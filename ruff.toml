@@ -1,0 +1,13 @@
+line-length = 100
+target-version = "py313"
+src = ["om/src", "infra/src", "services/api/src", "workers/maintenance/src"]
+
+[lint]
+select = ["E", "F", "W", "I", "UP", "B", "ASYNC", "RUF", "N"]
+ignore = ["RUF012", "UP042", "N818"]
+
+[lint.isort]
+known-first-party = ["tadas"]
+
+[format]
+quote-style = "double"

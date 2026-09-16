@@ -1,0 +1,10 @@
+{
+  "name": "tadas-workspace",
+  "private": true,
+  "packageManager": "pnpm@12.4.1",
+  "scripts": {
+    "lint": "pnpm -r --if-present run lint",
+    "typecheck": "pnpm -r --if-present run typecheck",
+    "test": "pnpm -r --if-present run test"
+  }
+}
