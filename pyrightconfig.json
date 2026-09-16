@@ -1,0 +1,10 @@
+{
+  "include": ["om/src", "om/tests", "om/migrations", "infra/src", "infra/tests", "services/api/src", "services/api/tests", "workers/maintenance/src", "workers/maintenance/tests"],
+  "exclude": ["**/node_modules", "**/.venv", "**/__pycache__"],
+  "typeCheckingMode": "standard",
+  "pythonVersion": "3.13",
+  "venvPath": ".",
+  "venv": ".venv",
+  "reportMissingImports": true,
+  "reportMissingTypeStubs": false
+}

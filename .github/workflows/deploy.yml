@@ -1,0 +1,117 @@
+# Dev builds and pushes both images by digest and applies its environment.
+# Production never rebuilds: behind the `production` environment's approval
+# gate it applies the same digests dev already ran. Credentials come from
+# the deploy role in deployment/terraform/shared through GitHub's OIDC
+# provider; the role's ARN and the state bucket are repository variables.
+name: deploy
+
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-1
+  TERRAFORM_VERSION: "1.12.2"
+
+jobs:
+  dev:
+    name: build, push, and apply dev
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    environment: dev
+    outputs:
+      api_image: ${{ steps.images.outputs.api_image }}
+      maintenance_image: ${{ steps.images.outputs.maintenance_image }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - uses: aws-actions/amazon-ecr-login@v2
+        id: ecr
+      - uses: docker/setup-buildx-action@v3
+      - name: build and push the api image
+        id: api
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deployment/docker/api.Dockerfile
+          push: true
+          tags: ${{ steps.ecr.outputs.registry }}/tadas-api:${{ github.sha }}
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,scope=api,mode=max
+      - name: build and push the maintenance image
+        id: maintenance
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deployment/docker/maintenance.Dockerfile
+          push: true
+          tags: ${{ steps.ecr.outputs.registry }}/tadas-maintenance:${{ github.sha }}
+          cache-from: type=gha,scope=maintenance
+          cache-to: type=gha,scope=maintenance,mode=max
+      - name: name the images by digest
+        id: images
+        run: |
+          echo "api_image=${{ steps.ecr.outputs.registry }}/tadas-api@${{ steps.api.outputs.digest }}" >> "$GITHUB_OUTPUT"
+          echo "maintenance_image=${{ steps.ecr.outputs.registry }}/tadas-maintenance@${{ steps.maintenance.outputs.digest }}" >> "$GITHUB_OUTPUT"
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+      - name: apply dev
+        run: |
+          terraform -chdir=deployment/terraform/environments/dev init -input=false \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
+            -backend-config="key=environments/dev/terraform.tfstate" \
+            -backend-config="region=${{ env.AWS_REGION }}" \
+            -backend-config="use_lockfile=true"
+          terraform -chdir=deployment/terraform/environments/dev apply -input=false -auto-approve \
+            -var "api_image=${{ steps.images.outputs.api_image }}" \
+            -var "maintenance_image=${{ steps.images.outputs.maintenance_image }}"
+      - name: migrate dev
+        run: scripts/cloud_migrate.sh deployment/terraform/environments/dev
+
+  production:
+    name: promote the same digests to production
+    needs: dev
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+      - name: apply production with dev's digests
+        run: |
+          terraform -chdir=deployment/terraform/environments/prod init -input=false \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
+            -backend-config="key=environments/prod/terraform.tfstate" \
+            -backend-config="region=${{ env.AWS_REGION }}" \
+            -backend-config="use_lockfile=true"
+          terraform -chdir=deployment/terraform/environments/prod apply -input=false -auto-approve \
+            -var "api_image=${{ needs.dev.outputs.api_image }}" \
+            -var "maintenance_image=${{ needs.dev.outputs.maintenance_image }}"
+      - name: migrate production
+        run: scripts/cloud_migrate.sh deployment/terraform/environments/prod

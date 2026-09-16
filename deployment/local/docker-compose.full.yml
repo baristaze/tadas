@@ -1,0 +1,50 @@
+# The local stack plus the application containers. Use with:
+#   docker compose -f deployment/local/docker-compose.yml -f deployment/local/docker-compose.full.yml up
+# Application services are appended by the scaffold steps that add them.
+name: tadas
+
+x-app-env: &app-env
+  TADAS_ENVIRONMENT: local
+  TADAS_DATABASE_URL: postgresql+asyncpg://tadas:tadas@postgres:5432/tadas
+  TADAS_CACHE_BACKEND: redis
+  TADAS_TOPICS_BACKEND: redis
+  TADAS_REDIS_URL: redis://redis:6379/0
+  TADAS_BUCKETS_BACKEND: s3
+  TADAS_S3_ENDPOINT_URL: http://minio:9000
+  TADAS_S3_ACCESS_KEY: tadas
+  TADAS_S3_SECRET_KEY: tadastadas
+  TADAS_QUEUES_BACKEND: sqs
+  TADAS_SQS_ENDPOINT_URL: http://elasticmq:9324
+  TADAS_SECRETS_BACKEND: local
+  TADAS_SECRETS_FILE: /run/tadas/secrets.env
+  TADAS_AWS_REGION: us-east-1
+  TADAS_LOG_JSON: "true"
+
+services:
+  api:
+    build:
+      context: ../..
+      dockerfile: deployment/docker/api.Dockerfile
+    environment:
+      <<: *app-env
+      TADAS_HOST: 0.0.0.0
+      TADAS_PORT: "8000"
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  maintenance:
+    build:
+      context: ../..
+      dockerfile: deployment/docker/maintenance.Dockerfile
+    environment:
+      <<: *app-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy

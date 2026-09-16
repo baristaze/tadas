@@ -1,0 +1,117 @@
+from datetime import datetime
+from uuid import UUID
+
+from pydantic import Field
+
+from tadas.om.opcontext import CredentialKind, Permission, Role
+from tadas.om.tenancy.rules import MAX_API_KEY_TTL
+from tadas.services.api.types.common import RequestBody, View
+
+
+class OrgView(View):
+    id: UUID
+    name: str
+    slug: str
+    created_at: datetime
+    deleted_at: datetime | None = None
+
+
+class UserView(View):
+    id: UUID
+    email: str
+    display_name: str
+    created_at: datetime
+
+
+class IdentityView(View):
+    """The person behind the caller's user; never carries the password hash."""
+
+    id: UUID
+    email: str
+    is_operator: bool
+    created_at: datetime
+
+
+class UpdateMeRequest(RequestBody):
+    display_name: str = Field(min_length=1, max_length=200)
+
+
+class MembershipView(View):
+    id: UUID
+    user_id: UUID
+    role: Role
+    teams: tuple[UUID, ...]
+
+
+class UpdateMembershipRequest(RequestBody):
+    role: Role
+
+
+class MembershipChoiceView(View):
+    org: OrgView
+    user: UserView
+    role: Role
+
+
+class LoginRequest(RequestBody):
+    email: str
+    password: str
+
+
+class IssuedLoginView(View):
+    """Carries the freshly minted login credential in the clear, once."""
+
+    token: str
+    expires_at: datetime
+    memberships: list[MembershipChoiceView]
+
+
+class ExchangeSessionRequest(RequestBody):
+    org_id: UUID
+
+
+class IssuedSessionView(View):
+    token: str
+    expires_at: datetime
+    org: OrgView
+    user: UserView
+    role: Role
+
+
+class MeView(View):
+    user: UserView
+    org: OrgView
+    role: Role
+    permissions: tuple[Permission, ...]
+    app: str
+
+
+class SessionView(View):
+    """Only the hash of a token is ever kept, so a session view carries no secret."""
+
+    id: UUID
+    credential_kind: CredentialKind
+    created_at: datetime
+    expires_at: datetime
+    revoked_at: datetime | None
+
+
+class ApiKeyView(View):
+    id: UUID
+    name: str
+    role: Role
+    user_id: UUID
+    created_at: datetime
+    expires_at: datetime
+    deleted_at: datetime | None
+
+
+class AddApiKeyRequest(RequestBody):
+    name: str
+    role: Role
+    ttl_days: int | None = Field(default=None, ge=1, le=MAX_API_KEY_TTL.days)
+
+
+class IssuedApiKeyView(View):
+    key: str
+    api_key: ApiKeyView

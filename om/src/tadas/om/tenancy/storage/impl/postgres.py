@@ -1,0 +1,165 @@
+from uuid import UUID
+
+from sqlalchemy import select
+
+from tadas.om.storage.impl.pg_base import PgStorageBase
+from tadas.om.storage.utils.translation import to_model
+from tadas.om.tenancy.storage import TenancyStorageInterface
+from tadas.om.tenancy.storage.tables.api_keys import ApiKeys
+from tadas.om.tenancy.storage.tables.identities import Identities
+from tadas.om.tenancy.storage.tables.memberships import Memberships
+from tadas.om.tenancy.storage.tables.orgs import Orgs
+from tadas.om.tenancy.storage.tables.sessions import Sessions
+from tadas.om.tenancy.storage.tables.users import Users
+from tadas.om.tenancy.types.api_key import ApiKey
+from tadas.om.tenancy.types.identity import Identity
+from tadas.om.tenancy.types.membership import Membership
+from tadas.om.tenancy.types.org import Org
+from tadas.om.tenancy.types.session import Session
+from tadas.om.tenancy.types.user import User
+
+
+class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
+    async def read_identity(self, identity_id: UUID) -> Identity | None:
+        stmt = select(Identities).where(Identities.id == identity_id)
+        async with self._session_for(stmt) as session:
+            row = (await session.execute(stmt)).scalar_one_or_none()
+            return None if row is None else to_model(row, Identity)
+
+    async def read_identity_by_email(self, email: str) -> Identity | None:
+        stmt = select(Identities).where(Identities.email == email)
+        async with self._session_for(stmt) as session:
+            row = (await session.execute(stmt)).scalar_one_or_none()
+            return None if row is None else to_model(row, Identity)
+
+    async def write_identity(self, identity: Identity) -> None:
+        await self._upsert_global(Identities, identity)
+
+    async def read_org(self, org_id: UUID) -> Org | None:
+        stmt = select(Orgs).where(Orgs.org_id == org_id, Orgs.id == org_id)
+        async with self._session_for(stmt) as session:
+            row = (await session.execute(stmt)).scalar_one_or_none()
+            return None if row is None else to_model(row, Org)
+
+    async def read_org_by_slug(self, slug: str) -> Org | None:
+        stmt = select(Orgs).where(Orgs.slug == slug)
+        async with self._session_for(stmt) as session:
+            row = (await session.execute(stmt)).scalar_one_or_none()
+            return None if row is None else to_model(row, Org)
+
+    async def read_orgs(self, limit: int) -> list[Org]:
+        stmt = select(Orgs).order_by(Orgs.id).limit(limit)
+        async with self._session_for(stmt) as session:
+            result = await session.execute(stmt)
+            return [to_model(row, Org) for row in result.scalars()]
+
+    async def write_org(self, org_id: UUID, org: Org) -> None:
+        await self._upsert(Orgs, org_id, org)
+
+    async def read_users(self, org_id: UUID, limit: int) -> list[User]:
+        stmt = (
+            select(Users)
+            .where(Users.org_id == org_id, Users.deleted_at.is_(None))
+            .order_by(Users.id)
+            .limit(limit)
+        )
+        async with self._session_for(stmt) as session:
+            result = await session.execute(stmt)
+            return [to_model(row, User) for row in result.scalars()]
+
+    async def read_user(self, org_id: UUID, user_id: UUID) -> User | None:
+        stmt = select(Users).where(Users.org_id == org_id, Users.id == user_id)
+        async with self._session_for(stmt) as session:
+            row = (await session.execute(stmt)).scalar_one_or_none()
+            return None if row is None else to_model(row, User)
+
+    async def read_users_by_identity(self, identity_id: UUID) -> list[tuple[UUID, User]]:
+        stmt = (
+            select(Users)
+            .where(Users.identity_id == identity_id, Users.deleted_at.is_(None))
+            .order_by(Users.id)
+        )
+        async with self._session_for(stmt) as session:
+            result = await session.execute(stmt)
+            return [(row.org_id, to_model(row, User)) for row in result.scalars()]
+
+    async def write_user(self, org_id: UUID, user: User) -> None:
+        await self._upsert(Users, org_id, user)
+
+    async def read_memberships(self, org_id: UUID, limit: int) -> list[Membership]:
+        stmt = (
+            select(Memberships)
+            .where(Memberships.org_id == org_id)
+            .order_by(Memberships.id)
+            .limit(limit)
+        )
+        async with self._session_for(stmt) as session:
+            result = await session.execute(stmt)
+            return [to_model(row, Membership) for row in result.scalars()]
+
+    async def read_membership_for_user(self, org_id: UUID, user_id: UUID) -> Membership | None:
+        stmt = select(Memberships).where(
+            Memberships.org_id == org_id, Memberships.user_id == user_id
+        )
+        async with self._session_for(stmt) as session:
+            row = (await session.execute(stmt)).scalar_one_or_none()
+            return None if row is None else to_model(row, Membership)
+
+    async def write_membership(self, org_id: UUID, membership: Membership) -> None:
+        await self._upsert(Memberships, org_id, membership)
+
+    async def read_sessions(self, org_id: UUID, user_id: UUID, limit: int) -> list[Session]:
+        stmt = (
+            select(Sessions)
+            .where(
+                Sessions.org_id == org_id,
+                Sessions.user_id == user_id,
+                Sessions.revoked_at.is_(None),
+            )
+            .order_by(Sessions.id)
+            .limit(limit)
+        )
+        async with self._session_for(stmt) as session:
+            result = await session.execute(stmt)
+            return [to_model(row, Session) for row in result.scalars()]
+
+    async def read_session(self, org_id: UUID, session_id: UUID) -> Session | None:
+        stmt = select(Sessions).where(Sessions.org_id == org_id, Sessions.id == session_id)
+        async with self._session_for(stmt) as session:
+            row = (await session.execute(stmt)).scalar_one_or_none()
+            return None if row is None else to_model(row, Session)
+
+    async def read_session_by_token_hash(self, token_hash: str) -> tuple[UUID, Session] | None:
+        stmt = select(Sessions).where(Sessions.token_hash == token_hash)
+        async with self._session_for(stmt) as session:
+            row = (await session.execute(stmt)).scalar_one_or_none()
+            return None if row is None else (row.org_id, to_model(row, Session))
+
+    async def write_session(self, org_id: UUID, session: Session) -> None:
+        await self._upsert(Sessions, org_id, session)
+
+    async def read_api_keys(self, org_id: UUID, limit: int) -> list[ApiKey]:
+        stmt = (
+            select(ApiKeys)
+            .where(ApiKeys.org_id == org_id, ApiKeys.deleted_at.is_(None))
+            .order_by(ApiKeys.id)
+            .limit(limit)
+        )
+        async with self._session_for(stmt) as session:
+            result = await session.execute(stmt)
+            return [to_model(row, ApiKey) for row in result.scalars()]
+
+    async def read_api_key(self, org_id: UUID, api_key_id: UUID) -> ApiKey | None:
+        stmt = select(ApiKeys).where(ApiKeys.org_id == org_id, ApiKeys.id == api_key_id)
+        async with self._session_for(stmt) as session:
+            row = (await session.execute(stmt)).scalar_one_or_none()
+            return None if row is None else to_model(row, ApiKey)
+
+    async def read_api_key_by_hash(self, key_hash: str) -> tuple[UUID, ApiKey] | None:
+        stmt = select(ApiKeys).where(ApiKeys.key_hash == key_hash)
+        async with self._session_for(stmt) as session:
+            row = (await session.execute(stmt)).scalar_one_or_none()
+            return None if row is None else (row.org_id, to_model(row, ApiKey))
+
+    async def write_api_key(self, org_id: UUID, api_key: ApiKey) -> None:
+        await self._upsert(ApiKeys, org_id, api_key)

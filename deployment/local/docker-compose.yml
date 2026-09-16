@@ -1,0 +1,64 @@
+# Every technology piece Tadas depends on, as a local container.
+# Application processes run on the host; see scripts/dev.sh.
+# Host ports sit in the 5xxxx range so the stack coexists with other
+# local stacks; inside the network the containers use their own ports.
+name: tadas
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: tadas
+      POSTGRES_PASSWORD: tadas
+      POSTGRES_DB: tadas
+    ports:
+      - "127.0.0.1:55432:5432"
+    volumes:
+      - postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tadas -d tadas"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "127.0.0.1:56379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  elasticmq:
+    image: softwaremill/elasticmq-native:1.6.9
+    ports:
+      - "127.0.0.1:59324:9324"
+      - "127.0.0.1:59325:9325"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1:9325/ >/dev/null || exit 1"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  minio:
+    image: quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: tadas
+      MINIO_ROOT_PASSWORD: tadastadas
+    ports:
+      - "127.0.0.1:59000:9000"
+      - "127.0.0.1:59001:9001"
+    volumes:
+      - minio:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:9000/minio/health/live || exit 1"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+volumes:
+  postgres:
+  minio:

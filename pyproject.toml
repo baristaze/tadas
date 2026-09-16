@@ -1,0 +1,44 @@
+[project]
+name = "tadas-workspace"
+version = "0.1.0"
+description = "Tadas: a multi-tenant to-do application for teams of people and the programs that work alongside them."
+requires-python = ">=3.13"
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+# Every member ships a subpackage of the one root package `tadas` (ADR 0001).
+members = [
+    "om",
+    "infra",
+    "services/api",
+    "workers/maintenance",
+]
+
+[tool.uv.sources]
+tadas-om = { workspace = true }
+tadas-infra = { workspace = true }
+tadas-api = { workspace = true }
+tadas-maintenance = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.8",
+    "pyright>=1.1.390",
+    "httpx>=0.27",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+addopts = "--import-mode=importlib"
+pythonpath = ["om/tests", "services/api/tests", "workers/maintenance/tests"]
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["om/tests", "infra/tests", "services/api/tests", "workers/maintenance/tests"]
+markers = [
+    "integration: needs the local compose stack",
+    "e2e: drives a running system end to end",
+    "slow: takes more than a few seconds",
+]
