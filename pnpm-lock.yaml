@@ -164,13 +164,26 @@ settings:
 
 importers:
 
-  .: {}
+  .:
+    devDependencies:
+      '@eslint/js':
+        specifier: ^9.17.0
+        version: 9.39.5
+      eslint:
+        specifier: ^9.17.0
+        version: 9.39.5(supports-color@10.2.2)
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      typescript-eslint:
+        specifier: ^8.19.0
+        version: 8.70.0(eslint@9.39.5(supports-color@10.2.2))(supports-color@10.2.2)(typescript@5.9.3)
 
   apps/portal:
     dependencies:
       '@tadas/api-client':
         specifier: workspace:*
-        version: link:../../packages/api-client
+        version: link:../../clients/api-client
       '@tanstack/react-query':
         specifier: ^5.62.7
         version: 5.102.8(react@19.3.0)
@@ -221,7 +234,7 @@ importers:
         specifier: ^3.0.0
         version: 3.2.7(@types/node@22.20.2)(supports-color@10.2.2)
 
-  packages/api-client:
+  clients/api-client:
     devDependencies:
       '@eslint/js':
         specifier: ^9.17.0

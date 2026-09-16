@@ -78,3 +78,14 @@ class DuplicateWorkItem(WorkException, Conflict):
 
 class LeaseLost(WorkException, Conflict):
     """The item is no longer claimed by this worker; another one may hold it."""
+
+
+class IdempotencyException(PlatformException): ...
+
+
+class DuplicateIdempotencyKey(IdempotencyException, Conflict):
+    """Another record already carries this (tenant, user, key)."""
+
+
+class IdempotencyKeyReused(IdempotencyException, ValidationFailed):
+    """The key was seen before with a different request."""

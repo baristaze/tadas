@@ -6,13 +6,14 @@ timer, and drain first on stop."""
 import asyncio
 import contextlib
 import logging
-from collections.abc import Mapping
+from collections.abc import Awaitable, Mapping
 from datetime import timedelta
 
 from tadas.infra.cache import CacheInterface
 from tadas.infra.observability import OUTCOMES
 from tadas.infra.topics import TopicPayload, Topics, TopicsInterface, WorkAvailablePayload
 from tadas.om.base import EMPTY_UUID, Platform
+from tadas.om.exceptions import LeaseLost, NotFound
 from tadas.om.opcontext import OpContext
 from tadas.om.work import WorkManagerInterface
 from tadas.om.work.types.handler import WorkHandlerInterface
@@ -132,51 +133,64 @@ class WorkerLoop:
     async def _run_item(self, ctx: OpContext, item: WorkItem) -> None:
         handler = self._handlers.get(item.kind)
         if handler is None:
-            await self._work.release(ctx, item)
-            OUTCOMES.labels(subsystem="worker", outcome="released").inc()
+            await self._settle(item, self._work.release(ctx, item), "released")
             return
         renewal = asyncio.create_task(
             self._renew_lease(ctx, item, asyncio.current_task()), name=f"lease-{item.id}"
         )
         try:
             await handler.handle(ctx, item)
-            await self._work.complete(ctx, item)
-            OUTCOMES.labels(subsystem="worker", outcome="done").inc()
         except asyncio.CancelledError:
             if self._stopping.is_set():
                 note = item.model_copy(update={"last_error": "returned: worker stopping"})
-                await self._work.release(ctx, note)
-                OUTCOMES.labels(subsystem="worker", outcome="returned").inc()
+                await self._settle(item, self._work.release(ctx, note), "returned")
             else:
                 log.warning("lease lost on %s; task cancelled before the lease expired", item.id)
                 OUTCOMES.labels(subsystem="worker", outcome="lease_lost").inc()
         except Exception as error:
             log.exception("handler failed on %s", item.id)
-            await self._work.fail(ctx, item, f"{type(error).__name__}: {error}"[:500])
-            OUTCOMES.labels(subsystem="worker", outcome="failed").inc()
+            failure = self._work.fail(ctx, item, f"{type(error).__name__}: {error}"[:500])
+            await self._settle(item, failure, "failed")
+        else:
+            await self._settle(item, self._work.complete(ctx, item), "done")
         finally:
             renewal.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await renewal
 
+    @staticmethod
+    async def _settle(item: WorkItem, transition: Awaitable[WorkItem], outcome: str) -> None:
+        """Writes the item's transition; a lease that was lost in the meantime is
+        logged and counted, never written over."""
+        try:
+            await transition
+        except (LeaseLost, NotFound) as error:
+            log.warning("%s was not settled as %s: %s", item.id, outcome, error)
+            OUTCOMES.labels(subsystem="worker", outcome="lease_lost").inc()
+            return
+        OUTCOMES.labels(subsystem="worker", outcome=outcome).inc()
+
     async def _renew_lease(
         self, ctx: OpContext, item: WorkItem, owner: asyncio.Task[None] | None
     ) -> None:
-        """Renews every third of the lease; after failing for half the lease, cancels
-        the owner so two workers never advance the same record."""
+        """Renews every third of the lease, each renewal bounded by that interval so
+        a stalled one counts as failed. Once half the lease has passed since the
+        last renewal that succeeded, cancels the owner before the lease expires so
+        two workers never advance the same record."""
         lease = self._options.lease
         interval = lease / 3
-        failing_since: float | None = None
+        clock = asyncio.get_running_loop().time
+        renewed_at = clock()
         while True:
             await asyncio.sleep(interval.total_seconds())
             try:
-                await self._work.extend_lease(ctx, item, lease)
-                failing_since = None
+                await asyncio.wait_for(
+                    self._work.extend_lease(ctx, item, lease), timeout=interval.total_seconds()
+                )
+                renewed_at = clock()
             except Exception as error:
-                now = asyncio.get_running_loop().time()
-                failing_since = now if failing_since is None else failing_since
-                log.warning("lease renewal failed on %s: %s", item.id, error)
-                if now - failing_since >= (lease / 2).total_seconds() - interval.total_seconds():
+                log.warning("lease renewal failed on %s: %r", item.id, error)
+                if clock() - renewed_at >= (lease / 2).total_seconds():
                     if owner is not None:
                         owner.cancel()
                     return
@@ -219,18 +233,18 @@ class WorkerLoop:
             await asyncio.sleep(self._options.sweep_interval.total_seconds())
 
     async def _sweep_once(self) -> None:
-        """Every step is idempotent and wrapped, so a failing step never stops the rest."""
-        try:
-            await self._work.requeue_stale()
-        except Exception:
-            log.exception("sweep: requeue_stale failed")
+        """One service context per live tenant, then every step under each of them.
+        Every step is idempotent and wrapped, so a failing tenant never stops the rest."""
         try:
             contexts = await self._work.maintenance_contexts()
         except Exception:
             log.exception("sweep: maintenance_contexts failed")
             contexts = []
         for ctx in contexts:
-            log.debug("sweep: tenant %s has no per-tenant maintenance yet", ctx.org_id)
+            try:
+                await self._work.requeue_stale(ctx)
+            except Exception:
+                log.exception("sweep: requeue_stale failed for tenant %s", ctx.org_id)
         self.sweeps += 1
 
     # Shutdown.

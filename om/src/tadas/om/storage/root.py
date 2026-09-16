@@ -1,5 +1,7 @@
 """Storage implementations are assembled behind a single root."""
 
+from tadas.om.events.storage import EventStorageInterface
+from tadas.om.idempotency.storage import IdempotencyStorageInterface
 from tadas.om.tasks.storage import TasksStorageInterface
 from tadas.om.tenancy.storage import TenancyStorageInterface
 from tadas.om.work.storage import WorkStorageInterface
@@ -11,6 +13,10 @@ class StorageInterface:
     def get_work_storage(self) -> WorkStorageInterface: ...
 
     def get_tasks_storage(self) -> TasksStorageInterface: ...
+
+    def get_idempotency_storage(self) -> IdempotencyStorageInterface: ...
+
+    def get_event_storage(self) -> EventStorageInterface: ...
 
     async def healthcheck(self) -> bool: ...
 

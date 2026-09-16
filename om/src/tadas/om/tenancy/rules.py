@@ -3,8 +3,13 @@ role cap. Values in, values out; no clock, no storage, no settings."""
 
 import hashlib
 import hmac
+from datetime import timedelta
 
 from tadas.om.tenancy.types.role import ROLE_RANK, CredentialKind, Role
+
+MAX_API_KEY_TTL = timedelta(days=90)
+"""The longest life a tenant may ask of an api key. `TenancyOptions.api_key_ttl`
+defaults to it and the wire type bounds its request field by it."""
 
 CREDENTIAL_PREFIXES: dict[str, CredentialKind] = {
     "ses_": CredentialKind.SESSION_TOKEN,

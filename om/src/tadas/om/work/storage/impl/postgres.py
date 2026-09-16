@@ -2,13 +2,13 @@ from collections.abc import Sequence
 from datetime import datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import select, update
+from sqlalchemy import DateTime, Interval, case, func, literal, select, update
 from sqlalchemy.exc import IntegrityError
 
 from tadas.om.base import utcnow
 from tadas.om.exceptions import DuplicateWorkItem
 from tadas.om.storage.impl.pg_base import PgStorageBase
-from tadas.om.storage.utils.translation import to_model
+from tadas.om.storage.utils.translation import to_model, to_values
 from tadas.om.work.storage import WorkStorageInterface
 from tadas.om.work.storage.tables.work_items import WorkItems
 from tadas.om.work.types.work_item import WorkItem, WorkKind, WorkStatus
@@ -20,6 +20,30 @@ class WorkStoragePostgresImpl(PgStorageBase, WorkStorageInterface):
             await self._upsert(WorkItems, org_id, item)
         except IntegrityError as error:
             raise DuplicateWorkItem(f"idempotency key {item.idempotency_key} is taken") from error
+
+    async def write_item_if_held(
+        self, org_id: UUID, worker_id: str, item: WorkItem
+    ) -> WorkItem | None:
+        values = to_values(item, WorkItems)
+        values.pop("id", None)
+        stmt = (
+            update(WorkItems)
+            .where(
+                WorkItems.id == item.id,
+                WorkItems.org_id == org_id,
+                WorkItems.status == WorkStatus.CLAIMED.value,
+                WorkItems.claimed_by == worker_id,
+            )
+            .values(**values)
+            .returning(WorkItems)
+        )
+        async with self._session_for(stmt) as session:
+            row = (await session.execute(stmt)).scalar_one_or_none()
+            if row is None:
+                return None
+            written = to_model(row, WorkItem)
+            await session.commit()
+            return written
 
     async def claim_next(
         self, queue: str, kinds: Sequence[WorkKind], worker_id: str, lease: timedelta
@@ -45,7 +69,7 @@ class WorkStoragePostgresImpl(PgStorageBase, WorkStorageInterface):
                 status=WorkStatus.CLAIMED.value,
                 claimed_by=worker_id,
                 lease_expires_at=now + lease,
-                attempts=WorkItems.attempts + 1,
+                attempts=WorkItems.attempts + 1,  # rules.attempts_after_claim, in SQL
                 updated_at=now,
             )
             .returning(WorkItems)
@@ -58,18 +82,44 @@ class WorkStoragePostgresImpl(PgStorageBase, WorkStorageInterface):
             await session.commit()
             return claimed
 
-    async def read_stale(self, before: datetime) -> list[tuple[UUID, WorkItem]]:
-        stmt = (
-            select(WorkItems)
-            .where(
-                WorkItems.status == WorkStatus.CLAIMED.value,
-                WorkItems.lease_expires_at < before,
+    async def requeue_stale(
+        self, org_id: UUID, now: datetime, stagger: timedelta
+    ) -> list[WorkItem]:
+        stale_filter = (
+            WorkItems.org_id == org_id,
+            WorkItems.status == WorkStatus.CLAIMED.value,
+            WorkItems.lease_expires_at < now,
+        )
+        stale = (
+            select(
+                WorkItems.id.label("id"),
+                (func.row_number().over(order_by=WorkItems.id) - 1).label("position"),
             )
-            .order_by(WorkItems.id)
+            .where(*stale_filter)
+            .subquery("stale")
+        )
+        exhausted = WorkItems.attempts >= WorkItems.max_attempts  # rules.is_exhausted, in SQL
+        staggered = (
+            literal(now, DateTime(timezone=True)) + literal(stagger, Interval()) * stale.c.position
+        )
+        stmt = (
+            update(WorkItems)
+            .where(WorkItems.id == stale.c.id, *stale_filter)
+            .values(
+                status=case((exhausted, WorkStatus.FAILED.value), else_=WorkStatus.QUEUED.value),
+                available_at=case((exhausted, WorkItems.available_at), else_=staggered),
+                claimed_by=None,
+                lease_expires_at=None,
+                last_error="lease expired",
+                updated_at=now,
+            )
+            .returning(WorkItems)
         )
         async with self._session_for(stmt) as session:
-            result = await session.execute(stmt)
-            return [(row.org_id, to_model(row, WorkItem)) for row in result.scalars()]
+            rows = (await session.execute(stmt)).scalars().all()
+            changed = sorted((to_model(row, WorkItem) for row in rows), key=lambda item: item.id)
+            await session.commit()
+            return changed
 
     async def read_item(self, org_id: UUID, item_id: UUID) -> WorkItem | None:
         stmt = select(WorkItems).where(WorkItems.org_id == org_id, WorkItems.id == item_id)

@@ -2,6 +2,7 @@ from uuid import UUID
 
 from tadas.infra.topics import EntityChangedPayload, Topics, TopicsInterface
 from tadas.om.base import Platform, new_id, utcnow
+from tadas.om.events import EventsManagerInterface
 from tadas.om.exceptions import Conflict, NotFound, ValidationFailed
 from tadas.om.opcontext import OpContext, Permission
 from tadas.om.tasks.manager import TasksManagerInterface
@@ -17,10 +18,12 @@ class TasksManagerImpl(TasksManagerInterface):
     def __init__(
         self,
         storage: TasksStorageInterface,
+        events: EventsManagerInterface,
         topics: TopicsInterface,
         options: TasksOptions,
     ) -> None:
         self._storage = storage
+        self._events = events
         self._topics = topics
         self._options = options
 
@@ -76,14 +79,18 @@ class TasksManagerImpl(TasksManagerInterface):
             raise ValidationFailed("a task needs a status")
 
     async def _changed(self, ctx: OpContext, task_id: UUID, action: str) -> None:
+        """The core row is written; now the stream row, then the push. Every push
+        is also a record, so a client that missed the push replays by seq."""
+        event = await self._events.record(ctx, "task", task_id, action, new_id())
         await self._topics.publish(
             Topics.ENTITY_CHANGED,
             EntityChangedPayload(
-                idempotency_key=new_id(),
-                produced_at=utcnow(),
+                idempotency_key=event.idempotency_key,
+                produced_at=event.produced_at,
                 org_id=ctx.org_id,
-                entity="task",
-                entity_id=task_id,
-                action=action,
+                entity=event.entity,
+                entity_id=event.entity_id,
+                action=event.action,
+                seq=event.seq,
             ),
         )

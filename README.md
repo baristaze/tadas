@@ -27,6 +27,7 @@ scripts/dev.sh    # every application process on the host
 
 ```bash
 make check             # lint, format, types, unit tests (the fast gate)
+make migrate-check     # every role's ORM metadata against the migrated schema
 make test-integration  # the same storage contracts over Postgres, plus migrations
 ```
 
@@ -35,4 +36,5 @@ make test-integration  # the same storage contracts over Postgres, plus migratio
 - `om/` the object model: entities, managers, storage, migrations
 - `infra/` cache, buckets, topics, queues, secrets, observability
 - `services/` web services; `workers/` background roles; `apps/` clients
-- `deployment/` compose, images, Terraform; `docs/` as built, ADRs, runbooks
+- `clients/` typed clients, one per service; `deployment/` compose, images, Terraform
+- `docs/` as built, ADRs, runbooks; `scripts/` dev.sh and the cloud migration runner

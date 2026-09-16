@@ -1,0 +1,56 @@
+"""Resolves the one container, and the services it holds, for a request or a
+socket. Routers name the service they need and make one call into it."""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Annotated
+
+from fastapi import Depends
+from starlette.requests import HTTPConnection
+
+from tadas.services.api.services import (
+    AdminServiceInterface,
+    EventsServiceInterface,
+    RealtimeServiceInterface,
+    ServicesInterface,
+    TasksServiceInterface,
+    TenancyServiceInterface,
+)
+
+if TYPE_CHECKING:
+    from tadas.services.api.container import AppContainer
+
+
+def container_of(connection: HTTPConnection) -> AppContainer:
+    return connection.app.state.container
+
+
+def services_of(connection: HTTPConnection) -> ServicesInterface:
+    return container_of(connection).services
+
+
+def tasks_service(connection: HTTPConnection) -> TasksServiceInterface:
+    return services_of(connection).get_tasks_service()
+
+
+def tenancy_service(connection: HTTPConnection) -> TenancyServiceInterface:
+    return services_of(connection).get_tenancy_service()
+
+
+def admin_service(connection: HTTPConnection) -> AdminServiceInterface:
+    return services_of(connection).get_admin_service()
+
+
+def events_service(connection: HTTPConnection) -> EventsServiceInterface:
+    return services_of(connection).get_events_service()
+
+
+def realtime_service(connection: HTTPConnection) -> RealtimeServiceInterface:
+    return services_of(connection).get_realtime_service()
+
+
+TasksService = Annotated[TasksServiceInterface, Depends(tasks_service)]
+TenancyService = Annotated[TenancyServiceInterface, Depends(tenancy_service)]
+AdminService = Annotated[AdminServiceInterface, Depends(admin_service)]
+EventsService = Annotated[EventsServiceInterface, Depends(events_service)]
+RealtimeService = Annotated[RealtimeServiceInterface, Depends(realtime_service)]

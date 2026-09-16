@@ -16,9 +16,10 @@ async def test_task_round_trip(client: httpx.AsyncClient, owner: dict[str, str])
     replay = await client.post(
         "/v1/tasks",
         headers={**owner, "Idempotency-Key": "task-1"},
-        json={"title": "Write the scaffold"},
+        json={"title": "Write the scaffold", "notes": "and test it"},
     )
     assert replay.status_code == 201 and replay.json()["id"] == task["id"]
+    assert replay.headers["Idempotent-Replayed"] == "true"
 
     listed = await client.get("/v1/tasks", headers=owner, params={"limit": 100000})
     assert [t["id"] for t in listed.json()] == [task["id"]]

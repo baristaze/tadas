@@ -112,6 +112,23 @@ class TenancyStorageContract:
         assert await storage.read_session(org.id, session.id) == session
         assert await storage.read_session_by_token_hash("missing") is None
 
+    async def test_sessions_of_a_user_hide_the_revoked_ones(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        org = make_org()
+        identity_id, user_id = new_id(), new_id()
+        sessions = [make_session(identity_id, user_id, uuid4().hex) for _ in range(3)]
+        for session in reversed(sessions):
+            await storage.write_session(org.id, session)
+        await storage.write_session(org.id, make_session(identity_id, new_id(), uuid4().hex))
+        listed = await storage.read_sessions(org.id, user_id, limit=10)
+        assert listed == sorted(sessions, key=lambda s: s.id)
+        assert len(await storage.read_sessions(org.id, user_id, limit=2)) == 2
+        revoked = sessions[0].model_copy(update={"revoked_at": utcnow()})
+        await storage.write_session(org.id, revoked)
+        assert revoked not in await storage.read_sessions(org.id, user_id, limit=10)
+        assert await storage.read_session(org.id, revoked.id) == revoked
+
     async def test_api_key_lookup_by_hash_returns_the_tenant(
         self, storage: TenancyStorageInterface
     ) -> None:

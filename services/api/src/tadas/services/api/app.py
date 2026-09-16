@@ -1,6 +1,6 @@
-"""create_app: settings, logging, trust store, tracing, then middleware in a
-fixed order, routers under /v1, health routes, and the lifespan that starts
-and closes the container."""
+"""create_app: boot (settings, logging, trust store, tracing), then the
+container, middleware in a fixed order, routers under /v1, health routes,
+and the lifespan that starts and closes the container."""
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -9,9 +9,8 @@ from fastapi import APIRouter, FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from tadas.infra.observability import configure_logging, configure_tracing, metrics_exposition
-from tadas.infra.trust import install_trust_store
-from tadas.services.api.container import AppContainer
+from tadas.infra.observability import metrics_exposition
+from tadas.services.api.container import AppContainer, boot
 from tadas.services.api.gateway.errors import register_error_handlers
 from tadas.services.api.gateway.observability import RequestIdMiddleware
 from tadas.services.api.routers import all_routers
@@ -21,11 +20,9 @@ API_PREFIX = "/v1"
 
 
 def create_app(container: AppContainer | None = None) -> FastAPI:
-    container = container or AppContainer.build(ApiSettings())
-    settings = container.settings
-    configure_logging(settings.log_level, settings.log_json)
-    install_trust_store()
-    configure_tracing(settings.otel_endpoint, settings.service_name)
+    settings = container.settings if container is not None else ApiSettings()
+    boot(settings)
+    container = container or AppContainer.build(settings)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:

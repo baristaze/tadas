@@ -1,10 +1,14 @@
 import asyncio
+import logging
 import secrets
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
+from tadas.infra.observability import OUTCOMES
 from tadas.infra.queues import QueueDepth, QueueInterface, QueueMessage, Queues
 from tadas.om.base import new_id, utcnow
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -19,7 +23,9 @@ class _Message:
 
 class QueueMemoryImpl(QueueInterface):
     """A faithful twin of the hosted queue: visibility timeouts, redelivery,
-    and a dead-letter list after `max_receives` attempts."""
+    and a dead-letter list after `max_receives` attempts. Like the hosted
+    queue it does not deduplicate; `dedup_id` rides along as an attribute
+    and the consumer is idempotent."""
 
     def __init__(self, max_receives: int = 5) -> None:
         self._max_receives = max_receives
@@ -27,12 +33,9 @@ class QueueMemoryImpl(QueueInterface):
         self._dead: dict[Queues, list[_Message]] = {q: [] for q in Queues}
 
     async def send(self, queue: Queues, body: bytes, *, dedup_id: str | None = None) -> str:
-        if dedup_id is not None:
-            for message in self._messages[queue]:
-                if message.dedup_id == dedup_id:
-                    return message.id
         message = _Message(id=str(new_id()), body=body, dedup_id=dedup_id)
         self._messages[queue].append(message)
+        OUTCOMES.labels(subsystem="queue", outcome="sent").inc()
         return message.id
 
     async def receive(
@@ -42,6 +45,7 @@ class QueueMemoryImpl(QueueInterface):
         while True:
             received = self._take(queue, max_messages, visibility)
             if received or utcnow() >= deadline:
+                OUTCOMES.labels(subsystem="queue", outcome="received").inc(len(received))
                 return received
             await asyncio.sleep(0.01)
 
@@ -55,8 +59,7 @@ class QueueMemoryImpl(QueueInterface):
                 continue
             message.attempts += 1
             if message.attempts > self._max_receives:
-                self._messages[queue].remove(message)
-                self._dead[queue].append(message)
+                self._dead_letter(queue, message)
                 continue
             message.visible_at = now + visibility
             message.receipt = secrets.token_hex(8)
@@ -70,8 +73,22 @@ class QueueMemoryImpl(QueueInterface):
             )
         return received
 
+    def _dead_letter(self, queue: Queues, message: _Message) -> None:
+        """Dead letters are visible, not silent: a log line names the message
+        and a metric counts it."""
+        self._messages[queue].remove(message)
+        self._dead[queue].append(message)
+        log.warning(
+            "message %s on queue %s dead-lettered after %d attempts",
+            message.id,
+            queue.value,
+            self._max_receives,
+        )
+        OUTCOMES.labels(subsystem="queue", outcome="dead_lettered").inc()
+
     async def delete(self, queue: Queues, receipt: str) -> None:
         self._messages[queue] = [m for m in self._messages[queue] if m.receipt != receipt]
+        OUTCOMES.labels(subsystem="queue", outcome="deleted").inc()
 
     async def change_visibility(self, queue: Queues, receipt: str, visibility: timedelta) -> None:
         for message in self._messages[queue]:
@@ -91,3 +108,9 @@ class QueueMemoryImpl(QueueInterface):
 
     def describe(self) -> str:
         return "queues=memory"
+
+    async def start(self) -> None:
+        return None
+
+    async def close(self) -> None:
+        return None

@@ -5,6 +5,7 @@ from uuid import UUID
 from tadas.om.base import utcnow
 from tadas.om.exceptions import DuplicateWorkItem
 from tadas.om.storage.impl.memory_base import MemoryStorageBase, MemoryTable
+from tadas.om.work.rules import attempts_after_claim, is_exhausted, stagger_delay
 from tadas.om.work.storage import WorkStorageInterface
 from tadas.om.work.types.work_item import WorkItem, WorkKind, WorkStatus
 
@@ -19,6 +20,20 @@ class WorkStorageMemoryImpl(MemoryStorageBase, WorkStorageInterface):
             if existing.idempotency_key == item.idempotency_key and existing.id != item.id:
                 raise DuplicateWorkItem(f"idempotency key {item.idempotency_key} is taken")
         self._put(self._items, org_id, item)
+
+    async def write_item_if_held(
+        self, org_id: UUID, worker_id: str, item: WorkItem
+    ) -> WorkItem | None:
+        async with self._lock:
+            stored = self._get(self._items, org_id, item.id)
+            if (
+                stored is None
+                or stored.status is not WorkStatus.CLAIMED
+                or stored.claimed_by != worker_id
+            ):
+                return None
+            self._items[item.id] = (org_id, item)
+            return item
 
     async def claim_next(
         self, queue: str, kinds: Sequence[WorkKind], worker_id: str, lease: timedelta
@@ -37,7 +52,7 @@ class WorkStorageMemoryImpl(MemoryStorageBase, WorkStorageInterface):
                             "status": WorkStatus.CLAIMED,
                             "claimed_by": worker_id,
                             "lease_expires_at": now + lease,
-                            "attempts": item.attempts + 1,
+                            "attempts": attempts_after_claim(item.attempts),
                             "updated_at": now,
                         }
                     )
@@ -45,14 +60,38 @@ class WorkStorageMemoryImpl(MemoryStorageBase, WorkStorageInterface):
                     return org_id, claimed
         return None
 
-    async def read_stale(self, before: datetime) -> list[tuple[UUID, WorkItem]]:
-        return [
-            (org_id, item)
-            for org_id, item in self._rows_across_tenants(self._items)
-            if item.status is WorkStatus.CLAIMED
-            and item.lease_expires_at is not None
-            and item.lease_expires_at < before
-        ]
+    async def requeue_stale(
+        self, org_id: UUID, now: datetime, stagger: timedelta
+    ) -> list[WorkItem]:
+        changed: list[WorkItem] = []
+        async with self._lock:
+            stale = [
+                item
+                for item in self._rows(self._items, org_id)
+                if item.status is WorkStatus.CLAIMED
+                and item.lease_expires_at is not None
+                and item.lease_expires_at < now
+            ]
+            for position, item in enumerate(stale):
+                if is_exhausted(item):
+                    update = {"status": WorkStatus.FAILED}
+                else:
+                    update = {
+                        "status": WorkStatus.QUEUED,
+                        "available_at": now + stagger_delay(position, stagger),
+                    }
+                requeued = item.model_copy(
+                    update={
+                        **update,
+                        "claimed_by": None,
+                        "lease_expires_at": None,
+                        "last_error": "lease expired",
+                        "updated_at": now,
+                    }
+                )
+                self._items[item.id] = (org_id, requeued)
+                changed.append(requeued)
+        return changed
 
     async def read_item(self, org_id: UUID, item_id: UUID) -> WorkItem | None:
         return self._get(self._items, org_id, item_id)

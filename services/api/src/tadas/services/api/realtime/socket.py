@@ -1,28 +1,24 @@
-"""The one socket route and the ticket route that opens it. The handler
-subscribes to topics on the client's behalf, filters by tenant, and moves
-frames through the bounded outbox."""
+"""The one socket route and the ticket route that opens it. The gateway
+redeems the ticket; the handler subscribes to topics on the client's behalf
+through the realtime service and moves frames through the bounded outbox."""
 
 import asyncio
 import contextlib
 import logging
 from collections.abc import Callable
-from datetime import timedelta
 from typing import Annotated
 
-from fastapi import APIRouter, Header, Query, Request, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
 
-from tadas.infra.cache import CacheScope
-from tadas.infra.topics import TopicPayload, Topics
+from tadas.infra.topics import Topics
 from tadas.om.exceptions import PlatformException
-from tadas.services.api.container import AppContainer
-from tadas.services.api.gateway.auth import Ctx, app_context_of
-from tadas.services.api.gateway.observability import request_id_of
+from tadas.services.api.gateway.auth import Ctx, SocketCtx
+from tadas.services.api.gateway.resolve import RealtimeService, container_of
 from tadas.services.api.realtime.envelopes import (
     IDLE_TIMEOUT_SECONDS,
     ClientCommand,
     ErrorEnvelope,
-    EventEnvelope,
     HelloEnvelope,
     PongEnvelope,
     SubscribedEnvelope,
@@ -30,69 +26,31 @@ from tadas.services.api.realtime.envelopes import (
     UnsubscribedEnvelope,
 )
 from tadas.services.api.realtime.outbox import Outbox
-from tadas.services.api.realtime.ticket import TicketStore
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/realtime", tags=["realtime"])
 
-CLOSE_UNAUTHENTICATED = 4401
+
+def new_outbox(websocket: WebSocket) -> Outbox:
+    return Outbox(container_of(websocket).settings.realtime_outbox_size)
 
 
-def _tickets(container: AppContainer) -> TicketStore:
-    return TicketStore(
-        container.infra.get_cache(CacheScope.REALTIME_TICKET),
-        timedelta(seconds=container.settings.realtime_ticket_ttl_seconds),
-    )
+SocketOutbox = Annotated[Outbox, Depends(new_outbox)]
 
 
 @router.post("/tickets", response_model=TicketView, status_code=201)
-async def mint_ticket(request: Request, ctx: Ctx) -> TicketView:
-    container: AppContainer = request.app.state.container
-    ticket = await _tickets(container).mint(ctx)
-    return TicketView(
-        ticket=ticket, expires_in_seconds=container.settings.realtime_ticket_ttl_seconds
-    )
+async def mint_ticket(ctx: Ctx, realtime: RealtimeService) -> TicketView:
+    return await realtime.issue_ticket(ctx)
 
 
 @router.websocket("")
-async def realtime(
-    websocket: WebSocket,
-    ticket: Annotated[str, Query()],
-    x_app: Annotated[str | None, Header()] = None,
-    x_app_version: Annotated[str | None, Header()] = None,
+async def channel(
+    websocket: WebSocket, ctx: SocketCtx, realtime: RealtimeService, outbox: SocketOutbox
 ) -> None:
-    container: AppContainer = websocket.app.state.container
-    try:
-        org_id, kind, credential_id = await _tickets(container).redeem(ticket)
-        ctx = await container.managers.tenancy.resume(
-            org_id,
-            kind,
-            credential_id,
-            app_context_of(x_app, x_app_version),
-            request_id_of(websocket.scope),
-        )
-    except PlatformException as error:
-        log.info("socket refused: %s", error.message)
-        await websocket.close(code=CLOSE_UNAUTHENTICATED, reason=error.code)
-        return
-
     await websocket.accept()
-    outbox = Outbox(container.settings.realtime_outbox_size)
     drainer = asyncio.create_task(outbox.drain(websocket), name=f"outbox-{ctx.user_id}")
     subscriptions: dict[Topics, Callable[[], None]] = {}
-    topics = container.infra.get_topics()
     outbox.offer(HelloEnvelope(org_id=ctx.org_id, user_id=ctx.user_id))
-
-    def subscribe(topic: Topics) -> None:
-        async def forward(payload: TopicPayload) -> None:
-            if payload.org_id == ctx.org_id:
-                outbox.offer(
-                    EventEnvelope(topic=topic.value, payload=payload.model_dump(mode="json"))
-                )
-
-        if topic not in subscriptions:
-            subscriptions[topic] = topics.subscribe(topic, f"socket:{ctx.user_id}", forward)
-        outbox.offer(SubscribedEnvelope(topic=topic.value))
 
     try:
         while True:
@@ -108,7 +66,13 @@ async def realtime(
             elif topic is None:
                 outbox.offer(ErrorEnvelope(code="bad_command", message="topic is required"))
             elif command.op == "subscribe":
-                subscribe(topic)
+                if topic not in subscriptions:
+                    try:
+                        subscriptions[topic] = realtime.subscribe(ctx, topic, outbox.offer)
+                    except PlatformException as error:
+                        outbox.offer(ErrorEnvelope(code=error.code, message=error.message))
+                        continue
+                outbox.offer(SubscribedEnvelope(topic=topic.value))
             else:
                 if (unsubscribe := subscriptions.pop(topic, None)) is not None:
                     unsubscribe()

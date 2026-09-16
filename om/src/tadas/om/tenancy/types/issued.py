@@ -32,3 +32,10 @@ class IssuedSession(Platform):
 class IssuedApiKey(Platform):
     key: str
     api_key: ApiKey
+
+
+class IssuedTicket(Platform):
+    """A single-use, short-lived socket ticket; redeeming it re-checks the credential behind it."""
+
+    ticket: str
+    expires_at: datetime

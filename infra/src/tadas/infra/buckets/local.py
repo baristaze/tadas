@@ -73,3 +73,9 @@ class BucketsLocalImpl(BucketsInterface):
 
     def describe(self) -> str:
         return f"buckets=local({self._root})"
+
+    async def start(self) -> None:
+        return None
+
+    async def close(self) -> None:
+        return None

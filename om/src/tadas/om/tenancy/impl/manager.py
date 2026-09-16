@@ -1,9 +1,12 @@
+import json
 import secrets
 from datetime import timedelta
 from uuid import UUID
 
+from tadas.infra.cache import CacheInterface
 from tadas.infra.topics import EntityChangedPayload, Topics, TopicsInterface
 from tadas.om.base import EMPTY_UUID, Platform, new_id, utcnow
+from tadas.om.events import EventsManagerInterface
 from tadas.om.exceptions import (
     Conflict,
     CredentialExpired,
@@ -11,10 +14,12 @@ from tadas.om.exceptions import (
     NotAnOperator,
     NotAuthorized,
     NotFound,
+    ValidationFailed,
 )
 from tadas.om.opcontext import (
     AdminContext,
     AppContext,
+    AppType,
     CredentialKind,
     OpContext,
     Permission,
@@ -23,6 +28,7 @@ from tadas.om.opcontext import (
 )
 from tadas.om.tenancy.manager import TenancyManagerInterface
 from tadas.om.tenancy.rules import (
+    MAX_API_KEY_TTL,
     PREFIX_FOR_KIND,
     capped_role,
     credential_kind_of,
@@ -34,11 +40,25 @@ from tadas.om.tenancy.rules import (
 from tadas.om.tenancy.storage import TenancyStorageInterface
 from tadas.om.tenancy.types.api_key import ApiKey
 from tadas.om.tenancy.types.identity import Identity
-from tadas.om.tenancy.types.issued import IssuedApiKey, IssuedLogin, IssuedSession, OrgMembership
+from tadas.om.tenancy.types.issued import (
+    IssuedApiKey,
+    IssuedLogin,
+    IssuedSession,
+    IssuedTicket,
+    OrgMembership,
+)
 from tadas.om.tenancy.types.membership import Membership
 from tadas.om.tenancy.types.org import Org
 from tadas.om.tenancy.types.session import Session
 from tadas.om.tenancy.types.user import User
+
+BOOTSTRAP_APP = AppContext(type=AppType.CLI, version="cli@bootstrap")
+"""The app a bootstrap runs as when its caller names none."""
+
+TICKET_KEY = "ticket:"
+TICKET_USED_KEY = "ticket-used:"
+TICKET_CREDENTIALS = (CredentialKind.SESSION_TOKEN, CredentialKind.API_KEY)
+"""The credentials a socket ticket may stand for."""
 
 
 class TenancyOptions(Platform):
@@ -46,7 +66,8 @@ class TenancyOptions(Platform):
 
     login_ttl: timedelta = timedelta(minutes=10)
     session_ttl: timedelta = timedelta(hours=12)
-    api_key_ttl: timedelta = timedelta(days=90)
+    api_key_ttl: timedelta = MAX_API_KEY_TTL
+    ticket_ttl: timedelta = timedelta(seconds=60)
     max_limit: int = 200
 
 
@@ -58,11 +79,15 @@ class TenancyManagerImpl(TenancyManagerInterface):
     def __init__(
         self,
         storage: TenancyStorageInterface,
+        events: EventsManagerInterface,
         topics: TopicsInterface,
+        cache: CacheInterface,
         options: TenancyOptions,
     ) -> None:
         self._storage = storage
+        self._events = events
         self._topics = topics
+        self._cache = cache
         self._options = options
 
     # Operations without a principal.
@@ -76,7 +101,9 @@ class TenancyManagerImpl(TenancyManagerInterface):
         display_name: str,
         *,
         operator: bool = False,
-    ) -> Org:
+        app: AppContext | None = None,
+        request_id: UUID | None = None,
+    ) -> tuple[OpContext, Org]:
         if await self._storage.read_org_by_slug(slug) is not None:
             raise Conflict(f"org slug {slug!r} is taken")
         now = utcnow()
@@ -125,7 +152,17 @@ class TenancyManagerImpl(TenancyManagerInterface):
             role=Role.OWNER,
         )
         await self._storage.write_membership(org.id, membership)
-        return org
+        # The principal now exists; everything after this line runs under it.
+        ctx = build_context(
+            user=user,
+            org=org,
+            role=membership.role,
+            credential_kind=CredentialKind.INTERNAL,
+            app=app or BOOTSTRAP_APP,
+            request_id=request_id or new_id(),
+            teams=membership.teams,
+        )
+        return ctx, org
 
     async def login(self, email: str, password: str) -> IssuedLogin:
         identity = await self._storage.read_identity_by_email(email)
@@ -261,6 +298,28 @@ class TenancyManagerImpl(TenancyManagerInterface):
             credential_id=credential_id,
         )
 
+    async def redeem_ticket(self, ticket: str, app: AppContext, request_id: UUID) -> OpContext:
+        if credential_kind_of(ticket) is not CredentialKind.SOCKET_TICKET:
+            raise InvalidCredential("expected a socket ticket")
+        digest = hash_token(ticket)
+        # One atomic increment consumes the ticket: only the first redeemer sees 1.
+        used, _ = await self._cache.increment(
+            EMPTY_UUID, TICKET_USED_KEY + digest, self._options.ticket_ttl
+        )
+        if used != 1:
+            raise InvalidCredential("socket ticket already redeemed")
+        raw = await self._cache.get(EMPTY_UUID, TICKET_KEY + digest)
+        if raw is None:
+            raise InvalidCredential("unknown or expired socket ticket")
+        behind = json.loads(raw)
+        return await self.resume(
+            UUID(behind["org_id"]),
+            CredentialKind(behind["credential_kind"]),
+            UUID(behind["credential_id"]),
+            app,
+            request_id,
+        )
+
     async def service_context(
         self, org_id: UUID, user_id: UUID, app: AppContext, request_id: UUID
     ) -> OpContext:
@@ -283,7 +342,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
             contexts.append(await self.service_context(org.id, org.created_by, app, request_id))
         return contexts
 
-    # Tenant operations.
+    # The principal.
 
     async def get_org(self, ctx: OpContext) -> Org:
         ctx.require(Permission.READ)
@@ -292,13 +351,96 @@ class TenancyManagerImpl(TenancyManagerInterface):
             raise NotFound(f"org {ctx.org_id} not found")
         return org
 
+    async def get_identity(self, ctx: OpContext) -> Identity:
+        ctx.require(Permission.READ)
+        identity = await self._storage.read_identity(ctx.security.user.identity_id)
+        if identity is None:
+            raise NotFound(f"identity {ctx.security.user.identity_id} not found")
+        return identity
+
+    async def update_user(self, ctx: OpContext, user: User) -> User:
+        ctx.require(Permission.READ)
+        if user.id != ctx.user_id:
+            ctx.require(Permission.MANAGE_MEMBERS)
+        existing = await self._live_user(ctx, user.id)
+        if not user.display_name.strip():
+            raise ValidationFailed("display name is required")
+        updated = existing.model_copy(
+            update={"display_name": user.display_name, "updated_at": utcnow()}
+        )
+        await self._storage.write_user(ctx.org_id, updated)
+        await self._changed(ctx, "user", updated.id, "updated")
+        return updated
+
     async def get_users(self, ctx: OpContext, limit: int) -> list[User]:
         ctx.require(Permission.READ)
         return await self._storage.read_users(ctx.org_id, self._clamp(limit))
 
+    # Memberships.
+
     async def get_memberships(self, ctx: OpContext, limit: int) -> list[Membership]:
         ctx.require(Permission.READ)
         return await self._storage.read_memberships(ctx.org_id, self._clamp(limit))
+
+    async def update_membership_role(self, ctx: OpContext, user_id: UUID, role: Role) -> Membership:
+        ctx.require(Permission.MANAGE_MEMBERS)
+        if role is Role.SERVICE:
+            raise ValidationFailed("service is not a membership role")
+        if user_id == ctx.user_id:
+            raise ValidationFailed("a member cannot change their own role")
+        membership = await self._live_membership(ctx, user_id)
+        if not role_at_most(membership.role, ctx.security.role):
+            raise NotAuthorized("cannot change the role of a member above your own")
+        if not role_at_most(role, ctx.security.role):
+            raise NotAuthorized(f"cannot grant role {role.value} above {ctx.security.role.value}")
+        updated = membership.model_copy(update={"role": role, "updated_at": utcnow()})
+        await self._storage.write_membership(ctx.org_id, updated)
+        await self._changed(ctx, "membership", updated.id, "updated")
+        return updated
+
+    async def remove_member(self, ctx: OpContext, user_id: UUID) -> User:
+        ctx.require(Permission.MANAGE_MEMBERS)
+        if user_id == ctx.user_id:
+            raise ValidationFailed("a member cannot remove themselves")
+        user = await self._live_user(ctx, user_id)
+        membership = await self._live_membership(ctx, user_id)
+        if not role_at_most(membership.role, ctx.security.role):
+            raise NotAuthorized("cannot remove a member above your own role")
+        now = utcnow()
+        removed = user.model_copy(
+            update={"deleted_at": now, "deleted_by": ctx.user_id, "updated_at": now}
+        )
+        await self._storage.write_user(ctx.org_id, removed)
+        await self._storage.write_membership(
+            ctx.org_id, membership.model_copy(update={"updated_at": now})
+        )
+        await self._changed(ctx, "user", removed.id, "deleted")
+        return removed
+
+    # Credentials.
+
+    async def get_sessions(self, ctx: OpContext, limit: int) -> list[Session]:
+        ctx.require(Permission.READ)
+        now = utcnow()
+        sessions = await self._storage.read_sessions(ctx.org_id, ctx.user_id, self._clamp(limit))
+        return [session for session in sessions if session.expires_at > now]
+
+    async def revoke_session(self, ctx: OpContext, session_id: UUID) -> Session:
+        ctx.require(Permission.READ)
+        session = await self._storage.read_session(ctx.org_id, session_id)
+        if session is None or session.revoked_at is not None:
+            raise NotFound(f"session {session_id} not found")
+        if session.user_id != ctx.user_id and not ctx.has(Permission.MANAGE_MEMBERS):
+            raise NotAuthorized("only the owner of a session or a member manager may revoke it")
+        now = utcnow()
+        revoked = session.model_copy(update={"revoked_at": now, "updated_at": now})
+        await self._storage.write_session(ctx.org_id, revoked)
+        return revoked
+
+    async def logout(self, ctx: OpContext) -> Session:
+        if ctx.security.credential_kind is not CredentialKind.SESSION_TOKEN:
+            raise ValidationFailed("only a session can log out")
+        return await self.revoke_session(ctx, ctx.security.credential_id)
 
     async def get_api_keys(self, ctx: OpContext, limit: int) -> list[ApiKey]:
         ctx.require(Permission.MANAGE_KEYS)
@@ -313,6 +455,10 @@ class TenancyManagerImpl(TenancyManagerInterface):
         ctx.require(Permission.MANAGE_KEYS)
         if not role_at_most(role, ctx.security.role):
             raise NotAuthorized(f"cannot issue role {role.value} above {ctx.security.role.value}")
+        if ttl is not None and not (timedelta(0) < ttl <= self._options.api_key_ttl):
+            raise ValidationFailed(
+                f"an api key lives between one second and {self._options.api_key_ttl.days} days"
+            )
         now = utcnow()
         key = mint_token(CredentialKind.API_KEY)
         api_key = ApiKey(
@@ -327,7 +473,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
             expires_at=now + (ttl or self._options.api_key_ttl),
         )
         await self._storage.write_api_key(ctx.org_id, api_key)
-        await self._changed(ctx, api_key.id, "created")
+        await self._changed(ctx, "api_key", api_key.id, "created")
         return IssuedApiKey(key=key, api_key=api_key)
 
     async def revoke_api_key(self, ctx: OpContext, api_key_id: UUID) -> ApiKey:
@@ -342,29 +488,60 @@ class TenancyManagerImpl(TenancyManagerInterface):
             update={"deleted_at": now, "deleted_by": ctx.user_id, "updated_at": now}
         )
         await self._storage.write_api_key(ctx.org_id, revoked)
-        await self._changed(ctx, revoked.id, "deleted")
+        await self._changed(ctx, "api_key", revoked.id, "deleted")
         return revoked
+
+    async def issue_ticket(self, ctx: OpContext) -> IssuedTicket:
+        ctx.require(Permission.READ)
+        if ctx.security.credential_kind not in TICKET_CREDENTIALS:
+            raise NotAuthorized("a ticket stands for a session token or an api key")
+        ticket = mint_token(CredentialKind.SOCKET_TICKET)
+        behind = {
+            "org_id": str(ctx.org_id),
+            "credential_kind": ctx.security.credential_kind.value,
+            "credential_id": str(ctx.security.credential_id),
+        }
+        ttl = self._options.ticket_ttl
+        await self._cache.put(
+            EMPTY_UUID, TICKET_KEY + hash_token(ticket), json.dumps(behind).encode(), ttl
+        )
+        return IssuedTicket(ticket=ticket, expires_at=utcnow() + ttl)
 
     # Operator operations.
 
     async def get_orgs(self, admin: AdminContext, limit: int) -> list[Org]:
         return await self._storage.read_orgs(self._clamp(limit))
 
+    async def delete_org(self, admin: AdminContext, org_id: UUID) -> Org:
+        org = await self._storage.read_org(org_id)
+        if org is None or org.deleted_at is not None:
+            raise NotFound(f"org {org_id} not found")
+        now = utcnow()
+        deleted = org.model_copy(
+            update={"deleted_at": now, "deleted_by": admin.identity_id, "updated_at": now}
+        )
+        await self._storage.write_org(org_id, deleted)
+        return deleted
+
     # Helpers.
 
     def _clamp(self, limit: int) -> int:
         return max(1, min(limit, self._options.max_limit))
 
-    async def _changed(self, ctx: OpContext, entity_id: UUID, action: str) -> None:
+    async def _changed(self, ctx: OpContext, entity: str, entity_id: UUID, action: str) -> None:
+        """The core row is written; now the stream row, then the push. Every push
+        is also a record, so a client that missed the push replays by seq."""
+        event = await self._events.record(ctx, entity, entity_id, action, new_id())
         await self._topics.publish(
             Topics.ENTITY_CHANGED,
             EntityChangedPayload(
-                idempotency_key=new_id(),
-                produced_at=utcnow(),
+                idempotency_key=event.idempotency_key,
+                produced_at=event.produced_at,
                 org_id=ctx.org_id,
-                entity="api_key",
-                entity_id=entity_id,
-                action=action,
+                entity=event.entity,
+                entity_id=event.entity_id,
+                action=event.action,
+                seq=event.seq,
             ),
         )
 
@@ -393,6 +570,19 @@ class TenancyManagerImpl(TenancyManagerInterface):
         _, session = found
         self._check_session(session, kind)
         return session
+
+    async def _live_user(self, ctx: OpContext, user_id: UUID) -> User:
+        """Existence and tenancy, or NotFound."""
+        user = await self._storage.read_user(ctx.org_id, user_id)
+        if user is None or user.deleted_at is not None:
+            raise NotFound(f"user {user_id} not found")
+        return user
+
+    async def _live_membership(self, ctx: OpContext, user_id: UUID) -> Membership:
+        membership = await self._storage.read_membership_for_user(ctx.org_id, user_id)
+        if membership is None:
+            raise NotFound(f"membership of user {user_id} not found")
+        return membership
 
     async def _principal(self, org_id: UUID, user_id: UUID) -> tuple[Org, User, Membership]:
         org = await self._storage.read_org(org_id)

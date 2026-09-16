@@ -19,3 +19,9 @@ class TopicsMemoryImpl(TopicsInterface):
 
     def describe(self) -> str:
         return "topics=memory"
+
+    async def start(self) -> None:
+        return None
+
+    async def close(self) -> None:
+        return None

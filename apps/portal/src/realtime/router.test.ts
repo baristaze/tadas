@@ -14,10 +14,9 @@ describe("routeEnvelope", () => {
     const envelope = parseEnvelope(
       JSON.stringify({
         type: "event",
-        seq: 3,
         sent_at: null,
         topic: "entity_changed",
-        payload: { entity: "api_key", entity_id: "x", action: "created" },
+        payload: { entity: "api_key", entity_id: "x", action: "created", seq: null },
       }),
     );
     expect(envelope).not.toBeNull();
@@ -27,9 +26,13 @@ describe("routeEnvelope", () => {
 
   it("ignores frames that are not pushes and rejects malformed ones", () => {
     const queryClient = new QueryClient();
-    const pong = parseEnvelope(JSON.stringify({ type: "pong", seq: 1, sent_at: null }));
+    const pong = parseEnvelope(JSON.stringify({ type: "pong", sent_at: null }));
     expect(routeEnvelope(queryClient, pong!)).toEqual({ invalidated: [] });
     expect(parseEnvelope("not json")).toBeNull();
-    expect(parseEnvelope(JSON.stringify({ type: "mystery", seq: 1 }))).toBeNull();
+    expect(parseEnvelope(JSON.stringify({ type: "mystery" }))).toBeNull();
+    const bare = parseEnvelope(
+      JSON.stringify({ type: "event", sent_at: null, topic: "entity_changed", payload: {} }),
+    );
+    expect(routeEnvelope(queryClient, bare!)).toEqual({ invalidated: [] });
   });
 });

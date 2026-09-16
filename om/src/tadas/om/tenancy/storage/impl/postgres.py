@@ -108,6 +108,21 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
     async def write_membership(self, org_id: UUID, membership: Membership) -> None:
         await self._upsert(Memberships, org_id, membership)
 
+    async def read_sessions(self, org_id: UUID, user_id: UUID, limit: int) -> list[Session]:
+        stmt = (
+            select(Sessions)
+            .where(
+                Sessions.org_id == org_id,
+                Sessions.user_id == user_id,
+                Sessions.revoked_at.is_(None),
+            )
+            .order_by(Sessions.id)
+            .limit(limit)
+        )
+        async with self._session_for(stmt) as session:
+            result = await session.execute(stmt)
+            return [to_model(row, Session) for row in result.scalars()]
+
     async def read_session(self, org_id: UUID, session_id: UUID) -> Session | None:
         stmt = select(Sessions).where(Sessions.org_id == org_id, Sessions.id == session_id)
         async with self._session_for(stmt) as session:

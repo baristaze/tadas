@@ -18,7 +18,12 @@ class WorkManagerInterface:
         enqueuer's principal under the service role; returns the context with the item."""
         ...
 
-    async def complete(self, ctx: OpContext, item: WorkItem) -> WorkItem: ...
+    async def complete(self, ctx: OpContext, item: WorkItem) -> WorkItem:
+        """Every transition of a claimed item (complete, fail, defer, release,
+        extend_lease) raises NotFound when the item is gone and LeaseLost when it
+        is no longer claimed by `item.claimed_by`; the write is conditional on
+        the claim, so a lost lease is never written over."""
+        ...
 
     async def fail(self, ctx: OpContext, item: WorkItem, error: str) -> WorkItem:
         """Requeues with a growing delay, or fails the item at max_attempts."""
@@ -36,8 +41,9 @@ class WorkManagerInterface:
         """Renews the lease; raises LeaseLost when the item is no longer this worker's."""
         ...
 
-    async def requeue_stale(self) -> int:
-        """Platform-internal: returns every item whose lease expired to the queue, everywhere."""
+    async def requeue_stale(self, ctx: OpContext) -> int:
+        """The sweep, for one tenant: returns every item whose lease expired to the
+        queue, or fails it when its attempts are spent; returns how many it moved."""
         ...
 
     async def maintenance_contexts(self) -> list[OpContext]:

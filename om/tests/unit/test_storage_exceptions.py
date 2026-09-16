@@ -18,7 +18,6 @@ STORAGE_EXCEPTIONS: frozenset[tuple[str, str]] = frozenset(
         ("TenancyStorageInterface", "read_session_by_token_hash"),
         ("TenancyStorageInterface", "read_api_key_by_hash"),
         ("WorkStorageInterface", "claim_next"),
-        ("WorkStorageInterface", "read_stale"),
     }
 )
 
@@ -30,10 +29,10 @@ MANAGER_EXCEPTIONS: frozenset[tuple[str, str]] = frozenset(
         ("TenancyManagerInterface", "authenticate"),
         ("TenancyManagerInterface", "authenticate_operator"),
         ("TenancyManagerInterface", "resume"),
+        ("TenancyManagerInterface", "redeem_ticket"),
         ("TenancyManagerInterface", "service_context"),
         ("TenancyManagerInterface", "service_contexts"),
         ("WorkManagerInterface", "claim"),
-        ("WorkManagerInterface", "requeue_stale"),
         ("WorkManagerInterface", "maintenance_contexts"),
     }
 )

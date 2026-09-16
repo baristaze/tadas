@@ -6,6 +6,8 @@ from contracts.factories import make_org, make_user
 from tadas.infra.impl.local import InfraLocalImpl
 from tadas.infra.topics import EntityChangedPayload, TopicPayload, Topics
 from tadas.om.base import new_id, utcnow
+from tadas.om.events.impl.manager import EventsManagerImpl, EventsOptions
+from tadas.om.events.storage.impl.memory import EventStorageMemoryImpl
 from tadas.om.exceptions import Conflict, NotAuthorized, NotFound, ValidationFailed
 from tadas.om.opcontext import AppContext, AppType, CredentialKind, OpContext, Role, build_context
 from tadas.om.tasks.impl.manager import TasksManagerImpl, TasksOptions
@@ -47,11 +49,18 @@ def infra(tmp_path: Path) -> InfraLocalImpl:
 
 
 @pytest.fixture
-def manager(infra: InfraLocalImpl) -> TasksManagerImpl:
-    return TasksManagerImpl(TasksStorageMemoryImpl(), infra.get_topics(), TasksOptions())
+def events() -> EventsManagerImpl:
+    return EventsManagerImpl(EventStorageMemoryImpl(), EventsOptions())
 
 
-async def test_the_five_operations(manager: TasksManagerImpl, infra: InfraLocalImpl) -> None:
+@pytest.fixture
+def manager(infra: InfraLocalImpl, events: EventsManagerImpl) -> TasksManagerImpl:
+    return TasksManagerImpl(TasksStorageMemoryImpl(), events, infra.get_topics(), TasksOptions())
+
+
+async def test_the_five_operations(
+    manager: TasksManagerImpl, events: EventsManagerImpl, infra: InfraLocalImpl
+) -> None:
     seen: list[TopicPayload] = []
 
     async def record(payload: TopicPayload) -> None:
@@ -79,6 +88,16 @@ async def test_the_five_operations(manager: TasksManagerImpl, infra: InfraLocalI
         "deleted",
     ]
     assert all(isinstance(p, EntityChangedPayload) and p.entity == "task" for p in seen)
+    # Every push is also a record: the payload carries the seq the stream assigned.
+    assert [p.seq for p in seen if isinstance(p, EntityChangedPayload)] == [1, 2, 3]
+    recorded = await events.get_events(ctx, after_seq=0, limit=10)
+    assert [(e.seq, e.action, e.entity_id) for e in recorded] == [
+        (1, "created", created.id),
+        (2, "updated", created.id),
+        (3, "deleted", created.id),
+    ]
+    assert {e.idempotency_key for e in recorded} == {p.idempotency_key for p in seen}
+    assert all(e.actor_id == ctx.user_id for e in recorded)
 
 
 async def test_authorize_then_verify(manager: TasksManagerImpl) -> None:
@@ -109,7 +128,10 @@ async def test_tenancy_holds_across_contexts(manager: TasksManagerImpl) -> None:
 
 async def test_lists_are_clamped(infra: InfraLocalImpl) -> None:
     manager = TasksManagerImpl(
-        TasksStorageMemoryImpl(), infra.get_topics(), TasksOptions(max_limit=2)
+        TasksStorageMemoryImpl(),
+        EventsManagerImpl(EventStorageMemoryImpl(), EventsOptions()),
+        infra.get_topics(),
+        TasksOptions(max_limit=2),
     )
     ctx = context(Role.MEMBER)
     for i in range(3):

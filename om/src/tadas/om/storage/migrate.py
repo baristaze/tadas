@@ -27,6 +27,10 @@ from tadas.om.storage.tables.base import Base
 MIGRATIONS_DIR = Path(__file__).resolve().parents[4] / "migrations"
 VERSION_TABLE = "alembic_version"
 _SCHEMA_REF = re.compile(r"\b(core|activity|queue|admin)\.([a-z_][a-z0-9_]*)")
+_INDEX_REF = re.compile(
+    r"\bDROP INDEX\s+(?:IF EXISTS\s+)?(core|activity|queue|admin)\.([a-z_][a-z0-9_]*)",
+    re.IGNORECASE,
+)
 
 
 def alembic_config(role: DatabaseRole, url: str | None = None) -> Config:
@@ -54,8 +58,12 @@ def split_statements(sql: str) -> list[str]:
 
 
 def check_role_of_sql(role: DatabaseRole, sql: str) -> None:
-    """Refuses a file that names a table of another role, by schema or by the role map."""
-    for schema, table in _SCHEMA_REF.findall(sql):
+    """Refuses a file that names a table of another role, by schema or by the role map.
+    A dropped index is schema-qualified too; only its schema is checked."""
+    for schema, index in _INDEX_REF.findall(sql):
+        if schema != role.value:
+            raise RuntimeError(f"{role.value} migration drops index {schema}.{index}")
+    for schema, table in _SCHEMA_REF.findall(_INDEX_REF.sub("", sql)):
         if schema != role.value:
             raise RuntimeError(f"{role.value} migration references {schema}.{table}")
         if table != VERSION_TABLE and role_for(table) is not role:

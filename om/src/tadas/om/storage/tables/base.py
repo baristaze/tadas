@@ -2,12 +2,12 @@
 and the column mixins that mirror the OM mixins."""
 
 from datetime import datetime
-from typing import Any
+from typing import Any, ClassVar
 from uuid import UUID
 
 from sqlalchemy import Boolean, DateTime, Integer, MetaData, Text, Uuid
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import DeclarativeBase, Mapped, declared_attr, mapped_column
 
 from tadas.om.storage.roles import role_for
 
@@ -45,8 +45,17 @@ class Base(DeclarativeBase):
 
 
 class IdentifiableMixin:
+    """Identity and tenancy. `org_id` is storage-only and indexed on its own
+    unless the table sets `__org_id_index__ = False` because `org_id` already
+    leads one of its compound indexes; no concrete table spells `org_id`."""
+
+    __org_id_index__: ClassVar[bool] = True
+
     id: Mapped[UUID] = mapped_column(primary_key=True, sort_order=-1000)
-    org_id: Mapped[UUID] = mapped_column(index=True, sort_order=-999)  # storage-only
+
+    @declared_attr
+    def org_id(cls) -> Mapped[UUID]:  # noqa: N805 (declared_attr receives the class)
+        return mapped_column(Uuid(), index=cls.__org_id_index__, sort_order=-999)
 
 
 class GlobalIdentifiableMixin:

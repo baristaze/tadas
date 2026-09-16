@@ -1,12 +1,31 @@
 """The infra half of every process's settings object. Backends are selected
-here and nowhere else."""
+here and nowhere else, and this is the only module below the container
+that reads the environment."""
 
+import os
 from pathlib import Path
 from typing import Literal
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-CLOUD_ENVIRONMENTS = frozenset({"staging", "production"})
+ENVIRONMENTS = frozenset({"local", "test", "dev", "staging", "production"})
+"""The one set of environment names, shared with deployment/terraform."""
+
+CLOUD_ENVIRONMENTS = frozenset({"dev", "staging", "production"})
+"""The deployed environments: each refuses every local-only backend at boot."""
+
+SECRET_ENV_PREFIX = "TADAS_SECRET_"
+
+
+def secret_overrides_from_environment() -> dict[str, str]:
+    """TADAS_SECRET_<NAME>=value, collected once at boot and handed to the local
+    secrets impl, keyed by NAME."""
+    return {
+        key[len(SECRET_ENV_PREFIX) :]: value
+        for key, value in os.environ.items()
+        if key.startswith(SECRET_ENV_PREFIX) and len(key) > len(SECRET_ENV_PREFIX)
+    }
 
 
 class InfraSettings(BaseSettings):
@@ -32,12 +51,19 @@ class InfraSettings(BaseSettings):
     secrets_backend: Literal["local", "aws"] = "local"
     secrets_file: Path | None = Path(".local/secrets.env")
     secrets_name_prefix: str = "tadas/"
+    secret_overrides: dict[str, str] = Field(
+        default_factory=secret_overrides_from_environment, exclude=True, repr=False
+    )
 
     aws_region: str = "us-east-1"
 
     log_level: str = "INFO"
     log_json: bool = False
     otel_endpoint: str | None = None
+
+    @property
+    def is_known_environment(self) -> bool:
+        return self.environment in ENVIRONMENTS
 
     @property
     def is_cloud_environment(self) -> bool:

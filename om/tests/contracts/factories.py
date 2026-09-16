@@ -19,7 +19,7 @@ def make_org(name: str = "Acme") -> Org:
         created_at=now,
         updated_at=now,
         created_by=new_id(),
-        slug=f"{name.lower()}-{org_id.hex[:8]}",
+        slug=f"{name.lower()}-{org_id.hex[-12:]}",  # the random tail; the head is the millisecond
     )
 
 
@@ -31,7 +31,7 @@ def make_identity(email: str | None = None, *, operator: bool = False) -> Identi
         created_at=now,
         updated_at=now,
         created_by=identity_id,
-        email=email or f"{identity_id.hex[:8]}@example.test",
+        email=email or f"{identity_id.hex[-12:]}@example.test",
         password_hash="scrypt$00$00",
         is_operator=operator,
     )

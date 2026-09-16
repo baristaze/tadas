@@ -8,9 +8,11 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 from tadas.om.tenancy.types.api_key import ApiKey
-from tadas.om.tenancy.types.issued import IssuedApiKey, IssuedLogin, IssuedSession
+from tadas.om.tenancy.types.identity import Identity
+from tadas.om.tenancy.types.issued import IssuedApiKey, IssuedLogin, IssuedSession, IssuedTicket
 from tadas.om.tenancy.types.membership import Membership
 from tadas.om.tenancy.types.org import Org
+from tadas.om.tenancy.types.session import Session
 from tadas.om.tenancy.types.user import User
 
 if TYPE_CHECKING:
@@ -38,8 +40,15 @@ class TenancyManagerInterface:
         display_name: str,
         *,
         operator: bool = False,
-    ) -> Org:
-        """Platform-internal: seeds a fresh environment with one org and its owner."""
+        app: AppContext | None = None,
+        request_id: UUID | None = None,
+    ) -> tuple[OpContext, Org]:
+        """Platform-internal: seeds a fresh environment with one org and its owner.
+
+        Produces the owner's context once the identity, org, user, and
+        membership exist; the rest of the seeding runs under it. Returns
+        that context beside the org.
+        """
         ...
 
     async def login(self, email: str, password: str) -> IssuedLogin:
@@ -75,6 +84,11 @@ class TenancyManagerInterface:
         """Platform-internal: re-checks the credential behind a redeemed socket ticket."""
         ...
 
+    async def redeem_ticket(self, ticket: str, app: AppContext, request_id: UUID) -> OpContext:
+        """Platform-internal: consumes a socket ticket exactly once and re-checks the
+        credential behind it. The gateway holds a ticket, not a principal."""
+        ...
+
     async def service_context(
         self, org_id: UUID, user_id: UUID, app: AppContext, request_id: UUID
     ) -> OpContext:
@@ -85,11 +99,43 @@ class TenancyManagerInterface:
         """Platform-internal: one service context per live tenant, for sweeps."""
         ...
 
+    # The principal.
+
     async def get_org(self, ctx: OpContext) -> Org: ...
+
+    async def get_identity(self, ctx: OpContext) -> Identity:
+        """The identity behind the caller's user."""
+        ...
+
+    async def update_user(self, ctx: OpContext, user: User) -> User:
+        """Copies the display name; email and identity belong to the identity."""
+        ...
 
     async def get_users(self, ctx: OpContext, limit: int) -> list[User]: ...
 
+    # Memberships.
+
     async def get_memberships(self, ctx: OpContext, limit: int) -> list[Membership]: ...
+
+    async def update_membership_role(self, ctx: OpContext, user_id: UUID, role: Role) -> Membership:
+        """Role-capped at the caller's role, for the target's old role and its new one."""
+        ...
+
+    async def remove_member(self, ctx: OpContext, user_id: UUID) -> User:
+        """Soft-deletes the member's user in this org; their credentials stop resolving."""
+        ...
+
+    # Credentials.
+
+    async def get_sessions(self, ctx: OpContext, limit: int) -> list[Session]:
+        """The caller's own live sessions in this org."""
+        ...
+
+    async def revoke_session(self, ctx: OpContext, session_id: UUID) -> Session: ...
+
+    async def logout(self, ctx: OpContext) -> Session:
+        """Revokes the session the caller presented."""
+        ...
 
     async def get_api_keys(self, ctx: OpContext, limit: int) -> list[ApiKey]: ...
 
@@ -99,4 +145,12 @@ class TenancyManagerInterface:
 
     async def revoke_api_key(self, ctx: OpContext, api_key_id: UUID) -> ApiKey: ...
 
+    async def issue_ticket(self, ctx: OpContext) -> IssuedTicket:
+        """A single-use, short-lived ticket standing for the caller's credential."""
+        ...
+
+    # Operator operations.
+
     async def get_orgs(self, admin: AdminContext, limit: int) -> list[Org]: ...
+
+    async def delete_org(self, admin: AdminContext, org_id: UUID) -> Org: ...

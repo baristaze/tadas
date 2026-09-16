@@ -2,10 +2,11 @@
 Inbound traffic is small by design: subscribe, unsubscribe, ping."""
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Literal
 from uuid import UUID
 
 from tadas.services.api.types.common import RequestBody, View
+from tadas.services.api.types.events import EntityChangedView
 
 PING_INTERVAL_SECONDS = 25
 """Pinned with the load balancer idle timeout in deployment/realtime-timeouts.json."""
@@ -16,7 +17,6 @@ IDLE_TIMEOUT_SECONDS = PING_INTERVAL_SECONDS * 3
 class Envelope(View):
     """Subclasses declare `type` as a literal; the client routes on it."""
 
-    seq: int = 0
     sent_at: datetime | None = None
 
 
@@ -42,9 +42,12 @@ class UnsubscribedEnvelope(Envelope):
 
 
 class EventEnvelope(Envelope):
+    """A push. The payload's `seq` is the tenant's stream position, so a
+    client that sees a gap replays from storage rather than trusting the socket."""
+
     type: Literal["event"] = "event"
     topic: str
-    payload: dict[str, Any]
+    payload: EntityChangedView
 
 
 class ErrorEnvelope(Envelope):

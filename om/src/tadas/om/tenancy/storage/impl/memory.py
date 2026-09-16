@@ -68,6 +68,13 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
     async def write_membership(self, org_id: UUID, membership: Membership) -> None:
         self._put(self._memberships, org_id, membership)
 
+    async def read_sessions(self, org_id: UUID, user_id: UUID, limit: int) -> list[Session]:
+        return [
+            s
+            for s in self._rows(self._sessions, org_id)
+            if s.user_id == user_id and s.revoked_at is None
+        ][:limit]
+
     async def read_session(self, org_id: UUID, session_id: UUID) -> Session | None:
         return self._get(self._sessions, org_id, session_id)
 

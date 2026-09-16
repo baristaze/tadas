@@ -10,21 +10,21 @@ from tadas.infra.buckets.s3 import BucketsS3Impl
 from tadas.infra.cache import CacheInterface, CacheScope
 from tadas.infra.cache.memory import CacheMemoryImpl
 from tadas.infra.cache.redis import CacheRedisImpl
-from tadas.infra.impl.settings import InfraSettings
+from tadas.infra.exceptions import InfraException
+from tadas.infra.impl.settings import ENVIRONMENTS, InfraSettings
 from tadas.infra.queues import QueueInterface
 from tadas.infra.queues.memory import QueueMemoryImpl
 from tadas.infra.queues.sqs import QueueSqsImpl
-from tadas.infra.root import HasLifecycle, InfraInterface
+from tadas.infra.root import InfraInterface
 from tadas.infra.secrets import SecretsInterface
 from tadas.infra.secrets.aws import SecretsAwsImpl
 from tadas.infra.secrets.local import SecretsLocalImpl
 from tadas.infra.topics import TopicsInterface
 from tadas.infra.topics.memory import TopicsMemoryImpl
 from tadas.infra.topics.redis import TopicsRedisImpl
-from tadas.om.exceptions import PlatformException
 
 
-class UnsafeConfiguration(PlatformException):
+class UnsafeConfiguration(InfraException):
     code = "unsafe_configuration"
 
 
@@ -38,7 +38,14 @@ UNSAFE_IN_CLOUD: tuple[tuple[str, str, str], ...] = (
 
 
 def refuse_unsafe(settings: InfraSettings) -> None:
-    """Each refusal is a one-line check that exits naming the setting."""
+    """Each refusal is a one-line check that exits naming the setting. An
+    environment name outside the known set is refused first, so a deployed
+    process cannot slip past the cloud checks under a misspelt name."""
+    if not settings.is_known_environment:
+        raise UnsafeConfiguration(
+            f"TADAS_ENVIRONMENT={settings.environment} is not one of "
+            f"{', '.join(sorted(ENVIRONMENTS))}"
+        )
     if not settings.is_cloud_environment:
         return
     for field, unsafe_value, env_name in UNSAFE_IN_CLOUD:
@@ -94,7 +101,7 @@ class InfraConfiguredImpl(InfraInterface):
                 self._aws, region=settings.aws_region, name_prefix=settings.secrets_name_prefix
             )
         else:
-            self._secrets = SecretsLocalImpl(settings.secrets_file)
+            self._secrets = SecretsLocalImpl(settings.secrets_file, settings.secret_overrides)
 
     def get_cache(self, scope: CacheScope) -> CacheInterface:
         if scope not in self._caches:
@@ -126,19 +133,16 @@ class InfraConfiguredImpl(InfraInterface):
             self._secrets.describe(),
         ]
 
-    def _lifecycles(self) -> list[HasLifecycle]:
-        return [
-            c
-            for c in (self._topics, self._buckets, self._queues, self._secrets)
-            if isinstance(c, HasLifecycle)
-        ]
-
     async def start(self) -> None:
-        for capability in self._lifecycles():
+        for capability in (self._topics, self._buckets, self._queues, self._secrets):
             await capability.start()
 
     async def close(self) -> None:
-        for capability in reversed(self._lifecycles()):
+        """Reverse order of start; the caches built since are closed first and
+        the shared client last, once nothing holds it."""
+        for cache in list(self._caches.values()):
+            await cache.close()
+        for capability in (self._secrets, self._queues, self._buckets, self._topics):
             await capability.close()
         if self._redis is not None:
             await self._redis.aclose()

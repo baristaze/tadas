@@ -1,5 +1,9 @@
 """The in-memory storage root: the default for unit tests and the fast gate."""
 
+from tadas.om.events.storage import EventStorageInterface
+from tadas.om.events.storage.impl.memory import EventStorageMemoryImpl
+from tadas.om.idempotency.storage import IdempotencyStorageInterface
+from tadas.om.idempotency.storage.impl.memory import IdempotencyStorageMemoryImpl
 from tadas.om.storage.root import StorageInterface
 from tadas.om.tasks.storage import TasksStorageInterface
 from tadas.om.tasks.storage.impl.memory import TasksStorageMemoryImpl
@@ -14,6 +18,8 @@ class StorageMemoryImpl(StorageInterface):
         self._tenancy = TenancyStorageMemoryImpl()
         self._work = WorkStorageMemoryImpl()
         self._tasks = TasksStorageMemoryImpl()
+        self._idempotency = IdempotencyStorageMemoryImpl()
+        self._events = EventStorageMemoryImpl()
 
     def get_tenancy_storage(self) -> TenancyStorageInterface:
         return self._tenancy
@@ -23,6 +29,12 @@ class StorageMemoryImpl(StorageInterface):
 
     def get_tasks_storage(self) -> TasksStorageInterface:
         return self._tasks
+
+    def get_idempotency_storage(self) -> IdempotencyStorageInterface:
+        return self._idempotency
+
+    def get_event_storage(self) -> EventStorageInterface:
+        return self._events
 
     async def healthcheck(self) -> bool:
         return True

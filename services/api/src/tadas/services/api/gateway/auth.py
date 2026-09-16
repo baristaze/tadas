@@ -1,18 +1,29 @@
 """The gateway verifies credentials and builds OpContext; nothing else does.
-The credential's prefix decides which dependency accepts it."""
+The credential's prefix decides which dependency accepts it, and a socket
+opens on a single-use ticket rather than a credential in its URL."""
 
+import logging
 from typing import Annotated
 
-from fastapi import Depends, Header, Request
+from fastapi import Depends, Header, Query, Request, WebSocket, WebSocketException
 
 from tadas.infra.observability import current_trace_id
-from tadas.om.exceptions import InvalidCredential, NotAuthenticated, ValidationFailed
+from tadas.om.exceptions import (
+    InvalidCredential,
+    NotAuthenticated,
+    PlatformException,
+    ValidationFailed,
+)
 from tadas.om.opcontext import AppContext, AppType, CredentialKind, OpContext
 from tadas.om.tenancy.rules import credential_kind_of
 from tadas.services.api.gateway.observability import request_id_of
+from tadas.services.api.gateway.resolve import container_of
+
+log = logging.getLogger(__name__)
 
 APP_HEADER = "x-app"
 APP_VERSION_HEADER = "x-app-version"
+CLOSE_UNAUTHENTICATED = 4401
 
 
 def bearer_of(authorization: str | None) -> str:
@@ -42,7 +53,7 @@ async def current_context(
     x_app: Annotated[str | None, Header()] = None,
     x_app_version: Annotated[str | None, Header()] = None,
 ) -> OpContext:
-    tenancy = request.app.state.container.managers.tenancy
+    tenancy = container_of(request).managers.tenancy
     return await tenancy.authenticate(
         bearer_of(authorization),
         app_context_of(x_app, x_app_version),
@@ -63,3 +74,25 @@ async def login_credential(authorization: Annotated[str | None, Header()] = None
 
 
 LoginCredential = Annotated[str, Depends(login_credential)]
+
+
+async def socket_context(
+    websocket: WebSocket,
+    ticket: Annotated[str, Query()],
+    x_app: Annotated[str | None, Header()] = None,
+    x_app_version: Annotated[str | None, Header()] = None,
+) -> OpContext:
+    """The socket's principal: the tenancy manager consumes the ticket once and
+    re-checks the credential behind it. A refused ticket closes the socket
+    with 4401 before the handler runs."""
+    tenancy = container_of(websocket).managers.tenancy
+    try:
+        return await tenancy.redeem_ticket(
+            ticket, app_context_of(x_app, x_app_version), request_id_of(websocket.scope)
+        )
+    except PlatformException as error:
+        log.info("socket refused: %s", error.message)
+        raise WebSocketException(code=CLOSE_UNAUTHENTICATED, reason=error.code) from None
+
+
+SocketCtx = Annotated[OpContext, Depends(socket_context)]

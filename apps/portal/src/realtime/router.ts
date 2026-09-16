@@ -9,7 +9,7 @@ export interface RouteOutcome {
 }
 
 export function routeEnvelope(queryClient: QueryClient, envelope: Envelope): RouteOutcome {
-  if (envelope.type === "event" && isEntityChanged(envelope)) {
+  if (isEntityChanged(envelope)) {
     const entity = envelope.payload.entity;
     void queryClient.invalidateQueries({ queryKey: [entity] });
     return { invalidated: [entity] };

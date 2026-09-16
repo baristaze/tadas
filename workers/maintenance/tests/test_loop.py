@@ -66,11 +66,20 @@ class LeaseLosingWork(WorkManagerInterface):
         self.renewals += 1
         raise LeaseLost("held elsewhere")
 
-    async def requeue_stale(self) -> int:
-        return await self._inner.requeue_stale()
+    async def requeue_stale(self, ctx: OpContext) -> int:
+        return await self._inner.requeue_stale(ctx)
 
     async def maintenance_contexts(self) -> list[OpContext]:
         return await self._inner.maintenance_contexts()
+
+
+class StallingWork(LeaseLosingWork):
+    """Decorates the real manager: every renewal hangs, as an unreachable database behaves."""
+
+    async def extend_lease(self, ctx: OpContext, item: WorkItem, lease: timedelta) -> WorkItem:
+        self.renewals += 1
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
 
 
 class MissingLiveness(CacheInterface):
@@ -172,6 +181,66 @@ async def test_lease_loss_cancels_the_task_before_the_lease_expires(tmp_path: Pa
     await until(lambda: len(handler.cancelled) == 1, within=2.0)
     assert losing.renewals >= 1
     assert handler.finished == []
+    loop.stop()
+    await task
+
+
+async def test_a_stalled_renewal_counts_as_failed_and_cancels_in_time(tmp_path: Path) -> None:
+    container = build_container(tmp_path)
+    ctx = await sign_in(container)
+    handler = SlowHandler(hold=5.0)
+    stalling = StallingWork(container.managers.work)
+    lease = timedelta(seconds=1.0)
+    loop, task = start_loop(container, handler, fast_options(lease=lease), work=stalling)
+    item = make_item(ctx)
+    await container.managers.work.enqueue(ctx, item)
+    await until(lambda: len(handler.started) == 1)
+    started = asyncio.get_running_loop().time()
+    await until(lambda: len(handler.cancelled) == 1, within=2.0)
+    cancelled = asyncio.get_running_loop().time()
+    assert cancelled - started < lease.total_seconds(), "cancelled before the lease expired"
+    assert stalling.renewals >= 1
+    assert handler.finished == []
+    loop.stop()
+    await task
+
+
+async def test_sweep_requeues_stale_items_per_tenant(tmp_path: Path) -> None:
+    container = build_container(tmp_path)
+    ctx = await sign_in(container)
+    item = make_item(ctx)
+    await container.managers.work.enqueue(ctx, item)
+    lost = await container.managers.work.claim(
+        "default", [WorkKind.NOOP], "gone-worker", timedelta(seconds=-1)
+    )
+    assert lost is not None
+    handler = NoopHandlerImpl()
+    loop, task = start_loop(container, handler, fast_options())
+    await until(lambda: [h.id for h in handler.handled] == [item.id])
+    loop.stop()
+    await task
+    stored = await container.storage.get_work_storage().read_item(ctx.org_id, item.id)
+    assert stored is not None and stored.status is WorkStatus.DONE
+    assert stored.attempts == 2, "the sweep kept the lost attempt; the rerun spent one more"
+
+
+async def test_a_lost_lease_is_never_written_over(tmp_path: Path) -> None:
+    container = build_container(tmp_path)
+    ctx = await sign_in(container)
+    handler = SlowHandler(hold=0.3)
+    loop, task = start_loop(container, handler, fast_options(sweep_interval=timedelta(hours=1)))
+    item = make_item(ctx)
+    await container.managers.work.enqueue(ctx, item)
+    await until(lambda: len(handler.started) == 1)
+    storage = container.storage.get_work_storage()
+    held = await storage.read_item(ctx.org_id, item.id)
+    assert held is not None and held.status is WorkStatus.CLAIMED
+    taken = held.model_copy(update={"claimed_by": "other-worker"})
+    await storage.write_item(ctx.org_id, taken)
+    await until(lambda: len(handler.finished) == 1)
+    await until(lambda: loop.running == 0)
+    stored = await storage.read_item(ctx.org_id, item.id)
+    assert stored == taken, "complete() saw the lease was lost and wrote nothing"
     loop.stop()
     await task
 

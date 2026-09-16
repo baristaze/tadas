@@ -1,6 +1,6 @@
 packages:
   - "apps/*"
-  - "packages/*"
+  - "clients/*"
 
 # Dependencies whose install scripts may run. esbuild downloads its binary.
 allowBuilds:

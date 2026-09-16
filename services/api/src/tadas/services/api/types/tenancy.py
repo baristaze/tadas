@@ -1,7 +1,10 @@
 from datetime import datetime
 from uuid import UUID
 
-from tadas.om.opcontext import Permission, Role
+from pydantic import Field
+
+from tadas.om.opcontext import CredentialKind, Permission, Role
+from tadas.om.tenancy.rules import MAX_API_KEY_TTL
 from tadas.services.api.types.common import RequestBody, View
 
 
@@ -10,6 +13,7 @@ class OrgView(View):
     name: str
     slug: str
     created_at: datetime
+    deleted_at: datetime | None = None
 
 
 class UserView(View):
@@ -19,11 +23,28 @@ class UserView(View):
     created_at: datetime
 
 
+class IdentityView(View):
+    """The person behind the caller's user; never carries the password hash."""
+
+    id: UUID
+    email: str
+    is_operator: bool
+    created_at: datetime
+
+
+class UpdateMeRequest(RequestBody):
+    display_name: str = Field(min_length=1, max_length=200)
+
+
 class MembershipView(View):
     id: UUID
     user_id: UUID
     role: Role
     teams: tuple[UUID, ...]
+
+
+class UpdateMembershipRequest(RequestBody):
+    role: Role
 
 
 class MembershipChoiceView(View):
@@ -65,6 +86,16 @@ class MeView(View):
     app: str
 
 
+class SessionView(View):
+    """Only the hash of a token is ever kept, so a session view carries no secret."""
+
+    id: UUID
+    credential_kind: CredentialKind
+    created_at: datetime
+    expires_at: datetime
+    revoked_at: datetime | None
+
+
 class ApiKeyView(View):
     id: UUID
     name: str
@@ -78,7 +109,7 @@ class ApiKeyView(View):
 class AddApiKeyRequest(RequestBody):
     name: str
     role: Role
-    ttl_days: int | None = None
+    ttl_days: int | None = Field(default=None, ge=1, le=MAX_API_KEY_TTL.days)
 
 
 class IssuedApiKeyView(View):

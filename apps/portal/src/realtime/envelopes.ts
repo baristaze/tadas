@@ -2,7 +2,6 @@
 // realtime envelopes. Commands travel the other way, and they are small.
 
 interface Base {
-  seq: number;
   sent_at: string | null;
 }
 
@@ -27,19 +26,20 @@ export interface UnsubscribedEnvelope extends Base {
   topic: string;
 }
 
-export interface EntityChangedPayload {
-  idempotency_key: string;
-  produced_at: string;
-  org_id: string;
+// Mirrors the service's EntityChangedView: which record changed, how, and
+// where it sits in the tenant's stream. `seq` is null for a push whose
+// producer wrote no stream record; such a push cannot be replayed.
+export interface EntityChangedView {
   entity: string;
   entity_id: string;
   action: "created" | "updated" | "deleted";
+  seq: number | null;
 }
 
 export interface EventEnvelope extends Base {
   type: "event";
   topic: string;
-  payload: Record<string, unknown>;
+  payload: EntityChangedView;
 }
 
 export interface ErrorEnvelope extends Base {
@@ -71,19 +71,19 @@ export function parseEnvelope(raw: string): Envelope | null {
     return null;
   }
   if (typeof parsed !== "object" || parsed === null) return null;
-  const candidate = parsed as { type?: unknown; seq?: unknown };
+  const candidate = parsed as { type?: unknown };
   if (typeof candidate.type !== "string" || !TYPES.has(candidate.type)) return null;
-  if (typeof candidate.seq !== "number") return null;
   return parsed as Envelope;
 }
 
-export function isEntityChanged(envelope: EventEnvelope): envelope is EventEnvelope & {
-  payload: EntityChangedPayload;
-} {
-  const payload = envelope.payload;
+export function isEntityChanged(envelope: Envelope): envelope is EventEnvelope {
+  if (envelope.type !== "event" || envelope.topic !== "entity_changed") return false;
+  const payload: unknown = envelope.payload;
+  if (typeof payload !== "object" || payload === null) return false;
+  const view = payload as Partial<EntityChangedView>;
   return (
-    envelope.topic === "entity_changed" &&
-    typeof payload.entity === "string" &&
-    typeof payload.entity_id === "string"
+    typeof view.entity === "string" &&
+    typeof view.entity_id === "string" &&
+    (typeof view.seq === "number" || view.seq === null)
   );
 }

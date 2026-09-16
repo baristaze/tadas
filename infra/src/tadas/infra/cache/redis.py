@@ -12,7 +12,8 @@ log = logging.getLogger(__name__)
 
 
 class CacheRedisImpl(CacheInterface):
-    """A backend that cannot be reached is a miss, not an error."""
+    """A backend that cannot be reached is a miss, not an error. The client
+    is owned by the infra root, so this impl has no lifecycle of its own."""
 
     def __init__(self, redis: Redis, scope: CacheScope) -> None:
         self._redis = redis
@@ -25,8 +26,9 @@ class CacheRedisImpl(CacheInterface):
         try:
             value = await self._redis.get(self._key(org_id, key))
         except RedisError:
-            self._miss("get")
+            self._unreachable("get")
             return None
+        OUTCOMES.labels(subsystem="cache", outcome="miss" if value is None else "hit").inc()
         if isinstance(value, str):
             return value.encode()
         return value
@@ -35,13 +37,13 @@ class CacheRedisImpl(CacheInterface):
         try:
             await self._redis.set(self._key(org_id, key), value, px=_millis(ttl))
         except RedisError:
-            self._miss("put")
+            self._unreachable("put")
 
     async def invalidate(self, org_id: UUID, key: str) -> None:
         try:
             await self._redis.delete(self._key(org_id, key))
         except RedisError:
-            self._miss("invalidate")
+            self._unreachable("invalidate")
 
     async def increment(self, org_id: UUID, key: str, ttl: timedelta) -> tuple[int, timedelta]:
         full_key = self._key(org_id, key)
@@ -52,14 +54,20 @@ class CacheRedisImpl(CacheInterface):
                 await self._redis.pexpire(full_key, _millis(ttl))
                 remaining = _millis(ttl)
         except RedisError:
-            self._miss("increment")
+            self._unreachable("increment")
             return 0, ttl
         return count, timedelta(milliseconds=remaining)
 
     def describe(self) -> str:
         return f"cache[{self._scope.value}]=redis"
 
-    def _miss(self, operation: str) -> None:
+    async def start(self) -> None:
+        return None
+
+    async def close(self) -> None:
+        return None
+
+    def _unreachable(self, operation: str) -> None:
         OUTCOMES.labels(subsystem="cache", outcome="unreachable").inc()
         log.warning("cache %s unreachable on %s; treating as a miss", self._scope.value, operation)
 

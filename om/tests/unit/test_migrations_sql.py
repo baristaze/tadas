@@ -24,6 +24,9 @@ def test_a_file_naming_another_role_is_refused() -> None:
         check_role_of_sql(DatabaseRole.CORE, "CREATE TABLE queue.work_items (id uuid)")
     with pytest.raises(LookupError):
         check_role_of_sql(DatabaseRole.CORE, "CREATE TABLE core.unknown_table (id uuid)")
+    check_role_of_sql(DatabaseRole.QUEUE, "DROP INDEX queue.ix_work_items_org_id")
+    with pytest.raises(RuntimeError):
+        check_role_of_sql(DatabaseRole.CORE, "DROP INDEX queue.ix_work_items_org_id")
 
 
 def test_split_statements_drops_comments_and_blanks() -> None:
@@ -58,4 +61,4 @@ def test_role_metadata_holds_only_that_role() -> None:
     assert {t.name for t in core.tables.values()} >= {"orgs", "identities", "users"}
     assert all(t.schema == "core" for t in core.tables.values())
     assert {t.name for t in role_metadata(DatabaseRole.QUEUE).tables.values()} == {"work_items"}
-    assert role_metadata(DatabaseRole.ACTIVITY).tables == {}
+    assert {t.name for t in role_metadata(DatabaseRole.ACTIVITY).tables.values()} == {"events"}

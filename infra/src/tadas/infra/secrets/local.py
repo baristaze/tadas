@@ -1,21 +1,22 @@
 import asyncio
-import os
 import stat
+from collections.abc import Mapping
 from pathlib import Path
 
 from tadas.infra.secrets import SecretNotFound, SecretsFileNotPrivate, SecretsInterface
 
 
 class SecretsLocalImpl(SecretsInterface):
-    """Environment variables under `env_prefix`, then an owner-only file of
-    NAME=value lines. Writes go to the file."""
+    """The overrides the settings object collected at boot (TADAS_SECRET_<NAME>
+    in the environment, keyed by NAME), then an owner-only file of NAME=value
+    lines. Writes go to the file. Nothing here reads the environment."""
 
-    def __init__(self, file: Path | None, env_prefix: str = "TADAS_SECRET_") -> None:
+    def __init__(self, file: Path | None, overrides: Mapping[str, str] | None = None) -> None:
         self._file = file
-        self._env_prefix = env_prefix
+        self._overrides = dict(overrides or {})
 
     async def get(self, name: str) -> str:
-        value = os.environ.get(self._env_prefix + name.upper())
+        value = self._overrides.get(name.upper())
         if value is not None:
             return value
         entries = await asyncio.to_thread(self._read_file)
@@ -24,7 +25,7 @@ class SecretsLocalImpl(SecretsInterface):
         raise SecretNotFound(name, "local")
 
     async def has(self, name: str) -> bool:
-        if self._env_prefix + name.upper() in os.environ:
+        if name.upper() in self._overrides:
             return True
         return name in await asyncio.to_thread(self._read_file)
 
@@ -69,3 +70,9 @@ class SecretsLocalImpl(SecretsInterface):
         self._file.touch(mode=0o600, exist_ok=True)
         self._file.chmod(0o600)
         self._file.write_text("".join(f"{k}={v}\n" for k, v in sorted(entries.items())))
+
+    async def start(self) -> None:
+        return None
+
+    async def close(self) -> None:
+        return None

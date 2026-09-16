@@ -1,5 +1,6 @@
 """The service binary is also its own operations CLI: serve, migrate,
-bootstrap, and openapi are subcommands of one entry point."""
+bootstrap, and openapi are subcommands of one entry point. Each one boots
+the same way before it does anything else."""
 
 import argparse
 import asyncio
@@ -11,15 +12,17 @@ from pathlib import Path
 import uvicorn
 
 from tadas.infra.impl.local import InfraLocalImpl
+from tadas.om.opcontext import AppContext, AppType
 from tadas.om.storage import migrate
 from tadas.om.storage.impl.memory import StorageMemoryImpl
 from tadas.services.api.app import create_app
-from tadas.services.api.container import AppContainer
+from tadas.services.api.container import AppContainer, boot
 from tadas.services.api.settings import ApiSettings
 
 
 def serve(args: argparse.Namespace) -> int:
     settings = ApiSettings()
+    boot(settings)
     uvicorn.run(
         "tadas.services.api.app:create_app",
         factory=True,
@@ -30,25 +33,43 @@ def serve(args: argparse.Namespace) -> int:
     return 0
 
 
+def migrate_roles(args: argparse.Namespace) -> int:
+    boot(ApiSettings())
+    forwarded = (
+        ["upgrade"] + (["--all"] if args.all else []) + (["--role", args.role] if args.role else [])
+    )
+    return migrate.main(forwarded)
+
+
 def bootstrap(args: argparse.Namespace) -> int:
     async def run() -> int:
-        container = AppContainer.build(ApiSettings())
+        settings = ApiSettings()
+        boot(settings)
+        container = AppContainer.build(settings)
         await container.start()
         try:
-            org = await container.managers.tenancy.bootstrap(
-                args.org, args.slug, args.email, args.password, args.name, operator=args.operator
+            ctx, org = await container.managers.tenancy.bootstrap(
+                args.org,
+                args.slug,
+                args.email,
+                args.password,
+                args.name,
+                operator=args.operator,
+                app=AppContext(type=AppType.CLI, version=f"cli@{settings.version}"),
             )
         finally:
             await container.close()
-        print(f"bootstrapped org {org.slug} ({org.id})")
+        print(f"bootstrapped org {org.slug} ({org.id}) with owner {ctx.user_id}")
         return 0
 
     return asyncio.run(run())
 
 
 def openapi(args: argparse.Namespace) -> int:
+    settings = ApiSettings.model_validate({"environment": "test"})
+    boot(settings)
     with tempfile.TemporaryDirectory() as tmp:
-        container = AppContainer.for_tests(StorageMemoryImpl(), InfraLocalImpl(Path(tmp)))
+        container = AppContainer.for_tests(StorageMemoryImpl(), InfraLocalImpl(Path(tmp)), settings)
         document = create_app(container).openapi()
     text = json.dumps(document, indent=2, sort_keys=True) + "\n"
     if args.out == "-":
@@ -88,12 +109,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "serve":
         return serve(args)
     if args.command == "migrate":
-        forwarded = (
-            ["upgrade"]
-            + (["--all"] if args.all else [])
-            + (["--role", args.role] if args.role else [])
-        )
-        return migrate.main(forwarded)
+        return migrate_roles(args)
     if args.command == "bootstrap":
         return bootstrap(args)
     return openapi(args)

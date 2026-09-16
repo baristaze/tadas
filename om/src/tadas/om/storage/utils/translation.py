@@ -25,8 +25,16 @@ def to_model[M: BaseModel](row: Any, model_type: type[M]) -> M:
 
 def apply_row(row: Any, entity: BaseModel) -> None:
     """Copy entity values onto an existing row in place, never touching org_id."""
-    columns = inspect(type(row)).columns
+    for name, value in to_values(entity, type(row)).items():
+        setattr(row, name, value)
+
+
+def to_values(entity: BaseModel, row_type: type[Any]) -> dict[str, Any]:
+    """The column values of an entity, for a statement that writes columns by
+    name; org_id and columns the entity has no field for are left out."""
+    columns = inspect(row_type).columns
     dumped: dict[str, Any] | None = None
+    values: dict[str, Any] = {}
     for name in type(entity).model_fields:
         if name == "org_id" or name not in columns:
             continue
@@ -37,4 +45,5 @@ def apply_row(row: Any, entity: BaseModel) -> None:
             value = dumped[name]
         elif isinstance(value, Enum):
             value = value.value
-        setattr(row, name, value)
+        values[name] = value
+    return values

@@ -55,6 +55,10 @@ class TenancyStorageInterface:
 
     async def write_membership(self, org_id: UUID, membership: Membership) -> None: ...
 
+    async def read_sessions(self, org_id: UUID, user_id: UUID, limit: int) -> list[Session]:
+        """One user's sessions that are not revoked, sorted by id."""
+        ...
+
     async def read_session(self, org_id: UUID, session_id: UUID) -> Session | None: ...
 
     async def read_session_by_token_hash(self, token_hash: str) -> tuple[UUID, Session] | None:

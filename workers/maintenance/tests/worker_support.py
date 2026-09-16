@@ -19,7 +19,7 @@ def build_container(tmp_path: Path) -> WorkerContainer:
 
 async def sign_in(container: WorkerContainer) -> OpContext:
     tenancy = container.managers.tenancy
-    org = await tenancy.bootstrap("Acme", "acme", "ann@example.test", "pw-1234", "Ann")
+    _, org = await tenancy.bootstrap("Acme", "acme", "ann@example.test", "pw-1234", "Ann")
     login = await tenancy.login("ann@example.test", "pw-1234")
     issued = await tenancy.exchange_login(login.token, org.id)
     return await tenancy.authenticate(

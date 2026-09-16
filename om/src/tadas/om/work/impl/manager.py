@@ -1,13 +1,15 @@
 import logging
 from collections.abc import Sequence
 from datetime import timedelta
+from typing import Any
 
 from tadas.infra.topics import Topics, TopicsInterface, WorkAvailablePayload
 from tadas.om.base import Platform, new_id, utcnow
-from tadas.om.exceptions import LeaseLost
+from tadas.om.exceptions import LeaseLost, NotFound
 from tadas.om.opcontext import AppContext, AppType, OpContext, Permission
 from tadas.om.tenancy import TenancyManagerInterface
 from tadas.om.work.manager import WorkManagerInterface
+from tadas.om.work.rules import attempts_after_hand_back, is_exhausted, retry_delay
 from tadas.om.work.storage import WorkStorageInterface
 from tadas.om.work.types.work_item import WorkItem, WorkKind, WorkStatus
 
@@ -18,12 +20,6 @@ class WorkOptions(Platform):
     base_retry_delay: timedelta = timedelta(seconds=30)
     max_retry_delay: timedelta = timedelta(minutes=15)
     stale_stagger: timedelta = timedelta(seconds=5)
-
-
-def retry_delay(attempts: int, options: WorkOptions) -> timedelta:
-    """A growing delay: base * 2^(attempts-1), capped."""
-    grown = options.base_retry_delay * (2 ** max(0, attempts - 1))
-    return min(grown, options.max_retry_delay)
 
 
 class WorkManagerImpl(WorkManagerInterface):
@@ -70,44 +66,37 @@ class WorkManagerImpl(WorkManagerInterface):
         return ctx, item
 
     async def complete(self, ctx: OpContext, item: WorkItem) -> WorkItem:
-        ctx.require(Permission.WRITE)
-        done = item.model_copy(
-            update={
+        return await self._transition(
+            ctx,
+            item,
+            {
                 "status": WorkStatus.DONE,
                 "claimed_by": None,
                 "lease_expires_at": None,
                 "updated_at": utcnow(),
-            }
+            },
         )
-        await self._storage.write_item(ctx.org_id, done)
-        return done
 
     async def fail(self, ctx: OpContext, item: WorkItem, error: str) -> WorkItem:
-        ctx.require(Permission.WRITE)
         now = utcnow()
-        if item.attempts >= item.max_attempts:
-            failed = item.model_copy(
-                update={
-                    "status": WorkStatus.FAILED,
-                    "claimed_by": None,
-                    "lease_expires_at": None,
-                    "last_error": error,
-                    "updated_at": now,
-                }
-            )
+        if is_exhausted(item):
+            update: dict[str, Any] = {"status": WorkStatus.FAILED}
         else:
-            failed = item.model_copy(
-                update={
-                    "status": WorkStatus.QUEUED,
-                    "available_at": now + retry_delay(item.attempts, self._options),
-                    "claimed_by": None,
-                    "lease_expires_at": None,
-                    "last_error": error,
-                    "updated_at": now,
-                }
+            delay = retry_delay(
+                item.attempts, self._options.base_retry_delay, self._options.max_retry_delay
             )
-        await self._storage.write_item(ctx.org_id, failed)
-        return failed
+            update = {"status": WorkStatus.QUEUED, "available_at": now + delay}
+        return await self._transition(
+            ctx,
+            item,
+            {
+                **update,
+                "claimed_by": None,
+                "lease_expires_at": None,
+                "last_error": error,
+                "updated_at": now,
+            },
+        )
 
     async def defer(self, ctx: OpContext, item: WorkItem, delay: timedelta) -> WorkItem:
         return await self._hand_back(ctx, item, delay)
@@ -116,39 +105,19 @@ class WorkManagerImpl(WorkManagerInterface):
         return await self._hand_back(ctx, item, timedelta(0))
 
     async def extend_lease(self, ctx: OpContext, item: WorkItem, lease: timedelta) -> WorkItem:
-        ctx.require(Permission.WRITE)
-        stored = await self._storage.read_item(ctx.org_id, item.id)
-        if (
-            stored is None
-            or stored.status is not WorkStatus.CLAIMED
-            or stored.claimed_by != item.claimed_by
-        ):
-            raise LeaseLost(f"work item {item.id} is no longer held by {item.claimed_by}")
         now = utcnow()
-        extended = stored.model_copy(update={"lease_expires_at": now + lease, "updated_at": now})
-        await self._storage.write_item(ctx.org_id, extended)
-        return extended
+        return await self._transition(
+            ctx, item, {"lease_expires_at": now + lease, "updated_at": now}
+        )
 
-    async def requeue_stale(self) -> int:
-        now = utcnow()
-        count = 0
-        for index, (org_id, item) in enumerate(await self._storage.read_stale(now)):
-            if item.attempts >= item.max_attempts:
-                update = {"status": WorkStatus.FAILED, "last_error": "lease expired"}
-            else:
-                update = {
-                    "status": WorkStatus.QUEUED,
-                    "available_at": now + self._options.stale_stagger * index,
-                    "last_error": "lease expired",
-                }
-            requeued = item.model_copy(
-                update={**update, "claimed_by": None, "lease_expires_at": None, "updated_at": now}
-            )
-            await self._storage.write_item(org_id, requeued)
-            count += 1
-        if count:
-            log.info("requeued %d stale work items", count)
-        return count
+    async def requeue_stale(self, ctx: OpContext) -> int:
+        ctx.require(Permission.WRITE)
+        requeued = await self._storage.requeue_stale(
+            ctx.org_id, utcnow(), self._options.stale_stagger
+        )
+        if requeued:
+            log.info("requeued %d stale work items in org %s", len(requeued), ctx.org_id)
+        return len(requeued)
 
     async def maintenance_contexts(self) -> list[OpContext]:
         return await self._tenancy.service_contexts(
@@ -156,17 +125,36 @@ class WorkManagerImpl(WorkManagerInterface):
         )
 
     async def _hand_back(self, ctx: OpContext, item: WorkItem, delay: timedelta) -> WorkItem:
-        ctx.require(Permission.WRITE)
         now = utcnow()
-        returned = item.model_copy(
-            update={
+        return await self._transition(
+            ctx,
+            item,
+            {
                 "status": WorkStatus.QUEUED,
                 "available_at": now + delay,
                 "claimed_by": None,
                 "lease_expires_at": None,
-                "attempts": max(0, item.attempts - 1),
+                "attempts": attempts_after_hand_back(item.attempts),
                 "updated_at": now,
-            }
+            },
         )
-        await self._storage.write_item(ctx.org_id, returned)
-        return returned
+
+    async def _transition(self, ctx: OpContext, item: WorkItem, update: dict[str, Any]) -> WorkItem:
+        """Confirms the item exists, is in this tenant, and is still claimed by the
+        worker named on it, then writes the transition conditionally on that claim."""
+        ctx.require(Permission.WRITE)
+        stored = await self._storage.read_item(ctx.org_id, item.id)
+        if stored is None:
+            raise NotFound(f"work item {item.id} not found")
+        if (
+            item.claimed_by is None
+            or stored.status is not WorkStatus.CLAIMED
+            or stored.claimed_by != item.claimed_by
+        ):
+            raise LeaseLost(f"work item {item.id} is no longer held by {item.claimed_by}")
+        written = await self._storage.write_item_if_held(
+            ctx.org_id, item.claimed_by, item.model_copy(update=update)
+        )
+        if written is None:
+            raise LeaseLost(f"work item {item.id} was taken from {item.claimed_by} mid-write")
+        return written

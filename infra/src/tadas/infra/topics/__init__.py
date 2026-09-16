@@ -32,6 +32,7 @@ class EntityChangedPayload(TopicPayload):
     entity: str
     entity_id: UUID
     action: str  # created | updated | deleted
+    seq: int | None = None  # the event record's per-tenant seq; None when no record was written
 
 
 TOPIC_PAYLOADS: dict[Topics, type[TopicPayload]] = {
@@ -55,3 +56,12 @@ class TopicsInterface:
         ...
 
     def describe(self) -> str: ...
+
+    async def start(self) -> None:
+        """Opened by the infra root at boot. An impl that holds no connection
+        of its own returns None."""
+        ...
+
+    async def close(self) -> None:
+        """Closed by the infra root at shutdown, in reverse order of start."""
+        ...

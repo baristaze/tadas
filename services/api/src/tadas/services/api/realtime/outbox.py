@@ -1,6 +1,6 @@
 """Per socket: one bounded outbox and a drainer task that writes it to the
 wire. When the outbox is full the oldest frame is dropped and the drop is
-logged; the client that notices a gap replays from storage."""
+logged; the client that notices a gap in the stream replays from storage."""
 
 import asyncio
 import logging
@@ -19,16 +19,14 @@ class Outbox:
         self._maxsize = maxsize
         self._frames: deque[Envelope] = deque()
         self._wakeup = asyncio.Event()
-        self._seq = 0
         self.dropped = 0
 
     def offer(self, envelope: Envelope) -> None:
-        self._seq += 1
-        frame = envelope.model_copy(update={"seq": self._seq, "sent_at": utcnow()})
+        frame = envelope.model_copy(update={"sent_at": utcnow()})
         if len(self._frames) >= self._maxsize:
             dropped = self._frames.popleft()
             self.dropped += 1
-            log.warning("outbox full; dropped frame %s (%s)", dropped.seq, type(dropped).__name__)
+            log.warning("outbox full; dropped a %s frame", type(dropped).__name__)
         self._frames.append(frame)
         self._wakeup.set()
 

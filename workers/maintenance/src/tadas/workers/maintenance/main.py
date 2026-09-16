@@ -1,4 +1,5 @@
-"""The worker binary: settings, container, stop handlers, and `serve`."""
+"""The worker binary: settings, container, stop handlers, `serve`, and the
+`health` probe the container healthcheck runs."""
 
 import argparse
 import asyncio
@@ -8,8 +9,10 @@ import sys
 from datetime import timedelta
 
 from tadas.infra.cache import CacheScope
+from tadas.infra.impl.configured import InfraConfiguredImpl
 from tadas.infra.observability import configure_logging, configure_tracing
 from tadas.infra.trust import install_trust_store
+from tadas.om.base import EMPTY_UUID
 from tadas.om.work.types.work_item import WorkKind
 from tadas.workers.maintenance.container import WorkerContainer
 from tadas.workers.maintenance.handler import NoopHandlerImpl
@@ -61,11 +64,38 @@ async def serve() -> int:
     return 0
 
 
+async def health(worker_id: str | None) -> int:
+    """The container healthcheck: reads the serving worker's liveness key through
+    the same cache the loop heartbeats into. Exit 0 while the key is present,
+    1 when it is missing or the cache is unreachable. Nothing here touches
+    storage or starts a listener."""
+    settings = MaintenanceSettings()
+    target = worker_id or settings.worker_id
+    infra = InfraConfiguredImpl(settings)
+    try:
+        alive = await infra.get_cache(CacheScope.WORKER_LIVENESS).get(
+            EMPTY_UUID, f"worker:{target}"
+        )
+    finally:
+        await infra.close()
+    if alive is None:
+        print(f"worker {target} has no liveness key", file=sys.stderr)
+        return 1
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="tadas-maintenance")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("serve", help="run the worker loop")
-    parser.parse_args(argv)
+    p_health = sub.add_parser("health", help="exit 0 while the serving worker is alive")
+    p_health.add_argument(
+        "--worker-id",
+        help="the id the serving process heartbeats under; defaults to TADAS_WORKER_ID",
+    )
+    args = parser.parse_args(argv)
+    if args.command == "health":
+        return asyncio.run(health(args.worker_id))
     return asyncio.run(serve())
 
 

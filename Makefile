@@ -4,7 +4,7 @@ SHELL := /bin/bash
 COMPOSE := docker compose -f deployment/local/docker-compose.yml
 ROLES := core activity queue admin
 
-.PHONY: help setup infra-up infra-down migrate check lint format-check typecheck test-unit test-integration openapi
+.PHONY: help setup infra-up infra-down migrate migrate-check check lint format-check typecheck test-unit test-integration openapi
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-18s %s\n", $$1, $$2}'
@@ -21,6 +21,13 @@ infra-down: ## Stop the local stack and drop its volumes
 
 migrate: ## Apply every role's migration chain to the local database
 	uv run --package tadas-om python -m tadas.om.storage.migrate upgrade --all
+
+# The ORM-versus-schema check needs a migrated database, which the fast gate
+# cannot reach, so `check` does not run it; CI's integration job runs it
+# right after `make migrate`, and the downgrade-then-upgrade round trip stays
+# in the integration tests.
+migrate-check: ## Compare every role's ORM metadata with the migrated schema
+	uv run --package tadas-om python -m tadas.om.storage.migrate check --all
 
 check: lint format-check typecheck test-unit ## The fast local gate
 	@if [ -d apps ]; then pnpm run lint && pnpm run typecheck && pnpm run test; fi
@@ -41,5 +48,5 @@ test-integration: ## Integration tests over the compose stack
 	uv run pytest -q -m integration
 
 openapi: ## Emit the API document into the apps that consume it and regenerate their types
-	uv run --package tadas-api tadas-api openapi --out packages/api-client/openapi.json
+	uv run --package tadas-api tadas-api openapi --out clients/api-client/openapi.json
 	pnpm --filter @tadas/api-client generate

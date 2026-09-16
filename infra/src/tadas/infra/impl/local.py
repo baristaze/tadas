@@ -52,7 +52,11 @@ class InfraLocalImpl(InfraInterface):
         ]
 
     async def start(self) -> None:
-        return None
+        for capability in (self._topics, self._buckets, self._queues, self._secrets):
+            await capability.start()
 
     async def close(self) -> None:
-        return None
+        for cache in list(self._caches.values()):
+            await cache.close()
+        for capability in (self._secrets, self._queues, self._buckets, self._topics):
+            await capability.close()
