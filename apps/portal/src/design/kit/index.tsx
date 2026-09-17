@@ -2,7 +2,7 @@
 import type { CSSProperties, ReactNode } from "react";
 import { tokens } from "../tokens";
 
-export function Page({ title, children }: { title: string; children: ReactNode }) {
+export function Page({ title, nav, children }: { title: string; nav?: ReactNode; children: ReactNode }) {
   return (
     <main
       style={{
@@ -14,6 +14,7 @@ export function Page({ title, children }: { title: string; children: ReactNode }
         padding: tokens.space.xl,
       }}
     >
+      {nav ? <div style={{ maxWidth: 880 }}>{nav}</div> : null}
       <h1 style={{ fontSize: tokens.font.size.xl, margin: 0, marginBottom: tokens.space.lg }}>
         {title}
       </h1>
@@ -168,5 +169,150 @@ export function Table({ headers, rows }: { headers: string[]; rows: ReactNode[][
         ))}
       </tbody>
     </table>
+  );
+}
+
+export function Pill({ children, title }: { children: ReactNode; title?: string }) {
+  return (
+    <span
+      title={title}
+      style={{
+        display: "inline-block",
+        fontSize: tokens.font.size.sm,
+        color: tokens.color.muted,
+        background: tokens.color.bg,
+        border: `1px solid ${tokens.color.border}`,
+        borderRadius: 999,
+        padding: `0 ${tokens.space.sm}`,
+        whiteSpace: "nowrap",
+      }}
+    >
+      {children}
+    </span>
+  );
+}
+
+export function LinkButton({ children, onClick }: { children: ReactNode; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        background: "none",
+        border: "none",
+        padding: 0,
+        color: tokens.color.accent,
+        font: "inherit",
+        fontSize: tokens.font.size.sm,
+        cursor: "pointer",
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+export function SegmentedControl<T extends string>({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: T;
+  options: { value: T; label: string }[];
+  onChange: (value: T) => void;
+}) {
+  return (
+    <div
+      role="radiogroup"
+      aria-label={label}
+      style={{
+        display: "inline-flex",
+        border: `1px solid ${tokens.color.border}`,
+        borderRadius: tokens.radius.sm,
+        overflow: "hidden",
+      }}
+    >
+      {options.map((option) => {
+        const selected = option.value === value;
+        return (
+          <button
+            key={option.value}
+            type="button"
+            role="radio"
+            aria-checked={selected}
+            onClick={() => onChange(option.value)}
+            style={{
+              font: "inherit",
+              fontSize: tokens.font.size.sm,
+              padding: `${tokens.space.xs} ${tokens.space.md}`,
+              border: "none",
+              cursor: "pointer",
+              background: selected ? tokens.color.accent : tokens.color.surface,
+              color: selected ? tokens.color.accentText : tokens.color.text,
+            }}
+          >
+            {option.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+const fieldStyle: CSSProperties = {
+  font: "inherit",
+  fontSize: tokens.font.size.md,
+  padding: tokens.space.sm,
+  border: `1px solid ${tokens.color.border}`,
+  borderRadius: tokens.radius.sm,
+  background: tokens.color.surface,
+};
+
+export function TextArea({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label style={{ display: "grid", gap: tokens.space.xs, fontSize: tokens.font.size.sm }}>
+      <span style={{ color: tokens.color.muted }}>{label}</span>
+      <textarea
+        value={value}
+        rows={3}
+        onChange={(event) => onChange(event.target.value)}
+        style={{ ...fieldStyle, resize: "vertical" }}
+      />
+    </label>
+  );
+}
+
+export function Select({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: { value: string; label: string }[];
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label style={{ display: "grid", gap: tokens.space.xs, fontSize: tokens.font.size.sm }}>
+      <span style={{ color: tokens.color.muted }}>{label}</span>
+      <select value={value} onChange={(event) => onChange(event.target.value)} style={fieldStyle}>
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }

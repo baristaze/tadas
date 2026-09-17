@@ -1,16 +1,13 @@
 import { Banner, Button, Card, Muted, Page, Table, TextField } from "../../design/kit";
-import { useHomeVm } from "./useHomeVm";
+import { AppNav } from "../../app/AppNav";
+import { useSettingsVm } from "./useSettingsVm";
 
-export function HomePage() {
-  const vm = useHomeVm();
+export function SettingsPage() {
+  const vm = useSettingsVm();
   return (
-    <Page title={vm.title}>
+    <Page title="Settings" nav={<AppNav />}>
       <div style={{ display: "flex", gap: 16, alignItems: "center" }}>
-        {vm.me ? (
-          <Muted>
-            Signed in as {vm.me.user.display_name} ({vm.me.role}); live updates: {vm.connection}
-          </Muted>
-        ) : null}
+        {vm.signedInAs ? <Muted>{vm.signedInAs}</Muted> : null}
         <Button tone="plain" onClick={vm.signOut}>
           Sign out
         </Button>

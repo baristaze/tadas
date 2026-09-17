@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Any, ClassVar
 from uuid import UUID
 
-from sqlalchemy import Boolean, DateTime, Integer, MetaData, Text, Uuid
+from sqlalchemy import Boolean, DateTime, Double, Integer, MetaData, Text, Uuid
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, declared_attr, mapped_column
 
@@ -24,6 +24,7 @@ class Base(DeclarativeBase):
         str: Text(),
         bool: Boolean(),
         int: Integer(),
+        float: Double(),
         datetime: DateTime(timezone=True),
         UUID: Uuid(),
         dict[str, Any]: JSONB(),

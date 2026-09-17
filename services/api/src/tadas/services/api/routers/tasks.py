@@ -1,22 +1,37 @@
-"""Task routes: list, get, create, update, delete. Each function is one call
-into the tasks service; the creating one runs under the idempotency record."""
+"""Task routes: the open and done lists, get, create, a partial update, move,
+and delete. Each function is one call into the tasks service; the creating
+one runs under the idempotency record."""
 
 from uuid import UUID
 
 from fastapi import APIRouter, Response
 
+from tadas.om.tasks.types.task import TaskScope, TaskStatus
 from tadas.services.api.gateway.auth import Ctx
 from tadas.services.api.gateway.idempotency import Idem
 from tadas.services.api.gateway.resolve import TasksService
 from tadas.services.api.types.common import LIMIT_DEFAULT
-from tadas.services.api.types.tasks import AddTaskRequest, TaskView, UpdateTaskRequest
+from tadas.services.api.types.tasks import (
+    AddTaskRequest,
+    MoveTaskRequest,
+    TaskPageView,
+    TaskView,
+    UpdateTaskRequest,
+)
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
 
-@router.get("", response_model=list[TaskView])
-async def list_tasks(ctx: Ctx, tasks: TasksService, limit: int = LIMIT_DEFAULT) -> list[TaskView]:
-    return await tasks.get_tasks(ctx, limit)
+@router.get("", response_model=TaskPageView)
+async def list_tasks(
+    ctx: Ctx,
+    tasks: TasksService,
+    status: TaskStatus = TaskStatus.OPEN,
+    scope: TaskScope = TaskScope.TEAM,
+    cursor: str | None = None,
+    limit: int = LIMIT_DEFAULT,
+) -> TaskPageView:
+    return await tasks.get_tasks(ctx, status, scope, cursor, limit)
 
 
 @router.get("/{task_id}", response_model=TaskView)
@@ -29,11 +44,18 @@ async def create_task(ctx: Ctx, tasks: TasksService, body: AddTaskRequest, idem:
     return await idem.run(201, lambda: tasks.create_task(ctx, body))
 
 
-@router.put("/{task_id}", response_model=TaskView)
+@router.patch("/{task_id}", response_model=TaskView)
 async def update_task(
     ctx: Ctx, tasks: TasksService, task_id: UUID, body: UpdateTaskRequest
 ) -> TaskView:
     return await tasks.update_task(ctx, task_id, body)
+
+
+@router.post("/{task_id}/move", response_model=TaskView)
+async def move_task(
+    ctx: Ctx, tasks: TasksService, task_id: UUID, body: MoveTaskRequest
+) -> TaskView:
+    return await tasks.move_task(ctx, task_id, body)
 
 
 @router.delete("/{task_id}", response_model=TaskView)

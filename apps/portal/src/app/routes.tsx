@@ -1,6 +1,7 @@
 import { createBrowserRouter, Outlet } from "react-router-dom";
-import { HomePage } from "../features/home/HomePage";
+import { SettingsPage } from "../features/settings/SettingsPage";
 import { SignInPage } from "../features/sign_in/SignInPage";
+import { TasksPage } from "../features/tasks/TasksPage";
 import { RealtimeProvider } from "../realtime/RealtimeProvider";
 import { RequireAuth } from "./RequireAuth";
 import { RouteError } from "./RouteError";
@@ -20,6 +21,9 @@ export const router = createBrowserRouter([
   {
     element: <AuthenticatedShell />,
     errorElement: <RouteError />,
-    children: [{ path: "/", element: <HomePage /> }],
+    children: [
+      { path: "/", element: <TasksPage /> },
+      { path: "/settings", element: <SettingsPage /> },
+    ],
   },
 ]);

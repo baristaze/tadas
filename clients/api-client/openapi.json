@@ -35,17 +35,25 @@
       "AddTaskRequest": {
         "additionalProperties": false,
         "properties": {
+          "assignee_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assignee Id"
+          },
           "notes": {
             "default": "",
             "title": "Notes",
             "type": "string"
           },
-          "status": {
-            "default": "open",
-            "title": "Status",
-            "type": "string"
-          },
           "title": {
+            "maxLength": 500,
             "title": "Title",
             "type": "string"
           }
@@ -397,6 +405,26 @@
         "title": "MembershipView",
         "type": "object"
       },
+      "MoveTaskRequest": {
+        "additionalProperties": false,
+        "description": "Places an open task right after `after_id`; null puts it at the top.",
+        "properties": {
+          "after_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "After Id"
+          }
+        },
+        "title": "MoveTaskRequest",
+        "type": "object"
+      },
       "OrgView": {
         "properties": {
           "created_at": {
@@ -504,8 +532,66 @@
         "title": "SessionView",
         "type": "object"
       },
+      "TaskPageView": {
+        "description": "One page of a task list. `next_cursor` fetches the next page of the done\nlist; it is null on the last page and always for the open list.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TaskView"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "TaskPageView",
+        "type": "object"
+      },
+      "TaskScope": {
+        "description": "Which tasks a list shows. The org is the team.",
+        "enum": [
+          "mine",
+          "team"
+        ],
+        "title": "TaskScope",
+        "type": "string"
+      },
+      "TaskStatus": {
+        "enum": [
+          "open",
+          "done"
+        ],
+        "title": "TaskStatus",
+        "type": "string"
+      },
       "TaskView": {
         "properties": {
+          "assignee_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assignee Id"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
@@ -537,9 +623,12 @@
             "title": "Notes",
             "type": "string"
           },
+          "position": {
+            "title": "Position",
+            "type": "number"
+          },
           "status": {
-            "title": "Status",
-            "type": "string"
+            "$ref": "#/components/schemas/TaskStatus"
           },
           "title": {
             "title": "Title",
@@ -556,6 +645,8 @@
           "title",
           "notes",
           "status",
+          "assignee_id",
+          "position",
           "created_at",
           "updated_at",
           "created_by",
@@ -613,25 +704,54 @@
       },
       "UpdateTaskRequest": {
         "additionalProperties": false,
+        "description": "A partial update: absent fields are kept. An explicit null\n`assignee_id` unassigns the task.",
         "properties": {
+          "assignee_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assignee Id"
+          },
           "notes": {
-            "title": "Notes",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
           },
           "status": {
-            "title": "Status",
-            "type": "string"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TaskStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "title": {
-            "title": "Title",
-            "type": "string"
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
           }
         },
-        "required": [
-          "title",
-          "notes",
-          "status"
-        ],
         "title": "UpdateTaskRequest",
         "type": "object"
       },
@@ -2321,6 +2441,40 @@
         "parameters": [
           {
             "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/TaskStatus",
+              "default": "open"
+            }
+          },
+          {
+            "in": "query",
+            "name": "scope",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/TaskScope",
+              "default": "team"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
             "name": "limit",
             "required": false,
             "schema": {
@@ -2383,11 +2537,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/TaskView"
-                  },
-                  "title": "Response List Tasks V1 Tasks Get",
-                  "type": "array"
+                  "$ref": "#/components/schemas/TaskPageView"
                 }
               }
             },
@@ -2694,8 +2844,8 @@
           "tasks"
         ]
       },
-      "put": {
-        "operationId": "update_task_v1_tasks__task_id__put",
+      "patch": {
+        "operationId": "update_task_v1_tasks__task_id__patch",
         "parameters": [
           {
             "in": "path",
@@ -2789,6 +2939,107 @@
           }
         },
         "summary": "Update Task",
+        "tags": [
+          "tasks"
+        ]
+      }
+    },
+    "/v1/tasks/{task_id}/move": {
+      "post": {
+        "operationId": "move_task_v1_tasks__task_id__move_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app-version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Version"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MoveTaskRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Move Task",
         "tags": [
           "tasks"
         ]

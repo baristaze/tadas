@@ -44,6 +44,7 @@ def build_managers(storage: StorageInterface, infra: InfraInterface) -> Managers
     )
     tasks = TasksManagerImpl(
         storage.get_tasks_storage(),
+        tenancy,
         events,
         infra.get_topics(),
         TasksOptions(),

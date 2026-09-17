@@ -76,7 +76,9 @@ everything in-process for tests.
   when `TADAS_OTEL_ENDPOINT` is set), and Prometheus metrics, all from
   `tadas.infra.observability`.
 - `apps/portal` (`@tadas/portal`): React, Vite, TanStack Query,
-  Zustand; sign-in, the home screen (members, api keys), and one
+  Zustand; sign-in, the tasks screen at `/` (My and Team's tasks, open in
+  manual order, done newest first with Show more, inline edit, drag to
+  reorder), settings at `/settings` (members, api keys, sign-out), and one
   realtime channel that invalidates queries by entity name. Errors go to
   the Sentry-compatible backend named by `VITE_SENTRY_DSN`, through every
   route's `errorElement` and React's root error hooks.

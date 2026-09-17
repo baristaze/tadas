@@ -11,4 +11,9 @@ export const keys = {
     all: ["api_key"] as const,
     list: (limit: number) => ["api_key", "list", limit] as const,
   },
+  tasks: {
+    all: ["task"] as const,
+    open: (scope: string) => ["task", "open", scope] as const,
+    done: (scope: string) => ["task", "done", scope] as const,
+  },
 };

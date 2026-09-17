@@ -376,6 +376,13 @@ class TenancyManagerImpl(TenancyManagerInterface):
         ctx.require(Permission.READ)
         return await self._storage.read_users(ctx.org_id, self._clamp(limit))
 
+    async def get_user(self, ctx: OpContext, user_id: UUID) -> User:
+        ctx.require(Permission.READ)
+        user = await self._storage.read_user(ctx.org_id, user_id)
+        if user is None or user.deleted_at is not None:
+            raise NotFound(f"user {user_id} not found")
+        return user
+
     # Memberships.
 
     async def get_memberships(self, ctx: OpContext, limit: int) -> list[Membership]:

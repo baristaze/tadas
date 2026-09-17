@@ -1,17 +1,15 @@
 import { useMemo, useState } from "react";
 import { useApiKeys, useCreateApiKey, useMe, useRevokeApiKey, useUsers } from "../../queries/tenancy";
-import { useConnectionStore } from "../../store/connection";
 import { useSessionStore } from "../../store/session";
-import { apiKeyRows, canManageKeys, headline, memberRows } from "./homeModel";
+import { apiKeyRows, canManageKeys, memberRows, signedInAs } from "./settingsModel";
 
-export function useHomeVm() {
+export function useSettingsVm() {
   const me = useMe();
   const users = useUsers();
   const apiKeys = useApiKeys();
   const createKey = useCreateApiKey();
   const revokeKey = useRevokeApiKey();
   const clearSession = useSessionStore((s) => s.clear);
-  const connection = useConnectionStore((s) => s.status);
   const [newKeyName, setNewKeyName] = useState("");
   const [issuedKey, setIssuedKey] = useState<string | null>(null);
 
@@ -26,14 +24,12 @@ export function useHomeVm() {
   };
 
   return {
-    title: headline(me.data),
-    me: me.data,
+    signedInAs: signedInAs(me.data),
     loading: me.isPending || users.isPending || apiKeys.isPending,
     error: me.error ?? users.error ?? apiKeys.error,
     members,
     keys,
     canManageKeys: canManageKeys(me.data),
-    connection,
     newKeyName,
     setNewKeyName,
     issuedKey,

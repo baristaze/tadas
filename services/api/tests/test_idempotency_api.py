@@ -27,7 +27,7 @@ async def test_a_retry_replays_the_stored_response(
     assert second.headers["content-type"] == first.headers["content-type"]
     assert second.json() == first.json()
     listed = await client.get("/v1/tasks", headers=owner)
-    assert [t["id"] for t in listed.json()] == [first.json()["id"]]
+    assert [t["id"] for t in listed.json()["items"]] == [first.json()["id"]]
 
 
 async def test_a_reused_key_with_another_body_is_refused(
