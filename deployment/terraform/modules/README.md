@@ -23,9 +23,9 @@ Three kinds of root live under this folder:
 | `cache`         | Valkey (cache scopes and the topic bus), encrypted in transit   |
 | `queue`         | One SQS queue and dead-letter queue per `Queues` member, IAM    |
 | `buckets`       | One private versioned bucket per `Buckets` member, IAM          |
-| `secrets`       | The injected database URL and the application secrets policy    |
+| `secrets`       | The injected database URL and Sentry DSN, the application secrets policy |
 | `load_balancer` | The public edge in front of the API                             |
-| `service`       | One process: log group, roles, task definition, service         |
+| `service`       | One process: log groups, roles, task definition with an ADOT collector sidecar, service |
 
 The `service` module is instantiated once per process. A worker passes
 `deployment_maximum_percent = 100` so a rollout never runs more workers
@@ -49,6 +49,27 @@ roots require. `shared/` creates the state bucket itself: apply it once with loc
 state, then run `init -migrate-state` against the bucket it made. No
 root holds credentials; a developer's AWS profile or the deploy role's
 OIDC session provides them.
+
+## Telemetry and error reporting
+
+Each task's collector sidecar scrapes the process's `/metrics` over
+localhost every 30 seconds into CloudWatch metrics (namespace `Tadas`,
+dimensions `service`, `environment`, and the metric's own labels) and
+forwards the traces the process sends to `127.0.0.1:4318` on to X-Ray. The
+load balancer answers `/metrics` with a 404, so the endpoint never leaves
+the task.
+
+Error reporting stays off until the DSN secret holds a real value. Create a
+project in sentry.io or a hosted GlitchTip, then, once per environment:
+
+```bash
+aws secretsmanager put-secret-value \
+  --secret-id tadas/dev/sentry_dsn --secret-string 'https://<key>@<host>/<project>'
+```
+
+Tasks read the secret when they start, so roll the services afterwards
+(`aws ecs update-service --force-new-deployment`, or the next deploy).
+Terraform never overwrites the value; `off` turns reporting off again.
 
 ## Checks
 

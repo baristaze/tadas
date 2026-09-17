@@ -1,12 +1,16 @@
 """Every process boots the same way: settings, then logging, the trust store,
-and tracing, then storage, infra, the managers, and the services, in that
+error reporting, and tracing, then storage, infra, the managers, and the services, in that
 order. Routers resolve them per request from this one object."""
 
 import logging
 from datetime import timedelta
 
 from tadas.infra.impl.configured import InfraConfiguredImpl
-from tadas.infra.observability import configure_logging, configure_tracing
+from tadas.infra.observability import (
+    configure_error_reporting,
+    configure_logging,
+    configure_tracing,
+)
 from tadas.infra.root import InfraInterface
 from tadas.infra.trust import install_trust_store
 from tadas.om.root import Managers, build_managers
@@ -23,13 +27,17 @@ _booted = False
 
 
 def boot(settings: ApiSettings) -> None:
-    """Settings first, then logging, the trust store, and tracing. Every entry
+    """Settings first, then logging, the trust store, error reporting, and
+    tracing. Every entry
     point calls it before it builds a container; it runs once per process."""
     global _booted
     if _booted:
         return
     configure_logging(settings.log_level, settings.log_json)
     install_trust_store()
+    configure_error_reporting(
+        settings.sentry_dsn, settings.environment, settings.service_name, settings.version
+    )
     configure_tracing(settings.otel_endpoint, settings.service_name)
     _booted = True
 

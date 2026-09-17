@@ -1,6 +1,11 @@
 # One application process: a task definition around one container image and
 # a service that keeps `desired_count` of it running. Workers and services
 # share this shape; a worker has no port and no target group.
+#
+# Beside the process runs an OpenTelemetry collector (ADOT). It scrapes the
+# process's /metrics over localhost into CloudWatch metrics (EMF, namespace
+# Tadas) and forwards the OTLP traces the process sends to localhost:4318 on
+# to X-Ray. It is not essential: a collector failure never stops the process.
 
 data "aws_region" "current" {}
 
@@ -10,14 +15,83 @@ locals {
     "tadas:environment" = var.environment
   }
 
+  collector_name = "otel-collector"
+
+  collector_config = {
+    extensions = { health_check = { endpoint = "0.0.0.0:13133" } }
+    receivers = {
+      otlp = { protocols = { http = { endpoint = "127.0.0.1:4318" } } }
+      prometheus = {
+        config = {
+          scrape_configs = [{
+            job_name        = var.name
+            scrape_interval = "30s"
+            static_configs = [{
+              targets = ["localhost:${var.metrics_port}"]
+              labels  = { service = var.name, environment = var.environment }
+            }]
+          }]
+        }
+      }
+    }
+    processors = {
+      batch = { timeout = "10s" }
+    }
+    exporters = {
+      awsemf = {
+        namespace               = "Tadas"
+        log_group_name          = aws_cloudwatch_log_group.metrics.name
+        log_stream_name         = "{TaskId}"
+        dimension_rollup_option = "NoDimensionRollup"
+      }
+      awsxray = {}
+    }
+    service = {
+      extensions = ["health_check"]
+      pipelines = {
+        metrics = { receivers = ["prometheus"], processors = ["batch"], exporters = ["awsemf"] }
+        traces  = { receivers = ["otlp"], processors = ["batch"], exporters = ["awsxray"] }
+      }
+    }
+  }
+
+  collector = {
+    name              = local.collector_name
+    image             = var.collector_image
+    essential         = false
+    memoryReservation = 96
+    environment       = [{ name = "AOT_CONFIG_CONTENT", value = yamlencode(local.collector_config) }]
+    logConfiguration = {
+      logDriver = "awslogs"
+      options = {
+        "awslogs-group"         = aws_cloudwatch_log_group.this.name
+        "awslogs-region"        = data.aws_region.current.region
+        "awslogs-stream-prefix" = local.collector_name
+      }
+    }
+    # The image is FROM scratch; this binary probes the health_check extension.
+    healthCheck = {
+      command     = ["CMD", "/healthcheck"]
+      interval    = 30
+      timeout     = 5
+      retries     = 3
+      startPeriod = 10
+    }
+  }
+
   container = merge(
     {
       name        = var.name
       image       = var.image
       essential   = true
       stopTimeout = var.stop_timeout_seconds
-      environment = [for key, value in var.environment_variables : { name = key, value = value }]
-      secrets     = [for key, arn in var.secrets : { name = key, valueFrom = arn }]
+      dependsOn   = [{ containerName = local.collector_name, condition = "START" }]
+      environment = [
+        for key, value in merge(var.environment_variables, {
+          TADAS_OTEL_ENDPOINT = "http://127.0.0.1:4318"
+        }) : { name = key, value = value }
+      ]
+      secrets = [for key, arn in var.secrets : { name = key, valueFrom = arn }]
       logConfiguration = {
         logDriver = "awslogs"
         options = {
@@ -43,6 +117,14 @@ locals {
 
 resource "aws_cloudwatch_log_group" "this" {
   name              = "/tadas/${var.environment}/${var.name}"
+  retention_in_days = var.log_retention_days
+  tags              = local.tags
+}
+
+# The collector writes metrics as embedded-metric-format log events here, and
+# CloudWatch extracts them into the Tadas namespace.
+resource "aws_cloudwatch_log_group" "metrics" {
+  name              = "/tadas/${var.environment}/${var.name}/metrics"
   retention_in_days = var.log_retention_days
   tags              = local.tags
 }
@@ -102,6 +184,36 @@ resource "aws_iam_role_policy_attachment" "task" {
   policy_arn = var.policy_arns[count.index]
 }
 
+# What the collector sidecar needs, on the task role it shares with the process.
+data "aws_iam_policy_document" "telemetry" {
+  statement {
+    actions = [
+      "logs:CreateLogStream",
+      "logs:PutLogEvents",
+      "logs:DescribeLogStreams",
+      "logs:DescribeLogGroups",
+    ]
+    resources = [aws_cloudwatch_log_group.metrics.arn, "${aws_cloudwatch_log_group.metrics.arn}:*"]
+  }
+
+  statement {
+    actions = [
+      "xray:PutTraceSegments",
+      "xray:PutTelemetryRecords",
+      "xray:GetSamplingRules",
+      "xray:GetSamplingTargets",
+      "xray:GetSamplingStatisticSummaries",
+    ]
+    resources = ["*"]
+  }
+}
+
+resource "aws_iam_role_policy" "telemetry" {
+  name   = "telemetry"
+  role   = aws_iam_role.task.id
+  policy = data.aws_iam_policy_document.telemetry.json
+}
+
 resource "aws_ecs_task_definition" "this" {
   family                   = "tadas-${var.environment}-${var.name}"
   requires_compatibilities = ["FARGATE"]
@@ -110,7 +222,7 @@ resource "aws_ecs_task_definition" "this" {
   memory                   = var.memory
   execution_role_arn       = aws_iam_role.execution.arn
   task_role_arn            = aws_iam_role.task.arn
-  container_definitions    = jsonencode([local.container])
+  container_definitions    = jsonencode([local.container, local.collector])
   tags                     = local.tags
 
   runtime_platform {

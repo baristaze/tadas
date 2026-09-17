@@ -28,7 +28,10 @@ once. Once it is up:
 | pgweb (Postgres) | http://localhost:58081 | |
 | Valkey Admin | http://localhost:58080 | add a connection: host `valkey`, port `6379`, no username or password |
 | ElasticMQ UI (SQS) | http://localhost:53000 | |
+| Grafana (metrics) | http://localhost:53001 | none; opens on the Tadas overview dashboard |
+| Prometheus | http://localhost:59090 | |
 | Jaeger (traces) | http://localhost:56686 | |
+| GlitchTip (errors) | http://localhost:58000 | `admin@example.test` / `tadas-local` |
 | MinIO console (S3) | http://localhost:59001 | `tadas` / `tadastadas` |
 
 For one service at a time (rebuild only the API, reset only the database,
@@ -80,7 +83,10 @@ need no sign-in; they listen on 127.0.0.1 only.
 | pgweb | http://localhost:58081 | Postgres: schemas `core`, `activity`, `queue`, `admin`; run SQL |
 | Valkey Admin | http://localhost:58080 | Valkey: keys, metrics, commands; add a connection to host `valkey`, port `6379`, no username or password |
 | ElasticMQ UI | http://localhost:53000 | SQS queues and their messages |
+| Grafana | http://localhost:53001 | Metrics: the Tadas overview dashboard over Prometheus, and Jaeger traces |
+| Prometheus | http://localhost:59090 | Raw metrics from the api and the worker, as containers or host processes |
 | Jaeger | http://localhost:56686 | Traces, once processes export them (below) |
+| GlitchTip | http://localhost:58000 | Errors from the api, the worker, and the portal; sign in as `admin@example.test` / `tadas-local` |
 
 Traces are off by default. To send them to Jaeger, uncomment
 `TADAS_OTEL_ENDPOINT=http://127.0.0.1:54318` in `.env` and restart

@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ENVIRONMENTS = frozenset({"local", "test", "dev", "staging", "production"})
@@ -60,6 +60,15 @@ class InfraSettings(BaseSettings):
     log_level: str = "INFO"
     log_json: bool = False
     otel_endpoint: str | None = None
+    sentry_dsn: str | None = None
+
+    @field_validator("sentry_dsn")
+    @classmethod
+    def _dsn_off_is_none(cls, value: str | None) -> str | None:
+        """Empty or "off" means no reporting; the cloud secret starts as "off"."""
+        if value is None or value.strip().lower() in ("", "off"):
+            return None
+        return value
 
     @property
     def is_known_environment(self) -> bool:

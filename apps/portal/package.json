@@ -12,6 +12,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@sentry/react": "^10.74.0",
     "@tadas/api-client": "workspace:*",
     "@tanstack/react-query": "^5.103.0",
     "react": "^19.3.0",

@@ -25,8 +25,8 @@ substitution recorded below the table:
 | Workspaces                            | uv, pnpm                        |
 | Local stack                           | Docker Compose                  |
 | Cloud and infrastructure as code      | AWS, Terraform                  |
-| Traces and metrics                    | OpenTelemetry, Prometheus client |
-| Logging                               | Python `logging`                |
+| Traces and metrics                    | OpenTelemetry, Prometheus client (CloudWatch and X-Ray through an ADOT collector in the cloud; Prometheus, Grafana, and Jaeger locally) |
+| Logging                               | Python `logging`; errors to a Sentry-compatible backend through the Sentry SDK (GlitchTip locally) |
 
 Substitutions. Each row names the choice, the substitute, the reason, and
 the rules the substitute must still satisfy (a queue claim that skips

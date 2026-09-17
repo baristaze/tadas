@@ -25,6 +25,24 @@ resource "aws_secretsmanager_secret_version" "database_url" {
   secret_string = var.database_url
 }
 
+# The Sentry-compatible DSN errors report to (sentry.io or a hosted GlitchTip).
+# Terraform creates it as "off", which leaves reporting off (Secrets Manager
+# refuses an empty value), and never writes it again: set the real value once with
+#   aws secretsmanager put-secret-value --secret-id <prefix>sentry_dsn --secret-string <dsn>
+resource "aws_secretsmanager_secret" "sentry_dsn" {
+  name = "${var.prefix}sentry_dsn"
+  tags = local.tags
+}
+
+resource "aws_secretsmanager_secret_version" "sentry_dsn" {
+  secret_id     = aws_secretsmanager_secret.sentry_dsn.id
+  secret_string = "off"
+
+  lifecycle {
+    ignore_changes = [secret_string]
+  }
+}
+
 data "aws_iam_policy_document" "application" {
   statement {
     actions = [

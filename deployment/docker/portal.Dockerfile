@@ -1,6 +1,7 @@
 # Two stages: the pnpm workspace builds the portal bundle, and an
-# unprivileged nginx serves it. VITE_API_URL is compiled into the bundle, so
-# it is a build argument naming the API as the browser reaches it.
+# unprivileged nginx serves it. VITE_API_URL and VITE_SENTRY_DSN are compiled
+# into the bundle, so they are build arguments naming what the browser reaches;
+# an empty VITE_SENTRY_DSN leaves error reporting off.
 FROM node:24.21.0-alpine AS build
 RUN corepack enable
 WORKDIR /app
@@ -12,6 +13,8 @@ COPY clients/api-client clients/api-client
 COPY apps/portal apps/portal
 COPY deployment/realtime-timeouts.json deployment/
 ARG VITE_API_URL=http://127.0.0.1:8000
+ARG VITE_SENTRY_DSN=
+ARG VITE_SENTRY_ENVIRONMENT=local
 RUN pnpm --filter @tadas/portal build
 
 FROM nginxinc/nginx-unprivileged:1.30-alpine-slim

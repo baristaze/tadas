@@ -87,3 +87,13 @@ async def test_secret_overrides_reach_the_local_secrets_impl(tmp_path: Path) -> 
         local_settings(tmp_path, secret_overrides={"API_TOKEN": "from-boot"})
     )
     assert await infra.get_secrets().get("api_token") == "from-boot"
+
+
+@pytest.mark.parametrize("value", ["", "off", " OFF "])
+def test_an_empty_or_off_sentry_dsn_turns_reporting_off(tmp_path: Path, value: str) -> None:
+    assert local_settings(tmp_path, sentry_dsn=value).sentry_dsn is None
+
+
+def test_a_sentry_dsn_is_kept(tmp_path: Path) -> None:
+    dsn = "http://key@glitchtip:8000/1"
+    assert local_settings(tmp_path, sentry_dsn=dsn).sentry_dsn == dsn

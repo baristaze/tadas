@@ -7,7 +7,7 @@ Every command below runs from the repository root.
 |-----------------|------|
 | `docker-compose.yml` | Postgres, Valkey, ElasticMQ, MinIO |
 | `docker-compose.full.yml` | the `api`, `maintenance`, and `portal` containers, built from the working tree |
-| profile `devx` (in `docker-compose.yml`) | pgweb, Valkey Admin, ElasticMQ UI, Jaeger |
+| profile `devx` (in `docker-compose.yml`) | pgweb, Valkey Admin, ElasticMQ UI, Prometheus, Grafana, Jaeger, GlitchTip |
 
 The compose project is `tadas`, so containers are named `tadas-<service>-1`
 and the volumes `tadas_postgres` and `tadas_minio`.
@@ -28,10 +28,15 @@ Everything listens on 127.0.0.1 only. `make urls` prints the browser URLs.
 | pgweb (devx) | http://localhost:58081 | | none |
 | Valkey Admin (devx) | http://localhost:58080 | | none; see below |
 | ElasticMQ UI (devx) | http://localhost:53000 | | none |
+| Prometheus (devx) | http://localhost:59090 | `prometheus:9090` | none |
+| Grafana (devx) | http://localhost:53001 | | none (anonymous admin) |
 | Jaeger UI (devx) | http://localhost:56686 | | none |
 | Jaeger OTLP (devx) | http://127.0.0.1:54318 | `jaeger:4318` | none |
+| GlitchTip (devx) | http://localhost:58000 | `glitchtip:8000` | `admin@example.test` / `tadas-local` |
+| maintenance metrics | http://127.0.0.1:9464/metrics (host process only) | `maintenance:9464` | |
 
-`maintenance` has no port; its healthcheck reads its liveness key in Valkey.
+`maintenance` publishes no port; its healthcheck reads its liveness key in
+Valkey, and Prometheus scrapes its `/metrics` inside the network.
 
 The local Valkey has no authentication: every client is the built-in
 `default` user, with no password and full access. Valkey Admin still asks
@@ -69,8 +74,8 @@ alias dc='docker compose -f deployment/local/docker-compose.yml -f deployment/lo
 | Rebuild the portal (also after changing `VITE_API_URL`) | `dc up -d --build --wait portal` |
 | Restart a service without rebuilding | `dc restart maintenance` |
 | Stop the app containers, keep the backing services (to switch to `scripts/dev.sh`) | `dc stop api maintenance portal` |
-| Start only the dashboards | `dc up -d pgweb valkey-admin elasticmq-ui jaeger` |
-| Stop only the dashboards | `dc stop pgweb valkey-admin elasticmq-ui jaeger` |
+| Start only the dashboards | `dc up -d pgweb valkey-admin elasticmq-ui prometheus grafana jaeger glitchtip` |
+| Stop only the dashboards | `dc stop pgweb valkey-admin elasticmq-ui prometheus grafana jaeger glitchtip` |
 | Apply new migrations | `make migrate` |
 | Seed again, or as someone else | `make seed SEED_EMAIL=me@example.test SEED_PASSWORD=secret SEED_SLUG=mine` |
 
@@ -89,14 +94,32 @@ ElasticMQ keeps nothing: `dc restart elasticmq` empties every queue.
 Valkey has no named volume but snapshots on shutdown, so `dc restart valkey`
 keeps its keys; `flushall` above empties it, and `make reset` removes it.
 
-## Traces
+## Metrics, traces, and errors
 
-Jaeger receives traces only from processes that export them. For host
-processes (`scripts/dev.sh`), set `TADAS_OTEL_ENDPOINT=http://127.0.0.1:54318`
-in `.env` and restart them. The app containers read their settings from
-`docker-compose.full.yml`, which sets no endpoint; add
-`TADAS_OTEL_ENDPOINT: http://jaeger:4318` to its `x-app-env` block to trace
-them too.
+Everything below needs the `devx` profile (`make up` or `make devx-up`).
+
+- **Metrics.** The api serves `/metrics` on its own port, the worker on
+  `TADAS_METRICS_PORT` (9464). Prometheus scrapes both, as containers
+  (`api:8000`, `maintenance:9464`) and as host processes
+  (`host.docker.internal:8000` and `:9464`); whichever is not running shows
+  as down on http://localhost:59090/targets, which is expected. Grafana
+  opens on the provisioned Tadas overview dashboard (requests, statuses,
+  p95 latency, cache, queue, and worker outcomes). Dashboards changed in the
+  UI are lost with the container; export them into
+  `grafana/dashboards/` to keep them.
+- **Traces.** The app containers export to Jaeger (`TADAS_OTEL_ENDPOINT` in
+  `docker-compose.full.yml`). Host processes export only when
+  `TADAS_OTEL_ENDPOINT=http://127.0.0.1:54318` is set in `.env`. Grafana's
+  Jaeger data source shows the same traces.
+- **Errors.** GlitchTip is Sentry-compatible. `glitchtip-db` creates its
+  database on the stack's Postgres and `glitchtip-seed` creates the admin
+  and one project, `tadas`, whose DSN key is fixed. So the DSNs are known
+  ahead of time: `http://0123456789abcdef0123456789abcdef@glitchtip:8000/1`
+  in the app containers, and the same key at `localhost:58000` or
+  `127.0.0.1:58000` for the portal and host processes (`TADAS_SENTRY_DSN`
+  and `VITE_SENTRY_DSN` in `.env.example`). Unhandled exceptions and ERROR
+  log lines become issues, tagged with `service`, `release`, and
+  `request_id`. An empty or `off` DSN turns reporting off.
 
 ## When something is off
 

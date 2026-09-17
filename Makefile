@@ -37,7 +37,10 @@ urls: ## Print the local URLs and the seeded sign-in
 	@echo "  pgweb          http://localhost:58081"
 	@echo "  Valkey Admin   http://localhost:58080"
 	@echo "  ElasticMQ UI   http://localhost:53000"
+	@echo "  Grafana        http://localhost:53001   metrics dashboards, no sign-in"
+	@echo "  Prometheus     http://localhost:59090"
 	@echo "  Jaeger         http://localhost:56686"
+	@echo "  GlitchTip      http://localhost:58000   admin@example.test / tadas-local"
 	@echo "  MinIO console  http://localhost:59001   tadas / tadastadas"
 	@echo ""
 
@@ -47,7 +50,7 @@ urls: ## Print the local URLs and the seeded sign-in
 infra-up: ## Start Postgres, the cache, the queue, and the object store
 	$(COMPOSE) up -d --wait
 
-devx-up: ## The local stack plus developer dashboards (pgweb, Valkey Admin, ElasticMQ UI, Jaeger)
+devx-up: ## The local stack plus developer dashboards (pgweb, Valkey Admin, ElasticMQ UI, Prometheus, Grafana, Jaeger, GlitchTip)
 	$(COMPOSE) --profile devx up -d --wait
 
 stack-up: ## The local stack plus the api, maintenance, and portal containers

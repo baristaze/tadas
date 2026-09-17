@@ -24,6 +24,7 @@ locals {
 
   process_secrets = {
     TADAS_DATABASE_URL = module.secrets.database_url_secret_arn
+    TADAS_SENTRY_DSN   = module.secrets.sentry_dsn_secret_arn
   }
 
   process_policies = [
@@ -115,6 +116,7 @@ module "api" {
   cpu                = var.api_cpu
   memory             = var.api_memory
   port               = 8000
+  metrics_port       = 8000
   target_group_arn   = module.load_balancer.target_group_arn
   policy_arns        = local.process_policies
   secrets            = local.process_secrets
@@ -147,6 +149,7 @@ module "maintenance" {
   desired_count      = var.maintenance_desired_count
   cpu                = var.maintenance_cpu
   memory             = var.maintenance_memory
+  metrics_port       = 9464
   policy_arns        = local.process_policies
   secrets            = local.process_secrets
 

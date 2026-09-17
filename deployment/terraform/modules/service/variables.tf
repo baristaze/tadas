@@ -108,3 +108,14 @@ variable "log_retention_days" {
   type    = number
   default = 30
 }
+
+variable "metrics_port" {
+  description = "Port the process serves /metrics on, on localhost; the collector sidecar scrapes it."
+  type        = number
+}
+
+variable "collector_image" {
+  description = "The AWS Distro for OpenTelemetry collector image the sidecar runs."
+  type        = string
+  default     = "public.ecr.aws/aws-observability/aws-otel-collector:v0.50.0"
+}

@@ -69,19 +69,27 @@ everything in-process for tests.
   context per live tenant). `tadas-maintenance serve | health`: the
   image's `HEALTHCHECK` runs `health`, which reads the serving worker's
   liveness key through the same cache and exits non-zero when it is
-  missing.
+  missing. It serves its own `/metrics` on `TADAS_METRICS_PORT` (9464).
+- Every Python process boots error reporting (the Sentry SDK, on only when
+  `TADAS_SENTRY_DSN` is set: unhandled exceptions and ERROR log lines,
+  tagged with `service` and `request_id`), tracing (OpenTelemetry, on only
+  when `TADAS_OTEL_ENDPOINT` is set), and Prometheus metrics, all from
+  `tadas.infra.observability`.
 - `apps/portal` (`@tadas/portal`): React, Vite, TanStack Query,
   Zustand; sign-in, the home screen (members, api keys), and one
-  realtime channel that invalidates queries by entity name.
+  realtime channel that invalidates queries by entity name. Errors go to
+  the Sentry-compatible backend named by `VITE_SENTRY_DSN`, through every
+  route's `errorElement` and React's root error hooks.
 - `clients/api-client` (`@tadas/api-client`): the committed
   `openapi.json`, generated types behind a facade, one transport
   client.
 
 ## Deployment (`deployment/`)
 
-- `local/`: the compose stack (Postgres, Valkey, ElasticMQ, MinIO, and
-  developer dashboards under the `devx` profile) and a second file that
-  adds the application containers, the portal among them.
+- `local/`: the compose stack (Postgres, Valkey, ElasticMQ, MinIO, and,
+  under the `devx` profile, developer dashboards plus Prometheus, Grafana,
+  Jaeger, and a seeded GlitchTip) and a second file that adds the
+  application containers, the portal among them.
 - `docker/`: one two-stage image per process, non-root, with a
   healthcheck (`/healthz` for the API, `tadas-maintenance health` for
   the worker, `/` for the portal's nginx).
@@ -91,7 +99,11 @@ everything in-process for tests.
   and `environments/prod` instantiate the same graph and differ only in
   variables, including the image digests; `shared/` holds the registry,
   the state bucket, and the deploy role. The worker's service instance
-  caps a rollout at 100% of desired because a worker holds leases. The
+  caps a rollout at 100% of desired because a worker holds leases. Every
+  task runs an ADOT collector sidecar that scrapes the process's
+  `/metrics` into CloudWatch (namespace `Tadas`) and forwards its traces to
+  X-Ray; the load balancer answers `/metrics` with a 404. Errors report to
+  the DSN in the `<prefix>sentry_dsn` secret, which starts as `off`. The
   module README explains state and credentials.
 - `.github/workflows/ci.yml`: the fast gate, the integration job (which
   runs `make migrate-check` right after `make migrate`), an image build
