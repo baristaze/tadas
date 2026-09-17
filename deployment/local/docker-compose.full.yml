@@ -1,4 +1,5 @@
-# The local stack plus the application containers. Use with:
+# The local stack plus the application containers: the API on 8000, the
+# maintenance worker, and the portal on 55173. `make stack-up` runs:
 #   docker compose -f deployment/local/docker-compose.yml -f deployment/local/docker-compose.full.yml up
 # Application services are appended by the scaffold steps that add them.
 name: tadas
@@ -19,6 +20,7 @@ x-app-env: &app-env
   TADAS_SECRETS_FILE: /run/tadas/secrets.env
   TADAS_AWS_REGION: us-east-1
   TADAS_LOG_JSON: "true"
+  TADAS_CORS_ORIGINS: '["http://localhost:55173","http://127.0.0.1:55173"]'
 
 services:
   api:
@@ -47,4 +49,18 @@ services:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+
+  # The browser loads the portal from the host and calls the API on the
+  # host port above, so VITE_API_URL is a host address, not a service name.
+  portal:
+    build:
+      context: ../..
+      dockerfile: deployment/docker/portal.Dockerfile
+      args:
+        VITE_API_URL: http://127.0.0.1:8000
+    ports:
+      - "127.0.0.1:55173:8080"
+    depends_on:
+      api:
         condition: service_healthy

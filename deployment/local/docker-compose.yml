@@ -2,6 +2,8 @@
 # Application processes run on the host; see scripts/dev.sh.
 # Host ports sit in the 5xxxx range so the stack coexists with other
 # local stacks; inside the network the containers use their own ports.
+# The `devx` profile adds developer dashboards over the same services:
+#   docker compose -f deployment/local/docker-compose.yml --profile devx up -d
 name: tadas
 
 services:
@@ -58,6 +60,55 @@ services:
       interval: 2s
       timeout: 2s
       retries: 30
+
+  # Developer dashboards (profile devx). Local only; none of them has auth.
+
+  pgweb:
+    image: sosedoff/pgweb:0.17.0
+    profiles: [devx]
+    environment:
+      PGWEB_DATABASE_URL: postgres://tadas:tadas@postgres:5432/tadas?sslmode=disable
+    ports:
+      - "127.0.0.1:58081:8081"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  redisinsight:
+    image: redis/redisinsight:3.8.0
+    profiles: [devx]
+    environment:
+      RI_ACCEPT_TERMS_AND_CONDITIONS: "true"
+      RI_REDIS_ALIAS: tadas-local
+      RI_REDIS_HOST: redis
+      RI_REDIS_PORT: "6379"
+    ports:
+      - "127.0.0.1:55540:5540"
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  elasticmq-ui:
+    image: softwaremill/elasticmq-ui:1.7.1
+    profiles: [devx]
+    environment:
+      SQS_ENDPOINT: http://elasticmq:9324
+      AWS_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: local
+      AWS_SECRET_ACCESS_KEY: local
+    ports:
+      - "127.0.0.1:53000:3000"
+    depends_on:
+      elasticmq:
+        condition: service_healthy
+
+  # Traces: set TADAS_OTEL_ENDPOINT=http://127.0.0.1:54318 for host processes.
+  jaeger:
+    image: jaegertracing/jaeger:2.21.0
+    profiles: [devx]
+    ports:
+      - "127.0.0.1:56686:16686"
+      - "127.0.0.1:54318:4318"
 
 volumes:
   postgres:

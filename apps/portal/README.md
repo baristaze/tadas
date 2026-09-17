@@ -30,3 +30,11 @@ pnpm install
 pnpm --filter @tadas/portal dev     # http://localhost:5173, API at VITE_API_URL
 pnpm --filter @tadas/portal test
 ```
+
+`make stack-up` from the repository root also serves a production build
+in a container at http://localhost:55173, from
+`deployment/docker/portal.Dockerfile`. The API address is compiled into
+that bundle (build argument `VITE_API_URL`, default
+`http://127.0.0.1:8000`), so a change to it needs a rebuild, which
+`make stack-up` does. Sign in as `owner@example.test` / `tadas-local`
+after `make seed`; see the root README for every local URL.

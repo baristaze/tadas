@@ -64,7 +64,7 @@ jobs:
     timeout-minutes: 30
     strategy:
       matrix:
-        image: [api, maintenance]
+        image: [api, maintenance, portal]
     steps:
       - uses: actions/checkout@v7
       - uses: docker/setup-buildx-action@v4

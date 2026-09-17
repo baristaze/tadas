@@ -2,9 +2,10 @@
 .DEFAULT_GOAL := help
 SHELL := /bin/bash
 COMPOSE := docker compose -f deployment/local/docker-compose.yml
+COMPOSE_FULL := $(COMPOSE) -f deployment/local/docker-compose.full.yml
 ROLES := core activity queue admin
 
-.PHONY: help setup infra-up infra-down migrate seed migrate-check check lint format-check typecheck test-unit test-integration openapi
+.PHONY: help setup infra-up devx-up stack-up infra-down migrate seed migrate-check check lint format-check typecheck test-unit test-integration openapi
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-18s %s\n", $$1, $$2}'
@@ -16,8 +17,15 @@ setup: ## Install every Python and TypeScript dependency
 infra-up: ## Start Postgres, the cache, the queue, and the object store
 	$(COMPOSE) up -d --wait
 
-infra-down: ## Stop the local stack and drop its volumes
-	$(COMPOSE) down -v
+devx-up: ## The local stack plus developer dashboards (pgweb, Redis Insight, ElasticMQ UI, Jaeger)
+	$(COMPOSE) --profile devx up -d --wait
+
+stack-up: ## The local stack plus the api, maintenance, and portal containers
+	$(COMPOSE_FULL) up -d --build --wait
+
+# Names every file and profile so no container of any of them is left behind.
+infra-down: ## Stop every local container, dashboards and app containers too, and drop the volumes
+	$(COMPOSE_FULL) --profile devx down -v --remove-orphans
 
 migrate: ## Apply every role's migration chain to the local database
 	uv run --package tadas-om python -m tadas.om.storage.migrate upgrade --all

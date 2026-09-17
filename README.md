@@ -20,9 +20,45 @@ make seed         # org "acme" with owner owner@example.test / tadas-local
 
 ## Run
 
+Pick one of two ways; both use the stack and the database from Set up.
+Stop one before starting the other, since both use port 8000 for the API.
+
 ```bash
-scripts/dev.sh    # every application process on the host
+scripts/dev.sh    # on the host, with hot reload: API, worker, portal (Vite)
+make stack-up     # in containers, built from the working tree: API, worker, portal (nginx)
 ```
+
+Then sign in to the portal as `owner@example.test` / `tadas-local` (from `make seed`).
+
+| What | `scripts/dev.sh` | `make stack-up` |
+|------|------------------|-----------------|
+| Portal | http://localhost:5173 | http://localhost:55173 |
+| API | http://127.0.0.1:8000 | http://127.0.0.1:8000 |
+| API docs (Swagger UI) | http://127.0.0.1:8000/docs | http://127.0.0.1:8000/docs |
+| API metrics (Prometheus) | http://127.0.0.1:8000/metrics | http://127.0.0.1:8000/metrics |
+
+### Dashboards
+
+The MinIO console comes with the stack: http://localhost:59001, user
+`tadas`, password `tadastadas`.
+
+For debugging, `make devx-up` adds developer dashboards next to the stack
+(the compose `devx` profile). They are wired to the local services and
+need no sign-in; they listen on 127.0.0.1 only.
+
+| Dashboard | URL | Shows |
+|-----------|-----|-------|
+| pgweb | http://localhost:58081 | Postgres: schemas `core`, `activity`, `queue`, `admin`; run SQL |
+| Redis Insight | http://localhost:55540 | Redis: keys, pub/sub, CLI; the `tadas-local` database is preconfigured |
+| ElasticMQ UI | http://localhost:53000 | SQS queues and their messages |
+| Jaeger | http://localhost:56686 | Traces, once processes export them (below) |
+
+Traces are off by default. To send them to Jaeger, uncomment
+`TADAS_OTEL_ENDPOINT=http://127.0.0.1:54318` in `.env` and restart
+`scripts/dev.sh`.
+
+`make infra-down` stops every container, dashboards and app containers
+included, and deletes the local data.
 
 ## Check
 

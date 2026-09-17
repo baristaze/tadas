@@ -79,11 +79,12 @@ everything in-process for tests.
 
 ## Deployment (`deployment/`)
 
-- `local/`: the compose stack (Postgres, Redis, ElasticMQ, MinIO) and a
-  second file that adds the application containers.
+- `local/`: the compose stack (Postgres, Redis, ElasticMQ, MinIO, and
+  developer dashboards under the `devx` profile) and a second file that
+  adds the application containers, the portal among them.
 - `docker/`: one two-stage image per process, non-root, with a
   healthcheck (`/healthz` for the API, `tadas-maintenance health` for
-  the worker).
+  the worker, `/` for the portal's nginx).
 - `terraform/`: every cloud resource. `modules/` holds one module per
   resource family (`network`, `cluster`, `database`, `cache`, `queue`,
   `buckets`, `secrets`, `load_balancer`, `service`); `environments/dev`
