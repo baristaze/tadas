@@ -62,10 +62,12 @@ services:
       retries: 30
 
   # Developer dashboards (profile devx). Local only; none of them has auth.
+  # They restart on their own when a service they watch is reset under them.
 
   pgweb:
     image: sosedoff/pgweb:0.17.0
     profiles: [devx]
+    restart: unless-stopped
     environment:
       PGWEB_DATABASE_URL: postgres://tadas:tadas@postgres:5432/tadas?sslmode=disable
     ports:
@@ -77,6 +79,7 @@ services:
   valkey-admin:
     image: valkey/valkey-admin:1.1.1
     profiles: [devx]
+    restart: unless-stopped
     environment:
       DEPLOYMENT_MODE: Web
       VALKEY_HOST: valkey
@@ -90,6 +93,7 @@ services:
   elasticmq-ui:
     image: softwaremill/elasticmq-ui:1.7.1
     profiles: [devx]
+    restart: unless-stopped
     environment:
       SQS_ENDPOINT: http://elasticmq:9324
       AWS_REGION: us-east-1
@@ -105,6 +109,7 @@ services:
   jaeger:
     image: jaegertracing/jaeger:2.21.0
     profiles: [devx]
+    restart: unless-stopped
     ports:
       - "127.0.0.1:56686:16686"
       - "127.0.0.1:54318:4318"

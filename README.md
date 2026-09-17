@@ -19,9 +19,23 @@ make urls     # print the URLs and the sign-in again
 
 `make up` creates `.env` from `.env.example` if it is missing, and is safe
 to rerun: it rebuilds the app images from the working tree and seeds only
-once. Sign in to http://localhost:55173 as `owner@example.test` /
-`tadas-local`. The sections below are the same steps one at a time, and the
-host-process alternative for hot reload.
+once. Once it is up:
+
+| What | URL | Sign-in |
+|------|-----|---------|
+| Portal | http://localhost:55173 | `owner@example.test` / `tadas-local` |
+| API docs (Swagger UI) | http://127.0.0.1:8000/docs | |
+| pgweb (Postgres) | http://localhost:58081 | |
+| Valkey Admin | http://localhost:58080 | add a connection: host `valkey`, port `6379`, no username or password |
+| ElasticMQ UI (SQS) | http://localhost:53000 | |
+| Jaeger (traces) | http://localhost:56686 | |
+| MinIO console (S3) | http://localhost:59001 | `tadas` / `tadastadas` |
+
+For one service at a time (rebuild only the API, reset only the database,
+open `psql` or `valkey-cli`, follow logs) instead of a full `down`/`reset`,
+see [deployment/local/README.md](deployment/local/README.md). The sections
+below are the same steps one at a time, and the host-process alternative
+for hot reload.
 
 ## Set up
 
@@ -64,7 +78,7 @@ need no sign-in; they listen on 127.0.0.1 only.
 | Dashboard | URL | Shows |
 |-----------|-----|-------|
 | pgweb | http://localhost:58081 | Postgres: schemas `core`, `activity`, `queue`, `admin`; run SQL |
-| Valkey Admin | http://localhost:58080 | Valkey: keys, metrics, commands; connected to the local Valkey |
+| Valkey Admin | http://localhost:58080 | Valkey: keys, metrics, commands; add a connection to host `valkey`, port `6379`, no username or password |
 | ElasticMQ UI | http://localhost:53000 | SQS queues and their messages |
 | Jaeger | http://localhost:56686 | Traces, once processes export them (below) |
 
