@@ -12,6 +12,7 @@ from pathlib import Path
 import uvicorn
 
 from tadas.infra.impl.local import InfraLocalImpl
+from tadas.om.exceptions import Conflict
 from tadas.om.opcontext import AppContext, AppType
 from tadas.om.storage import migrate
 from tadas.om.storage.impl.memory import StorageMemoryImpl
@@ -57,6 +58,12 @@ def bootstrap(args: argparse.Namespace) -> int:
                 operator=args.operator,
                 app=AppContext(type=AppType.CLI, version=f"cli@{settings.version}"),
             )
+        except Conflict:
+            # The only conflict bootstrap raises is a taken slug.
+            if not args.if_absent:
+                raise
+            print(f"org {args.slug} already exists; nothing to do")
+            return 0
         finally:
             await container.close()
         print(f"bootstrapped org {org.slug} ({org.id}) with owner {ctx.user_id}")
@@ -101,6 +108,9 @@ def main(argv: list[str] | None = None) -> int:
     p_boot.add_argument("--password", required=True)
     p_boot.add_argument("--name", required=True)
     p_boot.add_argument("--operator", action="store_true")
+    p_boot.add_argument(
+        "--if-absent", action="store_true", help="succeed without changes when the slug exists"
+    )
 
     p_openapi = sub.add_parser("openapi", help="emit the OpenAPI document")
     p_openapi.add_argument("--out", default="-")

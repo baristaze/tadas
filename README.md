@@ -15,6 +15,7 @@ make setup        # Python and TypeScript dependencies
 cp .env.example .env
 make infra-up     # Postgres, Redis, ElasticMQ, MinIO on host ports 55432, 56379, 59324, 59000
 make migrate      # every role's migration chain
+make seed         # org "acme" with owner owner@example.test / tadas-local
 ```
 
 ## Run

@@ -4,7 +4,7 @@ SHELL := /bin/bash
 COMPOSE := docker compose -f deployment/local/docker-compose.yml
 ROLES := core activity queue admin
 
-.PHONY: help setup infra-up infra-down migrate migrate-check check lint format-check typecheck test-unit test-integration openapi
+.PHONY: help setup infra-up infra-down migrate seed migrate-check check lint format-check typecheck test-unit test-integration openapi
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-18s %s\n", $$1, $$2}'
@@ -21,6 +21,19 @@ infra-down: ## Stop the local stack and drop its volumes
 
 migrate: ## Apply every role's migration chain to the local database
 	uv run --package tadas-om python -m tadas.om.storage.migrate upgrade --all
+
+# Local-only sign-in; override any of these on the command line, e.g.
+# `make seed SEED_EMAIL=me@example.test`.
+SEED_ORG ?= Acme
+SEED_SLUG ?= acme
+SEED_NAME ?= Local Owner
+SEED_EMAIL ?= owner@example.test
+SEED_PASSWORD ?= tadas-local
+
+seed: ## Create a local org and its owner to sign in with; a no-op once it exists
+	uv run --package tadas-api tadas-api bootstrap --if-absent \
+		--org "$(SEED_ORG)" --slug "$(SEED_SLUG)" --name "$(SEED_NAME)" \
+		--email "$(SEED_EMAIL)" --password "$(SEED_PASSWORD)"
 
 # The ORM-versus-schema check needs a migrated database, which the fast gate
 # cannot reach, so `check` does not run it; CI's integration job runs it
