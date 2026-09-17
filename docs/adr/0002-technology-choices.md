@@ -14,7 +14,7 @@ substitutions:
 
 | Choice in the guideline               | Adopted                         |
 |---------------------------------------|---------------------------------|
-| Object model language and validation  | Python 3.13, Pydantic 2         |
+| Object model language and validation  | Python 3.14, Pydantic 2         |
 | Relational store, ORM, migration runner | Postgres 16, SQLAlchemy 2 (asyncpg), Alembic (runner only) |
 | Cache                                 | Redis (a hosted Redis in the cloud) |
 | Object store                          | S3 (MinIO locally)              |

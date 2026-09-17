@@ -54,7 +54,7 @@ class TopicsRedisImpl(TopicsInterface):
             try:
                 topic = Topics(channel[len(self._prefix) :])
                 payload = TOPIC_PAYLOADS[topic].model_validate(json.loads(message["data"]))
-            except (ValueError, KeyError):
+            except ValueError, KeyError:
                 log.warning("ignoring malformed message on %s", channel)
                 continue
             await self._subscribers.dispatch(topic, payload)

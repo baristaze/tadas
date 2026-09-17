@@ -1,7 +1,7 @@
 # Same shape as a service image, no exposed port. The healthcheck is the
 # worker's own `health` subcommand, which reads the liveness key the loop
 # heartbeats into the cache.
-FROM python:3.13-slim AS build
+FROM python:3.14-slim AS build
 COPY --from=ghcr.io/astral-sh/uv:0.10 /uv /usr/local/bin/uv
 ENV UV_LINK_MODE=copy UV_COMPILE_BYTECODE=1
 WORKDIR /app
@@ -15,7 +15,7 @@ COPY infra infra
 COPY workers/maintenance workers/maintenance
 RUN uv sync --frozen --no-dev --package tadas-maintenance
 
-FROM python:3.13-slim
+FROM python:3.14-slim
 RUN useradd --create-home --uid 10001 tadas
 WORKDIR /app
 COPY --from=build --chown=tadas:tadas /app /app

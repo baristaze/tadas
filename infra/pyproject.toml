@@ -2,7 +2,7 @@
 name = "tadas-infra"
 version = "0.1.0"
 description = "Tadas infrastructure capabilities: cache, buckets, topics, queues, secrets, observability."
-requires-python = ">=3.13"
+requires-python = ">=3.14"
 dependencies = [
     "tadas-om",
     "pydantic>=2.9",

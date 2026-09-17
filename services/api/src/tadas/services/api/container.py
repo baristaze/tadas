@@ -61,7 +61,7 @@ class AppContainer:
         self.rate_limits = rate_limits
 
     @classmethod
-    def build(cls, settings: ApiSettings) -> "AppContainer":
+    def build(cls, settings: ApiSettings) -> AppContainer:
         storage = StoragePostgresImpl(settings.role_urls())
         infra = InfraConfiguredImpl(settings)
         return cls.over(settings, storage, infra)
@@ -72,14 +72,14 @@ class AppContainer:
         storage: StorageInterface,
         infra: InfraInterface,
         settings: ApiSettings | None = None,
-    ) -> "AppContainer":
+    ) -> AppContainer:
         settings = settings or ApiSettings.model_validate({"environment": "test"})
         return cls.over(settings, storage, infra)
 
     @classmethod
     def over(
         cls, settings: ApiSettings, storage: StorageInterface, infra: InfraInterface
-    ) -> "AppContainer":
+    ) -> AppContainer:
         """Managers, then services, over whichever roots the caller chose."""
         managers = build_managers(storage, infra)
         services = build_services(managers, infra)

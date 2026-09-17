@@ -2,7 +2,7 @@
 name = "tadas-workspace"
 version = "0.1.0"
 description = "Tadas: a multi-tenant to-do application for teams of people and the programs that work alongside them."
-requires-python = ">=3.13"
+requires-python = ">=3.14"
 
 [tool.uv]
 package = false
