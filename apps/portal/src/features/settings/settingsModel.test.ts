@@ -1,6 +1,6 @@
 import type { ApiKeyView, MeView } from "@tadas/api-client";
 import { describe, expect, it } from "vitest";
-import { apiKeyRows, canManageKeys, headline, keyState, memberRows } from "./homeModel";
+import { apiKeyRows, canManageKeys, keyState, memberRows, signedInAs } from "./settingsModel";
 
 const now = new Date("2026-09-16T12:00:00Z");
 
@@ -23,7 +23,7 @@ const me: MeView = {
   app: "portal",
 };
 
-describe("home model", () => {
+describe("settings model", () => {
   it("derives the key state from revocation and expiry", () => {
     expect(keyState(key({}), now)).toBe("active");
     expect(keyState(key({ expires_at: "2026-09-01T00:00:00Z" }), now)).toBe("expired");
@@ -43,7 +43,7 @@ describe("home model", () => {
     expect(canManageKeys(me)).toBe(true);
     expect(canManageKeys({ ...me, permissions: ["read"] })).toBe(false);
     expect(canManageKeys(undefined)).toBe(false);
-    expect(headline(undefined)).toBe("Loading your workspace");
-    expect(headline(me)).toBe("Acme");
+    expect(signedInAs(undefined)).toBe("");
+    expect(signedInAs(me)).toBe("Signed in to Acme as Ann (owner)");
   });
 });

@@ -1,4 +1,4 @@
-// Pure: rows, formatting, and gating predicates for the home screen.
+// Pure: rows, formatting, and gating predicates for the settings screen.
 import type { ApiKeyView, MeView, UserView } from "@tadas/api-client";
 
 export interface MemberRow {
@@ -51,7 +51,7 @@ export function canManageKeys(me: MeView | undefined): boolean {
   return me?.permissions.includes("manage_keys") ?? false;
 }
 
-export function headline(me: MeView | undefined): string {
-  if (!me) return "Loading your workspace";
-  return `${me.org.name}`;
+export function signedInAs(me: MeView | undefined): string {
+  if (!me) return "";
+  return `Signed in to ${me.org.name} as ${me.user.display_name} (${me.role})`;
 }

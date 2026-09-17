@@ -306,11 +306,28 @@ export interface paths {
         };
         /** Get Task */
         get: operations["get_task_v1_tasks__task_id__get"];
-        /** Update Task */
-        put: operations["update_task_v1_tasks__task_id__put"];
+        put?: never;
         post?: never;
         /** Delete Task */
         delete: operations["delete_task_v1_tasks__task_id__delete"];
+        options?: never;
+        head?: never;
+        /** Update Task */
+        patch: operations["update_task_v1_tasks__task_id__patch"];
+        trace?: never;
+    };
+    "/v1/tasks/{task_id}/move": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Move Task */
+        post: operations["move_task_v1_tasks__task_id__move_post"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -347,16 +364,13 @@ export interface components {
         };
         /** AddTaskRequest */
         AddTaskRequest: {
+            /** Assignee Id */
+            assignee_id?: string | null;
             /**
              * Notes
              * @default
              */
             notes: string;
-            /**
-             * Status
-             * @default open
-             */
-            status: string;
             /** Title */
             title: string;
         };
@@ -521,6 +535,14 @@ export interface components {
              */
             user_id: string;
         };
+        /**
+         * MoveTaskRequest
+         * @description Places an open task right after `after_id`; null puts it at the top.
+         */
+        MoveTaskRequest: {
+            /** After Id */
+            after_id?: string | null;
+        };
         /** OrgView */
         OrgView: {
             /**
@@ -574,8 +596,32 @@ export interface components {
             /** Revoked At */
             revoked_at: string | null;
         };
+        /**
+         * TaskPageView
+         * @description One page of a task list. `next_cursor` fetches the next page of the done
+         *     list; it is null on the last page and always for the open list.
+         */
+        TaskPageView: {
+            /** Items */
+            items: components["schemas"]["TaskView"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+        };
+        /**
+         * TaskScope
+         * @description Which tasks a list shows. The org is the team.
+         * @enum {string}
+         */
+        TaskScope: "mine" | "team";
+        /**
+         * TaskStatus
+         * @enum {string}
+         */
+        TaskStatus: "open" | "done";
         /** TaskView */
         TaskView: {
+            /** Assignee Id */
+            assignee_id: string | null;
             /**
              * Created At
              * Format: date-time
@@ -595,8 +641,9 @@ export interface components {
             id: string;
             /** Notes */
             notes: string;
-            /** Status */
-            status: string;
+            /** Position */
+            position: number;
+            status: components["schemas"]["TaskStatus"];
             /** Title */
             title: string;
             /**
@@ -621,14 +668,19 @@ export interface components {
         UpdateMembershipRequest: {
             role: components["schemas"]["Role"];
         };
-        /** UpdateTaskRequest */
+        /**
+         * UpdateTaskRequest
+         * @description A partial update: absent fields are kept. An explicit null
+         *     `assignee_id` unassigns the task.
+         */
         UpdateTaskRequest: {
+            /** Assignee Id */
+            assignee_id?: string | null;
             /** Notes */
-            notes: string;
-            /** Status */
-            status: string;
+            notes?: string | null;
+            status?: components["schemas"]["TaskStatus"] | null;
             /** Title */
-            title: string;
+            title?: string | null;
         };
         /** UserView */
         UserView: {
@@ -1333,6 +1385,9 @@ export interface operations {
     list_tasks_v1_tasks_get: {
         parameters: {
             query?: {
+                status?: components["schemas"]["TaskStatus"];
+                scope?: components["schemas"]["TaskScope"];
+                cursor?: string | null;
                 limit?: number;
             };
             header?: {
@@ -1351,7 +1406,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["TaskView"][];
+                    "application/json": components["schemas"]["TaskPageView"];
                 };
             };
             /** @description Validation Error */
@@ -1438,7 +1493,42 @@ export interface operations {
             };
         };
     };
-    update_task_v1_tasks__task_id__put: {
+    delete_task_v1_tasks__task_id__delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
+            };
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_task_v1_tasks__task_id__patch: {
         parameters: {
             query?: never;
             header?: {
@@ -1477,7 +1567,7 @@ export interface operations {
             };
         };
     };
-    delete_task_v1_tasks__task_id__delete: {
+    move_task_v1_tasks__task_id__move_post: {
         parameters: {
             query?: never;
             header?: {
@@ -1490,7 +1580,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MoveTaskRequest"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {

@@ -1,0 +1,25 @@
+# Local scrape targets. Each process is listed twice: as a container of the
+# full compose stack, and on the host for scripts/dev.sh. Whichever is not
+# running shows as down (up == 0), which is expected.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: api
+    static_configs:
+      - targets: ["api:8000"]
+        labels: {runs_in: container}
+      - targets: ["host.docker.internal:8000"]
+        labels: {runs_in: host}
+
+  - job_name: maintenance
+    static_configs:
+      - targets: ["maintenance:9464"]
+        labels: {runs_in: container}
+      - targets: ["host.docker.internal:9464"]
+        labels: {runs_in: host}
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]

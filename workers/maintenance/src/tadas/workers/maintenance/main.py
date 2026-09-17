@@ -8,9 +8,15 @@ import signal
 import sys
 from datetime import timedelta
 
+from prometheus_client import start_http_server
+
 from tadas.infra.cache import CacheScope
 from tadas.infra.impl.configured import InfraConfiguredImpl
-from tadas.infra.observability import configure_logging, configure_tracing
+from tadas.infra.observability import (
+    configure_error_reporting,
+    configure_logging,
+    configure_tracing,
+)
 from tadas.infra.trust import install_trust_store
 from tadas.om.base import EMPTY_UUID
 from tadas.om.work.types.work_item import WorkKind
@@ -49,7 +55,12 @@ async def serve() -> int:
     settings = MaintenanceSettings()
     configure_logging(settings.log_level, settings.log_json)
     install_trust_store()
+    configure_error_reporting(
+        settings.sentry_dsn, settings.environment, settings.service_name, settings.version
+    )
     configure_tracing(settings.otel_endpoint, settings.service_name)
+    # The worker's /metrics, for Prometheus locally and the collector sidecar in the cloud.
+    metrics_server, _ = start_http_server(settings.metrics_port, settings.metrics_host)
     container = WorkerContainer.build(settings)
     await container.start()
     loop = build_loop(container)
@@ -60,6 +71,7 @@ async def serve() -> int:
         await loop.run()
     finally:
         await container.close()
+        metrics_server.shutdown()
     log.info("%s stopped", settings.worker_id)
     return 0
 

@@ -2,11 +2,13 @@
 # Application processes run on the host; see scripts/dev.sh.
 # Host ports sit in the 5xxxx range so the stack coexists with other
 # local stacks; inside the network the containers use their own ports.
+# The `devx` profile adds developer dashboards over the same services:
+#   docker compose -f deployment/local/docker-compose.yml --profile devx up -d
 name: tadas
 
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:18-alpine
     environment:
       POSTGRES_USER: tadas
       POSTGRES_PASSWORD: tadas
@@ -14,36 +16,36 @@ services:
     ports:
       - "127.0.0.1:55432:5432"
     volumes:
-      - postgres:/var/lib/postgresql/data
+      - postgres:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U tadas -d tadas"]
       interval: 2s
       timeout: 2s
       retries: 30
 
-  redis:
-    image: redis:7-alpine
+  valkey:
+    image: valkey/valkey:9.1-alpine
     ports:
       - "127.0.0.1:56379:6379"
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "valkey-cli", "ping"]
       interval: 2s
       timeout: 2s
       retries: 30
 
   elasticmq:
-    image: softwaremill/elasticmq-native:1.6.9
+    image: softwaremill/elasticmq-native:1.7.1
     ports:
       - "127.0.0.1:59324:9324"
-      - "127.0.0.1:59325:9325"
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1:9325/ >/dev/null || exit 1"]
+      # 1.7 dropped the built-in stats UI on 9325; probe the SQS API itself.
+      test: ["CMD-SHELL", "wget -q -O- 'http://127.0.0.1:9324/?Action=ListQueues' >/dev/null || exit 1"]
       interval: 2s
       timeout: 2s
       retries: 30
 
   minio:
-    image: quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: tadas
@@ -58,6 +60,149 @@ services:
       interval: 2s
       timeout: 2s
       retries: 30
+
+  # Developer dashboards (profile devx). Local only; none of them has auth.
+  # They restart on their own when a service they watch is reset under them.
+
+  pgweb:
+    image: sosedoff/pgweb:0.17.0
+    profiles: [devx]
+    restart: unless-stopped
+    environment:
+      PGWEB_DATABASE_URL: postgres://tadas:tadas@postgres:5432/tadas?sslmode=disable
+    ports:
+      - "127.0.0.1:58081:8081"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  valkey-admin:
+    image: valkey/valkey-admin:1.1.1
+    profiles: [devx]
+    restart: unless-stopped
+    environment:
+      DEPLOYMENT_MODE: Web
+      VALKEY_HOST: valkey
+      VALKEY_PORT: "6379"
+    ports:
+      - "127.0.0.1:58080:8080"
+    depends_on:
+      valkey:
+        condition: service_healthy
+
+  elasticmq-ui:
+    image: softwaremill/elasticmq-ui:1.7.1
+    profiles: [devx]
+    restart: unless-stopped
+    environment:
+      SQS_ENDPOINT: http://elasticmq:9324
+      AWS_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: local
+      AWS_SECRET_ACCESS_KEY: local
+    ports:
+      - "127.0.0.1:53000:3000"
+    depends_on:
+      elasticmq:
+        condition: service_healthy
+
+  # Traces: set TADAS_OTEL_ENDPOINT=http://127.0.0.1:54318 for host processes.
+  jaeger:
+    image: jaegertracing/jaeger:2.21.0
+    profiles: [devx]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:56686:16686"
+      - "127.0.0.1:54318:4318"
+
+  # Metrics: Prometheus scrapes the api and the maintenance worker, as
+  # containers and as host processes; Grafana reads Prometheus and Jaeger.
+  prometheus:
+    image: prom/prometheus:v3.14.0
+    profiles: [devx]
+    restart: unless-stopped
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "127.0.0.1:59090:9090"
+
+  grafana:
+    image: grafana/grafana:13.2.2
+    profiles: [devx]
+    restart: unless-stopped
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/tadas-overview.json
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "127.0.0.1:53001:3000"
+    depends_on:
+      - prometheus
+
+  # Errors: GlitchTip, a Sentry-compatible backend, in its own database on the
+  # stack's Postgres and with Postgres for its queue (VALKEY_URL empty). The
+  # two one-shot services create that database and seed an admin and a
+  # project whose DSN key is fixed:
+  #   http://0123456789abcdef0123456789abcdef@localhost:58000/1
+  glitchtip-db:
+    image: postgres:18-alpine
+    profiles: [devx]
+    environment:
+      PGPASSWORD: tadas
+    command:
+      - sh
+      - -c
+      - >-
+        psql -h postgres -U tadas -d tadas -tAc "select 1 from pg_database where datname = 'glitchtip'" | grep -q 1
+        || psql -h postgres -U tadas -d tadas -c "create database glitchtip"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  glitchtip:
+    image: glitchtip/glitchtip:6.2.6
+    profiles: [devx]
+    restart: unless-stopped
+    command: ./bin/run-all-in-one.sh
+    environment: &glitchtip-env
+      DATABASE_URL: postgres://tadas:tadas@postgres:5432/glitchtip
+      VALKEY_URL: ""
+      SECRET_KEY: local-only-not-a-secret-glitchtip-key
+      GLITCHTIP_DOMAIN: http://localhost:58000
+      DEFAULT_FROM_EMAIL: glitchtip@example.test
+      EMAIL_URL: consolemail://
+      PORT: "8000"
+    healthcheck:
+      test: ["CMD", "python", "healthcheck.py"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+    ports:
+      - "127.0.0.1:58000:8000"
+    depends_on:
+      glitchtip-db:
+        condition: service_completed_successfully
+
+  glitchtip-seed:
+    image: glitchtip/glitchtip:6.2.6
+    profiles: [devx]
+    command: ["sh", "-c", "./manage.py shell < /seed/seed.py"]
+    environment:
+      <<: *glitchtip-env
+      GLITCHTIP_ADMIN_EMAIL: admin@example.test
+      GLITCHTIP_ADMIN_PASSWORD: tadas-local
+      GLITCHTIP_PROJECT_KEY: 0123456789abcdef0123456789abcdef
+      GLITCHTIP_EXPECTED_DSN: http://0123456789abcdef0123456789abcdef@localhost:58000/1
+    volumes:
+      - ./glitchtip/seed.py:/seed/seed.py:ro
+    depends_on:
+      glitchtip:
+        condition: service_healthy
 
 volumes:
   postgres:

@@ -1,12 +1,15 @@
-"""Logging with the request-id filter, tracing, and the process metrics.
-Configured once at the app container's boot and never per module."""
+"""Logging with the request-id filter, error reporting, tracing, and the
+process metrics. Configured once at the app container's boot and never per
+module."""
 
 import json
 import logging
 import sys
 from contextvars import ContextVar
 from datetime import UTC, datetime
+from typing import Any
 
+import sentry_sdk
 from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.sdk.resources import Resource
@@ -67,6 +70,33 @@ def configure_logging(level: str, json_logs: bool) -> None:
         )
     root.addHandler(handler)
     root.setLevel(level.upper())
+
+
+def configure_error_reporting(
+    dsn: str | None, environment: str, service_name: str, release: str | None = None
+) -> None:
+    """Sentry-compatible reporting (GlitchTip locally), only when a DSN is set.
+    Unhandled exceptions and ERROR log records become events, tagged with the
+    service and the request id; traces stay with OpenTelemetry."""
+    if not dsn:
+        return
+
+    def tag_request_id(event: Any, hint: Any) -> Any:
+        request_id = request_id_var.get()
+        if request_id:
+            event.setdefault("tags", {})["request_id"] = request_id
+        return event
+
+    sentry_sdk.init(
+        dsn=dsn,
+        environment=environment,
+        release=f"{service_name}@{release}" if release else None,
+        server_name=service_name,
+        traces_sample_rate=0.0,
+        send_default_pii=False,
+        before_send=tag_request_id,
+    )
+    sentry_sdk.set_tag("service", service_name)
 
 
 def configure_tracing(endpoint: str | None, service_name: str) -> None:

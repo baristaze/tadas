@@ -11,6 +11,8 @@ export const tokens = {
     danger: "#b42318",
     warningBg: "#fff4e5",
     warningText: "#7a4a00",
+    live: "#1f9d55",
+    pending: "#e8850c",
   },
   space: { xs: "4px", sm: "8px", md: "16px", lg: "24px", xl: "40px" },
   radius: { sm: "4px", md: "8px" },

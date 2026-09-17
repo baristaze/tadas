@@ -164,6 +164,57 @@ class TenancyManagerImpl(TenancyManagerInterface):
         )
         return ctx, org
 
+    async def add_member(
+        self,
+        slug: str,
+        email: str,
+        password: str,
+        display_name: str,
+        role: Role,
+    ) -> tuple[User, bool]:
+        org = await self._storage.read_org_by_slug(slug)
+        if org is None or org.deleted_at is not None:
+            raise NotFound(f"org {slug!r} not found")
+        now = utcnow()
+        identity = await self._storage.read_identity_by_email(email)
+        if identity is None:
+            identity_id = new_id()
+            identity = Identity(
+                id=identity_id,
+                created_at=now,
+                updated_at=now,
+                created_by=identity_id,
+                email=email,
+                password_hash=hash_password(password, secrets.token_bytes(16)),
+            )
+            await self._storage.write_identity(identity)
+        for org_id, existing in await self._storage.read_users_by_identity(identity.id):
+            if org_id == org.id and existing.deleted_at is None:
+                return existing, False
+        user_id = new_id()
+        user = User(
+            id=user_id,
+            created_at=now,
+            updated_at=now,
+            created_by=user_id,
+            identity_id=identity.id,
+            email=email,
+            display_name=display_name,
+        )
+        await self._storage.write_user(org.id, user)
+        await self._storage.write_membership(
+            org.id,
+            Membership(
+                id=new_id(),
+                created_at=now,
+                updated_at=now,
+                created_by=user_id,
+                user_id=user_id,
+                role=role,
+            ),
+        )
+        return user, True
+
     async def login(self, email: str, password: str) -> IssuedLogin:
         identity = await self._storage.read_identity_by_email(email)
         if identity is None or not verify_password(password, identity.password_hash):
@@ -375,6 +426,13 @@ class TenancyManagerImpl(TenancyManagerInterface):
     async def get_users(self, ctx: OpContext, limit: int) -> list[User]:
         ctx.require(Permission.READ)
         return await self._storage.read_users(ctx.org_id, self._clamp(limit))
+
+    async def get_user(self, ctx: OpContext, user_id: UUID) -> User:
+        ctx.require(Permission.READ)
+        user = await self._storage.read_user(ctx.org_id, user_id)
+        if user is None or user.deleted_at is not None:
+            raise NotFound(f"user {user_id} not found")
+        return user
 
     # Memberships.
 

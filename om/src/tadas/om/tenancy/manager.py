@@ -51,6 +51,23 @@ class TenancyManagerInterface:
         """
         ...
 
+    async def add_member(
+        self,
+        slug: str,
+        email: str,
+        password: str,
+        display_name: str,
+        role: Role,
+    ) -> tuple[User, bool]:
+        """Platform-internal: seeds a person into an existing org, for local and
+        test environments; there is no invitation flow yet.
+
+        Creates the identity if the email is new (an existing identity keeps
+        its password), then the user and membership. A person who is already
+        a member is left as is. Returns the user and whether it was created.
+        """
+        ...
+
     async def login(self, email: str, password: str) -> IssuedLogin:
         """Platform-internal: verifies a sign-in and issues a credential that carries no tenant."""
         ...
@@ -112,6 +129,8 @@ class TenancyManagerInterface:
         ...
 
     async def get_users(self, ctx: OpContext, limit: int) -> list[User]: ...
+
+    async def get_user(self, ctx: OpContext, user_id: UUID) -> User: ...
 
     # Memberships.
 

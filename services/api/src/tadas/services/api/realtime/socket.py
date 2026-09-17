@@ -77,7 +77,7 @@ async def channel(
                 if (unsubscribe := subscriptions.pop(topic, None)) is not None:
                     unsubscribe()
                 outbox.offer(UnsubscribedEnvelope(topic=topic.value))
-    except (WebSocketDisconnect, TimeoutError):
+    except WebSocketDisconnect, TimeoutError:
         pass
     finally:
         for unsubscribe in subscriptions.values():

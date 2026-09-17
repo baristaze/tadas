@@ -1,7 +1,7 @@
 # Two stages, a locked install of one workspace package, a non-root user,
 # and a healthcheck on /healthz.
-FROM python:3.13-slim AS build
-COPY --from=ghcr.io/astral-sh/uv:0.10 /uv /usr/local/bin/uv
+FROM python:3.14-slim AS build
+COPY --from=ghcr.io/astral-sh/uv:0.12 /uv /usr/local/bin/uv
 ENV UV_LINK_MODE=copy UV_COMPILE_BYTECODE=1
 WORKDIR /app
 COPY pyproject.toml uv.lock .python-version ./
@@ -14,7 +14,7 @@ COPY infra infra
 COPY services/api services/api
 RUN uv sync --frozen --no-dev --package tadas-api
 
-FROM python:3.13-slim
+FROM python:3.14-slim
 RUN useradd --create-home --uid 10001 tadas
 WORKDIR /app
 COPY --from=build --chown=tadas:tadas /app /app

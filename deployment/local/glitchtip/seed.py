@@ -1,0 +1,41 @@
+"""Seeds the local GlitchTip once it has migrated: an admin, an organization,
+a team, and the one project every Tadas process reports to, with a fixed DSN
+key so the DSNs in .env.example and the compose files work without clicking
+through the UI. Idempotent; run by the glitchtip-seed one-shot service."""
+
+import os
+import uuid
+
+from apps.organizations_ext.constants import OrganizationUserRole
+from apps.organizations_ext.models import Organization, OrganizationUser
+from apps.projects.models import Project, ProjectKey
+from apps.teams.models import Team
+from apps.users.models import User
+
+EMAIL = os.environ["GLITCHTIP_ADMIN_EMAIL"]
+PASSWORD = os.environ["GLITCHTIP_ADMIN_PASSWORD"]
+KEY = uuid.UUID(os.environ["GLITCHTIP_PROJECT_KEY"])
+EXPECTED_DSN = os.environ["GLITCHTIP_EXPECTED_DSN"]
+
+user = User.objects.filter(email=EMAIL).first() or User.objects.create_superuser(
+    email=EMAIL, password=PASSWORD
+)
+org, _ = Organization.objects.get_or_create(slug="tadas", defaults={"name": "Tadas"})
+if not OrganizationUser.objects.filter(organization=org, user=user).exists():
+    org.add_user(user, role=OrganizationUserRole.OWNER)
+membership = OrganizationUser.objects.get(organization=org, user=user)
+team, _ = Team.objects.get_or_create(organization=org, slug="tadas")
+team.members.add(membership)
+project, _ = Project.objects.get_or_create(
+    organization=org, slug="tadas", defaults={"name": "tadas", "platform": "python"}
+)
+team.projects.add(project)
+if not ProjectKey.objects.filter(public_key=KEY).exists():
+    # Saving a project creates a random key; the fixed one replaces it.
+    ProjectKey.objects.filter(project=project).delete()
+    ProjectKey.objects.create(project=project, public_key=KEY, name="local")
+
+dsn = ProjectKey.objects.get(public_key=KEY).get_dsn()
+print(f"glitchtip seeded: {EMAIL}, DSN {dsn}")
+if dsn != EXPECTED_DSN:
+    raise SystemExit(f"DSN is {dsn}, expected {EXPECTED_DSN}: the project id moved")

@@ -27,7 +27,7 @@ class WorkerContainer:
         self.managers = managers
 
     @classmethod
-    def build(cls, settings: MaintenanceSettings) -> "WorkerContainer":
+    def build(cls, settings: MaintenanceSettings) -> WorkerContainer:
         storage = StoragePostgresImpl(settings.role_urls())
         infra = InfraConfiguredImpl(settings)
         return cls(settings, storage, infra, build_managers(storage, infra))
@@ -38,7 +38,7 @@ class WorkerContainer:
         storage: StorageInterface,
         infra: InfraInterface,
         settings: MaintenanceSettings | None = None,
-    ) -> "WorkerContainer":
+    ) -> WorkerContainer:
         settings = settings or MaintenanceSettings.model_validate(
             {"environment": "test", "worker_id": "maintenance-test"}
         )

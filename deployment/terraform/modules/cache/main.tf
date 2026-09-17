@@ -1,5 +1,5 @@
-# Redis serves every cache scope and the topic bus (pub/sub). In transit and
-# at rest encryption are on, so the URL is rediss://.
+# Valkey serves every cache scope and the topic bus (pub/sub). In transit and
+# at rest encryption are on, so the URL is valkeys://.
 
 locals {
   tags = { "tadas:environment" = var.environment }
@@ -15,9 +15,9 @@ resource "aws_elasticache_replication_group" "this" {
   replication_group_id = "tadas-${var.environment}"
   description          = "Tadas ${var.environment}: cache scopes and the topic bus"
 
-  engine               = "redis"
+  engine               = "valkey"
   engine_version       = var.engine_version
-  parameter_group_name = "default.redis7"
+  parameter_group_name = "default.valkey9"
   node_type            = var.node_type
   num_cache_clusters   = var.node_count
   port                 = 6379

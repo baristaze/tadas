@@ -1,5 +1,5 @@
 line-length = 100
-target-version = "py313"
+target-version = "py314"
 src = ["om/src", "infra/src", "services/api/src", "workers/maintenance/src"]
 
 [lint]

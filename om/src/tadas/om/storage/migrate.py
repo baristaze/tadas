@@ -6,6 +6,7 @@ Run as a module: `python -m tadas.om.storage.migrate upgrade --all`.
 
 import argparse
 import asyncio
+import importlib
 import re
 import sys
 from collections.abc import Callable
@@ -20,7 +21,7 @@ from alembic.script import ScriptDirectory
 from sqlalchemy import Connection, MetaData
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from tadas.om.storage.roles import DatabaseRole, role_for
+from tadas.om.storage.roles import TABLE_ROLES, DatabaseRole, role_for
 from tadas.om.storage.settings import StorageSettings
 from tadas.om.storage.tables.base import Base
 
@@ -79,7 +80,24 @@ def run_sql(role: DatabaseRole, filename: str) -> None:
         bind.exec_driver_sql(statement)
 
 
+def load_tables() -> None:
+    """Imports every namespace's table modules so Base.metadata holds them all.
+    Without this the CLI compares an empty metadata and reports every migrated
+    table as drift; a table named in TABLE_ROLES but never defined is refused."""
+    om_root = Path(__file__).resolve().parents[1]
+    for path in sorted(om_root.glob("*/storage/tables/*.py")):
+        if path.stem != "__init__":
+            relative = path.relative_to(om_root).with_suffix("")
+            importlib.import_module(f"tadas.om.{'.'.join(relative.parts)}")
+    missing = sorted(
+        name for name in TABLE_ROLES if name not in {t.name for t in Base.metadata.tables.values()}
+    )
+    if missing:
+        raise RuntimeError(f"tables in TABLE_ROLES without an ORM definition: {missing}")
+
+
 def role_metadata(role: DatabaseRole) -> MetaData:
+    load_tables()
     metadata = MetaData(naming_convention=Base.metadata.naming_convention)
     for table in Base.metadata.tables.values():
         if table.schema == role.value:

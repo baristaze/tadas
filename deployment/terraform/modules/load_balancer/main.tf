@@ -83,3 +83,27 @@ resource "aws_lb_listener" "http_forward" {
     target_group_arn = aws_lb_target_group.api.arn
   }
 }
+
+# /metrics is for the collector sidecar, which scrapes it over localhost inside
+# the task; the internet gets a 404 before the request reaches a target.
+resource "aws_lb_listener_rule" "hide_metrics" {
+  listener_arn = local.https ? aws_lb_listener.https[0].arn : aws_lb_listener.http_forward[0].arn
+  priority     = 1
+  tags         = local.tags
+
+  condition {
+    path_pattern {
+      values = ["/metrics", "/metrics/*"]
+    }
+  }
+
+  action {
+    type = "fixed-response"
+
+    fixed_response {
+      content_type = "text/plain"
+      message_body = "Not Found"
+      status_code  = "404"
+    }
+  }
+}

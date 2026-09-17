@@ -2,11 +2,11 @@
 name = "tadas-maintenance"
 version = "0.1.0"
 description = "The Tadas maintenance worker: the claim loop and the sweep, ready for real kinds."
-requires-python = ">=3.13"
+requires-python = ">=3.14"
 dependencies = [
     "tadas-om",
     "tadas-infra",
-    "pydantic-settings>=2.6",
+    "pydantic-settings>=2.15",
 ]
 
 [project.scripts]

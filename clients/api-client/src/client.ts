@@ -39,6 +39,7 @@ export interface ApiClient {
   request<T>(method: string, path: string, body?: unknown, options?: RequestOptions): Promise<T>;
   get<T>(path: string, options?: RequestOptions): Promise<T>;
   post<T>(path: string, body?: unknown, options?: RequestOptions): Promise<T>;
+  patch<T>(path: string, body?: unknown, options?: RequestOptions): Promise<T>;
   del<T>(path: string, options?: RequestOptions): Promise<T>;
   websocketUrl(path: string): string;
 }
@@ -99,6 +100,7 @@ export function createClient(options: ClientOptions): ApiClient {
     request,
     get: (path, requestOptions) => request("GET", path, undefined, requestOptions),
     post: (path, body, requestOptions) => request("POST", path, body, requestOptions),
+    patch: (path, body, requestOptions) => request("PATCH", path, body, requestOptions),
     del: (path, requestOptions) => request("DELETE", path, undefined, requestOptions),
     websocketUrl: (path) => baseUrl.replace(/^http/, "ws") + path,
   };

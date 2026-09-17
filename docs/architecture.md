@@ -31,16 +31,16 @@ have chains today.
 
 The `tadas-infra` distribution fronts cache, buckets, topics, queues,
 and secrets with interfaces, each with a local or memory impl and a
-cloud impl (Redis, S3, SQS, Secrets Manager). Topics today:
+cloud impl (Valkey, S3, SQS, Secrets Manager). Topics today:
 `work_available` and `entity_changed`. Every capability interface
 declares `start()` and `close()`; the roots call them unconditionally
-and only the Redis topic listener does anything in them.
+and only the Valkey topic listener does anything in them.
 
 - The queue impls count `sent`, `received`, `deleted`, and, in the
   memory twin where the transition is visible, `dead_lettered` on the
   outcome counter, with a log line naming the message and the queue;
   the twin does not deduplicate on `dedup_id`, exactly like SQS. The
-  cache impls count `hit` and `miss` on `get`, and Redis `unreachable`.
+  cache impls count `hit` and `miss` on `get`, and Valkey `unreachable`.
 - The AWS impls translate every driver error into `BackendFailed`, an
   `InfraException` leaf (`tadas.infra.exceptions`), through the one
   module that names botocore (`tadas.infra.aws_errors`); not-found
@@ -62,43 +62,66 @@ everything in-process for tests.
   idempotency), routers for tenancy, tasks, and the operator plane
   under `/v1/admin/*`, health and metrics outside `/v1`, and the
   realtime channel at `/v1/realtime` opened with a single-use ticket.
-  `tadas-api serve | migrate | bootstrap | openapi`.
+  `tadas-api serve | migrate | bootstrap | add-member | openapi`
+  (`bootstrap` and `add-member` are what `make seed` runs).
 - `workers/maintenance` (`tadas-maintenance`): the claim loop for kind
   `NOOP`, lease renewal and self-fencing, a liveness heartbeat in the
   cache, and the maintenance sweep (requeue stale leases, one service
   context per live tenant). `tadas-maintenance serve | health`: the
   image's `HEALTHCHECK` runs `health`, which reads the serving worker's
   liveness key through the same cache and exits non-zero when it is
-  missing.
+  missing. It serves its own `/metrics` on `TADAS_METRICS_PORT` (9464).
+- Every Python process boots error reporting (the Sentry SDK, on only when
+  `TADAS_SENTRY_DSN` is set: unhandled exceptions and ERROR log lines,
+  tagged with `service` and `request_id`), tracing (OpenTelemetry, on only
+  when `TADAS_OTEL_ENDPOINT` is set), and Prometheus metrics, all from
+  `tadas.infra.observability`.
 - `apps/portal` (`@tadas/portal`): React, Vite, TanStack Query,
-  Zustand; sign-in, the home screen (members, api keys), and one
-  realtime channel that invalidates queries by entity name.
+  Zustand; sign-in, the tasks screen at `/` (My and Team's tasks, open in
+  manual order, done newest first with Show more, inline edit, drag to
+  reorder), settings at `/settings` (members, api keys, sign-out), and one
+  realtime channel that invalidates queries by entity name. Errors go to
+  the Sentry-compatible backend named by `VITE_SENTRY_DSN`, through every
+  route's `errorElement` and React's root error hooks.
 - `clients/api-client` (`@tadas/api-client`): the committed
   `openapi.json`, generated types behind a facade, one transport
   client.
 
 ## Deployment (`deployment/`)
 
-- `local/`: the compose stack (Postgres, Redis, ElasticMQ, MinIO) and a
-  second file that adds the application containers.
+- `local/`: the compose stack (Postgres, Valkey, ElasticMQ, MinIO, and,
+  under the `devx` profile, developer dashboards plus Prometheus, Grafana,
+  Jaeger, and a seeded GlitchTip) and a second file that adds the
+  application containers, the portal among them.
 - `docker/`: one two-stage image per process, non-root, with a
   healthcheck (`/healthz` for the API, `tadas-maintenance health` for
-  the worker).
+  the worker, `/` for the portal's nginx).
 - `terraform/`: every cloud resource. `modules/` holds one module per
   resource family (`network`, `cluster`, `database`, `cache`, `queue`,
   `buckets`, `secrets`, `load_balancer`, `service`); `environments/dev`
   and `environments/prod` instantiate the same graph and differ only in
   variables, including the image digests; `shared/` holds the registry,
   the state bucket, and the deploy role. The worker's service instance
-  caps a rollout at 100% of desired because a worker holds leases. The
+  caps a rollout at 100% of desired because a worker holds leases. Every
+  task runs an ADOT collector sidecar that scrapes the process's
+  `/metrics` into CloudWatch (namespace `Tadas`) and forwards its traces to
+  X-Ray; the load balancer answers `/metrics` with a 404. Errors report to
+  the DSN in the `<prefix>sentry_dsn` secret, which starts as `off`. The
   module README explains state and credentials.
 - `.github/workflows/ci.yml`: the fast gate, the integration job (which
   runs `make migrate-check` right after `make migrate`), an image build
   per Dockerfile, and `terraform fmt -check` plus `validate` per root.
-  `deploy.yml` builds and pushes both images by digest, applies dev,
-  runs the migration as a one-off task (`scripts/cloud_migrate.sh`),
-  and then, behind the `production` environment's approval, applies
-  production with the same digests.
+  `deploy.yml` builds and pushes both images by digest and the portal
+  once, applies dev, runs the migration as a one-off task
+  (`scripts/cloud_migrate.sh`), publishes the portal
+  (`scripts/deploy_portal.sh`), and then, behind the `production`
+  environment's approval, applies production with the same digests and
+  publishes the same portal files.
+- The portal in the cloud: a private S3 bucket behind CloudFront, which
+  also forwards `/v1/*` to the load balancer, so the portal and the API
+  share one HTTPS origin. The portal reads `/config.json`, written per
+  environment by Terraform, before it renders; locally it falls back to
+  the `VITE_` build variables.
 
 ## Checks
 

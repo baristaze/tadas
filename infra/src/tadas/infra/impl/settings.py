@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ENVIRONMENTS = frozenset({"local", "test", "dev", "staging", "production"})
@@ -33,9 +33,9 @@ class InfraSettings(BaseSettings):
 
     environment: str = "local"
 
-    cache_backend: Literal["memory", "redis"] = "memory"
-    topics_backend: Literal["memory", "redis"] = "memory"
-    redis_url: str = "redis://127.0.0.1:56379/0"
+    cache_backend: Literal["memory", "valkey"] = "memory"
+    topics_backend: Literal["memory", "valkey"] = "memory"
+    valkey_url: str = "valkey://127.0.0.1:56379/0"
 
     buckets_backend: Literal["local", "s3"] = "local"
     buckets_root: Path = Path(".local/buckets")
@@ -60,6 +60,15 @@ class InfraSettings(BaseSettings):
     log_level: str = "INFO"
     log_json: bool = False
     otel_endpoint: str | None = None
+    sentry_dsn: str | None = None
+
+    @field_validator("sentry_dsn")
+    @classmethod
+    def _dsn_off_is_none(cls, value: str | None) -> str | None:
+        """Empty or "off" means no reporting; the cloud secret starts as "off"."""
+        if value is None or value.strip().lower() in ("", "off"):
+            return None
+        return value
 
     @property
     def is_known_environment(self) -> bool:

@@ -8,8 +8,8 @@ from tadas.infra.impl.settings import InfraSettings
 
 CLOUD_BACKENDS = {
     "secrets_backend": "aws",
-    "cache_backend": "redis",
-    "topics_backend": "redis",
+    "cache_backend": "valkey",
+    "topics_backend": "valkey",
     "buckets_backend": "s3",
     "queues_backend": "sqs",
 }
@@ -71,14 +71,14 @@ async def test_local_environment_builds_local_impls(tmp_path: Path) -> None:
 def test_cloud_backends_are_constructed_without_connecting(tmp_path: Path) -> None:
     infra = InfraConfiguredImpl(local_settings(tmp_path, **CLOUD_BACKENDS))
     assert infra.describe() == [
-        "cache=redis",
-        "topics=redis",
+        "cache=valkey",
+        "topics=valkey",
         "buckets=s3(us-east-1)",
         "queues=sqs(us-east-1)",
         "secrets=aws(us-east-1)",
     ]
     assert (
-        infra.get_cache(CacheScope.NETWORK_RESPONSE).describe() == "cache[network_response]=redis"
+        infra.get_cache(CacheScope.NETWORK_RESPONSE).describe() == "cache[network_response]=valkey"
     )
 
 
@@ -87,3 +87,13 @@ async def test_secret_overrides_reach_the_local_secrets_impl(tmp_path: Path) -> 
         local_settings(tmp_path, secret_overrides={"API_TOKEN": "from-boot"})
     )
     assert await infra.get_secrets().get("api_token") == "from-boot"
+
+
+@pytest.mark.parametrize("value", ["", "off", " OFF "])
+def test_an_empty_or_off_sentry_dsn_turns_reporting_off(tmp_path: Path, value: str) -> None:
+    assert local_settings(tmp_path, sentry_dsn=value).sentry_dsn is None
+
+
+def test_a_sentry_dsn_is_kept(tmp_path: Path) -> None:
+    dsn = "http://key@glitchtip:8000/1"
+    assert local_settings(tmp_path, sentry_dsn=dsn).sentry_dsn == dsn

@@ -1,0 +1,36 @@
+/* The two motions the task list uses: an item arriving and an item leaving.
+   Both last one second; people who ask for less motion get none. */
+@keyframes tadas-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes tadas-fade-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+.tadas-arriving {
+  animation: tadas-fade-in 1s ease-out both;
+}
+
+.tadas-leaving {
+  animation: tadas-fade-out 1s ease-in both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tadas-arriving,
+  .tadas-leaving {
+    animation: none;
+  }
+}

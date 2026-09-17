@@ -9,9 +9,9 @@ locals {
   # anything else at boot.
   process_environment = {
     TADAS_ENVIRONMENT         = var.environment
-    TADAS_CACHE_BACKEND       = "redis"
-    TADAS_TOPICS_BACKEND      = "redis"
-    TADAS_REDIS_URL           = module.cache.url
+    TADAS_CACHE_BACKEND       = "valkey"
+    TADAS_TOPICS_BACKEND      = "valkey"
+    TADAS_VALKEY_URL          = module.cache.url
     TADAS_BUCKETS_BACKEND     = "s3"
     TADAS_S3_BUCKET_PREFIX    = module.buckets.prefix
     TADAS_QUEUES_BACKEND      = "sqs"
@@ -24,6 +24,7 @@ locals {
 
   process_secrets = {
     TADAS_DATABASE_URL = module.secrets.database_url_secret_arn
+    TADAS_SENTRY_DSN   = module.secrets.sentry_dsn_secret_arn
   }
 
   process_policies = [
@@ -101,6 +102,21 @@ module "load_balancer" {
   certificate_arn    = var.certificate_arn
 }
 
+# The portal's files and the API behind one CloudFront origin. Without a load
+# balancer certificate CloudFront reaches it over HTTP by its DNS name; with
+# one, over HTTPS by a name the certificate covers.
+module "portal" {
+  source = "../../modules/portal"
+
+  environment       = var.environment
+  bucket_name       = "${var.bucket_prefix}-portal"
+  api_origin_domain = var.certificate_arn == null ? module.load_balancer.dns_name : var.api_domain_name
+  api_origin_https  = var.certificate_arn != null
+  aliases           = var.portal_aliases
+  certificate_arn   = var.portal_certificate_arn
+  sentry_dsn        = var.portal_sentry_dsn
+}
+
 # A stateless service rolls with one extra replica (the module's defaults).
 module "api" {
   source = "../../modules/service"
@@ -115,6 +131,7 @@ module "api" {
   cpu                = var.api_cpu
   memory             = var.api_memory
   port               = 8000
+  metrics_port       = 8000
   target_group_arn   = module.load_balancer.target_group_arn
   policy_arns        = local.process_policies
   secrets            = local.process_secrets
@@ -147,6 +164,7 @@ module "maintenance" {
   desired_count      = var.maintenance_desired_count
   cpu                = var.maintenance_cpu
   memory             = var.maintenance_memory
+  metrics_port       = 9464
   policy_arns        = local.process_policies
   secrets            = local.process_secrets
 

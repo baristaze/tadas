@@ -40,10 +40,12 @@ resource "aws_db_instance" "this" {
 
   backup_retention_period    = var.backup_retention_days
   auto_minor_version_upgrade = true
-  deletion_protection        = var.deletion_protection
-  skip_final_snapshot        = !var.deletion_protection
-  final_snapshot_identifier  = "tadas-${var.environment}-final"
-  copy_tags_to_snapshot      = true
+  # Raising engine_version to a new major upgrades the instance in place.
+  allow_major_version_upgrade = true
+  deletion_protection         = var.deletion_protection
+  skip_final_snapshot         = !var.deletion_protection
+  final_snapshot_identifier   = "tadas-${var.environment}-final"
+  copy_tags_to_snapshot       = true
 
   tags = local.tags
 }

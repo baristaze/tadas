@@ -2,14 +2,14 @@
 name = "tadas-om"
 version = "0.1.0"
 description = "The Tadas object model: entities, managers, storage, migrations."
-requires-python = ">=3.13"
+requires-python = ">=3.14"
 dependencies = [
-    "pydantic>=2.9",
-    "pydantic-settings>=2.6",
-    "sqlalchemy[asyncio]>=2.0.36",
-    "asyncpg>=0.30",
-    "alembic>=1.14",
-    "uuid-utils>=0.9",
+    "pydantic>=2.13",
+    "pydantic-settings>=2.15",
+    "sqlalchemy[asyncio]>=2.0.54",
+    "asyncpg>=0.31",
+    "alembic>=1.20",
+    "uuid-utils>=1.0",
     "tadas-infra",
 ]
 

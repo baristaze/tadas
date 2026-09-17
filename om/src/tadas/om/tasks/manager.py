@@ -1,18 +1,41 @@
 """The tasks swimlane: the to-do items a team creates, works, and closes."""
 
+from datetime import datetime
 from uuid import UUID
 
 from tadas.om.opcontext import OpContext
-from tadas.om.tasks.types.task import Task
+from tadas.om.tasks.types.task import Task, TaskScope
 
 
 class TasksManagerInterface:
-    async def get_tasks(self, ctx: OpContext, limit: int) -> list[Task]: ...
+    async def get_open_tasks(self, ctx: OpContext, scope: TaskScope, limit: int) -> list[Task]:
+        """Open tasks in manual order, top first."""
+        ...
+
+    async def get_done_tasks(
+        self,
+        ctx: OpContext,
+        scope: TaskScope,
+        before: tuple[datetime, UUID] | None,
+        limit: int,
+    ) -> list[Task]:
+        """Done tasks newest first; `before` is the (updated_at, id) of the last
+        task of the previous page."""
+        ...
 
     async def get_task(self, ctx: OpContext, task_id: UUID) -> Task: ...
 
-    async def create_task(self, ctx: OpContext, task: Task) -> Task: ...
+    async def create_task(self, ctx: OpContext, task: Task) -> Task:
+        """A new task is open and goes to the top of the open list."""
+        ...
 
-    async def update_task(self, ctx: OpContext, task: Task) -> Task: ...
+    async def update_task(self, ctx: OpContext, task: Task) -> Task:
+        """A task reopened from done goes back to the top of the open list."""
+        ...
+
+    async def move_task(self, ctx: OpContext, task_id: UUID, after_id: UUID | None) -> Task:
+        """Places an open task right after `after_id` in the open list, or at
+        the top when it is None."""
+        ...
 
     async def delete_task(self, ctx: OpContext, task_id: UUID) -> Task: ...

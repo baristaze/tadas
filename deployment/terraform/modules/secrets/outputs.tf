@@ -12,3 +12,8 @@ output "policy_arn" {
   description = "Attached to every task role; covers the application prefix only."
   value       = aws_iam_policy.application.arn
 }
+
+output "sentry_dsn_secret_arn" {
+  description = "Injected into every task as TADAS_SENTRY_DSN; \"off\" until set, which leaves reporting off."
+  value       = aws_secretsmanager_secret.sentry_dsn.arn
+}

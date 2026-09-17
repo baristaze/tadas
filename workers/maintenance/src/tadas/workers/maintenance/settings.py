@@ -18,6 +18,10 @@ class MaintenanceSettings(StorageSettings, InfraSettings):
     model_config = SettingsConfigDict(env_prefix="TADAS_", env_file=".env", extra="ignore")
 
     service_name: str = "maintenance"
+    version: str = "0.1.0"
+    # The worker serves no HTTP but its metrics; containers bind 0.0.0.0.
+    metrics_host: str = "127.0.0.1"
+    metrics_port: int = 9464
     worker_id: str = Field(default_factory=default_worker_id)
     worker_queue: str = "default"
     worker_capacity: int = 4
