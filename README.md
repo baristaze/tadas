@@ -8,7 +8,7 @@ and workers around them, and apps at the edge.
 
 ## Set up
 
-Requirements: uv, pnpm, Docker.
+Requirements: uv, pnpm, Node 24.21.0 (see `.nvmrc`), Docker.
 
 ```bash
 make setup        # Python and TypeScript dependencies
