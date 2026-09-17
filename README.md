@@ -13,7 +13,8 @@ and workers around them, and apps at the edge.
 The portal in two windows, signed in as the two people `make seed` creates:
 `owner@example.test` on the left, `bob@example.test` on the right, both on
 Team's Tasks. Every task one of them adds or completes reaches the other over
-the realtime channel as it happens.
+the realtime channel as it happens. `make demo-gif` records it again from a
+running `make up` stack (`scripts/record_demo.py`).
 
 ## Quick start
 

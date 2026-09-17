@@ -78,6 +78,7 @@ alias dc='docker compose -f deployment/local/docker-compose.yml -f deployment/lo
 | Stop only the dashboards | `dc stop pgweb valkey-admin elasticmq-ui prometheus grafana jaeger glitchtip` |
 | Apply new migrations | `make migrate` |
 | Seed again, or other people | `make seed SEED_EMAIL=me@example.test SEED_MEMBER_EMAIL=you@example.test SEED_PASSWORD=secret SEED_SLUG=mine` |
+| Record the README's demo GIF (empties the task list first) | `make demo-gif` |
 | Add one more member to the seeded org | `uv run --package tadas-api tadas-api add-member --slug acme --email carol@example.test --password tadas-local --name Carol` |
 
 ## Data
