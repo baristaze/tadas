@@ -6,6 +6,15 @@ Design and Architecture Guidelines prescribe: one object model library
 at the center (`om/`), one infrastructure toolkit (`infra/`), services
 and workers around them, and apps at the edge.
 
+<p align="center">
+  <img src="docs/media/realtime-demo.gif" width="876" alt="Two portal windows side by side, the owner on the left and Bob on the right, both on Team's Tasks. Tasks added in either window appear in the other at once, and a task completed in one fades out of Open and into Done in both.">
+</p>
+
+The portal in two windows, signed in as the two people `make seed` creates:
+`owner@example.test` on the left, `bob@example.test` on the right, both on
+Team's Tasks. Every task one of them adds or completes reaches the other over
+the realtime channel as it happens.
+
 ## Quick start
 
 Requirements: uv, pnpm, Node 24.21.0 (see `.nvmrc`), Docker.

@@ -66,27 +66,40 @@ export function TaskItem({
         pointerEvents: leaving ? "none" : undefined,
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: tokens.space.sm }}>
+      {/* The title keeps a readable width and wraps by words; when the row runs
+          out of room, the pills and links move to a line of their own. */}
+      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: tokens.space.sm }}>
         <input
           type="checkbox"
           aria-label={row.done ? `Reopen ${row.title}` : `Mark ${row.title} done`}
           checked={struck}
           disabled={!canWrite || leaving}
           onChange={onToggle}
-          style={{ width: 18, height: 18, cursor: canWrite ? "pointer" : "default" }}
+          style={{ width: 18, height: 18, flexShrink: 0, cursor: canWrite ? "pointer" : "default" }}
         />
         <span
           style={{
+            flex: "1 1 8em",
+            minWidth: 0,
             textDecoration: struck ? "line-through" : "none",
             color: struck ? tokens.color.muted : tokens.color.text,
-            overflowWrap: "anywhere",
+            overflowWrap: "break-word",
           }}
         >
           {row.title}
         </span>
-        <Pill title="Created by">created by {row.createdBy}</Pill>
-        {row.assignee ? <Pill title="Assigned to">assigned to {row.assignee}</Pill> : null}
-        <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: tokens.space.sm }}>
+        <span
+          style={{
+            marginLeft: "auto",
+            display: "flex",
+            flexWrap: "wrap",
+            justifyContent: "flex-end",
+            alignItems: "center",
+            gap: tokens.space.sm,
+          }}
+        >
+          <Pill title="Created by">created by {row.createdBy}</Pill>
+          {row.assignee ? <Pill title="Assigned to">assigned to {row.assignee}</Pill> : null}
           {canWrite && !leaving ? <LinkButton onClick={editing ? onCancelEdit : onEdit}>{editing ? "close" : "edit"}</LinkButton> : null}
           {drag ? (
             <span
