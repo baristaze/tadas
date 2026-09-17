@@ -25,39 +25,35 @@ variable "maintenance_image" {
   type        = string
 }
 
-variable "certificate_arn" {
-  description = "ACM certificate for the load balancer; null until a domain exists."
+variable "dns_zone_name" {
+  description = "The Route 53 hosted zone both public names live in, e.g. tadas.fyi. Terraform validates the certificates and writes the records there."
   type        = string
-  default     = null
 }
 
 variable "api_domain_name" {
-  description = "A name on the load balancer's certificate, pointing at it; CloudFront forwards /v1/* there over HTTPS. Required once certificate_arn is set."
+  description = "The API's public name, e.g. api.tadas.fyi, or dev-api.tadas.fyi for dev."
   type        = string
-  default     = null
 
   validation {
-    condition     = var.certificate_arn == null || var.api_domain_name != null
-    error_message = "Set api_domain_name when certificate_arn is set: CloudFront can only reach an HTTPS load balancer by a name its certificate covers."
+    condition     = endswith(var.api_domain_name, ".${var.dns_zone_name}")
+    error_message = "api_domain_name must be a name inside dns_zone_name."
+  }
+}
+
+variable "app_domain_name" {
+  description = "The portal's public name, e.g. app.tadas.fyi, or dev-app.tadas.fyi for dev."
+  type        = string
+
+  validation {
+    condition     = endswith(var.app_domain_name, ".${var.dns_zone_name}")
+    error_message = "app_domain_name must be a name inside dns_zone_name."
   }
 }
 
 variable "cors_origins" {
-  description = "Other browser origins the API accepts. The portal needs none: CloudFront serves it and the API on one origin."
+  description = "Browser origins the API accepts besides the portal's, which is always allowed."
   type        = list(string)
   default     = []
-}
-
-variable "portal_aliases" {
-  description = "Custom domain names for the portal; empty serves it on its cloudfront.net name."
-  type        = list(string)
-  default     = []
-}
-
-variable "portal_certificate_arn" {
-  description = "An ACM certificate in us-east-1 covering portal_aliases."
-  type        = string
-  default     = null
 }
 
 variable "portal_sentry_dsn" {

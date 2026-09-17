@@ -43,8 +43,8 @@ root README for every local URL.
 ## Configuration
 
 `src/app/config.ts` loads `/config.json` before anything renders. In the
-cloud that file exists, written per environment by Terraform (`apiUrl` empty
-means the page's own origin, where CloudFront forwards `/v1/*`), so one build
-serves every environment. Locally there is none, and `VITE_API_URL`,
+cloud that file exists, written per environment by Terraform (`apiUrl` is the
+environment's API, e.g. `https://api.tadas.fyi`), so one build serves every
+environment. Locally there is none, and `VITE_API_URL`,
 `VITE_SENTRY_DSN`, and `VITE_SENTRY_ENVIRONMENT` apply instead. How the build
 reaches the cloud is in `deployment/terraform/modules/README.md`.

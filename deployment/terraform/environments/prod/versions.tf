@@ -24,3 +24,13 @@ provider "aws" {
     tags = { "tadas:managed-by" = "terraform" }
   }
 }
+
+# CloudFront reads certificates from us-east-1 only, whatever var.region is.
+provider "aws" {
+  alias  = "us_east_1"
+  region = "us-east-1"
+
+  default_tags {
+    tags = { "tadas:managed-by" = "terraform" }
+  }
+}

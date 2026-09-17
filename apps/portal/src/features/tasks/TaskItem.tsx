@@ -98,7 +98,7 @@ export function TaskItem({
             gap: tokens.space.sm,
           }}
         >
-          <Pill title="Created by">created by {row.createdBy}</Pill>
+          <Pill title={`Created by ${row.createdBy}`}>· {row.createdBy}</Pill>
           {row.assignee ? <Pill title="Assigned to">assigned to {row.assignee}</Pill> : null}
           {canWrite && !leaving ? <LinkButton onClick={editing ? onCancelEdit : onEdit}>{editing ? "close" : "edit"}</LinkButton> : null}
           {drag ? (

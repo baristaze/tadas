@@ -2,9 +2,14 @@
 # applies and publishes its environment. Production never rebuilds: behind the
 # `production` environment's approval gate it applies the same digests and
 # publishes the same portal files dev already served. The portal build holds no
-# environment; each environment's /config.json, written by Terraform, does. Credentials come from
-# the deploy role in deployment/terraform/shared through GitHub's OIDC
-# provider; the role's ARN and the state bucket are repository variables.
+# environment; each environment's /config.json, written by Terraform, does.
+#
+# Credentials come from the deploy role in deployment/terraform/shared through
+# GitHub's OIDC provider; the role's ARN and the state bucket are repository
+# variables. The public names are variables too: DNS_ZONE_NAME (e.g. tadas.fyi)
+# for the repository, and API_DOMAIN_NAME and APP_DOMAIN_NAME per GitHub
+# environment (dev-api.tadas.fyi and dev-app.tadas.fyi in `dev`,
+# api.tadas.fyi and app.tadas.fyi in `production`).
 name: deploy
 
 on:
@@ -107,7 +112,10 @@ jobs:
             -backend-config="use_lockfile=true"
           terraform -chdir=deployment/terraform/environments/dev apply -input=false -auto-approve \
             -var "api_image=${{ steps.images.outputs.api_image }}" \
-            -var "maintenance_image=${{ steps.images.outputs.maintenance_image }}"
+            -var "maintenance_image=${{ steps.images.outputs.maintenance_image }}" \
+            -var "dns_zone_name=${{ vars.DNS_ZONE_NAME }}" \
+            -var "api_domain_name=${{ vars.API_DOMAIN_NAME }}" \
+            -var "app_domain_name=${{ vars.APP_DOMAIN_NAME }}"
       - name: migrate dev
         run: scripts/cloud_migrate.sh deployment/terraform/environments/dev
       - uses: actions/download-artifact@v8
@@ -143,7 +151,10 @@ jobs:
             -backend-config="use_lockfile=true"
           terraform -chdir=deployment/terraform/environments/prod apply -input=false -auto-approve \
             -var "api_image=${{ needs.dev.outputs.api_image }}" \
-            -var "maintenance_image=${{ needs.dev.outputs.maintenance_image }}"
+            -var "maintenance_image=${{ needs.dev.outputs.maintenance_image }}" \
+            -var "dns_zone_name=${{ vars.DNS_ZONE_NAME }}" \
+            -var "api_domain_name=${{ vars.API_DOMAIN_NAME }}" \
+            -var "app_domain_name=${{ vars.APP_DOMAIN_NAME }}"
       - name: migrate production
         run: scripts/cloud_migrate.sh deployment/terraform/environments/prod
       - uses: actions/download-artifact@v8

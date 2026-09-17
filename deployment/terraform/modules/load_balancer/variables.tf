@@ -28,7 +28,6 @@ variable "health_check_path" {
 }
 
 variable "certificate_arn" {
-  description = "An ACM certificate for HTTPS. Null serves plain HTTP, which is only acceptable before a domain exists."
+  description = "The validated ACM certificate for the API's domain name."
   type        = string
-  default     = null
 }

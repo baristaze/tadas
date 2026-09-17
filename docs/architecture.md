@@ -117,11 +117,13 @@ everything in-process for tests.
   (`scripts/deploy_portal.sh`), and then, behind the `production`
   environment's approval, applies production with the same digests and
   publishes the same portal files.
-- The portal in the cloud: a private S3 bucket behind CloudFront, which
-  also forwards `/v1/*` to the load balancer, so the portal and the API
-  share one HTTPS origin. The portal reads `/config.json`, written per
-  environment by Terraform, before it renders; locally it falls back to
-  the `VITE_` build variables.
+- Public names are inputs: the API at `api_domain_name` (the load balancer,
+  e.g. `api.tadas.fyi`, `dev-api.tadas.fyi` for dev) and the portal at
+  `app_domain_name` (a private S3 bucket behind CloudFront, e.g.
+  `app.tadas.fyi`), with certificates and records in one Route 53 zone. The
+  portal reads `/config.json`, written per environment by Terraform, before
+  it renders, and calls the API cross-origin; locally it falls back to the
+  `VITE_` build variables.
 
 ## Checks
 
