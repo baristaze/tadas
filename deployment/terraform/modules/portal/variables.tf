@@ -8,26 +8,19 @@ variable "bucket_name" {
   type        = string
 }
 
-variable "api_origin_domain" {
-  description = "Where CloudFront forwards /v1/*: the load balancer's DNS name, or a name on its certificate."
+variable "domain_name" {
+  description = "The portal's domain name, e.g. app.tadas.fyi."
   type        = string
-}
-
-variable "api_origin_https" {
-  description = "Forward to the API over HTTPS. Needs api_origin_domain to be a name the load balancer's certificate covers."
-  type        = bool
-}
-
-variable "aliases" {
-  description = "Custom domain names for the portal; empty serves it on the cloudfront.net name."
-  type        = list(string)
-  default     = []
 }
 
 variable "certificate_arn" {
-  description = "An ACM certificate in us-east-1 covering the aliases; null uses CloudFront's own certificate."
+  description = "A validated ACM certificate in us-east-1 for domain_name."
   type        = string
-  default     = null
+}
+
+variable "api_url" {
+  description = "The API's base URL the portal calls, e.g. https://api.tadas.fyi."
+  type        = string
 }
 
 variable "sentry_dsn" {

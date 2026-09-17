@@ -1,10 +1,11 @@
-// The settings a build does not carry. In the cloud the page's own origin
-// serves /config.json, written per environment, so one build runs anywhere.
+// The settings a build does not carry. In the cloud the portal's host serves
+// /config.json, written per environment (the API is e.g. https://api.tadas.fyi),
+// so one build runs anywhere.
 // Locally there is none (the dev server and nginx answer with index.html),
 // and the Vite build variables apply instead.
 
 export interface RuntimeConfig {
-  /** Absolute base URL of the API; the page's origin when the API is behind it. */
+  /** Absolute base URL of the API; an empty value in the file means the page's origin. */
   apiUrl: string;
   sentryDsn: string;
   environment: string;

@@ -1,10 +1,10 @@
-output "load_balancer_dns_name" {
-  description = "The API's load balancer; browsers use portal_url instead."
-  value       = module.load_balancer.dns_name
+output "api_url" {
+  description = "Where the API answers."
+  value       = "https://${var.api_domain_name}"
 }
 
 output "portal_url" {
-  description = "Where the portal answers, and the API under /v1."
+  description = "Where the portal answers."
   value       = module.portal.url
 }
 

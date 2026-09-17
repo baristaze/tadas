@@ -8,7 +8,17 @@ output "distribution_id" {
   value       = aws_cloudfront_distribution.this.id
 }
 
+output "distribution_domain_name" {
+  description = "The alias target for the portal's domain name."
+  value       = aws_cloudfront_distribution.this.domain_name
+}
+
+output "distribution_zone_id" {
+  description = "CloudFront's hosted zone, for the alias record."
+  value       = aws_cloudfront_distribution.this.hosted_zone_id
+}
+
 output "url" {
-  description = "Where the portal, and the API under /v1, answer."
-  value       = "https://${length(var.aliases) > 0 ? var.aliases[0] : aws_cloudfront_distribution.this.domain_name}"
+  description = "Where the portal answers."
+  value       = "https://${var.domain_name}"
 }

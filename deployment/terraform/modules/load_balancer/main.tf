@@ -1,10 +1,8 @@
-# The one public surface: an application load balancer in front of the API
-# service. With a certificate, HTTPS serves and HTTP redirects; without one,
-# HTTP forwards.
+# The API's public surface: an application load balancer at the API's domain
+# name. HTTPS serves the API and its realtime WebSocket; HTTP redirects.
 
 locals {
-  tags  = { "tadas:environment" = var.environment }
-  https = var.certificate_arn != null
+  tags = { "tadas:environment" = var.environment }
 }
 
 resource "aws_lb" "this" {
@@ -36,8 +34,6 @@ resource "aws_lb_target_group" "api" {
 }
 
 resource "aws_lb_listener" "https" {
-  count = local.https ? 1 : 0
-
   load_balancer_arn = aws_lb.this.arn
   port              = 443
   protocol          = "HTTPS"
@@ -52,8 +48,6 @@ resource "aws_lb_listener" "https" {
 }
 
 resource "aws_lb_listener" "http_redirect" {
-  count = local.https ? 1 : 0
-
   load_balancer_arn = aws_lb.this.arn
   port              = 80
   protocol          = "HTTP"
@@ -70,24 +64,10 @@ resource "aws_lb_listener" "http_redirect" {
   }
 }
 
-resource "aws_lb_listener" "http_forward" {
-  count = local.https ? 0 : 1
-
-  load_balancer_arn = aws_lb.this.arn
-  port              = 80
-  protocol          = "HTTP"
-  tags              = local.tags
-
-  default_action {
-    type             = "forward"
-    target_group_arn = aws_lb_target_group.api.arn
-  }
-}
-
 # /metrics is for the collector sidecar, which scrapes it over localhost inside
 # the task; the internet gets a 404 before the request reaches a target.
 resource "aws_lb_listener_rule" "hide_metrics" {
-  listener_arn = local.https ? aws_lb_listener.https[0].arn : aws_lb_listener.http_forward[0].arn
+  listener_arn = aws_lb_listener.https.arn
   priority     = 1
   tags         = local.tags
 

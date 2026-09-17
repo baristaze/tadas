@@ -92,6 +92,30 @@ module "secrets" {
   database_url = module.database.url
 }
 
+# Two public names in one Route 53 zone: the API at the load balancer, the
+# portal at CloudFront. Each gets a DNS-validated certificate; the portal's is
+# in us-east-1, the only region CloudFront reads certificates from.
+data "aws_route53_zone" "this" {
+  name = var.dns_zone_name
+}
+
+module "api_certificate" {
+  source = "../../modules/certificate"
+
+  environment = var.environment
+  domain_name = var.api_domain_name
+  zone_id     = data.aws_route53_zone.this.zone_id
+}
+
+module "app_certificate" {
+  source    = "../../modules/certificate"
+  providers = { aws = aws.us_east_1 }
+
+  environment = var.environment
+  domain_name = var.app_domain_name
+  zone_id     = data.aws_route53_zone.this.zone_id
+}
+
 module "load_balancer" {
   source = "../../modules/load_balancer"
 
@@ -99,22 +123,30 @@ module "load_balancer" {
   vpc_id             = module.network.vpc_id
   subnet_ids         = module.network.public_subnet_ids
   security_group_ids = [module.network.load_balancer_security_group_id]
-  certificate_arn    = var.certificate_arn
+  certificate_arn    = module.api_certificate.arn
 }
 
-# The portal's files and the API behind one CloudFront origin. Without a load
-# balancer certificate CloudFront reaches it over HTTP by its DNS name; with
-# one, over HTTPS by a name the certificate covers.
 module "portal" {
   source = "../../modules/portal"
 
-  environment       = var.environment
-  bucket_name       = "${var.bucket_prefix}-portal"
-  api_origin_domain = var.certificate_arn == null ? module.load_balancer.dns_name : var.api_domain_name
-  api_origin_https  = var.certificate_arn != null
-  aliases           = var.portal_aliases
-  certificate_arn   = var.portal_certificate_arn
-  sentry_dsn        = var.portal_sentry_dsn
+  environment     = var.environment
+  bucket_name     = "${var.bucket_prefix}-portal"
+  domain_name     = var.app_domain_name
+  certificate_arn = module.app_certificate.arn
+  api_url         = "https://${var.api_domain_name}"
+  sentry_dsn      = var.portal_sentry_dsn
+}
+
+module "domain_records" {
+  source = "../../modules/domain_records"
+
+  zone_id                  = data.aws_route53_zone.this.zone_id
+  api_domain_name          = var.api_domain_name
+  app_domain_name          = var.app_domain_name
+  load_balancer_dns_name   = module.load_balancer.dns_name
+  load_balancer_zone_id    = module.load_balancer.zone_id
+  distribution_domain_name = module.portal.distribution_domain_name
+  distribution_zone_id     = module.portal.distribution_zone_id
 }
 
 # A stateless service rolls with one extra replica (the module's defaults).
@@ -140,7 +172,7 @@ module "api" {
     TADAS_SERVICE_NAME = "api"
     TADAS_HOST         = "0.0.0.0"
     TADAS_PORT         = "8000"
-    TADAS_CORS_ORIGINS = jsonencode(var.cors_origins)
+    TADAS_CORS_ORIGINS = jsonencode(concat(["https://${var.app_domain_name}"], var.cors_origins))
   })
 
   health_check_command = [
