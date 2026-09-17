@@ -5,14 +5,14 @@ description = "Tadas infrastructure capabilities: cache, buckets, topics, queues
 requires-python = ">=3.14"
 dependencies = [
     "tadas-om",
-    "pydantic>=2.9",
-    "pydantic-settings>=2.6",
-    "redis>=5.2",
-    "aioboto3>=13.2",
-    "opentelemetry-sdk>=1.28",
-    "opentelemetry-exporter-otlp-proto-http>=1.28",
-    "prometheus-client>=0.21",
-    "truststore>=0.10",
+    "pydantic>=2.13",
+    "pydantic-settings>=2.15",
+    "redis>=8.1",
+    "aioboto3>=15.5",
+    "opentelemetry-sdk>=1.44",
+    "opentelemetry-exporter-otlp-proto-http>=1.44",
+    "prometheus-client>=0.26",
+    "truststore>=0.10.4",
 ]
 
 [tool.uv.sources]

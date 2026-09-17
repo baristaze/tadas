@@ -20,7 +20,7 @@ Three kinds of root live under this folder:
 | `network`       | VPC, public and private subnets, NAT, the security groups        |
 | `cluster`       | The container cluster services and workers run on               |
 | `database`      | Postgres, its subnet group, the generated master password       |
-| `cache`         | Redis (cache scopes and the topic bus), encrypted in transit    |
+| `cache`         | Valkey (cache scopes and the topic bus), encrypted in transit   |
 | `queue`         | One SQS queue and dead-letter queue per `Queues` member, IAM    |
 | `buckets`       | One private versioned bucket per `Buckets` member, IAM          |
 | `secrets`       | The injected database URL and the application secrets policy    |

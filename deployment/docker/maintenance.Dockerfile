@@ -2,7 +2,7 @@
 # worker's own `health` subcommand, which reads the liveness key the loop
 # heartbeats into the cache.
 FROM python:3.14-slim AS build
-COPY --from=ghcr.io/astral-sh/uv:0.10 /uv /usr/local/bin/uv
+COPY --from=ghcr.io/astral-sh/uv:0.12 /uv /usr/local/bin/uv
 ENV UV_LINK_MODE=copy UV_COMPILE_BYTECODE=1
 WORKDIR /app
 COPY pyproject.toml uv.lock .python-version ./

@@ -12,8 +12,9 @@ variable "security_group_ids" {
 }
 
 variable "engine_version" {
-  type    = string
-  default = "7.1"
+  description = "Valkey <major>.<minor>; a 9.x version, to match default.valkey9."
+  type        = string
+  default     = "9.1"
 }
 
 variable "node_type" {

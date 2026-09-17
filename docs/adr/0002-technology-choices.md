@@ -15,8 +15,8 @@ substitutions:
 | Choice in the guideline               | Adopted                         |
 |---------------------------------------|---------------------------------|
 | Object model language and validation  | Python 3.14, Pydantic 2         |
-| Relational store, ORM, migration runner | Postgres 16, SQLAlchemy 2 (asyncpg), Alembic (runner only) |
-| Cache                                 | Redis (a hosted Redis in the cloud) |
+| Relational store, ORM, migration runner | Postgres 18, SQLAlchemy 2 (asyncpg), Alembic (runner only) |
+| Cache                                 | Redis (Valkey 9.1 on ElastiCache in the cloud, which serves the Redis protocol) |
 | Object store                          | S3 (MinIO locally)              |
 | Inbound queue                         | SQS (ElasticMQ locally)         |
 | Topic bus                             | Redis pub/sub (in-process dispatcher in tests) |

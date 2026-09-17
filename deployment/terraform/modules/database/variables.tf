@@ -14,9 +14,9 @@ variable "security_group_ids" {
 }
 
 variable "engine_version" {
-  description = "Postgres major version; ADR 0002 names 16."
+  description = "Postgres major version; ADR 0002 names 18."
   type        = string
-  default     = "16"
+  default     = "18"
 }
 
 variable "instance_class" {
