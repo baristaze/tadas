@@ -31,10 +31,39 @@ variable "certificate_arn" {
   default     = null
 }
 
+variable "api_domain_name" {
+  description = "A name on the load balancer's certificate, pointing at it; CloudFront forwards /v1/* there over HTTPS. Required once certificate_arn is set."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.certificate_arn == null || var.api_domain_name != null
+    error_message = "Set api_domain_name when certificate_arn is set: CloudFront can only reach an HTTPS load balancer by a name its certificate covers."
+  }
+}
+
 variable "cors_origins" {
-  description = "Browser origins the API accepts, i.e. where the portal is served from."
+  description = "Other browser origins the API accepts. The portal needs none: CloudFront serves it and the API on one origin."
   type        = list(string)
   default     = []
+}
+
+variable "portal_aliases" {
+  description = "Custom domain names for the portal; empty serves it on its cloudfront.net name."
+  type        = list(string)
+  default     = []
+}
+
+variable "portal_certificate_arn" {
+  description = "An ACM certificate in us-east-1 covering portal_aliases."
+  type        = string
+  default     = null
+}
+
+variable "portal_sentry_dsn" {
+  description = "The portal's error-reporting DSN (public by design); empty turns browser reporting off."
+  type        = string
+  default     = ""
 }
 
 # Scale. Everything below is what differs from dev: the module graph does not.

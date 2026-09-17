@@ -24,7 +24,8 @@ Three kinds of root live under this folder:
 | `queue`         | One SQS queue and dead-letter queue per `Queues` member, IAM    |
 | `buckets`       | One private versioned bucket per `Buckets` member, IAM          |
 | `secrets`       | The injected database URL and Sentry DSN, the application secrets policy |
-| `load_balancer` | The public edge in front of the API                             |
+| `load_balancer` | The load balancer in front of the API (reached through `portal`) |
+| `portal`        | The portal's private bucket and the CloudFront distribution that serves it and the API |
 | `service`       | One process: log groups, roles, task definition with an ADOT collector sidecar, service |
 
 The `service` module is instantiated once per process. A worker passes
@@ -49,6 +50,32 @@ roots require. `shared/` creates the state bucket itself: apply it once with loc
 state, then run `init -migrate-state` against the bucket it made. No
 root holds credentials; a developer's AWS profile or the deploy role's
 OIDC session provides them.
+
+## The portal
+
+The portal is static files: a private S3 bucket that only its CloudFront
+distribution can read (origin access control). The same distribution
+forwards `/v1/*` (the API and its realtime WebSocket) to the load balancer,
+so the browser sees one HTTPS origin: no CORS, relative API URLs, and HTTPS
+on the `cloudfront.net` name before any domain exists. Client routes such as
+`/settings` get `index.html` from a CloudFront Function; hashed assets are
+cached for a year; `index.html` and `config.json` revalidate on every load.
+
+The build carries no environment. Terraform writes `/config.json` per
+environment (`apiUrl`, `sentryDsn`, `environment`), and `deploy.yml` builds
+the portal once, publishes it to dev with `scripts/deploy_portal.sh` after
+the apply, and publishes the same files to production. The `portal_url`
+output is where an environment answers.
+
+Before a domain exists, CloudFront reaches the load balancer over HTTP by its
+DNS name. With a domain:
+
+- `certificate_arn` (the load balancer's) and `api_domain_name`, a name on
+  that certificate pointing at the load balancer, make CloudFront forward
+  over HTTPS; the variables refuse one without the other.
+- `portal_aliases` and `portal_certificate_arn` (in us-east-1, which
+  CloudFront requires) put the portal on its own name.
+- `portal_sentry_dsn` turns browser error reporting on.
 
 ## Telemetry and error reporting
 

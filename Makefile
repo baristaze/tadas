@@ -32,7 +32,7 @@ reset: ## Wipe every container and all local data, then `make up`
 
 urls: ## Print the local URLs and the seeded sign-in
 	@echo ""
-	@echo "  Portal         http://localhost:55173   sign in: $(SEED_EMAIL) / $(SEED_PASSWORD)"
+	@echo "  Portal         http://localhost:55173   sign in: $(SEED_EMAIL) or $(SEED_MEMBER_EMAIL) / $(SEED_PASSWORD)"
 	@echo "  API docs       http://127.0.0.1:8000/docs"
 	@echo "  pgweb          http://localhost:58081"
 	@echo "  Valkey Admin   http://localhost:58080"
@@ -63,18 +63,23 @@ infra-down: ## Stop every local container, dashboards and app containers too, an
 migrate: ## Apply every role's migration chain to the local database
 	uv run --package tadas-om python -m tadas.om.storage.migrate upgrade --all
 
-# Local-only sign-in; override any of these on the command line, e.g.
-# `make seed SEED_EMAIL=me@example.test`.
+# Local-only sign-ins: an owner and a member of one org, sharing a password,
+# so "My Tasks" and "Team's Tasks" differ. Override any of these on the command
+# line, e.g. `make seed SEED_EMAIL=me@example.test`.
 SEED_ORG ?= Acme
 SEED_SLUG ?= acme
 SEED_NAME ?= Local Owner
 SEED_EMAIL ?= owner@example.test
+SEED_MEMBER_NAME ?= Bob
+SEED_MEMBER_EMAIL ?= bob@example.test
 SEED_PASSWORD ?= tadas-local
 
-seed: ## Create a local org and its owner to sign in with; a no-op once it exists
+seed: ## Create a local org with an owner and a member to sign in as; a no-op once they exist
 	uv run --package tadas-api tadas-api bootstrap --if-absent \
 		--org "$(SEED_ORG)" --slug "$(SEED_SLUG)" --name "$(SEED_NAME)" \
 		--email "$(SEED_EMAIL)" --password "$(SEED_PASSWORD)"
+	uv run --package tadas-api tadas-api add-member --slug "$(SEED_SLUG)" \
+		--name "$(SEED_MEMBER_NAME)" --email "$(SEED_MEMBER_EMAIL)" --password "$(SEED_PASSWORD)"
 
 # The ORM-versus-schema check needs a migrated database, which the fast gate
 # cannot reach, so `check` does not run it; CI's integration job runs it

@@ -21,7 +21,7 @@ substitution recorded below the table:
 | Inbound queue                         | SQS (ElasticMQ locally)         |
 | Topic bus                             | Valkey pub/sub (substitutes Redis; in-process dispatcher in tests) |
 | Secret store                          | AWS Secrets Manager (env and file locally) |
-| Browser apps                          | React, TypeScript, Vite, TanStack Query, Zustand |
+| Browser apps                          | React, TypeScript, Vite, TanStack Query, Zustand; served from S3 through CloudFront in the cloud |
 | Workspaces                            | uv, pnpm                        |
 | Local stack                           | Docker Compose                  |
 | Cloud and infrastructure as code      | AWS, Terraform                  |

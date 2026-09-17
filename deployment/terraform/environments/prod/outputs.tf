@@ -1,6 +1,21 @@
 output "load_balancer_dns_name" {
-  description = "Where the API answers."
+  description = "The API's load balancer; browsers use portal_url instead."
   value       = module.load_balancer.dns_name
+}
+
+output "portal_url" {
+  description = "Where the portal answers, and the API under /v1."
+  value       = module.portal.url
+}
+
+# What deploy.yml needs to publish the portal build.
+
+output "portal_bucket" {
+  value = module.portal.bucket_name
+}
+
+output "portal_distribution_id" {
+  value = module.portal.distribution_id
 }
 
 # What deploy.yml needs to run the migration as a one-off task on the API

@@ -485,3 +485,40 @@ async def test_expired_tickets_are_refused(
     issued = await manager.issue_ticket(ctx)
     with pytest.raises(InvalidCredential):
         await manager.redeem_ticket(issued.ticket, APP, new_id())
+
+
+async def test_add_member_seeds_a_second_person_once(manager: TenancyManagerImpl) -> None:
+    owner, org = await manager.bootstrap("Acme", "acme", "ann@example.test", "pw-1234", "Ann")
+    bob, created = await manager.add_member(
+        "acme", "bob@example.test", "pw-1234", "Bob", Role.MEMBER
+    )
+    assert created and bob.display_name == "Bob"
+    again, created_again = await manager.add_member(
+        "acme", "bob@example.test", "other-pw", "Robert", Role.ADMIN
+    )
+    assert not created_again and again.id == bob.id and again.display_name == "Bob"
+    assert sorted(u.display_name for u in await manager.get_users(owner, limit=10)) == [
+        "Ann",
+        "Bob",
+    ]
+
+    login = await manager.login("bob@example.test", "pw-1234")  # the first password stays
+    assert [(m.org.id, m.role) for m in login.memberships] == [(org.id, Role.MEMBER)]
+    with pytest.raises(InvalidCredential):
+        await manager.login("bob@example.test", "other-pw")
+
+
+async def test_add_member_reuses_an_identity_across_orgs(manager: TenancyManagerImpl) -> None:
+    await manager.bootstrap("Acme", "acme", "ann@example.test", "pw-1234", "Ann")
+    await manager.bootstrap("Globex", "globex", "gus@example.test", "pw-5678", "Gus")
+    _, created = await manager.add_member(
+        "globex", "ann@example.test", "ignored", "Ann", Role.VIEWER
+    )
+    assert created
+    login = await manager.login("ann@example.test", "pw-1234")
+    assert sorted(m.role.value for m in login.memberships) == ["owner", "viewer"]
+
+
+async def test_add_member_refuses_an_unknown_org(manager: TenancyManagerImpl) -> None:
+    with pytest.raises(NotFound):
+        await manager.add_member("nope", "bob@example.test", "pw-1234", "Bob", Role.MEMBER)

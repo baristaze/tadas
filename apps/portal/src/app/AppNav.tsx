@@ -1,10 +1,10 @@
-// The bar above every signed-in page: the org, the two destinations, and the
-// state of the live channel.
+// The bar above every signed-in page: the org, the two destinations, and who is
+// signed in. The live channel's state is the dot in the bottom-right corner.
 import { NavLink } from "react-router-dom";
 import { Muted } from "../design/kit";
 import { tokens } from "../design/tokens";
 import { useMe } from "../queries/tenancy";
-import { useConnectionStore } from "../store/connection";
+import { ConnectionDot } from "./ConnectionDot";
 
 const linkStyle = ({ isActive }: { isActive: boolean }) => ({
   color: isActive ? tokens.color.text : tokens.color.muted,
@@ -14,7 +14,6 @@ const linkStyle = ({ isActive }: { isActive: boolean }) => ({
 
 export function AppNav() {
   const me = useMe();
-  const connection = useConnectionStore((s) => s.status);
   return (
     <nav
       style={{
@@ -33,7 +32,8 @@ export function AppNav() {
       <NavLink to="/settings" style={linkStyle}>
         Settings
       </NavLink>
-      <Muted style={{ marginLeft: "auto", fontSize: tokens.font.size.sm }}>live updates: {connection}</Muted>
+      <Muted style={{ marginLeft: "auto", fontSize: tokens.font.size.sm }}>{me.data?.user.email}</Muted>
+      <ConnectionDot />
     </nav>
   );
 }

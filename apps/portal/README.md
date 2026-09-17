@@ -36,5 +36,15 @@ in a container at http://localhost:55173, from
 `deployment/docker/portal.Dockerfile`. The API address is compiled into
 that bundle (build argument `VITE_API_URL`, default
 `http://127.0.0.1:8000`), so a change to it needs a rebuild, which
-`make stack-up` does. Sign in as `owner@example.test` / `tadas-local`
-after `make seed`; see the root README for every local URL.
+`make stack-up` does. Sign in as `owner@example.test` (owner) or
+`bob@example.test` (member), both `tadas-local`, after `make seed`; see the
+root README for every local URL.
+
+## Configuration
+
+`src/app/config.ts` loads `/config.json` before anything renders. In the
+cloud that file exists, written per environment by Terraform (`apiUrl` empty
+means the page's own origin, where CloudFront forwards `/v1/*`), so one build
+serves every environment. Locally there is none, and `VITE_API_URL`,
+`VITE_SENTRY_DSN`, and `VITE_SENTRY_ENVIRONMENT` apply instead. How the build
+reaches the cloud is in `deployment/terraform/modules/README.md`.

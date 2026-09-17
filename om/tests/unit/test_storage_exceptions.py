@@ -24,6 +24,7 @@ STORAGE_EXCEPTIONS: frozenset[tuple[str, str]] = frozenset(
 MANAGER_EXCEPTIONS: frozenset[tuple[str, str]] = frozenset(
     {
         ("TenancyManagerInterface", "bootstrap"),
+        ("TenancyManagerInterface", "add_member"),
         ("TenancyManagerInterface", "login"),
         ("TenancyManagerInterface", "exchange_login"),
         ("TenancyManagerInterface", "authenticate"),

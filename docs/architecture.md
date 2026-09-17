@@ -62,7 +62,8 @@ everything in-process for tests.
   idempotency), routers for tenancy, tasks, and the operator plane
   under `/v1/admin/*`, health and metrics outside `/v1`, and the
   realtime channel at `/v1/realtime` opened with a single-use ticket.
-  `tadas-api serve | migrate | bootstrap | openapi`.
+  `tadas-api serve | migrate | bootstrap | add-member | openapi`
+  (`bootstrap` and `add-member` are what `make seed` runs).
 - `workers/maintenance` (`tadas-maintenance`): the claim loop for kind
   `NOOP`, lease renewal and self-fencing, a liveness heartbeat in the
   cache, and the maintenance sweep (requeue stale leases, one service
@@ -110,10 +111,17 @@ everything in-process for tests.
 - `.github/workflows/ci.yml`: the fast gate, the integration job (which
   runs `make migrate-check` right after `make migrate`), an image build
   per Dockerfile, and `terraform fmt -check` plus `validate` per root.
-  `deploy.yml` builds and pushes both images by digest, applies dev,
-  runs the migration as a one-off task (`scripts/cloud_migrate.sh`),
-  and then, behind the `production` environment's approval, applies
-  production with the same digests.
+  `deploy.yml` builds and pushes both images by digest and the portal
+  once, applies dev, runs the migration as a one-off task
+  (`scripts/cloud_migrate.sh`), publishes the portal
+  (`scripts/deploy_portal.sh`), and then, behind the `production`
+  environment's approval, applies production with the same digests and
+  publishes the same portal files.
+- The portal in the cloud: a private S3 bucket behind CloudFront, which
+  also forwards `/v1/*` to the load balancer, so the portal and the API
+  share one HTTPS origin. The portal reads `/config.json`, written per
+  environment by Terraform, before it renders; locally it falls back to
+  the `VITE_` build variables.
 
 ## Checks
 

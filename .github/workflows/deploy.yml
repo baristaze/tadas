@@ -1,6 +1,8 @@
-# Dev builds and pushes both images by digest and applies its environment.
-# Production never rebuilds: behind the `production` environment's approval
-# gate it applies the same digests dev already ran. Credentials come from
+# Dev builds and pushes both images by digest, builds the portal once, and
+# applies and publishes its environment. Production never rebuilds: behind the
+# `production` environment's approval gate it applies the same digests and
+# publishes the same portal files dev already served. The portal build holds no
+# environment; each environment's /config.json, written by Terraform, does. Credentials come from
 # the deploy role in deployment/terraform/shared through GitHub's OIDC
 # provider; the role's ARN and the state bucket are repository variables.
 name: deploy
@@ -25,9 +27,32 @@ env:
   TERRAFORM_VERSION: "1.16.3"
 
 jobs:
+  portal:
+    name: build the portal once
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      # The pnpm version comes from packageManager in package.json.
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @tadas/portal build
+      - uses: actions/upload-artifact@v7
+        with:
+          name: portal
+          path: apps/portal/dist
+          if-no-files-found: error
+          retention-days: 30
+
   dev:
     name: build, push, and apply dev
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    needs: portal
     runs-on: ubuntu-latest
     environment: dev
     outputs:
@@ -85,10 +110,16 @@ jobs:
             -var "maintenance_image=${{ steps.images.outputs.maintenance_image }}"
       - name: migrate dev
         run: scripts/cloud_migrate.sh deployment/terraform/environments/dev
+      - uses: actions/download-artifact@v8
+        with:
+          name: portal
+          path: portal-dist
+      - name: publish the portal to dev
+        run: scripts/deploy_portal.sh deployment/terraform/environments/dev portal-dist
 
   production:
-    name: promote the same digests to production
-    needs: dev
+    name: promote the same digests and portal to production
+    needs: [portal, dev]
     runs-on: ubuntu-latest
     environment: production
     steps:
@@ -115,3 +146,9 @@ jobs:
             -var "maintenance_image=${{ needs.dev.outputs.maintenance_image }}"
       - name: migrate production
         run: scripts/cloud_migrate.sh deployment/terraform/environments/prod
+      - uses: actions/download-artifact@v8
+        with:
+          name: portal
+          path: portal-dist
+      - name: publish the same portal to production
+        run: scripts/deploy_portal.sh deployment/terraform/environments/prod portal-dist

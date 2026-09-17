@@ -102,6 +102,21 @@ module "load_balancer" {
   certificate_arn    = var.certificate_arn
 }
 
+# The portal's files and the API behind one CloudFront origin. Without a load
+# balancer certificate CloudFront reaches it over HTTP by its DNS name; with
+# one, over HTTPS by a name the certificate covers.
+module "portal" {
+  source = "../../modules/portal"
+
+  environment       = var.environment
+  bucket_name       = "${var.bucket_prefix}-portal"
+  api_origin_domain = var.certificate_arn == null ? module.load_balancer.dns_name : var.api_domain_name
+  api_origin_https  = var.certificate_arn != null
+  aliases           = var.portal_aliases
+  certificate_arn   = var.portal_certificate_arn
+  sentry_dsn        = var.portal_sentry_dsn
+}
+
 # A stateless service rolls with one extra replica (the module's defaults).
 module "api" {
   source = "../../modules/service"

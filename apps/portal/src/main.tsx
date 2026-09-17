@@ -1,11 +1,15 @@
 import * as Sentry from "@sentry/react";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { App } from "./app/App";
+import { loadRuntimeConfig } from "./app/config";
 import { initErrorReporting } from "./app/errors";
 import "./design/motion.css";
 
-initErrorReporting();
+// The config comes first: the API client and error reporting are built from it,
+// so the app is imported only once it is known.
+const config = await loadRuntimeConfig();
+initErrorReporting(config);
+const { App } = await import("./app/App");
 
 const root = document.getElementById("root");
 if (root === null) throw new Error("index.html has no #root");

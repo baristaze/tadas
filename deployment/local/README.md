@@ -18,7 +18,7 @@ Everything listens on 127.0.0.1 only. `make urls` prints the browser URLs.
 
 | Service | From the host | Inside the compose network | Sign-in |
 |---------|---------------|----------------------------|---------|
-| portal | http://localhost:55173 | `portal:8080` | `owner@example.test` / `tadas-local` (after `make seed`) |
+| portal | http://localhost:55173 | `portal:8080` | `owner@example.test` (owner) or `bob@example.test` (member), both `tadas-local` (after `make seed`) |
 | api | http://127.0.0.1:8000 (`/docs`, `/metrics`, `/healthz`) | `api:8000` | |
 | postgres | `127.0.0.1:55432` | `postgres:5432` | `tadas` / `tadas`, database `tadas` |
 | valkey | `127.0.0.1:56379` | `valkey:6379` | none: user `default`, no password |
@@ -77,7 +77,8 @@ alias dc='docker compose -f deployment/local/docker-compose.yml -f deployment/lo
 | Start only the dashboards | `dc up -d pgweb valkey-admin elasticmq-ui prometheus grafana jaeger glitchtip` |
 | Stop only the dashboards | `dc stop pgweb valkey-admin elasticmq-ui prometheus grafana jaeger glitchtip` |
 | Apply new migrations | `make migrate` |
-| Seed again, or as someone else | `make seed SEED_EMAIL=me@example.test SEED_PASSWORD=secret SEED_SLUG=mine` |
+| Seed again, or other people | `make seed SEED_EMAIL=me@example.test SEED_MEMBER_EMAIL=you@example.test SEED_PASSWORD=secret SEED_SLUG=mine` |
+| Add one more member to the seeded org | `uv run --package tadas-api tadas-api add-member --slug acme --email carol@example.test --password tadas-local --name Carol` |
 
 ## Data
 

@@ -23,7 +23,7 @@ once. Once it is up:
 
 | What | URL | Sign-in |
 |------|-----|---------|
-| Portal | http://localhost:55173 | `owner@example.test` / `tadas-local` |
+| Portal | http://localhost:55173 | `owner@example.test` (owner) or `bob@example.test` (member), both `tadas-local` |
 | API docs (Swagger UI) | http://127.0.0.1:8000/docs | |
 | pgweb (Postgres) | http://localhost:58081 | |
 | Valkey Admin | http://localhost:58080 | add a connection: host `valkey`, port `6379`, no username or password |
@@ -47,7 +47,7 @@ make setup        # Python and TypeScript dependencies
 cp .env.example .env
 make infra-up     # Postgres, Valkey, ElasticMQ, MinIO on host ports 55432, 56379, 59324, 59000
 make migrate      # every role's migration chain
-make seed         # org "acme" with owner owner@example.test / tadas-local
+make seed         # org "acme": owner@example.test (owner) and bob@example.test (member), both tadas-local
 ```
 
 ## Run
@@ -60,7 +60,10 @@ scripts/dev.sh    # on the host, with hot reload: API, worker, portal (Vite)
 make stack-up     # in containers, built from the working tree: API, worker, portal (nginx)
 ```
 
-Then sign in to the portal as `owner@example.test` / `tadas-local` (from `make seed`).
+Then sign in to the portal as `owner@example.test` or `bob@example.test`,
+both with password `tadas-local` (from `make seed`). Sign in as each in two
+browser windows to see "My Tasks" differ from "Team's Tasks" and to watch
+changes arrive live.
 
 | What | `scripts/dev.sh` | `make stack-up` |
 |------|------------------|-----------------|

@@ -1,13 +1,13 @@
 // Error reporting to a Sentry-compatible backend (GlitchTip locally). It is on
-// only when VITE_SENTRY_DSN is compiled in; without it every call is a no-op.
+// only when the runtime config names a DSN; without one every call is a no-op.
 import * as Sentry from "@sentry/react";
+import type { RuntimeConfig } from "./config";
 
-export function initErrorReporting(): void {
-  const dsn = import.meta.env.VITE_SENTRY_DSN;
-  if (!dsn) return;
+export function initErrorReporting(config: RuntimeConfig): void {
+  if (!config.sentryDsn) return;
   Sentry.init({
-    dsn,
-    environment: import.meta.env.VITE_SENTRY_ENVIRONMENT ?? "local",
+    dsn: config.sentryDsn,
+    environment: config.environment,
     release: __APP_VERSION__,
     sendDefaultPii: false,
   });
