@@ -5,22 +5,37 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
+# A new push to a pull request supersedes its running checks; main keeps
+# every run, since deploy.yml follows each successful one.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # uv sync and uv run fail instead of rewriting a stale uv.lock.
+  UV_LOCKED: "1"
+
 jobs:
   check:
     name: fast gate
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.1.0
+      # The pnpm version comes from packageManager in package.json.
       - uses: pnpm/action-setup@v6
-        with:
-          version: 12
       - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
           cache: pnpm
       - run: make setup
       - run: make check
+      - name: the apps build
+        run: pnpm run build
       - name: the committed OpenAPI document is current
         run: make openapi && git diff --exit-code
 
@@ -28,6 +43,7 @@ jobs:
     name: integration over the compose stack
     runs-on: ubuntu-latest
     needs: check
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.1.0
@@ -45,6 +61,7 @@ jobs:
     name: images build
     runs-on: ubuntu-latest
     needs: check
+    timeout-minutes: 30
     strategy:
       matrix:
         image: [api, maintenance]
@@ -63,6 +80,7 @@ jobs:
   terraform:
     name: terraform format and validate
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     strategy:
       matrix:
         root: [shared, environments/dev, environments/prod]
