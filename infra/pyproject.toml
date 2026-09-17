@@ -7,12 +7,12 @@ dependencies = [
     "tadas-om",
     "pydantic>=2.13",
     "pydantic-settings>=2.15",
-    "redis>=8.1",
     "aioboto3>=15.5",
     "opentelemetry-sdk>=1.44",
     "opentelemetry-exporter-otlp-proto-http>=1.44",
     "prometheus-client>=0.26",
     "truststore>=0.10.4",
+    "valkey-glide>=2.5.2",
 ]
 
 [tool.uv.sources]

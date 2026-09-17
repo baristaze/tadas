@@ -6,14 +6,29 @@ Design and Architecture Guidelines prescribe: one object model library
 at the center (`om/`), one infrastructure toolkit (`infra/`), services
 and workers around them, and apps at the edge.
 
-## Set up
+## Quick start
 
 Requirements: uv, pnpm, Node 24.21.0 (see `.nvmrc`), Docker.
 
 ```bash
+make up       # everything in containers, migrated and seeded, then prints the URLs
+make down     # stop it all; the data stays for the next `make up`
+make reset    # wipe all local data and containers, then `make up` again
+make urls     # print the URLs and the sign-in again
+```
+
+`make up` creates `.env` from `.env.example` if it is missing, and is safe
+to rerun: it rebuilds the app images from the working tree and seeds only
+once. Sign in to http://localhost:55173 as `owner@example.test` /
+`tadas-local`. The sections below are the same steps one at a time, and the
+host-process alternative for hot reload.
+
+## Set up
+
+```bash
 make setup        # Python and TypeScript dependencies
 cp .env.example .env
-make infra-up     # Postgres, Redis, ElasticMQ, MinIO on host ports 55432, 56379, 59324, 59000
+make infra-up     # Postgres, Valkey, ElasticMQ, MinIO on host ports 55432, 56379, 59324, 59000
 make migrate      # every role's migration chain
 make seed         # org "acme" with owner owner@example.test / tadas-local
 ```
@@ -49,7 +64,7 @@ need no sign-in; they listen on 127.0.0.1 only.
 | Dashboard | URL | Shows |
 |-----------|-----|-------|
 | pgweb | http://localhost:58081 | Postgres: schemas `core`, `activity`, `queue`, `admin`; run SQL |
-| Redis Insight | http://localhost:55540 | Redis: keys, pub/sub, CLI; the `tadas-local` database is preconfigured |
+| Valkey Admin | http://localhost:58080 | Valkey: keys, metrics, commands; connected to the local Valkey |
 | ElasticMQ UI | http://localhost:53000 | SQS queues and their messages |
 | Jaeger | http://localhost:56686 | Traces, once processes export them (below) |
 

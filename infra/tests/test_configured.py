@@ -8,8 +8,8 @@ from tadas.infra.impl.settings import InfraSettings
 
 CLOUD_BACKENDS = {
     "secrets_backend": "aws",
-    "cache_backend": "redis",
-    "topics_backend": "redis",
+    "cache_backend": "valkey",
+    "topics_backend": "valkey",
     "buckets_backend": "s3",
     "queues_backend": "sqs",
 }
@@ -71,14 +71,14 @@ async def test_local_environment_builds_local_impls(tmp_path: Path) -> None:
 def test_cloud_backends_are_constructed_without_connecting(tmp_path: Path) -> None:
     infra = InfraConfiguredImpl(local_settings(tmp_path, **CLOUD_BACKENDS))
     assert infra.describe() == [
-        "cache=redis",
-        "topics=redis",
+        "cache=valkey",
+        "topics=valkey",
         "buckets=s3(us-east-1)",
         "queues=sqs(us-east-1)",
         "secrets=aws(us-east-1)",
     ]
     assert (
-        infra.get_cache(CacheScope.NETWORK_RESPONSE).describe() == "cache[network_response]=redis"
+        infra.get_cache(CacheScope.NETWORK_RESPONSE).describe() == "cache[network_response]=valkey"
     )
 
 

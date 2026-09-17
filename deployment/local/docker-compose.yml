@@ -23,12 +23,12 @@ services:
       timeout: 2s
       retries: 30
 
-  redis:
-    image: redis:8.10-alpine
+  valkey:
+    image: valkey/valkey:9.1-alpine
     ports:
       - "127.0.0.1:56379:6379"
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "valkey-cli", "ping"]
       interval: 2s
       timeout: 2s
       retries: 30
@@ -74,18 +74,17 @@ services:
       postgres:
         condition: service_healthy
 
-  redisinsight:
-    image: redis/redisinsight:3.8.0
+  valkey-admin:
+    image: valkey/valkey-admin:1.1.1
     profiles: [devx]
     environment:
-      RI_ACCEPT_TERMS_AND_CONDITIONS: "true"
-      RI_REDIS_ALIAS: tadas-local
-      RI_REDIS_HOST: redis
-      RI_REDIS_PORT: "6379"
+      DEPLOYMENT_MODE: Web
+      VALKEY_HOST: valkey
+      VALKEY_PORT: "6379"
     ports:
-      - "127.0.0.1:55540:5540"
+      - "127.0.0.1:58080:8080"
     depends_on:
-      redis:
+      valkey:
         condition: service_healthy
 
   elasticmq-ui:

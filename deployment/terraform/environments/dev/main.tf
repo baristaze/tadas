@@ -9,9 +9,9 @@ locals {
   # anything else at boot.
   process_environment = {
     TADAS_ENVIRONMENT         = var.environment
-    TADAS_CACHE_BACKEND       = "redis"
-    TADAS_TOPICS_BACKEND      = "redis"
-    TADAS_REDIS_URL           = module.cache.url
+    TADAS_CACHE_BACKEND       = "valkey"
+    TADAS_TOPICS_BACKEND      = "valkey"
+    TADAS_VALKEY_URL          = module.cache.url
     TADAS_BUCKETS_BACKEND     = "s3"
     TADAS_S3_BUCKET_PREFIX    = module.buckets.prefix
     TADAS_QUEUES_BACKEND      = "sqs"

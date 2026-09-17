@@ -33,9 +33,9 @@ class InfraSettings(BaseSettings):
 
     environment: str = "local"
 
-    cache_backend: Literal["memory", "redis"] = "memory"
-    topics_backend: Literal["memory", "redis"] = "memory"
-    redis_url: str = "redis://127.0.0.1:56379/0"
+    cache_backend: Literal["memory", "valkey"] = "memory"
+    topics_backend: Literal["memory", "valkey"] = "memory"
+    valkey_url: str = "valkey://127.0.0.1:56379/0"
 
     buckets_backend: Literal["local", "s3"] = "local"
     buckets_root: Path = Path(".local/buckets")

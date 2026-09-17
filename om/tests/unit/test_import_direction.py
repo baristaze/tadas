@@ -103,7 +103,7 @@ def test_the_scan_sees_the_whole_tree() -> None:
         "tadas.infra.root",
         "tadas.infra.impl.configured",
     } <= names
-    assert is_infra_impl("tadas.infra.cache.redis")
+    assert is_infra_impl("tadas.infra.cache.valkey")
     assert is_infra_impl("tadas.infra.impl.local")
     assert is_infra_impl("tadas.infra.topics.dispatch")
     assert not is_infra_impl("tadas.infra.topics")

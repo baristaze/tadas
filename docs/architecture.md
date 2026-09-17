@@ -31,16 +31,16 @@ have chains today.
 
 The `tadas-infra` distribution fronts cache, buckets, topics, queues,
 and secrets with interfaces, each with a local or memory impl and a
-cloud impl (Redis, S3, SQS, Secrets Manager). Topics today:
+cloud impl (Valkey, S3, SQS, Secrets Manager). Topics today:
 `work_available` and `entity_changed`. Every capability interface
 declares `start()` and `close()`; the roots call them unconditionally
-and only the Redis topic listener does anything in them.
+and only the Valkey topic listener does anything in them.
 
 - The queue impls count `sent`, `received`, `deleted`, and, in the
   memory twin where the transition is visible, `dead_lettered` on the
   outcome counter, with a log line naming the message and the queue;
   the twin does not deduplicate on `dedup_id`, exactly like SQS. The
-  cache impls count `hit` and `miss` on `get`, and Redis `unreachable`.
+  cache impls count `hit` and `miss` on `get`, and Valkey `unreachable`.
 - The AWS impls translate every driver error into `BackendFailed`, an
   `InfraException` leaf (`tadas.infra.exceptions`), through the one
   module that names botocore (`tadas.infra.aws_errors`); not-found
@@ -79,7 +79,7 @@ everything in-process for tests.
 
 ## Deployment (`deployment/`)
 
-- `local/`: the compose stack (Postgres, Redis, ElasticMQ, MinIO, and
+- `local/`: the compose stack (Postgres, Valkey, ElasticMQ, MinIO, and
   developer dashboards under the `devx` profile) and a second file that
   adds the application containers, the portal among them.
 - `docker/`: one two-stage image per process, non-root, with a

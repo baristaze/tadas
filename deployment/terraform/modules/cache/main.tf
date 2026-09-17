@@ -1,6 +1,5 @@
-# Valkey serves every cache scope and the topic bus (pub/sub). It speaks the
-# Redis protocol, so processes keep their Redis client and TADAS_REDIS_URL.
-# In transit and at rest encryption are on, so the URL is rediss://.
+# Valkey serves every cache scope and the topic bus (pub/sub). In transit and
+# at rest encryption are on, so the URL is valkeys://.
 
 locals {
   tags = { "tadas:environment" = var.environment }
