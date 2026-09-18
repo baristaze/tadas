@@ -24,7 +24,9 @@ if TYPE_CHECKING:
 
 
 class TenancyManagerInterface:
-    """Manager of the tenancy swimlane.
+    """Manager of the tenancy swimlane, on the tenant plane: every operation
+    with a context takes `OpContext`. The operator plane is
+    `TenancyOperatorManagerInterface`, which takes `AdminContext`.
 
     The operations without `ctx` exist before any principal does or act
     across every tenant; each produces a context rather than consuming
@@ -167,9 +169,3 @@ class TenancyManagerInterface:
     async def issue_ticket(self, ctx: OpContext) -> IssuedTicket:
         """A single-use, short-lived ticket standing for the caller's credential."""
         ...
-
-    # Operator operations.
-
-    async def get_orgs(self, admin: AdminContext, limit: int) -> list[Org]: ...
-
-    async def delete_org(self, admin: AdminContext, org_id: UUID) -> Org: ...

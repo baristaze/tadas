@@ -12,8 +12,9 @@ from tadas.om.idempotency.impl.manager import IdempotencyManagerImpl
 from tadas.om.storage.root import StorageInterface
 from tadas.om.tasks import TasksManagerInterface
 from tadas.om.tasks.impl.manager import TasksManagerImpl, TasksOptions
-from tadas.om.tenancy import TenancyManagerInterface
+from tadas.om.tenancy import TenancyManagerInterface, TenancyOperatorManagerInterface
 from tadas.om.tenancy.impl.manager import TenancyManagerImpl, TenancyOptions
+from tadas.om.tenancy.impl.operator import TenancyOperatorManagerImpl, TenancyOperatorOptions
 from tadas.om.work import WorkManagerInterface
 from tadas.om.work.impl.manager import WorkManagerImpl, WorkOptions
 
@@ -21,6 +22,7 @@ from tadas.om.work.impl.manager import WorkManagerImpl, WorkOptions
 @dataclass(frozen=True)
 class Managers:
     tenancy: TenancyManagerInterface
+    tenancy_operator: TenancyOperatorManagerInterface
     work: WorkManagerInterface
     tasks: TasksManagerInterface
     idempotency: IdempotencyManagerInterface
@@ -50,4 +52,14 @@ def build_managers(storage: StorageInterface, infra: InfraInterface) -> Managers
         TasksOptions(),
     )
     idempotency = IdempotencyManagerImpl(storage.get_idempotency_storage())
-    return Managers(tenancy=tenancy, work=work, tasks=tasks, idempotency=idempotency, events=events)
+    tenancy_operator = TenancyOperatorManagerImpl(
+        storage.get_tenancy_storage(), TenancyOperatorOptions()
+    )
+    return Managers(
+        tenancy=tenancy,
+        tenancy_operator=tenancy_operator,
+        work=work,
+        tasks=tasks,
+        idempotency=idempotency,
+        events=events,
+    )

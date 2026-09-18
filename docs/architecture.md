@@ -15,7 +15,9 @@ and one namespace per swimlane:
 - `tenancy`: orgs, identities, users, memberships, sessions, api keys,
   socket tickets; sign-in, tenant-scoped session tokens, role-capped api
   keys, the operator allowlist, and the service contexts workers run
-  under. A socket ticket is a row; redeeming it is one conditional
+  under. The operator plane (every org, delete an org) is a second
+  manager, `TenancyOperatorManagerInterface`, which takes `AdminContext`
+  and nothing else. A socket ticket is a row; redeeming it is one conditional
   update on its hash, and the cache only remembers a redeemed one so a
   replay is refused without a round trip.
 - `work`: the table-backed work queue in the `queue` role; enqueue

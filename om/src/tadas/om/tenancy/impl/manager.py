@@ -566,22 +566,6 @@ class TenancyManagerImpl(TenancyManagerInterface):
         await self._storage.write_socket_ticket(ctx.org_id, behind)
         return IssuedTicket(ticket=ticket, expires_at=behind.expires_at)
 
-    # Operator operations.
-
-    async def get_orgs(self, admin: AdminContext, limit: int) -> list[Org]:
-        return await self._storage.read_orgs(self._clamp(limit))
-
-    async def delete_org(self, admin: AdminContext, org_id: UUID) -> Org:
-        org = await self._storage.read_org(org_id)
-        if org is None or org.deleted_at is not None:
-            raise NotFound(f"org {org_id} not found")
-        now = utcnow()
-        deleted = org.model_copy(
-            update={"deleted_at": now, "deleted_by": admin.identity_id, "updated_at": now}
-        )
-        await self._storage.write_org(org_id, deleted)
-        return deleted
-
     # Helpers.
 
     def _clamp(self, limit: int) -> int:

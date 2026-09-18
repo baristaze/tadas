@@ -12,7 +12,7 @@ from tadas.om.storage.roles import DatabaseRole
 from tadas.om.storage.settings import StorageSettings
 from tadas.om.tasks import TasksManagerInterface
 from tadas.om.tasks.storage import TasksStorageInterface
-from tadas.om.tenancy import TenancyManagerInterface
+from tadas.om.tenancy import TenancyManagerInterface, TenancyOperatorManagerInterface
 from tadas.om.tenancy.storage import TenancyStorageInterface
 from tadas.om.work import WorkManagerInterface
 from tadas.om.work.storage import WorkStorageInterface
@@ -56,6 +56,7 @@ def test_role_urls_default_to_the_shared_one() -> None:
 def test_business_root_has_a_field_per_manager(tmp_path: Path) -> None:
     managers = build_managers(StorageMemoryImpl(), InfraLocalImpl(tmp_path))
     assert isinstance(managers.tenancy, TenancyManagerInterface)
+    assert isinstance(managers.tenancy_operator, TenancyOperatorManagerInterface)
     assert isinstance(managers.work, WorkManagerInterface)
     assert isinstance(managers.tasks, TasksManagerInterface)
     assert isinstance(managers.idempotency, IdempotencyManagerInterface)

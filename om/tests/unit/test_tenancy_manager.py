@@ -23,6 +23,7 @@ from tadas.om.exceptions import (
 )
 from tadas.om.opcontext import AppContext, AppType, CredentialKind, OpContext, Permission, Role
 from tadas.om.tenancy.impl.manager import TenancyManagerImpl, TenancyOptions
+from tadas.om.tenancy.impl.operator import TenancyOperatorManagerImpl, TenancyOperatorOptions
 from tadas.om.tenancy.rules import hash_password, hash_token
 from tadas.om.tenancy.storage.impl.memory import TenancyStorageMemoryImpl
 from tadas.om.tenancy.types.identity import Identity
@@ -85,6 +86,11 @@ def make_manager(
 @pytest.fixture
 def manager(storage: TenancyStorageMemoryImpl, infra: InfraLocalImpl) -> TenancyManagerImpl:
     return make_manager(storage, infra)
+
+
+@pytest.fixture
+def operator(storage: TenancyStorageMemoryImpl) -> TenancyOperatorManagerImpl:
+    return TenancyOperatorManagerImpl(storage, TenancyOperatorOptions())
 
 
 async def sign_in(manager: TenancyManagerImpl, email: str, org_id: UUID) -> OpContext:
@@ -390,7 +396,7 @@ async def test_the_identity_behind_the_caller(manager: TenancyManagerImpl) -> No
 
 
 async def test_operator_gate_admits_only_operators_signing_in(
-    manager: TenancyManagerImpl,
+    manager: TenancyManagerImpl, operator: TenancyOperatorManagerImpl
 ) -> None:
     await manager.bootstrap("Acme", "acme", "ann@example.test", "pw-1234", "Ann")
     await manager.bootstrap("Ops", "ops", "root@example.test", "pw-1234", "Root", operator=True)
@@ -401,7 +407,8 @@ async def test_operator_gate_admits_only_operators_signing_in(
     operator_login = await manager.login("root@example.test", "pw-1234")
     admin = await manager.authenticate_operator(operator_login.token, new_id())
     assert admin.email == "root@example.test"
-    assert len(await manager.get_orgs(admin, limit=10)) == 2
+    assert len(await operator.get_orgs(admin, limit=10)) == 2
+    assert len(await operator.get_orgs(admin, limit=1)) == 1
 
     ops_org = next(m.org for m in operator_login.memberships if m.org.slug == "ops")
     session = await manager.exchange_login(operator_login.token, ops_org.id)
@@ -410,7 +417,7 @@ async def test_operator_gate_admits_only_operators_signing_in(
 
 
 async def test_operators_soft_delete_an_org_and_its_principals_stop_resolving(
-    manager: TenancyManagerImpl,
+    manager: TenancyManagerImpl, operator: TenancyOperatorManagerImpl
 ) -> None:
     _, org = await manager.bootstrap("Acme", "acme", "ann@example.test", "pw-1234", "Ann")
     await manager.bootstrap("Ops", "ops", "root@example.test", "pw-1234", "Root", operator=True)
@@ -420,7 +427,7 @@ async def test_operators_soft_delete_an_org_and_its_principals_stop_resolving(
         (await manager.login("root@example.test", "pw-1234")).token, new_id()
     )
 
-    deleted = await manager.delete_org(admin, org.id)
+    deleted = await operator.delete_org(admin, org.id)
     assert deleted.deleted_at is not None and deleted.deleted_by == admin.identity_id
     assert deleted.updated_at == deleted.deleted_at
     with pytest.raises(InvalidCredential):
@@ -428,9 +435,9 @@ async def test_operators_soft_delete_an_org_and_its_principals_stop_resolving(
     assert (await manager.login("ann@example.test", "pw-1234")).memberships == ()
     assert [c.org_id for c in await manager.service_contexts(APP, new_id())] != [org.id]
     with pytest.raises(NotFound):
-        await manager.delete_org(admin, org.id)
+        await operator.delete_org(admin, org.id)
     with pytest.raises(NotFound):
-        await manager.delete_org(admin, new_id())
+        await operator.delete_org(admin, new_id())
 
 
 async def test_resume_and_service_contexts(manager: TenancyManagerImpl) -> None:
