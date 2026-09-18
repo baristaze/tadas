@@ -23,7 +23,7 @@ class MaintenanceSettings(StorageSettings, InfraSettings):
     metrics_host: str = "127.0.0.1"
     metrics_port: int = 9464
     worker_id: str = Field(default_factory=default_worker_id)
-    worker_queue: str = "default"
+    worker_lane: str = "default"
     worker_capacity: int = 4
     worker_lease_seconds: int = 60
     worker_heartbeat_seconds: int = 10

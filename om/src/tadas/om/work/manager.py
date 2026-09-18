@@ -9,12 +9,15 @@ from tadas.om.work.types.work_item import WorkItem, WorkKind
 
 
 class WorkManagerInterface:
-    async def enqueue(self, ctx: OpContext, item: WorkItem) -> WorkItem: ...
+    async def enqueue(self, ctx: OpContext, item: WorkItem) -> WorkItem:
+        """Raises ValidationFailed when the payload is not the shape WORK_PAYLOADS
+        fixes for the kind, DuplicateWorkItem on a reused idempotency key."""
+        ...
 
     async def claim(
-        self, queue: str, kinds: Sequence[WorkKind], worker_id: str, lease: timedelta
+        self, lane: str, kinds: Sequence[WorkKind], worker_id: str, lease: timedelta
     ) -> tuple[OpContext, WorkItem] | None:
-        """Platform-internal: claims the oldest available item and rebuilds the
+        """Platform-internal: claims the oldest available item on the lane and rebuilds the
         enqueuer's principal under the service role; returns the context with the item."""
         ...
 
@@ -26,7 +29,8 @@ class WorkManagerInterface:
         ...
 
     async def fail(self, ctx: OpContext, item: WorkItem, error: str) -> WorkItem:
-        """Requeues with a growing delay, or fails the item at max_attempts."""
+        """Requeues with a growing delay, or fails the item at max_attempts. A failed
+        item is a dead letter: an audit event names it and a metric counts it."""
         ...
 
     async def defer(self, ctx: OpContext, item: WorkItem, delay: timedelta) -> WorkItem:

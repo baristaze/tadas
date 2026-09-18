@@ -46,13 +46,13 @@ class WorkStoragePostgresImpl(PgStorageBase, WorkStorageInterface):
             return written
 
     async def claim_next(
-        self, queue: str, kinds: Sequence[WorkKind], worker_id: str, lease: timedelta
+        self, lane: str, kinds: Sequence[WorkKind], worker_id: str, lease: timedelta
     ) -> tuple[UUID, WorkItem] | None:
         now = utcnow()
         candidate = (
             select(WorkItems.id)
             .where(
-                WorkItems.queue == queue,
+                WorkItems.lane == lane,
                 WorkItems.status == WorkStatus.QUEUED.value,
                 WorkItems.kind.in_([kind.value for kind in kinds]),
                 WorkItems.available_at <= now,
@@ -83,7 +83,7 @@ class WorkStoragePostgresImpl(PgStorageBase, WorkStorageInterface):
             return claimed
 
     async def requeue_stale(
-        self, org_id: UUID, now: datetime, stagger: timedelta
+        self, org_id: UUID, now: datetime, stagger: timedelta, updated_by: UUID
     ) -> list[WorkItem]:
         stale_filter = (
             WorkItems.org_id == org_id,
@@ -112,6 +112,7 @@ class WorkStoragePostgresImpl(PgStorageBase, WorkStorageInterface):
                 lease_expires_at=None,
                 last_error="lease expired",
                 updated_at=now,
+                updated_by=updated_by,
             )
             .returning(WorkItems)
         )

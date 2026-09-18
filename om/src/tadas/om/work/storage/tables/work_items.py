@@ -14,7 +14,7 @@ class WorkItems(IdentifiableMixin, TrackableMixin, Base):
     __org_id_index__ = False
     __table_args__ = (
         Index("uq_work_items_idempotency_key", "idempotency_key", unique=True),
-        Index("ix_work_items_queue_status_available_at", "queue", "status", "available_at"),
+        Index("ix_work_items_lane_status_available_at", "lane", "status", "available_at"),
         Index(
             "ix_work_items_org_id_status_lease_expires_at", "org_id", "status", "lease_expires_at"
         ),
@@ -23,7 +23,7 @@ class WorkItems(IdentifiableMixin, TrackableMixin, Base):
     target_id: Mapped[UUID]
     idempotency_key: Mapped[UUID]
     payload: Mapped[dict[str, Any]]
-    queue: Mapped[str]
+    lane: Mapped[str]
     status: Mapped[str]
     available_at: Mapped[datetime]
     claimed_by: Mapped[str | None]

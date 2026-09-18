@@ -1,7 +1,8 @@
 """The worker loop: wake on WORK_AVAILABLE with a short poll fallback, claim
-while a slot is free, run each item as a task that renews its lease and
-cancels itself when renewal keeps failing, heartbeat liveness, sweep on a
-timer, and drain first on stop."""
+on the lane while a slot is free, run each item as a task that renews its
+lease and cancels itself when renewal keeps failing, heartbeat liveness,
+sweep on a timer (stale leases, the outbox, done outbox rows), and drain
+first on stop."""
 
 import asyncio
 import contextlib
@@ -15,6 +16,7 @@ from tadas.infra.topics import TopicPayload, Topics, TopicsInterface, WorkAvaila
 from tadas.om.base import EMPTY_UUID, Platform
 from tadas.om.exceptions import LeaseLost, NotFound
 from tadas.om.opcontext import OpContext
+from tadas.om.outbox import OutboxRelayInterface
 from tadas.om.work import WorkManagerInterface
 from tadas.om.work.types.handler import WorkHandlerInterface
 from tadas.om.work.types.work_item import WorkItem, WorkKind
@@ -24,13 +26,15 @@ log = logging.getLogger(__name__)
 
 class LoopOptions(Platform):
     worker_id: str
-    queue: str = "default"
+    lane: str = "default"
     capacity: int = 4
     lease: timedelta = timedelta(seconds=60)
     heartbeat_interval: timedelta = timedelta(seconds=10)
     heartbeat_failure_limit: int = 3
     sweep_interval: timedelta = timedelta(seconds=30)
     poll_interval: timedelta = timedelta(seconds=5)
+    outbox_batch: int = 100  # pending rows relayed per sweep
+    outbox_retention: timedelta = timedelta(hours=1)  # done rows purged after this
 
 
 class WorkerLoop:
@@ -38,12 +42,14 @@ class WorkerLoop:
         self,
         *,
         work: WorkManagerInterface,
+        outbox: OutboxRelayInterface,
         handlers: Mapping[WorkKind, WorkHandlerInterface],
         topics: TopicsInterface,
         liveness: CacheInterface,
         options: LoopOptions,
     ) -> None:
         self._work = work
+        self._outbox = outbox
         self._handlers = handlers
         self._topics = topics
         self._liveness = liveness
@@ -96,7 +102,7 @@ class WorkerLoop:
     # Claiming.
 
     async def _on_work_available(self, payload: TopicPayload) -> None:
-        if isinstance(payload, WorkAvailablePayload) and payload.queue == self._options.queue:
+        if isinstance(payload, WorkAvailablePayload) and payload.lane == self._options.lane:
             self._wake.set()
 
     async def _claim_until_stopped(self) -> None:
@@ -114,7 +120,7 @@ class WorkerLoop:
     async def _try_claim(self) -> bool:
         try:
             claimed = await self._work.claim(
-                self._options.queue, self.kinds, self._options.worker_id, self._options.lease
+                self._options.lane, self.kinds, self._options.worker_id, self._options.lease
             )
         except Exception:
             log.exception("claim failed")
@@ -233,8 +239,9 @@ class WorkerLoop:
             await asyncio.sleep(self._options.sweep_interval.total_seconds())
 
     async def _sweep_once(self) -> None:
-        """One service context per live tenant, then every step under each of them.
-        Every step is idempotent and wrapped, so a failing tenant never stops the rest."""
+        """One service context per live tenant, then every step under each of them;
+        then the cross-tenant steps of the outbox. Every step is idempotent and
+        wrapped, so a failing tenant or step never stops the rest."""
         try:
             contexts = await self._work.maintenance_contexts()
         except Exception:
@@ -245,6 +252,15 @@ class WorkerLoop:
                 await self._work.requeue_stale(ctx)
             except Exception:
                 log.exception("sweep: requeue_stale failed for tenant %s", ctx.org_id)
+        try:
+            # Whatever a crash left between the core write and its push.
+            await self._outbox.relay_pending(self._options.outbox_batch)
+        except Exception:
+            log.exception("sweep: outbox relay failed")
+        try:
+            await self._outbox.purge_done(self._options.outbox_retention)
+        except Exception:
+            log.exception("sweep: outbox purge failed")
         self.sweeps += 1
 
     # Shutdown.

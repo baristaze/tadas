@@ -1,5 +1,7 @@
 """Durable background work is a row: what to do, for which record, under
-which producer key, and its own claim."""
+which producer key, on which lane, and its own claim. Payload shapes are
+fixed per kind by `WORK_PAYLOADS`, as `TOPIC_PAYLOADS` fixes them per topic;
+the row stores the dump."""
 
 from collections.abc import Mapping
 from datetime import datetime
@@ -9,7 +11,7 @@ from uuid import UUID
 
 from pydantic import Field
 
-from tadas.om.base import Identifiable, Trackable
+from tadas.om.base import Identifiable, Platform, Trackable
 
 
 class WorkKind(str, Enum):
@@ -27,8 +29,10 @@ class WorkItem(Identifiable, Trackable):
     kind: WorkKind  # what to do
     target_id: UUID  # the record it advances
     idempotency_key: UUID  # unique
-    payload: Mapping[str, Any] = Field(default_factory=dict)
-    queue: str = "default"  # routing: "default", "region:<id>", ...
+    payload: Mapping[str, Any] = Field(default_factory=dict)  # the dump of WORK_PAYLOADS[kind]
+    lane: str = (
+        "default"  # routing: "default", "region:<id>", ...; a string, because lanes are dynamic
+    )
     status: WorkStatus = WorkStatus.QUEUED
     available_at: datetime  # not before
     claimed_by: str | None = None
@@ -36,3 +40,13 @@ class WorkItem(Identifiable, Trackable):
     attempts: int = 0
     max_attempts: int = 3
     last_error: str | None = None
+
+
+class NoopPayload(Platform):
+    """The NOOP kind carries nothing."""
+
+
+WORK_PAYLOADS: dict[WorkKind, type[Platform]] = {
+    WorkKind.NOOP: NoopPayload,
+}
+"""The payload shape of every kind; enqueue validates the item's payload against it."""

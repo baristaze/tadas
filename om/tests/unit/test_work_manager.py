@@ -5,12 +5,13 @@ import pytest
 from contracts.work_storage import make_item
 
 from tadas.infra.impl.local import InfraLocalImpl
-from tadas.infra.topics import TopicPayload, Topics, WorkAvailablePayload
+from tadas.infra.topics import EntityChangedPayload, TopicPayload, Topics, WorkAvailablePayload
 from tadas.om.base import new_id, utcnow
-from tadas.om.exceptions import LeaseLost, NotFound
+from tadas.om.exceptions import LeaseLost, NotFound, ValidationFailed
 from tadas.om.opcontext import AppContext, AppType, CredentialKind, OpContext, Role
 from tadas.om.root import Managers, build_managers
 from tadas.om.storage.impl.memory import StorageMemoryImpl
+from tadas.om.work.impl.manager import DEAD_LETTER_KIND
 from tadas.om.work.types.work_item import WorkKind, WorkStatus
 
 LEASE = timedelta(seconds=30)
@@ -53,7 +54,7 @@ async def test_enqueue_publishes_and_claim_returns_the_enqueuers_context(
     item = make_item().model_copy(update={"created_by": ctx.user_id})
     await managers.work.enqueue(ctx, item)
     assert isinstance(seen[0], WorkAvailablePayload)
-    assert seen[0].queue == "default" and seen[0].kind == "NOOP"
+    assert seen[0].lane == "default" and seen[0].kind == "NOOP"
     assert seen[0].idempotency_key == item.idempotency_key
 
     claimed = await managers.work.claim("default", [WorkKind.NOOP], "w1", LEASE)
@@ -175,3 +176,50 @@ async def test_requeue_stale_runs_per_tenant_under_a_maintenance_context(
     again = await managers.work.claim("default", [WorkKind.NOOP], "w2", LEASE)
     assert again is not None and again[1].attempts == 2 and again[1].id != exhausted.id
     assert await managers.work.claim("default", [WorkKind.NOOP], "w2", LEASE) is None
+
+
+async def test_enqueue_refuses_a_payload_outside_the_kinds_shape(
+    managers: Managers, ctx: OpContext
+) -> None:
+    # WORK_PAYLOADS fixes the shape per kind; NOOP carries nothing.
+    item = make_item().model_copy(update={"created_by": ctx.user_id, "payload": {"extra": 1}})
+    with pytest.raises(ValidationFailed):
+        await managers.work.enqueue(ctx, item)
+
+
+async def test_a_failed_item_is_a_dead_letter_with_an_audit_event(
+    managers: Managers, infra: InfraLocalImpl, ctx: OpContext
+) -> None:
+    seen: list[TopicPayload] = []
+
+    async def record(payload: TopicPayload) -> None:
+        seen.append(payload)
+
+    infra.get_topics().subscribe(Topics.ENTITY_CHANGED, "test", record)
+    item = make_item().model_copy(update={"created_by": ctx.user_id, "max_attempts": 1})
+    await managers.work.enqueue(ctx, item)
+    claimed = await managers.work.claim("default", [WorkKind.NOOP], "w1", LEASE)
+    assert claimed is not None
+    work_ctx, claimed_item = claimed
+    failed = await managers.work.fail(work_ctx, claimed_item, "boom")
+    assert failed.status is WorkStatus.FAILED and failed.updated_by == work_ctx.user_id
+    events = await managers.events.get_events(ctx, after_seq=0, limit=10)
+    assert [(e.kind, e.target_id, e.payload["last_error"]) for e in events] == [
+        (DEAD_LETTER_KIND, item.id, "boom")
+    ]
+    assert [(p.kind, p.seq) for p in seen if isinstance(p, EntityChangedPayload)] == [
+        (DEAD_LETTER_KIND, 1)
+    ]
+
+
+async def test_a_retry_that_still_has_attempts_is_not_a_dead_letter(
+    managers: Managers, ctx: OpContext
+) -> None:
+    item = make_item().model_copy(update={"created_by": ctx.user_id, "max_attempts": 3})
+    await managers.work.enqueue(ctx, item)
+    claimed = await managers.work.claim("default", [WorkKind.NOOP], "w1", LEASE)
+    assert claimed is not None
+    work_ctx, claimed_item = claimed
+    requeued = await managers.work.fail(work_ctx, claimed_item, "again")
+    assert requeued.status is WorkStatus.QUEUED
+    assert await managers.events.get_events(ctx, after_seq=0, limit=10) == []
