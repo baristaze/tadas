@@ -9,11 +9,11 @@
     "preview": "vite preview",
     "lint": "eslint src",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "generate": "openapi-typescript openapi.json -o src/api/schema.d.ts"
   },
   "dependencies": {
     "@sentry/react": "^10.74.0",
-    "@tadas/api-client": "workspace:*",
     "@tanstack/react-query": "^5.103.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
@@ -28,6 +28,7 @@
     "@vitejs/plugin-react": "^6.1.1",
     "eslint": "^10.10.0",
     "eslint-plugin-react-hooks": "^7.1.1",
+    "openapi-typescript": "^7.13.0",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.70.0",
     "vite": "^8.3.0",

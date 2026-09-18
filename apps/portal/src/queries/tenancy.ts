@@ -9,7 +9,7 @@ import type {
   LoginRequest,
   MeView,
   UserView,
-} from "@tadas/api-client";
+} from "../api";
 import { api } from "../app/api";
 import { keys } from "./keys";
 

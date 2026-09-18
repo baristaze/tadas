@@ -4,7 +4,7 @@ import { parseEnvelope } from "./envelopes";
 import { routeEnvelope } from "./router";
 
 describe("routeEnvelope", () => {
-  it("invalidates queries by the entity name in the push", () => {
+  it("invalidates queries by the entity name inside the push's kind, ignoring unknown fields", () => {
     const queryClient = new QueryClient();
     const seen: unknown[] = [];
     queryClient.invalidateQueries = (filters) => {
@@ -16,7 +16,7 @@ describe("routeEnvelope", () => {
         type: "event",
         sent_at: null,
         topic: "entity_changed",
-        payload: { entity: "api_key", entity_id: "x", action: "created", seq: null },
+        payload: { kind: "tenancy.api_key.created", target_id: "x", seq: 3, added_later: 1 },
       }),
     );
     expect(envelope).not.toBeNull();

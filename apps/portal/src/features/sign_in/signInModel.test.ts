@@ -1,4 +1,4 @@
-import type { MembershipChoiceView } from "@tadas/api-client";
+import type { MembershipChoiceView } from "../../api";
 import { describe, expect, it } from "vitest";
 import { checkCredentials, chooseOrg } from "./signInModel";
 

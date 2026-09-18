@@ -113,5 +113,5 @@ test-integration: ## Integration tests over the compose stack
 	uv run pytest -q -m integration
 
 openapi: ## Emit the API document into the apps that consume it and regenerate their types
-	uv run --package tadas-api tadas-api openapi --out clients/api-client/openapi.json
-	pnpm --filter @tadas/api-client generate
+	uv run --package tadas-api tadas-api openapi --out apps/portal/openapi.json
+	pnpm --filter @tadas/portal generate

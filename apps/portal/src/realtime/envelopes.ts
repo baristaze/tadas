@@ -26,14 +26,20 @@ export interface UnsubscribedEnvelope extends Base {
   topic: string;
 }
 
-// Mirrors the service's EntityChangedView: which record changed, how, and
-// where it sits in the tenant's stream. `seq` is null for a push whose
-// producer wrote no stream record; such a push cannot be replayed.
+// Mirrors the service's EntityChangedView: which record changed (`kind` is
+// "<namespace>.<entity>.<action>") and where it sits in the tenant's stream.
+// Every push has a record, so `seq` is always a number. Read tolerantly: a
+// field the client does not know is ignored.
 export interface EntityChangedView {
-  entity: string;
-  entity_id: string;
-  action: "created" | "updated" | "deleted";
-  seq: number | null;
+  kind: string;
+  target_id: string;
+  seq: number;
+}
+
+// The entity name inside a kind, which is what query keys start with.
+export function entityOf(kind: string): string {
+  const parts = kind.split(".");
+  return parts.length >= 2 ? parts[1]! : kind;
 }
 
 export interface EventEnvelope extends Base {
@@ -82,8 +88,6 @@ export function isEntityChanged(envelope: Envelope): envelope is EventEnvelope {
   if (typeof payload !== "object" || payload === null) return false;
   const view = payload as Partial<EntityChangedView>;
   return (
-    typeof view.entity === "string" &&
-    typeof view.entity_id === "string" &&
-    (typeof view.seq === "number" || view.seq === null)
+    typeof view.kind === "string" && typeof view.target_id === "string" && typeof view.seq === "number"
   );
 }

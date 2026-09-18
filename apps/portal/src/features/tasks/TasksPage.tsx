@@ -1,4 +1,4 @@
-import type { TaskScope } from "@tadas/api-client";
+import type { TaskScope } from "../../api";
 import { useState, type DragEvent } from "react";
 import { AppNav } from "../../app/AppNav";
 import { Banner, Button, Card, LinkButton, Muted, Page, SegmentedControl } from "../../design/kit";

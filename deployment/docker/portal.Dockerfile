@@ -7,9 +7,7 @@ RUN corepack enable
 WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json eslint.config.js ./
 COPY apps/portal/package.json apps/portal/
-COPY clients/api-client/package.json clients/api-client/
 RUN pnpm install --frozen-lockfile --filter @tadas/portal...
-COPY clients/api-client clients/api-client
 COPY apps/portal apps/portal
 COPY deployment/realtime-timeouts.json deployment/
 ARG VITE_API_URL=http://127.0.0.1:8000

@@ -1,4 +1,4 @@
-import { ApiError, type MembershipChoiceView } from "@tadas/api-client";
+import { ApiError, type MembershipChoiceView } from "../../api";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useExchangeSession, useLogin } from "../../queries/tenancy";

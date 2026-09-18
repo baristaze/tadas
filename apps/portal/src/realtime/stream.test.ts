@@ -1,4 +1,4 @@
-import type { EventView } from "@tadas/api-client";
+import type { EventView } from "../api";
 import { describe, expect, it } from "vitest";
 import { eventEnvelope, isLastPage, place } from "./stream";
 
@@ -18,26 +18,21 @@ describe("place", () => {
     expect(place(7, 100)).toEqual({ kind: "gap", after: 7 });
   });
 
-  it("routes a push without a stream position and keeps the cursor", () => {
-    expect(place(7, null)).toEqual({ kind: "unsequenced" });
-    expect(place(null, null)).toEqual({ kind: "unsequenced" });
-  });
 });
 
 describe("eventEnvelope", () => {
   it("turns a replayed record into the envelope the socket would have carried", () => {
     const event: EventView = {
       seq: 4,
-      entity: "task",
-      entity_id: "t1",
-      action: "updated",
+      kind: "tasks.task.updated",
+      target_id: "t1",
       produced_at: "2026-09-16T12:00:00Z",
     };
     expect(eventEnvelope(event)).toEqual({
       type: "event",
       topic: "entity_changed",
       sent_at: null,
-      payload: { entity: "task", entity_id: "t1", action: "updated", seq: 4 },
+      payload: { kind: "tasks.task.updated", target_id: "t1", seq: 4 },
     });
   });
 

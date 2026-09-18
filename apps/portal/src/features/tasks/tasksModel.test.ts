@@ -1,5 +1,5 @@
 import type { InfiniteData } from "@tanstack/react-query";
-import type { MeView, TaskPageView, TaskView, UserView } from "@tadas/api-client";
+import type { MeView, TaskPageView, TaskView, UserView } from "../../api";
 import { describe, expect, it } from "vitest";
 import {
   canAdd,

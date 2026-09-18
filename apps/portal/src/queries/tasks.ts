@@ -5,7 +5,7 @@ import type {
   TaskScope,
   TaskView,
   UpdateTaskRequest,
-} from "@tadas/api-client";
+} from "../api";
 import { api } from "../app/api";
 import { keys } from "./keys";
 

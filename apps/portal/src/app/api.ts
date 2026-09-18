@@ -1,5 +1,5 @@
 // The one client instance the whole app shares, built from the runtime config.
-import { createClient } from "@tadas/api-client";
+import { createClient } from "../api";
 import { useSessionStore } from "../store/session";
 import { runtimeConfig } from "./config";
 
