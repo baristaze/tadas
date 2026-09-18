@@ -6,7 +6,7 @@ from uuid import UUID
 
 import pytest
 
-from tadas.infra.cache import CacheScope
+from tadas.infra.cache import CacheInterface, CacheScope
 from tadas.infra.impl.local import InfraLocalImpl
 from tadas.infra.topics import EntityChangedPayload, TopicPayload, Topics
 from tadas.om.base import new_id, utcnow
@@ -23,13 +23,38 @@ from tadas.om.exceptions import (
 )
 from tadas.om.opcontext import AppContext, AppType, CredentialKind, OpContext, Permission, Role
 from tadas.om.tenancy.impl.manager import TenancyManagerImpl, TenancyOptions
-from tadas.om.tenancy.rules import hash_password
+from tadas.om.tenancy.rules import hash_password, hash_token
 from tadas.om.tenancy.storage.impl.memory import TenancyStorageMemoryImpl
 from tadas.om.tenancy.types.identity import Identity
 from tadas.om.tenancy.types.membership import Membership
 from tadas.om.tenancy.types.user import User
 
 APP = AppContext(type=AppType.PORTAL, version="portal@test")
+
+
+class DownCache(CacheInterface):
+    """A backend that cannot be reached: every read is a miss, every write is lost."""
+
+    async def get(self, org_id: UUID, key: str) -> bytes | None:
+        return None
+
+    async def put(self, org_id: UUID, key: str, value: bytes, ttl: timedelta) -> None:
+        return None
+
+    async def invalidate(self, org_id: UUID, key: str) -> None:
+        return None
+
+    async def increment(self, org_id: UUID, key: str, ttl: timedelta) -> tuple[int, timedelta]:
+        return 0, ttl
+
+    def describe(self) -> str:
+        return "cache=down"
+
+    async def start(self) -> None:
+        return None
+
+    async def close(self) -> None:
+        return None
 
 
 @pytest.fixture
@@ -43,13 +68,16 @@ def storage() -> TenancyStorageMemoryImpl:
 
 
 def make_manager(
-    storage: TenancyStorageMemoryImpl, infra: InfraLocalImpl, options: TenancyOptions | None = None
+    storage: TenancyStorageMemoryImpl,
+    infra: InfraLocalImpl,
+    options: TenancyOptions | None = None,
+    cache: CacheInterface | None = None,
 ) -> TenancyManagerImpl:
     return TenancyManagerImpl(
         storage,
         EventsManagerImpl(EventStorageMemoryImpl(), EventsOptions()),
         infra.get_topics(),
-        infra.get_cache(CacheScope.REALTIME_TICKET),
+        cache or infra.get_cache(CacheScope.REALTIME_TICKET),
         options or TenancyOptions(),
     )
 
@@ -454,6 +482,25 @@ async def test_concurrent_redemptions_admit_one_socket(manager: TenancyManagerIm
     admitted = [o for o in outcomes if isinstance(o, OpContext)]
     refused = [o for o in outcomes if isinstance(o, InvalidCredential)]
     assert len(admitted) == 1 and len(refused) == 4
+
+
+async def test_the_ticket_row_decides_while_the_cache_is_down(
+    storage: TenancyStorageMemoryImpl, infra: InfraLocalImpl
+) -> None:
+    manager = make_manager(storage, infra, cache=DownCache())
+    _, org = await manager.bootstrap("Acme", "acme", "ann@example.test", "pw-1234", "Ann")
+    ctx = await sign_in(manager, "ann@example.test", org.id)
+    issued = await manager.issue_ticket(ctx)
+    outcomes = await asyncio.gather(
+        *(manager.redeem_ticket(issued.ticket, APP, new_id()) for _ in range(5)),
+        return_exceptions=True,
+    )
+    assert len([o for o in outcomes if isinstance(o, OpContext)]) == 1
+    assert len([o for o in outcomes if isinstance(o, InvalidCredential)]) == 4
+    with pytest.raises(InvalidCredential):
+        await manager.redeem_ticket(issued.ticket, APP, new_id())
+    # The row is spent: the one admitted redeemer consumed it.
+    assert await storage.consume_socket_ticket(hash_token(issued.ticket), utcnow()) is None
 
 
 async def test_redeeming_a_ticket_rechecks_the_credential_behind_it(

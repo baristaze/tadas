@@ -12,9 +12,12 @@ mixins, `new_id`, `utcnow`), `OpContext` and `AdminContext`, the
 exception root, the storage root with its Postgres and memory impls,
 and one namespace per swimlane:
 
-- `tenancy`: orgs, identities, users, memberships, sessions, api keys;
-  sign-in, tenant-scoped session tokens, role-capped api keys, the
-  operator allowlist, and the service contexts workers run under.
+- `tenancy`: orgs, identities, users, memberships, sessions, api keys,
+  socket tickets; sign-in, tenant-scoped session tokens, role-capped api
+  keys, the operator allowlist, and the service contexts workers run
+  under. A socket ticket is a row; redeeming it is one conditional
+  update on its hash, and the cache only remembers a redeemed one so a
+  replay is refused without a round trip.
 - `work`: the table-backed work queue in the `queue` role; enqueue
   publishes `work_available`, the claim is one `SELECT ... FOR UPDATE
   SKIP LOCKED` statement and returns the enqueuer's principal.

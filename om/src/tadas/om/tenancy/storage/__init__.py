@@ -2,6 +2,7 @@
 except the ones documented below, which are global by nature or cross
 tenants on purpose; the exceptions test enumerates them."""
 
+from datetime import datetime
 from uuid import UUID
 
 from tadas.om.tenancy.types.api_key import ApiKey
@@ -9,6 +10,7 @@ from tadas.om.tenancy.types.identity import Identity
 from tadas.om.tenancy.types.membership import Membership
 from tadas.om.tenancy.types.org import Org
 from tadas.om.tenancy.types.session import Session
+from tadas.om.tenancy.types.socket_ticket import SocketTicket
 from tadas.om.tenancy.types.user import User
 
 
@@ -76,3 +78,14 @@ class TenancyStorageInterface:
         ...
 
     async def write_api_key(self, org_id: UUID, api_key: ApiKey) -> None: ...
+
+    async def write_socket_ticket(self, org_id: UUID, ticket: SocketTicket) -> None: ...
+
+    async def consume_socket_ticket(
+        self, ticket_hash: str, redeemed_at: datetime
+    ) -> tuple[UUID, SocketTicket] | None:
+        """Cross-tenant lookup: the gateway holds a ticket, not a tenant; the tenant
+        travels back. One statement: marks the unredeemed ticket with this hash
+        redeemed and returns it, or None when it is unknown or already redeemed.
+        Two concurrent redeemers never both get it."""
+        ...

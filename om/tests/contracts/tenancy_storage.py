@@ -1,3 +1,4 @@
+import asyncio
 from uuid import uuid4
 
 import pytest
@@ -8,6 +9,7 @@ from contracts.factories import (
     make_membership,
     make_org,
     make_session,
+    make_socket_ticket,
     make_user,
 )
 from tadas.om.base import new_id, utcnow
@@ -141,3 +143,19 @@ class TenancyStorageContract:
         revoked = api_key.model_copy(update={"deleted_at": utcnow(), "deleted_by": new_id()})
         await storage.write_api_key(org.id, revoked)
         assert await storage.read_api_keys(org.id, limit=10) == []
+
+    async def test_a_socket_ticket_is_consumed_by_exactly_one_redeemer(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        org = make_org()
+        ticket = make_socket_ticket(new_id(), uuid4().hex)
+        await storage.write_socket_ticket(org.id, ticket)
+        redeemed_at = utcnow()
+        outcomes = await asyncio.gather(
+            *(storage.consume_socket_ticket(ticket.ticket_hash, redeemed_at) for _ in range(5))
+        )
+        consumed = [o for o in outcomes if o is not None]
+        assert len(consumed) == 1
+        assert consumed[0] == (org.id, ticket.model_copy(update={"redeemed_at": redeemed_at}))
+        assert await storage.consume_socket_ticket(ticket.ticket_hash, utcnow()) is None
+        assert await storage.consume_socket_ticket("missing", utcnow()) is None
