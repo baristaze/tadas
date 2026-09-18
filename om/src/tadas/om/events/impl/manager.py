@@ -1,5 +1,3 @@
-from uuid import UUID
-
 from tadas.om.base import Platform
 from tadas.om.events.manager import EventsManagerInterface
 from tadas.om.events.storage import EventStorageInterface
@@ -16,8 +14,9 @@ class EventsManagerImpl(EventsManagerInterface):
         self._storage = storage
         self._options = options
 
-    async def append(self, org_id: UUID, event: Event) -> Event:
-        return await self._storage.append(org_id, event)
+    async def append(self, ctx: OpContext, event: Event) -> Event:
+        ctx.require(Permission.READ)
+        return await self._storage.append(ctx.org_id, event)
 
     async def get_events(self, ctx: OpContext, after_seq: int, limit: int) -> list[Event]:
         ctx.require(Permission.READ)

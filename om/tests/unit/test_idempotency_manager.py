@@ -4,7 +4,7 @@ import pytest
 
 from tadas.om.base import new_id
 from tadas.om.exceptions import IdempotencyKeyReused, NotAuthorized, NotFound
-from tadas.om.idempotency.impl.manager import IdempotencyManagerImpl
+from tadas.om.idempotency.impl.manager import IdempotencyManagerImpl, IdempotencyOptions
 from tadas.om.idempotency.storage.impl.memory import IdempotencyStorageMemoryImpl
 from tadas.om.opcontext import AppContext, AppType, CredentialKind, OpContext, Role, build_context
 from tadas.om.tenancy.types.role import permissions_of
@@ -26,7 +26,7 @@ def context(role: Role = Role.MEMBER, org_id: UUID | None = None) -> OpContext:
 
 @pytest.fixture
 def manager() -> IdempotencyManagerImpl:
-    return IdempotencyManagerImpl(IdempotencyStorageMemoryImpl())
+    return IdempotencyManagerImpl(IdempotencyStorageMemoryImpl(), IdempotencyOptions())
 
 
 async def test_begin_once_then_replay_the_stored_outcome(manager: IdempotencyManagerImpl) -> None:
@@ -70,3 +70,20 @@ async def test_finish_needs_a_begun_key_and_write_permission(
     viewer = context(Role.VIEWER)
     with pytest.raises(NotAuthorized):
         await manager.begin(viewer, "k1", "digest-a")
+
+
+async def test_an_abandoned_pending_record_is_taken_over_after_its_lease() -> None:
+    # The marker landed and the effect never did (a crash in between); once the
+    # pending lease has passed a retry runs the request instead of replaying
+    # "in progress" for good.
+    from datetime import timedelta
+
+    manager = IdempotencyManagerImpl(
+        IdempotencyStorageMemoryImpl(), IdempotencyOptions(pending_ttl=timedelta(0))
+    )
+    ctx = context()
+    assert await manager.begin(ctx, "k", "d") is None
+    assert await manager.begin(ctx, "k", "d") is None, "abandoned: run it again"
+    await manager.finish(ctx, "k", 201, "{}")
+    replayed = await manager.begin(ctx, "k", "d")
+    assert replayed is not None and replayed.status == 201, "finished: replay it"

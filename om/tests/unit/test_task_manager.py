@@ -72,8 +72,13 @@ def infra(tmp_path: Path) -> InfraLocalImpl:
 
 
 @pytest.fixture
-def events() -> EventsManagerImpl:
-    return EventsManagerImpl(EventStorageMemoryImpl(), EventsOptions())
+def events_storage() -> EventStorageMemoryImpl:
+    return EventStorageMemoryImpl()
+
+
+@pytest.fixture
+def events(events_storage: EventStorageMemoryImpl) -> EventsManagerImpl:
+    return EventsManagerImpl(events_storage, EventsOptions())
 
 
 @pytest.fixture
@@ -89,11 +94,11 @@ def outbox() -> OutboxStorageMemoryImpl:
 @pytest.fixture
 def manager(
     infra: InfraLocalImpl,
-    events: EventsManagerImpl,
+    events_storage: EventStorageMemoryImpl,
     members: Members,
     outbox: OutboxStorageMemoryImpl,
 ) -> TasksManagerImpl:
-    relay = OutboxRelayImpl(outbox, events, infra.get_topics())
+    relay = OutboxRelayImpl(outbox, events_storage, infra.get_topics())
     return TasksManagerImpl(TasksStorageMemoryImpl(outbox), members, relay, TasksOptions())
 
 
@@ -144,6 +149,7 @@ async def test_create_update_delete_record_and_push(
     assert [e.id for e in recorded] == [p.idempotency_key for p in pushes]
     assert recorded[0].payload["title"] == created.title
     assert recorded[0].actor_id == ctx.user_id and recorded[0].request_id == ctx.request_id
+    assert recorded[0].app == "portal"
     assert await outbox.read_pending(10) == []
 
 
@@ -254,11 +260,11 @@ async def test_tenancy_holds_across_contexts(manager: TasksManagerImpl) -> None:
 
 async def test_lists_are_clamped(infra: InfraLocalImpl, members: Members) -> None:
     outbox = OutboxStorageMemoryImpl()
-    events = EventsManagerImpl(EventStorageMemoryImpl(), EventsOptions())
+    events_storage = EventStorageMemoryImpl()
     manager = TasksManagerImpl(
         TasksStorageMemoryImpl(outbox),
         members,
-        OutboxRelayImpl(outbox, events, infra.get_topics()),
+        OutboxRelayImpl(outbox, events_storage, infra.get_topics()),
         TasksOptions(max_limit=2),
     )
     ctx = context(Role.MEMBER)
@@ -268,7 +274,10 @@ async def test_lists_are_clamped(infra: InfraLocalImpl, members: Members) -> Non
 
 
 async def test_a_failed_relay_leaves_the_row_for_the_sweep(
-    infra: InfraLocalImpl, members: Members, events: EventsManagerImpl
+    infra: InfraLocalImpl,
+    members: Members,
+    events: EventsManagerImpl,
+    events_storage: EventStorageMemoryImpl,
 ) -> None:
     # The request succeeds on the core write; the push is the row's job, and a
     # bus that is down at that moment is caught by the sweep's relay_pending.
@@ -277,7 +286,7 @@ async def test_a_failed_relay_leaves_the_row_for_the_sweep(
             raise RuntimeError("bus down")
 
     outbox = OutboxStorageMemoryImpl()
-    relay = OutboxRelayImpl(outbox, events, DownTopics())
+    relay = OutboxRelayImpl(outbox, events_storage, DownTopics())
     manager = TasksManagerImpl(TasksStorageMemoryImpl(outbox), members, relay, TasksOptions())
     ctx = context(Role.MEMBER)
     created = await manager.create_task(ctx, make_task(ctx))
@@ -286,7 +295,7 @@ async def test_a_failed_relay_leaves_the_row_for_the_sweep(
     assert [(org, row.kind) for org, row in pending] == [(ctx.org_id, "tasks.task.created")]
     # The event was appended before the publish failed; relaying again is
     # idempotent on the row's id and marks the row done once the bus is back.
-    working = OutboxRelayImpl(outbox, events, infra.get_topics())
+    working = OutboxRelayImpl(outbox, events_storage, infra.get_topics())
     assert await working.relay_pending(10) == 1
     assert await outbox.read_pending(10) == []
     assert [e.seq for e in await events.get_events(ctx, after_seq=0, limit=10)] == [1]

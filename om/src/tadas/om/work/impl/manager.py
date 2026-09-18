@@ -9,7 +9,7 @@ from tadas.infra.observability import OUTCOMES
 from tadas.infra.topics import EntityChangedPayload, Topics, TopicsInterface, WorkAvailablePayload
 from tadas.om.base import Platform, new_id, utcnow
 from tadas.om.events import EventsManagerInterface
-from tadas.om.events.types.event import Event
+from tadas.om.events.manager import audit_event
 from tadas.om.exceptions import LeaseLost, NotFound, ValidationFailed
 from tadas.om.opcontext import AppContext, AppType, OpContext, Permission
 from tadas.om.tenancy import TenancyManagerInterface
@@ -195,20 +195,18 @@ class WorkManagerImpl(WorkManagerInterface):
             "work item %s (%s) failed for good: %s", item.id, item.kind.value, item.last_error
         )
         event = await self._events.append(
-            ctx.org_id,
-            Event(
-                id=new_id(),
-                kind=DEAD_LETTER_KIND,
-                target_id=item.id,
-                payload={
+            ctx,
+            audit_event(
+                ctx,
+                new_id(),
+                DEAD_LETTER_KIND,
+                item.id,
+                {
                     "kind": item.kind.value,
                     "work_target_id": str(item.target_id),
                     "attempts": item.attempts,
                     "last_error": item.last_error,
                 },
-                produced_at=utcnow(),
-                actor_id=ctx.user_id,
-                request_id=ctx.request_id,
             ),
         )
         await self._topics.publish(

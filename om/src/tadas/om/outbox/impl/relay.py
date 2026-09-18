@@ -5,7 +5,7 @@ from uuid import UUID
 from tadas.infra.observability import OUTCOMES
 from tadas.infra.topics import EntityChangedPayload, Topics, TopicsInterface
 from tadas.om.base import utcnow
-from tadas.om.events import EventsManagerInterface
+from tadas.om.events.storage import EventStorageInterface
 from tadas.om.events.types.event import Event
 from tadas.om.outbox.relay import OutboxRelayInterface
 from tadas.om.outbox.storage import OutboxStorageInterface
@@ -18,7 +18,7 @@ class OutboxRelayImpl(OutboxRelayInterface):
     def __init__(
         self,
         storage: OutboxStorageInterface,
-        events: EventsManagerInterface,
+        events: EventStorageInterface,
         topics: TopicsInterface,
     ) -> None:
         self._storage = storage
@@ -36,6 +36,7 @@ class OutboxRelayImpl(OutboxRelayInterface):
             produced_at=row.created_at,
             actor_id=row.actor_id,
             request_id=row.request_id,
+            app=row.app,
         )
         try:
             appended = await self._events.append(org_id, event)

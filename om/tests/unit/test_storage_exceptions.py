@@ -37,7 +37,6 @@ MANAGER_EXCEPTIONS: frozenset[tuple[str, str]] = frozenset(
         ("TenancyManagerInterface", "service_context"),
         ("TenancyManagerInterface", "service_contexts"),
         ("WorkManagerInterface", "claim"),
-        ("EventsManagerInterface", "append"),
         ("WorkManagerInterface", "maintenance_contexts"),
     }
 )

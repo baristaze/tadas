@@ -4,16 +4,12 @@ outbox memory storage the root handed this impl, the twin of "in the same
 commit"."""
 
 import asyncio
-from typing import TYPE_CHECKING, Protocol, TypeVar
+from typing import Protocol, TypeVar
 from uuid import UUID
 
 from tadas.om.exceptions import Conflict, TenantMismatch
+from tadas.om.outbox.storage import OutboxLandingInterface
 from tadas.om.outbox.types.row import OutboxRow
-
-if TYPE_CHECKING:
-    # The memory outbox impl is the landing place, not an interface: a concrete
-    # twin of the Postgres session that holds both rows.
-    from tadas.om.outbox.storage.impl.memory import OutboxStorageMemoryImpl
 
 
 class HasId(Protocol):
@@ -28,16 +24,9 @@ MemoryTable = dict[UUID, tuple[UUID, E]]
 
 
 class MemoryStorageBase:
-    def __init__(self, outbox: OutboxStorageMemoryImpl | None = None) -> None:
+    def __init__(self, outbox: OutboxLandingInterface | None = None) -> None:
         self._lock = asyncio.Lock()
         self._outbox = outbox
-
-    @property
-    def outbox(self) -> OutboxStorageMemoryImpl:
-        """The outbox this impl lands rows in; a core-role impl is built with one."""
-        if self._outbox is None:
-            raise RuntimeError("this memory storage was built without an outbox to land in")
-        return self._outbox
 
     def _put(
         self, table: MemoryTable[E], org_id: UUID, entity: E, outbox_row: OutboxRow | None = None

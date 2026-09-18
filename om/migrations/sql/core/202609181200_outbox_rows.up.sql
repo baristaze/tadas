@@ -12,6 +12,7 @@ CREATE TABLE core.outbox_rows (
     payload jsonb NOT NULL,
     actor_id uuid NOT NULL,
     request_id uuid NOT NULL,
+    app text NOT NULL,
     done_at timestamptz NULL,
     CONSTRAINT pk_outbox_rows PRIMARY KEY (id)
 );

@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.storage.impl.pg_base import PgStorageBase
@@ -173,6 +173,32 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
         self, org_id: UUID, api_key: ApiKey, outbox_row: OutboxRow | None = None
     ) -> None:
         await self._upsert(ApiKeys, org_id, api_key, outbox_row)
+
+    async def purge_deleted(self, org_id: UUID, before: datetime) -> int:
+        gone_users = (
+            delete(Users)
+            .where(Users.org_id == org_id, Users.deleted_at < before)
+            .returning(Users.id)
+        )
+        purged = 0
+        async with self._session_for(gone_users) as session:
+            user_ids = list((await session.execute(gone_users)).scalars().all())
+            purged += len(user_ids)
+            if user_ids:
+                memberships = (
+                    delete(Memberships)
+                    .where(Memberships.org_id == org_id, Memberships.user_id.in_(user_ids))
+                    .returning(Memberships.id)
+                )
+                purged += len((await session.execute(memberships)).scalars().all())
+            keys = (
+                delete(ApiKeys)
+                .where(ApiKeys.org_id == org_id, ApiKeys.deleted_at < before)
+                .returning(ApiKeys.id)
+            )
+            purged += len((await session.execute(keys)).scalars().all())
+            await session.commit()
+        return purged
 
     async def write_socket_ticket(self, org_id: UUID, ticket: SocketTicket) -> None:
         await self._upsert(SocketTickets, org_id, ticket)

@@ -7,7 +7,7 @@ first on stop."""
 import asyncio
 import contextlib
 import logging
-from collections.abc import Awaitable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from datetime import timedelta
 
 from tadas.infra.cache import CacheInterface
@@ -22,6 +22,9 @@ from tadas.om.work.types.handler import WorkHandlerInterface
 from tadas.om.work.types.work_item import WorkItem, WorkKind
 
 log = logging.getLogger(__name__)
+
+PurgeStep = Callable[[OpContext], Awaitable[int]]
+"""A manager's `purge_deleted(ctx)`: the one hard delete, per tenant, after retention."""
 
 
 class LoopOptions(Platform):
@@ -43,6 +46,7 @@ class WorkerLoop:
         *,
         work: WorkManagerInterface,
         outbox: OutboxRelayInterface,
+        purges: Mapping[str, PurgeStep],
         handlers: Mapping[WorkKind, WorkHandlerInterface],
         topics: TopicsInterface,
         liveness: CacheInterface,
@@ -50,6 +54,7 @@ class WorkerLoop:
     ) -> None:
         self._work = work
         self._outbox = outbox
+        self._purges = purges
         self._handlers = handlers
         self._topics = topics
         self._liveness = liveness
@@ -252,6 +257,13 @@ class WorkerLoop:
                 await self._work.requeue_stale(ctx)
             except Exception:
                 log.exception("sweep: requeue_stale failed for tenant %s", ctx.org_id)
+            for name, purge in self._purges.items():
+                try:
+                    purged = await purge(ctx)
+                    if purged:
+                        log.info("sweep: purged %d %s rows in org %s", purged, name, ctx.org_id)
+                except Exception:
+                    log.exception("sweep: %s purge failed for tenant %s", name, ctx.org_id)
         try:
             # Whatever a crash left between the core write and its push.
             await self._outbox.relay_pending(self._options.outbox_batch)

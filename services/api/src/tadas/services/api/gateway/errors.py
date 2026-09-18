@@ -38,7 +38,8 @@ def register_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(InfraException)
     async def infra_exception(request: Request, exc: InfraException) -> JSONResponse:
         # Infra is rooted apart from the object model (it imports nothing from
-        # it) but carries the same status and code, so it is presented alike.
+        # it) but carries the same status and code, so it is presented alike
+        # (ADR 0005).
         return envelope(request, exc.http_status, exc.code, exc.message)
 
     @app.exception_handler(RequestValidationError)

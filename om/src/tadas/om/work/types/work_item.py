@@ -3,15 +3,13 @@ which producer key, on which lane, and its own claim. Payload shapes are
 fixed per kind by `WORK_PAYLOADS`, as `TOPIC_PAYLOADS` fixes them per topic;
 the row stores the dump."""
 
-from collections.abc import Mapping
 from datetime import datetime
 from enum import Enum
-from typing import Any
 from uuid import UUID
 
 from pydantic import Field
 
-from tadas.om.base import Identifiable, Platform, Trackable
+from tadas.om.base import FrozenMapping, Identifiable, Platform, Trackable
 
 
 class WorkKind(str, Enum):
@@ -29,7 +27,7 @@ class WorkItem(Identifiable, Trackable):
     kind: WorkKind  # what to do
     target_id: UUID  # the record it advances
     idempotency_key: UUID  # unique
-    payload: Mapping[str, Any] = Field(default_factory=dict)  # the dump of WORK_PAYLOADS[kind]
+    payload: FrozenMapping = Field(default_factory=dict)  # the dump of WORK_PAYLOADS[kind]
     lane: str = (
         "default"  # routing: "default", "region:<id>", ...; a string, because lanes are dynamic
     )

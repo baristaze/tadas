@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from tadas.om.outbox.storage.impl.memory import OutboxStorageMemoryImpl
+from tadas.om.outbox.storage import OutboxLandingInterface
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.storage.impl.memory_base import MemoryStorageBase, MemoryTable
 from tadas.om.tenancy.storage import TenancyStorageInterface
@@ -15,7 +15,7 @@ from tadas.om.tenancy.types.user import User
 
 
 class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
-    def __init__(self, outbox: OutboxStorageMemoryImpl | None = None) -> None:
+    def __init__(self, outbox: OutboxLandingInterface | None = None) -> None:
         super().__init__(outbox)
         self._identities: dict[UUID, Identity] = {}
         self._orgs: MemoryTable[Org] = {}
@@ -116,6 +116,29 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
         self, org_id: UUID, api_key: ApiKey, outbox_row: OutboxRow | None = None
     ) -> None:
         self._put(self._api_keys, org_id, api_key, outbox_row)
+
+    async def purge_deleted(self, org_id: UUID, before: datetime) -> int:
+        gone_users = [
+            u.id
+            for u in self._rows(self._users, org_id)
+            if u.deleted_at is not None and u.deleted_at < before
+        ]
+        gone_memberships = [
+            m.id for m in self._rows(self._memberships, org_id) if m.user_id in gone_users
+        ]
+        gone_keys = [
+            k.id
+            for k in self._rows(self._api_keys, org_id)
+            if k.deleted_at is not None and k.deleted_at < before
+        ]
+        for table, ids in (
+            (self._users, gone_users),
+            (self._memberships, gone_memberships),
+            (self._api_keys, gone_keys),
+        ):
+            for row_id in ids:
+                del table[row_id]
+        return len(gone_users) + len(gone_memberships) + len(gone_keys)
 
     async def write_socket_ticket(self, org_id: UUID, ticket: SocketTicket) -> None:
         self._put(self._socket_tickets, org_id, ticket)

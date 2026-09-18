@@ -1,3 +1,4 @@
+import logging
 import secrets
 from datetime import timedelta
 from uuid import UUID
@@ -53,6 +54,8 @@ from tadas.om.tenancy.types.session import Session
 from tadas.om.tenancy.types.socket_ticket import SocketTicket
 from tadas.om.tenancy.types.user import User
 
+log = logging.getLogger(__name__)
+
 BOOTSTRAP_APP = AppContext(type=AppType.CLI, version="cli@bootstrap")
 """The app a bootstrap runs as when its caller names none."""
 
@@ -72,6 +75,9 @@ class TenancyOptions(Platform):
     api_key_ttl: timedelta = MAX_API_KEY_TTL
     ticket_ttl: timedelta = timedelta(seconds=60)
     max_limit: int = 200
+    retention: timedelta = timedelta(
+        days=30
+    )  # removed members and revoked keys are purged after this
 
 
 def mint_token(kind: CredentialKind) -> str:
@@ -424,7 +430,12 @@ class TenancyManagerImpl(TenancyManagerInterface):
         for org in await self._storage.read_orgs(self._options.max_limit):
             if org.deleted_at is not None:
                 continue
-            contexts.append(await self.service_context(org.id, org.created_by, app, request_id))
+            try:
+                contexts.append(await self.service_context(org.id, org.created_by, app, request_id))
+            except InvalidCredential as error:
+                # The founding user was removed; this tenant waits for a live
+                # principal, the others are still swept.
+                log.warning("no service context for org %s: %s", org.id, error.message)
         return contexts
 
     # The principal.
@@ -451,8 +462,10 @@ class TenancyManagerImpl(TenancyManagerInterface):
         existing = await self._live_user(ctx, user.id)
         if not user.display_name.strip():
             raise ValidationFailed("display name is required")
-        updated = existing.model_copy(
-            update={
+        # model_copy does not validate; the copy carries caller input, so it does.
+        updated = User.model_validate(
+            {
+                **existing.model_dump(),
                 "display_name": user.display_name,
                 "updated_at": utcnow(),
                 "updated_by": ctx.user_id,
@@ -599,6 +612,10 @@ class TenancyManagerImpl(TenancyManagerInterface):
         )
         await self._write_api_key(ctx, revoked, "deleted")
         return revoked
+
+    async def purge_deleted(self, ctx: OpContext) -> int:
+        ctx.require(Permission.MANAGE_MEMBERS)
+        return await self._storage.purge_deleted(ctx.org_id, utcnow() - self._options.retention)
 
     async def issue_ticket(self, ctx: OpContext) -> IssuedTicket:
         ctx.require(Permission.READ)

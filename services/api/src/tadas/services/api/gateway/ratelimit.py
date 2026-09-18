@@ -55,7 +55,10 @@ async def count(request: Request, route: str, ctx: OpContext | None) -> None:
     budget = container.rate_limits.of(route)
     cache = container.infra.get_cache(CacheScope.RATE_LIMIT)
     key = f"{route}:{subject_of(request, ctx)}"
-    total, remaining = await cache.increment(EMPTY_UUID, key, budget.window)
+    # A credential's budget counts under its tenant; only the address-keyed,
+    # unauthenticated path counts under the system scope.
+    scope = ctx.org_id if ctx is not None else EMPTY_UUID
+    total, remaining = await cache.increment(scope, key, budget.window)
     if total > budget.limit:
         OUTCOMES.labels(subsystem="rate_limit", outcome="rejected").inc()
         raise RateLimited(remaining)

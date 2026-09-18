@@ -10,7 +10,6 @@ from tadas.infra.cache import CacheInterface, CacheScope
 from tadas.infra.impl.local import InfraLocalImpl
 from tadas.infra.topics import EntityChangedPayload, TopicPayload, Topics
 from tadas.om.base import new_id, utcnow
-from tadas.om.events.impl.manager import EventsManagerImpl, EventsOptions
 from tadas.om.events.storage.impl.memory import EventStorageMemoryImpl
 from tadas.om.exceptions import (
     Conflict,
@@ -66,8 +65,13 @@ def infra(tmp_path: Path) -> InfraLocalImpl:
 
 
 @pytest.fixture
-def storage() -> TenancyStorageMemoryImpl:
-    return TenancyStorageMemoryImpl(OutboxStorageMemoryImpl())
+def outbox() -> OutboxStorageMemoryImpl:
+    return OutboxStorageMemoryImpl()
+
+
+@pytest.fixture
+def storage(outbox: OutboxStorageMemoryImpl) -> TenancyStorageMemoryImpl:
+    return TenancyStorageMemoryImpl(outbox)
 
 
 def make_manager(
@@ -75,9 +79,13 @@ def make_manager(
     infra: InfraLocalImpl,
     options: TenancyOptions | None = None,
     cache: CacheInterface | None = None,
+    outbox: OutboxStorageMemoryImpl | None = None,
 ) -> TenancyManagerImpl:
-    events = EventsManagerImpl(EventStorageMemoryImpl(), EventsOptions())
-    relay = OutboxRelayImpl(storage.outbox, events, infra.get_topics())
+    # A relay over its own outbox is enough where the sweep never runs; the
+    # fixture below shares the one the storage lands rows in.
+    relay = OutboxRelayImpl(
+        outbox or OutboxStorageMemoryImpl(), EventStorageMemoryImpl(), infra.get_topics()
+    )
     return TenancyManagerImpl(
         storage,
         relay,
@@ -87,8 +95,10 @@ def make_manager(
 
 
 @pytest.fixture
-def manager(storage: TenancyStorageMemoryImpl, infra: InfraLocalImpl) -> TenancyManagerImpl:
-    return make_manager(storage, infra)
+def manager(
+    storage: TenancyStorageMemoryImpl, infra: InfraLocalImpl, outbox: OutboxStorageMemoryImpl
+) -> TenancyManagerImpl:
+    return make_manager(storage, infra, outbox=outbox)
 
 
 @pytest.fixture

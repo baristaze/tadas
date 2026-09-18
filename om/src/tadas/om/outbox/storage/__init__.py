@@ -8,6 +8,14 @@ from uuid import UUID
 from tadas.om.outbox.types.row import OutboxRow
 
 
+class OutboxLandingInterface:
+    """What a storage base needs from the outbox: somewhere for the row to land
+    in the same commit as the core row. The Postgres base lands it in its own
+    session; the memory base lands it here."""
+
+    def land(self, org_id: UUID, row: OutboxRow) -> None: ...
+
+
 class OutboxStorageInterface:
     async def read_pending(self, limit: int) -> list[tuple[UUID, OutboxRow]]:
         """Cross-tenant, for the sweep: rows not yet done, oldest first, with their tenant."""

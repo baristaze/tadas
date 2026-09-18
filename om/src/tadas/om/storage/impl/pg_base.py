@@ -64,6 +64,10 @@ class PgStorageBase:
         its handoff land together or not at all (the transactional outbox), which
         is why every table with an outbox row lives in the `core` role."""
         entity_id = entity.id
+        if outbox_row is not None and role_of(row_type) is not role_of(OutboxRows):
+            raise CrossRoleStatement(
+                f"{row_type.__tablename__} is not in the outbox's role; no outbox row"
+            )
         async with self._session_for(row_type) as session:
             row = await session.get(row_type, entity_id)
             if row is None:
@@ -73,7 +77,6 @@ class PgStorageBase:
                     raise TenantMismatch(f"{row_type.__tablename__} {entity_id} is not in {org_id}")
                 apply_row(row, entity)
             if outbox_row is not None:
-                role_of(OutboxRows)  # the same role as row_type, or the session cannot hold both
                 session.add(to_row(outbox_row, OutboxRows, org_id=org_id))
             await session.commit()
 

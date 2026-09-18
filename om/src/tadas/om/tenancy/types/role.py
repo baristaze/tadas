@@ -22,7 +22,7 @@ ROLE_PERMISSIONS: dict[Role, tuple[Permission, ...]] = {
     ),
     Role.MEMBER: (Permission.READ, Permission.WRITE, Permission.MANAGE_KEYS),
     Role.VIEWER: (Permission.READ,),
-    Role.SERVICE: (Permission.READ, Permission.WRITE),
+    Role.SERVICE: (Permission.READ, Permission.WRITE, Permission.MANAGE_MEMBERS),
 }
 
 ROLE_RANK: dict[Role, int] = {

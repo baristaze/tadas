@@ -23,6 +23,7 @@ def make_row(target_id: UUID) -> OutboxRow:
         payload={"title": "t"},
         actor_id=new_id(),
         request_id=new_id(),
+        app="portal",
     )
 
 

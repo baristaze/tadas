@@ -9,16 +9,17 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from tadas.om.base import Created, Identifiable, new_id, utcnow
+from tadas.om.base import Created, FrozenMapping, Identifiable, new_id, utcnow
 from tadas.om.opcontext import OpContext
 
 
 class OutboxRow(Identifiable, Created):
     kind: str  # "<namespace>.<entity>.<created|updated|deleted>"
     target_id: UUID  # the record that changed
-    payload: Mapping[str, Any] = Field(default_factory=dict)  # the record's snapshot
+    payload: FrozenMapping = Field(default_factory=dict)  # the record's snapshot
     actor_id: UUID  # the user whose request produced it
     request_id: UUID  # the request that produced it
+    app: str  # the AppType value the request came from
     done_at: datetime | None = None  # set by the relay; the sweep purges done rows
 
 
@@ -32,6 +33,7 @@ def outbox_row(ctx: OpContext, kind: str, target_id: UUID, payload: Mapping[str,
         payload=payload,
         actor_id=ctx.user_id,
         request_id=ctx.request_id,
+        app=ctx.app.type.value,
     )
 
 

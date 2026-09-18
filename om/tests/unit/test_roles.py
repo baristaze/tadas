@@ -53,3 +53,26 @@ def test_a_statement_spanning_roles_is_refused(monkeypatch: pytest.MonkeyPatch) 
     assert role_of(Orgs) is DatabaseRole.CORE
     with pytest.raises(CrossRoleStatement):
         role_of(select(Orgs.id, probe.c.id))
+
+
+async def test_an_outbox_row_outside_the_core_role_is_refused() -> None:
+    # The outbox lives in core; a queue-role write may not carry an outbox row,
+    # or the session would hold two roles in one transaction.
+    from tadas.om.base import new_id, utcnow
+    from tadas.om.outbox.types.row import OutboxRow
+    from tadas.om.storage.impl.pg_base import PgStorageBase
+    from tadas.om.work.storage.tables.work_items import WorkItems
+
+    row = OutboxRow(
+        id=new_id(),
+        created_at=utcnow(),
+        kind="work.item.created",
+        target_id=new_id(),
+        actor_id=new_id(),
+        request_id=new_id(),
+        app="worker",
+    )
+
+    base = PgStorageBase({})  # no sessions: the role check fires before one is opened
+    with pytest.raises(CrossRoleStatement):
+        await base._upsert(WorkItems, new_id(), row, row)

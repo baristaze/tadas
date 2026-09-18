@@ -1,6 +1,7 @@
+from datetime import datetime
 from uuid import UUID
 
-from tadas.om.outbox.storage.impl.memory import OutboxStorageMemoryImpl
+from tadas.om.outbox.storage import OutboxLandingInterface
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.storage.impl.memory_base import MemoryStorageBase, MemoryTable
 from tadas.om.tasks.rules import is_before, is_visible
@@ -10,7 +11,7 @@ from tadas.om.tasks.types.task import Task, TaskStatus
 
 
 class TasksStorageMemoryImpl(MemoryStorageBase, TasksStorageInterface):
-    def __init__(self, outbox: OutboxStorageMemoryImpl | None = None) -> None:
+    def __init__(self, outbox: OutboxLandingInterface | None = None) -> None:
         super().__init__(outbox)
         self._tasks: MemoryTable[Task] = {}
 
@@ -40,6 +41,16 @@ class TasksStorageMemoryImpl(MemoryStorageBase, TasksStorageInterface):
 
     async def read_task(self, org_id: UUID, task_id: UUID) -> Task | None:
         return self._get(self._tasks, org_id, task_id)
+
+    async def purge_deleted(self, org_id: UUID, before: datetime) -> int:
+        gone = [
+            t.id
+            for t in self._rows(self._tasks, org_id)
+            if t.deleted_at is not None and t.deleted_at < before
+        ]
+        for task_id in gone:
+            del self._tasks[task_id]
+        return len(gone)
 
     async def write_task(
         self, org_id: UUID, task: Task, outbox_row: OutboxRow | None = None

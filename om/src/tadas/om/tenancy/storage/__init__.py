@@ -88,6 +88,12 @@ class TenancyStorageInterface:
         self, org_id: UUID, api_key: ApiKey, outbox_row: OutboxRow | None = None
     ) -> None: ...
 
+    async def purge_deleted(self, org_id: UUID, before: datetime) -> int:
+        """The one hard delete: removes the tenant's users soft-deleted before `before`
+        with their memberships, and its api keys revoked before `before`; returns
+        how many rows went."""
+        ...
+
     async def write_socket_ticket(self, org_id: UUID, ticket: SocketTicket) -> None: ...
 
     async def consume_socket_ticket(

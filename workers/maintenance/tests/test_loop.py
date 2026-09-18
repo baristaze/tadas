@@ -114,6 +114,10 @@ def start_loop(
     loop = WorkerLoop(
         work=work or container.managers.work,
         outbox=container.managers.outbox,
+        purges={
+            "tasks": container.managers.tasks.purge_deleted,
+            "tenancy": container.managers.tenancy.purge_deleted,
+        },
         handlers={WorkKind.NOOP: handler},
         topics=container.infra.get_topics(),
         liveness=liveness or container.infra.get_cache(CacheScope.WORKER_LIVENESS),

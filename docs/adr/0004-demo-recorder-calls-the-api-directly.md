@@ -27,6 +27,11 @@ that calls this one) brings the generated client package with it, under
 change. Until then the recorder stays the only Python caller and lives
 under `scripts/`, not under `clients/`.
 
+The same client package is what the remote impl of each
+`*ServiceInterface` (the typed client the guideline pairs with every
+in-process impl) is built on; `build_services` wires in-process impls
+only until then.
+
 ## Consequences
 
 A change to the login, session, or tasks routes can break the recorder

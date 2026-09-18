@@ -164,6 +164,13 @@ class TenancyManagerInterface:
 
     async def revoke_api_key(self, ctx: OpContext, api_key_id: UUID) -> ApiKey: ...
 
+    async def purge_deleted(self, ctx: OpContext) -> int:
+        """The sweep, for one tenant: hard-deletes removed members (and their
+        memberships) and revoked api keys past the retention period; returns how
+        many rows went. Erasing a person is this purge; personal data lives in
+        named fields (`email`, `display_name`)."""
+        ...
+
     async def issue_ticket(self, ctx: OpContext) -> IssuedTicket:
         """A single-use, short-lived ticket standing for the caller's credential."""
         ...

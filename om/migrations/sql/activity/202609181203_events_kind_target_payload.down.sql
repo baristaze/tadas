@@ -1,4 +1,5 @@
 ALTER TABLE activity.events DROP COLUMN payload;
+ALTER TABLE activity.events DROP COLUMN app;
 ALTER TABLE activity.events ADD COLUMN idempotency_key uuid NOT NULL DEFAULT gen_random_uuid();
 ALTER TABLE activity.events ALTER COLUMN idempotency_key DROP DEFAULT;
 ALTER TABLE activity.events ADD COLUMN action text NOT NULL DEFAULT 'updated';

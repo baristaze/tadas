@@ -18,4 +18,5 @@ class OutboxRows(IdentifiableMixin, CreatedMixin, Base):
     payload: Mapped[dict[str, Any]]
     actor_id: Mapped[UUID]
     request_id: Mapped[UUID]
+    app: Mapped[str]
     done_at: Mapped[datetime | None]

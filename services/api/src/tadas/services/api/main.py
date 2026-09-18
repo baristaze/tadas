@@ -46,6 +46,7 @@ def bootstrap(args: argparse.Namespace) -> int:
     async def run() -> int:
         settings = ApiSettings()
         boot(settings)
+        settings.refuse_remote()  # a development seed never reaches a shared database
         container = AppContainer.build(settings)
         await container.start()
         try:
@@ -76,6 +77,7 @@ def add_member(args: argparse.Namespace) -> int:
     async def run() -> int:
         settings = ApiSettings()
         boot(settings)
+        settings.refuse_remote()
         container = AppContainer.build(settings)
         await container.start()
         try:

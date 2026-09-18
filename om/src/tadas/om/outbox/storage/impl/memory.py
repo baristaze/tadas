@@ -2,20 +2,20 @@ from datetime import datetime
 from uuid import UUID
 
 from tadas.om.base import utcnow
-from tadas.om.outbox.storage import OutboxStorageInterface
+from tadas.om.outbox.storage import OutboxLandingInterface, OutboxStorageInterface
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.storage.impl.memory_base import MemoryTable
 
 
-class OutboxStorageMemoryImpl(OutboxStorageInterface):
+class OutboxStorageMemoryImpl(OutboxStorageInterface, OutboxLandingInterface):
     """Holds no base of its own: the memory base of every other namespace lands
-    rows here, so this impl is what the storage root hands them."""
+    rows here through `OutboxLandingInterface`, which the storage root hands them."""
 
     def __init__(self) -> None:
         self._rows: MemoryTable[OutboxRow] = {}
 
     def land(self, org_id: UUID, row: OutboxRow) -> None:
-        """The memory twin of "inserted in the same commit as the core row"."""
+        # The memory twin of "inserted in the same commit as the core row".
         self._rows[row.id] = (org_id, row)
 
     async def read_pending(self, limit: int) -> list[tuple[UUID, OutboxRow]]:

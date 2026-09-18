@@ -44,7 +44,9 @@ last changed it (`updated_by`); every update sets it from the context.
 
 - `idempotency`: the durable outcome of a request the caller may retry,
   one record per (tenant, user, key); the gateway begins it before a
-  creating request and finishes it with the outcome.
+  creating request and finishes it with the outcome. A record left
+  pending past its lease (a crash between marker and effect) is taken
+  over by the next retry, which runs the request again.
 - `outbox`: the transactional outbox. A manager that writes a core row
   hands the storage an `OutboxRow` (`kind`, `target_id`, the record's
   snapshot as `payload`, the actor and the request) and the storage base
@@ -129,8 +131,10 @@ everything in-process for tests.
   `NOOP` on one lane (`TADAS_WORKER_LANE`, or `serve --lane`), lease
   renewal and self-fencing, a liveness heartbeat in the cache, and the
   maintenance sweep (requeue stale leases under one service context per
-  live tenant, then relay the pending outbox rows and purge the done
-  ones). `tadas-maintenance serve | health`: the
+  live tenant, then purge the tenant's soft-deleted tasks, removed
+  members, and revoked api keys past their retention (the one hard
+  delete, 30 days by default), then relay the pending outbox rows and
+  purge the done ones). `tadas-maintenance serve | health`: the
   image's `HEALTHCHECK` runs `health`, which reads the serving worker's
   liveness key through the same cache and exits non-zero when it is
   missing. It serves its own `/metrics` on `TADAS_METRICS_PORT` (9464).

@@ -45,6 +45,10 @@ def build_loop(container: WorkerContainer, lane: str | None = None) -> WorkerLoo
     return WorkerLoop(
         work=container.managers.work,
         outbox=container.managers.outbox,
+        purges={
+            "tasks": container.managers.tasks.purge_deleted,
+            "tenancy": container.managers.tenancy.purge_deleted,
+        },
         handlers={WorkKind.NOOP: NoopHandlerImpl()},
         topics=container.infra.get_topics(),
         liveness=container.infra.get_cache(CacheScope.WORKER_LIVENESS),

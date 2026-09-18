@@ -11,9 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async
 from tadas.om.storage.impl.pg_base import SessionFactory
 from tadas.om.storage.migrate import upgrade_all
 from tadas.om.storage.roles import DatabaseRole
-from tadas.om.storage.settings import StorageSettings
-
-LOCAL_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", "postgres"})
+from tadas.om.storage.settings import LOCAL_HOSTS, StorageSettings
 
 
 @pytest.fixture(scope="session")

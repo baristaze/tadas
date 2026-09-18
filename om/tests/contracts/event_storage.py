@@ -16,6 +16,7 @@ def make_event(kind: str = "tasks.task.created") -> Event:
         produced_at=utcnow(),
         actor_id=new_id(),
         request_id=new_id(),
+        app="portal",
     )
 
 

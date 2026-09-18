@@ -1,4 +1,5 @@
 import asyncio
+from datetime import timedelta
 from uuid import uuid4
 
 import pytest
@@ -159,3 +160,32 @@ class TenancyStorageContract:
         assert consumed[0] == (org.id, ticket.model_copy(update={"redeemed_at": redeemed_at}))
         assert await storage.consume_socket_ticket(ticket.ticket_hash, utcnow()) is None
         assert await storage.consume_socket_ticket("missing", utcnow()) is None
+
+    async def test_purge_removes_members_with_their_memberships_and_revoked_keys(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        org = make_org()
+        await storage.write_org(org.id, org)
+        cut = utcnow()
+        gone, kept = make_user(make_identity().id), make_user(make_identity().id)
+        await storage.write_user(
+            org.id,
+            gone.model_copy(update={"deleted_at": cut - timedelta(days=1), "deleted_by": gone.id}),
+        )
+        await storage.write_user(org.id, kept)
+        await storage.write_membership(org.id, make_membership(gone.id))
+        await storage.write_membership(org.id, make_membership(kept.id))
+        old_key = make_api_key(kept.id, uuid4().hex).model_copy(
+            update={"deleted_at": cut - timedelta(days=1), "deleted_by": kept.id}
+        )
+        live_key = make_api_key(kept.id, uuid4().hex)
+        await storage.write_api_key(org.id, old_key)
+        await storage.write_api_key(org.id, live_key)
+        assert await storage.purge_deleted(org.id, cut) == 3  # the user, its membership, the key
+        assert await storage.read_user(org.id, gone.id) is None
+        assert await storage.read_membership_for_user(org.id, gone.id) is None
+        assert await storage.read_user(org.id, kept.id) == kept
+        assert await storage.read_membership_for_user(org.id, kept.id) is not None
+        assert await storage.read_api_key(org.id, old_key.id) is None
+        assert await storage.read_api_key(org.id, live_key.id) == live_key
+        assert await storage.purge_deleted(org.id, cut) == 0

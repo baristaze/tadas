@@ -1,3 +1,4 @@
+from datetime import timedelta
 from uuid import UUID
 
 from tadas.om.base import Platform, utcnow
@@ -15,6 +16,7 @@ from tadas.om.tenancy import TenancyManagerInterface
 
 class TasksOptions(Platform):
     max_limit: int = 200
+    retention: timedelta = timedelta(days=30)  # a deleted task is purged after this
 
 
 class TasksManagerImpl(TasksManagerInterface):
@@ -113,6 +115,10 @@ class TasksManagerImpl(TasksManagerInterface):
         )
         await self._write(ctx, deleted, "deleted")
         return deleted
+
+    async def purge_deleted(self, ctx: OpContext) -> int:
+        ctx.require(Permission.WRITE)
+        return await self._storage.purge_deleted(ctx.org_id, utcnow() - self._options.retention)
 
     def _clamp(self, limit: int) -> int:
         return max(1, min(limit, self._options.max_limit))

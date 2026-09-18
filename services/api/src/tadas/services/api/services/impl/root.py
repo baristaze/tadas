@@ -18,7 +18,7 @@ from tadas.services.api.services.impl.tasks import TasksServiceImpl
 from tadas.services.api.services.impl.tenancy import TenancyServiceImpl
 
 
-class Services(ServicesInterface):
+class ServicesImpl(ServicesInterface):
     def __init__(
         self,
         tasks: TasksServiceInterface,
@@ -50,7 +50,9 @@ class Services(ServicesInterface):
 
 
 def build_services(managers: Managers, infra: InfraInterface) -> ServicesInterface:
-    return Services(
+    """In-process impls only: the remote impl of each interface is the typed
+    Python client, which arrives with the first Python consumer (ADR 0004)."""
+    return ServicesImpl(
         tasks=TasksServiceImpl(managers.tasks),
         tenancy=TenancyServiceImpl(managers.tenancy),
         admin=AdminServiceImpl(managers.tenancy_operator),

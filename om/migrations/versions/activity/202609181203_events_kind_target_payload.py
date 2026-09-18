@@ -1,4 +1,4 @@
-"""Events carry a kind, a target, and a payload.
+"""Events carry a kind, a target, a payload, and the app.
 
 Revision ID: 202609181203
 Revises: 202609181001
