@@ -23,3 +23,4 @@ class Events(IdentifiableMixin, Base):
     produced_at: Mapped[datetime]
     idempotency_key: Mapped[UUID]
     actor_id: Mapped[UUID]
+    request_id: Mapped[UUID]

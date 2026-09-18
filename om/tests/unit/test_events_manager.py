@@ -33,6 +33,7 @@ async def test_record_sequences_per_tenant_and_names_the_actor(manager: EventsMa
     elsewhere = await manager.record(bob, "task", new_id(), "created", new_id())
     assert (first.seq, second.seq, elsewhere.seq) == (1, 2, 1)
     assert first.actor_id == ann.user_id and first.idempotency_key == key
+    assert first.request_id == ann.request_id and elsewhere.request_id == bob.request_id
     assert first.entity == "task" and first.entity_id == task_id and first.action == "created"
     assert await manager.get_events(ann, after_seq=1, limit=10) == [second]
     assert await manager.get_events(bob, after_seq=0, limit=10) == [elsewhere]

@@ -16,3 +16,4 @@ class Event(Identifiable):
     produced_at: datetime
     idempotency_key: UUID  # the key the matching topic payload carries
     actor_id: UUID  # the user whose request produced it
+    request_id: UUID  # the request that produced it, from the context

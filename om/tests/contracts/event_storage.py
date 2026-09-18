@@ -16,6 +16,7 @@ def make_event(action: str = "created") -> Event:
         produced_at=utcnow(),
         idempotency_key=new_id(),
         actor_id=new_id(),
+        request_id=new_id(),
     )
 
 
@@ -41,6 +42,7 @@ class EventStorageContract:
                 "produced_at": first.produced_at,
                 "idempotency_key": first.idempotency_key,
                 "actor_id": first.actor_id,
+                "request_id": first.request_id,
             }
         )
         assert await storage.read_after(org_a, 0, 10) == appended
