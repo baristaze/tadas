@@ -1,24 +1,11 @@
-"""Roles, permissions, and the one table that maps one to the other.
-Permissions are a pure function of role, declared here in the tenancy
-namespace; `OpContext` reads this table and nothing else does."""
+"""The role-to-permission table and the role ranks: pure rules of the
+tenancy namespace over the `Role` and `Permission` the context module
+declares. Permissions are a function of role; a context is built with the
+tuple this table gives."""
 
-from enum import Enum
+from tadas.om.opcontext import Permission, Role
 
-
-class Role(str, Enum):
-    OWNER = "owner"
-    ADMIN = "admin"
-    MEMBER = "member"
-    VIEWER = "viewer"
-    SERVICE = "service"  # a worker acting on a person's earlier request
-
-
-class Permission(str, Enum):
-    READ = "read"
-    WRITE = "write"
-    MANAGE_MEMBERS = "manage_members"
-    MANAGE_KEYS = "manage_keys"
-
+__all__ = ["ROLE_PERMISSIONS", "ROLE_RANK", "permissions_of"]
 
 ROLE_PERMISSIONS: dict[Role, tuple[Permission, ...]] = {
     Role.OWNER: (
@@ -48,9 +35,5 @@ ROLE_RANK: dict[Role, int] = {
 """Used to cap an issued credential at its issuer's role."""
 
 
-class CredentialKind(str, Enum):
-    API_KEY = "api_key"
-    SESSION_TOKEN = "session_token"
-    LOGIN = "login"
-    SOCKET_TICKET = "socket_ticket"
-    INTERNAL = "internal"
+def permissions_of(role: Role) -> tuple[Permission, ...]:
+    return ROLE_PERMISSIONS[role]

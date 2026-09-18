@@ -47,9 +47,11 @@ class TenancyServiceImpl(TenancyServiceInterface):
         return SessionView.model_validate(await self._tenancy.logout(ctx))
 
     async def get_me(self, ctx: OpContext) -> MeView:
+        # The context carries ids; the entities are loaded by the manager.
+        user = await self._tenancy.get_user(ctx, ctx.user_id)
         org = await self._tenancy.get_org(ctx)
         return MeView(
-            user=UserView.model_validate(ctx.security.user),
+            user=UserView.model_validate(user),
             org=OrgView.model_validate(org),
             role=ctx.security.role,
             permissions=ctx.security.permissions,
@@ -57,7 +59,8 @@ class TenancyServiceImpl(TenancyServiceInterface):
         )
 
     async def update_me(self, ctx: OpContext, body: UpdateMeRequest) -> UserView:
-        user = ctx.security.user.model_copy(update={"display_name": body.display_name})
+        me = await self._tenancy.get_user(ctx, ctx.user_id)
+        user = me.model_copy(update={"display_name": body.display_name})
         return UserView.model_validate(await self._tenancy.update_user(ctx, user))
 
     async def get_identity(self, ctx: OpContext) -> IdentityView:

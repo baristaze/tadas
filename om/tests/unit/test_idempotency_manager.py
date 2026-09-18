@@ -1,25 +1,23 @@
 from uuid import UUID
 
 import pytest
-from contracts.factories import make_org, make_user
 
 from tadas.om.base import new_id
 from tadas.om.exceptions import IdempotencyKeyReused, NotAuthorized, NotFound
 from tadas.om.idempotency.impl.manager import IdempotencyManagerImpl
 from tadas.om.idempotency.storage.impl.memory import IdempotencyStorageMemoryImpl
 from tadas.om.opcontext import AppContext, AppType, CredentialKind, OpContext, Role, build_context
+from tadas.om.tenancy.types.role import permissions_of
 
 APP = AppContext(type=AppType.API, version="api@test")
 
 
 def context(role: Role = Role.MEMBER, org_id: UUID | None = None) -> OpContext:
-    org = make_org()
-    if org_id is not None:
-        org = org.model_copy(update={"id": org_id})
     return build_context(
-        user=make_user(new_id()),
-        org=org,
+        user_id=new_id(),
+        org_id=org_id or new_id(),
         role=role,
+        permissions=permissions_of(role),
         credential_kind=CredentialKind.SESSION_TOKEN,
         app=APP,
         request_id=new_id(),

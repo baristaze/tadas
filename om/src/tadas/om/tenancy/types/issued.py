@@ -3,9 +3,9 @@
 from datetime import datetime
 
 from tadas.om.base import Platform
+from tadas.om.opcontext import Role
 from tadas.om.tenancy.types.api_key import ApiKey
 from tadas.om.tenancy.types.org import Org
-from tadas.om.tenancy.types.role import Role
 from tadas.om.tenancy.types.user import User
 
 

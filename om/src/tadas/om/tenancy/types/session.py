@@ -2,7 +2,7 @@ from datetime import datetime
 from uuid import UUID
 
 from tadas.om.base import EMPTY_UUID, Identifiable, Trackable
-from tadas.om.tenancy.types.role import CredentialKind
+from tadas.om.opcontext import CredentialKind
 
 
 class Session(Identifiable, Trackable):
