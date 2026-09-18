@@ -122,6 +122,7 @@ make test-integration  # the same storage contracts over Postgres, plus migratio
 
 - `om/` the object model: entities, managers, storage, migrations
 - `infra/` cache, buckets, topics, queues, secrets, observability
-- `services/` web services; `workers/` background roles; `apps/` clients
-- `clients/` typed clients, one per service; `deployment/` compose, images, Terraform
+- `services/` web services; `workers/` background roles; `apps/` clients, each
+  with its generated API types and one transport client under `src/api/`
+- `deployment/` compose, images, Terraform
 - `docs/` as built, ADRs, runbooks; `scripts/` dev.sh and the cloud migration runner
