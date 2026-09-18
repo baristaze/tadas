@@ -1,10 +1,11 @@
+from datetime import timedelta
 from uuid import UUID
 
-from tadas.infra.topics import EntityChangedPayload, Topics, TopicsInterface
-from tadas.om.base import Platform, new_id, utcnow
-from tadas.om.events import EventsManagerInterface
+from tadas.om.base import Platform, utcnow
 from tadas.om.exceptions import Conflict, NotFound, ValidationFailed
 from tadas.om.opcontext import OpContext, Permission
+from tadas.om.outbox import OutboxRelayInterface
+from tadas.om.outbox.types.row import outbox_row, snapshot
 from tadas.om.tasks.manager import TasksManagerInterface
 from tadas.om.tasks.rules import position_after, top_position
 from tadas.om.tasks.storage import TasksStorageInterface
@@ -15,6 +16,7 @@ from tadas.om.tenancy import TenancyManagerInterface
 
 class TasksOptions(Platform):
     max_limit: int = 200
+    retention: timedelta = timedelta(days=30)  # a deleted task is purged after this
 
 
 class TasksManagerImpl(TasksManagerInterface):
@@ -22,14 +24,12 @@ class TasksManagerImpl(TasksManagerInterface):
         self,
         storage: TasksStorageInterface,
         tenancy: TenancyManagerInterface,
-        events: EventsManagerInterface,
-        topics: TopicsInterface,
+        relay: OutboxRelayInterface,
         options: TasksOptions,
     ) -> None:
         self._storage = storage
         self._tenancy = tenancy
-        self._events = events
-        self._topics = topics
+        self._relay = relay
         self._options = options
 
     async def get_open_tasks(self, ctx: OpContext, criterion: TaskFilter, limit: int) -> list[Task]:
@@ -61,24 +61,23 @@ class TasksManagerImpl(TasksManagerInterface):
         created = task.model_copy(
             update={
                 "created_by": ctx.user_id,
+                "updated_by": ctx.user_id,
                 "status": TaskStatus.OPEN,
                 "position": await self._top_position(ctx, exclude=task.id),
             }
         )
-        await self._storage.write_task(ctx.org_id, created)
-        await self._changed(ctx, created.id, "created")
+        await self._write(ctx, created, "created")
         return created
 
     async def update_task(self, ctx: OpContext, task: Task) -> Task:
         ctx.require(Permission.WRITE)
         current = await self.get_task(ctx, task.id)  # existence and tenancy, or NotFound
         await self._verify(ctx, task)
-        update: dict[str, object] = {"updated_at": utcnow()}
+        update: dict[str, object] = {"updated_at": utcnow(), "updated_by": ctx.user_id}
         if current.status == TaskStatus.DONE and task.status == TaskStatus.OPEN:
             update["position"] = await self._top_position(ctx, exclude=task.id)
         updated = task.model_copy(update=update)
-        await self._storage.write_task(ctx.org_id, updated)
-        await self._changed(ctx, updated.id, "updated")
+        await self._write(ctx, updated, "updated")
         return updated
 
     async def move_task(self, ctx: OpContext, task_id: UUID, after_id: UUID | None) -> Task:
@@ -96,9 +95,10 @@ class TasksManagerImpl(TasksManagerInterface):
                 raise ValidationFailed("a task can only be placed after an open task")
             positions = await self._storage.read_open_positions(ctx.org_id, exclude=task_id)
             position = position_after(anchor.position, positions)
-        moved = task.model_copy(update={"position": position, "updated_at": utcnow()})
-        await self._storage.write_task(ctx.org_id, moved)
-        await self._changed(ctx, moved.id, "updated")
+        moved = task.model_copy(
+            update={"position": position, "updated_at": utcnow(), "updated_by": ctx.user_id}
+        )
+        await self._write(ctx, moved, "updated")
         return moved
 
     async def delete_task(self, ctx: OpContext, task_id: UUID) -> Task:
@@ -106,11 +106,19 @@ class TasksManagerImpl(TasksManagerInterface):
         task = await self.get_task(ctx, task_id)
         now = utcnow()
         deleted = task.model_copy(
-            update={"deleted_at": now, "deleted_by": ctx.user_id, "updated_at": now}
+            update={
+                "deleted_at": now,
+                "deleted_by": ctx.user_id,
+                "updated_at": now,
+                "updated_by": ctx.user_id,
+            }
         )
-        await self._storage.write_task(ctx.org_id, deleted)
-        await self._changed(ctx, deleted.id, "deleted")
+        await self._write(ctx, deleted, "deleted")
         return deleted
+
+    async def purge_deleted(self, ctx: OpContext) -> int:
+        ctx.require(Permission.WRITE)
+        return await self._storage.purge_deleted(ctx.org_id, utcnow() - self._options.retention)
 
     def _clamp(self, limit: int) -> int:
         return max(1, min(limit, self._options.max_limit))
@@ -132,19 +140,11 @@ class TasksManagerImpl(TasksManagerInterface):
             except NotFound:
                 raise ValidationFailed("the assignee is not a member of this org") from None
 
-    async def _changed(self, ctx: OpContext, task_id: UUID, action: str) -> None:
-        """The core row is written; now the stream row, then the push. Every push
-        is also a record, so a client that missed the push replays by seq."""
-        event = await self._events.record(ctx, "task", task_id, action, new_id())
-        await self._topics.publish(
-            Topics.ENTITY_CHANGED,
-            EntityChangedPayload(
-                idempotency_key=event.idempotency_key,
-                produced_at=event.produced_at,
-                org_id=ctx.org_id,
-                entity=event.entity,
-                entity_id=event.entity_id,
-                action=event.action,
-                seq=event.seq,
-            ),
-        )
+    async def _write(self, ctx: OpContext, task: Task, action: str) -> None:
+        """The core row and its outbox row land in one storage call; the relay
+        then appends the event and pushes at once, and the sweep catches what a
+        crash left behind. Every push is also a record, so a client that missed
+        the push replays by seq."""
+        row = outbox_row(ctx, f"tasks.task.{action}", task.id, snapshot(task))
+        await self._storage.write_task(ctx.org_id, task, row)
+        await self._relay.relay(ctx.org_id, row)

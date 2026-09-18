@@ -4,9 +4,10 @@ import json
 import logging
 from collections.abc import Callable
 
-from glide import GlideClient, GlideClientConfiguration
+from glide import GlideClient, GlideClientConfiguration, GlideError
 
 from tadas.infra.impl.valkey import ValkeyConnection
+from tadas.infra.observability import OUTCOMES
 from tadas.infra.topics import TOPIC_PAYLOADS, TopicHandler, TopicPayload, Topics, TopicsInterface
 from tadas.infra.topics.dispatch import LocalSubscribers, check_payload
 
@@ -30,7 +31,15 @@ class TopicsValkeyImpl(TopicsInterface):
         client = await self._connection.client()
         if client is None:
             raise RuntimeError("topics publish after the infra root closed")
-        await client.publish(payload.model_dump_json(), self._prefix + topic.value)
+        try:
+            await client.publish(payload.model_dump_json(), self._prefix + topic.value)
+        except GlideError:
+            # A topic is best effort: the durable part of the operation has landed
+            # and a missed wake-up degrades to polling latency, never to lost work.
+            log.warning(
+                "publish of %s %s failed; the bus dropped it", topic.value, payload.idempotency_key
+            )
+            OUTCOMES.labels(subsystem="topics", outcome="publish_failed").inc()
 
     def subscribe(self, topic: Topics, consumer: str, handler: TopicHandler) -> Callable[[], None]:
         return self._subscribers.add(topic, consumer, handler)

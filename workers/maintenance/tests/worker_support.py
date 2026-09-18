@@ -34,6 +34,7 @@ def make_item(ctx: OpContext, *, target_id: UUID | None = None) -> WorkItem:
         created_at=now,
         updated_at=now,
         created_by=ctx.user_id,
+        updated_by=ctx.user_id,
         kind=WorkKind.NOOP,
         target_id=target_id or new_id(),
         idempotency_key=new_id(),

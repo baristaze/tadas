@@ -7,13 +7,12 @@ from typing import Any
 import pytest
 from botocore.exceptions import ClientError
 
+from tadas.infra.base import new_id
 from tadas.infra.buckets import BlobNotFound, Buckets
 from tadas.infra.buckets.s3 import BucketsS3Impl
 from tadas.infra.exceptions import BackendFailed, InfraException
 from tadas.infra.secrets import SecretNotFound
 from tadas.infra.secrets.aws import SecretsAwsImpl
-from tadas.om.base import new_id
-from tadas.om.exceptions import PlatformException
 
 
 def client_error(code: str) -> ClientError:
@@ -83,7 +82,7 @@ async def test_every_other_code_becomes_a_platform_exception() -> None:
     with pytest.raises(BackendFailed) as raised:
         await buckets("AccessDenied").get(new_id(), Buckets.EXPORTS, "k")
     assert isinstance(raised.value, InfraException)
-    assert isinstance(raised.value, PlatformException)
+    assert isinstance(raised.value, InfraException)
     assert raised.value.message == "s3 get failed with AccessDenied"
     with pytest.raises(BackendFailed):
         await buckets("SlowDown").put(new_id(), Buckets.EXPORTS, "k", b"", "text/plain")

@@ -4,6 +4,8 @@ from tadas.om.events.storage import EventStorageInterface
 from tadas.om.events.storage.impl.memory import EventStorageMemoryImpl
 from tadas.om.idempotency.storage import IdempotencyStorageInterface
 from tadas.om.idempotency.storage.impl.memory import IdempotencyStorageMemoryImpl
+from tadas.om.outbox.storage import OutboxStorageInterface
+from tadas.om.outbox.storage.impl.memory import OutboxStorageMemoryImpl
 from tadas.om.storage.root import StorageInterface
 from tadas.om.tasks.storage import TasksStorageInterface
 from tadas.om.tasks.storage.impl.memory import TasksStorageMemoryImpl
@@ -15,9 +17,11 @@ from tadas.om.work.storage.impl.memory import WorkStorageMemoryImpl
 
 class StorageMemoryImpl(StorageInterface):
     def __init__(self) -> None:
-        self._tenancy = TenancyStorageMemoryImpl()
+        # The outbox first: the core-role impls land their outbox rows in it.
+        self._outbox = OutboxStorageMemoryImpl()
+        self._tenancy = TenancyStorageMemoryImpl(self._outbox)
         self._work = WorkStorageMemoryImpl()
-        self._tasks = TasksStorageMemoryImpl()
+        self._tasks = TasksStorageMemoryImpl(self._outbox)
         self._idempotency = IdempotencyStorageMemoryImpl()
         self._events = EventStorageMemoryImpl()
 
@@ -35,6 +39,9 @@ class StorageMemoryImpl(StorageInterface):
 
     def get_event_storage(self) -> EventStorageInterface:
         return self._events
+
+    def get_outbox_storage(self) -> OutboxStorageInterface:
+        return self._outbox
 
     async def healthcheck(self) -> bool:
         return True

@@ -2,8 +2,10 @@
 tasks never appear in a list. The filter and the cursor arrive as the value
 objects the manager received, unchanged."""
 
+from datetime import datetime
 from uuid import UUID
 
+from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.tasks.types.filter import TaskCursor, TaskFilter
 from tadas.om.tasks.types.task import Task
 
@@ -27,4 +29,13 @@ class TasksStorageInterface:
 
     async def read_task(self, org_id: UUID, task_id: UUID) -> Task | None: ...
 
-    async def write_task(self, org_id: UUID, task: Task) -> None: ...
+    async def purge_deleted(self, org_id: UUID, before: datetime) -> int:
+        """The one hard delete: removes the tenant's tasks soft-deleted before
+        `before`; returns how many."""
+        ...
+
+    async def write_task(
+        self, org_id: UUID, task: Task, outbox_row: OutboxRow | None = None
+    ) -> None:
+        """Lands the task and its outbox row together (the named atomic write)."""
+        ...

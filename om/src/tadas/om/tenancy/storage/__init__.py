@@ -5,6 +5,7 @@ tenants on purpose; the exceptions test enumerates them."""
 from datetime import datetime
 from uuid import UUID
 
+from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.tenancy.types.api_key import ApiKey
 from tadas.om.tenancy.types.identity import Identity
 from tadas.om.tenancy.types.membership import Membership
@@ -49,13 +50,19 @@ class TenancyStorageInterface:
         """Cross-tenant sweep: the users one identity is, in every tenant, with the tenant."""
         ...
 
-    async def write_user(self, org_id: UUID, user: User) -> None: ...
+    async def write_user(
+        self, org_id: UUID, user: User, outbox_row: OutboxRow | None = None
+    ) -> None:
+        """Lands the row and its outbox row together; so do the other writes below."""
+        ...
 
     async def read_memberships(self, org_id: UUID, limit: int) -> list[Membership]: ...
 
     async def read_membership_for_user(self, org_id: UUID, user_id: UUID) -> Membership | None: ...
 
-    async def write_membership(self, org_id: UUID, membership: Membership) -> None: ...
+    async def write_membership(
+        self, org_id: UUID, membership: Membership, outbox_row: OutboxRow | None = None
+    ) -> None: ...
 
     async def read_sessions(self, org_id: UUID, user_id: UUID, limit: int) -> list[Session]:
         """One user's sessions that are not revoked, sorted by id."""
@@ -77,7 +84,15 @@ class TenancyStorageInterface:
         """Cross-tenant lookup: the gateway holds a key, not a tenant; the tenant travels back."""
         ...
 
-    async def write_api_key(self, org_id: UUID, api_key: ApiKey) -> None: ...
+    async def write_api_key(
+        self, org_id: UUID, api_key: ApiKey, outbox_row: OutboxRow | None = None
+    ) -> None: ...
+
+    async def purge_deleted(self, org_id: UUID, before: datetime) -> int:
+        """The one hard delete: removes the tenant's users soft-deleted before `before`
+        with their memberships, and its api keys revoked before `before`; returns
+        how many rows went."""
+        ...
 
     async def write_socket_ticket(self, org_id: UUID, ticket: SocketTicket) -> None: ...
 

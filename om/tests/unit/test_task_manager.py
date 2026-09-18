@@ -5,18 +5,21 @@ import pytest
 from contracts.factories import make_org, make_user
 
 from tadas.infra.impl.local import InfraLocalImpl
-from tadas.infra.topics import EntityChangedPayload, TopicPayload, Topics
+from tadas.infra.topics import EntityChangedPayload, TopicPayload, Topics, TopicsInterface
 from tadas.om.base import new_id, utcnow
 from tadas.om.events.impl.manager import EventsManagerImpl, EventsOptions
 from tadas.om.events.storage.impl.memory import EventStorageMemoryImpl
 from tadas.om.exceptions import Conflict, NotAuthorized, NotFound, ValidationFailed
 from tadas.om.opcontext import AppContext, AppType, CredentialKind, OpContext, Role, build_context
+from tadas.om.outbox.impl.relay import OutboxRelayImpl
+from tadas.om.outbox.storage.impl.memory import OutboxStorageMemoryImpl
 from tadas.om.tasks.impl.manager import TasksManagerImpl, TasksOptions
 from tadas.om.tasks.storage.impl.memory import TasksStorageMemoryImpl
 from tadas.om.tasks.types.filter import TaskFilter
 from tadas.om.tasks.types.task import Task, TaskScope, TaskStatus
 from tadas.om.tenancy import TenancyManagerInterface
 from tadas.om.tenancy.types.org import Org
+from tadas.om.tenancy.types.role import permissions_of
 from tadas.om.tenancy.types.user import User
 
 APP = AppContext(type=AppType.PORTAL, version="portal@test")
@@ -40,9 +43,10 @@ def context(role: Role, org: Org | None = None, members: Members | None = None) 
     if members is not None:
         members.users[user.id] = user
     return build_context(
-        user=user,
-        org=org or make_org(),
+        user_id=user.id,
+        org_id=(org or make_org()).id,
         role=role,
+        permissions=permissions_of(role),
         credential_kind=CredentialKind.SESSION_TOKEN,
         app=APP,
         request_id=new_id(),
@@ -56,6 +60,7 @@ def make_task(ctx: OpContext, title: str = "Ship it", assignee_id: UUID | None =
         created_at=now,
         updated_at=now,
         created_by=ctx.user_id,
+        updated_by=ctx.user_id,
         title=title,
         assignee_id=assignee_id,
     )
@@ -67,8 +72,13 @@ def infra(tmp_path: Path) -> InfraLocalImpl:
 
 
 @pytest.fixture
-def events() -> EventsManagerImpl:
-    return EventsManagerImpl(EventStorageMemoryImpl(), EventsOptions())
+def events_storage() -> EventStorageMemoryImpl:
+    return EventStorageMemoryImpl()
+
+
+@pytest.fixture
+def events(events_storage: EventStorageMemoryImpl) -> EventsManagerImpl:
+    return EventsManagerImpl(events_storage, EventsOptions())
 
 
 @pytest.fixture
@@ -77,10 +87,19 @@ def members() -> Members:
 
 
 @pytest.fixture
-def manager(infra: InfraLocalImpl, events: EventsManagerImpl, members: Members) -> TasksManagerImpl:
-    return TasksManagerImpl(
-        TasksStorageMemoryImpl(), members, events, infra.get_topics(), TasksOptions()
-    )
+def outbox() -> OutboxStorageMemoryImpl:
+    return OutboxStorageMemoryImpl()
+
+
+@pytest.fixture
+def manager(
+    infra: InfraLocalImpl,
+    events_storage: EventStorageMemoryImpl,
+    members: Members,
+    outbox: OutboxStorageMemoryImpl,
+) -> TasksManagerImpl:
+    relay = OutboxRelayImpl(outbox, events_storage, infra.get_topics())
+    return TasksManagerImpl(TasksStorageMemoryImpl(outbox), members, relay, TasksOptions())
 
 
 def own(ctx: OpContext, scope: TaskScope) -> TaskFilter:
@@ -92,7 +111,10 @@ async def open_titles(manager: TasksManagerImpl, ctx: OpContext, scope: TaskScop
 
 
 async def test_create_update_delete_record_and_push(
-    manager: TasksManagerImpl, events: EventsManagerImpl, infra: InfraLocalImpl
+    manager: TasksManagerImpl,
+    events: EventsManagerImpl,
+    infra: InfraLocalImpl,
+    outbox: OutboxStorageMemoryImpl,
 ) -> None:
     seen: list[TopicPayload] = []
 
@@ -103,10 +125,12 @@ async def test_create_update_delete_record_and_push(
     ctx = context(Role.MEMBER)
     created = await manager.create_task(ctx, make_task(ctx))
     assert created.created_by == ctx.user_id and created.status == TaskStatus.OPEN
+    assert created.updated_by == ctx.user_id
     assert await manager.get_task(ctx, created.id) == created
 
     updated = await manager.update_task(ctx, created.model_copy(update={"notes": "carefully"}))
     assert updated.notes == "carefully" and updated.updated_at > created.updated_at
+    assert updated.updated_by == ctx.user_id
 
     deleted = await manager.delete_task(ctx, created.id)
     assert deleted.deleted_at is not None and deleted.deleted_by == ctx.user_id
@@ -114,13 +138,19 @@ async def test_create_update_delete_record_and_push(
     with pytest.raises(NotFound):
         await manager.get_task(ctx, created.id)
     pushes = [p for p in seen if isinstance(p, EntityChangedPayload)]
-    assert [(p.entity, p.action, p.seq) for p in pushes] == [
-        ("task", "created", 1),
-        ("task", "updated", 2),
-        ("task", "deleted", 3),
+    assert [(p.kind, p.target_id, p.seq) for p in pushes] == [
+        ("tasks.task.created", created.id, 1),
+        ("tasks.task.updated", created.id, 2),
+        ("tasks.task.deleted", created.id, 3),
     ]
+    # Every push is a record: the event carries the row's id, the snapshot, and
+    # the caller's provenance; the outbox row behind it is done.
     recorded = await events.get_events(ctx, after_seq=0, limit=10)
-    assert {e.idempotency_key for e in recorded} == {p.idempotency_key for p in pushes}
+    assert [e.id for e in recorded] == [p.idempotency_key for p in pushes]
+    assert recorded[0].payload["title"] == created.title
+    assert recorded[0].actor_id == ctx.user_id and recorded[0].request_id == ctx.request_id
+    assert recorded[0].app == "portal"
+    assert await outbox.read_pending(10) == []
 
 
 async def test_new_tasks_go_to_the_top_of_the_open_list(manager: TasksManagerImpl) -> None:
@@ -229,14 +259,43 @@ async def test_tenancy_holds_across_contexts(manager: TasksManagerImpl) -> None:
 
 
 async def test_lists_are_clamped(infra: InfraLocalImpl, members: Members) -> None:
+    outbox = OutboxStorageMemoryImpl()
+    events_storage = EventStorageMemoryImpl()
     manager = TasksManagerImpl(
-        TasksStorageMemoryImpl(),
+        TasksStorageMemoryImpl(outbox),
         members,
-        EventsManagerImpl(EventStorageMemoryImpl(), EventsOptions()),
-        infra.get_topics(),
+        OutboxRelayImpl(outbox, events_storage, infra.get_topics()),
         TasksOptions(max_limit=2),
     )
     ctx = context(Role.MEMBER)
     for i in range(3):
         await manager.create_task(ctx, make_task(ctx, title=f"t{i}"))
     assert len(await manager.get_open_tasks(ctx, own(ctx, TaskScope.TEAM), limit=1000)) == 2
+
+
+async def test_a_failed_relay_leaves_the_row_for_the_sweep(
+    infra: InfraLocalImpl,
+    members: Members,
+    events: EventsManagerImpl,
+    events_storage: EventStorageMemoryImpl,
+) -> None:
+    # The request succeeds on the core write; the push is the row's job, and a
+    # bus that is down at that moment is caught by the sweep's relay_pending.
+    class DownTopics(TopicsInterface):
+        async def publish(self, topic: Topics, payload: TopicPayload) -> None:
+            raise RuntimeError("bus down")
+
+    outbox = OutboxStorageMemoryImpl()
+    relay = OutboxRelayImpl(outbox, events_storage, DownTopics())
+    manager = TasksManagerImpl(TasksStorageMemoryImpl(outbox), members, relay, TasksOptions())
+    ctx = context(Role.MEMBER)
+    created = await manager.create_task(ctx, make_task(ctx))
+    assert await manager.get_task(ctx, created.id) == created
+    pending = await outbox.read_pending(10)
+    assert [(org, row.kind) for org, row in pending] == [(ctx.org_id, "tasks.task.created")]
+    # The event was appended before the publish failed; relaying again is
+    # idempotent on the row's id and marks the row done once the bus is back.
+    working = OutboxRelayImpl(outbox, events_storage, infra.get_topics())
+    assert await working.relay_pending(10) == 1
+    assert await outbox.read_pending(10) == []
+    assert [e.seq for e in await events.get_events(ctx, after_seq=0, limit=10)] == [1]

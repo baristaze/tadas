@@ -1,8 +1,9 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 
+from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.storage.impl.pg_base import PgStorageBase
 from tadas.om.storage.utils.translation import to_model
 from tadas.om.tenancy.storage import TenancyStorageInterface
@@ -86,8 +87,10 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
             result = await session.execute(stmt)
             return [(row.org_id, to_model(row, User)) for row in result.scalars()]
 
-    async def write_user(self, org_id: UUID, user: User) -> None:
-        await self._upsert(Users, org_id, user)
+    async def write_user(
+        self, org_id: UUID, user: User, outbox_row: OutboxRow | None = None
+    ) -> None:
+        await self._upsert(Users, org_id, user, outbox_row)
 
     async def read_memberships(self, org_id: UUID, limit: int) -> list[Membership]:
         stmt = (
@@ -108,8 +111,10 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
             row = (await session.execute(stmt)).scalar_one_or_none()
             return None if row is None else to_model(row, Membership)
 
-    async def write_membership(self, org_id: UUID, membership: Membership) -> None:
-        await self._upsert(Memberships, org_id, membership)
+    async def write_membership(
+        self, org_id: UUID, membership: Membership, outbox_row: OutboxRow | None = None
+    ) -> None:
+        await self._upsert(Memberships, org_id, membership, outbox_row)
 
     async def read_sessions(self, org_id: UUID, user_id: UUID, limit: int) -> list[Session]:
         stmt = (
@@ -164,8 +169,36 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
             row = (await session.execute(stmt)).scalar_one_or_none()
             return None if row is None else (row.org_id, to_model(row, ApiKey))
 
-    async def write_api_key(self, org_id: UUID, api_key: ApiKey) -> None:
-        await self._upsert(ApiKeys, org_id, api_key)
+    async def write_api_key(
+        self, org_id: UUID, api_key: ApiKey, outbox_row: OutboxRow | None = None
+    ) -> None:
+        await self._upsert(ApiKeys, org_id, api_key, outbox_row)
+
+    async def purge_deleted(self, org_id: UUID, before: datetime) -> int:
+        gone_users = (
+            delete(Users)
+            .where(Users.org_id == org_id, Users.deleted_at < before)
+            .returning(Users.id)
+        )
+        purged = 0
+        async with self._session_for(gone_users) as session:
+            user_ids = list((await session.execute(gone_users)).scalars().all())
+            purged += len(user_ids)
+            if user_ids:
+                memberships = (
+                    delete(Memberships)
+                    .where(Memberships.org_id == org_id, Memberships.user_id.in_(user_ids))
+                    .returning(Memberships.id)
+                )
+                purged += len((await session.execute(memberships)).scalars().all())
+            keys = (
+                delete(ApiKeys)
+                .where(ApiKeys.org_id == org_id, ApiKeys.deleted_at < before)
+                .returning(ApiKeys.id)
+            )
+            purged += len((await session.execute(keys)).scalars().all())
+            await session.commit()
+        return purged
 
     async def write_socket_ticket(self, org_id: UUID, ticket: SocketTicket) -> None:
         await self._upsert(SocketTickets, org_id, ticket)

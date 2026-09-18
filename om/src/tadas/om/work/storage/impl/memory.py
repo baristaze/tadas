@@ -36,13 +36,13 @@ class WorkStorageMemoryImpl(MemoryStorageBase, WorkStorageInterface):
             return item
 
     async def claim_next(
-        self, queue: str, kinds: Sequence[WorkKind], worker_id: str, lease: timedelta
+        self, lane: str, kinds: Sequence[WorkKind], worker_id: str, lease: timedelta
     ) -> tuple[UUID, WorkItem] | None:
         now = utcnow()
         async with self._lock:
             for org_id, item in self._rows_across_tenants(self._items):
                 if (
-                    item.queue == queue
+                    item.lane == lane
                     and item.status is WorkStatus.QUEUED
                     and item.kind in kinds
                     and item.available_at <= now
@@ -61,7 +61,7 @@ class WorkStorageMemoryImpl(MemoryStorageBase, WorkStorageInterface):
         return None
 
     async def requeue_stale(
-        self, org_id: UUID, now: datetime, stagger: timedelta
+        self, org_id: UUID, now: datetime, stagger: timedelta, updated_by: UUID
     ) -> list[WorkItem]:
         changed: list[WorkItem] = []
         async with self._lock:
@@ -87,6 +87,7 @@ class WorkStorageMemoryImpl(MemoryStorageBase, WorkStorageInterface):
                         "lease_expires_at": None,
                         "last_error": "lease expired",
                         "updated_at": now,
+                        "updated_by": updated_by,
                     }
                 )
                 self._items[item.id] = (org_id, requeued)

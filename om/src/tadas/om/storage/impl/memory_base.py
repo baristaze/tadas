@@ -1,11 +1,15 @@
 """The in-memory base: a full second implementation of every tenancy rule
-the relational base has, over dicts keyed by id."""
+the relational base has, over dicts keyed by id. An outbox row lands in the
+outbox memory storage the root handed this impl, the twin of "in the same
+commit"."""
 
 import asyncio
 from typing import Protocol, TypeVar
 from uuid import UUID
 
-from tadas.om.exceptions import TenantMismatch
+from tadas.om.exceptions import Conflict, TenantMismatch
+from tadas.om.outbox.storage import OutboxLandingInterface
+from tadas.om.outbox.types.row import OutboxRow
 
 
 class HasId(Protocol):
@@ -20,14 +24,26 @@ MemoryTable = dict[UUID, tuple[UUID, E]]
 
 
 class MemoryStorageBase:
-    def __init__(self) -> None:
+    def __init__(self, outbox: OutboxLandingInterface | None = None) -> None:
         self._lock = asyncio.Lock()
+        self._outbox = outbox
 
-    @staticmethod
-    def _put(table: MemoryTable[E], org_id: UUID, entity: E) -> None:
+    def _put(
+        self, table: MemoryTable[E], org_id: UUID, entity: E, outbox_row: OutboxRow | None = None
+    ) -> None:
         existing = table.get(entity.id)
         if existing is not None and existing[0] != org_id:
             raise TenantMismatch(f"{entity.id} is not in {org_id}")
+        if outbox_row is not None:
+            if self._outbox is None:
+                raise RuntimeError("this memory storage was built without an outbox to land in")
+            self._outbox.land(org_id, outbox_row)
+        table[entity.id] = (org_id, entity)
+
+    @staticmethod
+    def _insert(table: MemoryTable[E], org_id: UUID, entity: E) -> None:
+        if entity.id in table:
+            raise Conflict(f"{entity.id} already exists")
         table[entity.id] = (org_id, entity)
 
     @staticmethod

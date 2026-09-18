@@ -2,7 +2,7 @@ from datetime import datetime
 from uuid import UUID
 
 from tadas.om.base import Identifiable, Named, SoftDeletable, Trackable
-from tadas.om.tenancy.types.role import Role
+from tadas.om.opcontext import Role
 
 
 class ApiKey(Identifiable, Named, Trackable, SoftDeletable):

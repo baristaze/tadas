@@ -6,7 +6,7 @@ from datetime import datetime
 from uuid import UUID
 
 from tadas.om.base import Created, Identifiable
-from tadas.om.tenancy.types.role import CredentialKind
+from tadas.om.opcontext import CredentialKind
 
 
 class SocketTicket(Identifiable, Created):

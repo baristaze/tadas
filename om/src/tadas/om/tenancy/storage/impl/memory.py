@@ -1,6 +1,8 @@
 from datetime import datetime
 from uuid import UUID
 
+from tadas.om.outbox.storage import OutboxLandingInterface
+from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.storage.impl.memory_base import MemoryStorageBase, MemoryTable
 from tadas.om.tenancy.storage import TenancyStorageInterface
 from tadas.om.tenancy.types.api_key import ApiKey
@@ -13,8 +15,8 @@ from tadas.om.tenancy.types.user import User
 
 
 class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, outbox: OutboxLandingInterface | None = None) -> None:
+        super().__init__(outbox)
         self._identities: dict[UUID, Identity] = {}
         self._orgs: MemoryTable[Org] = {}
         self._users: MemoryTable[User] = {}
@@ -57,8 +59,10 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
             if user.identity_id == identity_id and user.deleted_at is None
         ]
 
-    async def write_user(self, org_id: UUID, user: User) -> None:
-        self._put(self._users, org_id, user)
+    async def write_user(
+        self, org_id: UUID, user: User, outbox_row: OutboxRow | None = None
+    ) -> None:
+        self._put(self._users, org_id, user, outbox_row)
 
     async def read_memberships(self, org_id: UUID, limit: int) -> list[Membership]:
         return self._rows(self._memberships, org_id)[:limit]
@@ -68,8 +72,10 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
             (m for m in self._rows(self._memberships, org_id) if m.user_id == user_id), None
         )
 
-    async def write_membership(self, org_id: UUID, membership: Membership) -> None:
-        self._put(self._memberships, org_id, membership)
+    async def write_membership(
+        self, org_id: UUID, membership: Membership, outbox_row: OutboxRow | None = None
+    ) -> None:
+        self._put(self._memberships, org_id, membership, outbox_row)
 
     async def read_sessions(self, org_id: UUID, user_id: UUID, limit: int) -> list[Session]:
         return [
@@ -106,8 +112,33 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
             None,
         )
 
-    async def write_api_key(self, org_id: UUID, api_key: ApiKey) -> None:
-        self._put(self._api_keys, org_id, api_key)
+    async def write_api_key(
+        self, org_id: UUID, api_key: ApiKey, outbox_row: OutboxRow | None = None
+    ) -> None:
+        self._put(self._api_keys, org_id, api_key, outbox_row)
+
+    async def purge_deleted(self, org_id: UUID, before: datetime) -> int:
+        gone_users = [
+            u.id
+            for u in self._rows(self._users, org_id)
+            if u.deleted_at is not None and u.deleted_at < before
+        ]
+        gone_memberships = [
+            m.id for m in self._rows(self._memberships, org_id) if m.user_id in gone_users
+        ]
+        gone_keys = [
+            k.id
+            for k in self._rows(self._api_keys, org_id)
+            if k.deleted_at is not None and k.deleted_at < before
+        ]
+        for table, ids in (
+            (self._users, gone_users),
+            (self._memberships, gone_memberships),
+            (self._api_keys, gone_keys),
+        ):
+            for row_id in ids:
+                del table[row_id]
+        return len(gone_users) + len(gone_memberships) + len(gone_keys)
 
     async def write_socket_ticket(self, org_id: UUID, ticket: SocketTicket) -> None:
         self._put(self._socket_tickets, org_id, ticket)

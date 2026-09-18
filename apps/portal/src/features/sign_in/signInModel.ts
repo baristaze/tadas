@@ -1,5 +1,5 @@
 // Pure: validation and the org choice. No React, no fetch.
-import type { MembershipChoiceView } from "@tadas/api-client";
+import type { MembershipChoiceView } from "../../api";
 
 export interface CredentialsCheck {
   ok: boolean;

@@ -1,5 +1,5 @@
 // Pure: rows, formatting, and gating predicates for the settings screen.
-import type { ApiKeyView, MeView, UserView } from "@tadas/api-client";
+import type { ApiKeyView, MeView, UserView } from "../../api";
 
 export interface MemberRow {
   id: string;

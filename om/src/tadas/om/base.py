@@ -1,11 +1,14 @@
 """Root of the object model: the base class, the mixins, and the two helpers
 every entity constructor needs."""
 
+from collections.abc import Mapping
 from datetime import UTC, datetime
+from types import MappingProxyType
+from typing import Annotated, Any
 from uuid import UUID
 
 import uuid_utils
-from pydantic import BaseModel, ConfigDict
+from pydantic import AfterValidator, BaseModel, ConfigDict, PlainSerializer
 
 
 def new_id() -> UUID:
@@ -21,6 +24,14 @@ class Platform(BaseModel):
     """Root of the object model. Holds no fields."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
+
+
+FrozenMapping = Annotated[
+    Mapping[str, Any], AfterValidator(MappingProxyType), PlainSerializer(dict, return_type=dict)
+]
+"""A mapping field that stays frozen past the model: pydantic validates a
+`Mapping` into a dict, so a read-only view is put around it, and the freeze
+is deep as the guideline requires; a dump hands out a plain dict again."""
 
 
 class Identifiable(Platform):
@@ -42,6 +53,7 @@ class Created(Platform):
 class Trackable(Created):
     updated_at: datetime
     created_by: UUID  # id of the user who created it
+    updated_by: UUID  # id of the user who last changed it
 
 
 class SoftDeletable(Platform):
@@ -50,4 +62,7 @@ class SoftDeletable(Platform):
 
 
 EMPTY_UUID = UUID(int=0)
-"""The reserved system scope, and the sentinel for a required reference that means none."""
+"""The platform, not a tenant or a person: the reserved system scope, and the
+value of a required reference that no tenant and no person owns. It equals
+infra's `SYSTEM_SCOPE` by value, so infra never imports it. A reference that
+is genuinely optional is `None`, never `EMPTY_UUID`."""

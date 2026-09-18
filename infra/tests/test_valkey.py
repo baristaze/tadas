@@ -2,10 +2,10 @@ from datetime import timedelta
 
 import pytest
 
+from tadas.infra.base import new_id
 from tadas.infra.cache import CacheScope
 from tadas.infra.cache.valkey import CacheValkeyImpl
 from tadas.infra.impl.valkey import ValkeyConnection
-from tadas.om.base import new_id
 
 
 @pytest.mark.parametrize(

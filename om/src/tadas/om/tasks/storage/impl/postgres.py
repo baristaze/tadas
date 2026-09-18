@@ -1,7 +1,20 @@
+from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import ColumnElement, DateTime, Uuid, and_, literal, or_, select, true, tuple_
+from sqlalchemy import (
+    ColumnElement,
+    DateTime,
+    Uuid,
+    and_,
+    delete,
+    literal,
+    or_,
+    select,
+    true,
+    tuple_,
+)
 
+from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.storage.impl.pg_base import PgStorageBase
 from tadas.om.storage.utils.translation import to_model
 from tadas.om.tasks.storage import TasksStorageInterface
@@ -68,5 +81,18 @@ class TasksStoragePostgresImpl(PgStorageBase, TasksStorageInterface):
             row = (await session.execute(stmt)).scalar_one_or_none()
             return None if row is None else to_model(row, Task)
 
-    async def write_task(self, org_id: UUID, task: Task) -> None:
-        await self._upsert(Tasks, org_id, task)
+    async def purge_deleted(self, org_id: UUID, before: datetime) -> int:
+        stmt = (
+            delete(Tasks)
+            .where(Tasks.org_id == org_id, Tasks.deleted_at < before)
+            .returning(Tasks.id)
+        )
+        async with self._session_for(stmt) as session:
+            purged = len((await session.execute(stmt)).scalars().all())
+            await session.commit()
+            return purged
+
+    async def write_task(
+        self, org_id: UUID, task: Task, outbox_row: OutboxRow | None = None
+    ) -> None:
+        await self._upsert(Tasks, org_id, task, outbox_row)

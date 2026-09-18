@@ -130,19 +130,10 @@
         "type": "string"
       },
       "EventView": {
-        "description": "One record of the tenant's append-only stream, paged by `after_seq`.",
+        "description": "One record of the tenant's append-only stream, paged by `after_seq`.\n`kind` is \"<namespace>.<entity>.<action>\", or an audit kind; the payload\nstays inside, an event is a record and not a second read path. The rename\nfrom `entity`/`entity_id`/`action` stayed under `/v1` (ADR 0006).",
         "properties": {
-          "action": {
-            "title": "Action",
-            "type": "string"
-          },
-          "entity": {
-            "title": "Entity",
-            "type": "string"
-          },
-          "entity_id": {
-            "format": "uuid",
-            "title": "Entity Id",
+          "kind": {
+            "title": "Kind",
             "type": "string"
           },
           "produced_at": {
@@ -153,13 +144,17 @@
           "seq": {
             "title": "Seq",
             "type": "integer"
+          },
+          "target_id": {
+            "format": "uuid",
+            "title": "Target Id",
+            "type": "string"
           }
         },
         "required": [
           "seq",
-          "entity",
-          "entity_id",
-          "action",
+          "kind",
+          "target_id",
           "produced_at"
         ],
         "title": "EventView",
@@ -1249,24 +1244,6 @@
     "/v1/auth/login": {
       "post": {
         "operationId": "login_v1_auth_login_post",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
         "requestBody": {
           "content": {
             "application/json": {

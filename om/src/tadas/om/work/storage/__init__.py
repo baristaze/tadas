@@ -23,18 +23,19 @@ class WorkStorageInterface:
         ...
 
     async def claim_next(
-        self, queue: str, kinds: Sequence[WorkKind], worker_id: str, lease: timedelta
+        self, lane: str, kinds: Sequence[WorkKind], worker_id: str, lease: timedelta
     ) -> tuple[UUID, WorkItem] | None:
-        """Cross-tenant claim, one statement: the oldest available row in the queue,
+        """Cross-tenant claim, one statement: the oldest available row on the lane,
         skipping locked ones, stamped with the claim and the lease."""
         ...
 
     async def requeue_stale(
-        self, org_id: UUID, now: datetime, stagger: timedelta
+        self, org_id: UUID, now: datetime, stagger: timedelta, updated_by: UUID
     ) -> list[WorkItem]:
         """One conditional statement: every claimed item of the tenant whose lease
         expired before `now` goes back to the queue, staggered by its position, or
-        fails when its attempts are spent; returns the items it changed, by id."""
+        fails when its attempts are spent; returns the items it changed, by id.
+        `updated_by` is the sweep's principal."""
         ...
 
     async def read_item(self, org_id: UUID, item_id: UUID) -> WorkItem | None: ...

@@ -37,6 +37,7 @@ def make_task(
         created_at=now,
         updated_at=now - updated_ago,
         created_by=created_by or new_id(),
+        updated_by=created_by or new_id(),
         title=title,
         status=status,
         assignee_id=assignee_id,
@@ -133,3 +134,27 @@ class TaskStorageContract:
             "mine, done"
         ]
         assert await storage.read_done_tasks(org, mine(other), None, limit=10) == []
+
+    async def test_purge_removes_only_tasks_deleted_before_the_cut(
+        self, storage: TasksStorageInterface
+    ) -> None:
+        org, elsewhere = new_id(), new_id()
+        old, recent, live = make_task("old"), make_task("recent"), make_task("live")
+        cut = utcnow()
+        await storage.write_task(
+            org, old.model_copy(update={"deleted_at": cut - timedelta(days=1), "deleted_by": org})
+        )
+        await storage.write_task(
+            org, recent.model_copy(update={"deleted_at": cut, "deleted_by": org})
+        )
+        await storage.write_task(org, live)
+        other = make_task("other")
+        await storage.write_task(
+            elsewhere, other.model_copy(update={"deleted_at": cut - timedelta(days=1)})
+        )
+        assert await storage.purge_deleted(org, cut) == 1
+        assert await storage.read_task(org, old.id) is None
+        assert await storage.read_task(org, recent.id) is not None
+        assert await storage.read_task(org, live.id) == live
+        assert await storage.read_task(elsewhere, other.id) is not None, "per tenant"
+        assert await storage.purge_deleted(org, cut) == 0, "idempotent"

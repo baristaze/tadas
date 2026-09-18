@@ -1,18 +1,20 @@
 """Per-route rate limits counted in the shared cache so every replica shares
-one budget. The subject is the credential (by digest) or the client address.
+one budget. The subject is the credential id on an authenticated route and
+the client address on an unauthenticated one; never a digest of the bearer.
 The limits fail open: they guard against runaway clients and are not a
 security boundary."""
 
-import hashlib
 from datetime import timedelta
-from typing import Annotated, Any
+from typing import Any
 
-from fastapi import Depends, Header, Request
+from fastapi import Depends, Request
 
 from tadas.infra.cache import CacheScope
 from tadas.infra.observability import OUTCOMES
 from tadas.om.base import EMPTY_UUID, Platform
 from tadas.om.exceptions import PlatformException
+from tadas.om.opcontext import OpContext
+from tadas.services.api.gateway.auth import Ctx
 from tadas.services.api.gateway.resolve import container_of
 
 
@@ -41,29 +43,37 @@ class RateLimitOptions(Platform):
         return budgets[route]
 
 
-def subject_of(request: Request, authorization: str | None) -> str:
-    if authorization:
-        return "cred:" + hashlib.sha256(authorization.encode()).hexdigest()[:32]
+def subject_of(request: Request, ctx: OpContext | None) -> str:
+    if ctx is not None:
+        return f"cred:{ctx.security.credential_id}"
     client = request.client.host if request.client else "unknown"
     return f"addr:{client}"
 
 
-def rate_limited(route: str) -> Any:
+async def count(request: Request, route: str, ctx: OpContext | None) -> None:
+    container = container_of(request)
+    budget = container.rate_limits.of(route)
+    cache = container.infra.get_cache(CacheScope.RATE_LIMIT)
+    key = f"{route}:{subject_of(request, ctx)}"
+    # A credential's budget counts under its tenant; only the address-keyed,
+    # unauthenticated path counts under the system scope.
+    scope = ctx.org_id if ctx is not None else EMPTY_UUID
+    total, remaining = await cache.increment(scope, key, budget.window)
+    if total > budget.limit:
+        OUTCOMES.labels(subsystem="rate_limit", outcome="rejected").inc()
+        raise RateLimited(remaining)
+    OUTCOMES.labels(subsystem="rate_limit", outcome="allowed").inc()
+
+
+def rate_limited(route: str, *, authenticated: bool = False) -> Any:
     """A route dependency: `dependencies=[rate_limited("login")]`. The budget
-    named by `route` must exist on RateLimitOptions."""
+    named by `route` must exist on RateLimitOptions. An authenticated route
+    counts per credential id, an unauthenticated one per client address."""
 
-    async def dependency(
-        request: Request,
-        authorization: Annotated[str | None, Header()] = None,
-    ) -> None:
-        container = container_of(request)
-        budget = container.rate_limits.of(route)
-        cache = container.infra.get_cache(CacheScope.RATE_LIMIT)
-        key = f"{route}:{subject_of(request, authorization)}"
-        count, remaining = await cache.increment(EMPTY_UUID, key, budget.window)
-        if count > budget.limit:
-            OUTCOMES.labels(subsystem="rate_limit", outcome="rejected").inc()
-            raise RateLimited(remaining)
-        OUTCOMES.labels(subsystem="rate_limit", outcome="allowed").inc()
+    async def by_credential(request: Request, ctx: Ctx) -> None:
+        await count(request, route, ctx)
 
-    return Depends(dependency)
+    async def by_address(request: Request) -> None:
+        await count(request, route, None)
+
+    return Depends(by_credential if authenticated else by_address)

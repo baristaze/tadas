@@ -2,11 +2,10 @@
 and credentials. Owns the identity model and issues tokens; the gateway
 only verifies."""
 
-from __future__ import annotations
-
-from typing import TYPE_CHECKING
+from datetime import timedelta
 from uuid import UUID
 
+from tadas.om.opcontext import AdminContext, AppContext, CredentialKind, OpContext, Role
 from tadas.om.tenancy.types.api_key import ApiKey
 from tadas.om.tenancy.types.identity import Identity
 from tadas.om.tenancy.types.issued import IssuedApiKey, IssuedLogin, IssuedSession, IssuedTicket
@@ -14,13 +13,6 @@ from tadas.om.tenancy.types.membership import Membership
 from tadas.om.tenancy.types.org import Org
 from tadas.om.tenancy.types.session import Session
 from tadas.om.tenancy.types.user import User
-
-if TYPE_CHECKING:
-    # opcontext imports the tenancy entities it carries; this interface only
-    # annotates with the context types, so the import stays out of the cycle.
-    from datetime import timedelta
-
-    from tadas.om.opcontext import AdminContext, AppContext, CredentialKind, OpContext, Role
 
 
 class TenancyManagerInterface:
@@ -171,6 +163,13 @@ class TenancyManagerInterface:
     ) -> IssuedApiKey: ...
 
     async def revoke_api_key(self, ctx: OpContext, api_key_id: UUID) -> ApiKey: ...
+
+    async def purge_deleted(self, ctx: OpContext) -> int:
+        """The sweep, for one tenant: hard-deletes removed members (and their
+        memberships) and revoked api keys past the retention period; returns how
+        many rows went. Erasing a person is this purge; personal data lives in
+        named fields (`email`, `display_name`)."""
+        ...
 
     async def issue_ticket(self, ctx: OpContext) -> IssuedTicket:
         """A single-use, short-lived ticket standing for the caller's credential."""

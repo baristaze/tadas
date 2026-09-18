@@ -8,21 +8,23 @@ from tadas.om.exceptions import DuplicateWorkItem, TenantMismatch
 from tadas.om.work.storage import WorkStorageInterface
 from tadas.om.work.types.work_item import WorkItem, WorkKind, WorkStatus
 
+SWEEPER = new_id()
 LEASE = timedelta(seconds=30)
 
 
-def make_item(*, queue: str = "default", available_in: timedelta = timedelta(0)) -> WorkItem:
+def make_item(*, lane: str = "default", available_in: timedelta = timedelta(0)) -> WorkItem:
     now = utcnow()
     return WorkItem(
         id=new_id(),
         created_at=now,
         updated_at=now,
         created_by=new_id(),
+        updated_by=new_id(),
         kind=WorkKind.NOOP,
         target_id=new_id(),
         idempotency_key=new_id(),
-        payload={"note": "contract"},
-        queue=queue,
+        payload={},
+        lane=lane,
         available_at=now + available_in,
     )
 
@@ -33,16 +35,16 @@ class WorkStorageContract:
         raise NotImplementedError("the concrete test class provides the storage")
 
     @pytest.fixture
-    def queue(self) -> str:
+    def lane(self) -> str:
         return f"q-{new_id().hex[-12:]}"  # the random tail; the head is the millisecond
 
     async def test_claim_is_exclusive_and_stamps_the_lease(
-        self, storage: WorkStorageInterface, queue: str
+        self, storage: WorkStorageInterface, lane: str
     ) -> None:
         org: UUID = new_id()
-        item = make_item(queue=queue)
+        item = make_item(lane=lane)
         await storage.write_item(org, item)
-        first = await storage.claim_next(queue, [WorkKind.NOOP], "w1", LEASE)
+        first = await storage.claim_next(lane, [WorkKind.NOOP], "w1", LEASE)
         assert first is not None
         claimed_org, claimed = first
         assert claimed_org == org
@@ -50,49 +52,50 @@ class WorkStorageContract:
         assert claimed.claimed_by == "w1"
         assert claimed.attempts == 1
         assert claimed.lease_expires_at is not None and claimed.lease_expires_at > utcnow()
-        assert claimed.payload == {"note": "contract"}
-        assert await storage.claim_next(queue, [WorkKind.NOOP], "w2", LEASE) is None
+        assert claimed.payload == {}
+        assert await storage.claim_next(lane, [WorkKind.NOOP], "w2", LEASE) is None
         assert await storage.read_item(org, item.id) == claimed
 
     async def test_claim_takes_the_oldest_available_in_its_queue(
-        self, storage: WorkStorageInterface, queue: str
+        self, storage: WorkStorageInterface, lane: str
     ) -> None:
         org = new_id()
-        later = make_item(queue=queue, available_in=timedelta(hours=1))
-        elsewhere = make_item(queue=queue + "-other")
-        first, second = make_item(queue=queue), make_item(queue=queue)
+        later = make_item(lane=lane, available_in=timedelta(hours=1))
+        elsewhere = make_item(lane=lane + "-other")
+        first, second = make_item(lane=lane), make_item(lane=lane)
         for item in (later, elsewhere, second, first):
             await storage.write_item(org, item)
-        claimed = await storage.claim_next(queue, [WorkKind.NOOP], "w1", LEASE)
+        claimed = await storage.claim_next(lane, [WorkKind.NOOP], "w1", LEASE)
         assert claimed is not None and claimed[1].id == min(first.id, second.id)
-        claimed = await storage.claim_next(queue, [WorkKind.NOOP], "w1", LEASE)
+        claimed = await storage.claim_next(lane, [WorkKind.NOOP], "w1", LEASE)
         assert claimed is not None and claimed[1].id == max(first.id, second.id)
-        assert await storage.claim_next(queue, [WorkKind.NOOP], "w1", LEASE) is None
+        assert await storage.claim_next(lane, [WorkKind.NOOP], "w1", LEASE) is None
 
     async def test_requeue_stale_is_per_tenant_conditional_and_staggered(
-        self, storage: WorkStorageInterface, queue: str
+        self, storage: WorkStorageInterface, lane: str
     ) -> None:
         org_a, org_b = new_id(), new_id()
-        stale = [make_item(queue=queue) for _ in range(3)]
+        stale = [make_item(lane=lane) for _ in range(3)]
         stale[1] = stale[1].model_copy(update={"max_attempts": 1})
         for item in stale:
             await storage.write_item(org_a, item)
-        elsewhere = make_item(queue=queue)
+        elsewhere = make_item(lane=lane)
         await storage.write_item(org_b, elsewhere)
         expired = timedelta(seconds=-1)
         for _ in range(4):
-            assert await storage.claim_next(queue, [WorkKind.NOOP], "w1", expired) is not None
-        live = make_item(queue=queue)
+            assert await storage.claim_next(lane, [WorkKind.NOOP], "w1", expired) is not None
+        live = make_item(lane=lane)
         await storage.write_item(org_a, live)
-        assert await storage.claim_next(queue, [WorkKind.NOOP], "w1", LEASE) is not None
+        assert await storage.claim_next(lane, [WorkKind.NOOP], "w1", LEASE) is not None
 
         now = utcnow()
         stagger = timedelta(seconds=5)
-        changed = await storage.requeue_stale(org_a, now, stagger)
+        changed = await storage.requeue_stale(org_a, now, stagger, SWEEPER)
         assert [item.id for item in changed] == sorted(item.id for item in stale)
         for position, item in enumerate(changed):
             assert item.claimed_by is None and item.lease_expires_at is None
             assert item.last_error == "lease expired" and item.updated_at == now
+            assert item.updated_by == SWEEPER
             if item.max_attempts == 1:
                 assert item.status is WorkStatus.FAILED
             else:
@@ -103,14 +106,14 @@ class WorkStorageContract:
         assert held is not None and held.status is WorkStatus.CLAIMED
         other = await storage.read_item(org_b, elsewhere.id)
         assert other is not None and other.status is WorkStatus.CLAIMED
-        assert await storage.requeue_stale(org_a, utcnow(), stagger) == []
+        assert await storage.requeue_stale(org_a, utcnow(), stagger, SWEEPER) == []
 
     async def test_write_if_held_refuses_a_row_this_worker_does_not_hold(
-        self, storage: WorkStorageInterface, queue: str
+        self, storage: WorkStorageInterface, lane: str
     ) -> None:
         org, other_org = new_id(), new_id()
-        await storage.write_item(org, make_item(queue=queue))
-        claimed = await storage.claim_next(queue, [WorkKind.NOOP], "w1", LEASE)
+        await storage.write_item(org, make_item(lane=lane))
+        claimed = await storage.claim_next(lane, [WorkKind.NOOP], "w1", LEASE)
         assert claimed is not None
         held = claimed[1]
         done = held.model_copy(

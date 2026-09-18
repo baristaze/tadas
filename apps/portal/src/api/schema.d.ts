@@ -410,17 +410,13 @@ export interface components {
         /**
          * EventView
          * @description One record of the tenant's append-only stream, paged by `after_seq`.
+         *     `kind` is "<namespace>.<entity>.<action>", or an audit kind; the payload
+         *     stays inside, an event is a record and not a second read path. The rename
+         *     from `entity`/`entity_id`/`action` stayed under `/v1` (ADR 0006).
          */
         EventView: {
-            /** Action */
-            action: string;
-            /** Entity */
-            entity: string;
-            /**
-             * Entity Id
-             * Format: uuid
-             */
-            entity_id: string;
+            /** Kind */
+            kind: string;
             /**
              * Produced At
              * Format: date-time
@@ -428,6 +424,11 @@ export interface components {
             produced_at: string;
             /** Seq */
             seq: number;
+            /**
+             * Target Id
+             * Format: uuid
+             */
+            target_id: string;
         };
         /** ExchangeSessionRequest */
         ExchangeSessionRequest: {
@@ -898,9 +899,7 @@ export interface operations {
     login_v1_auth_login_post: {
         parameters: {
             query?: never;
-            header?: {
-                authorization?: string | null;
-            };
+            header?: never;
             path?: never;
             cookie?: never;
         };

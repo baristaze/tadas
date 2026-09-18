@@ -70,6 +70,7 @@ class TasksServiceImpl(TasksServiceInterface):
             created_at=now,
             updated_at=now,
             created_by=ctx.user_id,
+            updated_by=ctx.user_id,
             title=body.title,
             notes=body.notes,
             assignee_id=body.assignee_id,
@@ -84,7 +85,8 @@ class TasksServiceImpl(TasksServiceInterface):
             for name, value in body.model_dump(exclude_unset=True).items()
             if value is not None or name == "assignee_id"
         }
-        changed = current.model_copy(update=changes)
+        # model_copy does not validate; a copy that carries caller input does.
+        changed = Task.model_validate({**current.model_dump(), **changes})
         return TaskView.model_validate(await self._tasks.update_task(ctx, changed))
 
     async def move_task(self, ctx: OpContext, task_id: UUID, body: MoveTaskRequest) -> TaskView:

@@ -1,5 +1,6 @@
 // One transport client: bearer, app header, the error envelope parsed into
 // a typed error carrying the request id, and a 401 that clears authentication.
+// The one file in the app that may call fetch.
 
 export interface ErrorEnvelope {
   error: { code: string; message: string; request_id: string };

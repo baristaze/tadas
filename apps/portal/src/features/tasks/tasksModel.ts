@@ -1,7 +1,7 @@
 // Pure: ordering, the rows the list renders, drag placements, and the cache
 // edits the list makes before the server answers.
 import type { InfiniteData } from "@tanstack/react-query";
-import type { MeView, TaskPageView, TaskView, UserView } from "@tadas/api-client";
+import type { MeView, TaskPageView, TaskView, UserView } from "../../api";
 
 /** How long a task takes to fade out of one group and into the other. */
 export const MOTION_MS = 1000;

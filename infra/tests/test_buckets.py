@@ -3,10 +3,10 @@ from pathlib import Path
 
 import pytest
 
+from tadas.infra.base import new_id
 from tadas.infra.buckets import BlobNotFound, Buckets
 from tadas.infra.buckets.local import BucketsLocalImpl
-from tadas.om.base import new_id
-from tadas.om.exceptions import ValidationFailed
+from tadas.infra.exceptions import InvalidBucketKey
 
 
 async def test_put_get_exists_list_delete(tmp_path: Path) -> None:
@@ -36,9 +36,9 @@ async def test_tenants_cannot_see_each_other(tmp_path: Path) -> None:
 
 async def test_keys_stay_inside_the_tenant_prefix(tmp_path: Path) -> None:
     buckets = BucketsLocalImpl(tmp_path)
-    with pytest.raises(ValidationFailed):
+    with pytest.raises(InvalidBucketKey):
         await buckets.put(new_id(), Buckets.EXPORTS, "../escape", b"", "text/plain")
-    with pytest.raises(ValidationFailed):
+    with pytest.raises(InvalidBucketKey):
         await buckets.get(new_id(), Buckets.EXPORTS, "/absolute")
 
 

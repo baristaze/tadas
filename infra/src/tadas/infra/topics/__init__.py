@@ -1,16 +1,25 @@
 """Topics: wake-ups and live updates. Names are fixed by enum, payloads by
-the payload map, delivery is at-least-once to every subscribed process.
-Durable work never rides a topic; it is a row in the work queue."""
+the payload map. A topic is best effort: a published event reaches every
+process that was subscribed at the time, at most once, and a bus hiccup may
+lose it. Durable work never rides a topic; it is a row in the work queue,
+and a missed wake-up degrades to polling latency, never to lost work."""
 
 from collections.abc import Awaitable, Callable
 from datetime import datetime
 from enum import Enum
 from uuid import UUID
 
-from tadas.om.base import Platform
+from pydantic import BaseModel, ConfigDict
 
 
-class TopicPayload(Platform):
+class TopicPayload(BaseModel):
+    """The frozen base every payload extends, declared here so the object
+    model never has to be imported by the bus. A tolerant reader: a field
+    the consumer does not know is ignored, so producers and consumers roll
+    out in either order."""
+
+    model_config = ConfigDict(frozen=True, extra="ignore")
+
     idempotency_key: UUID  # uuid_v7, set by the producer
     produced_at: datetime
     org_id: UUID
@@ -18,21 +27,21 @@ class TopicPayload(Platform):
 
 class Topics(str, Enum):
     WORK_AVAILABLE = "work_available"
-    ENTITY_CHANGED = "entity_changed"
+    ENTITY_CHANGED = "entity_changed"  # kind, target_id, seq: the realtime producer
 
 
 class WorkAvailablePayload(TopicPayload):
-    queue: str
+    lane: str
     kind: str
 
 
 class EntityChangedPayload(TopicPayload):
-    """A record of `entity` changed; the socket is a hint and the record is the truth."""
+    """A record of `kind` changed; the socket is a hint and the record, at
+    `seq` in the tenant's event stream, is the truth."""
 
-    entity: str
-    entity_id: UUID
-    action: str  # created | updated | deleted
-    seq: int | None = None  # the event record's per-tenant seq; None when no record was written
+    kind: str  # "<namespace>.<entity>.<created|updated|deleted>"
+    target_id: UUID
+    seq: int
 
 
 TOPIC_PAYLOADS: dict[Topics, type[TopicPayload]] = {

@@ -7,9 +7,11 @@ from uuid import UUID
 from worker_support import build_container, fast_options, make_item, sign_in
 
 from tadas.infra.cache import CacheInterface, CacheScope
-from tadas.om.base import EMPTY_UUID
+from tadas.om.base import EMPTY_UUID, new_id, utcnow
 from tadas.om.exceptions import LeaseLost
 from tadas.om.opcontext import OpContext
+from tadas.om.outbox.types.row import outbox_row, snapshot
+from tadas.om.tasks.types.task import Task
 from tadas.om.work import WorkManagerInterface
 from tadas.om.work.types.handler import WorkHandlerInterface
 from tadas.om.work.types.work_item import WorkItem, WorkKind, WorkStatus
@@ -46,9 +48,9 @@ class LeaseLosingWork(WorkManagerInterface):
         return await self._inner.enqueue(ctx, item)
 
     async def claim(
-        self, queue: str, kinds: Sequence[WorkKind], worker_id: str, lease: timedelta
+        self, lane: str, kinds: Sequence[WorkKind], worker_id: str, lease: timedelta
     ) -> tuple[OpContext, WorkItem] | None:
-        return await self._inner.claim(queue, kinds, worker_id, lease)
+        return await self._inner.claim(lane, kinds, worker_id, lease)
 
     async def complete(self, ctx: OpContext, item: WorkItem) -> WorkItem:
         return await self._inner.complete(ctx, item)
@@ -111,6 +113,11 @@ def start_loop(
 ) -> tuple[WorkerLoop, asyncio.Task[None]]:
     loop = WorkerLoop(
         work=work or container.managers.work,
+        outbox=container.managers.outbox,
+        purges={
+            "tasks": container.managers.tasks.purge_deleted,
+            "tenancy": container.managers.tenancy.purge_deleted,
+        },
         handlers={WorkKind.NOOP: handler},
         topics=container.infra.get_topics(),
         liveness=liveness or container.infra.get_cache(CacheScope.WORKER_LIVENESS),
@@ -222,6 +229,37 @@ async def test_sweep_requeues_stale_items_per_tenant(tmp_path: Path) -> None:
     stored = await container.storage.get_work_storage().read_item(ctx.org_id, item.id)
     assert stored is not None and stored.status is WorkStatus.DONE
     assert stored.attempts == 2, "the sweep kept the lost attempt; the rerun spent one more"
+
+
+async def test_sweep_relays_the_outbox_and_purges_done_rows(tmp_path: Path) -> None:
+    # A row a crash left behind: written with its core row, never relayed.
+    container = build_container(tmp_path)
+    ctx = await sign_in(container)
+    now = utcnow()
+    task = Task(
+        id=new_id(),
+        created_at=now,
+        updated_at=now,
+        created_by=ctx.user_id,
+        updated_by=ctx.user_id,
+        title="left behind",
+    )
+    row = outbox_row(ctx, "tasks.task.created", task.id, snapshot(task))
+    await container.storage.get_tasks_storage().write_task(ctx.org_id, task, row)
+    outbox = container.storage.get_outbox_storage()
+    assert [r.id for _, r in await outbox.read_pending(10)] == [row.id]
+    loop, task_ = start_loop(
+        container, NoopHandlerImpl(), fast_options(outbox_retention=timedelta(0))
+    )
+    await until(lambda: loop.sweeps >= 2)
+    loop.stop()
+    await task_
+    assert await outbox.read_pending(10) == [], "the sweep relayed the row"
+    events = await container.managers.events.get_events(ctx, after_seq=0, limit=10)
+    assert [(e.id, e.kind, e.target_id) for e in events] == [(row.id, row.kind, task.id)]
+    # With no retention the second sweep purged the done row: nothing pending,
+    # nothing done, and the relay of a purged row is never asked for.
+    assert await outbox.purge_done(utcnow()) == 0
 
 
 async def test_a_lost_lease_is_never_written_over(tmp_path: Path) -> None:

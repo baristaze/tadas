@@ -8,20 +8,21 @@ from tadas.services.api.types.common import View
 
 
 class EventView(View):
-    """One record of the tenant's append-only stream, paged by `after_seq`."""
+    """One record of the tenant's append-only stream, paged by `after_seq`.
+    `kind` is "<namespace>.<entity>.<action>", or an audit kind; the payload
+    stays inside, an event is a record and not a second read path. The rename
+    from `entity`/`entity_id`/`action` stayed under `/v1` (ADR 0006)."""
 
     seq: int
-    entity: str
-    entity_id: UUID
-    action: str
+    kind: str
+    target_id: UUID
     produced_at: datetime
 
 
 class EntityChangedView(View):
     """What a push says: which record changed, how, and where it sits in the
-    stream. `seq` is None for a push whose producer wrote no stream record."""
+    stream. Every push has a record, so `seq` is always present."""
 
-    entity: str
-    entity_id: UUID
-    action: str
-    seq: int | None
+    kind: str
+    target_id: UUID
+    seq: int

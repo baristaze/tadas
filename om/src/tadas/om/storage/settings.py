@@ -2,8 +2,12 @@
 each defaulting to the shared one."""
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy.engine import make_url
 
 from tadas.om.storage.roles import DatabaseRole
+
+LOCAL_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", "postgres"})
+"""Where a development seed may write; the compose service name included."""
 
 
 class StorageSettings(BaseSettings):
@@ -14,6 +18,16 @@ class StorageSettings(BaseSettings):
     database_url_activity: str | None = None
     database_url_queue: str | None = None
     database_url_admin: str | None = None
+
+    def refuse_remote(self) -> None:
+        """For a development seed: refuses a role URL whose host is not local, so
+        development credentials never land in a shared database by a stray `.env`."""
+        for role, url in self.role_urls().items():
+            host = make_url(url).host
+            if host not in LOCAL_HOSTS:
+                raise SystemExit(
+                    f"refusing to seed {role.value} at {host}: TADAS_DATABASE_URL must be local"
+                )
 
     def role_urls(self) -> dict[DatabaseRole, str]:
         overrides = {

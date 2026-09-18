@@ -5,7 +5,8 @@ import hashlib
 import hmac
 from datetime import timedelta
 
-from tadas.om.tenancy.types.role import ROLE_RANK, CredentialKind, Role
+from tadas.om.opcontext import CredentialKind, Role
+from tadas.om.tenancy.types.role import ROLE_RANK
 
 MAX_API_KEY_TTL = timedelta(days=90)
 """The longest life a tenant may ask of an api key. `TenancyOptions.api_key_ttl`

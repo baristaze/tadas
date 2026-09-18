@@ -66,6 +66,7 @@ async def add_member(
             created_at=now,
             updated_at=now,
             created_by=identity_id,
+            updated_by=identity_id,
             email=email,
             password_hash=hash_password(password, secrets.token_bytes(16)),
         )
@@ -75,6 +76,7 @@ async def add_member(
         created_at=now,
         updated_at=now,
         created_by=user_id,
+        updated_by=user_id,
         identity_id=identity_id,
         email=email,
         display_name=email.split("@")[0].title(),
@@ -87,6 +89,7 @@ async def add_member(
             created_at=now,
             updated_at=now,
             created_by=user_id,
+            updated_by=user_id,
             user_id=user_id,
             role=role,
         ),

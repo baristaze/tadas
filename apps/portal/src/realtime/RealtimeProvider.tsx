@@ -3,7 +3,7 @@
 // It remembers the last stream position it applied; a reconnect or a gap is
 // closed by replaying /v1/events after it through the same envelope router.
 import { useQueryClient } from "@tanstack/react-query";
-import type { TicketView } from "@tadas/api-client";
+import type { TicketView } from "../api";
 import { useEffect, type ReactNode } from "react";
 import { api } from "../app/api";
 import { Banner } from "../design/kit";
@@ -79,7 +79,7 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
       // Still out of order: the push is worth routing either way. After a
       // failed replay the cursor stays so the next push retries the fetch.
       routeEnvelope(queryClient, envelope);
-      if (replayed && isEntityChanged(envelope) && envelope.payload.seq !== null) {
+      if (replayed && isEntityChanged(envelope)) {
         cursor = envelope.payload.seq;
       }
     };

@@ -11,8 +11,9 @@ set for a TypeScript app and one typed client package for Python
 consumers." `scripts/record_demo.py`, which records the README's
 realtime GIF, signs two people in and empties the task list with a few
 `urllib.request` calls against `/v1/*`. It is the only Python code that
-calls the API; the TypeScript client under `clients/api-client/` is the
-one client generated from the committed document. A generated Python
+calls the API; the TypeScript types and client under
+`apps/portal/src/api/` are the one client generated from the committed
+document. A generated Python
 client would exist for one local script that is never deployed, never
 imported, and runs against a `make up` stack on the developer's machine.
 
@@ -22,9 +23,14 @@ The demo recorder keeps its own six-line request helper and cites this
 record. No Python client is generated for it. The first Python consumer
 of the API that ships (the CLI the guideline describes, or a service
 that calls this one) brings the generated client package with it, under
-`clients/`, and the recorder switches to that client in the same change.
-Until then the recorder stays the only Python caller and lives under
-`scripts/`, not under `clients/`.
+`clients/python/`, and the recorder switches to that client in the same
+change. Until then the recorder stays the only Python caller and lives
+under `scripts/`, not under `clients/`.
+
+The same client package is what the remote impl of each
+`*ServiceInterface` (the typed client the guideline pairs with every
+in-process impl) is built on; `build_services` wires in-process impls
+only until then.
 
 ## Consequences
 

@@ -26,7 +26,12 @@ class TenancyOperatorManagerImpl(TenancyOperatorManagerInterface):
             raise NotFound(f"org {org_id} not found")
         now = utcnow()
         deleted = org.model_copy(
-            update={"deleted_at": now, "deleted_by": admin.identity_id, "updated_at": now}
+            update={
+                "deleted_at": now,
+                "deleted_by": admin.identity_id,
+                "updated_at": now,
+                "updated_by": admin.identity_id,
+            }
         )
         await self._storage.write_org(org_id, deleted)
         return deleted

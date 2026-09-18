@@ -6,8 +6,10 @@ Zustand, one realtime channel.
 ## Conventions
 
 - Feature code never calls `fetch` and never imports `schema.d.ts`;
-  everything goes through `@tadas/api-client` (`src/app/api.ts` holds
-  the one instance). ESLint enforces both.
+  everything goes through `src/api/` (the types generated from the
+  committed `openapi.json` behind the facade `types.ts`, and the one
+  transport client; `src/app/api.ts` holds the one instance). ESLint
+  enforces both. `make openapi` regenerates `schema.d.ts`.
 - Server state lives in TanStack Query (`src/queries/`), with keys from
   `src/queries/keys.ts`. The first key element is the entity name the
   server pushes, so a push invalidates by convention.

@@ -7,11 +7,11 @@ from datetime import timedelta
 
 import pytest
 
+from tadas.infra.base import SYSTEM_SCOPE, new_id, utcnow
 from tadas.infra.cache import CacheScope
 from tadas.infra.impl.configured import InfraConfiguredImpl
 from tadas.infra.impl.settings import InfraSettings
 from tadas.infra.topics import TopicPayload, Topics, WorkAvailablePayload
-from tadas.om.base import EMPTY_UUID, new_id, utcnow
 
 pytestmark = pytest.mark.integration
 
@@ -38,10 +38,10 @@ async def test_put_get_invalidate_and_tenant_scoping(infra: InfraConfiguredImpl)
     cache = infra.get_cache(CacheScope.NETWORK_RESPONSE)
     org_a, org_b = new_id(), new_id()
     await cache.put(org_a, "k", b"a", timedelta(seconds=30))
-    await cache.put(EMPTY_UUID, "k", b"system", timedelta(seconds=30))
+    await cache.put(SYSTEM_SCOPE, "k", b"system", timedelta(seconds=30))
     assert await cache.get(org_a, "k") == b"a"
     assert await cache.get(org_b, "k") is None
-    assert await cache.get(EMPTY_UUID, "k") == b"system"
+    assert await cache.get(SYSTEM_SCOPE, "k") == b"system"
     await cache.invalidate(org_a, "k")
     assert await cache.get(org_a, "k") is None
 
@@ -75,7 +75,7 @@ async def test_a_publish_reaches_a_subscriber(infra: InfraConfiguredImpl) -> Non
         idempotency_key=new_id(),
         produced_at=utcnow(),
         org_id=new_id(),
-        queue="default",
+        lane="default",
         kind="NOOP",
     )
     # The subscriber connects lazily; publish until the subscription is live.

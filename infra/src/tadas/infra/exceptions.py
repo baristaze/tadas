@@ -1,10 +1,22 @@
-"""The infra family of platform exceptions. A driver's own error type never
-crosses the infra boundary: every impl translates it into one of these."""
+"""The infra family of exceptions, rooted here and not in the object model,
+because infra imports nothing from it (ADR 0005). The root carries the same status and
+stable code the platform's root does, so a boundary presents both alike. A
+driver's own error type never crosses the infra boundary: every impl
+translates it into one of these."""
 
-from tadas.om.exceptions import PlatformException
 
+class InfraException(Exception):
+    """Root of every exception infra raises."""
 
-class InfraException(PlatformException): ...
+    http_status: int = 500
+    code: str = "infra_error"
+
+    def __init__(self, message: str | None = None) -> None:
+        super().__init__(message or self.code)
+
+    @property
+    def message(self) -> str:
+        return str(self.args[0]) if self.args else self.code
 
 
 class BackendFailed(InfraException):
@@ -16,3 +28,38 @@ class BackendFailed(InfraException):
 
     def __init__(self, backend: str, operation: str, error_code: str) -> None:
         super().__init__(f"{backend} {operation} failed with {error_code}")
+
+
+class InfraNotFound(InfraException):
+    http_status = 404
+    code = "not_found"
+
+
+class InfraValidationFailed(InfraException):
+    http_status = 422
+    code = "validation_failed"
+
+
+class BlobNotFound(InfraNotFound):
+    code = "blob_not_found"
+
+
+class InvalidBucketKey(InfraValidationFailed):
+    code = "invalid_bucket_key"
+
+
+class SecretNotFound(InfraNotFound):
+    code = "secret_not_found"
+
+    def __init__(self, name: str, store: str) -> None:
+        super().__init__(f"secret {name!r} not found in {store}")
+
+
+class SecretsFileNotPrivate(InfraException):
+    code = "secrets_file_not_private"
+
+
+class PayloadMismatch(InfraValidationFailed):
+    """A payload of the wrong type was offered to a topic."""
+
+    code = "payload_mismatch"

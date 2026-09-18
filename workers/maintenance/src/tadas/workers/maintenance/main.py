@@ -28,10 +28,10 @@ from tadas.workers.maintenance.settings import MaintenanceSettings
 log = logging.getLogger(__name__)
 
 
-def loop_options(settings: MaintenanceSettings) -> LoopOptions:
+def loop_options(settings: MaintenanceSettings, lane: str | None = None) -> LoopOptions:
     return LoopOptions(
         worker_id=settings.worker_id,
-        queue=settings.worker_queue,
+        lane=lane or settings.worker_lane,
         capacity=settings.worker_capacity,
         lease=timedelta(seconds=settings.worker_lease_seconds),
         heartbeat_interval=timedelta(seconds=settings.worker_heartbeat_seconds),
@@ -41,17 +41,22 @@ def loop_options(settings: MaintenanceSettings) -> LoopOptions:
     )
 
 
-def build_loop(container: WorkerContainer) -> WorkerLoop:
+def build_loop(container: WorkerContainer, lane: str | None = None) -> WorkerLoop:
     return WorkerLoop(
         work=container.managers.work,
+        outbox=container.managers.outbox,
+        purges={
+            "tasks": container.managers.tasks.purge_deleted,
+            "tenancy": container.managers.tenancy.purge_deleted,
+        },
         handlers={WorkKind.NOOP: NoopHandlerImpl()},
         topics=container.infra.get_topics(),
         liveness=container.infra.get_cache(CacheScope.WORKER_LIVENESS),
-        options=loop_options(container.settings),
+        options=loop_options(container.settings, lane),
     )
 
 
-async def serve() -> int:
+async def serve(lane: str | None) -> int:
     settings = MaintenanceSettings()
     configure_logging(settings.log_level, settings.log_json)
     install_trust_store()
@@ -63,7 +68,7 @@ async def serve() -> int:
     metrics_server, _ = start_http_server(settings.metrics_port, settings.metrics_host)
     container = WorkerContainer.build(settings)
     await container.start()
-    loop = build_loop(container)
+    loop = build_loop(container, lane)
     running = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
         running.add_signal_handler(sig, loop.stop)
@@ -99,7 +104,8 @@ async def health(worker_id: str | None) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="tadas-maintenance")
     sub = parser.add_subparsers(dest="command", required=True)
-    sub.add_parser("serve", help="run the worker loop")
+    p_serve = sub.add_parser("serve", help="run the worker loop")
+    p_serve.add_argument("--lane", help="the lane to claim from; defaults to TADAS_WORKER_LANE")
     p_health = sub.add_parser("health", help="exit 0 while the serving worker is alive")
     p_health.add_argument(
         "--worker-id",
@@ -108,7 +114,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.command == "health":
         return asyncio.run(health(args.worker_id))
-    return asyncio.run(serve())
+    return asyncio.run(serve(args.lane))
 
 
 if __name__ == "__main__":

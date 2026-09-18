@@ -1,11 +1,10 @@
+import logging
 import secrets
 from datetime import timedelta
 from uuid import UUID
 
 from tadas.infra.cache import CacheInterface
-from tadas.infra.topics import EntityChangedPayload, Topics, TopicsInterface
 from tadas.om.base import EMPTY_UUID, Platform, new_id, utcnow
-from tadas.om.events import EventsManagerInterface
 from tadas.om.exceptions import (
     Conflict,
     CredentialExpired,
@@ -25,6 +24,8 @@ from tadas.om.opcontext import (
     Role,
     build_context,
 )
+from tadas.om.outbox import OutboxRelayInterface
+from tadas.om.outbox.types.row import outbox_row, snapshot
 from tadas.om.tenancy.manager import TenancyManagerInterface
 from tadas.om.tenancy.rules import (
     MAX_API_KEY_TTL,
@@ -48,9 +49,12 @@ from tadas.om.tenancy.types.issued import (
 )
 from tadas.om.tenancy.types.membership import Membership
 from tadas.om.tenancy.types.org import Org
+from tadas.om.tenancy.types.role import permissions_of
 from tadas.om.tenancy.types.session import Session
 from tadas.om.tenancy.types.socket_ticket import SocketTicket
 from tadas.om.tenancy.types.user import User
+
+log = logging.getLogger(__name__)
 
 BOOTSTRAP_APP = AppContext(type=AppType.CLI, version="cli@bootstrap")
 """The app a bootstrap runs as when its caller names none."""
@@ -71,6 +75,9 @@ class TenancyOptions(Platform):
     api_key_ttl: timedelta = MAX_API_KEY_TTL
     ticket_ttl: timedelta = timedelta(seconds=60)
     max_limit: int = 200
+    retention: timedelta = timedelta(
+        days=30
+    )  # removed members and revoked keys are purged after this
 
 
 def mint_token(kind: CredentialKind) -> str:
@@ -81,14 +88,12 @@ class TenancyManagerImpl(TenancyManagerInterface):
     def __init__(
         self,
         storage: TenancyStorageInterface,
-        events: EventsManagerInterface,
-        topics: TopicsInterface,
+        relay: OutboxRelayInterface,
         cache: CacheInterface,
         options: TenancyOptions,
     ) -> None:
         self._storage = storage
-        self._events = events
-        self._topics = topics
+        self._relay = relay
         self._cache = cache
         self._options = options
 
@@ -117,13 +122,16 @@ class TenancyManagerImpl(TenancyManagerInterface):
                 created_at=now,
                 updated_at=now,
                 created_by=identity_id,
+                updated_by=identity_id,
                 email=email,
                 password_hash=hash_password(password, secrets.token_bytes(16)),
                 is_operator=operator,
             )
             await self._storage.write_identity(identity)
         elif operator and not identity.is_operator:
-            identity = identity.model_copy(update={"is_operator": True, "updated_at": now})
+            identity = identity.model_copy(
+                update={"is_operator": True, "updated_at": now, "updated_by": identity.id}
+            )
             await self._storage.write_identity(identity)
         user_id = new_id()
         org = Org(
@@ -132,6 +140,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
             created_at=now,
             updated_at=now,
             created_by=user_id,
+            updated_by=user_id,
             slug=slug,
         )
         await self._storage.write_org(org.id, org)
@@ -140,6 +149,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
             created_at=now,
             updated_at=now,
             created_by=user_id,
+            updated_by=user_id,
             identity_id=identity.id,
             email=email,
             display_name=display_name,
@@ -150,15 +160,17 @@ class TenancyManagerImpl(TenancyManagerInterface):
             created_at=now,
             updated_at=now,
             created_by=user_id,
+            updated_by=user_id,
             user_id=user_id,
             role=Role.OWNER,
         )
         await self._storage.write_membership(org.id, membership)
         # The principal now exists; everything after this line runs under it.
         ctx = build_context(
-            user=user,
-            org=org,
+            user_id=user.id,
+            org_id=org.id,
             role=membership.role,
+            permissions=permissions_of(membership.role),
             credential_kind=CredentialKind.INTERNAL,
             app=app or BOOTSTRAP_APP,
             request_id=request_id or new_id(),
@@ -183,9 +195,10 @@ class TenancyManagerImpl(TenancyManagerInterface):
         # The org's creator is the principal; everything after this line runs under it.
         org, creator, membership = await self._principal(org.id, org.created_by)
         ctx = build_context(
-            user=creator,
-            org=org,
+            user_id=creator.id,
+            org_id=org.id,
             role=membership.role,
+            permissions=permissions_of(membership.role),
             credential_kind=CredentialKind.INTERNAL,
             app=app or BOOTSTRAP_APP,
             request_id=request_id or new_id(),
@@ -205,6 +218,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
                 created_at=now,
                 updated_at=now,
                 created_by=identity_id,
+                updated_by=identity_id,
                 email=email,
                 password_hash=hash_password(password, secrets.token_bytes(16)),
             )
@@ -218,11 +232,11 @@ class TenancyManagerImpl(TenancyManagerInterface):
             created_at=now,
             updated_at=now,
             created_by=ctx.user_id,
+            updated_by=ctx.user_id,
             identity_id=identity.id,
             email=email,
             display_name=display_name,
         )
-        await self._storage.write_user(ctx.org_id, user)
         await self._storage.write_membership(
             ctx.org_id,
             Membership(
@@ -230,11 +244,12 @@ class TenancyManagerImpl(TenancyManagerInterface):
                 created_at=now,
                 updated_at=now,
                 created_by=ctx.user_id,
+                updated_by=ctx.user_id,
                 user_id=user_id,
                 role=role,
             ),
         )
-        await self._changed(ctx, "user", user.id, "created")
+        await self._write_user(ctx, user, "created")
         return ctx, user, True
 
     async def login(self, email: str, password: str) -> IssuedLogin:
@@ -248,6 +263,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
             created_at=now,
             updated_at=now,
             created_by=identity.id,
+            updated_by=identity.id,
             identity_id=identity.id,
             token_hash=hash_token(token),
             credential_kind=CredentialKind.LOGIN,
@@ -267,6 +283,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
             created_at=now,
             updated_at=now,
             created_by=user.id,
+            updated_by=user.id,
             identity_id=login.identity_id,
             user_id=user.id,
             token_hash=hash_token(token),
@@ -294,9 +311,10 @@ class TenancyManagerImpl(TenancyManagerInterface):
             self._check_session(session, CredentialKind.SESSION_TOKEN)
             org, user, membership = await self._principal(org_id, session.user_id)
             return build_context(
-                user=user,
-                org=org,
+                user_id=user.id,
+                org_id=org.id,
                 role=membership.role,
+                permissions=permissions_of(membership.role),
                 credential_kind=kind,
                 app=app,
                 request_id=request_id,
@@ -312,9 +330,10 @@ class TenancyManagerImpl(TenancyManagerInterface):
             self._check_api_key(api_key)
             org, user, membership = await self._principal(org_id, api_key.user_id)
             return build_context(
-                user=user,
-                org=org,
+                user_id=user.id,
+                org_id=org.id,
                 role=capped_role(api_key.role, membership.role),
+                permissions=permissions_of(capped_role(api_key.role, membership.role)),
                 credential_kind=kind,
                 app=app,
                 request_id=request_id,
@@ -361,9 +380,10 @@ class TenancyManagerImpl(TenancyManagerInterface):
         else:
             raise InvalidCredential("a ticket stands for a session token or an api key")
         return build_context(
-            user=user,
-            org=org,
+            user_id=user.id,
+            org_id=org.id,
             role=role,
+            permissions=permissions_of(role),
             credential_kind=CredentialKind.SOCKET_TICKET,
             app=app,
             request_id=request_id,
@@ -395,9 +415,10 @@ class TenancyManagerImpl(TenancyManagerInterface):
     ) -> OpContext:
         org, user, membership = await self._principal(org_id, user_id)
         return build_context(
-            user=user,
-            org=org,
+            user_id=user.id,
+            org_id=org.id,
             role=Role.SERVICE,
+            permissions=permissions_of(Role.SERVICE),
             credential_kind=CredentialKind.INTERNAL,
             app=app,
             request_id=request_id,
@@ -409,7 +430,12 @@ class TenancyManagerImpl(TenancyManagerInterface):
         for org in await self._storage.read_orgs(self._options.max_limit):
             if org.deleted_at is not None:
                 continue
-            contexts.append(await self.service_context(org.id, org.created_by, app, request_id))
+            try:
+                contexts.append(await self.service_context(org.id, org.created_by, app, request_id))
+            except InvalidCredential as error:
+                # The founding user was removed; this tenant waits for a live
+                # principal, the others are still swept.
+                log.warning("no service context for org %s: %s", org.id, error.message)
         return contexts
 
     # The principal.
@@ -423,9 +449,10 @@ class TenancyManagerImpl(TenancyManagerInterface):
 
     async def get_identity(self, ctx: OpContext) -> Identity:
         ctx.require(Permission.READ)
-        identity = await self._storage.read_identity(ctx.security.user.identity_id)
+        user = await self._live_user(ctx, ctx.user_id)
+        identity = await self._storage.read_identity(user.identity_id)
         if identity is None:
-            raise NotFound(f"identity {ctx.security.user.identity_id} not found")
+            raise NotFound(f"identity {user.identity_id} not found")
         return identity
 
     async def update_user(self, ctx: OpContext, user: User) -> User:
@@ -435,11 +462,16 @@ class TenancyManagerImpl(TenancyManagerInterface):
         existing = await self._live_user(ctx, user.id)
         if not user.display_name.strip():
             raise ValidationFailed("display name is required")
-        updated = existing.model_copy(
-            update={"display_name": user.display_name, "updated_at": utcnow()}
+        # model_copy does not validate; the copy carries caller input, so it does.
+        updated = User.model_validate(
+            {
+                **existing.model_dump(),
+                "display_name": user.display_name,
+                "updated_at": utcnow(),
+                "updated_by": ctx.user_id,
+            }
         )
-        await self._storage.write_user(ctx.org_id, updated)
-        await self._changed(ctx, "user", updated.id, "updated")
+        await self._write_user(ctx, updated, "updated")
         return updated
 
     async def get_users(self, ctx: OpContext, limit: int) -> list[User]:
@@ -470,9 +502,12 @@ class TenancyManagerImpl(TenancyManagerInterface):
             raise NotAuthorized("cannot change the role of a member above your own")
         if not role_at_most(role, ctx.security.role):
             raise NotAuthorized(f"cannot grant role {role.value} above {ctx.security.role.value}")
-        updated = membership.model_copy(update={"role": role, "updated_at": utcnow()})
-        await self._storage.write_membership(ctx.org_id, updated)
-        await self._changed(ctx, "membership", updated.id, "updated")
+        updated = membership.model_copy(
+            update={"role": role, "updated_at": utcnow(), "updated_by": ctx.user_id}
+        )
+        row = outbox_row(ctx, "tenancy.membership.updated", updated.id, snapshot(updated))
+        await self._storage.write_membership(ctx.org_id, updated, row)
+        await self._relay.relay(ctx.org_id, row)
         return updated
 
     async def remove_member(self, ctx: OpContext, user_id: UUID) -> User:
@@ -485,13 +520,17 @@ class TenancyManagerImpl(TenancyManagerInterface):
             raise NotAuthorized("cannot remove a member above your own role")
         now = utcnow()
         removed = user.model_copy(
-            update={"deleted_at": now, "deleted_by": ctx.user_id, "updated_at": now}
+            update={
+                "deleted_at": now,
+                "deleted_by": ctx.user_id,
+                "updated_at": now,
+                "updated_by": ctx.user_id,
+            }
         )
-        await self._storage.write_user(ctx.org_id, removed)
         await self._storage.write_membership(
-            ctx.org_id, membership.model_copy(update={"updated_at": now})
+            ctx.org_id, membership.model_copy(update={"updated_at": now, "updated_by": ctx.user_id})
         )
-        await self._changed(ctx, "user", removed.id, "deleted")
+        await self._write_user(ctx, removed, "deleted")
         return removed
 
     # Credentials.
@@ -510,7 +549,9 @@ class TenancyManagerImpl(TenancyManagerInterface):
         if session.user_id != ctx.user_id and not ctx.has(Permission.MANAGE_MEMBERS):
             raise NotAuthorized("only the owner of a session or a member manager may revoke it")
         now = utcnow()
-        revoked = session.model_copy(update={"revoked_at": now, "updated_at": now})
+        revoked = session.model_copy(
+            update={"revoked_at": now, "updated_at": now, "updated_by": ctx.user_id}
+        )
         await self._storage.write_session(ctx.org_id, revoked)
         return revoked
 
@@ -544,13 +585,13 @@ class TenancyManagerImpl(TenancyManagerInterface):
             created_at=now,
             updated_at=now,
             created_by=ctx.user_id,
+            updated_by=ctx.user_id,
             user_id=ctx.user_id,
             key_hash=hash_token(key),
             role=role,
             expires_at=now + (ttl or self._options.api_key_ttl),
         )
-        await self._storage.write_api_key(ctx.org_id, api_key)
-        await self._changed(ctx, "api_key", api_key.id, "created")
+        await self._write_api_key(ctx, api_key, "created")
         return IssuedApiKey(key=key, api_key=api_key)
 
     async def revoke_api_key(self, ctx: OpContext, api_key_id: UUID) -> ApiKey:
@@ -562,11 +603,19 @@ class TenancyManagerImpl(TenancyManagerInterface):
             raise NotAuthorized("only the owner of a key or a member manager may revoke it")
         now = utcnow()
         revoked = api_key.model_copy(
-            update={"deleted_at": now, "deleted_by": ctx.user_id, "updated_at": now}
+            update={
+                "deleted_at": now,
+                "deleted_by": ctx.user_id,
+                "updated_at": now,
+                "updated_by": ctx.user_id,
+            }
         )
-        await self._storage.write_api_key(ctx.org_id, revoked)
-        await self._changed(ctx, "api_key", revoked.id, "deleted")
+        await self._write_api_key(ctx, revoked, "deleted")
         return revoked
+
+    async def purge_deleted(self, ctx: OpContext) -> int:
+        ctx.require(Permission.MANAGE_MEMBERS)
+        return await self._storage.purge_deleted(ctx.org_id, utcnow() - self._options.retention)
 
     async def issue_ticket(self, ctx: OpContext) -> IssuedTicket:
         ctx.require(Permission.READ)
@@ -591,22 +640,21 @@ class TenancyManagerImpl(TenancyManagerInterface):
     def _clamp(self, limit: int) -> int:
         return max(1, min(limit, self._options.max_limit))
 
-    async def _changed(self, ctx: OpContext, entity: str, entity_id: UUID, action: str) -> None:
-        """The core row is written; now the stream row, then the push. Every push
-        is also a record, so a client that missed the push replays by seq."""
-        event = await self._events.record(ctx, entity, entity_id, action, new_id())
-        await self._topics.publish(
-            Topics.ENTITY_CHANGED,
-            EntityChangedPayload(
-                idempotency_key=event.idempotency_key,
-                produced_at=event.produced_at,
-                org_id=ctx.org_id,
-                entity=event.entity,
-                entity_id=event.entity_id,
-                action=event.action,
-                seq=event.seq,
-            ),
-        )
+    # The core row and its outbox row land in one storage call; the relay then
+    # appends the event and pushes at once, and the sweep catches what a crash
+    # left behind.
+
+    async def _write_user(self, ctx: OpContext, user: User, action: str) -> None:
+        row = outbox_row(ctx, f"tenancy.user.{action}", user.id, snapshot(user))
+        await self._storage.write_user(ctx.org_id, user, row)
+        await self._relay.relay(ctx.org_id, row)
+
+    async def _write_api_key(self, ctx: OpContext, api_key: ApiKey, action: str) -> None:
+        # The snapshot never carries the hash; the event is a record, not a credential.
+        payload = snapshot(api_key, exclude=frozenset({"key_hash"}))
+        row = outbox_row(ctx, f"tenancy.api_key.{action}", api_key.id, payload)
+        await self._storage.write_api_key(ctx.org_id, api_key, row)
+        await self._relay.relay(ctx.org_id, row)
 
     @staticmethod
     def _check_session(session: Session, kind: CredentialKind) -> None:

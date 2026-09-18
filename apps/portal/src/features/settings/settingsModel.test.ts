@@ -1,4 +1,4 @@
-import type { ApiKeyView, MeView } from "@tadas/api-client";
+import type { ApiKeyView, MeView } from "../../api";
 import { describe, expect, it } from "vitest";
 import { apiKeyRows, canManageKeys, keyState, memberRows, signedInAs } from "./settingsModel";
 

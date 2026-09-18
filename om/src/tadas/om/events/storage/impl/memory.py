@@ -13,6 +13,9 @@ class EventStorageMemoryImpl(MemoryStorageBase, EventStorageInterface):
 
     async def append(self, org_id: UUID, event: Event) -> Event:
         async with self._lock:
+            stored = self._get(self._events, org_id, event.id)
+            if stored is not None:
+                return stored
             seq = self._next_seq.get(org_id, 0) + 1
             self._next_seq[org_id] = seq
             appended = event.model_copy(update={"seq": seq})

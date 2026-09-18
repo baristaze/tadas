@@ -18,4 +18,4 @@ class ApiSettings(StorageSettings, InfraSettings):
 
     login_rate_limit: int = 10
     login_rate_window_seconds: int = 60
-    realtime_outbox_size: int = 256
+    realtime_send_buffer_size: int = 256

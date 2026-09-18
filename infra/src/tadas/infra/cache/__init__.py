@@ -5,7 +5,7 @@ from datetime import timedelta
 from enum import Enum
 from uuid import UUID
 
-from tadas.om.base import EMPTY_UUID
+from tadas.infra.base import SYSTEM_SCOPE
 
 
 class CacheScope(str, Enum):
@@ -17,7 +17,7 @@ class CacheScope(str, Enum):
 
 def cache_key(org_id: UUID, key: str) -> str:
     """System keys and tenant keys live in disjoint namespaces."""
-    if org_id == EMPTY_UUID:
+    if org_id == SYSTEM_SCOPE:
         return f"system:{key}"
     return f"org:{org_id}:{key}"
 

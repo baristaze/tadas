@@ -1,6 +1,7 @@
-"""One handler translates PlatformException into the error envelope with the
-status the exception names; one catch-all turns anything else into a 500
-with the same shape. Routers never set error status codes."""
+"""One handler translates PlatformException, and its infra sibling, into the
+error envelope with the status the exception names; one catch-all turns
+anything else into a 500 with the same shape. Routers never set error
+status codes."""
 
 import logging
 
@@ -8,6 +9,7 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from tadas.infra.exceptions import InfraException
 from tadas.om.exceptions import PlatformException
 from tadas.services.api.gateway.observability import request_id_of
 from tadas.services.api.gateway.ratelimit import RateLimited
@@ -32,6 +34,13 @@ def register_error_handlers(app: FastAPI) -> None:
         if isinstance(exc, RateLimited):
             headers = {"Retry-After": str(max(1, int(exc.retry_after.total_seconds())))}
         return envelope(request, exc.http_status, exc.code, exc.message, headers)
+
+    @app.exception_handler(InfraException)
+    async def infra_exception(request: Request, exc: InfraException) -> JSONResponse:
+        # Infra is rooted apart from the object model (it imports nothing from
+        # it) but carries the same status and code, so it is presented alike
+        # (ADR 0005).
+        return envelope(request, exc.http_status, exc.code, exc.message)
 
     @app.exception_handler(RequestValidationError)
     async def request_validation(request: Request, exc: RequestValidationError) -> JSONResponse:

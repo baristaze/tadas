@@ -4,21 +4,21 @@ wait. At-least-once, no deduplication; the consumer is idempotent."""
 from datetime import timedelta
 from enum import Enum
 
-from tadas.om.base import Platform
+from tadas.infra.base import InfraModel
 
 
 class Queues(str, Enum):
     WEBHOOKS = "webhooks"
 
 
-class QueueMessage(Platform):
+class QueueMessage(InfraModel):
     id: str
     body: bytes
     receipt: str
     attempts: int
 
 
-class QueueDepth(Platform):
+class QueueDepth(InfraModel):
     visible: int
     in_flight: int
     dead_lettered: int

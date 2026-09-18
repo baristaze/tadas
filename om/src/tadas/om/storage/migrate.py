@@ -29,7 +29,7 @@ MIGRATIONS_DIR = Path(__file__).resolve().parents[4] / "migrations"
 VERSION_TABLE = "alembic_version"
 _SCHEMA_REF = re.compile(r"\b(core|activity|queue|admin)\.([a-z_][a-z0-9_]*)")
 _INDEX_REF = re.compile(
-    r"\bDROP INDEX\s+(?:IF EXISTS\s+)?(core|activity|queue|admin)\.([a-z_][a-z0-9_]*)",
+    r"\b(?:DROP|ALTER) INDEX\s+(?:IF EXISTS\s+)?(core|activity|queue|admin)\.([a-z_][a-z0-9_]*)",
     re.IGNORECASE,
 )
 
@@ -60,7 +60,7 @@ def split_statements(sql: str) -> list[str]:
 
 def check_role_of_sql(role: DatabaseRole, sql: str) -> None:
     """Refuses a file that names a table of another role, by schema or by the role map.
-    A dropped index is schema-qualified too; only its schema is checked."""
+    A dropped or altered index is schema-qualified too; only its schema is checked."""
     for schema, index in _INDEX_REF.findall(sql):
         if schema != role.value:
             raise RuntimeError(f"{role.value} migration drops index {schema}.{index}")

@@ -11,8 +11,10 @@ class IdempotencyManagerInterface:
         self, ctx: OpContext, key: str, request_digest: str
     ) -> IdempotencyRecord | None:
         """Writes a pending record for (tenant, user, key) and returns None when the
-        request is new. Returns the stored record on a replay, pending or finished.
-        Raises IdempotencyKeyReused when the stored record has another digest."""
+        request is new, or when the stored record was left pending longer than
+        the pending lease (the request runs again). Returns the stored record on a
+        replay, pending or finished. Raises IdempotencyKeyReused when the stored
+        record has another digest."""
         ...
 
     async def finish(self, ctx: OpContext, key: str, status: int, body: str) -> IdempotencyRecord:
