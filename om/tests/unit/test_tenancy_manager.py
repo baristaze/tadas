@@ -543,11 +543,20 @@ async def test_expired_tickets_are_refused(
 
 async def test_add_member_seeds_a_second_person_once(manager: TenancyManagerImpl) -> None:
     owner, org = await manager.bootstrap("Acme", "acme", "ann@example.test", "pw-1234", "Ann")
-    bob, created = await manager.add_member(
+    ctx, bob, created = await manager.add_member(
         "acme", "bob@example.test", "pw-1234", "Bob", Role.MEMBER
     )
     assert created and bob.display_name == "Bob"
-    again, created_again = await manager.add_member(
+    # The write ran under the creator's context and is recorded as theirs.
+    assert ctx.org_id == org.id and ctx.user_id == owner.user_id
+    assert ctx.security.role is Role.OWNER
+    assert ctx.security.credential_kind is CredentialKind.INTERNAL
+    assert bob.created_by == owner.user_id
+    membership = await manager.get_memberships(owner, limit=10)
+    assert [(m.user_id, m.created_by) for m in membership if m.user_id == bob.id] == [
+        (bob.id, owner.user_id)
+    ]
+    _, again, created_again = await manager.add_member(
         "acme", "bob@example.test", "other-pw", "Robert", Role.ADMIN
     )
     assert not created_again and again.id == bob.id and again.display_name == "Bob"
@@ -565,7 +574,7 @@ async def test_add_member_seeds_a_second_person_once(manager: TenancyManagerImpl
 async def test_add_member_reuses_an_identity_across_orgs(manager: TenancyManagerImpl) -> None:
     await manager.bootstrap("Acme", "acme", "ann@example.test", "pw-1234", "Ann")
     await manager.bootstrap("Globex", "globex", "gus@example.test", "pw-5678", "Gus")
-    _, created = await manager.add_member(
+    _, _, created = await manager.add_member(
         "globex", "ann@example.test", "ignored", "Ann", Role.VIEWER
     )
     assert created
@@ -576,3 +585,23 @@ async def test_add_member_reuses_an_identity_across_orgs(manager: TenancyManager
 async def test_add_member_refuses_an_unknown_org(manager: TenancyManagerImpl) -> None:
     with pytest.raises(NotFound):
         await manager.add_member("nope", "bob@example.test", "pw-1234", "Bob", Role.MEMBER)
+
+
+async def test_add_member_caps_the_role_at_the_creators_and_records_the_write(
+    manager: TenancyManagerImpl, infra: InfraLocalImpl
+) -> None:
+    seen: list[TopicPayload] = []
+
+    async def record(payload: TopicPayload) -> None:
+        seen.append(payload)
+
+    infra.get_topics().subscribe(Topics.ENTITY_CHANGED, "test", record)
+    _, org = await manager.bootstrap("Acme", "acme", "ann@example.test", "pw-1234", "Ann")
+    with pytest.raises(ValidationFailed):
+        await manager.add_member("acme", "svc@example.test", "pw-1234", "Svc", Role.SERVICE)
+    ctx, bob, _ = await manager.add_member("acme", "bob@example.test", "pw-1234", "Bob", Role.ADMIN)
+    pushes = [p for p in seen if isinstance(p, EntityChangedPayload)]
+    assert [(p.org_id, p.entity, p.entity_id, p.action) for p in pushes] == [
+        (org.id, "user", bob.id, "created")
+    ]
+    assert ctx.security.role is Role.OWNER  # the cap: a creator seeds at most their own rank

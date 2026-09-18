@@ -173,10 +173,29 @@ class TenancyManagerImpl(TenancyManagerInterface):
         password: str,
         display_name: str,
         role: Role,
-    ) -> tuple[User, bool]:
+        *,
+        app: AppContext | None = None,
+        request_id: UUID | None = None,
+    ) -> tuple[OpContext, User, bool]:
         org = await self._storage.read_org_by_slug(slug)
         if org is None or org.deleted_at is not None:
             raise NotFound(f"org {slug!r} not found")
+        # The org's creator is the principal; everything after this line runs under it.
+        org, creator, membership = await self._principal(org.id, org.created_by)
+        ctx = build_context(
+            user=creator,
+            org=org,
+            role=membership.role,
+            credential_kind=CredentialKind.INTERNAL,
+            app=app or BOOTSTRAP_APP,
+            request_id=request_id or new_id(),
+            teams=membership.teams,
+        )
+        ctx.require(Permission.MANAGE_MEMBERS)
+        if role is Role.SERVICE:
+            raise ValidationFailed("service is not a membership role")
+        if not role_at_most(role, ctx.security.role):
+            raise NotAuthorized(f"cannot grant role {role.value} above {ctx.security.role.value}")
         now = utcnow()
         identity = await self._storage.read_identity_by_email(email)
         if identity is None:
@@ -192,30 +211,31 @@ class TenancyManagerImpl(TenancyManagerInterface):
             await self._storage.write_identity(identity)
         for org_id, existing in await self._storage.read_users_by_identity(identity.id):
             if org_id == org.id and existing.deleted_at is None:
-                return existing, False
+                return ctx, existing, False
         user_id = new_id()
         user = User(
             id=user_id,
             created_at=now,
             updated_at=now,
-            created_by=user_id,
+            created_by=ctx.user_id,
             identity_id=identity.id,
             email=email,
             display_name=display_name,
         )
-        await self._storage.write_user(org.id, user)
+        await self._storage.write_user(ctx.org_id, user)
         await self._storage.write_membership(
-            org.id,
+            ctx.org_id,
             Membership(
                 id=new_id(),
                 created_at=now,
                 updated_at=now,
-                created_by=user_id,
+                created_by=ctx.user_id,
                 user_id=user_id,
                 role=role,
             ),
         )
-        return user, True
+        await self._changed(ctx, "user", user.id, "created")
+        return ctx, user, True
 
     async def login(self, email: str, password: str) -> IssuedLogin:
         identity = await self._storage.read_identity_by_email(email)
