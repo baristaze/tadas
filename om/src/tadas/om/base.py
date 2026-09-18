@@ -31,8 +31,15 @@ class Named(Platform):
     name: str
 
 
-class Trackable(Platform):
+class Created(Platform):
+    """When a row came to be. For a record that is written once and never
+    edited (an idempotency record, a socket ticket); an entity that changes
+    composes `Trackable` instead."""
+
     created_at: datetime
+
+
+class Trackable(Created):
     updated_at: datetime
     created_by: UUID  # id of the user who created it
 
