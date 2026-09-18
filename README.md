@@ -57,7 +57,7 @@ make setup        # Python and TypeScript dependencies
 cp .env.example .env
 make infra-up     # Postgres, Valkey, ElasticMQ, MinIO on host ports 55432, 56379, 59324, 59000
 make migrate      # every role's migration chain
-make seed         # org "acme": owner@example.test (owner) and bob@example.test (member), both tadas-local
+make seed         # org "acme": owner@example.test (owner) and bob@example.test (member), both tadas-local (the SEED_* knobs in .env)
 ```
 
 ## Run
@@ -89,7 +89,9 @@ The MinIO console comes with the stack: http://localhost:59001, user
 
 For debugging, `make devx-up` adds developer dashboards next to the stack
 (the compose `devx` profile). They are wired to the local services and
-need no sign-in; they listen on 127.0.0.1 only.
+need no sign-in; they listen on 127.0.0.1 only. The ports below are the
+defaults of the `TADAS_<DASHBOARD>_PORT` knobs in `.env.example`; a clash
+is fixed by setting the knob in `.env`.
 
 | Dashboard | URL | Shows |
 |-----------|-----|-------|

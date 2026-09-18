@@ -15,6 +15,9 @@ and the volumes `tadas_postgres` and `tadas_minio`.
 ## URLs and ports
 
 Everything listens on 127.0.0.1 only. `make urls` prints the browser URLs.
+The dashboard ports below are the defaults of the `TADAS_<DASHBOARD>_PORT`
+knobs in `.env.example`; a clash is fixed by setting the knob in `.env`.
+The data services' ports are fixed, since the `TADAS_*_URL` knobs name them.
 
 | Service | From the host | Inside the compose network | Sign-in |
 |---------|---------------|----------------------------|---------|
@@ -77,7 +80,7 @@ alias dc='docker compose -f deployment/local/docker-compose.yml -f deployment/lo
 | Start only the dashboards | `dc up -d pgweb valkey-admin elasticmq-ui prometheus grafana jaeger glitchtip` |
 | Stop only the dashboards | `dc stop pgweb valkey-admin elasticmq-ui prometheus grafana jaeger glitchtip` |
 | Apply new migrations | `make migrate` |
-| Seed again, or other people | `make seed SEED_EMAIL=me@example.test SEED_MEMBER_EMAIL=you@example.test SEED_PASSWORD=secret SEED_SLUG=mine` |
+| Seed again, or other people | `make seed SEED_EMAIL=me@example.test SEED_MEMBER_EMAIL=you@example.test SEED_PASSWORD=secret SEED_SLUG=mine`, or set the `SEED_*` knobs in `.env` |
 | Record the README's demo GIF (empties the task list first) | `make demo-gif` |
 | Add one more member to the seeded org | `uv run --package tadas-api tadas-api add-member --slug acme --email carol@example.test --password tadas-local --name Carol` |
 
@@ -129,7 +132,7 @@ Everything below needs the `devx` profile (`make up` or `make devx-up`).
 |---------|----------------------|
 | `postgres` exits right after start | A volume from another Postgres major version. `make reset`, or reset only the database as above. |
 | `api` exits at start with `Failed connecting to valkey` | Valkey was not reachable yet as the API booted. `dc up -d --wait api`. |
-| `port is already allocated` | Another process holds that host port: `lsof -nP -iTCP:<port> -sTCP:LISTEN`. |
+| `port is already allocated` | Another process holds that host port: `lsof -nP -iTCP:<port> -sTCP:LISTEN`. For a dashboard, set its `TADAS_<DASHBOARD>_PORT` in `.env`. |
 | The portal loads but every request fails | The API is down, or the portal was built for another `VITE_API_URL`: `dc ps api`, then rebuild the portal. |
 | The API refuses to start, naming a setting | `.env` predates a rename; compare it with `.env.example`. |
 | `scripts/dev.sh` fails on port 8000 | The `api` container is running: `dc stop api maintenance portal`. |

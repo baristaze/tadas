@@ -64,7 +64,7 @@ services:
       dockerfile: deployment/docker/portal.Dockerfile
       args:
         VITE_API_URL: http://127.0.0.1:8000
-        VITE_SENTRY_DSN: http://0123456789abcdef0123456789abcdef@localhost:58000/1
+        VITE_SENTRY_DSN: http://0123456789abcdef0123456789abcdef@localhost:${TADAS_GLITCHTIP_PORT:-58000}/1
     ports:
       - "127.0.0.1:55173:8080"
     depends_on:
