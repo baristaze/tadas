@@ -16,6 +16,7 @@ INFRA_INTERFACE_MODULES = frozenset(
     {
         "tadas.infra",
         "tadas.infra.root",
+        "tadas.infra.base",
         "tadas.infra.exceptions",
         "tadas.infra.observability",
         "tadas.infra.trust",
@@ -78,6 +79,17 @@ def test_om_and_infra_never_import_a_service_or_a_worker(module: str, path: Path
         for name in imported_modules(module, path)
         if any(is_under(name, prefix) for prefix in FORBIDDEN_EVERYWHERE)
     ]
+    assert offending == [], f"{module} imports {offending}"
+
+
+INFRA_MODULES = [(m, p) for m, p in ALL_MODULES if is_under(m, "tadas.infra")]
+
+
+@pytest.mark.parametrize("module,path", INFRA_MODULES, ids=[m for m, _ in INFRA_MODULES])
+def test_infra_never_imports_the_object_model(module: str, path: Path) -> None:
+    """The object model imports infra interfaces; infra imports nothing from
+    the object model. The system scope is compared by value on both sides."""
+    offending = [name for name in imported_modules(module, path) if is_under(name, "tadas.om")]
     assert offending == [], f"{module} imports {offending}"
 
 

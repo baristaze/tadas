@@ -1340,8 +1340,8 @@ dependencies = [
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "sentry-sdk" },
-    { name = "tadas-om" },
     { name = "truststore" },
+    { name = "uuid-utils" },
     { name = "valkey-glide" },
 ]
 
@@ -1354,8 +1354,8 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.13" },
     { name = "pydantic-settings", specifier = ">=2.15" },
     { name = "sentry-sdk", specifier = ">=2.69.2" },
-    { name = "tadas-om", editable = "om" },
     { name = "truststore", specifier = ">=0.10.4" },
+    { name = "uuid-utils", specifier = ">=1.0" },
     { name = "valkey-glide", specifier = ">=2.5.2" },
 ]
 

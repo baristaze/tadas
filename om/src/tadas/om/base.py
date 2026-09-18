@@ -42,6 +42,7 @@ class Created(Platform):
 class Trackable(Created):
     updated_at: datetime
     created_by: UUID  # id of the user who created it
+    updated_by: UUID  # id of the user who last changed it
 
 
 class SoftDeletable(Platform):
@@ -50,4 +51,7 @@ class SoftDeletable(Platform):
 
 
 EMPTY_UUID = UUID(int=0)
-"""The reserved system scope, and the sentinel for a required reference that means none."""
+"""The platform, not a tenant or a person: the reserved system scope, and the
+value of a required reference that no tenant and no person owns. It equals
+infra's `SYSTEM_SCOPE` by value, so infra never imports it. A reference that
+is genuinely optional is `None`, never `EMPTY_UUID`."""

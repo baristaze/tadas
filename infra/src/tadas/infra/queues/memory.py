@@ -4,9 +4,9 @@ import secrets
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
+from tadas.infra.base import new_id, utcnow
 from tadas.infra.observability import OUTCOMES
 from tadas.infra.queues import QueueDepth, QueueInterface, QueueMessage, Queues
-from tadas.om.base import new_id, utcnow
 
 log = logging.getLogger(__name__)
 

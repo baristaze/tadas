@@ -1,8 +1,8 @@
 from datetime import timedelta
 
+from tadas.infra.base import SYSTEM_SCOPE, new_id
 from tadas.infra.cache import CacheScope
 from tadas.infra.cache.memory import CacheMemoryImpl
-from tadas.om.base import EMPTY_UUID, new_id
 
 
 async def test_put_get_invalidate() -> None:
@@ -19,10 +19,10 @@ async def test_keys_are_tenant_scoped_and_system_scope_is_disjoint() -> None:
     cache = CacheMemoryImpl(CacheScope.NETWORK_RESPONSE)
     org_a, org_b = new_id(), new_id()
     await cache.put(org_a, "k", b"a", timedelta(seconds=30))
-    await cache.put(EMPTY_UUID, "k", b"system", timedelta(seconds=30))
+    await cache.put(SYSTEM_SCOPE, "k", b"system", timedelta(seconds=30))
     assert await cache.get(org_b, "k") is None
     assert await cache.get(org_a, "k") == b"a"
-    assert await cache.get(EMPTY_UUID, "k") == b"system"
+    assert await cache.get(SYSTEM_SCOPE, "k") == b"system"
 
 
 async def test_expired_entries_are_misses() -> None:

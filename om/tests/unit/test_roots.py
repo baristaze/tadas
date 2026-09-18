@@ -61,3 +61,11 @@ def test_business_root_has_a_field_per_manager(tmp_path: Path) -> None:
     assert isinstance(managers.tasks, TasksManagerInterface)
     assert isinstance(managers.idempotency, IdempotencyManagerInterface)
     assert isinstance(managers.events, EventsManagerInterface)
+
+
+def test_the_system_scope_is_the_same_value_on_both_sides() -> None:
+    # Infra compares the scope by value rather than importing the model.
+    from tadas.infra.base import SYSTEM_SCOPE
+    from tadas.om.base import EMPTY_UUID
+
+    assert SYSTEM_SCOPE == EMPTY_UUID

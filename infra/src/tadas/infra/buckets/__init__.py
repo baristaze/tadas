@@ -5,7 +5,9 @@ from datetime import timedelta
 from enum import Enum
 from uuid import UUID
 
-from tadas.om.exceptions import NotFound, ValidationFailed
+from tadas.infra.exceptions import BlobNotFound, InvalidBucketKey
+
+__all__ = ["BlobNotFound", "Buckets", "BucketsInterface", "InvalidBucketKey", "object_key"]
 
 
 class Buckets(str, Enum):
@@ -13,14 +15,10 @@ class Buckets(str, Enum):
     EXPORTS = "exports"
 
 
-class BlobNotFound(NotFound):
-    code = "blob_not_found"
-
-
 def object_key(org_id: UUID, key: str) -> str:
     """The storage key: the tenant first, then the caller's path."""
     if not key or key.startswith("/") or ".." in key.split("/"):
-        raise ValidationFailed(f"bucket key {key!r} is not a relative path")
+        raise InvalidBucketKey(f"bucket key {key!r} is not a relative path")
     return f"{org_id}/{key}"
 
 

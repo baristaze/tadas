@@ -1,9 +1,9 @@
 from datetime import datetime, timedelta
 from uuid import UUID
 
+from tadas.infra.base import utcnow
 from tadas.infra.cache import CacheInterface, CacheScope, cache_key
 from tadas.infra.observability import OUTCOMES
-from tadas.om.base import utcnow
 
 
 class CacheMemoryImpl(CacheInterface):

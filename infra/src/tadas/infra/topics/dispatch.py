@@ -5,8 +5,8 @@ import itertools
 import logging
 from collections.abc import Callable
 
+from tadas.infra.exceptions import PayloadMismatch
 from tadas.infra.topics import TOPIC_PAYLOADS, TopicHandler, TopicPayload, Topics
-from tadas.om.exceptions import ValidationFailed
 
 log = logging.getLogger(__name__)
 
@@ -41,6 +41,6 @@ class LocalSubscribers:
 def check_payload(topic: Topics, payload: TopicPayload) -> None:
     expected = TOPIC_PAYLOADS[topic]
     if not isinstance(payload, expected):
-        raise ValidationFailed(
+        raise PayloadMismatch(
             f"{topic.value} carries {expected.__name__}, not {type(payload).__name__}"
         )

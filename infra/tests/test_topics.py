@@ -1,5 +1,7 @@
 import pytest
 
+from tadas.infra.base import new_id, utcnow
+from tadas.infra.exceptions import PayloadMismatch
 from tadas.infra.topics import (
     EntityChangedPayload,
     TopicPayload,
@@ -7,8 +9,6 @@ from tadas.infra.topics import (
     WorkAvailablePayload,
 )
 from tadas.infra.topics.memory import TopicsMemoryImpl
-from tadas.om.base import new_id, utcnow
-from tadas.om.exceptions import ValidationFailed
 
 
 def work_available() -> WorkAvailablePayload:
@@ -16,7 +16,7 @@ def work_available() -> WorkAvailablePayload:
         idempotency_key=new_id(),
         produced_at=utcnow(),
         org_id=new_id(),
-        queue="default",
+        lane="default",
         kind="NOOP",
     )
 
@@ -64,9 +64,25 @@ async def test_payload_type_is_fixed_by_the_map() -> None:
         idempotency_key=new_id(),
         produced_at=utcnow(),
         org_id=new_id(),
-        entity="task",
-        entity_id=new_id(),
-        action="created",
+        kind="tasks.task.created",
+        target_id=new_id(),
+        seq=1,
     )
-    with pytest.raises(ValidationFailed):
+    with pytest.raises(PayloadMismatch):
         await topics.publish(Topics.WORK_AVAILABLE, wrong)
+
+
+def test_a_payload_ignores_a_field_it_does_not_know() -> None:
+    # A tolerant reader: a producer one release ahead adds a field and every
+    # consumer still parses the frame.
+    payload = WorkAvailablePayload.model_validate(
+        {
+            "idempotency_key": str(new_id()),
+            "produced_at": utcnow().isoformat(),
+            "org_id": str(new_id()),
+            "lane": "default",
+            "kind": "NOOP",
+            "added_later": True,
+        }
+    )
+    assert payload.lane == "default" and not hasattr(payload, "added_later")

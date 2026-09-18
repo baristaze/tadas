@@ -1,11 +1,11 @@
 from datetime import timedelta
 from pathlib import Path
 
+from tadas.infra.base import new_id
 from tadas.infra.buckets import Buckets
 from tadas.infra.cache import CacheScope
 from tadas.infra.impl.local import InfraLocalImpl
 from tadas.infra.queues import Queues
-from tadas.om.base import new_id
 
 
 async def test_every_capability_works_over_the_local_root(tmp_path: Path) -> None:

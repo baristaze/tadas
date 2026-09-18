@@ -2,18 +2,9 @@
 the value is resolved at the point of use and discarded. Errors name the
 secret and the store, never the value."""
 
-from tadas.om.exceptions import NotFound, PlatformException
+from tadas.infra.exceptions import SecretNotFound, SecretsFileNotPrivate
 
-
-class SecretNotFound(NotFound):
-    code = "secret_not_found"
-
-    def __init__(self, name: str, store: str) -> None:
-        super().__init__(f"secret {name!r} not found in {store}")
-
-
-class SecretsFileNotPrivate(PlatformException):
-    code = "secrets_file_not_private"
+__all__ = ["SecretNotFound", "SecretsFileNotPrivate", "SecretsInterface"]
 
 
 class SecretsInterface:
