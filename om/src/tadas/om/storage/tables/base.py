@@ -67,8 +67,11 @@ class NamedMixin:
     name: Mapped[str] = mapped_column(sort_order=-900)
 
 
-class TrackableMixin:
+class CreatedMixin:
     created_at: Mapped[datetime] = mapped_column(sort_order=-800)
+
+
+class TrackableMixin(CreatedMixin):
     updated_at: Mapped[datetime] = mapped_column(sort_order=-799)
     created_by: Mapped[UUID] = mapped_column(sort_order=-798)
 

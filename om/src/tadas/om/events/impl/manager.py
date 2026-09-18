@@ -31,6 +31,7 @@ class EventsManagerImpl(EventsManagerInterface):
             produced_at=utcnow(),
             idempotency_key=idempotency_key,
             actor_id=ctx.user_id,
+            request_id=ctx.request_id,
         )
         return await self._storage.append(ctx.org_id, event)
 

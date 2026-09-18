@@ -1,13 +1,12 @@
-from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import Index
 from sqlalchemy.orm import Mapped
 
-from tadas.om.storage.tables.base import Base, IdentifiableMixin
+from tadas.om.storage.tables.base import Base, CreatedMixin, IdentifiableMixin
 
 
-class IdempotencyRecords(IdentifiableMixin, Base):
+class IdempotencyRecords(IdentifiableMixin, CreatedMixin, Base):
     __tablename__ = "idempotency_records"
     # org_id leads the unique compound index, so it gets no index of its own.
     __org_id_index__ = False
@@ -19,4 +18,3 @@ class IdempotencyRecords(IdentifiableMixin, Base):
     request_digest: Mapped[str]
     status: Mapped[int | None]
     body: Mapped[str | None]
-    created_at: Mapped[datetime]

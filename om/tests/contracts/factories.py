@@ -7,6 +7,7 @@ from tadas.om.tenancy.types.identity import Identity
 from tadas.om.tenancy.types.membership import Membership
 from tadas.om.tenancy.types.org import Org
 from tadas.om.tenancy.types.session import Session
+from tadas.om.tenancy.types.socket_ticket import SocketTicket
 from tadas.om.tenancy.types.user import User
 
 
@@ -84,5 +85,18 @@ def make_api_key(user_id: UUID, key_hash: str) -> ApiKey:
         user_id=user_id,
         key_hash=key_hash,
         role=Role.MEMBER,
+        expires_at=now,
+    )
+
+
+def make_socket_ticket(user_id: UUID, ticket_hash: str) -> SocketTicket:
+    now = utcnow()
+    return SocketTicket(
+        id=new_id(),
+        created_at=now,
+        user_id=user_id,
+        ticket_hash=ticket_hash,
+        credential_kind=CredentialKind.SESSION_TOKEN,
+        credential_id=new_id(),
         expires_at=now,
     )

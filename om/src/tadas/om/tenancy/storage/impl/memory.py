@@ -1,3 +1,4 @@
+from datetime import datetime
 from uuid import UUID
 
 from tadas.om.storage.impl.memory_base import MemoryStorageBase, MemoryTable
@@ -7,6 +8,7 @@ from tadas.om.tenancy.types.identity import Identity
 from tadas.om.tenancy.types.membership import Membership
 from tadas.om.tenancy.types.org import Org
 from tadas.om.tenancy.types.session import Session
+from tadas.om.tenancy.types.socket_ticket import SocketTicket
 from tadas.om.tenancy.types.user import User
 
 
@@ -19,6 +21,7 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
         self._memberships: MemoryTable[Membership] = {}
         self._sessions: MemoryTable[Session] = {}
         self._api_keys: MemoryTable[ApiKey] = {}
+        self._socket_tickets: MemoryTable[SocketTicket] = {}
 
     async def read_identity(self, identity_id: UUID) -> Identity | None:
         return self._identities.get(identity_id)
@@ -105,3 +108,19 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
 
     async def write_api_key(self, org_id: UUID, api_key: ApiKey) -> None:
         self._put(self._api_keys, org_id, api_key)
+
+    async def write_socket_ticket(self, org_id: UUID, ticket: SocketTicket) -> None:
+        self._put(self._socket_tickets, org_id, ticket)
+
+    async def consume_socket_ticket(
+        self, ticket_hash: str, redeemed_at: datetime
+    ) -> tuple[UUID, SocketTicket] | None:
+        async with self._lock:
+            for org_id, ticket in self._socket_tickets.values():
+                if ticket.ticket_hash == ticket_hash:
+                    if ticket.redeemed_at is not None:
+                        return None
+                    consumed = ticket.model_copy(update={"redeemed_at": redeemed_at})
+                    self._put(self._socket_tickets, org_id, consumed)
+                    return org_id, consumed
+            return None

@@ -1,7 +1,17 @@
 # Tadas developer entry points. `make help` lists them.
 .DEFAULT_GOAL := help
 SHELL := /bin/bash
-COMPOSE ?= docker compose -f deployment/local/docker-compose.yml
+
+# The knobs live in one place: .env.example carries every default and .env
+# (which `make up` copies from it) the developer's overrides. Make reads both
+# so `make seed` and `make urls` say what the compose stack does, and compose
+# reads the same two files for the dashboard ports.
+include .env.example
+ifneq ($(wildcard .env),)
+include .env
+endif
+COMPOSE_ENV := --env-file .env.example $(if $(wildcard .env),--env-file .env)
+COMPOSE ?= docker compose $(COMPOSE_ENV) -f deployment/local/docker-compose.yml
 COMPOSE_FULL := $(COMPOSE) -f deployment/local/docker-compose.full.yml
 ROLES := core activity queue admin
 
@@ -34,13 +44,13 @@ urls: ## Print the local URLs and the seeded sign-in
 	@echo ""
 	@echo "  Portal         http://localhost:55173   sign in: $(SEED_EMAIL) or $(SEED_MEMBER_EMAIL) / $(SEED_PASSWORD)"
 	@echo "  API docs       http://127.0.0.1:8000/docs"
-	@echo "  pgweb          http://localhost:58081"
-	@echo "  Valkey Admin   http://localhost:58080"
-	@echo "  ElasticMQ UI   http://localhost:53000"
-	@echo "  Grafana        http://localhost:53001   metrics dashboards, no sign-in"
-	@echo "  Prometheus     http://localhost:59090"
-	@echo "  Jaeger         http://localhost:56686"
-	@echo "  GlitchTip      http://localhost:58000   admin@example.test / tadas-local"
+	@echo "  pgweb          http://localhost:$(TADAS_PGWEB_PORT)"
+	@echo "  Valkey Admin   http://localhost:$(TADAS_VALKEY_ADMIN_PORT)"
+	@echo "  ElasticMQ UI   http://localhost:$(TADAS_ELASTICMQ_UI_PORT)"
+	@echo "  Grafana        http://localhost:$(TADAS_GRAFANA_PORT)   metrics dashboards, no sign-in"
+	@echo "  Prometheus     http://localhost:$(TADAS_PROMETHEUS_PORT)"
+	@echo "  Jaeger         http://localhost:$(TADAS_JAEGER_PORT)"
+	@echo "  GlitchTip      http://localhost:$(TADAS_GLITCHTIP_PORT)   admin@example.test / tadas-local"
 	@echo "  MinIO console  http://localhost:59001   tadas / tadastadas"
 	@echo ""
 
@@ -63,17 +73,8 @@ infra-down: ## Stop every local container, dashboards and app containers too, an
 migrate: ## Apply every role's migration chain to the local database
 	uv run --package tadas-om python -m tadas.om.storage.migrate upgrade --all
 
-# Local-only sign-ins: an owner and a member of one org, sharing a password,
-# so "My Tasks" and "Team's Tasks" differ. Override any of these on the command
-# line, e.g. `make seed SEED_EMAIL=me@example.test`.
-SEED_ORG ?= Acme
-SEED_SLUG ?= acme
-SEED_NAME ?= Local Owner
-SEED_EMAIL ?= owner@example.test
-SEED_MEMBER_NAME ?= Bob
-SEED_MEMBER_EMAIL ?= bob@example.test
-SEED_PASSWORD ?= tadas-local
-
+# The SEED_* values come from .env (or .env.example); override any of them
+# there or on the command line, e.g. `make seed SEED_EMAIL=me@example.test`.
 seed: ## Create a local org with an owner and a member to sign in as; a no-op once they exist
 	uv run --package tadas-api tadas-api bootstrap --if-absent \
 		--org "$(SEED_ORG)" --slug "$(SEED_SLUG)" --name "$(SEED_NAME)" \
@@ -89,7 +90,7 @@ demo-gif: ## Record the README's realtime demo GIF against the running stack
 # The ORM-versus-schema check needs a migrated database, which the fast gate
 # cannot reach, so `check` does not run it; CI's integration job runs it
 # right after `make migrate`, and the downgrade-then-upgrade round trip stays
-# in the integration tests.
+# in the integration tests. The deviation is ADR 0003.
 migrate-check: ## Compare every role's ORM metadata with the migrated schema
 	uv run --package tadas-om python -m tadas.om.storage.migrate check --all
 

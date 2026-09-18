@@ -1,4 +1,3 @@
-from datetime import datetime
 from uuid import UUID
 
 from tadas.infra.topics import EntityChangedPayload, Topics, TopicsInterface
@@ -7,8 +6,10 @@ from tadas.om.events import EventsManagerInterface
 from tadas.om.exceptions import Conflict, NotFound, ValidationFailed
 from tadas.om.opcontext import OpContext, Permission
 from tadas.om.tasks.manager import TasksManagerInterface
+from tadas.om.tasks.rules import position_after, top_position
 from tadas.om.tasks.storage import TasksStorageInterface
-from tadas.om.tasks.types.task import Task, TaskScope, TaskStatus
+from tadas.om.tasks.types.filter import TaskCursor, TaskFilter
+from tadas.om.tasks.types.task import Task, TaskStatus
 from tadas.om.tenancy import TenancyManagerInterface
 
 
@@ -31,22 +32,18 @@ class TasksManagerImpl(TasksManagerInterface):
         self._topics = topics
         self._options = options
 
-    async def get_open_tasks(self, ctx: OpContext, scope: TaskScope, limit: int) -> list[Task]:
+    async def get_open_tasks(self, ctx: OpContext, criterion: TaskFilter, limit: int) -> list[Task]:
         ctx.require(Permission.READ)
-        return await self._storage.read_open_tasks(
-            ctx.org_id, self._for_user(ctx, scope), self._clamp(limit)
-        )
+        self._own(ctx, criterion)
+        return await self._storage.read_open_tasks(ctx.org_id, criterion, self._clamp(limit))
 
     async def get_done_tasks(
-        self,
-        ctx: OpContext,
-        scope: TaskScope,
-        before: tuple[datetime, UUID] | None,
-        limit: int,
+        self, ctx: OpContext, criterion: TaskFilter, before: TaskCursor | None, limit: int
     ) -> list[Task]:
         ctx.require(Permission.READ)
+        self._own(ctx, criterion)
         return await self._storage.read_done_tasks(
-            ctx.org_id, self._for_user(ctx, scope), before, self._clamp(limit)
+            ctx.org_id, criterion, before, self._clamp(limit)
         )
 
     async def get_task(self, ctx: OpContext, task_id: UUID) -> Task:
@@ -98,8 +95,7 @@ class TasksManagerImpl(TasksManagerInterface):
             if anchor.status != TaskStatus.OPEN:
                 raise ValidationFailed("a task can only be placed after an open task")
             positions = await self._storage.read_open_positions(ctx.org_id, exclude=task_id)
-            following = [p for p in positions if p > anchor.position]
-            position = (anchor.position + following[0]) / 2 if following else anchor.position + 1.0
+            position = position_after(anchor.position, positions)
         moved = task.model_copy(update={"position": position, "updated_at": utcnow()})
         await self._storage.write_task(ctx.org_id, moved)
         await self._changed(ctx, moved.id, "updated")
@@ -120,12 +116,12 @@ class TasksManagerImpl(TasksManagerInterface):
         return max(1, min(limit, self._options.max_limit))
 
     @staticmethod
-    def _for_user(ctx: OpContext, scope: TaskScope) -> UUID | None:
-        return ctx.user_id if scope == TaskScope.MINE else None
+    def _own(ctx: OpContext, criterion: TaskFilter) -> None:
+        if criterion.user_id != ctx.user_id:
+            raise ValidationFailed("a task list is scoped to the caller")
 
     async def _top_position(self, ctx: OpContext, exclude: UUID) -> float:
-        positions = await self._storage.read_open_positions(ctx.org_id, exclude=exclude)
-        return positions[0] - 1.0 if positions else 0.0
+        return top_position(await self._storage.read_open_positions(ctx.org_id, exclude=exclude))
 
     async def _verify(self, ctx: OpContext, task: Task) -> None:
         if not task.title.strip():

@@ -1,4 +1,3 @@
-import json
 import secrets
 from datetime import timedelta
 from uuid import UUID
@@ -50,13 +49,16 @@ from tadas.om.tenancy.types.issued import (
 from tadas.om.tenancy.types.membership import Membership
 from tadas.om.tenancy.types.org import Org
 from tadas.om.tenancy.types.session import Session
+from tadas.om.tenancy.types.socket_ticket import SocketTicket
 from tadas.om.tenancy.types.user import User
 
 BOOTSTRAP_APP = AppContext(type=AppType.CLI, version="cli@bootstrap")
 """The app a bootstrap runs as when its caller names none."""
 
-TICKET_KEY = "ticket:"
 TICKET_USED_KEY = "ticket-used:"
+"""The cache remembers a redeemed ticket so a replay is refused without a
+round trip; the row decides, so a miss (or a cache that is down) costs
+one conditional write and nothing else."""
 TICKET_CREDENTIALS = (CredentialKind.SESSION_TOKEN, CredentialKind.API_KEY)
 """The credentials a socket ticket may stand for."""
 
@@ -171,10 +173,29 @@ class TenancyManagerImpl(TenancyManagerInterface):
         password: str,
         display_name: str,
         role: Role,
-    ) -> tuple[User, bool]:
+        *,
+        app: AppContext | None = None,
+        request_id: UUID | None = None,
+    ) -> tuple[OpContext, User, bool]:
         org = await self._storage.read_org_by_slug(slug)
         if org is None or org.deleted_at is not None:
             raise NotFound(f"org {slug!r} not found")
+        # The org's creator is the principal; everything after this line runs under it.
+        org, creator, membership = await self._principal(org.id, org.created_by)
+        ctx = build_context(
+            user=creator,
+            org=org,
+            role=membership.role,
+            credential_kind=CredentialKind.INTERNAL,
+            app=app or BOOTSTRAP_APP,
+            request_id=request_id or new_id(),
+            teams=membership.teams,
+        )
+        ctx.require(Permission.MANAGE_MEMBERS)
+        if role is Role.SERVICE:
+            raise ValidationFailed("service is not a membership role")
+        if not role_at_most(role, ctx.security.role):
+            raise NotAuthorized(f"cannot grant role {role.value} above {ctx.security.role.value}")
         now = utcnow()
         identity = await self._storage.read_identity_by_email(email)
         if identity is None:
@@ -190,30 +211,31 @@ class TenancyManagerImpl(TenancyManagerInterface):
             await self._storage.write_identity(identity)
         for org_id, existing in await self._storage.read_users_by_identity(identity.id):
             if org_id == org.id and existing.deleted_at is None:
-                return existing, False
+                return ctx, existing, False
         user_id = new_id()
         user = User(
             id=user_id,
             created_at=now,
             updated_at=now,
-            created_by=user_id,
+            created_by=ctx.user_id,
             identity_id=identity.id,
             email=email,
             display_name=display_name,
         )
-        await self._storage.write_user(org.id, user)
+        await self._storage.write_user(ctx.org_id, user)
         await self._storage.write_membership(
-            org.id,
+            ctx.org_id,
             Membership(
                 id=new_id(),
                 created_at=now,
                 updated_at=now,
-                created_by=user_id,
+                created_by=ctx.user_id,
                 user_id=user_id,
                 role=role,
             ),
         )
-        return user, True
+        await self._changed(ctx, "user", user.id, "created")
+        return ctx, user, True
 
     async def login(self, email: str, password: str) -> IssuedLogin:
         identity = await self._storage.read_identity_by_email(email)
@@ -353,22 +375,19 @@ class TenancyManagerImpl(TenancyManagerInterface):
         if credential_kind_of(ticket) is not CredentialKind.SOCKET_TICKET:
             raise InvalidCredential("expected a socket ticket")
         digest = hash_token(ticket)
-        # One atomic increment consumes the ticket: only the first redeemer sees 1.
-        used, _ = await self._cache.increment(
-            EMPTY_UUID, TICKET_USED_KEY + digest, self._options.ticket_ttl
-        )
-        if used != 1:
+        if await self._cache.get(EMPTY_UUID, TICKET_USED_KEY + digest) is not None:
             raise InvalidCredential("socket ticket already redeemed")
-        raw = await self._cache.get(EMPTY_UUID, TICKET_KEY + digest)
-        if raw is None:
-            raise InvalidCredential("unknown or expired socket ticket")
-        behind = json.loads(raw)
+        now = utcnow()
+        # One conditional write consumes the ticket: only the first redeemer gets the row.
+        consumed = await self._storage.consume_socket_ticket(digest, now)
+        if consumed is None:
+            raise InvalidCredential("unknown or already redeemed socket ticket")
+        org_id, behind = consumed
+        await self._cache.put(EMPTY_UUID, TICKET_USED_KEY + digest, b"1", self._options.ticket_ttl)
+        if behind.expires_at <= now:
+            raise InvalidCredential("socket ticket expired")
         return await self.resume(
-            UUID(behind["org_id"]),
-            CredentialKind(behind["credential_kind"]),
-            UUID(behind["credential_id"]),
-            app,
-            request_id,
+            org_id, behind.credential_kind, behind.credential_id, app, request_id
         )
 
     async def service_context(
@@ -554,32 +573,18 @@ class TenancyManagerImpl(TenancyManagerInterface):
         if ctx.security.credential_kind not in TICKET_CREDENTIALS:
             raise NotAuthorized("a ticket stands for a session token or an api key")
         ticket = mint_token(CredentialKind.SOCKET_TICKET)
-        behind = {
-            "org_id": str(ctx.org_id),
-            "credential_kind": ctx.security.credential_kind.value,
-            "credential_id": str(ctx.security.credential_id),
-        }
-        ttl = self._options.ticket_ttl
-        await self._cache.put(
-            EMPTY_UUID, TICKET_KEY + hash_token(ticket), json.dumps(behind).encode(), ttl
-        )
-        return IssuedTicket(ticket=ticket, expires_at=utcnow() + ttl)
-
-    # Operator operations.
-
-    async def get_orgs(self, admin: AdminContext, limit: int) -> list[Org]:
-        return await self._storage.read_orgs(self._clamp(limit))
-
-    async def delete_org(self, admin: AdminContext, org_id: UUID) -> Org:
-        org = await self._storage.read_org(org_id)
-        if org is None or org.deleted_at is not None:
-            raise NotFound(f"org {org_id} not found")
         now = utcnow()
-        deleted = org.model_copy(
-            update={"deleted_at": now, "deleted_by": admin.identity_id, "updated_at": now}
+        behind = SocketTicket(
+            id=new_id(),
+            created_at=now,
+            user_id=ctx.user_id,
+            ticket_hash=hash_token(ticket),
+            credential_kind=ctx.security.credential_kind,
+            credential_id=ctx.security.credential_id,
+            expires_at=now + self._options.ticket_ttl,
         )
-        await self._storage.write_org(org_id, deleted)
-        return deleted
+        await self._storage.write_socket_ticket(ctx.org_id, behind)
+        return IssuedTicket(ticket=ticket, expires_at=behind.expires_at)
 
     # Helpers.
 

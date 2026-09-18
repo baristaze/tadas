@@ -79,8 +79,13 @@ def add_member(args: argparse.Namespace) -> int:
         container = AppContainer.build(settings)
         await container.start()
         try:
-            user, created = await container.managers.tenancy.add_member(
-                args.slug, args.email, args.password, args.name, Role(args.role)
+            _, user, created = await container.managers.tenancy.add_member(
+                args.slug,
+                args.email,
+                args.password,
+                args.name,
+                Role(args.role),
+                app=AppContext(type=AppType.CLI, version=f"cli@{settings.version}"),
             )
         finally:
             await container.close()

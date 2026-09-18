@@ -1,26 +1,22 @@
 """The tasks swimlane: the to-do items a team creates, works, and closes."""
 
-from datetime import datetime
 from uuid import UUID
 
 from tadas.om.opcontext import OpContext
-from tadas.om.tasks.types.task import Task, TaskScope
+from tadas.om.tasks.types.filter import TaskCursor, TaskFilter
+from tadas.om.tasks.types.task import Task
 
 
 class TasksManagerInterface:
-    async def get_open_tasks(self, ctx: OpContext, scope: TaskScope, limit: int) -> list[Task]:
-        """Open tasks in manual order, top first."""
+    async def get_open_tasks(self, ctx: OpContext, criterion: TaskFilter, limit: int) -> list[Task]:
+        """Open tasks the filter shows, in manual order, top first. The filter's
+        user is the caller: `mine` is about nobody else."""
         ...
 
     async def get_done_tasks(
-        self,
-        ctx: OpContext,
-        scope: TaskScope,
-        before: tuple[datetime, UUID] | None,
-        limit: int,
+        self, ctx: OpContext, criterion: TaskFilter, before: TaskCursor | None, limit: int
     ) -> list[Task]:
-        """Done tasks newest first; `before` is the (updated_at, id) of the last
-        task of the previous page."""
+        """Done tasks the filter shows, newest first, strictly before the cursor."""
         ...
 
     async def get_task(self, ctx: OpContext, task_id: UUID) -> Task: ...

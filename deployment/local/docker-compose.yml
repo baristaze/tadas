@@ -4,6 +4,9 @@
 # local stacks; inside the network the containers use their own ports.
 # The `devx` profile adds developer dashboards over the same services:
 #   docker compose -f deployment/local/docker-compose.yml --profile devx up -d
+# Each dashboard's host port is a TADAS_<DASHBOARD>_PORT knob (.env.example
+# lists the defaults, which are also the fallbacks below); the Makefile passes
+# .env.example and .env as env files so the knobs reach the stack.
 name: tadas
 
 services:
@@ -63,6 +66,7 @@ services:
 
   # Developer dashboards (profile devx). Local only; none of them has auth.
   # They restart on their own when a service they watch is reset under them.
+  # A host port here is a knob, so a clash is fixed in .env, not in this file.
 
   pgweb:
     image: sosedoff/pgweb:0.17.0
@@ -71,7 +75,7 @@ services:
     environment:
       PGWEB_DATABASE_URL: postgres://tadas:tadas@postgres:5432/tadas?sslmode=disable
     ports:
-      - "127.0.0.1:58081:8081"
+      - "127.0.0.1:${TADAS_PGWEB_PORT:-58081}:8081"
     depends_on:
       postgres:
         condition: service_healthy
@@ -85,7 +89,7 @@ services:
       VALKEY_HOST: valkey
       VALKEY_PORT: "6379"
     ports:
-      - "127.0.0.1:58080:8080"
+      - "127.0.0.1:${TADAS_VALKEY_ADMIN_PORT:-58080}:8080"
     depends_on:
       valkey:
         condition: service_healthy
@@ -100,7 +104,7 @@ services:
       AWS_ACCESS_KEY_ID: local
       AWS_SECRET_ACCESS_KEY: local
     ports:
-      - "127.0.0.1:53000:3000"
+      - "127.0.0.1:${TADAS_ELASTICMQ_UI_PORT:-53000}:3000"
     depends_on:
       elasticmq:
         condition: service_healthy
@@ -111,8 +115,8 @@ services:
     profiles: [devx]
     restart: unless-stopped
     ports:
-      - "127.0.0.1:56686:16686"
-      - "127.0.0.1:54318:4318"
+      - "127.0.0.1:${TADAS_JAEGER_PORT:-56686}:16686"
+      - "127.0.0.1:${TADAS_JAEGER_OTLP_PORT:-54318}:4318"
 
   # Metrics: Prometheus scrapes the api and the maintenance worker, as
   # containers and as host processes; Grafana reads Prometheus and Jaeger.
@@ -125,7 +129,7 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
-      - "127.0.0.1:59090:9090"
+      - "127.0.0.1:${TADAS_PROMETHEUS_PORT:-59090}:9090"
 
   grafana:
     image: grafana/grafana:13.2.2
@@ -140,7 +144,7 @@ services:
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
       - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
     ports:
-      - "127.0.0.1:53001:3000"
+      - "127.0.0.1:${TADAS_GRAFANA_PORT:-53001}:3000"
     depends_on:
       - prometheus
 
@@ -173,7 +177,7 @@ services:
       DATABASE_URL: postgres://tadas:tadas@postgres:5432/glitchtip
       VALKEY_URL: ""
       SECRET_KEY: local-only-not-a-secret-glitchtip-key
-      GLITCHTIP_DOMAIN: http://localhost:58000
+      GLITCHTIP_DOMAIN: http://localhost:${TADAS_GLITCHTIP_PORT:-58000}
       DEFAULT_FROM_EMAIL: glitchtip@example.test
       EMAIL_URL: consolemail://
       PORT: "8000"
@@ -183,7 +187,7 @@ services:
       timeout: 5s
       retries: 60
     ports:
-      - "127.0.0.1:58000:8000"
+      - "127.0.0.1:${TADAS_GLITCHTIP_PORT:-58000}:8000"
     depends_on:
       glitchtip-db:
         condition: service_completed_successfully
@@ -197,7 +201,7 @@ services:
       GLITCHTIP_ADMIN_EMAIL: admin@example.test
       GLITCHTIP_ADMIN_PASSWORD: tadas-local
       GLITCHTIP_PROJECT_KEY: 0123456789abcdef0123456789abcdef
-      GLITCHTIP_EXPECTED_DSN: http://0123456789abcdef0123456789abcdef@localhost:58000/1
+      GLITCHTIP_EXPECTED_DSN: http://0123456789abcdef0123456789abcdef@localhost:${TADAS_GLITCHTIP_PORT:-58000}/1
     volumes:
       - ./glitchtip/seed.py:/seed/seed.py:ro
     depends_on:

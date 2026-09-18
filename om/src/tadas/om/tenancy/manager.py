@@ -24,7 +24,9 @@ if TYPE_CHECKING:
 
 
 class TenancyManagerInterface:
-    """Manager of the tenancy swimlane.
+    """Manager of the tenancy swimlane, on the tenant plane: every operation
+    with a context takes `OpContext`. The operator plane is
+    `TenancyOperatorManagerInterface`, which takes `AdminContext`.
 
     The operations without `ctx` exist before any principal does or act
     across every tenant; each produces a context rather than consuming
@@ -58,13 +60,19 @@ class TenancyManagerInterface:
         password: str,
         display_name: str,
         role: Role,
-    ) -> tuple[User, bool]:
+        *,
+        app: AppContext | None = None,
+        request_id: UUID | None = None,
+    ) -> tuple[OpContext, User, bool]:
         """Platform-internal: seeds a person into an existing org, for local and
         test environments; there is no invitation flow yet.
 
-        Creates the identity if the email is new (an existing identity keeps
-        its password), then the user and membership. A person who is already
-        a member is left as is. Returns the user and whether it was created.
+        Produces the context of the org's creator first, and the rest runs
+        under it: the identity is created if the email is new (an existing
+        identity keeps its password), then the user and the membership, with
+        the role capped at the creator's and the write recorded as theirs. A
+        person who is already a member is left as is. Returns that context
+        beside the user and whether it was created.
         """
         ...
 
@@ -167,9 +175,3 @@ class TenancyManagerInterface:
     async def issue_ticket(self, ctx: OpContext) -> IssuedTicket:
         """A single-use, short-lived ticket standing for the caller's credential."""
         ...
-
-    # Operator operations.
-
-    async def get_orgs(self, admin: AdminContext, limit: int) -> list[Org]: ...
-
-    async def delete_org(self, admin: AdminContext, org_id: UUID) -> Org: ...

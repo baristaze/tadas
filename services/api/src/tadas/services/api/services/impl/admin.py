@@ -1,14 +1,14 @@
 from uuid import UUID
 
 from tadas.om.opcontext import AdminContext
-from tadas.om.tenancy import TenancyManagerInterface
+from tadas.om.tenancy import TenancyOperatorManagerInterface
 from tadas.services.api.services.admin import AdminServiceInterface
 from tadas.services.api.types.common import clamp_limit
 from tadas.services.api.types.tenancy import OrgView
 
 
 class AdminServiceImpl(AdminServiceInterface):
-    def __init__(self, tenancy: TenancyManagerInterface) -> None:
+    def __init__(self, tenancy: TenancyOperatorManagerInterface) -> None:
         self._tenancy = tenancy
 
     async def get_orgs(self, admin: AdminContext, limit: int) -> list[OrgView]:

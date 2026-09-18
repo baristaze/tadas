@@ -23,3 +23,5 @@ adopts every technology the guideline names.
 
 | ADR | Rule | Summary |
 |-----|------|---------|
+| [0003](../docs/adr/0003-migrate-check-in-the-integration-job.md) | STO-18, The Storage Layer, Migrations | The per-role metadata-vs-schema check needs a migrated Postgres, so it runs in CI's integration job, not the fast gate. |
+| [0004](../docs/adr/0004-demo-recorder-calls-the-api-directly.md) | NET-15, The Network Layer, Clients Live in One Place | The demo recorder, the only Python caller, keeps its own request helper until a Python consumer ships a generated client. |

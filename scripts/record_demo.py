@@ -5,7 +5,8 @@ other follows live.
 
 It drives a headless Chrome over the DevTools protocol, one isolated browser
 context per person. Each signs in through the API (a session token, the way
-the API tests do) rather than through the form. The task list is emptied
+the API tests do) rather than through the form; the few calls go through the
+`Api` helper below rather than a generated client, which is ADR 0004. The task list is emptied
 first, then both windows are screencast and the frames are composed on one
 timeline into a GIF.
 

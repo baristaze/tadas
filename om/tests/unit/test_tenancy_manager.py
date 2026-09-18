@@ -6,7 +6,7 @@ from uuid import UUID
 
 import pytest
 
-from tadas.infra.cache import CacheScope
+from tadas.infra.cache import CacheInterface, CacheScope
 from tadas.infra.impl.local import InfraLocalImpl
 from tadas.infra.topics import EntityChangedPayload, TopicPayload, Topics
 from tadas.om.base import new_id, utcnow
@@ -23,13 +23,39 @@ from tadas.om.exceptions import (
 )
 from tadas.om.opcontext import AppContext, AppType, CredentialKind, OpContext, Permission, Role
 from tadas.om.tenancy.impl.manager import TenancyManagerImpl, TenancyOptions
-from tadas.om.tenancy.rules import hash_password
+from tadas.om.tenancy.impl.operator import TenancyOperatorManagerImpl, TenancyOperatorOptions
+from tadas.om.tenancy.rules import hash_password, hash_token
 from tadas.om.tenancy.storage.impl.memory import TenancyStorageMemoryImpl
 from tadas.om.tenancy.types.identity import Identity
 from tadas.om.tenancy.types.membership import Membership
 from tadas.om.tenancy.types.user import User
 
 APP = AppContext(type=AppType.PORTAL, version="portal@test")
+
+
+class DownCache(CacheInterface):
+    """A backend that cannot be reached: every read is a miss, every write is lost."""
+
+    async def get(self, org_id: UUID, key: str) -> bytes | None:
+        return None
+
+    async def put(self, org_id: UUID, key: str, value: bytes, ttl: timedelta) -> None:
+        return None
+
+    async def invalidate(self, org_id: UUID, key: str) -> None:
+        return None
+
+    async def increment(self, org_id: UUID, key: str, ttl: timedelta) -> tuple[int, timedelta]:
+        return 0, ttl
+
+    def describe(self) -> str:
+        return "cache=down"
+
+    async def start(self) -> None:
+        return None
+
+    async def close(self) -> None:
+        return None
 
 
 @pytest.fixture
@@ -43,13 +69,16 @@ def storage() -> TenancyStorageMemoryImpl:
 
 
 def make_manager(
-    storage: TenancyStorageMemoryImpl, infra: InfraLocalImpl, options: TenancyOptions | None = None
+    storage: TenancyStorageMemoryImpl,
+    infra: InfraLocalImpl,
+    options: TenancyOptions | None = None,
+    cache: CacheInterface | None = None,
 ) -> TenancyManagerImpl:
     return TenancyManagerImpl(
         storage,
         EventsManagerImpl(EventStorageMemoryImpl(), EventsOptions()),
         infra.get_topics(),
-        infra.get_cache(CacheScope.REALTIME_TICKET),
+        cache or infra.get_cache(CacheScope.REALTIME_TICKET),
         options or TenancyOptions(),
     )
 
@@ -57,6 +86,11 @@ def make_manager(
 @pytest.fixture
 def manager(storage: TenancyStorageMemoryImpl, infra: InfraLocalImpl) -> TenancyManagerImpl:
     return make_manager(storage, infra)
+
+
+@pytest.fixture
+def operator(storage: TenancyStorageMemoryImpl) -> TenancyOperatorManagerImpl:
+    return TenancyOperatorManagerImpl(storage, TenancyOperatorOptions())
 
 
 async def sign_in(manager: TenancyManagerImpl, email: str, org_id: UUID) -> OpContext:
@@ -362,7 +396,7 @@ async def test_the_identity_behind_the_caller(manager: TenancyManagerImpl) -> No
 
 
 async def test_operator_gate_admits_only_operators_signing_in(
-    manager: TenancyManagerImpl,
+    manager: TenancyManagerImpl, operator: TenancyOperatorManagerImpl
 ) -> None:
     await manager.bootstrap("Acme", "acme", "ann@example.test", "pw-1234", "Ann")
     await manager.bootstrap("Ops", "ops", "root@example.test", "pw-1234", "Root", operator=True)
@@ -373,7 +407,8 @@ async def test_operator_gate_admits_only_operators_signing_in(
     operator_login = await manager.login("root@example.test", "pw-1234")
     admin = await manager.authenticate_operator(operator_login.token, new_id())
     assert admin.email == "root@example.test"
-    assert len(await manager.get_orgs(admin, limit=10)) == 2
+    assert len(await operator.get_orgs(admin, limit=10)) == 2
+    assert len(await operator.get_orgs(admin, limit=1)) == 1
 
     ops_org = next(m.org for m in operator_login.memberships if m.org.slug == "ops")
     session = await manager.exchange_login(operator_login.token, ops_org.id)
@@ -382,7 +417,7 @@ async def test_operator_gate_admits_only_operators_signing_in(
 
 
 async def test_operators_soft_delete_an_org_and_its_principals_stop_resolving(
-    manager: TenancyManagerImpl,
+    manager: TenancyManagerImpl, operator: TenancyOperatorManagerImpl
 ) -> None:
     _, org = await manager.bootstrap("Acme", "acme", "ann@example.test", "pw-1234", "Ann")
     await manager.bootstrap("Ops", "ops", "root@example.test", "pw-1234", "Root", operator=True)
@@ -392,7 +427,7 @@ async def test_operators_soft_delete_an_org_and_its_principals_stop_resolving(
         (await manager.login("root@example.test", "pw-1234")).token, new_id()
     )
 
-    deleted = await manager.delete_org(admin, org.id)
+    deleted = await operator.delete_org(admin, org.id)
     assert deleted.deleted_at is not None and deleted.deleted_by == admin.identity_id
     assert deleted.updated_at == deleted.deleted_at
     with pytest.raises(InvalidCredential):
@@ -400,9 +435,9 @@ async def test_operators_soft_delete_an_org_and_its_principals_stop_resolving(
     assert (await manager.login("ann@example.test", "pw-1234")).memberships == ()
     assert [c.org_id for c in await manager.service_contexts(APP, new_id())] != [org.id]
     with pytest.raises(NotFound):
-        await manager.delete_org(admin, org.id)
+        await operator.delete_org(admin, org.id)
     with pytest.raises(NotFound):
-        await manager.delete_org(admin, new_id())
+        await operator.delete_org(admin, new_id())
 
 
 async def test_resume_and_service_contexts(manager: TenancyManagerImpl) -> None:
@@ -456,6 +491,25 @@ async def test_concurrent_redemptions_admit_one_socket(manager: TenancyManagerIm
     assert len(admitted) == 1 and len(refused) == 4
 
 
+async def test_the_ticket_row_decides_while_the_cache_is_down(
+    storage: TenancyStorageMemoryImpl, infra: InfraLocalImpl
+) -> None:
+    manager = make_manager(storage, infra, cache=DownCache())
+    _, org = await manager.bootstrap("Acme", "acme", "ann@example.test", "pw-1234", "Ann")
+    ctx = await sign_in(manager, "ann@example.test", org.id)
+    issued = await manager.issue_ticket(ctx)
+    outcomes = await asyncio.gather(
+        *(manager.redeem_ticket(issued.ticket, APP, new_id()) for _ in range(5)),
+        return_exceptions=True,
+    )
+    assert len([o for o in outcomes if isinstance(o, OpContext)]) == 1
+    assert len([o for o in outcomes if isinstance(o, InvalidCredential)]) == 4
+    with pytest.raises(InvalidCredential):
+        await manager.redeem_ticket(issued.ticket, APP, new_id())
+    # The row is spent: the one admitted redeemer consumed it.
+    assert await storage.consume_socket_ticket(hash_token(issued.ticket), utcnow()) is None
+
+
 async def test_redeeming_a_ticket_rechecks_the_credential_behind_it(
     manager: TenancyManagerImpl,
 ) -> None:
@@ -489,11 +543,20 @@ async def test_expired_tickets_are_refused(
 
 async def test_add_member_seeds_a_second_person_once(manager: TenancyManagerImpl) -> None:
     owner, org = await manager.bootstrap("Acme", "acme", "ann@example.test", "pw-1234", "Ann")
-    bob, created = await manager.add_member(
+    ctx, bob, created = await manager.add_member(
         "acme", "bob@example.test", "pw-1234", "Bob", Role.MEMBER
     )
     assert created and bob.display_name == "Bob"
-    again, created_again = await manager.add_member(
+    # The write ran under the creator's context and is recorded as theirs.
+    assert ctx.org_id == org.id and ctx.user_id == owner.user_id
+    assert ctx.security.role is Role.OWNER
+    assert ctx.security.credential_kind is CredentialKind.INTERNAL
+    assert bob.created_by == owner.user_id
+    membership = await manager.get_memberships(owner, limit=10)
+    assert [(m.user_id, m.created_by) for m in membership if m.user_id == bob.id] == [
+        (bob.id, owner.user_id)
+    ]
+    _, again, created_again = await manager.add_member(
         "acme", "bob@example.test", "other-pw", "Robert", Role.ADMIN
     )
     assert not created_again and again.id == bob.id and again.display_name == "Bob"
@@ -511,7 +574,7 @@ async def test_add_member_seeds_a_second_person_once(manager: TenancyManagerImpl
 async def test_add_member_reuses_an_identity_across_orgs(manager: TenancyManagerImpl) -> None:
     await manager.bootstrap("Acme", "acme", "ann@example.test", "pw-1234", "Ann")
     await manager.bootstrap("Globex", "globex", "gus@example.test", "pw-5678", "Gus")
-    _, created = await manager.add_member(
+    _, _, created = await manager.add_member(
         "globex", "ann@example.test", "ignored", "Ann", Role.VIEWER
     )
     assert created
@@ -522,3 +585,23 @@ async def test_add_member_reuses_an_identity_across_orgs(manager: TenancyManager
 async def test_add_member_refuses_an_unknown_org(manager: TenancyManagerImpl) -> None:
     with pytest.raises(NotFound):
         await manager.add_member("nope", "bob@example.test", "pw-1234", "Bob", Role.MEMBER)
+
+
+async def test_add_member_caps_the_role_at_the_creators_and_records_the_write(
+    manager: TenancyManagerImpl, infra: InfraLocalImpl
+) -> None:
+    seen: list[TopicPayload] = []
+
+    async def record(payload: TopicPayload) -> None:
+        seen.append(payload)
+
+    infra.get_topics().subscribe(Topics.ENTITY_CHANGED, "test", record)
+    _, org = await manager.bootstrap("Acme", "acme", "ann@example.test", "pw-1234", "Ann")
+    with pytest.raises(ValidationFailed):
+        await manager.add_member("acme", "svc@example.test", "pw-1234", "Svc", Role.SERVICE)
+    ctx, bob, _ = await manager.add_member("acme", "bob@example.test", "pw-1234", "Bob", Role.ADMIN)
+    pushes = [p for p in seen if isinstance(p, EntityChangedPayload)]
+    assert [(p.org_id, p.entity, p.entity_id, p.action) for p in pushes] == [
+        (org.id, "user", bob.id, "created")
+    ]
+    assert ctx.security.role is Role.OWNER  # the cap: a creator seeds at most their own rank

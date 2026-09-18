@@ -12,20 +12,35 @@ mixins, `new_id`, `utcnow`), `OpContext` and `AdminContext`, the
 exception root, the storage root with its Postgres and memory impls,
 and one namespace per swimlane:
 
-- `tenancy`: orgs, identities, users, memberships, sessions, api keys;
-  sign-in, tenant-scoped session tokens, role-capped api keys, the
-  operator allowlist, and the service contexts workers run under.
+- `tenancy`: orgs, identities, users, memberships, sessions, api keys,
+  socket tickets; sign-in, tenant-scoped session tokens, role-capped api
+  keys, the operator allowlist, and the service contexts workers run
+  under. The operator plane (every org, delete an org) is a second
+  manager, `TenancyOperatorManagerInterface`, which takes `AdminContext`
+  and nothing else. A socket ticket is a row; redeeming it is one conditional
+  update on its hash, and the cache only remembers a redeemed one so a
+  replay is refused without a round trip.
 - `work`: the table-backed work queue in the `queue` role; enqueue
   publishes `work_available`, the claim is one `SELECT ... FOR UPDATE
   SKIP LOCKED` statement and returns the enqueuer's principal.
-- `tasks`: the to-do items (`Task`: title, notes, status), a feed with
-  the `(org_id, id)` index.
+- `tasks`: the to-do items (`Task`: title, notes, status), listed by a
+  `TaskFilter` (team or mine) and paged by a `TaskCursor`, both passed
+  unchanged from the manager to storage; the visibility, cursor, and
+  placement rules are pure functions in `tasks.rules`, which the memory
+  impl calls and the Postgres impl mirrors in SQL.
+
+- `idempotency`: the durable outcome of a request the caller may retry,
+  one record per (tenant, user, key); the gateway begins it before a
+  creating request and finishes it with the outcome.
+- `events`: the append-only stream behind every realtime push, in the
+  `activity` role; one sequence per tenant, and every row names its
+  actor and the request that produced it.
 
 Every table belongs to one database role (`core`, `activity`, `queue`,
 `admin`); the map in `tadas.om.storage.roles` decides the schema, the
 pool, and the migration chain. Migrations are hand-written SQL under
-`om/migrations/sql/<role>/` with Alembic wrappers; `core` and `queue`
-have chains today.
+`om/migrations/sql/<role>/` with Alembic wrappers; `core`, `activity`,
+and `queue` have chains today, and `admin` has no table yet.
 
 ## Infrastructure (`infra/`)
 
@@ -63,7 +78,8 @@ everything in-process for tests.
   under `/v1/admin/*`, health and metrics outside `/v1`, and the
   realtime channel at `/v1/realtime` opened with a single-use ticket.
   `tadas-api serve | migrate | bootstrap | add-member | openapi`
-  (`bootstrap` and `add-member` are what `make seed` runs).
+  (`bootstrap` and `add-member` are what `make seed` runs; both produce
+  the context the seeding then runs under).
 - `workers/maintenance` (`tadas-maintenance`): the claim loop for kind
   `NOOP`, lease renewal and self-fencing, a liveness heartbeat in the
   cache, and the maintenance sweep (requeue stale leases, one service
@@ -98,10 +114,13 @@ everything in-process for tests.
   the worker, `/` for the portal's nginx).
 - `terraform/`: every cloud resource. `modules/` holds one module per
   resource family (`network`, `cluster`, `database`, `cache`, `queue`,
-  `buckets`, `secrets`, `load_balancer`, `service`); `environments/dev`
-  and `environments/prod` instantiate the same graph and differ only in
-  variables, including the image digests; `shared/` holds the registry,
-  the state bucket, and the deploy role. The worker's service instance
+  `buckets`, `secrets`, `load_balancer`, `certificate`, `domain_records`,
+  `portal`, `service`); `environments/dev` and `environments/prod`
+  instantiate the same graph and differ only in variables, including
+  the image digests; `shared/` holds the registry, the state bucket, and
+  the deploy role. The load balancer's idle timeout is read from
+  `deployment/realtime-timeouts.json`, the file the api and the portal
+  pin their ping interval against. The worker's service instance
   caps a rollout at 100% of desired because a worker holds leases. Every
   task runs an ADOT collector sidecar that scrapes the process's
   `/metrics` into CloudWatch (namespace `Tadas`) and forwards its traces to
@@ -146,7 +165,8 @@ Rules a program can check are checked in `om/tests/unit/`:
 worker, or on an object-model module outside `tadas.om.root` importing
 an infra impl rather than an interface. `make migrate-check` compares
 every role's ORM metadata with the migrated schema; it needs the compose
-database, so CI's integration job runs it and the fast gate does not.
+database, so CI's integration job runs it and the fast gate does not
+([ADR 0003](adr/0003-migrate-check-in-the-integration-job.md)).
 
 ## Decisions
 
