@@ -6,6 +6,7 @@ from tadas.om.base import new_id, utcnow
 from tadas.om.exceptions import ValidationFailed
 from tadas.om.opcontext import OpContext
 from tadas.om.tasks import TasksManagerInterface
+from tadas.om.tasks.types.filter import TaskCursor, TaskFilter
 from tadas.om.tasks.types.task import Task, TaskScope, TaskStatus
 from tadas.services.api.services.tasks import TasksServiceInterface
 from tadas.services.api.types.common import clamp_limit
@@ -23,12 +24,12 @@ def encode_cursor(task: Task) -> str:
     return base64.urlsafe_b64encode(raw).decode().rstrip("=")
 
 
-def decode_cursor(cursor: str) -> tuple[datetime, UUID]:
+def decode_cursor(cursor: str) -> TaskCursor:
     """The (updated_at, id) of the last task of the previous page."""
     try:
         raw = base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4)).decode()
         updated_at, task_id = raw.split("|")
-        return datetime.fromisoformat(updated_at), UUID(task_id)
+        return TaskCursor(updated_at=datetime.fromisoformat(updated_at), id=UUID(task_id))
     except ValueError:
         raise ValidationFailed("the cursor is not one this list issued") from None
 
@@ -46,12 +47,13 @@ class TasksServiceImpl(TasksServiceInterface):
         limit: int,
     ) -> TaskPageView:
         limit = clamp_limit(limit)
+        criterion = TaskFilter(scope=scope, user_id=ctx.user_id)
         if status == TaskStatus.OPEN:
-            tasks = await self._tasks.get_open_tasks(ctx, scope, limit)
+            tasks = await self._tasks.get_open_tasks(ctx, criterion, limit)
             return TaskPageView(items=[TaskView.model_validate(t) for t in tasks], next_cursor=None)
         before = decode_cursor(cursor) if cursor else None
         # One more than asked tells whether a next page exists.
-        tasks = await self._tasks.get_done_tasks(ctx, scope, before, limit + 1)
+        tasks = await self._tasks.get_done_tasks(ctx, criterion, before, limit + 1)
         page, more = tasks[:limit], len(tasks) > limit
         return TaskPageView(
             items=[TaskView.model_validate(t) for t in page],

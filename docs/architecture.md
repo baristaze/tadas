@@ -23,8 +23,11 @@ and one namespace per swimlane:
 - `work`: the table-backed work queue in the `queue` role; enqueue
   publishes `work_available`, the claim is one `SELECT ... FOR UPDATE
   SKIP LOCKED` statement and returns the enqueuer's principal.
-- `tasks`: the to-do items (`Task`: title, notes, status), a feed with
-  the `(org_id, id)` index.
+- `tasks`: the to-do items (`Task`: title, notes, status), listed by a
+  `TaskFilter` (team or mine) and paged by a `TaskCursor`, both passed
+  unchanged from the manager to storage; the visibility, cursor, and
+  placement rules are pure functions in `tasks.rules`, which the memory
+  impl calls and the Postgres impl mirrors in SQL.
 
 Every table belongs to one database role (`core`, `activity`, `queue`,
 `admin`); the map in `tadas.om.storage.roles` decides the schema, the

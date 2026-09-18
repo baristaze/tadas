@@ -1,26 +1,23 @@
 """Storage of the tasks swimlane. Every operation takes org_id first; deleted
-tasks never appear in a list."""
+tasks never appear in a list. The filter and the cursor arrive as the value
+objects the manager received, unchanged."""
 
-from datetime import datetime
 from uuid import UUID
 
+from tadas.om.tasks.types.filter import TaskCursor, TaskFilter
 from tadas.om.tasks.types.task import Task
 
 
 class TasksStorageInterface:
-    async def read_open_tasks(self, org_id: UUID, for_user: UUID | None, limit: int) -> list[Task]:
-        """Open tasks by position, then id. With `for_user`, only that user's:
-        assigned to them, or unassigned and created by them."""
+    async def read_open_tasks(self, org_id: UUID, criterion: TaskFilter, limit: int) -> list[Task]:
+        """Open tasks the filter shows (tasks.rules.is_visible), by position, then id."""
         ...
 
     async def read_done_tasks(
-        self,
-        org_id: UUID,
-        for_user: UUID | None,
-        before: tuple[datetime, UUID] | None,
-        limit: int,
+        self, org_id: UUID, criterion: TaskFilter, before: TaskCursor | None, limit: int
     ) -> list[Task]:
-        """Done tasks newest first by (updated_at, id), strictly before `before`."""
+        """Done tasks the filter shows, newest first by (updated_at, id), strictly
+        before the cursor (tasks.rules.is_before)."""
         ...
 
     async def read_open_positions(self, org_id: UUID, exclude: UUID | None) -> list[float]:
