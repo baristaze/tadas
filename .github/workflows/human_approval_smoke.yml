@@ -1,0 +1,13 @@
+# Self-test of the pause in human_approval.yml, run by hand: dispatch it, see
+# the run wait for the `human_approval` environment's reviewer, then Approve
+# (the run turns green) or Reject (it is cancelled). It touches nothing.
+name: human_approval_smoke
+
+on:
+  workflow_dispatch:
+
+jobs:
+  human_approval:
+    uses: ./.github/workflows/human_approval.yml
+    with:
+      reason: smoke test, nothing is applied

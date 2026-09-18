@@ -112,11 +112,24 @@ everything in-process for tests.
   runs `make migrate-check` right after `make migrate`), an image build
   per Dockerfile, and `terraform fmt -check` plus `validate` per root.
   `deploy.yml` builds and pushes both images by digest and the portal
-  once, applies dev, runs the migration as a one-off task
-  (`scripts/cloud_migrate.sh`), publishes the portal
+  once, plans dev (the plan goes to the job summary, its text to the
+  `dev-plan` artifact, the saved plan to the state bucket), pauses for
+  `human_approval`, applies the approved plan, runs the migration as a
+  one-off task (`scripts/cloud_migrate.sh`), publishes the portal
   (`scripts/deploy_portal.sh`), and then, behind the `production`
   environment's approval, applies production with the same digests and
-  publishes the same portal files.
+  publishes the same portal files. Its first job checks the repository
+  variables (`AWS_DEPLOY_ROLE_ARN`, `TF_STATE_BUCKET`, `DNS_ZONE_NAME`);
+  while they are empty every cloud job is skipped, the summary says so,
+  and the run stays green.
+- `.github/workflows/human_approval.yml`: the pause, a reusable workflow
+  with one job bound to the `human_approval` GitHub environment, whose
+  required reviewer is the owner. A job requires it with `needs:` after
+  `uses: ./.github/workflows/human_approval.yml`; Approve lets the run
+  go on, Reject cancels what needs it. `deploy.yml` requires it in one
+  place, before the first `terraform apply`. `human_approval_smoke.yml`
+  is its self-test, run by hand. [The deploy runbook](runbooks/deploy.md)
+  says what to check at the pause.
 - Public names are inputs: the API at `api_domain_name` (the load balancer,
   e.g. `api.tadas.fyi`, `dev-api.tadas.fyi` for dev) and the portal at
   `app_domain_name` (a private S3 bucket behind CloudFront, e.g.

@@ -1,8 +1,13 @@
-# Dev builds and pushes both images by digest, builds the portal once, and
-# applies and publishes its environment. Production never rebuilds: behind the
-# `production` environment's approval gate it applies the same digests and
-# publishes the same portal files dev already served. The portal build holds no
-# environment; each environment's /config.json, written by Terraform, does.
+# Dev builds and pushes both images by digest, builds the portal once, plans
+# its environment, pauses for a human, then applies the saved plan and
+# publishes. The pause is the `human_approval` reusable workflow
+# (human_approval.yml), required in exactly one place: between the dev plan
+# and the first `terraform apply`. The plan the reviewer approves is the plan
+# that is applied: Terraform refuses a saved plan once the state has moved.
+# Production never rebuilds: behind the `production` environment's approval
+# gate it applies the same digests and publishes the same portal files dev
+# already served. The portal build holds no environment; each environment's
+# /config.json, written by Terraform, does.
 #
 # Credentials come from the deploy role in deployment/terraform/shared through
 # GitHub's OIDC provider; the role's ARN and the state bucket are repository
@@ -10,6 +15,10 @@
 # for the repository, and API_DOMAIN_NAME and APP_DOMAIN_NAME per GitHub
 # environment (dev-api.tadas.fyi and dev-app.tadas.fyi in `dev`,
 # api.tadas.fyi and app.tadas.fyi in `production`).
+#
+# Until those repository variables are set there is no cloud to deploy to:
+# the `cloud` job says so in its summary and every job that touches the cloud
+# is skipped, so the run stays green and the portal still builds.
 name: deploy
 
 on:
@@ -32,6 +41,32 @@ env:
   TERRAFORM_VERSION: "1.16.3"
 
 jobs:
+  cloud:
+    name: is the cloud configured?
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    outputs:
+      configured: ${{ steps.check.outputs.configured }}
+    steps:
+      - name: check the repository variables
+        id: check
+        env:
+          AWS_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+          DNS_ZONE_NAME: ${{ vars.DNS_ZONE_NAME }}
+        run: |
+          missing=""
+          for name in AWS_DEPLOY_ROLE_ARN TF_STATE_BUCKET DNS_ZONE_NAME; do
+            [ -n "${!name}" ] || missing="${missing:+$missing, }$name"
+          done
+          if [ -z "$missing" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+            echo "The cloud deployment is configured: the deploy role is \`$AWS_DEPLOY_ROLE_ARN\`." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "**The cloud deployment is not configured.** The repository variables \`$missing\` are empty, so every job that touches the cloud is skipped; only the portal builds. Set them once the account exists (deployment/terraform/shared)." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
   portal:
     name: build the portal once
     if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
@@ -55,14 +90,16 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-  dev:
-    name: build, push, and apply dev
-    needs: portal
+  plan:
+    name: build, push, and plan dev
+    needs: cloud
+    if: needs.cloud.outputs.configured == 'true'
     runs-on: ubuntu-latest
     environment: dev
     outputs:
       api_image: ${{ steps.images.outputs.api_image }}
       maintenance_image: ${{ steps.images.outputs.maintenance_image }}
+      plan_key: ${{ steps.plan.outputs.plan_key }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -103,19 +140,87 @@ jobs:
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
           terraform_wrapper: false
-      - name: apply dev
+      # The saved plan goes to the state bucket, next to the state it was
+      # computed against and under the same access: a plan file carries
+      # sensitive values unmasked, and a workflow artifact of a public
+      # repository is downloadable by anyone. The text rendering, in which
+      # Terraform masks them, is the reviewer's copy: the job summary and the
+      # `dev-plan` artifact.
+      - name: plan dev
+        id: plan
         run: |
           terraform -chdir=deployment/terraform/environments/dev init -input=false \
             -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
             -backend-config="key=environments/dev/terraform.tfstate" \
             -backend-config="region=${{ env.AWS_REGION }}" \
             -backend-config="use_lockfile=true"
-          terraform -chdir=deployment/terraform/environments/dev apply -input=false -auto-approve \
+          terraform -chdir=deployment/terraform/environments/dev plan -input=false -out=tfplan \
             -var "api_image=${{ steps.images.outputs.api_image }}" \
             -var "maintenance_image=${{ steps.images.outputs.maintenance_image }}" \
             -var "dns_zone_name=${{ vars.DNS_ZONE_NAME }}" \
             -var "api_domain_name=${{ vars.API_DOMAIN_NAME }}" \
             -var "app_domain_name=${{ vars.APP_DOMAIN_NAME }}"
+          terraform -chdir=deployment/terraform/environments/dev show -no-color tfplan > plan.txt
+          plan_key="plans/environments/dev/${{ github.run_id }}-${{ github.run_attempt }}.tfplan"
+          aws s3 cp deployment/terraform/environments/dev/tfplan "s3://${{ vars.TF_STATE_BUCKET }}/$plan_key"
+          echo "plan_key=$plan_key" >> "$GITHUB_OUTPUT"
+          {
+            echo "## dev plan"
+            echo ""
+            echo "Images: \`${{ steps.images.outputs.api_image }}\`, \`${{ steps.images.outputs.maintenance_image }}\`."
+            echo ""
+            grep -E '^(Plan:|No changes\.)' plan.txt || echo "See the plan below."
+            echo ""
+            echo "<details><summary>terraform show</summary>"
+            echo ""
+            echo '```'
+            head -c 900000 plan.txt
+            [ "$(wc -c < plan.txt)" -le 900000 ] || echo "... (truncated; the dev-plan artifact holds the whole text)"
+            echo '```'
+            echo "</details>"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dev-plan
+          path: plan.txt
+          if-no-files-found: error
+          retention-days: 30
+
+  human_approval:
+    needs: plan
+    uses: ./.github/workflows/human_approval.yml
+    with:
+      reason: sanity check the dev plan in the job summary of "build, push, and plan dev"; approving applies it
+
+  dev:
+    name: apply the dev plan, migrate, and publish
+    needs: [portal, plan, human_approval]
+    runs-on: ubuntu-latest
+    environment: dev
+    outputs:
+      api_image: ${{ needs.plan.outputs.api_image }}
+      maintenance_image: ${{ needs.plan.outputs.maintenance_image }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+      - name: apply the approved dev plan
+        run: |
+          terraform -chdir=deployment/terraform/environments/dev init -input=false \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
+            -backend-config="key=environments/dev/terraform.tfstate" \
+            -backend-config="region=${{ env.AWS_REGION }}" \
+            -backend-config="use_lockfile=true"
+          aws s3 cp "s3://${{ vars.TF_STATE_BUCKET }}/${{ needs.plan.outputs.plan_key }}" deployment/terraform/environments/dev/tfplan
+          terraform -chdir=deployment/terraform/environments/dev apply -input=false tfplan
       - name: migrate dev
         run: scripts/cloud_migrate.sh deployment/terraform/environments/dev
       - uses: actions/download-artifact@v8
