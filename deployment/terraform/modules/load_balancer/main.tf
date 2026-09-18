@@ -3,6 +3,10 @@
 
 locals {
   tags = { "tadas:environment" = var.environment }
+  # The idle timeout is pinned beside the realtime ping interval in one shared
+  # file, which the api and the portal test against; the load balancer reads
+  # the same value, so a change there reaches the infrastructure.
+  realtime_timeouts = jsondecode(file("${path.module}/../../../realtime-timeouts.json"))
 }
 
 resource "aws_lb" "this" {
@@ -11,6 +15,7 @@ resource "aws_lb" "this" {
   subnets                    = var.subnet_ids
   security_groups            = var.security_group_ids
   drop_invalid_header_fields = true
+  idle_timeout               = local.realtime_timeouts.load_balancer_idle_timeout_seconds
   tags                       = local.tags
 }
 
