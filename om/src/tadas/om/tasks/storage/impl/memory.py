@@ -1,5 +1,7 @@
 from uuid import UUID
 
+from tadas.om.outbox.storage.impl.memory import OutboxStorageMemoryImpl
+from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.storage.impl.memory_base import MemoryStorageBase, MemoryTable
 from tadas.om.tasks.rules import is_before, is_visible
 from tadas.om.tasks.storage import TasksStorageInterface
@@ -8,8 +10,8 @@ from tadas.om.tasks.types.task import Task, TaskStatus
 
 
 class TasksStorageMemoryImpl(MemoryStorageBase, TasksStorageInterface):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, outbox: OutboxStorageMemoryImpl | None = None) -> None:
+        super().__init__(outbox)
         self._tasks: MemoryTable[Task] = {}
 
     def _live(self, org_id: UUID, status: TaskStatus) -> list[Task]:
@@ -39,5 +41,7 @@ class TasksStorageMemoryImpl(MemoryStorageBase, TasksStorageInterface):
     async def read_task(self, org_id: UUID, task_id: UUID) -> Task | None:
         return self._get(self._tasks, org_id, task_id)
 
-    async def write_task(self, org_id: UUID, task: Task) -> None:
-        self._put(self._tasks, org_id, task)
+    async def write_task(
+        self, org_id: UUID, task: Task, outbox_row: OutboxRow | None = None
+    ) -> None:
+        self._put(self._tasks, org_id, task, outbox_row)

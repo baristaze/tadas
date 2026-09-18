@@ -4,6 +4,7 @@ objects the manager received, unchanged."""
 
 from uuid import UUID
 
+from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.tasks.types.filter import TaskCursor, TaskFilter
 from tadas.om.tasks.types.task import Task
 
@@ -27,4 +28,8 @@ class TasksStorageInterface:
 
     async def read_task(self, org_id: UUID, task_id: UUID) -> Task | None: ...
 
-    async def write_task(self, org_id: UUID, task: Task) -> None: ...
+    async def write_task(
+        self, org_id: UUID, task: Task, outbox_row: OutboxRow | None = None
+    ) -> None:
+        """Lands the task and its outbox row together (the named atomic write)."""
+        ...

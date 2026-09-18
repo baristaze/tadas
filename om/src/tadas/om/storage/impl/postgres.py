@@ -10,6 +10,8 @@ from tadas.om.events.storage import EventStorageInterface
 from tadas.om.events.storage.impl.postgres import EventStoragePostgresImpl
 from tadas.om.idempotency.storage import IdempotencyStorageInterface
 from tadas.om.idempotency.storage.impl.postgres import IdempotencyStoragePostgresImpl
+from tadas.om.outbox.storage import OutboxStorageInterface
+from tadas.om.outbox.storage.impl.postgres import OutboxStoragePostgresImpl
 from tadas.om.storage.impl.pg_base import SessionFactory
 from tadas.om.storage.roles import DatabaseRole
 from tadas.om.storage.root import StorageInterface
@@ -37,6 +39,7 @@ class StoragePostgresImpl(StorageInterface):
         self._tasks = TasksStoragePostgresImpl(sessions)
         self._idempotency = IdempotencyStoragePostgresImpl(sessions)
         self._events = EventStoragePostgresImpl(sessions)
+        self._outbox = OutboxStoragePostgresImpl(sessions)
 
     def get_tenancy_storage(self) -> TenancyStorageInterface:
         return self._tenancy
@@ -52,6 +55,9 @@ class StoragePostgresImpl(StorageInterface):
 
     def get_event_storage(self) -> EventStorageInterface:
         return self._events
+
+    def get_outbox_storage(self) -> OutboxStorageInterface:
+        return self._outbox
 
     async def healthcheck(self) -> bool:
         try:

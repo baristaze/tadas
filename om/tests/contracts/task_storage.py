@@ -37,6 +37,7 @@ def make_task(
         created_at=now,
         updated_at=now - updated_ago,
         created_by=created_by or new_id(),
+        updated_by=created_by or new_id(),
         title=title,
         status=status,
         assignee_id=assignee_id,

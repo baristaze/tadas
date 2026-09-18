@@ -23,6 +23,11 @@ class EventStoragePostgresImpl(PgStorageBase, EventStorageInterface):
             try:
                 return await self._append_once(org_id, event)
             except IntegrityError:
+                # Either the seq race or the id already appended; the second
+                # case is the relay running twice and returns what is stored.
+                stored = await self._read(org_id, event.id)
+                if stored is not None:
+                    return stored
                 continue
         raise Conflict(f"could not append event {event.id} for org {org_id}")
 
@@ -42,6 +47,12 @@ class EventStoragePostgresImpl(PgStorageBase, EventStorageInterface):
             appended = to_model(row, Event)
             await session.commit()
             return appended
+
+    async def _read(self, org_id: UUID, event_id: UUID) -> Event | None:
+        stmt = select(Events).where(Events.org_id == org_id, Events.id == event_id)
+        async with self._session_for(stmt) as session:
+            row = (await session.execute(stmt)).scalar_one_or_none()
+            return None if row is None else to_model(row, Event)
 
     async def read_after(self, org_id: UUID, after_seq: int, limit: int) -> list[Event]:
         stmt = (

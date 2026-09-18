@@ -2,6 +2,7 @@
 
 from tadas.om.events.storage import EventStorageInterface
 from tadas.om.idempotency.storage import IdempotencyStorageInterface
+from tadas.om.outbox.storage import OutboxStorageInterface
 from tadas.om.tasks.storage import TasksStorageInterface
 from tadas.om.tenancy.storage import TenancyStorageInterface
 from tadas.om.work.storage import WorkStorageInterface
@@ -17,6 +18,8 @@ class StorageInterface:
     def get_idempotency_storage(self) -> IdempotencyStorageInterface: ...
 
     def get_event_storage(self) -> EventStorageInterface: ...
+
+    def get_outbox_storage(self) -> OutboxStorageInterface: ...
 
     async def healthcheck(self) -> bool: ...
 

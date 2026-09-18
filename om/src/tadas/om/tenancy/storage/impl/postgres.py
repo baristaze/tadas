@@ -3,6 +3,7 @@ from uuid import UUID
 
 from sqlalchemy import select, update
 
+from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.storage.impl.pg_base import PgStorageBase
 from tadas.om.storage.utils.translation import to_model
 from tadas.om.tenancy.storage import TenancyStorageInterface
@@ -86,8 +87,10 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
             result = await session.execute(stmt)
             return [(row.org_id, to_model(row, User)) for row in result.scalars()]
 
-    async def write_user(self, org_id: UUID, user: User) -> None:
-        await self._upsert(Users, org_id, user)
+    async def write_user(
+        self, org_id: UUID, user: User, outbox_row: OutboxRow | None = None
+    ) -> None:
+        await self._upsert(Users, org_id, user, outbox_row)
 
     async def read_memberships(self, org_id: UUID, limit: int) -> list[Membership]:
         stmt = (
@@ -108,8 +111,10 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
             row = (await session.execute(stmt)).scalar_one_or_none()
             return None if row is None else to_model(row, Membership)
 
-    async def write_membership(self, org_id: UUID, membership: Membership) -> None:
-        await self._upsert(Memberships, org_id, membership)
+    async def write_membership(
+        self, org_id: UUID, membership: Membership, outbox_row: OutboxRow | None = None
+    ) -> None:
+        await self._upsert(Memberships, org_id, membership, outbox_row)
 
     async def read_sessions(self, org_id: UUID, user_id: UUID, limit: int) -> list[Session]:
         stmt = (
@@ -164,8 +169,10 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
             row = (await session.execute(stmt)).scalar_one_or_none()
             return None if row is None else (row.org_id, to_model(row, ApiKey))
 
-    async def write_api_key(self, org_id: UUID, api_key: ApiKey) -> None:
-        await self._upsert(ApiKeys, org_id, api_key)
+    async def write_api_key(
+        self, org_id: UUID, api_key: ApiKey, outbox_row: OutboxRow | None = None
+    ) -> None:
+        await self._upsert(ApiKeys, org_id, api_key, outbox_row)
 
     async def write_socket_ticket(self, org_id: UUID, ticket: SocketTicket) -> None:
         await self._upsert(SocketTickets, org_id, ticket)

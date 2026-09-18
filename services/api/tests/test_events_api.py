@@ -20,9 +20,13 @@ async def test_events_are_paged_by_seq(client: httpx.AsyncClient, owner: dict[st
     assert everything.status_code == 200, everything.text
     events = everything.json()
     assert [e["seq"] for e in events] == [1, 2, 3]
-    assert [e["action"] for e in events] == ["created", "updated", "deleted"]
-    assert all(e["entity"] == "task" and e["entity_id"] == task_id for e in events)
-    assert set(events[0]) == {"seq", "entity", "entity_id", "action", "produced_at"}
+    assert [e["kind"] for e in events] == [
+        "tasks.task.created",
+        "tasks.task.updated",
+        "tasks.task.deleted",
+    ]
+    assert all(e["target_id"] == task_id for e in events)
+    assert set(events[0]) == {"seq", "kind", "target_id", "produced_at"}
 
     tail = await client.get("/v1/events", headers=owner, params={"after_seq": 2, "limit": 10})
     assert [e["seq"] for e in tail.json()] == [3]
@@ -63,9 +67,8 @@ def test_a_push_carries_the_stream_position(tmp_path: Path) -> None:
             event = ws.receive_json()
             assert event["type"] == "event" and event["topic"] == "entity_changed"
             assert event["payload"] == {
-                "entity": "task",
-                "entity_id": created.json()["id"],
-                "action": "created",
+                "kind": "tasks.task.created",
+                "target_id": created.json()["id"],
                 "seq": 1,
             }
         replay = tc.get("/v1/events", headers=headers, params={"after_seq": 0})

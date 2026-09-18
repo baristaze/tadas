@@ -25,6 +25,7 @@ def test_a_file_naming_another_role_is_refused() -> None:
     with pytest.raises(LookupError):
         check_role_of_sql(DatabaseRole.CORE, "CREATE TABLE core.unknown_table (id uuid)")
     check_role_of_sql(DatabaseRole.QUEUE, "DROP INDEX queue.ix_work_items_org_id")
+    check_role_of_sql(DatabaseRole.QUEUE, "ALTER INDEX queue.ix_work_items_a RENAME TO ix_b")
     with pytest.raises(RuntimeError):
         check_role_of_sql(DatabaseRole.CORE, "DROP INDEX queue.ix_work_items_org_id")
 

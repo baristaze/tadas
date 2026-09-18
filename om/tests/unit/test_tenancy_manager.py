@@ -22,6 +22,8 @@ from tadas.om.exceptions import (
     ValidationFailed,
 )
 from tadas.om.opcontext import AppContext, AppType, CredentialKind, OpContext, Permission, Role
+from tadas.om.outbox.impl.relay import OutboxRelayImpl
+from tadas.om.outbox.storage.impl.memory import OutboxStorageMemoryImpl
 from tadas.om.tenancy.impl.manager import TenancyManagerImpl, TenancyOptions
 from tadas.om.tenancy.impl.operator import TenancyOperatorManagerImpl, TenancyOperatorOptions
 from tadas.om.tenancy.rules import hash_password, hash_token
@@ -65,7 +67,7 @@ def infra(tmp_path: Path) -> InfraLocalImpl:
 
 @pytest.fixture
 def storage() -> TenancyStorageMemoryImpl:
-    return TenancyStorageMemoryImpl()
+    return TenancyStorageMemoryImpl(OutboxStorageMemoryImpl())
 
 
 def make_manager(
@@ -74,10 +76,11 @@ def make_manager(
     options: TenancyOptions | None = None,
     cache: CacheInterface | None = None,
 ) -> TenancyManagerImpl:
+    events = EventsManagerImpl(EventStorageMemoryImpl(), EventsOptions())
+    relay = OutboxRelayImpl(storage.outbox, events, infra.get_topics())
     return TenancyManagerImpl(
         storage,
-        EventsManagerImpl(EventStorageMemoryImpl(), EventsOptions()),
-        infra.get_topics(),
+        relay,
         cache or infra.get_cache(CacheScope.REALTIME_TICKET),
         options or TenancyOptions(),
     )
@@ -111,6 +114,7 @@ async def add_member(
             created_at=now,
             updated_at=now,
             created_by=identity_id,
+            updated_by=identity_id,
             email=email,
             password_hash=hash_password("pw-1234", secrets.token_bytes(16)),
         )
@@ -120,6 +124,7 @@ async def add_member(
         created_at=now,
         updated_at=now,
         created_by=user_id,
+        updated_by=user_id,
         identity_id=identity_id,
         email=email,
         display_name=email.split("@")[0].title(),
@@ -132,6 +137,7 @@ async def add_member(
             created_at=now,
             updated_at=now,
             created_by=user_id,
+            updated_by=user_id,
             user_id=user_id,
             role=role,
         ),
@@ -328,20 +334,18 @@ async def test_users_update_their_own_display_name(
     await add_member(storage, org.id, "cid@example.test", Role.VIEWER)
     viewer = await sign_in(manager, "cid@example.test", org.id)
 
-    renamed = await manager.update_user(
-        viewer, viewer.security.user.model_copy(update={"display_name": "Cid R."})
-    )
+    # The context carries the user's id; the entity is loaded by the manager.
+    me = await manager.get_user(viewer, viewer.user_id)
+    renamed = await manager.update_user(viewer, me.model_copy(update={"display_name": "Cid R."}))
     assert renamed.display_name == "Cid R." and renamed.updated_at > renamed.created_at
-    assert (await sign_in(manager, "cid@example.test", org.id)).security.user == renamed
+    assert renamed.updated_by == viewer.user_id
+    assert await manager.get_user(viewer, viewer.user_id) == renamed
 
     with pytest.raises(NotAuthorized):
-        await manager.update_user(
-            viewer, owner.security.user.model_copy(update={"display_name": "Nope"})
-        )
+        owner_user = await manager.get_user(owner, owner.user_id)
+        await manager.update_user(viewer, owner_user.model_copy(update={"display_name": "Nope"}))
     with pytest.raises(ValidationFailed):
-        await manager.update_user(
-            viewer, viewer.security.user.model_copy(update={"display_name": "  "})
-        )
+        await manager.update_user(viewer, me.model_copy(update={"display_name": "  "}))
     by_owner = await manager.update_user(
         owner, renamed.model_copy(update={"display_name": "Cid", "email": "ignored@example.test"})
     )
@@ -391,7 +395,7 @@ async def test_the_identity_behind_the_caller(manager: TenancyManagerImpl) -> No
     _, org = await manager.bootstrap("Acme", "acme", "ann@example.test", "pw-1234", "Ann")
     ctx = await sign_in(manager, "ann@example.test", org.id)
     identity = await manager.get_identity(ctx)
-    assert identity.id == ctx.security.user.identity_id
+    assert identity.id == (await manager.get_user(ctx, ctx.user_id)).identity_id
     assert identity.email == "ann@example.test" and identity.is_operator is False
 
 
@@ -601,7 +605,7 @@ async def test_add_member_caps_the_role_at_the_creators_and_records_the_write(
         await manager.add_member("acme", "svc@example.test", "pw-1234", "Svc", Role.SERVICE)
     ctx, bob, _ = await manager.add_member("acme", "bob@example.test", "pw-1234", "Bob", Role.ADMIN)
     pushes = [p for p in seen if isinstance(p, EntityChangedPayload)]
-    assert [(p.org_id, p.entity, p.entity_id, p.action) for p in pushes] == [
-        (org.id, "user", bob.id, "created")
+    assert [(p.org_id, p.kind, p.target_id, p.seq) for p in pushes] == [
+        (org.id, "tenancy.user.created", bob.id, 1)
     ]
     assert ctx.security.role is Role.OWNER  # the cap: a creator seeds at most their own rank

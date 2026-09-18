@@ -19,7 +19,8 @@ def make_org(name: str = "Acme") -> Org:
         name=name,
         created_at=now,
         updated_at=now,
-        created_by=new_id(),
+        created_by=org_id,
+        updated_by=org_id,
         slug=f"{name.lower()}-{org_id.hex[-12:]}",  # the random tail; the head is the millisecond
     )
 
@@ -32,6 +33,7 @@ def make_identity(email: str | None = None, *, operator: bool = False) -> Identi
         created_at=now,
         updated_at=now,
         created_by=identity_id,
+        updated_by=identity_id,
         email=email or f"{identity_id.hex[-12:]}@example.test",
         password_hash="scrypt$00$00",
         is_operator=operator,
@@ -46,6 +48,7 @@ def make_user(identity_id: UUID, email: str = "someone@example.test") -> User:
         created_at=now,
         updated_at=now,
         created_by=user_id,
+        updated_by=user_id,
         identity_id=identity_id,
         email=email,
         display_name="Someone",
@@ -55,7 +58,13 @@ def make_user(identity_id: UUID, email: str = "someone@example.test") -> User:
 def make_membership(user_id: UUID, role: Role = Role.MEMBER) -> Membership:
     now = utcnow()
     return Membership(
-        id=new_id(), created_at=now, updated_at=now, created_by=user_id, user_id=user_id, role=role
+        id=new_id(),
+        created_at=now,
+        updated_at=now,
+        created_by=user_id,
+        updated_by=user_id,
+        user_id=user_id,
+        role=role,
     )
 
 
@@ -66,6 +75,7 @@ def make_session(identity_id: UUID, user_id: UUID, token_hash: str) -> Session:
         created_at=now,
         updated_at=now,
         created_by=user_id,
+        updated_by=user_id,
         identity_id=identity_id,
         user_id=user_id,
         token_hash=token_hash,
@@ -82,6 +92,7 @@ def make_api_key(user_id: UUID, key_hash: str) -> ApiKey:
         created_at=now,
         updated_at=now,
         created_by=user_id,
+        updated_by=user_id,
         user_id=user_id,
         key_hash=key_hash,
         role=Role.MEMBER,

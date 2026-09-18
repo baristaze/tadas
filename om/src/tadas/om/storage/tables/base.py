@@ -74,6 +74,7 @@ class CreatedMixin:
 class TrackableMixin(CreatedMixin):
     updated_at: Mapped[datetime] = mapped_column(sort_order=-799)
     created_by: Mapped[UUID] = mapped_column(sort_order=-798)
+    updated_by: Mapped[UUID] = mapped_column(sort_order=-797)
 
 
 class SoftDeletableMixin:

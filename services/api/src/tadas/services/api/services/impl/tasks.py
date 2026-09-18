@@ -70,6 +70,7 @@ class TasksServiceImpl(TasksServiceInterface):
             created_at=now,
             updated_at=now,
             created_by=ctx.user_id,
+            updated_by=ctx.user_id,
             title=body.title,
             notes=body.notes,
             assignee_id=body.assignee_id,

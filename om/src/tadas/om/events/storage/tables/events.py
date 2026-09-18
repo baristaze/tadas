@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import Index
@@ -17,10 +18,9 @@ class Events(IdentifiableMixin, Base):
         Index("ix_events_org_id_id", "org_id", "id"),
     )
     seq: Mapped[int]
-    entity: Mapped[str]
-    entity_id: Mapped[UUID]
-    action: Mapped[str]
+    kind: Mapped[str]
+    target_id: Mapped[UUID]
+    payload: Mapped[dict[str, Any]]
     produced_at: Mapped[datetime]
-    idempotency_key: Mapped[UUID]
     actor_id: Mapped[UUID]
     request_id: Mapped[UUID]
