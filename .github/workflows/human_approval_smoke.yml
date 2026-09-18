@@ -5,6 +5,9 @@ name: human_approval_smoke
 
 on:
   workflow_dispatch:
+  # Temporary, to observe the pause before this file exists on main.
+  push:
+    branches: [deploy-human-approval]
 
 jobs:
   human_approval:
