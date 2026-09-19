@@ -5,10 +5,13 @@ interface Base {
   sent_at: string | null;
 }
 
+// The stream position when the socket opened: the cursor to replay from
+// before any push has arrived.
 export interface HelloEnvelope extends Base {
   type: "hello";
   org_id: string;
   user_id: string;
+  seq: number;
   ping_interval_seconds: number;
 }
 

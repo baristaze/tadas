@@ -45,11 +45,13 @@ def test_hello_and_malformed_frames() -> None:
                 "sent_at": None,
                 "org_id": str(uuid4()),
                 "user_id": str(uuid4()),
+                "seq": 12,
                 "ping_interval_seconds": 25,
             }
         )
     )
     assert isinstance(hello, HelloEnvelope) and hello.ping_interval_seconds == 25
+    assert hello.seq == 12
     assert parse_envelope("not json") is None
     assert parse_envelope(json.dumps({"type": "unknown"})) is None
     assert parse_envelope(json.dumps({"type": "event", "topic": "x"})) is None

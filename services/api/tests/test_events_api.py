@@ -57,7 +57,8 @@ def test_a_push_carries_the_stream_position(tmp_path: Path) -> None:
         headers = {"Authorization": f"Bearer {session.json()['token']}", "X-App": "portal"}
         ticket = tc.post("/v1/realtime/tickets", headers=headers).json()["ticket"]
         with tc.websocket_connect(f"/v1/realtime?ticket={ticket}") as ws:
-            assert ws.receive_json()["type"] == "hello"
+            hello = ws.receive_json()
+            assert hello["type"] == "hello" and hello["seq"] == 0
             ws.send_json({"op": "subscribe", "topic": "entity_changed"})
             assert ws.receive_json()["type"] == "subscribed"
             ws.send_json({"op": "subscribe", "topic": "work_available"})
@@ -76,3 +77,7 @@ def test_a_push_carries_the_stream_position(tmp_path: Path) -> None:
             }
         replay = tc.get("/v1/events", headers=headers, params={"after_seq": 0})
         assert [e["seq"] for e in replay.json()] == [1]
+        # A socket opened now starts at the stream's position.
+        ticket = tc.post("/v1/realtime/tickets", headers=headers).json()["ticket"]
+        with tc.websocket_connect(f"/v1/realtime?ticket={ticket}") as ws:
+            assert ws.receive_json()["seq"] == 1

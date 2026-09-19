@@ -61,3 +61,13 @@ async def test_the_stream_is_read_with_read_and_is_append_only(manager: EventsMa
     )
     with pytest.raises(NotAuthorized):
         await manager.get_events(no_read, after_seq=0, limit=10)
+
+
+async def test_the_head_is_the_last_seq_of_the_callers_tenant(manager: EventsManagerImpl) -> None:
+    ctx, other = context(), context()
+    assert await manager.get_head(ctx) == 0
+    await manager.append(ctx, make_event())
+    await manager.append(ctx, make_event())
+    await manager.append(other, make_event())
+    assert await manager.get_head(ctx) == 2
+    assert await manager.get_head(other) == 1

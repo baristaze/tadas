@@ -10,9 +10,10 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager
 from typing import Literal, Protocol
 
+import httpx
 import websockets
 
-from tadas.client.client import LIMIT_MAX, ApiClient, trust_store
+from tadas.client.client import LIMIT_MAX, ApiClient, ApiError, trust_store
 from tadas.client.envelopes import (
     ENTITY_CHANGED,
     PING_COMMAND,
@@ -90,7 +91,22 @@ class Channel:
             except ChannelRefused:
                 self._set("closed")
                 raise
-            except (OSError, websockets.exceptions.WebSocketException, TimeoutError) as error:
+            except ApiError as error:
+                # The ticket or the replay: a refused credential ends it; the
+                # API being down or overloaded is a reason to wait and retry.
+                if error.status == 401:
+                    self._set("closed")
+                    raise ChannelRefused(error.code) from None
+                if error.status < 500:
+                    self._set("closed")
+                    raise
+                log.info("channel paused, the API answered %s: %s", error.status, error)
+            except (
+                OSError,
+                httpx.TransportError,
+                websockets.exceptions.WebSocketException,
+                TimeoutError,
+            ) as error:
                 log.info("channel dropped: %s", error)
             delay = BACKOFF_SECONDS[min(attempt, len(BACKOFF_SECONDS) - 1)]
             attempt += 1
@@ -107,8 +123,13 @@ class Channel:
                     raise websockets.exceptions.ProtocolError("expected hello")
                 await socket.send(subscribe_command(ENTITY_CHANGED))
                 self._set("open")
-                # Anything that happened while the socket was down.
-                if self.cursor is not None:
+                if self.cursor is None:
+                    # The first session starts where the stream stands; a later
+                    # reconnect then has a position to replay from even if no
+                    # push ever reached this session.
+                    self.cursor = hello.seq
+                else:
+                    # Anything that happened while the socket was down.
                     async for change in self._replay(self.cursor):
                         yield change
                 interval = max(float(hello.ping_interval_seconds), MIN_PING_SECONDS)

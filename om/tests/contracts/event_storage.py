@@ -29,10 +29,13 @@ class EventStorageContract:
         self, storage: EventStorageInterface
     ) -> None:
         org_a, org_b = new_id(), new_id()
+        assert await storage.read_head(org_a) == 0
         appended = [await storage.append(org_a, make_event()) for _ in range(3)]
         assert [e.seq for e in appended] == [1, 2, 3]
+        assert await storage.read_head(org_a) == 3
         elsewhere = await storage.append(org_b, make_event())
         assert elsewhere.seq == 1
+        assert await storage.read_head(org_b) == 1
         first = appended[0]
         assert first == make_event().model_copy(
             update={

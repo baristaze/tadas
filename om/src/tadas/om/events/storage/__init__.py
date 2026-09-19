@@ -17,3 +17,8 @@ class EventStorageInterface:
     async def read_after(self, org_id: UUID, after_seq: int, limit: int) -> list[Event]:
         """The tenant's events with seq greater than `after_seq`, ascending."""
         ...
+
+    async def read_head(self, org_id: UUID) -> int:
+        """The tenant's last assigned seq; 0 before the first append. What a
+        client that has seen no push yet replays from."""
+        ...

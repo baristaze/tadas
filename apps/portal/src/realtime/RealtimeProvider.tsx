@@ -142,7 +142,11 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
       };
       socket.onmessage = (message) => {
         const envelope = parseEnvelope(String(message.data));
-        if (envelope) enqueue(() => deliver(envelope));
+        if (!envelope) return;
+        // The hello names the stream position, so a reconnect before the
+        // first push replays from it instead of refreshing wholesale.
+        if (envelope.type === "hello" && cursor === null) cursor = envelope.seq;
+        enqueue(() => deliver(envelope));
       };
       socket.onclose = () => {
         if (pingTimer) clearInterval(pingTimer);

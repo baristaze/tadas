@@ -38,9 +38,16 @@ HELLO = json.dumps(
         "sent_at": None,
         "org_id": str(ORG),
         "user_id": str(USER),
+        "seq": 0,
         "ping_interval_seconds": 25,
     }
 )
+
+
+def hello_at(seq: int) -> str:
+    return json.dumps({**json.loads(HELLO), "seq": seq})
+
+
 SUBSCRIBED = json.dumps({"type": "subscribed", "sent_at": None, "topic": "entity_changed"})
 
 
@@ -69,9 +76,20 @@ class FakeSocket:
         self.sent.append(message)
 
 
-def transport(events: list[dict[str, Any]]) -> httpx.MockTransport:
+def transport(
+    events: list[dict[str, Any]], ticket_failures: list[Exception | int] | None = None
+) -> httpx.MockTransport:
+    """`ticket_failures` are consumed one per ticket request before tickets succeed:
+    an exception to raise, or a status to answer with."""
+    failures = list(ticket_failures or [])
+
     def handle(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/v1/realtime/tickets":
+            if failures:
+                failure = failures.pop(0)
+                if isinstance(failure, Exception):
+                    raise failure
+                return httpx.Response(failure, json={"error": {"code": "down", "message": "x"}})
             return httpx.Response(201, json={"ticket": "tkt_1", "expires_in_seconds": 30})
         if request.url.path == "/v1/events":
             after = int(request.url.params["after_seq"])
@@ -91,9 +109,15 @@ def record(seq: int) -> dict[str, Any]:
     }
 
 
-def client_over(events: list[dict[str, Any]]) -> ApiClient:
+def client_over(
+    events: list[dict[str, Any]], ticket_failures: list[Exception | int] | None = None
+) -> ApiClient:
     return ApiClient(
-        "http://test", app="cli", app_version="cli@test", token="ses_1", transport=transport(events)
+        "http://test",
+        app="cli",
+        app_version="cli@test",
+        token="ses_1",
+        transport=transport(events, ticket_failures),
     )
 
 
@@ -148,6 +172,48 @@ async def test_a_dropped_socket_reconnects_and_replays_after_the_cursor(
     assert await collect(channel, 4) == [1, 2, 3, 4]
     assert len(urls) == 2
     assert states == ["connecting", "open", "reconnecting", "open"]
+
+
+async def test_an_api_that_is_down_while_reconnecting_is_waited_for(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(realtime, "BACKOFF_SECONDS", (0.0,))
+    # The API is down when the channel opens: the ticket call fails at the
+    # transport, then the API answers 503 while it comes up, then it is back;
+    # later the socket drops and the reconnect finds it healthy.
+    first = FakeSocket([HELLO, SUBSCRIBED, push(1), Close(1006, "gone")])
+    second = FakeSocket([HELLO, SUBSCRIBED, push(2)])
+    failures: list[Exception | int] = [httpx.ConnectError("refused"), 503]
+    states: list[str] = []
+    channel = Channel(
+        client_over([record(1)], failures),
+        on_state=states.append,
+        connect=connect_to([first, second], []),
+    )
+    assert await collect(channel, 2) == [1, 2]
+    assert states == ["connecting", "reconnecting", "open", "reconnecting", "open"]
+
+
+async def test_a_ticket_refused_with_401_stops_the_channel() -> None:
+    channel = Channel(client_over([], [401]), connect=connect_to([], []))
+    with pytest.raises(ChannelRefused):
+        await collect(channel, 1)
+    assert channel.state == "closed"
+
+
+async def test_what_happened_before_the_first_push_is_replayed_on_reconnect(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(realtime, "BACKOFF_SECONDS", (0.0,))
+    # The stream stands at 4 when the socket opens; nothing arrives before it
+    # drops; two events happen meanwhile; the reconnect replays them.
+    first = FakeSocket([hello_at(4), SUBSCRIBED, Close(1006, "gone")])
+    second = FakeSocket([hello_at(6), SUBSCRIBED, push(7)])
+    channel = Channel(
+        client_over([record(3), record(5), record(6)]), connect=connect_to([first, second], [])
+    )
+    assert await collect(channel, 3) == [5, 6, 7]
+    assert channel.cursor == 7
 
 
 async def test_a_refused_ticket_stops_the_channel() -> None:

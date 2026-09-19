@@ -21,6 +21,7 @@ class HelloEnvelope(Frame):
     type: Literal["hello"]
     org_id: UUID
     user_id: UUID
+    seq: int  # the stream position when the socket opened
     ping_interval_seconds: int
 
 

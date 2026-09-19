@@ -12,6 +12,11 @@ from tadas.services.api.realtime.envelopes import EventEnvelope, TicketView
 class RealtimeServiceInterface:
     async def issue_ticket(self, ctx: OpContext) -> TicketView: ...
 
+    async def head(self, ctx: OpContext) -> int:
+        """The tenant's stream position when a socket opens; the hello carries it
+        so a client can replay from there before it has seen any push."""
+        ...
+
     def subscribe(
         self, ctx: OpContext, topic: Topics, deliver: Callable[[EventEnvelope], None]
     ) -> Callable[[], None]:

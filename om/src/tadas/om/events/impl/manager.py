@@ -22,5 +22,9 @@ class EventsManagerImpl(EventsManagerInterface):
         ctx.require(Permission.READ)
         return await self._storage.read_after(ctx.org_id, max(0, after_seq), self._clamp(limit))
 
+    async def get_head(self, ctx: OpContext) -> int:
+        ctx.require(Permission.READ)
+        return await self._storage.read_head(ctx.org_id)
+
     def _clamp(self, limit: int) -> int:
         return max(1, min(limit, self._options.max_limit))

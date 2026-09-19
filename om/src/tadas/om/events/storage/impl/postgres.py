@@ -64,3 +64,8 @@ class EventStoragePostgresImpl(PgStorageBase, EventStorageInterface):
         async with self._session_for(stmt) as session:
             result = await session.execute(stmt)
             return [to_model(row, Event) for row in result.scalars()]
+
+    async def read_head(self, org_id: UUID) -> int:
+        stmt = select(func.coalesce(func.max(Events.seq), 0)).where(Events.org_id == org_id)
+        async with self._session_for(stmt) as session:
+            return int(await session.scalar(stmt) or 0)

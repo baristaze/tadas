@@ -25,3 +25,6 @@ class EventStorageMemoryImpl(MemoryStorageBase, EventStorageInterface):
     async def read_after(self, org_id: UUID, after_seq: int, limit: int) -> list[Event]:
         newer = [e for e in self._rows(self._events, org_id) if e.seq > after_seq]
         return sorted(newer, key=lambda e: e.seq)[:limit]
+
+    async def read_head(self, org_id: UUID) -> int:
+        return self._next_seq.get(org_id, 0)
