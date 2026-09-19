@@ -138,6 +138,12 @@ everything in-process for tests.
   image's `HEALTHCHECK` runs `health`, which reads the serving worker's
   liveness key through the same cache and exits non-zero when it is
   missing. It serves its own `/metrics` on `TADAS_METRICS_PORT` (9464).
+- Every Python process builds its roots whole at boot, once: storage,
+  infra, then every manager, in dependency order; a request constructs
+  nothing. The cost is the imports (about 450 ms, once per process);
+  a root itself builds in microseconds. `make bench-boot` measures it;
+  [ADR 0007](adr/0007-roots-built-whole-at-boot.md) says why a lazy
+  root is refused.
 - Every Python process boots error reporting (the Sentry SDK, on only when
   `TADAS_SENTRY_DSN` is set: unhandled exceptions and ERROR log lines,
   tagged with `service` and `request_id`), tracing (OpenTelemetry, on only

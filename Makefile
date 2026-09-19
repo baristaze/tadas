@@ -99,6 +99,10 @@ demo-cli-gif: ## Record the README's CLI demo GIF (command mode beside listen) a
 migrate-check: ## Compare every role's ORM metadata with the migrated schema
 	uv run --package tadas-om python -m tadas.om.storage.migrate check --all
 
+# What a process pays to boot: imports once, then microseconds per root (ADR 0007).
+bench-boot: ## Time the imports and the construction of every root
+	uv run --package tadas-api python scripts/bench_boot.py
+
 check: lint format-check typecheck test-unit ## The fast local gate
 	@if [ -d apps ]; then pnpm run lint && pnpm run typecheck && pnpm run test; fi
 
