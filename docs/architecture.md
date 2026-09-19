@@ -246,7 +246,14 @@ worker, on an infra module importing the object model, or on an
 object-model module outside `tadas.om.root` importing an infra impl
 rather than an interface. `test_storage_exceptions.py` lists every
 storage method that does not take `org_id` first and every manager
-operation that does not take a context, each with its stated reason. `make migrate-check` compares
+operation that does not take a context, each with its stated reason.
+`test_interfaces.py` fails on a `*Interface` under `tadas.om` or
+`tadas.infra` that is not an `ABC` with every public method abstract.
+Each process's `tests/test_settings.py` (and `infra/tests/`) reads
+`.env.example` and fails on a settings field it does not document, and
+reads every Terraform environment and fails on a field the cloud neither
+sets nor lists, with a reason, as one it leaves at the local default.
+`make migrate-check` compares
 every role's ORM metadata with the migrated schema; it needs the compose
 database, so CI's integration job runs it and the fast gate does not
 ([ADR 0003](adr/0003-migrate-check-in-the-integration-job.md)).
