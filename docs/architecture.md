@@ -246,7 +246,14 @@ worker, on an infra module importing the object model, or on an
 object-model module outside `tadas.om.root` importing an infra impl
 rather than an interface. `test_storage_exceptions.py` lists every
 storage method that does not take `org_id` first and every manager
-operation that does not take a context, each with its stated reason. `make migrate-check` compares
+operation that does not take a context, each with its stated reason.
+`test_interfaces.py` fails on a `*Interface` under `tadas.om` or
+`tadas.infra` that is not an `ABC` with every public method abstract.
+Each process's `tests/test_settings.py` (and `infra/tests/`) reads
+`.env.example` and fails on a settings field it does not document, and
+reads every Terraform environment and fails on a field the cloud neither
+sets nor lists, with a reason, as one it leaves at the local default.
+`make migrate-check` compares
 every role's ORM metadata with the migrated schema; it needs the compose
 database, so CI's integration job runs it and the fast gate does not
 ([ADR 0003](adr/0003-migrate-check-in-the-integration-job.md)).
@@ -254,3 +261,29 @@ database, so CI's integration job runs it and the fast gate does not
 ## Decisions
 
 See [docs/adr/](adr/).
+
+### Considered
+
+Shapes a sibling system (xtadas, the one-shot scaffold benchmark) has and
+this one does not, judged and not taken, or not yet:
+
+- **A TypeScript client as its own workspace package** (`clients/api-client`
+  beside `clients/python`). "Clients Live in One Place" read literally; the
+  portal today keeps the committed `openapi.json`, the generated types, the
+  facade, and the transport client under `apps/portal/src/api/`, which is one
+  place while the portal is the only TypeScript caller. The move is real and
+  mechanical (a package with its own `tsconfig`, the portal importing it,
+  `make openapi` regenerating into it) and it pays off the day a second
+  TypeScript app arrives; it is not taken before then.
+- **A server-side scope on the realtime subscription** (`subscribe` with
+  `scope: team | mine`, the push carrying the record's assignee and creator
+  so the server filters by audience). Not taken: every push carries the
+  tenant's stream position and both clients hold a contiguous cursor, so a
+  push the server withholds is a gap to them, and the next push that arrives
+  replays `/v1/events` after the cursor, which is unscoped and hands back what
+  was withheld. A scoped subscription would either cost a replay per filtered
+  push or need a scoped replay and a per-subscription frame counter to keep
+  the dropped-frame guarantee, a second protocol. The "mine" rule stays where
+  it is, in the client (`model.py`, the portal's scoped lists), until the
+  channel carries enough traffic that filtering at the server pays for the
+  protocol it needs.

@@ -1,3 +1,4 @@
+from datetime import datetime
 from uuid import UUID
 
 from tadas.om.exceptions import DuplicateIdempotencyKey
@@ -28,3 +29,19 @@ class IdempotencyStorageMemoryImpl(MemoryStorageBase, IdempotencyStorageInterfac
             if record.user_id == user_id and record.key == key:
                 return record
         return None
+
+    async def take_over_pending(
+        self,
+        org_id: UUID,
+        user_id: UUID,
+        key: str,
+        abandoned_before: datetime,
+        restarted_at: datetime,
+    ) -> IdempotencyRecord | None:
+        async with self._lock:
+            stored = await self.read_record(org_id, user_id, key)
+            if stored is None or not stored.pending or stored.created_at >= abandoned_before:
+                return None
+            taken = stored.model_copy(update={"created_at": restarted_at})
+            self._put(self._records, org_id, taken)
+            return taken

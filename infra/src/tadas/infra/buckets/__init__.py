@@ -1,6 +1,7 @@
 """Buckets: large blobs. Every call takes org_id and the impl prefixes keys
 with it, so one tenant's blobs cannot be read or listed by another."""
 
+from abc import ABC, abstractmethod
 from datetime import timedelta
 from enum import Enum
 from uuid import UUID
@@ -22,34 +23,44 @@ def object_key(org_id: UUID, key: str) -> str:
     return f"{org_id}/{key}"
 
 
-class BucketsInterface:
+class BucketsInterface(ABC):
+    @abstractmethod
     async def put(
         self, org_id: UUID, bucket: Buckets, key: str, data: bytes, content_type: str
     ) -> None: ...
 
+    @abstractmethod
     async def get(self, org_id: UUID, bucket: Buckets, key: str) -> bytes: ...
 
+    @abstractmethod
     async def exists(self, org_id: UUID, bucket: Buckets, key: str) -> bool: ...
 
+    @abstractmethod
     async def list(self, org_id: UUID, bucket: Buckets, prefix: str) -> list[str]: ...
 
+    @abstractmethod
     async def delete(self, org_id: UUID, bucket: Buckets, key: str) -> None: ...
 
+    @abstractmethod
     async def presign_get(
         self, org_id: UUID, bucket: Buckets, key: str, ttl: timedelta
     ) -> str | None: ...
 
+    @abstractmethod
     async def presign_put(
         self, org_id: UUID, bucket: Buckets, key: str, content_type: str, ttl: timedelta
     ) -> str | None: ...
 
+    @abstractmethod
     def describe(self) -> str: ...
 
+    @abstractmethod
     async def start(self) -> None:
         """Opened by the infra root at boot. An impl that holds no connection
         of its own returns None."""
         ...
 
+    @abstractmethod
     async def close(self) -> None:
         """Closed by the infra root at shutdown, in reverse order of start."""
         ...

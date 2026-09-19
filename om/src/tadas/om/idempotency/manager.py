@@ -2,11 +2,14 @@
 may retry. The gateway begins a record before it runs a creating request
 and finishes it with the outcome; a retry gets the stored record back."""
 
+from abc import ABC, abstractmethod
+
 from tadas.om.idempotency.types.record import IdempotencyRecord
 from tadas.om.opcontext import OpContext
 
 
-class IdempotencyManagerInterface:
+class IdempotencyManagerInterface(ABC):
+    @abstractmethod
     async def begin(
         self, ctx: OpContext, key: str, request_digest: str
     ) -> IdempotencyRecord | None:
@@ -17,6 +20,7 @@ class IdempotencyManagerInterface:
         record has another digest."""
         ...
 
+    @abstractmethod
     async def finish(self, ctx: OpContext, key: str, status: int, body: str) -> IdempotencyRecord:
         """Records the outcome on the record `begin` wrote; raises NotFound without one."""
         ...

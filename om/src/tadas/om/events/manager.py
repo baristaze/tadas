@@ -4,6 +4,7 @@ storage; an audit producer appends through this manager under its context.
 A client replays the stream from the last sequence it saw. Append-only: no
 update, no delete."""
 
+from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from uuid import UUID
 
@@ -12,17 +13,20 @@ from tadas.om.events.types.event import Event
 from tadas.om.opcontext import OpContext
 
 
-class EventsManagerInterface:
+class EventsManagerInterface(ABC):
+    @abstractmethod
     async def append(self, ctx: OpContext, event: Event) -> Event:
         """Appends an audit event under the caller's tenant; the write it records
         was authorized by the manager that made it, so READ is enough. Idempotent
         on `event.id`: an id already appended returns the stored event."""
         ...
 
+    @abstractmethod
     async def get_events(self, ctx: OpContext, after_seq: int, limit: int) -> list[Event]:
         """The tenant's events after `after_seq`, oldest first."""
         ...
 
+    @abstractmethod
     async def get_head(self, ctx: OpContext) -> int:
         """The tenant's stream position: the last seq assigned, 0 before the
         first event. A client that opens the channel starts here."""

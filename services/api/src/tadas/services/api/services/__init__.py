@@ -2,6 +2,8 @@
 service it needs from this object and makes one call into it; the impl
 translates the request, calls one manager, and projects the result."""
 
+from abc import ABC, abstractmethod
+
 from tadas.services.api.services.admin import AdminServiceInterface
 from tadas.services.api.services.events import EventsServiceInterface
 from tadas.services.api.services.realtime import RealtimeServiceInterface
@@ -18,13 +20,18 @@ __all__ = [
 ]
 
 
-class ServicesInterface:
+class ServicesInterface(ABC):
+    @abstractmethod
     def get_tasks_service(self) -> TasksServiceInterface: ...
 
+    @abstractmethod
     def get_tenancy_service(self) -> TenancyServiceInterface: ...
 
+    @abstractmethod
     def get_admin_service(self) -> AdminServiceInterface: ...
 
+    @abstractmethod
     def get_events_service(self) -> EventsServiceInterface: ...
 
+    @abstractmethod
     def get_realtime_service(self) -> RealtimeServiceInterface: ...

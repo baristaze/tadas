@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta
 from uuid import UUID
 
 import pytest
@@ -57,3 +58,29 @@ class IdempotencyStorageContract:
         with pytest.raises(TenantMismatch):
             await storage.write_record(org_b, record.model_copy(update={"status": 200}))
         assert await storage.read_record(org_a, record.user_id, record.key) == record
+
+    async def test_take_over_is_one_conditional_write(
+        self, storage: IdempotencyStorageInterface
+    ) -> None:
+        org = new_id()
+        record = make_record()
+        await storage.write_record(org, record)
+        later = utcnow() + timedelta(minutes=5)
+
+        async def take_over(org_id: UUID, cutoff: datetime) -> IdempotencyRecord | None:
+            return await storage.take_over_pending(
+                org_id, record.user_id, record.key, cutoff, later
+            )
+
+        # Not abandoned yet: the marker began after the cut-off.
+        assert await take_over(org, record.created_at) is None
+        # Abandoned: exactly one of two racing retries takes it over.
+        cutoff = record.created_at + timedelta(seconds=1)
+        taken = await take_over(org, cutoff)
+        assert taken is not None and taken.created_at == later and taken.pending
+        assert await take_over(org, cutoff) is None
+        assert await storage.read_record(org, record.user_id, record.key) == taken
+        # A finished record is never taken over, and another tenant's is never matched.
+        await storage.write_record(org, taken.model_copy(update={"status": 200, "body": "{}"}))
+        assert await take_over(org, later) is None
+        assert await take_over(new_id(), later) is None

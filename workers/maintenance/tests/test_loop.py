@@ -7,6 +7,7 @@ from uuid import UUID
 from worker_support import build_container, fast_options, make_item, sign_in
 
 from tadas.infra.cache import CacheInterface, CacheScope
+from tadas.infra.observability import request_id_var
 from tadas.om.base import EMPTY_UUID, new_id, utcnow
 from tadas.om.exceptions import LeaseLost
 from tadas.om.opcontext import OpContext
@@ -26,9 +27,11 @@ class SlowHandler(WorkHandlerInterface):
         self.started: list[UUID] = []
         self.finished: list[UUID] = []
         self.cancelled: list[UUID] = []
+        self.request_ids: dict[UUID, str | None] = {}
 
     async def handle(self, ctx: OpContext, item: WorkItem) -> None:
         self.started.append(item.id)
+        self.request_ids[item.id] = request_id_var.get()
         try:
             await asyncio.sleep(self.hold)
         except asyncio.CancelledError:
@@ -102,6 +105,12 @@ class MissingLiveness(CacheInterface):
     def describe(self) -> str:
         return "cache[worker_liveness]=missing"
 
+    async def start(self) -> None:
+        return None
+
+    async def close(self) -> None:
+        return None
+
 
 def start_loop(
     container: WorkerContainer,
@@ -152,6 +161,10 @@ async def test_claims_within_capacity_and_completes(tmp_path: Path) -> None:
     for item in items:
         stored = await storage.read_item(ctx.org_id, item.id)
         assert stored is not None and stored.status is WorkStatus.DONE
+    # Each run carried its own request id, the one the claim minted, in the
+    # context variable the log filter reads.
+    assert len(set(handler.request_ids.values())) == 3
+    assert all(rid and rid != str(ctx.request_id) for rid in handler.request_ids.values())
 
 
 async def test_lease_is_renewed_while_an_item_runs(tmp_path: Path) -> None:

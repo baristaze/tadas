@@ -11,7 +11,6 @@ from datetime import timedelta
 from prometheus_client import start_http_server
 
 from tadas.infra.cache import CacheScope
-from tadas.infra.impl.configured import InfraConfiguredImpl
 from tadas.infra.observability import (
     configure_error_reporting,
     configure_logging,
@@ -84,17 +83,19 @@ async def serve(lane: str | None) -> int:
 async def health(worker_id: str | None) -> int:
     """The container healthcheck: reads the serving worker's liveness key through
     the same cache the loop heartbeats into. Exit 0 while the key is present,
-    1 when it is missing or the cache is unreachable. Nothing here touches
-    storage or starts a listener."""
+    1 when it is missing or the cache is unreachable. The container is built
+    and started the way `serve` builds it, so the probe reads through the same
+    root under its lifecycle; nothing here touches storage."""
     settings = MaintenanceSettings()
     target = worker_id or settings.worker_id
-    infra = InfraConfiguredImpl(settings)
+    container = WorkerContainer.build(settings)
+    await container.start()
     try:
-        alive = await infra.get_cache(CacheScope.WORKER_LIVENESS).get(
+        alive = await container.infra.get_cache(CacheScope.WORKER_LIVENESS).get(
             EMPTY_UUID, f"worker:{target}"
         )
     finally:
-        await infra.close()
+        await container.close()
     if alive is None:
         print(f"worker {target} has no liveness key", file=sys.stderr)
         return 1

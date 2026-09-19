@@ -1,5 +1,6 @@
 """The tasks service: what the wire can do with tasks, in views."""
 
+from abc import ABC, abstractmethod
 from uuid import UUID
 
 from tadas.om.opcontext import OpContext
@@ -13,7 +14,8 @@ from tadas.services.api.types.tasks import (
 )
 
 
-class TasksServiceInterface:
+class TasksServiceInterface(ABC):
+    @abstractmethod
     async def get_tasks(
         self,
         ctx: OpContext,
@@ -23,14 +25,19 @@ class TasksServiceInterface:
         limit: int,
     ) -> TaskPageView: ...
 
+    @abstractmethod
     async def get_task(self, ctx: OpContext, task_id: UUID) -> TaskView: ...
 
+    @abstractmethod
     async def create_task(self, ctx: OpContext, body: AddTaskRequest) -> TaskView: ...
 
+    @abstractmethod
     async def update_task(
         self, ctx: OpContext, task_id: UUID, body: UpdateTaskRequest
     ) -> TaskView: ...
 
+    @abstractmethod
     async def move_task(self, ctx: OpContext, task_id: UUID, body: MoveTaskRequest) -> TaskView: ...
 
+    @abstractmethod
     async def delete_task(self, ctx: OpContext, task_id: UUID) -> TaskView: ...

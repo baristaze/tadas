@@ -20,13 +20,14 @@ class StorageSettings(BaseSettings):
     database_url_admin: str | None = None
 
     def refuse_remote(self) -> None:
-        """For a development seed: refuses a role URL whose host is not local, so
-        development credentials never land in a shared database by a stray `.env`."""
+        """For a development command (the seed, `make migrate`, the integration
+        tests): refuses a role URL whose host is not local, so a stray `.env`
+        never points a local command at a shared database."""
         for role, url in self.role_urls().items():
             host = make_url(url).host
             if host not in LOCAL_HOSTS:
                 raise SystemExit(
-                    f"refusing to seed {role.value} at {host}: TADAS_DATABASE_URL must be local"
+                    f"refusing to touch {role.value} at {host}: TADAS_DATABASE_URL must be local"
                 )
 
     def role_urls(self) -> dict[DatabaseRole, str]:

@@ -3,6 +3,7 @@ the one cross-tenant read; every other operation takes org_id first. The
 writes that move a claimed item are conditional on the claim still being
 this worker's, so a lost lease can never be written over."""
 
+from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from datetime import datetime, timedelta
 from uuid import UUID
@@ -10,11 +11,13 @@ from uuid import UUID
 from tadas.om.work.types.work_item import WorkItem, WorkKind
 
 
-class WorkStorageInterface:
+class WorkStorageInterface(ABC):
+    @abstractmethod
     async def write_item(self, org_id: UUID, item: WorkItem) -> None:
         """Raises DuplicateWorkItem when another item carries the same idempotency key."""
         ...
 
+    @abstractmethod
     async def write_item_if_held(
         self, org_id: UUID, worker_id: str, item: WorkItem
     ) -> WorkItem | None:
@@ -22,6 +25,7 @@ class WorkStorageInterface:
         is still claimed by `worker_id`; returns None when it is not."""
         ...
 
+    @abstractmethod
     async def claim_next(
         self, lane: str, kinds: Sequence[WorkKind], worker_id: str, lease: timedelta
     ) -> tuple[UUID, WorkItem] | None:
@@ -29,6 +33,7 @@ class WorkStorageInterface:
         skipping locked ones, stamped with the claim and the lease."""
         ...
 
+    @abstractmethod
     async def requeue_stale(
         self, org_id: UUID, now: datetime, stagger: timedelta, updated_by: UUID
     ) -> list[WorkItem]:
@@ -38,4 +43,5 @@ class WorkStorageInterface:
         `updated_by` is the sweep's principal."""
         ...
 
+    @abstractmethod
     async def read_item(self, org_id: UUID, item_id: UUID) -> WorkItem | None: ...
