@@ -4,7 +4,7 @@ stream position and again on /v1/events after the last seq a client saw."""
 from pathlib import Path
 
 import httpx
-from api_support import OWNER, build_container, run
+from api_support import OWNER, build_container, run, seed_request
 from starlette.testclient import TestClient
 
 from tadas.services.api.app import create_app
@@ -42,7 +42,7 @@ def test_a_push_carries_the_stream_position(tmp_path: Path) -> None:
     container = build_container(tmp_path)
     _, org = run(
         container.managers.tenancy.bootstrap(
-            "Acme", "acme", OWNER["email"], OWNER["password"], OWNER["name"]
+            seed_request(), "Acme", "acme", OWNER["email"], OWNER["password"], OWNER["name"]
         )
     )
     with TestClient(create_app(container)) as tc:

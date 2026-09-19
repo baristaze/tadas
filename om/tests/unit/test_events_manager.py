@@ -5,7 +5,15 @@ from tadas.om.base import new_id
 from tadas.om.events.impl.manager import EventsManagerImpl, EventsOptions
 from tadas.om.events.storage.impl.memory import EventStorageMemoryImpl
 from tadas.om.exceptions import NotAuthorized
-from tadas.om.opcontext import AppContext, AppType, CredentialKind, OpContext, Role, build_context
+from tadas.om.opcontext import (
+    AppContext,
+    AppType,
+    CredentialKind,
+    OpContext,
+    RequestContext,
+    Role,
+    build_context,
+)
 from tadas.om.tenancy.types.role import permissions_of
 
 APP = AppContext(type=AppType.PORTAL, version="portal@test")
@@ -13,13 +21,12 @@ APP = AppContext(type=AppType.PORTAL, version="portal@test")
 
 def context(role: Role = Role.MEMBER) -> OpContext:
     return build_context(
+        RequestContext(request_id=new_id(), app=APP),
         user_id=new_id(),
         org_id=new_id(),
         role=role,
         permissions=permissions_of(role),
         credential_kind=CredentialKind.SESSION_TOKEN,
-        app=APP,
-        request_id=new_id(),
     )
 
 

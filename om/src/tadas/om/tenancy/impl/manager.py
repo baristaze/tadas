@@ -15,12 +15,12 @@ from tadas.om.exceptions import (
     ValidationFailed,
 )
 from tadas.om.opcontext import (
-    AdminContext,
-    AppContext,
-    AppType,
     CredentialKind,
+    IdentityContext,
     OpContext,
+    OperatorContext,
     Permission,
+    RequestContext,
     Role,
     build_context,
 )
@@ -55,9 +55,6 @@ from tadas.om.tenancy.types.socket_ticket import SocketTicket
 from tadas.om.tenancy.types.user import User
 
 log = logging.getLogger(__name__)
-
-BOOTSTRAP_APP = AppContext(type=AppType.CLI, version="cli@bootstrap")
-"""The app a bootstrap runs as when its caller names none."""
 
 TICKET_USED_KEY = "ticket-used:"
 """The cache remembers a redeemed ticket so a replay is refused without a
@@ -97,10 +94,11 @@ class TenancyManagerImpl(TenancyManagerInterface):
         self._cache = cache
         self._options = options
 
-    # Operations without a principal.
+    # The transitions: each takes a stage and produces a stronger one.
 
     async def bootstrap(
         self,
+        rctx: RequestContext,
         org_name: str,
         slug: str,
         email: str,
@@ -108,8 +106,6 @@ class TenancyManagerImpl(TenancyManagerInterface):
         display_name: str,
         *,
         operator: bool = False,
-        app: AppContext | None = None,
-        request_id: UUID | None = None,
     ) -> tuple[OpContext, Org]:
         if await self._storage.read_org_by_slug(slug) is not None:
             raise Conflict(f"org slug {slug!r} is taken")
@@ -167,27 +163,24 @@ class TenancyManagerImpl(TenancyManagerInterface):
         await self._storage.write_membership(org.id, membership)
         # The principal now exists; everything after this line runs under it.
         ctx = build_context(
+            rctx,
             user_id=user.id,
             org_id=org.id,
             role=membership.role,
             permissions=permissions_of(membership.role),
             credential_kind=CredentialKind.INTERNAL,
-            app=app or BOOTSTRAP_APP,
-            request_id=request_id or new_id(),
             teams=membership.teams,
         )
         return ctx, org
 
     async def add_member(
         self,
+        rctx: RequestContext,
         slug: str,
         email: str,
         password: str,
         display_name: str,
         role: Role,
-        *,
-        app: AppContext | None = None,
-        request_id: UUID | None = None,
     ) -> tuple[OpContext, User, bool]:
         org = await self._storage.read_org_by_slug(slug)
         if org is None or org.deleted_at is not None:
@@ -195,13 +188,12 @@ class TenancyManagerImpl(TenancyManagerInterface):
         # The org's creator is the principal; everything after this line runs under it.
         org, creator, membership = await self._principal(org.id, org.created_by)
         ctx = build_context(
+            rctx,
             user_id=creator.id,
             org_id=org.id,
             role=membership.role,
             permissions=permissions_of(membership.role),
             credential_kind=CredentialKind.INTERNAL,
-            app=app or BOOTSTRAP_APP,
-            request_id=request_id or new_id(),
             teams=membership.teams,
         )
         ctx.require(Permission.MANAGE_MEMBERS)
@@ -252,7 +244,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
         await self._write_user(ctx, user, "created")
         return ctx, user, True
 
-    async def login(self, email: str, password: str) -> IssuedLogin:
+    async def login(self, rctx: RequestContext, email: str, password: str) -> IssuedLogin:
         identity = await self._storage.read_identity_by_email(email)
         if identity is None or not verify_password(password, identity.password_hash):
             raise InvalidCredential("email or password is wrong")
@@ -273,9 +265,23 @@ class TenancyManagerImpl(TenancyManagerInterface):
         memberships = await self._memberships_of(identity.id)
         return IssuedLogin(token=token, expires_at=session.expires_at, memberships=memberships)
 
-    async def exchange_login(self, login_token: str, org_id: UUID) -> IssuedSession:
-        login = await self._live_session(login_token, CredentialKind.LOGIN)
-        org, user, membership = await self._principal_in(org_id, login.identity_id)
+    async def authenticate_login(self, rctx: RequestContext, credential: str) -> IdentityContext:
+        login = await self._live_session(credential, CredentialKind.LOGIN)
+        identity = await self._storage.read_identity(login.identity_id)
+        if identity is None:
+            raise InvalidCredential("the identity is gone")
+        return IdentityContext(
+            request_id=rctx.request_id,
+            app=rctx.app,
+            trace_id=rctx.trace_id,
+            identity_id=identity.id,
+            email=identity.email,
+            credential_kind=CredentialKind.LOGIN,
+            credential_id=login.id,
+        )
+
+    async def exchange_login(self, ictx: IdentityContext, org_id: UUID) -> IssuedSession:
+        org, user, membership = await self._principal_in(org_id, ictx.identity_id)
         now = utcnow()
         token = mint_token(CredentialKind.SESSION_TOKEN)
         session = Session(
@@ -284,7 +290,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
             updated_at=now,
             created_by=user.id,
             updated_by=user.id,
-            identity_id=login.identity_id,
+            identity_id=ictx.identity_id,
             user_id=user.id,
             token_hash=hash_token(token),
             credential_kind=CredentialKind.SESSION_TOKEN,
@@ -295,13 +301,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
             token=token, expires_at=session.expires_at, org=org, user=user, role=membership.role
         )
 
-    async def authenticate(
-        self,
-        credential: str,
-        app: AppContext,
-        request_id: UUID,
-        trace_id: str | None = None,
-    ) -> OpContext:
+    async def authenticate(self, rctx: RequestContext, credential: str) -> OpContext:
         kind = credential_kind_of(credential)
         if kind is CredentialKind.SESSION_TOKEN:
             found = await self._storage.read_session_by_token_hash(hash_token(credential))
@@ -311,15 +311,13 @@ class TenancyManagerImpl(TenancyManagerInterface):
             self._check_session(session, CredentialKind.SESSION_TOKEN)
             org, user, membership = await self._principal(org_id, session.user_id)
             return build_context(
+                rctx,
                 user_id=user.id,
                 org_id=org.id,
                 role=membership.role,
                 permissions=permissions_of(membership.role),
                 credential_kind=kind,
-                app=app,
-                request_id=request_id,
                 teams=membership.teams,
-                trace_id=trace_id,
                 credential_id=session.id,
             )
         if kind is CredentialKind.API_KEY:
@@ -330,38 +328,37 @@ class TenancyManagerImpl(TenancyManagerInterface):
             self._check_api_key(api_key)
             org, user, membership = await self._principal(org_id, api_key.user_id)
             return build_context(
+                rctx,
                 user_id=user.id,
                 org_id=org.id,
                 role=capped_role(api_key.role, membership.role),
                 permissions=permissions_of(capped_role(api_key.role, membership.role)),
                 credential_kind=kind,
-                app=app,
-                request_id=request_id,
                 teams=membership.teams,
-                trace_id=trace_id,
                 credential_id=api_key.id,
             )
         raise InvalidCredential("this route accepts a session token or an api key")
 
-    async def authenticate_operator(self, credential: str, request_id: UUID) -> AdminContext:
-        login = await self._live_session(credential, CredentialKind.LOGIN)
-        identity = await self._storage.read_identity(login.identity_id)
+    async def admit_operator(self, ictx: IdentityContext) -> OperatorContext:
+        identity = await self._storage.read_identity(ictx.identity_id)
         if identity is None or not identity.is_operator:
             raise NotAnOperator("this identity is not an operator")
-        return AdminContext(
+        return OperatorContext(
+            request_id=ictx.request_id,
+            app=ictx.app,
+            trace_id=ictx.trace_id,
             identity_id=identity.id,
             email=identity.email,
-            credential_kind=CredentialKind.LOGIN,
-            request_id=request_id,
+            credential_kind=ictx.credential_kind,
+            credential_id=ictx.credential_id,
         )
 
     async def resume(
         self,
+        rctx: RequestContext,
         org_id: UUID,
         credential_kind: CredentialKind,
         credential_id: UUID,
-        app: AppContext,
-        request_id: UUID,
     ) -> OpContext:
         if credential_kind is CredentialKind.SESSION_TOKEN:
             session = await self._storage.read_session(org_id, credential_id)
@@ -380,18 +377,17 @@ class TenancyManagerImpl(TenancyManagerInterface):
         else:
             raise InvalidCredential("a ticket stands for a session token or an api key")
         return build_context(
+            rctx,
             user_id=user.id,
             org_id=org.id,
             role=role,
             permissions=permissions_of(role),
             credential_kind=CredentialKind.SOCKET_TICKET,
-            app=app,
-            request_id=request_id,
             teams=membership.teams,
             credential_id=credential_id,
         )
 
-    async def redeem_ticket(self, ticket: str, app: AppContext, request_id: UUID) -> OpContext:
+    async def redeem_ticket(self, rctx: RequestContext, ticket: str) -> OpContext:
         if credential_kind_of(ticket) is not CredentialKind.SOCKET_TICKET:
             raise InvalidCredential("expected a socket ticket")
         digest = hash_token(ticket)
@@ -406,22 +402,17 @@ class TenancyManagerImpl(TenancyManagerInterface):
         await self._cache.put(EMPTY_UUID, TICKET_USED_KEY + digest, b"1", self._options.ticket_ttl)
         if behind.expires_at <= now:
             raise InvalidCredential("socket ticket expired")
-        return await self.resume(
-            org_id, behind.credential_kind, behind.credential_id, app, request_id
-        )
+        return await self.resume(rctx, org_id, behind.credential_kind, behind.credential_id)
 
-    async def service_context(
-        self, org_id: UUID, user_id: UUID, app: AppContext, request_id: UUID
-    ) -> OpContext:
+    async def service_context(self, rctx: RequestContext, org_id: UUID, user_id: UUID) -> OpContext:
         org, user, membership = await self._principal(org_id, user_id)
         return build_context(
+            rctx,
             user_id=user.id,
             org_id=org.id,
             role=Role.SERVICE,
             permissions=permissions_of(Role.SERVICE),
             credential_kind=CredentialKind.INTERNAL,
-            app=app,
-            request_id=request_id,
             teams=membership.teams,
         )
 
@@ -437,13 +428,13 @@ class TenancyManagerImpl(TenancyManagerInterface):
                 return orgs
             after_id = page[-1].id
 
-    async def service_contexts(self, app: AppContext, request_id: UUID) -> list[OpContext]:
+    async def service_contexts(self, rctx: RequestContext) -> list[OpContext]:
         contexts: list[OpContext] = []
         for org in await self._every_org():
             if org.deleted_at is not None:
                 continue
             try:
-                contexts.append(await self.service_context(org.id, org.created_by, app, request_id))
+                contexts.append(await self.service_context(rctx, org.id, org.created_by))
             except InvalidCredential as error:
                 # The founding user was removed; this tenant waits for a live
                 # principal, the others are still swept.

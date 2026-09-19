@@ -6,7 +6,7 @@ from uuid import UUID
 
 from tadas.infra.impl.local import InfraLocalImpl
 from tadas.om.base import new_id, utcnow
-from tadas.om.opcontext import AppContext, AppType, OpContext
+from tadas.om.opcontext import AppContext, AppType, OpContext, RequestContext
 from tadas.om.storage.impl.memory import StorageMemoryImpl
 from tadas.om.work.types.work_item import WorkItem, WorkKind
 from tadas.workers.maintenance.container import WorkerContainer
@@ -17,14 +17,22 @@ def build_container(tmp_path: Path) -> WorkerContainer:
     return WorkerContainer.for_tests(StorageMemoryImpl(), InfraLocalImpl(tmp_path))
 
 
+def request() -> RequestContext:
+    """The request stage a test mints at its edge, one per call."""
+    return RequestContext(
+        request_id=new_id(), app=AppContext(type=AppType.PORTAL, version="portal@test")
+    )
+
+
 async def sign_in(container: WorkerContainer) -> OpContext:
     tenancy = container.managers.tenancy
-    _, org = await tenancy.bootstrap("Acme", "acme", "ann@example.test", "pw-1234", "Ann")
-    login = await tenancy.login("ann@example.test", "pw-1234")
-    issued = await tenancy.exchange_login(login.token, org.id)
-    return await tenancy.authenticate(
-        issued.token, AppContext(type=AppType.PORTAL, version="portal@test"), new_id()
+    _, org = await tenancy.bootstrap(
+        request(), "Acme", "acme", "ann@example.test", "pw-1234", "Ann"
     )
+    login = await tenancy.login(request(), "ann@example.test", "pw-1234")
+    identity = await tenancy.authenticate_login(request(), login.token)
+    issued = await tenancy.exchange_login(identity, org.id)
+    return await tenancy.authenticate(request(), issued.token)
 
 
 def make_item(ctx: OpContext, *, target_id: UUID | None = None) -> WorkItem:

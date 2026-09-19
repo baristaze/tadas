@@ -13,9 +13,9 @@ from datetime import timedelta
 from tadas.infra.cache import CacheInterface
 from tadas.infra.observability import OUTCOMES, request_id_var
 from tadas.infra.topics import TopicPayload, Topics, TopicsInterface, WorkAvailablePayload
-from tadas.om.base import EMPTY_UUID, Platform
+from tadas.om.base import EMPTY_UUID, Platform, new_id
 from tadas.om.exceptions import LeaseLost, NotFound
-from tadas.om.opcontext import OpContext
+from tadas.om.opcontext import AppContext, AppType, OpContext, RequestContext
 from tadas.om.outbox import OutboxRelayInterface
 from tadas.om.work import WorkManagerInterface
 from tadas.om.work.types.handler import WorkHandlerInterface
@@ -59,6 +59,7 @@ class WorkerLoop:
         self._topics = topics
         self._liveness = liveness
         self._options = options
+        self._app = AppContext(type=AppType.WORKER, version=f"worker@{options.worker_id}")
         self._wake = asyncio.Event()
         self._stopping = asyncio.Event()
         self._drained = asyncio.Event()
@@ -122,10 +123,19 @@ class WorkerLoop:
                     self._wake.wait(), timeout=self._options.poll_interval.total_seconds()
                 )
 
+    def _request(self) -> RequestContext:
+        """The request stage the worker mints at its edge: one per claim and one per
+        sweep pass, the way the gateway mints one per request."""
+        return RequestContext(request_id=new_id(), app=self._app)
+
     async def _try_claim(self) -> bool:
         try:
             claimed = await self._work.claim(
-                self._options.lane, self.kinds, self._options.worker_id, self._options.lease
+                self._request(),
+                self._options.lane,
+                self.kinds,
+                self._options.worker_id,
+                self._options.lease,
             )
         except Exception:
             log.exception("claim failed")
@@ -142,8 +152,8 @@ class WorkerLoop:
     # Running one item.
 
     async def _run_item(self, ctx: OpContext, item: WorkItem) -> None:
-        # The claim minted the item's request id; every log line of the run
-        # carries it, the way the API's middleware does for a request.
+        # The claim refined the request stage minted for it; every log line of
+        # the run carries its request id, the way the API's middleware does.
         token = request_id_var.set(str(ctx.request_id))
         try:
             await self._handle(ctx, item)
@@ -257,7 +267,7 @@ class WorkerLoop:
         then the cross-tenant steps of the outbox. Every step is idempotent and
         wrapped, so a failing tenant or step never stops the rest."""
         try:
-            contexts = await self._work.maintenance_contexts()
+            contexts = await self._work.maintenance_contexts(self._request())
         except Exception:
             log.exception("sweep: maintenance_contexts failed")
             contexts = []

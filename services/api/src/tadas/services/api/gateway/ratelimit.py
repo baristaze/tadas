@@ -13,7 +13,7 @@ from tadas.infra.cache import CacheScope
 from tadas.infra.observability import OUTCOMES
 from tadas.om.base import EMPTY_UUID, Platform
 from tadas.om.exceptions import PlatformException
-from tadas.om.opcontext import OpContext
+from tadas.om.opcontext import CredentialScope, OpContext
 from tadas.services.api.gateway.auth import Ctx
 from tadas.services.api.gateway.resolve import container_of
 
@@ -43,14 +43,18 @@ class RateLimitOptions(Platform):
         return budgets[route]
 
 
-def subject_of(request: Request, ctx: OpContext | None) -> str:
+def subject_of(request: Request, ctx: CredentialScope | None) -> str:
+    """The credential id when a credential was presented, else the client address."""
     if ctx is not None:
-        return f"cred:{ctx.security.credential_id}"
+        return f"cred:{ctx.credential_id}"
     client = request.client.host if request.client else "unknown"
     return f"addr:{client}"
 
 
 async def count(request: Request, route: str, ctx: OpContext | None) -> None:
+    """Reads the tenant for the budget's scope and hands the context on to
+    `subject_of` for the credential; no named scope covers both, so it says
+    the stage."""
     container = container_of(request)
     budget = container.rate_limits.of(route)
     cache = container.infra.get_cache(CacheScope.RATE_LIMIT)

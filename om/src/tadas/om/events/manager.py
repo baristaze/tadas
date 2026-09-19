@@ -10,7 +10,7 @@ from uuid import UUID
 
 from tadas.om.base import utcnow
 from tadas.om.events.types.event import Event
-from tadas.om.opcontext import OpContext
+from tadas.om.opcontext import OpContext, ProvenanceScope
 
 
 class EventsManagerInterface(ABC):
@@ -34,9 +34,10 @@ class EventsManagerInterface(ABC):
 
 
 def audit_event(
-    ctx: OpContext, event_id: UUID, kind: str, target_id: UUID, facts: Mapping[str, object]
+    ctx: ProvenanceScope, event_id: UUID, kind: str, target_id: UUID, facts: Mapping[str, object]
 ) -> Event:
-    """An audit entry: the event shape plus the principal and the app, from the context."""
+    """An audit entry: the event shape plus the actor, the request, and the app,
+    which is all it reads from the context."""
     return Event(
         id=event_id,
         kind=kind,

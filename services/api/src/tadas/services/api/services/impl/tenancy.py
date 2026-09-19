@@ -1,7 +1,7 @@
 from datetime import timedelta
 from uuid import UUID
 
-from tadas.om.opcontext import OpContext
+from tadas.om.opcontext import IdentityContext, OpContext, RequestContext
 from tadas.om.tenancy import TenancyManagerInterface
 from tadas.services.api.services.tenancy import TenancyServiceInterface
 from tadas.services.api.types.common import clamp_limit
@@ -29,8 +29,8 @@ class TenancyServiceImpl(TenancyServiceInterface):
     def __init__(self, tenancy: TenancyManagerInterface) -> None:
         self._tenancy = tenancy
 
-    async def login(self, body: LoginRequest) -> IssuedLoginView:
-        issued = await self._tenancy.login(body.email, body.password)
+    async def login(self, rctx: RequestContext, body: LoginRequest) -> IssuedLoginView:
+        issued = await self._tenancy.login(rctx, body.email, body.password)
         return IssuedLoginView(
             token=issued.token,
             expires_at=issued.expires_at,
@@ -38,9 +38,9 @@ class TenancyServiceImpl(TenancyServiceInterface):
         )
 
     async def exchange_session(
-        self, login_credential: str, body: ExchangeSessionRequest
+        self, ictx: IdentityContext, body: ExchangeSessionRequest
     ) -> IssuedSessionView:
-        issued = await self._tenancy.exchange_login(login_credential, body.org_id)
+        issued = await self._tenancy.exchange_login(ictx, body.org_id)
         return IssuedSessionView.model_validate(issued)
 
     async def logout(self, ctx: OpContext) -> SessionView:

@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 
 from tadas.infra.topics import Topics
-from tadas.om.opcontext import OpContext
+from tadas.om.opcontext import ActorScope, OpContext
 from tadas.services.api.realtime.envelopes import EventEnvelope, TicketView
 
 
@@ -22,9 +22,11 @@ class RealtimeServiceInterface(ABC):
 
     @abstractmethod
     def subscribe(
-        self, ctx: OpContext, topic: Topics, deliver: Callable[[EventEnvelope], None]
+        self, ctx: ActorScope, topic: Topics, deliver: Callable[[EventEnvelope], None]
     ) -> Callable[[], None]:
         """Hands `deliver` every push on `topic` for the caller's tenant, projected
         onto its view; returns the unsubscribe callable. Raises ValidationFailed
-        for a topic the channel does not carry."""
+        for a topic the channel does not carry. Reads the tenant and the user
+        and nothing else; `head` and `issue_ticket` keep `OpContext` because
+        the managers behind them authorize."""
         ...

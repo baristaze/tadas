@@ -7,7 +7,15 @@ from tadas.om.base import new_id
 from tadas.om.exceptions import IdempotencyInProgress, IdempotencyKeyReused, NotAuthorized, NotFound
 from tadas.om.idempotency.impl.manager import IdempotencyManagerImpl, IdempotencyOptions
 from tadas.om.idempotency.storage.impl.memory import IdempotencyStorageMemoryImpl
-from tadas.om.opcontext import AppContext, AppType, CredentialKind, OpContext, Role, build_context
+from tadas.om.opcontext import (
+    AppContext,
+    AppType,
+    CredentialKind,
+    OpContext,
+    RequestContext,
+    Role,
+    build_context,
+)
 from tadas.om.tenancy.types.role import permissions_of
 
 APP = AppContext(type=AppType.API, version="api@test")
@@ -15,13 +23,12 @@ APP = AppContext(type=AppType.API, version="api@test")
 
 def context(role: Role = Role.MEMBER, org_id: UUID | None = None) -> OpContext:
     return build_context(
+        RequestContext(request_id=new_id(), app=APP),
         user_id=new_id(),
         org_id=org_id or new_id(),
         role=role,
         permissions=permissions_of(role),
         credential_kind=CredentialKind.SESSION_TOKEN,
-        app=APP,
-        request_id=new_id(),
     )
 
 

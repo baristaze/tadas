@@ -1,21 +1,17 @@
-"""The gateway verifies credentials and builds OpContext; nothing else does.
-The credential's prefix decides which dependency accepts it, and a socket
-opens on a single-use ticket rather than a credential in its URL."""
+"""The gateway mints the request stage once per request and asks the tenancy
+manager for every stronger stage; nothing else builds a context. The
+credential's prefix decides which transition accepts it, and a socket opens
+on a single-use ticket rather than a credential in its URL."""
 
 import logging
 from typing import Annotated
 
 from fastapi import Depends, Header, Query, Request, WebSocket, WebSocketException
+from starlette.requests import HTTPConnection
 
 from tadas.infra.observability import current_trace_id
-from tadas.om.exceptions import (
-    InvalidCredential,
-    NotAuthenticated,
-    PlatformException,
-    ValidationFailed,
-)
-from tadas.om.opcontext import AppContext, AppType, CredentialKind, OpContext
-from tadas.om.tenancy.rules import credential_kind_of
+from tadas.om.exceptions import NotAuthenticated, PlatformException, ValidationFailed
+from tadas.om.opcontext import AppContext, AppType, IdentityContext, OpContext, RequestContext
 from tadas.services.api.gateway.observability import request_id_of
 from tadas.services.api.gateway.resolve import container_of
 
@@ -47,49 +43,60 @@ def app_context_of(x_app: str | None, x_app_version: str | None) -> AppContext:
     return AppContext(type=app_type, version=x_app_version or f"{app_type.value}@unknown")
 
 
-async def current_context(
-    request: Request,
-    authorization: Annotated[str | None, Header()] = None,
+def request_context(
+    connection: HTTPConnection,
     x_app: Annotated[str | None, Header()] = None,
     x_app_version: Annotated[str | None, Header()] = None,
-) -> OpContext:
-    tenancy = container_of(request).managers.tenancy
-    return await tenancy.authenticate(
-        bearer_of(authorization),
-        app_context_of(x_app, x_app_version),
-        request_id_of(request.scope),
-        current_trace_id(),
+) -> RequestContext:
+    """The weakest stage, minted once at the edge: the request id the
+    middleware stamped on the scope, the calling app from its headers, and the
+    trace id of the current span. A websocket scope reaches it the same way."""
+    return RequestContext(
+        request_id=request_id_of(connection.scope),
+        app=app_context_of(x_app, x_app_version),
+        trace_id=current_trace_id(),
     )
+
+
+Rctx = Annotated[RequestContext, Depends(request_context)]
+
+
+async def current_context(
+    request: Request,
+    rctx: Rctx,
+    authorization: Annotated[str | None, Header()] = None,
+) -> OpContext:
+    """The tenant stage: a session token or an api key, resolved to a membership."""
+    tenancy = container_of(request).managers.tenancy
+    return await tenancy.authenticate(rctx, bearer_of(authorization))
 
 
 Ctx = Annotated[OpContext, Depends(current_context)]
 
 
-async def login_credential(authorization: Annotated[str | None, Header()] = None) -> str:
-    """The tenant-less sign-in credential, accepted only where a tenant is chosen."""
-    credential = bearer_of(authorization)
-    if credential_kind_of(credential) is not CredentialKind.LOGIN:
-        raise InvalidCredential("this route accepts a login credential")
-    return credential
+async def current_identity(
+    request: Request,
+    rctx: Rctx,
+    authorization: Annotated[str | None, Header()] = None,
+) -> IdentityContext:
+    """The identity stage: the tenant-less sign-in credential, accepted only
+    where a tenant is chosen or an operator is admitted."""
+    tenancy = container_of(request).managers.tenancy
+    return await tenancy.authenticate_login(rctx, bearer_of(authorization))
 
 
-LoginCredential = Annotated[str, Depends(login_credential)]
+Identity = Annotated[IdentityContext, Depends(current_identity)]
 
 
 async def socket_context(
-    websocket: WebSocket,
-    ticket: Annotated[str, Query()],
-    x_app: Annotated[str | None, Header()] = None,
-    x_app_version: Annotated[str | None, Header()] = None,
+    websocket: WebSocket, rctx: Rctx, ticket: Annotated[str, Query()]
 ) -> OpContext:
     """The socket's principal: the tenancy manager consumes the ticket once and
     re-checks the credential behind it. A refused ticket closes the socket
     with 4401 before the handler runs."""
     tenancy = container_of(websocket).managers.tenancy
     try:
-        return await tenancy.redeem_ticket(
-            ticket, app_context_of(x_app, x_app_version), request_id_of(websocket.scope)
-        )
+        return await tenancy.redeem_ticket(rctx, ticket)
     except PlatformException as error:
         log.info("socket refused: %s", error.message)
         raise WebSocketException(code=CLOSE_UNAUTHENTICATED, reason=error.code) from None

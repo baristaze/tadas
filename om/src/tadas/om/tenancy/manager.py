@@ -6,7 +6,14 @@ from abc import ABC, abstractmethod
 from datetime import timedelta
 from uuid import UUID
 
-from tadas.om.opcontext import AdminContext, AppContext, CredentialKind, OpContext, Role
+from tadas.om.opcontext import (
+    CredentialKind,
+    IdentityContext,
+    OpContext,
+    OperatorContext,
+    RequestContext,
+    Role,
+)
 from tadas.om.tenancy.types.api_key import ApiKey
 from tadas.om.tenancy.types.identity import Identity
 from tadas.om.tenancy.types.issued import IssuedApiKey, IssuedLogin, IssuedSession, IssuedTicket
@@ -18,17 +25,19 @@ from tadas.om.tenancy.types.user import User
 
 class TenancyManagerInterface(ABC):
     """Manager of the tenancy swimlane, on the tenant plane: every operation
-    with a context takes `OpContext`. The operator plane is
-    `TenancyOperatorManagerInterface`, which takes `AdminContext`.
+    on a principal takes `OpContext`. The operator plane is
+    `TenancyOperatorManagerInterface`, which takes `OperatorContext`.
 
-    The operations without `ctx` exist before any principal does or act
-    across every tenant; each produces a context rather than consuming
-    one. They are platform-internal and listed in the exceptions test.
+    The transitions come first. Each takes the weakest stage it needs and
+    produces a stronger one: `RequestContext` in, `IdentityContext` or
+    `OpContext` out; `IdentityContext` in, `OperatorContext` out. They are the
+    only constructors of those stages, and the exceptions test names them.
     """
 
     @abstractmethod
     async def bootstrap(
         self,
+        rctx: RequestContext,
         org_name: str,
         slug: str,
         email: str,
@@ -36,8 +45,6 @@ class TenancyManagerInterface(ABC):
         display_name: str,
         *,
         operator: bool = False,
-        app: AppContext | None = None,
-        request_id: UUID | None = None,
     ) -> tuple[OpContext, Org]:
         """Platform-internal: seeds a fresh environment with one org and its owner.
 
@@ -50,14 +57,12 @@ class TenancyManagerInterface(ABC):
     @abstractmethod
     async def add_member(
         self,
+        rctx: RequestContext,
         slug: str,
         email: str,
         password: str,
         display_name: str,
         role: Role,
-        *,
-        app: AppContext | None = None,
-        request_id: UUID | None = None,
     ) -> tuple[OpContext, User, bool]:
         """Platform-internal: seeds a person into an existing org, for local and
         test environments; there is no invitation flow yet.
@@ -72,58 +77,62 @@ class TenancyManagerInterface(ABC):
         ...
 
     @abstractmethod
-    async def login(self, email: str, password: str) -> IssuedLogin:
+    async def login(self, rctx: RequestContext, email: str, password: str) -> IssuedLogin:
         """Platform-internal: verifies a sign-in and issues a credential that carries no tenant."""
         ...
 
     @abstractmethod
-    async def exchange_login(self, login_token: str, org_id: UUID) -> IssuedSession:
-        """Platform-internal: exchanges a login credential for a tenant-scoped session token."""
+    async def authenticate_login(self, rctx: RequestContext, credential: str) -> IdentityContext:
+        """Platform-internal: the transition to the identity stage. Verifies a
+        login credential (the person's own sign-in, `lgn_`) and produces the
+        identity behind it; a session token or an api key is refused with
+        InvalidCredential. Every operation on an identity starts here."""
         ...
 
     @abstractmethod
-    async def authenticate(
-        self,
-        credential: str,
-        app: AppContext,
-        request_id: UUID,
-        trace_id: str | None = None,
-    ) -> OpContext:
-        """Platform-internal: the gateway asks for the principal behind a credential."""
+    async def exchange_login(self, ictx: IdentityContext, org_id: UUID) -> IssuedSession:
+        """Platform-internal: exchanges the verified identity for a tenant-scoped
+        session token; NotAuthorized when the identity is not a member of `org_id`."""
         ...
 
     @abstractmethod
-    async def authenticate_operator(self, credential: str, request_id: UUID) -> AdminContext:
-        """Platform-internal: admits a person's own sign-in when the identity is an operator."""
+    async def authenticate(self, rctx: RequestContext, credential: str) -> OpContext:
+        """Platform-internal: the transition to the tenant stage. The gateway asks
+        for the principal behind a session token or an api key."""
+        ...
+
+    @abstractmethod
+    async def admit_operator(self, ictx: IdentityContext) -> OperatorContext:
+        """Platform-internal: the transition to the operator stage. Admits the
+        verified identity when it is on the operator allowlist, NotAnOperator
+        otherwise. The identity stage already guarantees the credential is the
+        person's own sign-in."""
         ...
 
     @abstractmethod
     async def resume(
         self,
+        rctx: RequestContext,
         org_id: UUID,
         credential_kind: CredentialKind,
         credential_id: UUID,
-        app: AppContext,
-        request_id: UUID,
     ) -> OpContext:
         """Platform-internal: re-checks the credential behind a redeemed socket ticket."""
         ...
 
     @abstractmethod
-    async def redeem_ticket(self, ticket: str, app: AppContext, request_id: UUID) -> OpContext:
+    async def redeem_ticket(self, rctx: RequestContext, ticket: str) -> OpContext:
         """Platform-internal: consumes a socket ticket exactly once and re-checks the
         credential behind it. The gateway holds a ticket, not a principal."""
         ...
 
     @abstractmethod
-    async def service_context(
-        self, org_id: UUID, user_id: UUID, app: AppContext, request_id: UUID
-    ) -> OpContext:
+    async def service_context(self, rctx: RequestContext, org_id: UUID, user_id: UUID) -> OpContext:
         """Platform-internal: rebuilds a person's principal under the service role."""
         ...
 
     @abstractmethod
-    async def service_contexts(self, app: AppContext, request_id: UUID) -> list[OpContext]:
+    async def service_contexts(self, rctx: RequestContext) -> list[OpContext]:
         """Platform-internal: one service context per live tenant, for sweeps."""
         ...
 

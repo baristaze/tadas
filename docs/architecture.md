@@ -8,21 +8,50 @@ adopts unchanged; the technology choices as adopted are recorded in
 ## Object model (`om/`)
 
 The `tadas-om` distribution holds the base classes (`Platform`, the
-mixins, `new_id`, `utcnow`), `OpContext` and `AdminContext` with `Role`,
-`Permission`, `CredentialKind`, and `AppType` declared beside them, the
-exception root, the storage root with its Postgres and memory impls,
-and one namespace per swimlane. The context carries ids and facts
-(`user_id`, `org_id`, `credential_id`, the role and its permissions),
-never a `User` or an `Org`: a manager that needs the entity loads it, so
-a role change is seen on the next request, and `opcontext.py` imports
-nothing above `base.py`. `Trackable` records who created a row and who
-last changed it (`updated_by`); every update sets it from the context.
+mixins, `new_id`, `utcnow`), the context model in `opcontext.py` with
+`Role`, `Permission`, `CredentialKind`, and `AppType` declared beside it,
+the exception root, the storage root with its Postgres and memory impls,
+and one namespace per swimlane. `Trackable` records who created a row
+and who last changed it (`updated_by`); every update sets it from the
+context.
+
+The context model is two orthogonal ideas. The stages are four frozen
+types ordered by evidence: `RequestContext` (a request exists: its id,
+the calling app, the trace id), `IdentityContext` (a person is verified
+by their own sign-in; no tenant, on purpose), `OpContext` (a membership
+is established: the user, the org, the role and its permissions, the
+credential), and `OperatorContext` (an identity on the operator allowlist;
+no org, on purpose). A subclass is a refinement, so every stage is
+accepted where `RequestContext` is asked for; `OperatorContext` is an
+`IdentityContext`, `OpContext` is not, because what a tenant operation
+knows about the person is the user inside the tenant. A stage above the
+request stage is produced only by a transition, an operation of the
+tenancy manager or one that asks it, and nowhere else
+(`authenticate_login`, `authenticate`, `admit_operator`,
+`redeem_ticket`, `service_context`, the worker's claim, and the
+seeding), and a function that
+takes a stage relies on its invariant instead of re-checking it. The
+context carries ids and facts, never a `User` or an `Org`: a manager that
+needs the entity loads it, so a role change is seen on the next request,
+and `opcontext.py` imports nothing above `base.py`.
+
+The scopes are five `Protocol` views over what a stage carries, each a
+set of read-only properties: `RequestScope`, `TenantScope`, `ActorScope`
+(there is no actor without a tenant), `CredentialScope`, and
+`ProvenanceScope` (actor, request, and app: the one named composition,
+because provenance is a domain concept). A function that reads only a
+few fields declares the scope it reads (`outbox_row` and `audit_event`
+take `ProvenanceScope`, the realtime `subscribe` takes `ActorScope`, the
+rate limit's subject takes `CredentialScope`) and its callers keep
+passing the stage they hold. A manager operation takes `OpContext`, which
+is its scope, and says nothing narrower; a function that forwards the
+context on keeps the stage the callee needs.
 
 - `tenancy`: orgs, identities, users, memberships, sessions, api keys,
   socket tickets; sign-in, tenant-scoped session tokens, role-capped api
   keys, the operator allowlist, and the service contexts workers run
   under. The operator plane (every org, delete an org) is a second
-  manager, `TenancyOperatorManagerInterface`, which takes `AdminContext`
+  manager, `TenancyOperatorManagerInterface`, which takes `OperatorContext`
   and nothing else. A socket ticket is a row; redeeming it is one conditional
   update on its hash, and the cache only remembers a redeemed one so a
   replay is refused without a round trip.
@@ -124,6 +153,15 @@ everything in-process for tests.
   edge idempotency), routers for tenancy, tasks, and the operator plane
   under `/v1/admin/*`, health and metrics outside `/v1`, and the
   realtime channel at `/v1/realtime` opened with a single-use ticket.
+  The gateway mints the request stage once per request
+  (`request_context`: the request id the middleware stamped, `X-App`
+  and `X-App-Version`, the current trace id) and asks the tenancy
+  manager for every stronger stage: `Ctx` is `authenticate` over the
+  bearer (a session token or an api key), `Identity` is
+  `authenticate_login` over it (the sign-in credential, on the tenant
+  choice and the operator gate), `OperatorCtx` is `admit_operator` over the
+  identity, and the socket builds the request stage from its scope and
+  redeems its ticket. The login route takes the request stage alone.
   Per socket the process keeps one bounded send buffer
   (`realtime/send_buffer.py`, `TADAS_REALTIME_SEND_BUFFER_SIZE`) and a
   drainer; a full buffer drops the oldest frame and the client replays.
@@ -253,8 +291,10 @@ Rules a program can check are checked in `om/tests/unit/`:
 worker, on an infra module importing the object model, or on an
 object-model module outside `tadas.om.root` importing an infra impl
 rather than an interface. `test_storage_exceptions.py` lists every
-storage method that does not take `org_id` first and every manager
-operation that does not take a context, each with its stated reason.
+storage method that does not take `org_id` first, asserts every manager
+operation takes a context stage first (the outbox relay is the stated
+exception), and names the transitions that take `RequestContext` or
+`IdentityContext`, so a new principal-less operation must be listed.
 `test_interfaces.py` fails on a `*Interface` under `tadas.om` or
 `tadas.infra` that is not an `ABC` with every public method abstract.
 Each process's `tests/test_settings.py` (and `infra/tests/`) reads

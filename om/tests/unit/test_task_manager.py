@@ -11,7 +11,15 @@ from tadas.om.base import new_id, utcnow
 from tadas.om.events.impl.manager import EventsManagerImpl, EventsOptions
 from tadas.om.events.storage.impl.memory import EventStorageMemoryImpl
 from tadas.om.exceptions import NotAuthorized, NotFound, ValidationFailed
-from tadas.om.opcontext import AppContext, AppType, CredentialKind, OpContext, Role, build_context
+from tadas.om.opcontext import (
+    AppContext,
+    AppType,
+    CredentialKind,
+    OpContext,
+    RequestContext,
+    Role,
+    build_context,
+)
 from tadas.om.outbox.impl.relay import OutboxRelayImpl
 from tadas.om.outbox.storage.impl.memory import OutboxStorageMemoryImpl
 from tadas.om.tasks.impl.manager import TasksManagerImpl, TasksOptions
@@ -49,13 +57,12 @@ def context(role: Role, org: Org | None = None, members: Members | None = None) 
     if members is not None:
         members.users[user.id] = user
     return build_context(
+        RequestContext(request_id=new_id(), app=APP),
         user_id=user.id,
         org_id=(org or make_org()).id,
         role=role,
         permissions=permissions_of(role),
         credential_kind=CredentialKind.SESSION_TOKEN,
-        app=APP,
-        request_id=new_id(),
     )
 
 

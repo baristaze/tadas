@@ -3,7 +3,7 @@ from uuid import UUID, uuid4
 
 import httpx
 import pytest
-from api_support import OWNER, add_member, build_container, run, sign_in_as
+from api_support import OWNER, add_member, build_container, run, seed_request, sign_in_as
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
@@ -210,7 +210,7 @@ async def test_operator_routes_need_an_operator_sign_in(
     refused = await client.get("/v1/admin/orgs", headers=owner)
     assert refused.status_code == 401
     await container.managers.tenancy.bootstrap(
-        "Ops", "ops", "root@example.test", "pw-1234", "Root", operator=True
+        seed_request(), "Ops", "ops", "root@example.test", "pw-1234", "Root", operator=True
     )
     login = await client.post(
         "/v1/auth/login", json={"email": "root@example.test", "password": "pw-1234"}
@@ -227,7 +227,7 @@ async def test_operators_delete_an_org(
 ) -> None:
     org_id = (await client.get("/v1/orgs/current", headers=owner)).json()["id"]
     await container.managers.tenancy.bootstrap(
-        "Ops", "ops", "root@example.test", "pw-1234", "Root", operator=True
+        seed_request(), "Ops", "ops", "root@example.test", "pw-1234", "Root", operator=True
     )
     login = await client.post(
         "/v1/auth/login", json={"email": "root@example.test", "password": "pw-1234"}
@@ -246,7 +246,7 @@ def test_realtime_channel_delivers_tenant_events(tmp_path: Path) -> None:
     container = build_container(tmp_path)
     _, org = run(
         container.managers.tenancy.bootstrap(
-            "Acme", "acme", OWNER["email"], OWNER["password"], OWNER["name"]
+            seed_request(), "Acme", "acme", OWNER["email"], OWNER["password"], OWNER["name"]
         )
     )
     app = create_app(container)
