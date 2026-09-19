@@ -37,7 +37,10 @@ class LoopOptions(Platform):
     sweep_interval: timedelta = timedelta(seconds=30)
     poll_interval: timedelta = timedelta(seconds=5)
     outbox_batch: int = 100  # pending rows relayed per sweep
-    outbox_retention: timedelta = timedelta(hours=1)  # done rows purged after this
+    # Done rows are purged after this. It outlives the database backup retention
+    # (`backup_retention_days` in the database module), so a role restored to an
+    # earlier point than its siblings is reconciled by relaying the outbox again.
+    outbox_retention: timedelta = timedelta(days=8)
 
 
 class WorkerLoop:
