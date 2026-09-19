@@ -42,6 +42,7 @@ class EntityChangedPayload(TopicPayload):
     kind: str  # "<namespace>.<entity>.<created|updated|deleted>"
     target_id: UUID
     seq: int
+    actor_id: UUID  # the user whose request produced it
 
 
 TOPIC_PAYLOADS: dict[Topics, type[TopicPayload]] = {

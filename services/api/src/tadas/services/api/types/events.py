@@ -17,12 +17,14 @@ class EventView(View):
     kind: str
     target_id: UUID
     produced_at: datetime
+    actor_id: UUID
 
 
 class EntityChangedView(View):
-    """What a push says: which record changed, how, and where it sits in the
-    stream. Every push has a record, so `seq` is always present."""
+    """What a push says: which record changed, how, who changed it, and where
+    it sits in the stream. Every push has a record, so `seq` is always present."""
 
     kind: str
     target_id: UUID
     seq: int
+    actor_id: UUID

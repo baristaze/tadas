@@ -27,12 +27,13 @@ describe("eventEnvelope", () => {
       kind: "tasks.task.updated",
       target_id: "t1",
       produced_at: "2026-09-16T12:00:00Z",
+      actor_id: "u1",
     };
     expect(eventEnvelope(event)).toEqual({
       type: "event",
       topic: "entity_changed",
       sent_at: null,
-      payload: { kind: "tasks.task.updated", target_id: "t1", seq: 4 },
+      payload: { kind: "tasks.task.updated", target_id: "t1", seq: 4, actor_id: "u1" },
     });
   });
 

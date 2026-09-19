@@ -49,6 +49,7 @@ class OutboxRelayImpl(OutboxRelayInterface):
                     kind=appended.kind,
                     target_id=appended.target_id,
                     seq=appended.seq,
+                    actor_id=appended.actor_id,
                 ),
             )
             await self._storage.mark_done(org_id, row.id)

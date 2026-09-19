@@ -67,6 +67,7 @@ async def test_payload_type_is_fixed_by_the_map() -> None:
         kind="tasks.task.created",
         target_id=new_id(),
         seq=1,
+        actor_id=new_id(),
     )
     with pytest.raises(PayloadMismatch):
         await topics.publish(Topics.WORK_AVAILABLE, wrong)
