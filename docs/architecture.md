@@ -261,3 +261,29 @@ database, so CI's integration job runs it and the fast gate does not
 ## Decisions
 
 See [docs/adr/](adr/).
+
+### Considered
+
+Shapes a sibling system (xtadas, the one-shot scaffold benchmark) has and
+this one does not, judged and not taken, or not yet:
+
+- **A TypeScript client as its own workspace package** (`clients/api-client`
+  beside `clients/python`). "Clients Live in One Place" read literally; the
+  portal today keeps the committed `openapi.json`, the generated types, the
+  facade, and the transport client under `apps/portal/src/api/`, which is one
+  place while the portal is the only TypeScript caller. The move is real and
+  mechanical (a package with its own `tsconfig`, the portal importing it,
+  `make openapi` regenerating into it) and it pays off the day a second
+  TypeScript app arrives; it is not taken before then.
+- **A server-side scope on the realtime subscription** (`subscribe` with
+  `scope: team | mine`, the push carrying the record's assignee and creator
+  so the server filters by audience). Not taken: every push carries the
+  tenant's stream position and both clients hold a contiguous cursor, so a
+  push the server withholds is a gap to them, and the next push that arrives
+  replays `/v1/events` after the cursor, which is unscoped and hands back what
+  was withheld. A scoped subscription would either cost a replay per filtered
+  push or need a scoped replay and a per-subscription frame counter to keep
+  the dropped-frame guarantee, a second protocol. The "mine" rule stays where
+  it is, in the client (`model.py`, the portal's scoped lists), until the
+  channel carries enough traffic that filtering at the server pays for the
+  protocol it needs.

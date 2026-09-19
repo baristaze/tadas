@@ -180,10 +180,18 @@ def main(argv: list[str] | None = None) -> int:
         p = sub.add_parser(name)
         p.add_argument("--role", choices=[r.value for r in DatabaseRole])
         p.add_argument("--all", action="store_true")
+        p.add_argument(
+            "--local",
+            action="store_true",
+            help="refuse a database whose host is not local; every Makefile target passes it",
+        )
         if name == "downgrade":
             p.add_argument("--to", required=True, help="revision, or -1 for one step")
     args = parser.parse_args(argv)
-    urls = StorageSettings().role_urls()
+    settings = StorageSettings()
+    if args.local:
+        settings.refuse_remote()
+    urls = settings.role_urls()
     roles = _roles_from_args(args)
 
     async def run() -> int:

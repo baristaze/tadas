@@ -70,8 +70,11 @@ stack-up: ## The local stack plus the api, maintenance, and portal containers
 infra-down: ## Stop every local container, dashboards and app containers too, and drop the volumes
 	$(COMPOSE_FULL) --profile devx down -v --remove-orphans
 
+# The local targets (migrate, migrate-check, seed, test-integration) refuse a
+# database whose host is not local, so a stray .env never points them at a
+# shared one; the cloud runs `tadas-api migrate` without --local.
 migrate: ## Apply every role's migration chain to the local database
-	uv run --package tadas-om python -m tadas.om.storage.migrate upgrade --all
+	uv run --package tadas-om python -m tadas.om.storage.migrate upgrade --all --local
 
 # The SEED_* values come from .env (or .env.example); override any of them
 # there or on the command line, e.g. `make seed SEED_EMAIL=me@example.test`.
@@ -97,7 +100,7 @@ demo-cli-gif: ## Record the README's CLI demo GIF (command mode beside listen) a
 # right after `make migrate`, and the downgrade-then-upgrade round trip stays
 # in the integration tests. The deviation is ADR 0003.
 migrate-check: ## Compare every role's ORM metadata with the migrated schema
-	uv run --package tadas-om python -m tadas.om.storage.migrate check --all
+	uv run --package tadas-om python -m tadas.om.storage.migrate check --all --local
 
 # What a process pays to boot: imports once, then microseconds per root (ADR 0007).
 benchmark-boot: ## Time the imports and the construction of every root
