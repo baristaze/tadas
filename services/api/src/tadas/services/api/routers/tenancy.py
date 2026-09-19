@@ -6,7 +6,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Response
 
-from tadas.services.api.gateway.auth import Ctx, LoginCredential
+from tadas.services.api.gateway.auth import Ctx, Identity, Rctx
 from tadas.services.api.gateway.idempotency import Idem
 from tadas.services.api.gateway.ratelimit import rate_limited
 from tadas.services.api.gateway.resolve import TenancyService
@@ -33,15 +33,15 @@ router = APIRouter(tags=["tenancy"])
 
 
 @router.post("/auth/login", response_model=IssuedLoginView, dependencies=[rate_limited("login")])
-async def login(tenancy: TenancyService, body: LoginRequest) -> IssuedLoginView:
-    return await tenancy.login(body)
+async def login(rctx: Rctx, tenancy: TenancyService, body: LoginRequest) -> IssuedLoginView:
+    return await tenancy.login(rctx, body)
 
 
 @router.post("/auth/sessions", response_model=IssuedSessionView)
 async def exchange_session(
-    tenancy: TenancyService, credential: LoginCredential, body: ExchangeSessionRequest
+    identity: Identity, tenancy: TenancyService, body: ExchangeSessionRequest
 ) -> IssuedSessionView:
-    return await tenancy.exchange_session(credential, body)
+    return await tenancy.exchange_session(identity, body)
 
 
 @router.post("/auth/logout", response_model=SessionView)

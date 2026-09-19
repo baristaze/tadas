@@ -734,6 +734,8 @@ export interface operations {
             };
             header?: {
                 authorization?: string | null;
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -765,6 +767,8 @@ export interface operations {
             query?: never;
             header?: {
                 authorization?: string | null;
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
             };
             path: {
                 org_id: string;
@@ -904,7 +908,10 @@ export interface operations {
     login_v1_auth_login_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -972,6 +979,8 @@ export interface operations {
             query?: never;
             header?: {
                 authorization?: string | null;
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
             };
             path?: never;
             cookie?: never;
