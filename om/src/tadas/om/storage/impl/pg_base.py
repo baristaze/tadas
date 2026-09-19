@@ -14,7 +14,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.sql.util import find_tables
 
 from tadas.om.base import Identifiable
-from tadas.om.exceptions import Conflict, CrossRoleStatement, TenantMismatch
+from tadas.om.exceptions import (
+    CrossRoleStatement,
+    TenantMismatch,
+    UniqueKeyTaken,
+)
 from tadas.om.outbox.storage.tables.outbox_rows import OutboxRows
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.storage.roles import DatabaseRole, role_for
@@ -82,7 +86,9 @@ class PgStorageBase:
                 await session.commit()
             except IntegrityError as error:
                 # A key race the read did not see; a Conflict, never a driver error.
-                raise Conflict(f"{row_type.__tablename__} {entity.id} already exists") from error
+                raise UniqueKeyTaken(
+                    f"{row_type.__tablename__} {entity.id}: a unique key is taken"
+                ) from error
 
     async def _insert(
         self,

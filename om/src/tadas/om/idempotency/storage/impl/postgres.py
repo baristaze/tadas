@@ -2,9 +2,8 @@ from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import delete, select, update
-from sqlalchemy.exc import IntegrityError
 
-from tadas.om.exceptions import DuplicateIdempotencyKey
+from tadas.om.exceptions import DuplicateIdempotencyKey, UniqueKeyTaken
 from tadas.om.idempotency.storage import IdempotencyStorageInterface
 from tadas.om.idempotency.storage.tables.idempotency_records import IdempotencyRecords
 from tadas.om.idempotency.types.record import IdempotencyRecord
@@ -16,7 +15,7 @@ class IdempotencyStoragePostgresImpl(PgStorageBase, IdempotencyStorageInterface)
     async def write_record(self, org_id: UUID, record: IdempotencyRecord) -> None:
         try:
             await self._upsert(IdempotencyRecords, org_id, record)
-        except IntegrityError as error:
+        except UniqueKeyTaken as error:
             raise DuplicateIdempotencyKey(f"idempotency key {record.key!r} is taken") from error
 
     async def read_record(self, org_id: UUID, user_id: UUID, key: str) -> IdempotencyRecord | None:
