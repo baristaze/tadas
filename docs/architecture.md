@@ -24,10 +24,12 @@ credential), and `AdminContext` (an identity on the operator allowlist;
 no org, on purpose). A subclass is a refinement, so every stage is
 accepted where `RequestContext` is asked for; `AdminContext` is an
 `IdentityContext`, `OpContext` is not, because what a tenant operation
-knows about the person is the user inside the tenant. Each stage is
-produced by exactly one transition on the tenancy manager and nowhere
-else (`authenticate_login`, `authenticate`, `admit_operator`,
-`redeem_ticket`, `service_context`, and the seeding), and a function that
+knows about the person is the user inside the tenant. A stage above the
+request stage is produced only by a transition, an operation of the
+tenancy manager or one that asks it, and nowhere else
+(`authenticate_login`, `authenticate`, `admit_operator`,
+`redeem_ticket`, `service_context`, the worker's claim, and the
+seeding), and a function that
 takes a stage relies on its invariant instead of re-checking it. The
 context carries ids and facts, never a `User` or an `Org`: a manager that
 needs the entity loads it, so a role change is seen on the next request,

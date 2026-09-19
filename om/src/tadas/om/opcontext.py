@@ -4,9 +4,10 @@ Stages are concrete frozen types, one per amount of evidence a request has
 gathered: `RequestContext` (a request exists), `IdentityContext` (a person
 is verified), `OpContext` (a membership is established), `AdminContext`
 (an operator is admitted). A subclass is a refinement, so every stage is
-accepted where a weaker one is asked for. Each stage is produced by exactly
-one transition on the tenancy manager and nowhere else; a function that
-takes a stage relies on its invariant instead of re-checking it.
+accepted where a weaker one is asked for. A stage above the request stage
+is produced only by a transition, an operation of the tenancy manager or
+one that asks it, as the worker's claim does, and nowhere else; a function
+that takes a stage relies on its invariant instead of re-checking it.
 
 Scopes are structural views (`Protocol`) over what a stage carries:
 `RequestScope`, `TenantScope`, `ActorScope`, `CredentialScope`, and the one

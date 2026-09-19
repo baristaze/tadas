@@ -1,5 +1,6 @@
-"""The context model: four stages, each produced by exactly one transition on
-the tenancy manager, and five scopes every stage satisfies structurally."""
+"""The context model: four stages, each produced only by a transition (an
+operation of the tenancy manager, or one that asks it, as the worker's claim
+does), and five scopes every stage satisfies structurally."""
 
 from pathlib import Path
 
