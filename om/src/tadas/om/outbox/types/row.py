@@ -10,7 +10,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 from tadas.om.base import Created, FrozenMapping, Identifiable, new_id, utcnow
-from tadas.om.opcontext import OpContext
+from tadas.om.opcontext import ProvenanceScope
 
 
 class OutboxRow(Identifiable, Created):
@@ -25,8 +25,11 @@ class OutboxRow(Identifiable, Created):
     done_at: datetime | None = None  # set by the relay; the sweep purges done rows
 
 
-def outbox_row(ctx: OpContext, kind: str, target_id: UUID, payload: Mapping[str, Any]) -> OutboxRow:
-    """The row a manager writes beside its core row, under the caller's provenance."""
+def outbox_row(
+    ctx: ProvenanceScope, kind: str, target_id: UUID, payload: Mapping[str, Any]
+) -> OutboxRow:
+    """The row a manager writes beside its core row, under the caller's provenance:
+    the actor, the request, and the app are all the row reads from the context."""
     return OutboxRow(
         id=new_id(),
         created_at=utcnow(),

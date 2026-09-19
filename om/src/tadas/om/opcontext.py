@@ -1,4 +1,4 @@
-"""The context an operation takes first: four stages, ordered by evidence.
+"""The context an operation takes first, in two orthogonal ideas.
 
 Stages are concrete frozen types, one per amount of evidence a request has
 gathered: `RequestContext` (a request exists), `IdentityContext` (a person
@@ -8,27 +8,39 @@ accepted where a weaker one is asked for. Each stage is produced by exactly
 one transition on the tenancy manager and nowhere else; a function that
 takes a stage relies on its invariant instead of re-checking it.
 
+Scopes are structural views (`Protocol`) over what a stage carries:
+`RequestScope`, `TenantScope`, `ActorScope`, `CredentialScope`, and the one
+named composition, `ProvenanceScope`. A function that reads only a few
+fields declares the scope it reads, and its callers keep passing the stage
+they hold.
+
 Roles, permissions, credential kinds, and app types are declared here, so
 this module imports nothing above `base.py` and the tenancy namespace reads
 them rather than the other way round."""
 
 from enum import Enum
+from typing import Protocol
 from uuid import UUID
 
 from tadas.om.base import EMPTY_UUID, Platform
 from tadas.om.exceptions import NotAuthorized
 
 __all__ = [
+    "ActorScope",
     "AdminContext",
     "AppContext",
     "AppType",
     "CredentialKind",
+    "CredentialScope",
     "IdentityContext",
     "OpContext",
     "Permission",
+    "ProvenanceScope",
     "RequestContext",
+    "RequestScope",
     "Role",
     "SecurityContext",
+    "TenantScope",
     "build_context",
 ]
 
@@ -143,6 +155,43 @@ class AdminContext(IdentityContext):
     """The operator plane: an identity on the operator allowlist. No org_id,
     on purpose. No field of its own: the type is the evidence, and only the
     tenancy manager's `admit_operator` constructs it."""
+
+
+# Scopes: composable capability views. Every member is a read-only property,
+# so a frozen field and a property both satisfy it.
+
+
+class RequestScope(Protocol):
+    @property
+    def request_id(self) -> UUID: ...
+
+    @property
+    def app(self) -> AppContext: ...
+
+
+class TenantScope(Protocol):
+    @property
+    def org_id(self) -> UUID: ...
+
+
+class ActorScope(TenantScope, Protocol):
+    """There is no actor without a tenant."""
+
+    @property
+    def user_id(self) -> UUID: ...
+
+
+class CredentialScope(Protocol):
+    @property
+    def credential_kind(self) -> CredentialKind: ...
+
+    @property
+    def credential_id(self) -> UUID: ...
+
+
+class ProvenanceScope(ActorScope, RequestScope, Protocol):
+    """Who, under which request, from which app: the provenance a write
+    records. A named composition because provenance is a domain concept."""
 
 
 def build_context(

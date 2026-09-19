@@ -4,7 +4,7 @@ from tadas.infra.topics import TopicPayload, Topics, TopicsInterface
 from tadas.om.base import utcnow
 from tadas.om.events import EventsManagerInterface
 from tadas.om.exceptions import ValidationFailed
-from tadas.om.opcontext import OpContext
+from tadas.om.opcontext import ActorScope, OpContext
 from tadas.om.tenancy import TenancyManagerInterface
 from tadas.services.api.realtime.envelopes import EventEnvelope, TicketView
 from tadas.services.api.services.realtime import RealtimeServiceInterface
@@ -37,7 +37,7 @@ class RealtimeServiceImpl(RealtimeServiceInterface):
         return TicketView(ticket=issued.ticket, expires_in_seconds=max(remaining, 0))
 
     def subscribe(
-        self, ctx: OpContext, topic: Topics, deliver: Callable[[EventEnvelope], None]
+        self, ctx: ActorScope, topic: Topics, deliver: Callable[[EventEnvelope], None]
     ) -> Callable[[], None]:
         project = PROJECTIONS.get(topic)
         if project is None:
