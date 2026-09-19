@@ -1,6 +1,6 @@
 # Tadas
 
-A multi-tenant to-do application for teams of people and the programs
+A multi-tenant to-do application for teams of people and the agents
 that work alongside them. The system is built in the shape the Software
 Design and Architecture Guidelines prescribe: one object model library
 at the center (`om/`), one infrastructure toolkit (`infra/`), services
