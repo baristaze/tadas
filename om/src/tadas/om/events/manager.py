@@ -23,6 +23,11 @@ class EventsManagerInterface:
         """The tenant's events after `after_seq`, oldest first."""
         ...
 
+    async def get_head(self, ctx: OpContext) -> int:
+        """The tenant's stream position: the last seq assigned, 0 before the
+        first event. A client that opens the channel starts here."""
+        ...
+
 
 def audit_event(
     ctx: OpContext, event_id: UUID, kind: str, target_id: UUID, facts: Mapping[str, object]

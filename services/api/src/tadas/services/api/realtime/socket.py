@@ -50,7 +50,9 @@ async def channel(
     await websocket.accept()
     drainer = asyncio.create_task(buffer.drain(websocket), name=f"send-buffer-{ctx.user_id}")
     subscriptions: dict[Topics, Callable[[], None]] = {}
-    buffer.offer(HelloEnvelope(org_id=ctx.org_id, user_id=ctx.user_id))
+    buffer.offer(
+        HelloEnvelope(org_id=ctx.org_id, user_id=ctx.user_id, seq=await realtime.head(ctx))
+    )
 
     try:
         while True:

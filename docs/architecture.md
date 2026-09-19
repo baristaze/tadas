@@ -154,8 +154,28 @@ everything in-process for tests.
   through every route's `errorElement` and React's root error hooks. The
   API is reached through `src/api/`: the committed `openapi.json` at the
   app root, generated types behind the facade `types.ts`, one transport
-  client. There is no Python client yet; the only Python caller is the
-  demo recorder ([ADR 0004](adr/0004-demo-recorder-calls-the-api-directly.md)).
+  client. Every push and every event record carry `actor_id`, so a client
+  can say who changed what, and the hello frame carries the stream
+  position (`seq`), so a client replays from there after a reconnect
+  even when no push reached it before the drop.
+- `clients/python` (`tadas-client`, `tadas.client`): the one Python client,
+  generated from the same committed `openapi.json` (`schema.py`, by
+  `make openapi`) behind the facade `types.py`; one transport client with
+  the error envelope, idempotency keys, and the OS trust store; the socket
+  frames mirrored by hand (`envelopes.py`); the placement rule
+  (`stream.py`); and the channel (`realtime.py`): ticket, one
+  subscription, pings, gaps replayed from `/v1/events`, reconnect with
+  backoff. The demo recorders use it; the interval before it existed is
+  [ADR 0004](adr/0004-demo-recorder-calls-the-api-directly.md).
+- `apps/cli` (`tadas-cli`, `tadas`): Typer over the Python client. Command
+  mode (`add`, `ls`, `edit`, `done`, `reopen`, `rm`, `mv`) does one call
+  and exits with 0, 1 (refused), 2 (usage), 3 (not signed in), or 4
+  (unreachable); `listen` prints every task change as one line (who did
+  what to which task) as it arrives on the channel, `--mine` for the
+  caller's own. `login` keeps a session token under `TADAS_HOME`;
+  `TADAS_TOKEN` (a session token or an api key) and `TADAS_API_URL` win
+  over it. The rules of what is shown live in `model.py`, pure and unit
+  tested; the commands run in tests against the whole API in-process.
 
 ## Deployment (`deployment/`)
 

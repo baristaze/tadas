@@ -5,10 +5,13 @@ interface Base {
   sent_at: string | null;
 }
 
+// The stream position when the socket opened: the cursor to replay from
+// before any push has arrived.
 export interface HelloEnvelope extends Base {
   type: "hello";
   org_id: string;
   user_id: string;
+  seq: number;
   ping_interval_seconds: number;
 }
 
@@ -27,13 +30,14 @@ export interface UnsubscribedEnvelope extends Base {
 }
 
 // Mirrors the service's EntityChangedView: which record changed (`kind` is
-// "<namespace>.<entity>.<action>") and where it sits in the tenant's stream.
-// Every push has a record, so `seq` is always a number. Read tolerantly: a
-// field the client does not know is ignored.
+// "<namespace>.<entity>.<action>"), who changed it, and where it sits in the
+// tenant's stream. Every push has a record, so `seq` is always a number. Read
+// tolerantly: a field the client does not know is ignored.
 export interface EntityChangedView {
   kind: string;
   target_id: string;
   seq: number;
+  actor_id: string;
 }
 
 // The entity name inside a kind, which is what query keys start with.

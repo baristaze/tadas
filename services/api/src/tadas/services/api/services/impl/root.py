@@ -57,5 +57,5 @@ def build_services(managers: Managers, infra: InfraInterface) -> ServicesInterfa
         tenancy=TenancyServiceImpl(managers.tenancy),
         admin=AdminServiceImpl(managers.tenancy_operator),
         events=EventsServiceImpl(managers.events),
-        realtime=RealtimeServiceImpl(managers.tenancy, infra.get_topics()),
+        realtime=RealtimeServiceImpl(managers.tenancy, managers.events, infra.get_topics()),
     )

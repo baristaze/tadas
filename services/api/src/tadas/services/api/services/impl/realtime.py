@@ -2,6 +2,7 @@ from collections.abc import Callable
 
 from tadas.infra.topics import TopicPayload, Topics, TopicsInterface
 from tadas.om.base import utcnow
+from tadas.om.events import EventsManagerInterface
 from tadas.om.exceptions import ValidationFailed
 from tadas.om.opcontext import OpContext
 from tadas.om.tenancy import TenancyManagerInterface
@@ -17,9 +18,18 @@ onto before a frame is offered. A topic outside this map never reaches a client.
 
 
 class RealtimeServiceImpl(RealtimeServiceInterface):
-    def __init__(self, tenancy: TenancyManagerInterface, topics: TopicsInterface) -> None:
+    def __init__(
+        self,
+        tenancy: TenancyManagerInterface,
+        events: EventsManagerInterface,
+        topics: TopicsInterface,
+    ) -> None:
         self._tenancy = tenancy
+        self._events = events
         self._topics = topics
+
+    async def head(self, ctx: OpContext) -> int:
+        return await self._events.get_head(ctx)
 
     async def issue_ticket(self, ctx: OpContext) -> TicketView:
         issued = await self._tenancy.issue_ticket(ctx)

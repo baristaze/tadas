@@ -5,10 +5,10 @@ other follows live.
 
 It drives a headless Chrome over the DevTools protocol, one isolated browser
 context per person. Each signs in through the API (a session token, the way
-the API tests do) rather than through the form; the few calls go through the
-`Api` helper below rather than a generated client, which is ADR 0004. The task list is emptied
-first, then both windows are screencast and the frames are composed on one
-timeline into a GIF.
+the API tests do) rather than through the form, over the Python client in
+`clients/python/` (ADR 0004 records the interval before that client
+existed). The task list is emptied first, then both windows are screencast
+and the frames are composed on one timeline into a GIF.
 
     make up
     uv run --with pillow python scripts/record_demo.py docs/media/realtime-demo.gif
@@ -36,6 +36,9 @@ from typing import Any
 import websockets
 from PIL import Image
 
+from tadas.client.client import ApiClient
+from tadas.client.types import TaskScope, TaskStatus
+
 WIDTH, HEIGHT = 420, 840  # each window in the GIF: portrait, height twice the width
 SCALE = 2  # render at twice the size, then downscale, for crisp text
 FPS = 12
@@ -58,40 +61,33 @@ def chrome_path() -> str:
 
 
 class Api:
+    """The two things the recorder asks of the API, over the Python client."""
+
     def __init__(self, base: str) -> None:
         self.base = base
 
-    def call(self, method: str, path: str, body: Any = None, token: str | None = None) -> Any:
-        headers = {"X-App": "portal", "X-App-Version": "portal@demo"}
-        if body is not None:
-            headers["Content-Type"] = "application/json"
-        if token:
-            headers["Authorization"] = f"Bearer {token}"
-        data = None if body is None else json.dumps(body).encode()
-        request = urllib.request.Request(self.base + path, data, headers, method=method)
-        with urllib.request.urlopen(request) as response:
-            text = response.read()
-        return json.loads(text) if text else None
+    def _client(self, token: str | None = None) -> ApiClient:
+        return ApiClient(self.base, app="portal", app_version="portal@demo", token=token)
 
-    def session(self, email: str, password: str) -> dict[str, Any]:
+    async def session(self, email: str, password: str) -> dict[str, Any]:
         """What the portal keeps in localStorage once someone has signed in."""
-        login = self.call("POST", "/v1/auth/login", {"email": email, "password": password})
-        org = login["memberships"][0]["org"]
-        issued = self.call("POST", "/v1/auth/sessions", {"org_id": org["id"]}, login["token"])
-        return {"state": {"token": issued["token"], "orgSlug": org["slug"]}, "version": 0}
+        async with self._client() as client:
+            login = await client.login(email, password)
+            org = login.memberships[0].org
+            issued = await client.exchange_session(login.token, org.id)
+        return {"state": {"token": issued.token, "orgSlug": org.slug}, "version": 0}
 
-    def clear_tasks(self, token: str) -> int:
+    async def clear_tasks(self, token: str) -> int:
         cleared = 0
-        for status in ("open", "done"):
-            while True:
-                page = self.call(
-                    "GET", f"/v1/tasks?status={status}&scope=team&limit=200", token=token
-                )
-                if not page["items"]:
-                    break
-                for task in page["items"]:
-                    self.call("DELETE", f"/v1/tasks/{task['id']}", token=token)
-                    cleared += 1
+        async with self._client(token) as client:
+            for status in (TaskStatus.open, TaskStatus.done):
+                while True:
+                    page = await client.tasks(status, TaskScope.team, limit=200)
+                    if not page.items:
+                        break
+                    for task in page.items:
+                        await client.delete_task(task.id)
+                        cleared += 1
         return cleared
 
 
@@ -202,7 +198,7 @@ async def open_window(
     await cdp.send("Emulation.setDeviceMetricsOverride", metrics, window.session)
     await cdp.send("Page.navigate", {"url": f"{portal}/sign-in"}, window.session)
     await window.wait_for("document.readyState === 'complete'")
-    stored = json.dumps(json.dumps(await asyncio.to_thread(api.session, email, password)))
+    stored = json.dumps(json.dumps(await api.session(email, password)))
     await window.js(
         f"localStorage.setItem('tadas.portal.session', {stored});"
         "localStorage.setItem('tadas.portal.taskScope', 'team'); true"
@@ -301,8 +297,8 @@ async def still(window: Window, path: str) -> None:
 async def record(args: argparse.Namespace) -> None:
     api = Api(args.api)
     if not args.still:  # a still shows whatever the list holds; a recording starts empty
-        owner_session = await asyncio.to_thread(api.session, args.owner, args.password)
-        cleared = await asyncio.to_thread(api.clear_tasks, owner_session["state"]["token"])
+        owner_session = await api.session(args.owner, args.password)
+        cleared = await api.clear_tasks(owner_session["state"]["token"])
         print(f"cleared {cleared} tasks")
 
     profile = tempfile.mkdtemp(prefix="tadas-demo-chrome-")

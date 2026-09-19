@@ -21,9 +21,14 @@ class Envelope(View):
 
 
 class HelloEnvelope(Envelope):
+    """The first frame: who the socket is, how often to ping, and where the
+    tenant's stream stands, so a client replays from `seq` on a reconnect
+    even when no push has reached it yet."""
+
     type: Literal["hello"] = "hello"
     org_id: UUID
     user_id: UUID
+    seq: int
     ping_interval_seconds: int = PING_INTERVAL_SECONDS
 
 

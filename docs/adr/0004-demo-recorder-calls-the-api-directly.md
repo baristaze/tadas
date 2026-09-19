@@ -1,6 +1,9 @@
 # ADR 0004: The demo recorder calls the API without a generated client
 
-**Status**: accepted (2026-09-18)
+**Status**: superseded (2026-09-18). The CLI (`apps/cli`) brought the
+Python client package, `clients/python/` (`tadas.client`), and the demo
+recorder switched to it in the same change, as the decision below said it
+would. The record stays for the interval it covers.
 
 ## Context
 

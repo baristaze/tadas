@@ -415,6 +415,11 @@ export interface components {
          *     from `entity`/`entity_id`/`action` stayed under `/v1` (ADR 0006).
          */
         EventView: {
+            /**
+             * Actor Id
+             * Format: uuid
+             */
+            actor_id: string;
             /** Kind */
             kind: string;
             /**

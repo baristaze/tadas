@@ -26,7 +26,9 @@ async def test_events_are_paged_by_seq(client: httpx.AsyncClient, owner: dict[st
         "tasks.task.deleted",
     ]
     assert all(e["target_id"] == task_id for e in events)
-    assert set(events[0]) == {"seq", "kind", "target_id", "produced_at"}
+    assert set(events[0]) == {"seq", "kind", "target_id", "produced_at", "actor_id"}
+    me = (await client.get("/v1/me", headers=owner)).json()["user"]["id"]
+    assert all(e["actor_id"] == me for e in events)
 
     tail = await client.get("/v1/events", headers=owner, params={"after_seq": 2, "limit": 10})
     assert [e["seq"] for e in tail.json()] == [3]
@@ -55,7 +57,8 @@ def test_a_push_carries_the_stream_position(tmp_path: Path) -> None:
         headers = {"Authorization": f"Bearer {session.json()['token']}", "X-App": "portal"}
         ticket = tc.post("/v1/realtime/tickets", headers=headers).json()["ticket"]
         with tc.websocket_connect(f"/v1/realtime?ticket={ticket}") as ws:
-            assert ws.receive_json()["type"] == "hello"
+            hello = ws.receive_json()
+            assert hello["type"] == "hello" and hello["seq"] == 0
             ws.send_json({"op": "subscribe", "topic": "entity_changed"})
             assert ws.receive_json()["type"] == "subscribed"
             ws.send_json({"op": "subscribe", "topic": "work_available"})
@@ -70,6 +73,11 @@ def test_a_push_carries_the_stream_position(tmp_path: Path) -> None:
                 "kind": "tasks.task.created",
                 "target_id": created.json()["id"],
                 "seq": 1,
+                "actor_id": session.json()["user"]["id"],
             }
         replay = tc.get("/v1/events", headers=headers, params={"after_seq": 0})
         assert [e["seq"] for e in replay.json()] == [1]
+        # A socket opened now starts at the stream's position.
+        ticket = tc.post("/v1/realtime/tickets", headers=headers).json()["ticket"]
+        with tc.websocket_connect(f"/v1/realtime?ticket={ticket}") as ws:
+            assert ws.receive_json()["seq"] == 1

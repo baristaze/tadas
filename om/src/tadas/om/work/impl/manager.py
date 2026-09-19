@@ -218,5 +218,6 @@ class WorkManagerImpl(WorkManagerInterface):
                 kind=event.kind,
                 target_id=event.target_id,
                 seq=event.seq,
+                actor_id=event.actor_id,
             ),
         )

@@ -15,7 +15,7 @@ COMPOSE ?= docker compose $(COMPOSE_ENV) -f deployment/local/docker-compose.yml
 COMPOSE_FULL := $(COMPOSE) -f deployment/local/docker-compose.full.yml
 ROLES := core activity queue admin
 
-.PHONY: help setup up down reset urls infra-up devx-up stack-up infra-down migrate seed demo-gif migrate-check check lint format-check typecheck test-unit test-integration openapi
+.PHONY: help setup up down reset urls infra-up devx-up stack-up infra-down migrate seed demo-gif demo-cli-gif migrate-check check lint format-check typecheck test-unit test-integration openapi
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-18s %s\n", $$1, $$2}'
@@ -87,6 +87,11 @@ seed: ## Create a local org with an owner and a member to sign in as; a no-op on
 demo-gif: ## Record the README's realtime demo GIF against the running stack
 	uv run --with pillow python scripts/record_demo.py docs/media/realtime-demo.gif
 
+# Needs `make up` too. Bob in command mode on the left, the owner on
+# `tadas listen` on the right; records docs/media/cli-demo.gif.
+demo-cli-gif: ## Record the README's CLI demo GIF (command mode beside listen) against the running stack
+	uv run --with pillow python scripts/record_cli_demo.py docs/media/cli-demo.gif
+
 # The ORM-versus-schema check needs a migrated database, which the fast gate
 # cannot reach, so `check` does not run it; CI's integration job runs it
 # right after `make migrate`, and the downgrade-then-upgrade round trip stays
@@ -112,6 +117,14 @@ test-unit: ## Unit tests over the memory impls
 test-integration: ## Integration tests over the compose stack
 	uv run pytest -q -m integration
 
-openapi: ## Emit the API document into the apps that consume it and regenerate their types
+# One committed document, apps/portal/openapi.json; both generated type sets
+# come from it: the portal's schema.d.ts and the Python client's schema.py.
+openapi: ## Emit the API document and regenerate the portal's and the Python client's types
 	uv run --package tadas-api tadas-api openapi --out apps/portal/openapi.json
 	pnpm --filter @tadas/portal generate
+	uv run datamodel-codegen --input apps/portal/openapi.json --input-file-type openapi \
+		--output clients/python/src/tadas/client/schema.py \
+		--output-model-type pydantic_v2.BaseModel --target-python-version 3.13 \
+		--use-standard-collections --use-union-operator --use-annotated \
+		--enum-field-as-literal none --use-schema-description --disable-timestamp \
+		--formatters ruff-format --formatters ruff-check
