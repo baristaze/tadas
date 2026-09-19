@@ -14,7 +14,7 @@ from contracts.factories import (
     make_user,
 )
 from tadas.om.base import new_id, utcnow
-from tadas.om.exceptions import TenantMismatch
+from tadas.om.exceptions import Conflict, TenantMismatch
 from tadas.om.tenancy.storage import TenancyStorageInterface
 
 
@@ -59,8 +59,7 @@ class TenancyStorageContract:
         self, storage: TenancyStorageInterface
     ) -> None:
         org = make_org()
-        identity = make_identity()
-        users = [make_user(identity.id) for _ in range(3)]
+        users = [make_user(make_identity().id) for _ in range(3)]  # one live user per identity
         for user in reversed(users):
             await storage.write_user(org.id, user)
         listed = await storage.read_users(org.id, limit=10)
@@ -77,6 +76,21 @@ class TenancyStorageContract:
         await storage.write_user(org.id, gone)
         assert await storage.read_users(org.id, limit=10) == []
         assert await storage.read_user(org.id, user.id) == gone
+
+    async def test_one_live_user_per_identity_in_a_tenant(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        org, other_org = make_org(), make_org("Other")
+        identity = make_identity()
+        user = make_user(identity.id)
+        await storage.write_user(org.id, user)
+        with pytest.raises(Conflict):
+            await storage.write_user(org.id, make_user(identity.id))
+        # The same identity in another tenant, and again here once the first is gone.
+        await storage.write_user(other_org.id, make_user(identity.id))
+        gone = user.model_copy(update={"deleted_at": utcnow(), "deleted_by": user.id})
+        await storage.write_user(org.id, gone)
+        await storage.write_user(org.id, make_user(identity.id))
 
     async def test_identity_is_global(self, storage: TenancyStorageInterface) -> None:
         identity = make_identity()

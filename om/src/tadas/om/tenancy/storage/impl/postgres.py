@@ -2,7 +2,9 @@ from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import delete, select, update
+from sqlalchemy.exc import IntegrityError
 
+from tadas.om.exceptions import Conflict
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.storage.impl.pg_base import PgStorageBase
 from tadas.om.storage.utils.translation import to_model
@@ -90,7 +92,11 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
     async def write_user(
         self, org_id: UUID, user: User, outbox_row: OutboxRow | None = None
     ) -> None:
-        await self._upsert(Users, org_id, user, outbox_row)
+        try:
+            await self._upsert(Users, org_id, user, outbox_row)
+        except IntegrityError as error:
+            # uq_users_org_id_identity_id_live: one live user per identity in a tenant.
+            raise Conflict(f"identity {user.identity_id} already has a live user") from error
 
     async def read_memberships(self, org_id: UUID, limit: int) -> list[Membership]:
         stmt = (

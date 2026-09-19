@@ -43,12 +43,18 @@ class IdempotencyManagerImpl(IdempotencyManagerInterface):
                 raise IdempotencyKeyReused(
                     f"idempotency key {key!r} was used for a different request"
                 ) from None
-            if stored.pending and stored.created_at < utcnow() - self._options.pending_ttl:
-                # Abandoned: the marker was written and its effect never landed.
-                await self._storage.write_record(
-                    ctx.org_id, stored.model_copy(update={"created_at": utcnow()})
+            if stored.pending:
+                # Abandoned when the marker was written and its effect never
+                # landed. The take-over is one conditional write, so of two
+                # retries racing for it exactly one runs the request again; the
+                # other sees the restarted marker and replays "in progress".
+                now = utcnow()
+                taken = await self._storage.take_over_pending(
+                    ctx.org_id, ctx.user_id, key, now - self._options.pending_ttl, now
                 )
-                return None
+                if taken is not None:
+                    return None
+                return await self._storage.read_record(ctx.org_id, ctx.user_id, key) or stored
             return stored
         return None
 

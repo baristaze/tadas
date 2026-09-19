@@ -11,7 +11,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from datetime import timedelta
 
 from tadas.infra.cache import CacheInterface
-from tadas.infra.observability import OUTCOMES
+from tadas.infra.observability import OUTCOMES, request_id_var
 from tadas.infra.topics import TopicPayload, Topics, TopicsInterface, WorkAvailablePayload
 from tadas.om.base import EMPTY_UUID, Platform
 from tadas.om.exceptions import LeaseLost, NotFound
@@ -142,6 +142,15 @@ class WorkerLoop:
     # Running one item.
 
     async def _run_item(self, ctx: OpContext, item: WorkItem) -> None:
+        # The claim minted the item's request id; every log line of the run
+        # carries it, the way the API's middleware does for a request.
+        token = request_id_var.set(str(ctx.request_id))
+        try:
+            await self._handle(ctx, item)
+        finally:
+            request_id_var.reset(token)
+
+    async def _handle(self, ctx: OpContext, item: WorkItem) -> None:
         handler = self._handlers.get(item.kind)
         if handler is None:
             await self._settle(item, self._work.release(ctx, item), "released")

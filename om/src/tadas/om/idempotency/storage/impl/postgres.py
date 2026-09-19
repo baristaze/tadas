@@ -1,6 +1,7 @@
+from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 
 from tadas.om.exceptions import DuplicateIdempotencyKey
@@ -27,3 +28,31 @@ class IdempotencyStoragePostgresImpl(PgStorageBase, IdempotencyStorageInterface)
         async with self._session_for(stmt) as session:
             row = (await session.execute(stmt)).scalar_one_or_none()
             return None if row is None else to_model(row, IdempotencyRecord)
+
+    async def take_over_pending(
+        self,
+        org_id: UUID,
+        user_id: UUID,
+        key: str,
+        abandoned_before: datetime,
+        restarted_at: datetime,
+    ) -> IdempotencyRecord | None:
+        stmt = (
+            update(IdempotencyRecords)
+            .where(
+                IdempotencyRecords.org_id == org_id,
+                IdempotencyRecords.user_id == user_id,
+                IdempotencyRecords.key == key,
+                IdempotencyRecords.status.is_(None),
+                IdempotencyRecords.created_at < abandoned_before,
+            )
+            .values(created_at=restarted_at)
+            .returning(IdempotencyRecords)
+        )
+        async with self._session_for(stmt) as session:
+            row = (await session.execute(stmt)).scalar_one_or_none()
+            if row is None:
+                return None
+            taken = to_model(row, IdempotencyRecord)
+            await session.commit()
+            return taken

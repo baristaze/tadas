@@ -1,6 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
+from tadas.om.exceptions import Conflict
 from tadas.om.outbox.storage import OutboxLandingInterface
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.storage.impl.memory_base import MemoryStorageBase, MemoryTable
@@ -62,7 +63,16 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
     async def write_user(
         self, org_id: UUID, user: User, outbox_row: OutboxRow | None = None
     ) -> None:
-        self._put(self._users, org_id, user, outbox_row)
+        async with self._lock:
+            if user.deleted_at is None:
+                for other in self._rows(self._users, org_id):
+                    if (
+                        other.id != user.id
+                        and other.identity_id == user.identity_id
+                        and other.deleted_at is None
+                    ):
+                        raise Conflict(f"identity {user.identity_id} already has a live user")
+            self._put(self._users, org_id, user, outbox_row)
 
     async def read_memberships(self, org_id: UUID, limit: int) -> list[Membership]:
         return self._rows(self._memberships, org_id)[:limit]
