@@ -10,7 +10,7 @@ from tadas.infra.topics.memory import TopicsMemoryImpl
 from tadas.om.base import new_id, utcnow
 from tadas.om.events.impl.manager import EventsManagerImpl, EventsOptions
 from tadas.om.events.storage.impl.memory import EventStorageMemoryImpl
-from tadas.om.exceptions import Conflict, NotAuthorized, NotFound, ValidationFailed
+from tadas.om.exceptions import NotAuthorized, NotFound, ValidationFailed
 from tadas.om.opcontext import AppContext, AppType, CredentialKind, OpContext, Role, build_context
 from tadas.om.outbox.impl.relay import OutboxRelayImpl
 from tadas.om.outbox.storage.impl.memory import OutboxStorageMemoryImpl
@@ -244,8 +244,8 @@ async def test_authorize_then_verify(manager: TasksManagerImpl) -> None:
     with pytest.raises(ValidationFailed):
         await manager.create_task(member, make_task(member, title="   "))
     task = await manager.create_task(member, make_task(member))
-    with pytest.raises(Conflict):
-        await manager.create_task(member, task)
+    # A retry presents the same minted id: the row as stored, never a second one.
+    assert await manager.create_task(member, task) == task
     with pytest.raises(NotFound):
         await manager.update_task(member, make_task(member))
     with pytest.raises(NotFound):

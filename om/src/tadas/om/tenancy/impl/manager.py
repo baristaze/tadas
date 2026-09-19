@@ -568,9 +568,19 @@ class TenancyManagerImpl(TenancyManagerInterface):
         return [key for key in keys if key.user_id == ctx.user_id]
 
     async def create_api_key(
-        self, ctx: OpContext, name: str, role: Role, ttl: timedelta | None = None
+        self,
+        ctx: OpContext,
+        name: str,
+        role: Role,
+        ttl: timedelta | None = None,
+        api_key_id: UUID | None = None,
     ) -> IssuedApiKey:
         ctx.require(Permission.MANAGE_KEYS)
+        api_key_id = api_key_id or new_id()
+        if await self._storage.read_api_key(ctx.org_id, api_key_id) is not None:
+            raise Conflict(
+                f"api key {api_key_id} was issued once; its secret cannot be shown again"
+            )
         if not role_at_most(role, ctx.security.role):
             raise NotAuthorized(f"cannot issue role {role.value} above {ctx.security.role.value}")
         if ttl is not None and not (timedelta(0) < ttl <= self._options.api_key_ttl):
@@ -580,7 +590,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
         now = utcnow()
         key = mint_token(CredentialKind.API_KEY)
         api_key = ApiKey(
-            id=new_id(),
+            id=api_key_id,
             name=name,
             created_at=now,
             updated_at=now,

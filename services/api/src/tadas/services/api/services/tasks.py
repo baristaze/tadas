@@ -29,7 +29,10 @@ class TasksServiceInterface(ABC):
     async def get_task(self, ctx: OpContext, task_id: UUID) -> TaskView: ...
 
     @abstractmethod
-    async def create_task(self, ctx: OpContext, body: AddTaskRequest) -> TaskView: ...
+    async def create_task(self, ctx: OpContext, body: AddTaskRequest, task_id: UUID) -> TaskView:
+        """`task_id` is minted by the gateway before the idempotency marker, so a
+        retried create lands on the same id."""
+        ...
 
     @abstractmethod
     async def update_task(

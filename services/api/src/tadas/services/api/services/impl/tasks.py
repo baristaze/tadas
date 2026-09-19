@@ -2,7 +2,7 @@ import base64
 from datetime import datetime
 from uuid import UUID
 
-from tadas.om.base import new_id, utcnow
+from tadas.om.base import utcnow
 from tadas.om.exceptions import ValidationFailed
 from tadas.om.opcontext import OpContext
 from tadas.om.tasks import TasksManagerInterface
@@ -63,10 +63,10 @@ class TasksServiceImpl(TasksServiceInterface):
     async def get_task(self, ctx: OpContext, task_id: UUID) -> TaskView:
         return TaskView.model_validate(await self._tasks.get_task(ctx, task_id))
 
-    async def create_task(self, ctx: OpContext, body: AddTaskRequest) -> TaskView:
+    async def create_task(self, ctx: OpContext, body: AddTaskRequest, task_id: UUID) -> TaskView:
         now = utcnow()
         task = Task(
-            id=new_id(),
+            id=task_id,
             created_at=now,
             updated_at=now,
             created_by=ctx.user_id,

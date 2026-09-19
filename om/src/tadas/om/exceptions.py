@@ -89,3 +89,9 @@ class DuplicateIdempotencyKey(IdempotencyException, Conflict):
 
 class IdempotencyKeyReused(IdempotencyException, ValidationFailed):
     """The key was seen before with a different request."""
+
+
+class IdempotencyInProgress(IdempotencyException, Conflict):
+    """The first request under this key has not finished yet."""
+
+    code = "idempotency_in_progress"

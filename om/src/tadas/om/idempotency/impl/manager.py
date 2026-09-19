@@ -1,7 +1,13 @@
 from datetime import timedelta
+from uuid import UUID
 
 from tadas.om.base import Platform, new_id, utcnow
-from tadas.om.exceptions import DuplicateIdempotencyKey, IdempotencyKeyReused, NotFound
+from tadas.om.exceptions import (
+    DuplicateIdempotencyKey,
+    IdempotencyInProgress,
+    IdempotencyKeyReused,
+    NotFound,
+)
 from tadas.om.idempotency.manager import IdempotencyManagerInterface
 from tadas.om.idempotency.storage import IdempotencyStorageInterface
 from tadas.om.idempotency.types.record import IdempotencyRecord
@@ -21,14 +27,15 @@ class IdempotencyManagerImpl(IdempotencyManagerInterface):
         self._options = options
 
     async def begin(
-        self, ctx: OpContext, key: str, request_digest: str
-    ) -> IdempotencyRecord | None:
+        self, ctx: OpContext, key: str, request_digest: str, target_id: UUID
+    ) -> IdempotencyRecord:
         ctx.require(Permission.WRITE)
         pending = IdempotencyRecord(
             id=new_id(),
             user_id=ctx.user_id,
             key=key,
             request_digest=request_digest,
+            target_id=target_id,
             created_at=utcnow(),
         )
         try:
@@ -45,18 +52,22 @@ class IdempotencyManagerImpl(IdempotencyManagerInterface):
                 ) from None
             if stored.pending:
                 # Abandoned when the marker was written and its effect never
-                # landed. The take-over is one conditional write, so of two
-                # retries racing for it exactly one runs the request again; the
-                # other sees the restarted marker and replays "in progress".
+                # landed, or the effect landed and the outcome did not. The
+                # take-over is one conditional write, so of two retries racing
+                # for it exactly one runs the request again, on the target_id
+                # the first attempt minted, so a create that already landed is
+                # found and not repeated; the other sees the restarted marker.
                 now = utcnow()
                 taken = await self._storage.take_over_pending(
                     ctx.org_id, ctx.user_id, key, now - self._options.pending_ttl, now
                 )
                 if taken is not None:
-                    return None
-                return await self._storage.read_record(ctx.org_id, ctx.user_id, key) or stored
+                    return taken
+                raise IdempotencyInProgress(
+                    f"idempotency key {key!r} is still being processed"
+                ) from None
             return stored
-        return None
+        return pending
 
     async def finish(self, ctx: OpContext, key: str, status: int, body: str) -> IdempotencyRecord:
         ctx.require(Permission.WRITE)

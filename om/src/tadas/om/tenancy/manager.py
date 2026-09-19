@@ -183,8 +183,17 @@ class TenancyManagerInterface(ABC):
 
     @abstractmethod
     async def create_api_key(
-        self, ctx: OpContext, name: str, role: Role, ttl: timedelta | None = None
-    ) -> IssuedApiKey: ...
+        self,
+        ctx: OpContext,
+        name: str,
+        role: Role,
+        ttl: timedelta | None = None,
+        api_key_id: UUID | None = None,
+    ) -> IssuedApiKey:
+        """`api_key_id`, when given, is the id a retried request carries; a key
+        that already exists under it raises Conflict, because its secret was
+        shown once and cannot be shown again."""
+        ...
 
     @abstractmethod
     async def revoke_api_key(self, ctx: OpContext, api_key_id: UUID) -> ApiKey: ...
