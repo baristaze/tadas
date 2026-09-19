@@ -1,6 +1,6 @@
 """What a process pays to boot: importing the roots, then building the
-storage root, the infra root, and every manager (ADR 0007). `make bench-boot`, or
-`uv run --package tadas-api python scripts/bench_boot.py`."""
+storage root, the infra root, and every manager (ADR 0007). `make benchmark-boot`, or
+`uv run --package tadas-api python scripts/benchmark_boot.py`."""
 
 import sys
 import tempfile

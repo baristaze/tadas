@@ -141,7 +141,7 @@ everything in-process for tests.
 - Every Python process builds its roots whole at boot, once: storage,
   infra, then every manager, in dependency order; a request constructs
   nothing. The cost is the imports (about 450 ms, once per process);
-  a root itself builds in microseconds. `make bench-boot` measures it;
+  a root itself builds in microseconds. `make benchmark-boot` measures it;
   [ADR 0007](adr/0007-roots-built-whole-at-boot.md) says why a lazy
   root is refused.
 - Every Python process boots error reporting (the Sentry SDK, on only when

@@ -10,7 +10,7 @@ the same way, whether or not the process ever calls them. The
 question was whether a lazy root (a manager built on first use) would
 make a process that serves a narrow flow cheaper.
 
-Measured on this tree (`make bench-boot`, warm, Apple silicon):
+Measured on this tree (`make benchmark-boot`, warm, Apple silicon):
 
 | Step                                                      | Cost      |
 |-----------------------------------------------------------|-----------|
@@ -56,7 +56,7 @@ per-scope cache in the infra root is the one lazy member and stays
 so: a scope is a name, not a connection, and building one costs
 nothing either way.
 
-`make bench-boot` is the re-test: run it when a root or a dependency
+`make benchmark-boot` is the re-test: run it when a root or a dependency
 changes and compare the table above. A change that moves a
 constructor above a millisecond, or that opens a connection in one,
 is a finding. The import floor moves only when a dependency is added
@@ -64,6 +64,6 @@ or dropped; that is visible in the same table.
 
 ## Evidence
 
-![make bench-boot](media/0007-bench-boot.png)
+![make benchmark-boot](media/0007-benchmark-boot.png)
 
 ![the roots build once, for any number of requests](media/0007-built-once.png)
