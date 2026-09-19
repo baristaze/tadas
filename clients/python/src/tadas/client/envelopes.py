@@ -27,6 +27,7 @@ class HelloEnvelope(Frame):
 
 class PongEnvelope(Frame):
     type: Literal["pong"]
+    seq: int  # where the tenant's stream stands: a head past the cursor is a gap
 
 
 class SubscribedEnvelope(Frame):

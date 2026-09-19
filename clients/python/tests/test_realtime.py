@@ -51,6 +51,10 @@ def hello_at(seq: int) -> str:
 SUBSCRIBED = json.dumps({"type": "subscribed", "sent_at": None, "topic": "entity_changed"})
 
 
+def pong(seq: int) -> str:
+    return json.dumps({"type": "pong", "sent_at": None, "seq": seq})
+
+
 class FakeSocket:
     """Frames in order; a `Close` entry ends the session the way the server
     would. Once the frames run out the socket is silent: the first read waits
@@ -154,6 +158,15 @@ async def test_pushes_arrive_in_order_and_a_gap_is_replayed_from_the_stream() ->
     assert urls == ["ws://test/v1/realtime?ticket=tkt_1"]
     assert json.loads(socket.sent[0]) == {"op": "subscribe", "topic": "entity_changed"}
     assert states == ["connecting", "open"]
+
+
+async def test_a_pong_past_the_cursor_replays_what_no_frame_announced() -> None:
+    # The push for seq 2 was dropped and nothing followed it; the pong says
+    # the stream stands at 3, so the client replays after its cursor.
+    socket = FakeSocket([HELLO, SUBSCRIBED, push(1), pong(1), pong(3)])
+    channel = Channel(client_over([record(2), record(3)]), connect=connect_to([socket], []))
+    assert await collect(channel, 3) == [1, 2, 3]
+    assert channel.cursor == 3
 
 
 async def test_a_dropped_socket_reconnects_and_replays_after_the_cursor(

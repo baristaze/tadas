@@ -271,7 +271,8 @@ def test_realtime_channel_delivers_tenant_events(tmp_path: Path) -> None:
             ws.send_json({"op": "subscribe", "topic": "entity_changed"})
             assert ws.receive_json()["type"] == "subscribed"
             ws.send_json({"op": "ping"})
-            assert ws.receive_json()["type"] == "pong"
+            pong = ws.receive_json()
+            assert pong["type"] == "pong" and pong["seq"] == hello["seq"]
             created = tc.post(
                 "/v1/api-keys", headers=headers, json={"name": "ci", "role": "member"}
             )

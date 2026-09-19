@@ -20,6 +20,13 @@ export function place(cursor: Cursor, seq: number): Placement {
   return { kind: "gap", after: cursor };
 }
 
+// Where to replay from when the head the server reports is past the cursor;
+// null when the client is caught up or has no cursor to replay from yet.
+export function behind(cursor: Cursor, head: number): number | null {
+  if (cursor === null || head <= cursor) return null;
+  return cursor;
+}
+
 export function eventEnvelope(event: EventView): EventEnvelope {
   return {
     type: "event",

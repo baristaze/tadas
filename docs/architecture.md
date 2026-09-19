@@ -161,9 +161,11 @@ everything in-process for tests.
   API is reached through `src/api/`: the committed `openapi.json` at the
   app root, generated types behind the facade `types.ts`, one transport
   client. Every push and every event record carry `actor_id`, so a client
-  can say who changed what, and the hello frame carries the stream
-  position (`seq`), so a client replays from there after a reconnect
-  even when no push reached it before the drop.
+  can say who changed what, and the hello frame and every pong carry
+  the stream position (`seq`), so a client replays from there after a
+  reconnect even when no push reached it before the drop, and a push
+  that was dropped with nothing behind it is found on the next
+  keepalive rather than on the next event.
 - `clients/python` (`tadas-client`, `tadas.client`): the one Python client,
   generated from the same committed `openapi.json` (`schema.py`, by
   `make openapi`) behind the facade `types.py`; one transport client with

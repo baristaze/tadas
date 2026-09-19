@@ -15,8 +15,11 @@ export interface HelloEnvelope extends Base {
   ping_interval_seconds: number;
 }
 
+// The keepalive's answer names the stream position too, so a quiet socket
+// cannot hide a dropped last frame: a head past the cursor is a gap.
 export interface PongEnvelope extends Base {
   type: "pong";
+  seq: number;
 }
 
 export interface SubscribedEnvelope extends Base {

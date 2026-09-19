@@ -46,6 +46,14 @@ def place(cursor: Cursor, seq: int) -> Placement:
     return Gap("gap", cursor)
 
 
+def behind(cursor: Cursor, head: int) -> int | None:
+    """Where to replay from when the head the server reports is past the
+    cursor; None when the client is caught up or has no cursor yet."""
+    if cursor is None or head <= cursor:
+        return None
+    return cursor
+
+
 def is_last_page(received: int, limit: int) -> bool:
     """A page shorter than the limit is the last one."""
     return received < limit
