@@ -10,7 +10,7 @@ from typing import Any
 
 import httpx
 import pytest
-from api_support import OWNER, add_member, build_container, run
+from api_support import OWNER, add_member, build_container, run, seed_request
 from starlette.testclient import TestClient
 from typer.testing import CliRunner
 
@@ -89,7 +89,7 @@ def stack(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Stack]:
     container = build_container(tmp_path)
     _, org = run(
         container.managers.tenancy.bootstrap(
-            "Acme", "acme", OWNER["email"], OWNER["password"], OWNER["name"]
+            seed_request(), "Acme", "acme", OWNER["email"], OWNER["password"], OWNER["name"]
         )
     )
     run(add_member(container, org.id, BOB["email"], BOB["password"], Role.MEMBER))

@@ -8,13 +8,20 @@ from tadas.infra.impl.local import InfraLocalImpl
 from tadas.infra.topics import EntityChangedPayload, TopicPayload, Topics, WorkAvailablePayload
 from tadas.om.base import new_id, utcnow
 from tadas.om.exceptions import LeaseLost, NotFound, ValidationFailed
-from tadas.om.opcontext import AppContext, AppType, CredentialKind, OpContext, Role
+from tadas.om.opcontext import AppContext, AppType, CredentialKind, OpContext, RequestContext, Role
 from tadas.om.root import Managers, build_managers
 from tadas.om.storage.impl.memory import StorageMemoryImpl
 from tadas.om.work.impl.manager import DEAD_LETTER_KIND
 from tadas.om.work.types.work_item import WorkKind, WorkStatus
 
 LEASE = timedelta(seconds=30)
+APP = AppContext(type=AppType.PORTAL, version="portal@test")
+WORKER = AppContext(type=AppType.WORKER, version="worker@test")
+
+
+def request(app: AppContext = WORKER) -> RequestContext:
+    """The request stage the worker mints per claim and per sweep pass."""
+    return RequestContext(request_id=new_id(), app=app)
 
 
 @pytest.fixture
@@ -34,12 +41,14 @@ def managers(infra: InfraLocalImpl, storage: StorageMemoryImpl) -> Managers:
 
 @pytest.fixture
 async def ctx(managers: Managers) -> OpContext:
-    _, org = await managers.tenancy.bootstrap("Acme", "acme", "ann@example.test", "pw-1234", "Ann")
-    login = await managers.tenancy.login("ann@example.test", "pw-1234")
-    issued = await managers.tenancy.exchange_login(login.token, org.id)
-    return await managers.tenancy.authenticate(
-        issued.token, AppContext(type=AppType.PORTAL, version="portal@test"), new_id()
+    tenancy = managers.tenancy
+    _, org = await tenancy.bootstrap(
+        request(APP), "Acme", "acme", "ann@example.test", "pw-1234", "Ann"
     )
+    login = await tenancy.login(request(APP), "ann@example.test", "pw-1234")
+    identity = await tenancy.authenticate_login(request(APP), login.token)
+    issued = await tenancy.exchange_login(identity, org.id)
+    return await tenancy.authenticate(request(APP), issued.token)
 
 
 async def test_enqueue_publishes_and_claim_returns_the_enqueuers_context(
@@ -57,39 +66,41 @@ async def test_enqueue_publishes_and_claim_returns_the_enqueuers_context(
     assert seen[0].lane == "default" and seen[0].kind == "NOOP"
     assert seen[0].idempotency_key == item.idempotency_key
 
-    claimed = await managers.work.claim("default", [WorkKind.NOOP], "w1", LEASE)
+    claim_request = request()
+    claimed = await managers.work.claim(claim_request, "default", [WorkKind.NOOP], "w1", LEASE)
     assert claimed is not None
     work_ctx, claimed_item = claimed
     assert work_ctx.org_id == ctx.org_id
     assert work_ctx.user_id == ctx.user_id
     assert work_ctx.security.role is Role.SERVICE
     assert work_ctx.security.credential_kind is CredentialKind.INTERNAL
-    assert work_ctx.app.type is AppType.WORKER
+    # The work context refines the request stage the worker minted for the claim.
+    assert work_ctx.app.type is AppType.WORKER and work_ctx.request_id == claim_request.request_id
     assert claimed_item.claimed_by == "w1"
 
     done = await managers.work.complete(work_ctx, claimed_item)
     assert done.status is WorkStatus.DONE and done.claimed_by is None
-    assert await managers.work.claim("default", [WorkKind.NOOP], "w1", LEASE) is None
+    assert await managers.work.claim(request(), "default", [WorkKind.NOOP], "w1", LEASE) is None
 
 
 async def test_defer_and_release_hand_back_without_spending_an_attempt(
     managers: Managers, storage: StorageMemoryImpl, ctx: OpContext
 ) -> None:
     await managers.work.enqueue(ctx, make_item().model_copy(update={"created_by": ctx.user_id}))
-    claimed = await managers.work.claim("default", [WorkKind.NOOP], "w1", LEASE)
+    claimed = await managers.work.claim(request(), "default", [WorkKind.NOOP], "w1", LEASE)
     assert claimed is not None
     deferred = await managers.work.defer(claimed[0], claimed[1], timedelta(hours=1))
     assert deferred.status is WorkStatus.QUEUED and deferred.attempts == 0
     assert deferred.available_at > utcnow() + timedelta(minutes=59)
-    assert await managers.work.claim("default", [WorkKind.NOOP], "w1", LEASE) is None
+    assert await managers.work.claim(request(), "default", [WorkKind.NOOP], "w1", LEASE) is None
 
     ready = deferred.model_copy(update={"available_at": utcnow()})
     await storage.get_work_storage().write_item(ctx.org_id, ready)
-    reclaimed = await managers.work.claim("default", [WorkKind.NOOP], "w1", LEASE)
+    reclaimed = await managers.work.claim(request(), "default", [WorkKind.NOOP], "w1", LEASE)
     assert reclaimed is not None and reclaimed[1].attempts == 1
     released = await managers.work.release(reclaimed[0], reclaimed[1])
     assert released.attempts == 0 and released.status is WorkStatus.QUEUED
-    again = await managers.work.claim("default", [WorkKind.NOOP], "w2", LEASE)
+    again = await managers.work.claim(request(), "default", [WorkKind.NOOP], "w2", LEASE)
     assert again is not None and again[1].attempts == 1
 
 
@@ -98,25 +109,25 @@ async def test_fail_requeues_with_a_growing_delay_then_fails(
 ) -> None:
     item = make_item().model_copy(update={"created_by": ctx.user_id, "max_attempts": 2})
     await managers.work.enqueue(ctx, item)
-    first = await managers.work.claim("default", [WorkKind.NOOP], "w1", LEASE)
+    first = await managers.work.claim(request(), "default", [WorkKind.NOOP], "w1", LEASE)
     assert first is not None
     requeued = await managers.work.fail(first[0], first[1], "boom")
     assert requeued.status is WorkStatus.QUEUED and requeued.last_error == "boom"
     assert requeued.available_at > utcnow() + timedelta(seconds=20)
-    assert await managers.work.claim("default", [WorkKind.NOOP], "w1", LEASE) is None
+    assert await managers.work.claim(request(), "default", [WorkKind.NOOP], "w1", LEASE) is None
 
     ready = requeued.model_copy(update={"available_at": utcnow()})
     await storage.get_work_storage().write_item(ctx.org_id, ready)
-    second = await managers.work.claim("default", [WorkKind.NOOP], "w1", LEASE)
+    second = await managers.work.claim(request(), "default", [WorkKind.NOOP], "w1", LEASE)
     assert second is not None and second[1].attempts == 2
     failed = await managers.work.fail(second[0], second[1], "boom again")
     assert failed.status is WorkStatus.FAILED
-    assert await managers.work.claim("default", [WorkKind.NOOP], "w1", LEASE) is None
+    assert await managers.work.claim(request(), "default", [WorkKind.NOOP], "w1", LEASE) is None
 
 
 async def test_extend_lease_and_lease_loss(managers: Managers, ctx: OpContext) -> None:
     await managers.work.enqueue(ctx, make_item().model_copy(update={"created_by": ctx.user_id}))
-    claimed = await managers.work.claim("default", [WorkKind.NOOP], "w1", LEASE)
+    claimed = await managers.work.claim(request(), "default", [WorkKind.NOOP], "w1", LEASE)
     assert claimed is not None
     extended = await managers.work.extend_lease(claimed[0], claimed[1], timedelta(minutes=5))
     assert extended.lease_expires_at is not None
@@ -130,7 +141,9 @@ async def test_transitions_refuse_a_lost_lease_and_a_missing_item(
     managers: Managers, storage: StorageMemoryImpl, ctx: OpContext
 ) -> None:
     await managers.work.enqueue(ctx, make_item().model_copy(update={"created_by": ctx.user_id}))
-    claimed = await managers.work.claim("default", [WorkKind.NOOP], "w1", timedelta(seconds=-1))
+    claimed = await managers.work.claim(
+        request(), "default", [WorkKind.NOOP], "w1", timedelta(seconds=-1)
+    )
     assert claimed is not None
     work_ctx, held = claimed
     assert await managers.work.requeue_stale(ctx) == 1
@@ -147,7 +160,7 @@ async def test_transitions_refuse_a_lost_lease_and_a_missing_item(
     assert stored is not None
     assert stored.status is WorkStatus.QUEUED and stored.last_error == "lease expired"
 
-    taken = await managers.work.claim("default", [WorkKind.NOOP], "w2", LEASE)
+    taken = await managers.work.claim(request(), "default", [WorkKind.NOOP], "w2", LEASE)
     assert taken is not None and taken[1].claimed_by == "w2"
     with pytest.raises(LeaseLost):
         await managers.work.complete(work_ctx, held)
@@ -164,18 +177,22 @@ async def test_requeue_stale_runs_per_tenant_under_a_maintenance_context(
     exhausted = make_item().model_copy(update={"created_by": ctx.user_id, "max_attempts": 1})
     await managers.work.enqueue(ctx, exhausted)
     expired = timedelta(seconds=-1)
-    assert await managers.work.claim("default", [WorkKind.NOOP], "w1", expired) is not None
-    assert await managers.work.claim("default", [WorkKind.NOOP], "w1", expired) is not None
+    assert (
+        await managers.work.claim(request(), "default", [WorkKind.NOOP], "w1", expired) is not None
+    )
+    assert (
+        await managers.work.claim(request(), "default", [WorkKind.NOOP], "w1", expired) is not None
+    )
 
-    contexts = await managers.work.maintenance_contexts()
+    contexts = await managers.work.maintenance_contexts(request())
     assert [c.org_id for c in contexts] == [ctx.org_id]
     assert all(c.security.role is Role.SERVICE for c in contexts)
     assert await managers.work.requeue_stale(contexts[0]) == 2
     assert await managers.work.requeue_stale(contexts[0]) == 0
 
-    again = await managers.work.claim("default", [WorkKind.NOOP], "w2", LEASE)
+    again = await managers.work.claim(request(), "default", [WorkKind.NOOP], "w2", LEASE)
     assert again is not None and again[1].attempts == 2 and again[1].id != exhausted.id
-    assert await managers.work.claim("default", [WorkKind.NOOP], "w2", LEASE) is None
+    assert await managers.work.claim(request(), "default", [WorkKind.NOOP], "w2", LEASE) is None
 
 
 async def test_enqueue_refuses_a_payload_outside_the_kinds_shape(
@@ -198,7 +215,7 @@ async def test_a_failed_item_is_a_dead_letter_with_an_audit_event(
     infra.get_topics().subscribe(Topics.ENTITY_CHANGED, "test", record)
     item = make_item().model_copy(update={"created_by": ctx.user_id, "max_attempts": 1})
     await managers.work.enqueue(ctx, item)
-    claimed = await managers.work.claim("default", [WorkKind.NOOP], "w1", LEASE)
+    claimed = await managers.work.claim(request(), "default", [WorkKind.NOOP], "w1", LEASE)
     assert claimed is not None
     work_ctx, claimed_item = claimed
     failed = await managers.work.fail(work_ctx, claimed_item, "boom")
@@ -217,7 +234,7 @@ async def test_a_retry_that_still_has_attempts_is_not_a_dead_letter(
 ) -> None:
     item = make_item().model_copy(update={"created_by": ctx.user_id, "max_attempts": 3})
     await managers.work.enqueue(ctx, item)
-    claimed = await managers.work.claim("default", [WorkKind.NOOP], "w1", LEASE)
+    claimed = await managers.work.claim(request(), "default", [WorkKind.NOOP], "w1", LEASE)
     assert claimed is not None
     work_ctx, claimed_item = claimed
     requeued = await managers.work.fail(work_ctx, claimed_item, "again")

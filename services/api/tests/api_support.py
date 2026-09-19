@@ -11,7 +11,7 @@ import httpx
 
 from tadas.infra.impl.local import InfraLocalImpl
 from tadas.om.base import new_id, utcnow
-from tadas.om.opcontext import Role
+from tadas.om.opcontext import AppContext, AppType, RequestContext, Role
 from tadas.om.storage.impl.memory import StorageMemoryImpl
 from tadas.om.tenancy.rules import hash_password
 from tadas.om.tenancy.types.identity import Identity
@@ -20,6 +20,11 @@ from tadas.om.tenancy.types.user import User
 from tadas.services.api.container import AppContainer
 
 OWNER = {"email": "ann@example.test", "password": "pw-1234", "name": "Ann"}
+
+
+def seed_request() -> RequestContext:
+    """The request stage a test's seeding mints at its edge, as `make seed` does."""
+    return RequestContext(request_id=new_id(), app=AppContext(type=AppType.CLI, version="cli@test"))
 
 
 def build_container(tmp_path: Path) -> AppContainer:
@@ -48,7 +53,7 @@ async def sign_in_as(
 async def sign_in(client: httpx.AsyncClient, container: AppContainer) -> dict[str, str]:
     """Bootstraps an org, signs its owner in, and returns the tenant headers."""
     _, org = await container.managers.tenancy.bootstrap(
-        "Acme", "acme", OWNER["email"], OWNER["password"], OWNER["name"]
+        seed_request(), "Acme", "acme", OWNER["email"], OWNER["password"], OWNER["name"]
     )
     return await sign_in_as(client, OWNER["email"], OWNER["password"], org.id)
 

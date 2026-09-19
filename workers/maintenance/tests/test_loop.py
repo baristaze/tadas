@@ -4,13 +4,13 @@ from datetime import timedelta
 from pathlib import Path
 from uuid import UUID
 
-from worker_support import build_container, fast_options, make_item, sign_in
+from worker_support import build_container, fast_options, make_item, request, sign_in
 
 from tadas.infra.cache import CacheInterface, CacheScope
 from tadas.infra.observability import request_id_var
 from tadas.om.base import EMPTY_UUID, new_id, utcnow
 from tadas.om.exceptions import LeaseLost
-from tadas.om.opcontext import OpContext
+from tadas.om.opcontext import OpContext, RequestContext
 from tadas.om.outbox.types.row import outbox_row, snapshot
 from tadas.om.tasks.types.task import Task
 from tadas.om.work import WorkManagerInterface
@@ -51,9 +51,14 @@ class LeaseLosingWork(WorkManagerInterface):
         return await self._inner.enqueue(ctx, item)
 
     async def claim(
-        self, lane: str, kinds: Sequence[WorkKind], worker_id: str, lease: timedelta
+        self,
+        rctx: RequestContext,
+        lane: str,
+        kinds: Sequence[WorkKind],
+        worker_id: str,
+        lease: timedelta,
     ) -> tuple[OpContext, WorkItem] | None:
-        return await self._inner.claim(lane, kinds, worker_id, lease)
+        return await self._inner.claim(rctx, lane, kinds, worker_id, lease)
 
     async def complete(self, ctx: OpContext, item: WorkItem) -> WorkItem:
         return await self._inner.complete(ctx, item)
@@ -74,8 +79,8 @@ class LeaseLosingWork(WorkManagerInterface):
     async def requeue_stale(self, ctx: OpContext) -> int:
         return await self._inner.requeue_stale(ctx)
 
-    async def maintenance_contexts(self) -> list[OpContext]:
-        return await self._inner.maintenance_contexts()
+    async def maintenance_contexts(self, rctx: RequestContext) -> list[OpContext]:
+        return await self._inner.maintenance_contexts(rctx)
 
 
 class StallingWork(LeaseLosingWork):
@@ -231,7 +236,7 @@ async def test_sweep_requeues_stale_items_per_tenant(tmp_path: Path) -> None:
     item = make_item(ctx)
     await container.managers.work.enqueue(ctx, item)
     lost = await container.managers.work.claim(
-        "default", [WorkKind.NOOP], "gone-worker", timedelta(seconds=-1)
+        request(), "default", [WorkKind.NOOP], "gone-worker", timedelta(seconds=-1)
     )
     assert lost is not None
     handler = NoopHandlerImpl()
