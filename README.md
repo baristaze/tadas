@@ -41,33 +41,35 @@ make urls     # print the URLs and the sign-in again
 to rerun: it rebuilds the app images from the working tree and seeds only
 once. Once it is up:
 
-| What | URL | Sign-in |
-|------|-----|---------|
-| Portal | http://localhost:55173 | `owner@example.test` (owner) or `bob@example.test` (member), both `tadas-local` |
-| API docs (Swagger UI) | http://127.0.0.1:8000/docs | |
-| pgweb (Postgres) | http://localhost:58081 | |
-| Valkey Admin | http://localhost:58080 | add a connection: host `valkey`, port `6379`, no username or password |
-| ElasticMQ UI (SQS) | http://localhost:53000 | |
-| Grafana (metrics) | http://localhost:53001 | none; opens on the Tadas overview dashboard |
-| Prometheus | http://localhost:59090 | |
-| Jaeger (traces) | http://localhost:56686 | |
-| GlitchTip (errors) | http://localhost:58000 | `admin@example.test` / `tadas-local` |
-| MinIO console (S3) | http://localhost:59001 | `tadas` / `tadastadas` |
+| What | URL | Sign-in and what it shows |
+|------|-----|---------------------------|
+| Portal | http://localhost:55173 | `owner@example.test` (owner) or `bob@example.test` (member), both `tadas-local`; the two people `make seed` creates |
+| API | http://127.0.0.1:8000 | Swagger UI at `/docs`, Prometheus metrics at `/metrics` |
+| pgweb | http://localhost:58081 | Postgres: schemas `core`, `activity`, `queue`, `admin`; run SQL |
+| Valkey Admin | http://localhost:58080 | Valkey: keys, metrics, commands; add a connection to host `valkey`, port `6379`, no username or password |
+| ElasticMQ UI | http://localhost:53000 | SQS queues and their messages |
+| Grafana | http://localhost:53001 | No sign-in; opens on the Tadas overview dashboard over Prometheus, and Jaeger traces |
+| Prometheus | http://localhost:59090 | Raw metrics from the api and the worker, as containers or host processes |
+| Jaeger | http://localhost:56686 | Traces, once processes export them (see Dashboards) |
+| GlitchTip | http://localhost:58000 | `admin@example.test` / `tadas-local`; errors from the api, the worker, and the portal |
+| MinIO console | http://localhost:59001 | `tadas` / `tadastadas`; the S3 buckets |
 
-For one service at a time (rebuild only the API, reset only the database,
-open `psql` or `valkey-cli`, follow logs) instead of a full `down`/`reset`,
-see [deployment/local/README.md](deployment/local/README.md). The sections
+This table is the one place the local URLs live; every section below
+refers back to it. For one service at a time (rebuild only the API, reset
+only the database, open `psql` or `valkey-cli`, follow logs) instead of a
+full `down`/`reset`, see
+[deployment/local/README.md](deployment/local/README.md). The sections
 below are the same steps one at a time, and the host-process alternative
 for hot reload.
 
 ## The command line
 
 `apps/cli` ships `tadas`: one command at a time, or `listen` for what the
-team does as it happens. It signs in with the same email and password as
-the portal and keeps the session under `~/.config/tadas`.
+team does as it happens. It signs in as one of the seeded people above
+and keeps the session under `~/.config/tadas`.
 
 ```bash
-uv run tadas login --email bob@example.test   # prompts for the password (tadas-local after make seed)
+uv run tadas login --email bob@example.test   # prompts for the password
 uv run tadas add "Do groceries"
 uv run tadas ls
 uv run tadas done <id>                        # the short id ls shows; also edit, reopen, rm, mv
@@ -85,7 +87,7 @@ make setup        # Python and TypeScript dependencies
 cp .env.example .env
 make infra-up     # Postgres, Valkey, ElasticMQ, MinIO on host ports 55432, 56379, 59324, 59000
 make migrate      # every role's migration chain
-make seed         # org "acme": owner@example.test (owner) and bob@example.test (member), both tadas-local (the SEED_* knobs in .env)
+make seed         # org "acme" with the owner and the member of the table above (the SEED_* knobs in .env)
 ```
 
 ## Run
@@ -98,38 +100,20 @@ scripts/dev.sh    # on the host, with hot reload: API, worker, portal (Vite)
 make stack-up     # in containers, built from the working tree: API, worker, portal (nginx)
 ```
 
-Then sign in to the portal as `owner@example.test` or `bob@example.test`,
-both with password `tadas-local` (from `make seed`). Sign in as each in two
-browser windows to see "My Tasks" differ from "Team's Tasks" and to watch
-changes arrive live.
-
-| What | `scripts/dev.sh` | `make stack-up` |
-|------|------------------|-----------------|
-| Portal | http://localhost:5173 | http://localhost:55173 |
-| API | http://127.0.0.1:8000 | http://127.0.0.1:8000 |
-| API docs (Swagger UI) | http://127.0.0.1:8000/docs | http://127.0.0.1:8000/docs |
-| API metrics (Prometheus) | http://127.0.0.1:8000/metrics | http://127.0.0.1:8000/metrics |
+The API is at the same address either way; only the portal's port differs:
+`scripts/dev.sh` serves it from Vite on http://localhost:5173, `make
+stack-up` from nginx on the port in the table above. Sign in as each of
+the two seeded people in two browser windows to see "My Tasks" differ from
+"Team's Tasks" and to watch changes arrive live.
 
 ### Dashboards
 
-The MinIO console comes with the stack: http://localhost:59001, user
-`tadas`, password `tadastadas`.
-
-For debugging, `make devx-up` adds developer dashboards next to the stack
-(the compose `devx` profile). They are wired to the local services and
-need no sign-in; they listen on 127.0.0.1 only. The ports below are the
-defaults of the `TADAS_<DASHBOARD>_PORT` knobs in `.env.example`; a clash
-is fixed by setting the knob in `.env`.
-
-| Dashboard | URL | Shows |
-|-----------|-----|-------|
-| pgweb | http://localhost:58081 | Postgres: schemas `core`, `activity`, `queue`, `admin`; run SQL |
-| Valkey Admin | http://localhost:58080 | Valkey: keys, metrics, commands; add a connection to host `valkey`, port `6379`, no username or password |
-| ElasticMQ UI | http://localhost:53000 | SQS queues and their messages |
-| Grafana | http://localhost:53001 | Metrics: the Tadas overview dashboard over Prometheus, and Jaeger traces |
-| Prometheus | http://localhost:59090 | Raw metrics from the api and the worker, as containers or host processes |
-| Jaeger | http://localhost:56686 | Traces, once processes export them (below) |
-| GlitchTip | http://localhost:58000 | Errors from the api, the worker, and the portal; sign in as `admin@example.test` / `tadas-local` |
+The MinIO console comes with the stack. For debugging, `make devx-up` adds
+the developer dashboards of the table above (the compose `devx` profile):
+pgweb, Valkey Admin, ElasticMQ UI, Grafana, Prometheus, Jaeger, GlitchTip.
+They are wired to the local services and listen on 127.0.0.1 only. Their
+ports are the defaults of the `TADAS_<DASHBOARD>_PORT` knobs in
+`.env.example`; a clash is fixed by setting the knob in `.env`.
 
 Traces are off by default. To send them to Jaeger, uncomment
 `TADAS_OTEL_ENDPOINT=http://127.0.0.1:54318` in `.env` and restart
