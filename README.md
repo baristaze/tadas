@@ -16,6 +16,16 @@ Team's Tasks. Every task one of them adds or completes reaches the other over
 the realtime channel as it happens. `make demo-gif` records it again from a
 running `make up` stack (`scripts/record_demo.py`).
 
+<p align="center">
+  <img src="docs/media/cli-demo.gif" width="876" alt="Two terminals side by side. On the left Bob adds, edits, completes, reopens, and deletes tasks with the tadas command line. On the right the owner runs tadas listen, and every change appears as a line the moment it happens.">
+</p>
+
+The same thing from two terminals. On the left Bob works in command mode,
+one `tadas` call at a time; on the right the owner runs `tadas listen` and
+every change reaches the terminal over the same realtime channel the portal
+uses, as one line: who did what to which task. `make demo-cli-gif` records
+it from a running `make up` stack (`scripts/record_cli_demo.py`).
+
 ## Quick start
 
 Requirements: uv, pnpm, Node 24.21.0 (see `.nvmrc`), Docker.
@@ -49,6 +59,24 @@ open `psql` or `valkey-cli`, follow logs) instead of a full `down`/`reset`,
 see [deployment/local/README.md](deployment/local/README.md). The sections
 below are the same steps one at a time, and the host-process alternative
 for hot reload.
+
+## The command line
+
+`apps/cli` ships `tadas`: one command at a time, or `listen` for what the
+team does as it happens. It signs in with the same email and password as
+the portal and keeps the session under `~/.config/tadas`.
+
+```bash
+uv run tadas login --email bob@example.test   # prompts for the password (tadas-local after make seed)
+uv run tadas add "Do groceries"
+uv run tadas ls
+uv run tadas done <id>                        # the short id ls shows; also edit, reopen, rm, mv
+uv run tadas listen                           # every change, live; --mine for your own tasks
+```
+
+See [apps/cli/README.md](apps/cli/README.md) for the conventions and the
+exit codes, and [clients/python/README.md](clients/python/README.md) for
+the Python client every Python caller goes through.
 
 ## Set up
 
@@ -122,7 +150,8 @@ make test-integration  # the same storage contracts over Postgres, plus migratio
 
 - `om/` the object model: entities, managers, storage, migrations
 - `infra/` cache, buckets, topics, queues, secrets, observability
-- `services/` web services; `workers/` background roles; `apps/` clients, each
-  with its generated API types and one transport client under `src/api/`
+- `services/` web services; `workers/` background roles; `apps/` clients: the
+  portal, with its generated API types and one transport client under
+  `src/api/`, and the CLI; `clients/python/` the one Python client
 - `deployment/` compose, images, Terraform
 - `docs/` as built, ADRs, runbooks; `scripts/` dev.sh and the cloud migration runner

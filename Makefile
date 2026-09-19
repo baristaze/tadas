@@ -15,7 +15,7 @@ COMPOSE ?= docker compose $(COMPOSE_ENV) -f deployment/local/docker-compose.yml
 COMPOSE_FULL := $(COMPOSE) -f deployment/local/docker-compose.full.yml
 ROLES := core activity queue admin
 
-.PHONY: help setup up down reset urls infra-up devx-up stack-up infra-down migrate seed demo-gif migrate-check check lint format-check typecheck test-unit test-integration openapi
+.PHONY: help setup up down reset urls infra-up devx-up stack-up infra-down migrate seed demo-gif demo-cli-gif migrate-check check lint format-check typecheck test-unit test-integration openapi
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-18s %s\n", $$1, $$2}'
@@ -86,6 +86,11 @@ seed: ## Create a local org with an owner and a member to sign in as; a no-op on
 # 55173). Empties the task list, then records docs/media/realtime-demo.gif.
 demo-gif: ## Record the README's realtime demo GIF against the running stack
 	uv run --with pillow python scripts/record_demo.py docs/media/realtime-demo.gif
+
+# Needs `make up` too. Bob in command mode on the left, the owner on
+# `tadas listen` on the right; records docs/media/cli-demo.gif.
+demo-cli-gif: ## Record the README's CLI demo GIF (command mode beside listen) against the running stack
+	uv run --with pillow python scripts/record_cli_demo.py docs/media/cli-demo.gif
 
 # The ORM-versus-schema check needs a migrated database, which the fast gate
 # cannot reach, so `check` does not run it; CI's integration job runs it
