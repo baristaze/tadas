@@ -41,7 +41,7 @@ async def get_task(ctx: Ctx, tasks: TasksService, task_id: UUID) -> TaskView:
 
 @router.post("", response_model=TaskView, status_code=201)
 async def create_task(ctx: Ctx, tasks: TasksService, body: AddTaskRequest, idem: Idem) -> Response:
-    return await idem.run(201, lambda: tasks.create_task(ctx, body))
+    return await idem.run(201, lambda task_id: tasks.create_task(ctx, body, task_id))
 
 
 @router.patch("/{task_id}", response_model=TaskView)

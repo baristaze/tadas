@@ -118,7 +118,7 @@ async def list_api_keys(
 async def create_api_key(
     ctx: Ctx, tenancy: TenancyService, body: AddApiKeyRequest, idem: Idem
 ) -> Response:
-    return await idem.run(201, lambda: tenancy.create_api_key(ctx, body))
+    return await idem.run(201, lambda api_key_id: tenancy.create_api_key(ctx, body, api_key_id))
 
 
 @router.delete("/api-keys/{api_key_id}", response_model=ApiKeyView)

@@ -7,12 +7,14 @@ running is told to wait."""
 import hashlib
 from collections.abc import Awaitable, Callable
 from typing import Annotated
+from uuid import UUID
 
 from fastapi import Depends, Header, Request, Response
 from pydantic import BaseModel
 
 from tadas.infra.observability import OUTCOMES
-from tadas.om.exceptions import PlatformException
+from tadas.om.base import new_id
+from tadas.om.exceptions import IdempotencyInProgress, PlatformException
 from tadas.om.idempotency import IdempotencyManagerInterface
 from tadas.om.opcontext import OpContext
 from tadas.services.api.gateway.auth import Ctx
@@ -21,13 +23,6 @@ from tadas.services.api.types.common import ErrorBody, ErrorResponse
 
 REPLAYED_HEADER = "Idempotent-Replayed"
 JSON = "application/json"
-
-
-class IdempotencyInProgress(PlatformException):
-    """The first request under this key has not finished yet."""
-
-    http_status = 409
-    code = "idempotency_in_progress"
 
 
 def request_digest(method: str, path: str, body: bytes) -> str:
@@ -40,8 +35,11 @@ def request_digest(method: str, path: str, body: bytes) -> str:
 
 class Idempotency:
     """Wraps the one creating call of a route so the outcome cannot escape
-    without being recorded: `run` begins the record, calls the handler, and
-    finishes the record with whatever the handler produced."""
+    without being recorded: `run` begins the record, calls the handler with
+    the id the create uses, and finishes the record with whatever the handler
+    produced. The id is minted here, before the marker, and travels on it, so
+    a retry that takes over an abandoned marker creates on the same id and a
+    crash between the create and `finish` cannot end in two rows."""
 
     def __init__(
         self,
@@ -54,17 +52,17 @@ class Idempotency:
         self._ctx = ctx
         self._key = key
         self._digest = digest
+        self.target_id: UUID = new_id()
 
-    async def run(self, status: int, handler: Callable[[], Awaitable[BaseModel]]) -> Response:
+    async def run(self, status: int, handler: Callable[[UUID], Awaitable[BaseModel]]) -> Response:
         if self._key is None:
-            return _json(await handler(), status)
-        record = await self._manager.begin(self._ctx, self._key, self._digest)
-        if record is not None:
-            if record.status is None or record.body is None:
-                OUTCOMES.labels(subsystem="idempotency", outcome="in_progress").inc()
-                raise IdempotencyInProgress(
-                    f"idempotency key {self._key!r} is still being processed"
-                )
+            return _json(await handler(self.target_id), status)
+        try:
+            record = await self._manager.begin(self._ctx, self._key, self._digest, self.target_id)
+        except IdempotencyInProgress:
+            OUTCOMES.labels(subsystem="idempotency", outcome="in_progress").inc()
+            raise
+        if record.status is not None and record.body is not None:
             OUTCOMES.labels(subsystem="idempotency", outcome="replayed").inc()
             return Response(
                 content=record.body,
@@ -73,7 +71,7 @@ class Idempotency:
                 headers={REPLAYED_HEADER: "true"},
             )
         try:
-            view = await handler()
+            view = await handler(record.target_id)
         except PlatformException as error:
             await self._finish(error.http_status, self._error_body(error.code, error.message))
             raise

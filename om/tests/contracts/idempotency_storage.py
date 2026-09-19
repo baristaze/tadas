@@ -15,6 +15,7 @@ def make_record(user_id: UUID | None = None, key: str = "req-1") -> IdempotencyR
         user_id=user_id or new_id(),
         key=key,
         request_digest="sha256:abc",
+        target_id=new_id(),
         created_at=utcnow(),
     )
 

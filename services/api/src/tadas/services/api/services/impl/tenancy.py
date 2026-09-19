@@ -97,9 +97,11 @@ class TenancyServiceImpl(TenancyServiceInterface):
         keys = await self._tenancy.get_api_keys(ctx, clamp_limit(limit))
         return [ApiKeyView.model_validate(k) for k in keys]
 
-    async def create_api_key(self, ctx: OpContext, body: AddApiKeyRequest) -> IssuedApiKeyView:
+    async def create_api_key(
+        self, ctx: OpContext, body: AddApiKeyRequest, api_key_id: UUID
+    ) -> IssuedApiKeyView:
         ttl = timedelta(days=body.ttl_days) if body.ttl_days is not None else None
-        issued = await self._tenancy.create_api_key(ctx, body.name, body.role, ttl)
+        issued = await self._tenancy.create_api_key(ctx, body.name, body.role, ttl, api_key_id)
         return IssuedApiKeyView(key=issued.key, api_key=ApiKeyView.model_validate(issued.api_key))
 
     async def revoke_api_key(self, ctx: OpContext, api_key_id: UUID) -> ApiKeyView:

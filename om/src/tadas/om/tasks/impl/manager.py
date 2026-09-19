@@ -2,7 +2,7 @@ from datetime import timedelta
 from uuid import UUID
 
 from tadas.om.base import Platform, utcnow
-from tadas.om.exceptions import Conflict, NotFound, ValidationFailed
+from tadas.om.exceptions import NotFound, ValidationFailed
 from tadas.om.opcontext import OpContext, Permission
 from tadas.om.outbox import OutboxRelayInterface
 from tadas.om.outbox.types.row import outbox_row, snapshot
@@ -56,8 +56,10 @@ class TasksManagerImpl(TasksManagerInterface):
     async def create_task(self, ctx: OpContext, task: Task) -> Task:
         ctx.require(Permission.WRITE)
         await self._verify(ctx, task)
-        if await self._storage.read_task(ctx.org_id, task.id) is not None:
-            raise Conflict(f"task {task.id} already exists")
+        if (existing := await self._storage.read_task(ctx.org_id, task.id)) is not None:
+            # Ids are minted above storage, so the only way to present one twice
+            # is a retry, and a retry must not create twice.
+            return existing
         created = task.model_copy(
             update={
                 "created_by": ctx.user_id,

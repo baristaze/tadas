@@ -3,12 +3,14 @@ with another body is refused, keys are personal, and a request still
 running answers 409 to its own retry."""
 
 import asyncio
+from datetime import timedelta
 from uuid import UUID
 
 import httpx
 import pytest
 from api_support import add_member, sign_in_as
 
+from tadas.om.idempotency.impl.manager import IdempotencyOptions
 from tadas.om.opcontext import Role
 from tadas.services.api.container import AppContainer
 
@@ -100,3 +102,40 @@ async def test_without_a_key_every_request_creates(
     second = await client.post("/v1/tasks", headers=owner, json=BODY)
     assert first.status_code == 201 and second.status_code == 201
     assert first.json()["id"] != second.json()["id"]
+
+
+async def test_a_crash_between_the_create_and_finish_does_not_create_twice(
+    client: httpx.AsyncClient,
+    container: AppContainer,
+    owner: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The create committed, then the process died before the outcome landed on
+    # the marker. The retry takes the abandoned marker over once its lease has
+    # passed and runs the request again on the id the marker carries, so the
+    # create finds its own row and returns it instead of making a second one.
+    manager = container.managers.idempotency
+    monkeypatch.setattr(manager, "_options", IdempotencyOptions(pending_ttl=timedelta(0)))
+    original_finish = manager.finish
+    crashed = False
+
+    async def crash_once(ctx, key, status, body):
+        nonlocal crashed
+        if not crashed:
+            crashed = True
+            raise RuntimeError("the process died before finish")
+        return await original_finish(ctx, key, status, body)
+
+    monkeypatch.setattr(manager, "finish", crash_once)
+    headers = {**owner, "Idempotency-Key": "crash-1"}
+    first = await client.post("/v1/tasks", headers=headers, json=BODY)
+    assert first.status_code == 500 and crashed
+
+    retry = await client.post("/v1/tasks", headers=headers, json=BODY)
+    assert retry.status_code == 201, retry.text
+    assert "Idempotent-Replayed" not in retry.headers
+    listed = await client.get("/v1/tasks", headers=owner)
+    assert [t["id"] for t in listed.json()["items"]] == [retry.json()["id"]]
+    replay = await client.post("/v1/tasks", headers=headers, json=BODY)
+    assert replay.status_code == 201 and replay.headers["Idempotent-Replayed"] == "true"
+    assert replay.json() == retry.json()
