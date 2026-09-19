@@ -15,6 +15,7 @@ members = [
     "services/api",
     "workers/maintenance",
     "clients/python",
+    "apps/cli",
 ]
 
 [tool.uv.sources]
@@ -23,6 +24,7 @@ tadas-infra = { workspace = true }
 tadas-api = { workspace = true }
 tadas-maintenance = { workspace = true }
 tadas-client = { workspace = true }
+tadas-cli = { workspace = true }
 
 [dependency-groups]
 dev = [

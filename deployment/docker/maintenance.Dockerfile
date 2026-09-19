@@ -12,6 +12,7 @@ COPY workers/maintenance/pyproject.toml workers/maintenance/
 # Every workspace member's manifest, so the frozen lock resolves; only the
 # members this image runs are copied whole below.
 COPY clients/python/pyproject.toml clients/python/
+COPY apps/cli/pyproject.toml apps/cli/
 RUN uv sync --frozen --no-dev --package tadas-maintenance --no-install-workspace
 COPY om om
 COPY infra infra
