@@ -33,7 +33,12 @@ class HelloEnvelope(Envelope):
 
 
 class PongEnvelope(Envelope):
+    """The keepalive's answer carries where the tenant's stream stands, so a
+    client whose last push was the one dropped learns of the gap on the next
+    ping rather than on the next event; a quiet socket cannot hide a loss."""
+
     type: Literal["pong"] = "pong"
+    seq: int
 
 
 class SubscribedEnvelope(Envelope):

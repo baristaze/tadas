@@ -64,7 +64,7 @@ async def channel(
                 buffer.offer(ErrorEnvelope(code="bad_command", message=str(error)[:200]))
                 continue
             if command.op == "ping":
-                buffer.offer(PongEnvelope())
+                buffer.offer(PongEnvelope(seq=await realtime.head(ctx)))
             elif topic is None:
                 buffer.offer(ErrorEnvelope(code="bad_command", message="topic is required"))
             elif command.op == "subscribe":

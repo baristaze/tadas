@@ -12,7 +12,7 @@ import { useConnectionStore } from "../store/connection";
 import { useSessionStore } from "../store/session";
 import { isEntityChanged, parseEnvelope, type ClientCommand, type Envelope } from "./envelopes";
 import { routeEnvelope } from "./router";
-import { eventEnvelope, isLastPage, place, type Cursor } from "./stream";
+import { behind, eventEnvelope, isLastPage, place, type Cursor } from "./stream";
 import { backoffDelay, DEGRADED_POLL_INTERVAL_MS, PING_INTERVAL_MS } from "./timeouts";
 
 const TOPICS = ["entity_changed"];
@@ -72,6 +72,12 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
     };
 
     const deliver = async (envelope: Envelope) => {
+      // A pong names the head; a head past the cursor is a gap no frame announced.
+      if (envelope.type === "pong") {
+        const after = behind(cursor, envelope.seq);
+        if (after !== null) await replay(after);
+        return;
+      }
       const gap = apply(envelope);
       if (gap === null) return;
       const replayed = await replay(gap);

@@ -1,6 +1,6 @@
 import type { EventView } from "../api";
 import { describe, expect, it } from "vitest";
-import { eventEnvelope, isLastPage, place } from "./stream";
+import { behind, eventEnvelope, isLastPage, place } from "./stream";
 
 describe("place", () => {
   it("takes the first sequenced push as the cursor", () => {
@@ -17,7 +17,19 @@ describe("place", () => {
     expect(place(7, 9)).toEqual({ kind: "gap", after: 7 });
     expect(place(7, 100)).toEqual({ kind: "gap", after: 7 });
   });
+});
 
+describe("behind", () => {
+  it("names the replay point when the head the pong reports is past the cursor", () => {
+    expect(behind(7, 9)).toBe(7);
+    expect(behind(7, 8)).toBe(7);
+  });
+
+  it("stays quiet when caught up, and before the first cursor", () => {
+    expect(behind(7, 7)).toBeNull();
+    expect(behind(7, 3)).toBeNull();
+    expect(behind(null, 9)).toBeNull();
+  });
 });
 
 describe("eventEnvelope", () => {

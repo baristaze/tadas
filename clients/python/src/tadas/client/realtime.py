@@ -21,10 +21,11 @@ from tadas.client.envelopes import (
     ErrorEnvelope,
     EventEnvelope,
     HelloEnvelope,
+    PongEnvelope,
     parse_envelope,
     subscribe_command,
 )
-from tadas.client.stream import Cursor, Gap, Next, Seen, is_last_page, place
+from tadas.client.stream import Cursor, Gap, Next, Seen, behind, is_last_page, place
 
 log = logging.getLogger(__name__)
 
@@ -150,6 +151,12 @@ class Channel:
             envelope = parse_envelope(raw)
             if isinstance(envelope, ErrorEnvelope):
                 log.warning("channel error %s: %s", envelope.code, envelope.message)
+            if isinstance(envelope, PongEnvelope):
+                # A pong names the head; a head past the cursor is a gap no frame announced.
+                if (after := behind(self.cursor, envelope.seq)) is not None:
+                    async for change in self._replay(after):
+                        yield change
+                continue
             if not isinstance(envelope, EventEnvelope) or envelope.topic != ENTITY_CHANGED:
                 continue
             match place(self.cursor, envelope.payload.seq):
