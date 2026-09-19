@@ -60,6 +60,19 @@ class IdempotencyStorageContract:
             await storage.write_record(org_b, record.model_copy(update={"status": 200}))
         assert await storage.read_record(org_a, record.user_id, record.key) == record
 
+    async def test_release_drops_a_pending_record_and_keeps_a_finished_one(
+        self, storage: IdempotencyStorageInterface
+    ) -> None:
+        org_id, user_id = new_id(), new_id()
+        pending = make_record(user_id, "k-pending")
+        await storage.write_record(org_id, pending)
+        await storage.release_pending(org_id, user_id, "k-pending")
+        assert await storage.read_record(org_id, user_id, "k-pending") is None
+        finished = make_record(user_id, "k-done").model_copy(update={"status": 201, "body": "{}"})
+        await storage.write_record(org_id, finished)
+        await storage.release_pending(org_id, user_id, "k-done")
+        assert await storage.read_record(org_id, user_id, "k-done") == finished
+
     async def test_take_over_is_one_conditional_write(
         self, storage: IdempotencyStorageInterface
     ) -> None:

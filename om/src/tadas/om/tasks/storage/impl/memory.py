@@ -52,6 +52,10 @@ class TasksStorageMemoryImpl(MemoryStorageBase, TasksStorageInterface):
             del self._tasks[task_id]
         return len(gone)
 
+    async def create_task(self, org_id: UUID, task: Task, outbox_row: OutboxRow) -> bool:
+        async with self._lock:
+            return self._insert(self._tasks, org_id, task, outbox_row)
+
     async def write_task(
         self, org_id: UUID, task: Task, outbox_row: OutboxRow | None = None
     ) -> None:

@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.exc import IntegrityError
 
 from tadas.om.exceptions import DuplicateIdempotencyKey
@@ -28,6 +28,17 @@ class IdempotencyStoragePostgresImpl(PgStorageBase, IdempotencyStorageInterface)
         async with self._session_for(stmt) as session:
             row = (await session.execute(stmt)).scalar_one_or_none()
             return None if row is None else to_model(row, IdempotencyRecord)
+
+    async def release_pending(self, org_id: UUID, user_id: UUID, key: str) -> None:
+        stmt = delete(IdempotencyRecords).where(
+            IdempotencyRecords.org_id == org_id,
+            IdempotencyRecords.user_id == user_id,
+            IdempotencyRecords.key == key,
+            IdempotencyRecords.status.is_(None),
+        )
+        async with self._session_for(stmt) as session:
+            await session.execute(stmt)
+            await session.commit()
 
     async def take_over_pending(
         self,

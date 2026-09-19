@@ -16,7 +16,9 @@ from tadas.om.opcontext import OpContext
 class OutboxRow(Identifiable, Created):
     kind: str  # "<namespace>.<entity>.<created|updated|deleted>"
     target_id: UUID  # the record that changed
-    payload: FrozenMapping = Field(default_factory=dict)  # the record's snapshot
+    payload: FrozenMapping = Field(
+        default_factory=dict, validate_default=True
+    )  # the record's snapshot
     actor_id: UUID  # the user whose request produced it
     request_id: UUID  # the request that produced it
     app: str  # the AppType value the request came from

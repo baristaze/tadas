@@ -95,6 +95,38 @@ async def test_a_request_still_running_answers_409_to_its_retry(
     assert replay.status_code == 201 and replay.headers["Idempotent-Replayed"] == "true"
 
 
+async def test_a_failure_is_not_an_outcome_the_retry_runs_again(
+    client: httpx.AsyncClient,
+    container: AppContainer,
+    owner: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The first attempt fails before anything lands; the marker is released,
+    # not finished with a 500, so the retry runs the request again on the same
+    # id and the third call replays the success.
+    original = container.managers.tasks.create_task
+    failed = False
+
+    async def fail_once(ctx, task):
+        nonlocal failed
+        if not failed:
+            failed = True
+            raise RuntimeError("the database went away")
+        return await original(ctx, task)
+
+    monkeypatch.setattr(container.managers.tasks, "create_task", fail_once)
+    headers = {**owner, "Idempotency-Key": "flaky-1"}
+    first = await client.post("/v1/tasks", headers=headers, json=BODY)
+    assert first.status_code == 500 and failed
+    retry = await client.post("/v1/tasks", headers=headers, json=BODY)
+    assert retry.status_code == 201, retry.text
+    assert "Idempotent-Replayed" not in retry.headers
+    replay = await client.post("/v1/tasks", headers=headers, json=BODY)
+    assert replay.status_code == 201 and replay.headers["Idempotent-Replayed"] == "true"
+    listed = await client.get("/v1/tasks", headers=owner)
+    assert [t["id"] for t in listed.json()["items"]] == [retry.json()["id"]]
+
+
 async def test_without_a_key_every_request_creates(
     client: httpx.AsyncClient, owner: dict[str, str]
 ) -> None:

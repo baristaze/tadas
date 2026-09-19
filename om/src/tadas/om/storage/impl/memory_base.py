@@ -7,7 +7,7 @@ import asyncio
 from typing import Protocol, TypeVar
 from uuid import UUID
 
-from tadas.om.exceptions import Conflict, TenantMismatch
+from tadas.om.exceptions import TenantMismatch
 from tadas.om.outbox.storage import OutboxLandingInterface
 from tadas.om.outbox.types.row import OutboxRow
 
@@ -40,11 +40,19 @@ class MemoryStorageBase:
             self._outbox.land(org_id, outbox_row)
         table[entity.id] = (org_id, entity)
 
-    @staticmethod
-    def _insert(table: MemoryTable[E], org_id: UUID, entity: E) -> None:
+    def _insert(
+        self, table: MemoryTable[E], org_id: UUID, entity: E, outbox_row: OutboxRow | None = None
+    ) -> bool:
+        """The create primitive: False when the id is already written, and nothing
+        changes then, the outbox row included."""
         if entity.id in table:
-            raise Conflict(f"{entity.id} already exists")
+            return False
+        if outbox_row is not None:
+            if self._outbox is None:
+                raise RuntimeError("this memory storage was built without an outbox to land in")
+            self._outbox.land(org_id, outbox_row)
         table[entity.id] = (org_id, entity)
+        return True
 
     @staticmethod
     def _get(table: MemoryTable[E], org_id: UUID, entity_id: UUID) -> E | None:

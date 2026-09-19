@@ -41,8 +41,15 @@ class TasksStorageInterface(ABC):
         ...
 
     @abstractmethod
+    async def create_task(self, org_id: UUID, task: Task, outbox_row: OutboxRow) -> bool:
+        """The create: lands the task and its outbox row together, or neither when
+        the id is already written, which it reports as False."""
+        ...
+
+    @abstractmethod
     async def write_task(
         self, org_id: UUID, task: Task, outbox_row: OutboxRow | None = None
     ) -> None:
-        """Lands the task and its outbox row together (the named atomic write)."""
+        """The update: lands the task and its outbox row together (the named atomic
+        write)."""
         ...

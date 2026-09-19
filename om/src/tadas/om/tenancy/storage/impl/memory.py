@@ -41,8 +41,11 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
     async def read_org_by_slug(self, slug: str) -> Org | None:
         return next((org for _, org in self._orgs.values() if org.slug == slug), None)
 
-    async def read_orgs(self, limit: int) -> list[Org]:
-        return [org for _, org in self._rows_across_tenants(self._orgs)][:limit]
+    async def read_orgs(self, limit: int, after_id: UUID | None = None) -> list[Org]:
+        orgs = [org for _, org in self._rows_across_tenants(self._orgs)]
+        if after_id is not None:
+            orgs = [org for org in orgs if org.id > after_id]
+        return orgs[:limit]
 
     async def write_org(self, org_id: UUID, org: Org) -> None:
         self._put(self._orgs, org_id, org)

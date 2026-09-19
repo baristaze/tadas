@@ -53,8 +53,10 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
             row = (await session.execute(stmt)).scalar_one_or_none()
             return None if row is None else to_model(row, Org)
 
-    async def read_orgs(self, limit: int) -> list[Org]:
+    async def read_orgs(self, limit: int, after_id: UUID | None = None) -> list[Org]:
         stmt = select(Orgs).order_by(Orgs.id).limit(limit)
+        if after_id is not None:
+            stmt = stmt.where(Orgs.id > after_id)
         async with self._session_for(stmt) as session:
             result = await session.execute(stmt)
             return [to_model(row, Org) for row in result.scalars()]

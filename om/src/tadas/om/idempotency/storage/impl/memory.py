@@ -30,6 +30,12 @@ class IdempotencyStorageMemoryImpl(MemoryStorageBase, IdempotencyStorageInterfac
                 return record
         return None
 
+    async def release_pending(self, org_id: UUID, user_id: UUID, key: str) -> None:
+        async with self._lock:
+            stored = await self.read_record(org_id, user_id, key)
+            if stored is not None and stored.pending:
+                del self._records[stored.id]
+
     async def take_over_pending(
         self,
         org_id: UUID,

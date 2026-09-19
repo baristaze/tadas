@@ -78,17 +78,38 @@ class PgStorageBase:
                 apply_row(row, entity)
             if outbox_row is not None:
                 session.add(to_row(outbox_row, OutboxRows, org_id=org_id))
-            await session.commit()
-
-    async def _insert(self, row_type: type[Any], org_id: UUID, entity: Identifiable) -> None:
-        """Insert by id, raising Conflict when the id exists, then commit. For an
-        append-only row that is never upserted."""
-        async with self._session_for(row_type) as session:
-            session.add(to_row(entity, row_type, org_id=org_id))
             try:
                 await session.commit()
             except IntegrityError as error:
+                # A key race the read did not see; a Conflict, never a driver error.
                 raise Conflict(f"{row_type.__tablename__} {entity.id} already exists") from error
+
+    async def _insert(
+        self,
+        row_type: type[Any],
+        org_id: UUID,
+        entity: Identifiable,
+        outbox_row: OutboxRow | None = None,
+    ) -> bool:
+        """The create primitive: insert by id and commit, with the outbox row in
+        the same commit; False when the id is already written, in which case
+        nothing changes, the outbox row included. Ids are minted above storage,
+        so an existing id is a retry, and a retry must neither overwrite the row
+        nor announce it twice. A key collision is a report, never a driver error."""
+        if outbox_row is not None and role_of(row_type) is not role_of(OutboxRows):
+            raise CrossRoleStatement(
+                f"{row_type.__tablename__} is not in the outbox's role; no outbox row"
+            )
+        async with self._session_for(row_type) as session:
+            session.add(to_row(entity, row_type, org_id=org_id))
+            if outbox_row is not None:
+                session.add(to_row(outbox_row, OutboxRows, org_id=org_id))
+            try:
+                await session.commit()
+            except IntegrityError:
+                await session.rollback()
+                return False
+            return True
 
     async def _upsert_global(self, row_type: type[Any], entity: Identifiable) -> None:
         """The same primitive for a global table, which has no tenant to check."""

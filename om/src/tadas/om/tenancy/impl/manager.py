@@ -425,9 +425,21 @@ class TenancyManagerImpl(TenancyManagerInterface):
             teams=membership.teams,
         )
 
+    async def _every_org(self) -> list[Org]:
+        """Every tenant, page by page: a sweep that stopped at the first clamp
+        would never reach the tenants behind it."""
+        orgs: list[Org] = []
+        after_id: UUID | None = None
+        while True:
+            page = await self._storage.read_orgs(self._options.max_limit, after_id)
+            orgs.extend(page)
+            if len(page) < self._options.max_limit:
+                return orgs
+            after_id = page[-1].id
+
     async def service_contexts(self, app: AppContext, request_id: UUID) -> list[OpContext]:
         contexts: list[OpContext] = []
-        for org in await self._storage.read_orgs(self._options.max_limit):
+        for org in await self._every_org():
             if org.deleted_at is not None:
                 continue
             try:

@@ -25,5 +25,13 @@ class IdempotencyManagerInterface(ABC):
 
     @abstractmethod
     async def finish(self, ctx: OpContext, key: str, status: int, body: str) -> IdempotencyRecord:
-        """Records the outcome on the record `begin` wrote; raises NotFound without one."""
+        """Records the outcome on the record `begin` wrote; raises NotFound without one.
+        Only an outcome a retry cannot change belongs here: a refusal, never a
+        failure."""
+        ...
+
+    @abstractmethod
+    async def release(self, ctx: OpContext, key: str) -> None:
+        """Drops the pending record `begin` wrote, because the attempt failed in a
+        way a retry may change; the next attempt begins afresh on the same key."""
         ...

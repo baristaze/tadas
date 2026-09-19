@@ -21,6 +21,12 @@ class IdempotencyStorageInterface(ABC):
     ) -> IdempotencyRecord | None: ...
 
     @abstractmethod
+    async def release_pending(self, org_id: UUID, user_id: UUID, key: str) -> None:
+        """Removes the record under (org_id, user_id, key) while it is still
+        pending, so the next attempt begins afresh; a finished record stays."""
+        ...
+
+    @abstractmethod
     async def take_over_pending(
         self,
         org_id: UUID,

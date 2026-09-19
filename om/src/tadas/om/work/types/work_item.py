@@ -27,7 +27,9 @@ class WorkItem(Identifiable, Trackable):
     kind: WorkKind  # what to do
     target_id: UUID  # the record it advances
     idempotency_key: UUID  # unique
-    payload: FrozenMapping = Field(default_factory=dict)  # the dump of WORK_PAYLOADS[kind]
+    payload: FrozenMapping = Field(
+        default_factory=dict, validate_default=True
+    )  # the dump of WORK_PAYLOADS[kind]
     lane: str = (
         "default"  # routing: "default", "region:<id>", ...; a string, because lanes are dynamic
     )

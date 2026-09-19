@@ -23,4 +23,4 @@ class Event(Identifiable):
     # Fixed per kind: a "<namespace>.<entity>.<action>" event carries the
     # entity's snapshot (the outbox row's payload); an audit kind carries the
     # facts its producer names.
-    payload: FrozenMapping = Field(default_factory=dict)
+    payload: FrozenMapping = Field(default_factory=dict, validate_default=True)
