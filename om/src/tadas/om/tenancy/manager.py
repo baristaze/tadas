@@ -7,10 +7,10 @@ from datetime import timedelta
 from uuid import UUID
 
 from tadas.om.opcontext import (
-    AdminContext,
     CredentialKind,
     IdentityContext,
     OpContext,
+    OperatorContext,
     RequestContext,
     Role,
 )
@@ -26,11 +26,11 @@ from tadas.om.tenancy.types.user import User
 class TenancyManagerInterface(ABC):
     """Manager of the tenancy swimlane, on the tenant plane: every operation
     on a principal takes `OpContext`. The operator plane is
-    `TenancyOperatorManagerInterface`, which takes `AdminContext`.
+    `TenancyOperatorManagerInterface`, which takes `OperatorContext`.
 
     The transitions come first. Each takes the weakest stage it needs and
     produces a stronger one: `RequestContext` in, `IdentityContext` or
-    `OpContext` out; `IdentityContext` in, `AdminContext` out. They are the
+    `OpContext` out; `IdentityContext` in, `OperatorContext` out. They are the
     only constructors of those stages, and the exceptions test names them.
     """
 
@@ -102,7 +102,7 @@ class TenancyManagerInterface(ABC):
         ...
 
     @abstractmethod
-    async def admit_operator(self, ictx: IdentityContext) -> AdminContext:
+    async def admit_operator(self, ictx: IdentityContext) -> OperatorContext:
         """Platform-internal: the transition to the operator stage. Admits the
         verified identity when it is on the operator allowlist, NotAnOperator
         otherwise. The identity stage already guarantees the credential is the

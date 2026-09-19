@@ -20,9 +20,9 @@ types ordered by evidence: `RequestContext` (a request exists: its id,
 the calling app, the trace id), `IdentityContext` (a person is verified
 by their own sign-in; no tenant, on purpose), `OpContext` (a membership
 is established: the user, the org, the role and its permissions, the
-credential), and `AdminContext` (an identity on the operator allowlist;
+credential), and `OperatorContext` (an identity on the operator allowlist;
 no org, on purpose). A subclass is a refinement, so every stage is
-accepted where `RequestContext` is asked for; `AdminContext` is an
+accepted where `RequestContext` is asked for; `OperatorContext` is an
 `IdentityContext`, `OpContext` is not, because what a tenant operation
 knows about the person is the user inside the tenant. A stage above the
 request stage is produced only by a transition, an operation of the
@@ -51,7 +51,7 @@ context on keeps the stage the callee needs.
   socket tickets; sign-in, tenant-scoped session tokens, role-capped api
   keys, the operator allowlist, and the service contexts workers run
   under. The operator plane (every org, delete an org) is a second
-  manager, `TenancyOperatorManagerInterface`, which takes `AdminContext`
+  manager, `TenancyOperatorManagerInterface`, which takes `OperatorContext`
   and nothing else. A socket ticket is a row; redeeming it is one conditional
   update on its hash, and the cache only remembers a redeemed one so a
   replay is refused without a round trip.
@@ -159,7 +159,7 @@ everything in-process for tests.
   manager for every stronger stage: `Ctx` is `authenticate` over the
   bearer (a session token or an api key), `Identity` is
   `authenticate_login` over it (the sign-in credential, on the tenant
-  choice and the operator gate), `AdminCtx` is `admit_operator` over the
+  choice and the operator gate), `OperatorCtx` is `admit_operator` over the
   identity, and the socket builds the request stage from its scope and
   redeems its ticket. The login route takes the request stage alone.
   Per socket the process keeps one bounded send buffer

@@ -14,13 +14,13 @@ from tadas.om.events.storage.impl.memory import EventStorageMemoryImpl
 from tadas.om.exceptions import InvalidCredential, NotAnOperator, NotAuthorized
 from tadas.om.opcontext import (
     ActorScope,
-    AdminContext,
     AppContext,
     AppType,
     CredentialKind,
     CredentialScope,
     IdentityContext,
     OpContext,
+    OperatorContext,
     ProvenanceScope,
     RequestContext,
     RequestScope,
@@ -60,10 +60,10 @@ def manager(tmp_path: Path) -> TenancyManagerImpl:
 def test_every_stage_is_a_request_context_and_only_admin_is_an_identity() -> None:
     assert issubclass(IdentityContext, RequestContext)
     assert issubclass(OpContext, RequestContext)
-    assert issubclass(AdminContext, IdentityContext)
+    assert issubclass(OperatorContext, IdentityContext)
     assert not issubclass(OpContext, IdentityContext)
     assert not issubclass(IdentityContext, OpContext)
-    assert not issubclass(AdminContext, OpContext)
+    assert not issubclass(OperatorContext, OpContext)
 
 
 def test_a_stage_is_immutable() -> None:
@@ -160,7 +160,7 @@ async def test_admit_operator_produces_the_operator_stage_for_operators_only(
     root = await manager.login(request(), "root@example.test", "pw-1234")
     ictx = await manager.authenticate_login(request(), root.token)
     admin = await manager.admit_operator(ictx)
-    assert type(admin) is AdminContext
+    assert type(admin) is OperatorContext
     assert isinstance(admin, IdentityContext)
     assert (admin.identity_id, admin.email, admin.credential_id) == (
         ictx.identity_id,
@@ -228,7 +228,7 @@ def test_every_stage_satisfies_the_scopes_it_carries() -> None:
         credential_kind=CredentialKind.LOGIN,
         credential_id=new_id(),
     )
-    admin = AdminContext(
+    admin = OperatorContext(
         request_id=rctx.request_id,
         app=rctx.app,
         identity_id=ictx.identity_id,

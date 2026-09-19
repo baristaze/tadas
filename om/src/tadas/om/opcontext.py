@@ -2,7 +2,7 @@
 
 Stages are concrete frozen types, one per amount of evidence a request has
 gathered: `RequestContext` (a request exists), `IdentityContext` (a person
-is verified), `OpContext` (a membership is established), `AdminContext`
+is verified), `OpContext` (a membership is established), `OperatorContext`
 (an operator is admitted). A subclass is a refinement, so every stage is
 accepted where a weaker one is asked for. A stage above the request stage
 is produced only by a transition, an operation of the tenancy manager or
@@ -28,13 +28,13 @@ from tadas.om.exceptions import NotAuthorized
 
 __all__ = [
     "ActorScope",
-    "AdminContext",
     "AppContext",
     "AppType",
     "CredentialKind",
     "CredentialScope",
     "IdentityContext",
     "OpContext",
+    "OperatorContext",
     "Permission",
     "ProvenanceScope",
     "RequestContext",
@@ -152,7 +152,7 @@ class OpContext(RequestContext):
         return team_id in self.security.teams
 
 
-class AdminContext(IdentityContext):
+class OperatorContext(IdentityContext):
     """The operator plane: an identity on the operator allowlist. No org_id,
     on purpose. No field of its own: the type is the evidence, and only the
     tenancy manager's `admit_operator` constructs it."""

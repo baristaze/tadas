@@ -15,10 +15,10 @@ from tadas.om.exceptions import (
     ValidationFailed,
 )
 from tadas.om.opcontext import (
-    AdminContext,
     CredentialKind,
     IdentityContext,
     OpContext,
+    OperatorContext,
     Permission,
     RequestContext,
     Role,
@@ -339,11 +339,11 @@ class TenancyManagerImpl(TenancyManagerInterface):
             )
         raise InvalidCredential("this route accepts a session token or an api key")
 
-    async def admit_operator(self, ictx: IdentityContext) -> AdminContext:
+    async def admit_operator(self, ictx: IdentityContext) -> OperatorContext:
         identity = await self._storage.read_identity(ictx.identity_id)
         if identity is None or not identity.is_operator:
             raise NotAnOperator("this identity is not an operator")
-        return AdminContext(
+        return OperatorContext(
             request_id=ictx.request_id,
             app=ictx.app,
             trace_id=ictx.trace_id,

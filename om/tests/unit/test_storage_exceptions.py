@@ -8,7 +8,7 @@ import inspect
 import pkgutil
 
 import tadas.om
-from tadas.om.opcontext import AdminContext, IdentityContext, OpContext, RequestContext
+from tadas.om.opcontext import IdentityContext, OpContext, OperatorContext, RequestContext
 
 STORAGE_EXCEPTIONS: frozenset[tuple[str, str]] = frozenset(
     {
@@ -37,7 +37,7 @@ MANAGER_EXCEPTIONS: frozenset[tuple[str, str]] = frozenset(
     }
 )
 
-STAGES: tuple[type, ...] = (RequestContext, IdentityContext, OpContext, AdminContext)
+STAGES: tuple[type, ...] = (RequestContext, IdentityContext, OpContext, OperatorContext)
 
 REQUEST_TRANSITIONS: frozenset[tuple[str, str]] = frozenset(
     {
