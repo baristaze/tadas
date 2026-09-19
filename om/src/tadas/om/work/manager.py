@@ -5,7 +5,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from datetime import timedelta
 
-from tadas.om.opcontext import OpContext
+from tadas.om.opcontext import OpContext, RequestContext
 from tadas.om.work.types.work_item import WorkItem, WorkKind
 
 
@@ -18,10 +18,16 @@ class WorkManagerInterface(ABC):
 
     @abstractmethod
     async def claim(
-        self, lane: str, kinds: Sequence[WorkKind], worker_id: str, lease: timedelta
+        self,
+        rctx: RequestContext,
+        lane: str,
+        kinds: Sequence[WorkKind],
+        worker_id: str,
+        lease: timedelta,
     ) -> tuple[OpContext, WorkItem] | None:
         """Platform-internal: claims the oldest available item on the lane and rebuilds the
-        enqueuer's principal under the service role; returns the context with the item."""
+        enqueuer's principal under the service role, refining the request stage the
+        worker minted for this claim; returns the context with the item."""
         ...
 
     @abstractmethod
@@ -60,6 +66,7 @@ class WorkManagerInterface(ABC):
         ...
 
     @abstractmethod
-    async def maintenance_contexts(self) -> list[OpContext]:
-        """Platform-internal: one service context per live tenant, for the sweep."""
+    async def maintenance_contexts(self, rctx: RequestContext) -> list[OpContext]:
+        """Platform-internal: one service context per live tenant, for the sweep, each
+        refining the request stage the worker minted for this pass."""
         ...

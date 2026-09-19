@@ -12,8 +12,9 @@ from pathlib import Path
 import uvicorn
 
 from tadas.infra.impl.local import InfraLocalImpl
+from tadas.om.base import new_id
 from tadas.om.exceptions import Conflict
-from tadas.om.opcontext import AppContext, AppType, Role
+from tadas.om.opcontext import AppContext, AppType, RequestContext, Role
 from tadas.om.storage import migrate
 from tadas.om.storage.impl.memory import StorageMemoryImpl
 from tadas.services.api.app import create_app
@@ -34,6 +35,13 @@ def serve(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_request(settings: ApiSettings) -> RequestContext:
+    """The request stage an ops command mints once at its edge."""
+    return RequestContext(
+        request_id=new_id(), app=AppContext(type=AppType.CLI, version=f"cli@{settings.version}")
+    )
+
+
 def migrate_roles(args: argparse.Namespace) -> int:
     boot(ApiSettings())
     forwarded = (
@@ -51,13 +59,13 @@ def bootstrap(args: argparse.Namespace) -> int:
         await container.start()
         try:
             ctx, org = await container.managers.tenancy.bootstrap(
+                command_request(settings),
                 args.org,
                 args.slug,
                 args.email,
                 args.password,
                 args.name,
                 operator=args.operator,
-                app=AppContext(type=AppType.CLI, version=f"cli@{settings.version}"),
             )
         except Conflict:
             # The only conflict bootstrap raises is a taken slug.
@@ -82,12 +90,12 @@ def add_member(args: argparse.Namespace) -> int:
         await container.start()
         try:
             _, user, created = await container.managers.tenancy.add_member(
+                command_request(settings),
                 args.slug,
                 args.email,
                 args.password,
                 args.name,
                 Role(args.role),
-                app=AppContext(type=AppType.CLI, version=f"cli@{settings.version}"),
             )
         finally:
             await container.close()

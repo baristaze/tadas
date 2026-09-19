@@ -11,7 +11,7 @@ from tadas.om.base import Platform, new_id, utcnow
 from tadas.om.events import EventsManagerInterface
 from tadas.om.events.manager import audit_event
 from tadas.om.exceptions import LeaseLost, NotFound, ValidationFailed
-from tadas.om.opcontext import AppContext, AppType, OpContext, Permission
+from tadas.om.opcontext import OpContext, Permission, RequestContext
 from tadas.om.tenancy import TenancyManagerInterface
 from tadas.om.work.manager import WorkManagerInterface
 from tadas.om.work.rules import attempts_after_hand_back, is_exhausted, retry_delay
@@ -65,18 +65,18 @@ class WorkManagerImpl(WorkManagerInterface):
         return item
 
     async def claim(
-        self, lane: str, kinds: Sequence[WorkKind], worker_id: str, lease: timedelta
+        self,
+        rctx: RequestContext,
+        lane: str,
+        kinds: Sequence[WorkKind],
+        worker_id: str,
+        lease: timedelta,
     ) -> tuple[OpContext, WorkItem] | None:
         found = await self._storage.claim_next(lane, kinds, worker_id, lease)
         if found is None:
             return None
         org_id, item = found
-        ctx = await self._tenancy.service_context(
-            org_id,
-            item.created_by,
-            AppContext(type=AppType.WORKER, version=f"worker@{worker_id}"),
-            new_id(),
-        )
+        ctx = await self._tenancy.service_context(rctx, org_id, item.created_by)
         return ctx, item
 
     async def complete(self, ctx: OpContext, item: WorkItem) -> WorkItem:
@@ -140,10 +140,8 @@ class WorkManagerImpl(WorkManagerInterface):
                 await self._dead_letter(ctx, item)
         return len(requeued)
 
-    async def maintenance_contexts(self) -> list[OpContext]:
-        return await self._tenancy.service_contexts(
-            AppContext(type=AppType.WORKER, version="worker@maintenance"), new_id()
-        )
+    async def maintenance_contexts(self, rctx: RequestContext) -> list[OpContext]:
+        return await self._tenancy.service_contexts(rctx)
 
     async def _hand_back(self, ctx: OpContext, item: WorkItem, delay: timedelta) -> WorkItem:
         now = utcnow()

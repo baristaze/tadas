@@ -1,7 +1,16 @@
-"""The operation context every operation takes first, and the operator
-context that never mixes with it. Roles, permissions, credential kinds, and
-app types are declared here, so this module imports nothing above `base.py`
-and the tenancy namespace reads them rather than the other way round."""
+"""The context an operation takes first: four stages, ordered by evidence.
+
+Stages are concrete frozen types, one per amount of evidence a request has
+gathered: `RequestContext` (a request exists), `IdentityContext` (a person
+is verified), `OpContext` (a membership is established), `AdminContext`
+(an operator is admitted). A subclass is a refinement, so every stage is
+accepted where a weaker one is asked for. Each stage is produced by exactly
+one transition on the tenancy manager and nowhere else; a function that
+takes a stage relies on its invariant instead of re-checking it.
+
+Roles, permissions, credential kinds, and app types are declared here, so
+this module imports nothing above `base.py` and the tenancy namespace reads
+them rather than the other way round."""
 
 from enum import Enum
 from uuid import UUID
@@ -14,8 +23,10 @@ __all__ = [
     "AppContext",
     "AppType",
     "CredentialKind",
+    "IdentityContext",
     "OpContext",
     "Permission",
+    "RequestContext",
     "Role",
     "SecurityContext",
     "build_context",
@@ -71,11 +82,35 @@ class AppContext(Platform):
     version: str  # e.g. "portal@0.1.0"
 
 
-class OpContext(Platform):
-    security: SecurityContext
-    app: AppContext
+# Stages: refinement by evidence.
+
+
+class RequestContext(Platform):
+    """The weakest stage: a request exists, nobody is known yet. Minted once
+    at the edge (the gateway, the worker loop, an ops command)."""
+
     request_id: UUID
+    app: AppContext
     trace_id: str | None = None
+
+
+class IdentityContext(RequestContext):
+    """A person is verified by their own sign-in. No tenant chosen, on purpose:
+    the credential behind it carries none."""
+
+    identity_id: UUID
+    email: str
+    credential_kind: CredentialKind
+    credential_id: UUID
+
+
+class OpContext(RequestContext):
+    """A membership is established: the person is a user of one tenant with a
+    role. What a tenant operation knows about the person is the user inside
+    the tenant, not the identity across tenants, so this is not an
+    `IdentityContext`."""
+
+    security: SecurityContext
 
     @property
     def org_id(self) -> UUID:
@@ -84,6 +119,14 @@ class OpContext(Platform):
     @property
     def user_id(self) -> UUID:
         return self.security.user_id
+
+    @property
+    def credential_kind(self) -> CredentialKind:
+        return self.security.credential_kind
+
+    @property
+    def credential_id(self) -> UUID:
+        return self.security.credential_id
 
     def has(self, permission: Permission) -> bool:
         return permission in self.security.permissions
@@ -96,32 +139,31 @@ class OpContext(Platform):
         return team_id in self.security.teams
 
 
-class AdminContext(Platform):
-    """The operator plane. No org_id, on purpose."""
-
-    identity_id: UUID
-    email: str
-    credential_kind: CredentialKind
-    request_id: UUID
+class AdminContext(IdentityContext):
+    """The operator plane: an identity on the operator allowlist. No org_id,
+    on purpose. No field of its own: the type is the evidence, and only the
+    tenancy manager's `admit_operator` constructs it."""
 
 
 def build_context(
+    rctx: RequestContext,
     *,
     user_id: UUID,
     org_id: UUID,
     role: Role,
     permissions: tuple[Permission, ...],
     credential_kind: CredentialKind,
-    app: AppContext,
-    request_id: UUID,
     teams: tuple[UUID, ...] = (),
-    trace_id: str | None = None,
     credential_id: UUID = EMPTY_UUID,
 ) -> OpContext:
-    """The one place a tenant context is assembled from its parts. The
-    permissions come from the tenancy namespace's role table, which is a
-    pure rule this module does not import."""
+    """The one place a tenant context is assembled from its parts: the request
+    stage it refines and the security facts. The permissions come from the
+    tenancy namespace's role table, which is a pure rule this module does not
+    import."""
     return OpContext(
+        request_id=rctx.request_id,
+        app=rctx.app,
+        trace_id=rctx.trace_id,
         security=SecurityContext(
             user_id=user_id,
             org_id=org_id,
@@ -131,7 +173,4 @@ def build_context(
             credential_kind=credential_kind,
             credential_id=credential_id,
         ),
-        app=app,
-        request_id=request_id,
-        trace_id=trace_id,
     )
