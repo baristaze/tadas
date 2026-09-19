@@ -1,8 +1,10 @@
 """Edge idempotency: a creating POST accepts an Idempotency-Key. The outcome
 is recorded per tenant and per user under the key, on the same durable
-primitive the queue handlers dedupe on, and replayed on a retry. A key seen
-with a different request is refused; a key whose first request is still
-running is told to wait."""
+primitive the queue handlers dedupe on, and replayed on a retry. Only an
+outcome a retry cannot change is recorded: a refusal is replayed, a failure
+releases the marker so the retry runs again on the same id. A key seen with
+a different request is refused; a key whose first request is still running
+is told to wait."""
 
 import hashlib
 from collections.abc import Awaitable, Callable
@@ -73,10 +75,16 @@ class Idempotency:
         try:
             view = await handler(record.target_id)
         except PlatformException as error:
-            await self._finish(error.http_status, self._error_body(error.code, error.message))
+            if error.http_status >= 500:
+                await self._release()
+            else:
+                # A refusal is an outcome a retry cannot change: stored and replayed.
+                await self._finish(error.http_status, self._error_body(error.code, error.message))
             raise
         except Exception:
-            await self._finish(500, self._error_body("internal_error", "internal error"))
+            # A failure is not an outcome: the marker goes, and the retry runs the
+            # request again on the same id instead of replaying the failure for good.
+            await self._release()
             raise
         body = view.model_dump_json()
         await self._finish(status, body)
@@ -86,6 +94,11 @@ class Idempotency:
     async def _finish(self, status: int, body: str) -> None:
         assert self._key is not None
         await self._manager.finish(self._ctx, self._key, status, body)
+
+    async def _release(self) -> None:
+        assert self._key is not None
+        OUTCOMES.labels(subsystem="idempotency", outcome="released").inc()
+        await self._manager.release(self._ctx, self._key)
 
     def _error_body(self, code: str, message: str) -> str:
         """The error envelope as the handler would have sent it, so a retry sees

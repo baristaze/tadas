@@ -49,11 +49,14 @@ last changed it (`updated_by`); every update sets it from the context.
   record left pending past its lease (a crash between marker and
   outcome) is taken over by the next retry, which runs the request
   again on that id; a create that finds its own id already written
-  returns the row as stored, so the rerun cannot create twice.
+  returns the row as stored, so the rerun cannot create twice. A failure (a `5xx`) is not an outcome: the marker is released and the
+  retry runs again; a refusal (a `4xx`) is stored and replayed.
 - `outbox`: the transactional outbox. A manager that writes a core row
   hands the storage an `OutboxRow` (`kind`, `target_id`, the record's
   snapshot as `payload`, the actor and the request) and the storage base
-  inserts both in one commit (`_upsert(..., outbox_row)`, `core` role);
+  inserts both in one commit (`_insert(..., outbox_row)` for a create, which
+  reports an existing id and changes nothing then; `_upsert(..., outbox_row)`
+  for an update; `core` role);
   the manager then calls `OutboxRelayInterface.relay(org_id, row)`,
   which appends the `Event` under the row's id, publishes
   `entity_changed` with `(kind, target_id, seq)`, and marks the row done.

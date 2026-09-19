@@ -43,8 +43,10 @@ class TenancyStorageInterface(ABC):
         ...
 
     @abstractmethod
-    async def read_orgs(self, limit: int) -> list[Org]:
-        """Cross-tenant sweep: every tenant, for the operator plane and for sweeps."""
+    async def read_orgs(self, limit: int, after_id: UUID | None = None) -> list[Org]:
+        """Cross-tenant sweep: every tenant, for the operator plane and for sweeps,
+        in id order; `after_id` pages, so a sweep reaches every tenant and not
+        only the first clamp of them."""
         ...
 
     @abstractmethod

@@ -26,6 +26,13 @@ class Conflict(PlatformException):
     code = "conflict"
 
 
+class UniqueKeyTaken(Conflict):
+    """A unique key the upsert's read did not see was taken by the time it wrote:
+    a key race, reported as a Conflict and never as a driver error."""
+
+    code = "unique_key_taken"
+
+
 class ValidationFailed(PlatformException):
     http_status = 422
     code = "validation_failed"

@@ -69,6 +69,10 @@ class IdempotencyManagerImpl(IdempotencyManagerInterface):
             return stored
         return pending
 
+    async def release(self, ctx: OpContext, key: str) -> None:
+        ctx.require(Permission.WRITE)
+        await self._storage.release_pending(ctx.org_id, ctx.user_id, key)
+
     async def finish(self, ctx: OpContext, key: str, status: int, body: str) -> IdempotencyRecord:
         ctx.require(Permission.WRITE)
         stored = await self._storage.read_record(ctx.org_id, ctx.user_id, key)

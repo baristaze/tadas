@@ -5,6 +5,7 @@ import pytest
 
 from tadas.om.base import new_id, utcnow
 from tadas.om.exceptions import TenantMismatch
+from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.tasks.storage import TasksStorageInterface
 from tadas.om.tasks.types.filter import TaskCursor, TaskFilter
 from tadas.om.tasks.types.task import Task, TaskScope, TaskStatus
@@ -20,6 +21,21 @@ def mine(user_id: UUID) -> TaskFilter:
 
 def after(task: Task) -> TaskCursor:
     return TaskCursor(updated_at=task.updated_at, id=task.id)
+
+
+def make_row(org_id: UUID, task: Task) -> OutboxRow:
+    """The outbox row a create lands with; the memory outbox the root wires
+    receives it, the Postgres one inserts it in the same commit."""
+    return OutboxRow(
+        id=new_id(),
+        created_at=utcnow(),
+        kind="tasks.task.created",
+        target_id=task.id,
+        payload={"title": task.title},
+        actor_id=task.created_by,
+        request_id=new_id(),
+        app="api",
+    )
 
 
 def make_task(
@@ -60,6 +76,19 @@ class TaskStorageContract:
         assert await storage.read_task(org, task.id) == done
         assert await storage.read_open_tasks(org, team(), limit=10) == []
         assert await storage.read_done_tasks(org, team(), None, limit=10) == [done]
+
+    async def test_create_reports_an_existing_id_and_changes_nothing(
+        self, storage: TasksStorageInterface
+    ) -> None:
+        # The create primitive: a retry presents the id it minted the first time;
+        # the insert reports it, and neither the row nor the outbox is touched.
+        org_id = new_id()
+        task = make_task("Once")
+        assert await storage.create_task(org_id, task, make_row(org_id, task)) is True
+        again = task.model_copy(update={"title": "Twice"})
+        assert await storage.create_task(org_id, again, make_row(org_id, again)) is False
+        stored = await storage.read_task(org_id, task.id)
+        assert stored is not None and stored.title == "Once"
 
     async def test_reads_are_tenant_scoped(self, storage: TasksStorageInterface) -> None:
         org_a, org_b = new_id(), new_id()

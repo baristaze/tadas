@@ -56,10 +56,6 @@ class TasksManagerImpl(TasksManagerInterface):
     async def create_task(self, ctx: OpContext, task: Task) -> Task:
         ctx.require(Permission.WRITE)
         await self._verify(ctx, task)
-        if (existing := await self._storage.read_task(ctx.org_id, task.id)) is not None:
-            # Ids are minted above storage, so the only way to present one twice
-            # is a retry, and a retry must not create twice.
-            return existing
         created = task.model_copy(
             update={
                 "created_by": ctx.user_id,
@@ -68,7 +64,15 @@ class TasksManagerImpl(TasksManagerInterface):
                 "position": await self._top_position(ctx, exclude=task.id),
             }
         )
-        await self._write(ctx, created, "created")
+        row = outbox_row(ctx, "tasks.task.created", created.id, snapshot(created))
+        if not await self._storage.create_task(ctx.org_id, created, row):
+            # Ids are minted above storage, so the only way to present one twice
+            # is a retry, and a retry must not create twice: the insert reported
+            # the id and nothing changed, so the row as stored is the answer.
+            existing = await self._storage.read_task(ctx.org_id, created.id)
+            assert existing is not None
+            return existing
+        await self._relay.relay(ctx.org_id, row)
         return created
 
     async def update_task(self, ctx: OpContext, task: Task) -> Task:

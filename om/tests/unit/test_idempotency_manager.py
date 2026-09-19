@@ -65,6 +65,16 @@ async def test_keys_are_personal_within_the_tenant(manager: IdempotencyManagerIm
         await manager.begin(bob, "k1", "digest-a", new_id())
 
 
+async def test_release_lets_the_next_attempt_begin_afresh(manager: IdempotencyManagerImpl) -> None:
+    ctx = context()
+    first = new_id()
+    assert (await manager.begin(ctx, "k1", "d", first)).pending
+    await manager.release(ctx, "k1")
+    second = new_id()
+    begun = await manager.begin(ctx, "k1", "d", second)
+    assert begun.pending and begun.target_id == second, "afresh: the new attempt's id"
+
+
 async def test_finish_needs_a_begun_key_and_write_permission(
     manager: IdempotencyManagerImpl,
 ) -> None:

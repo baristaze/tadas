@@ -2,9 +2,8 @@ from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import delete, select, update
-from sqlalchemy.exc import IntegrityError
 
-from tadas.om.exceptions import Conflict
+from tadas.om.exceptions import Conflict, UniqueKeyTaken
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.storage.impl.pg_base import PgStorageBase
 from tadas.om.storage.utils.translation import to_model
@@ -53,8 +52,10 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
             row = (await session.execute(stmt)).scalar_one_or_none()
             return None if row is None else to_model(row, Org)
 
-    async def read_orgs(self, limit: int) -> list[Org]:
+    async def read_orgs(self, limit: int, after_id: UUID | None = None) -> list[Org]:
         stmt = select(Orgs).order_by(Orgs.id).limit(limit)
+        if after_id is not None:
+            stmt = stmt.where(Orgs.id > after_id)
         async with self._session_for(stmt) as session:
             result = await session.execute(stmt)
             return [to_model(row, Org) for row in result.scalars()]
@@ -94,7 +95,7 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
     ) -> None:
         try:
             await self._upsert(Users, org_id, user, outbox_row)
-        except IntegrityError as error:
+        except UniqueKeyTaken as error:
             # uq_users_org_id_identity_id_live: one live user per identity in a tenant.
             raise Conflict(f"identity {user.identity_id} already has a live user") from error
 
