@@ -4,6 +4,7 @@ process that was subscribed at the time, at most once, and a bus hiccup may
 lose it. Durable work never rides a topic; it is a row in the work queue,
 and a missed wake-up degrades to polling latency, never to lost work."""
 
+from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from datetime import datetime
 from enum import Enum
@@ -53,9 +54,11 @@ TOPIC_PAYLOADS: dict[Topics, type[TopicPayload]] = {
 TopicHandler = Callable[[TopicPayload], Awaitable[None]]
 
 
-class TopicsInterface:
+class TopicsInterface(ABC):
+    @abstractmethod
     async def publish(self, topic: Topics, payload: TopicPayload) -> None: ...
 
+    @abstractmethod
     def subscribe(
         self,
         topic: Topics,
@@ -65,13 +68,16 @@ class TopicsInterface:
         """Returns an unsubscribe callable."""
         ...
 
+    @abstractmethod
     def describe(self) -> str: ...
 
+    @abstractmethod
     async def start(self) -> None:
         """Opened by the infra root at boot. An impl that holds no connection
         of its own returns None."""
         ...
 
+    @abstractmethod
     async def close(self) -> None:
         """Closed by the infra root at shutdown, in reverse order of start."""
         ...

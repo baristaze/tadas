@@ -2,6 +2,8 @@
 they need. The root has a lifecycle because some capabilities do, and every
 capability declares one so the root never asks which."""
 
+from abc import ABC, abstractmethod
+
 from tadas.infra.buckets import BucketsInterface
 from tadas.infra.cache import CacheInterface, CacheScope
 from tadas.infra.queues import QueueInterface
@@ -9,21 +11,29 @@ from tadas.infra.secrets import SecretsInterface
 from tadas.infra.topics import TopicsInterface
 
 
-class InfraInterface:
+class InfraInterface(ABC):
+    @abstractmethod
     def get_cache(self, scope: CacheScope) -> CacheInterface: ...
 
+    @abstractmethod
     def get_buckets(self) -> BucketsInterface: ...
 
+    @abstractmethod
     def get_topics(self) -> TopicsInterface: ...
 
+    @abstractmethod
     def get_queues(self) -> QueueInterface: ...
 
+    @abstractmethod
     def get_secrets(self) -> SecretsInterface: ...
 
+    @abstractmethod
     def describe(self) -> list[str]:
         """One line per chosen backend, logged once at boot."""
         ...
 
+    @abstractmethod
     async def start(self) -> None: ...
 
+    @abstractmethod
     async def close(self) -> None: ...

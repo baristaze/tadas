@@ -5,7 +5,8 @@ import pytest
 from contracts.factories import make_org, make_user
 
 from tadas.infra.impl.local import InfraLocalImpl
-from tadas.infra.topics import EntityChangedPayload, TopicPayload, Topics, TopicsInterface
+from tadas.infra.topics import EntityChangedPayload, TopicPayload, Topics
+from tadas.infra.topics.memory import TopicsMemoryImpl
 from tadas.om.base import new_id, utcnow
 from tadas.om.events.impl.manager import EventsManagerImpl, EventsOptions
 from tadas.om.events.storage.impl.memory import EventStorageMemoryImpl
@@ -26,7 +27,9 @@ APP = AppContext(type=AppType.PORTAL, version="portal@test")
 
 
 class Members(TenancyManagerInterface):
-    """Just enough tenancy for the assignee check: the users of one org."""
+    """Just enough tenancy for the assignee check: the users of one org. A
+    partial double: only `get_user` is reached, and any other method fails
+    loudly as unimplemented, so the abstract set is cleared below."""
 
     def __init__(self) -> None:
         self.users: dict[UUID, User] = {}
@@ -36,6 +39,9 @@ class Members(TenancyManagerInterface):
         if user is None:
             raise NotFound(f"user {user_id} not found")
         return user
+
+
+Members.__abstractmethods__ = frozenset()
 
 
 def context(role: Role, org: Org | None = None, members: Members | None = None) -> OpContext:
@@ -83,7 +89,7 @@ def events(events_storage: EventStorageMemoryImpl) -> EventsManagerImpl:
 
 @pytest.fixture
 def members() -> Members:
-    return Members()
+    return Members()  # pyright: ignore[reportAbstractUsage] (a partial double)
 
 
 @pytest.fixture
@@ -281,7 +287,7 @@ async def test_a_failed_relay_leaves_the_row_for_the_sweep(
 ) -> None:
     # The request succeeds on the core write; the push is the row's job, and a
     # bus that is down at that moment is caught by the sweep's relay_pending.
-    class DownTopics(TopicsInterface):
+    class DownTopics(TopicsMemoryImpl):
         async def publish(self, topic: Topics, payload: TopicPayload) -> None:
             raise RuntimeError("bus down")
 

@@ -1,6 +1,7 @@
 """Cache: fast reads against data that is expensive to fetch. Scoped so
 unrelated consumers do not step on each other's keys; fails open."""
 
+from abc import ABC, abstractmethod
 from datetime import timedelta
 from enum import Enum
 from uuid import UUID
@@ -22,24 +23,31 @@ def cache_key(org_id: UUID, key: str) -> str:
     return f"org:{org_id}:{key}"
 
 
-class CacheInterface:
+class CacheInterface(ABC):
+    @abstractmethod
     async def get(self, org_id: UUID, key: str) -> bytes | None: ...
 
+    @abstractmethod
     async def put(self, org_id: UUID, key: str, value: bytes, ttl: timedelta) -> None: ...
 
+    @abstractmethod
     async def invalidate(self, org_id: UUID, key: str) -> None: ...
 
+    @abstractmethod
     async def increment(self, org_id: UUID, key: str, ttl: timedelta) -> tuple[int, timedelta]:
         """The one atomic primitive: the new count and the time left on the window."""
         ...
 
+    @abstractmethod
     def describe(self) -> str: ...
 
+    @abstractmethod
     async def start(self) -> None:
         """Opened by the infra root at boot. An impl that holds no connection
         of its own returns None."""
         ...
 
+    @abstractmethod
     async def close(self) -> None:
         """Closed by the infra root at shutdown, in reverse order of start."""
         ...

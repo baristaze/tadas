@@ -105,6 +105,12 @@ class MissingLiveness(CacheInterface):
     def describe(self) -> str:
         return "cache[worker_liveness]=missing"
 
+    async def start(self) -> None:
+        return None
+
+    async def close(self) -> None:
+        return None
+
 
 def start_loop(
     container: WorkerContainer,

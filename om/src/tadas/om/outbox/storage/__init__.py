@@ -2,29 +2,34 @@
 base lands it in the same commit as the core row (`_upsert(..., outbox_row)`
 in the `core` role). The two cross-tenant reads here serve the sweep."""
 
+from abc import ABC, abstractmethod
 from datetime import datetime
 from uuid import UUID
 
 from tadas.om.outbox.types.row import OutboxRow
 
 
-class OutboxLandingInterface:
+class OutboxLandingInterface(ABC):
     """What a storage base needs from the outbox: somewhere for the row to land
     in the same commit as the core row. The Postgres base lands it in its own
     session; the memory base lands it here."""
 
+    @abstractmethod
     def land(self, org_id: UUID, row: OutboxRow) -> None: ...
 
 
-class OutboxStorageInterface:
+class OutboxStorageInterface(ABC):
+    @abstractmethod
     async def read_pending(self, limit: int) -> list[tuple[UUID, OutboxRow]]:
         """Cross-tenant, for the sweep: rows not yet done, oldest first, with their tenant."""
         ...
 
+    @abstractmethod
     async def mark_done(self, org_id: UUID, row_id: UUID) -> None:
         """Stamps `done_at`; a row already done, or unknown, is left as is."""
         ...
 
+    @abstractmethod
     async def purge_done(self, before: datetime) -> int:
         """Cross-tenant, for the sweep: deletes rows done before `before`; returns how many."""
         ...
