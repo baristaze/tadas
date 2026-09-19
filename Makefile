@@ -112,6 +112,14 @@ test-unit: ## Unit tests over the memory impls
 test-integration: ## Integration tests over the compose stack
 	uv run pytest -q -m integration
 
-openapi: ## Emit the API document into the apps that consume it and regenerate their types
+# One committed document, apps/portal/openapi.json; both generated type sets
+# come from it: the portal's schema.d.ts and the Python client's schema.py.
+openapi: ## Emit the API document and regenerate the portal's and the Python client's types
 	uv run --package tadas-api tadas-api openapi --out apps/portal/openapi.json
 	pnpm --filter @tadas/portal generate
+	uv run datamodel-codegen --input apps/portal/openapi.json --input-file-type openapi \
+		--output clients/python/src/tadas/client/schema.py \
+		--output-model-type pydantic_v2.BaseModel --target-python-version 3.13 \
+		--use-standard-collections --use-union-operator --use-annotated \
+		--enum-field-as-literal none --use-schema-description --disable-timestamp \
+		--formatters ruff-format --formatters ruff-check

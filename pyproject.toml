@@ -14,6 +14,7 @@ members = [
     "infra",
     "services/api",
     "workers/maintenance",
+    "clients/python",
 ]
 
 [tool.uv.sources]
@@ -21,6 +22,7 @@ tadas-om = { workspace = true }
 tadas-infra = { workspace = true }
 tadas-api = { workspace = true }
 tadas-maintenance = { workspace = true }
+tadas-client = { workspace = true }
 
 [dependency-groups]
 dev = [
@@ -29,14 +31,30 @@ dev = [
     "ruff>=0.16.8",
     "pyright>=1.1.414",
     "httpx>=0.28.1",
+    # Pinned exactly: `make openapi` regenerates clients/python/src/tadas/client/schema.py
+    # with it and CI checks the committed file is current.
+    "datamodel-code-generator==0.82.0",
 ]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 addopts = "--import-mode=importlib"
-pythonpath = ["om/tests", "services/api/tests", "workers/maintenance/tests"]
+pythonpath = [
+    "om/tests",
+    "services/api/tests",
+    "workers/maintenance/tests",
+    "clients/python/tests",
+    "apps/cli/tests",
+]
 asyncio_default_fixture_loop_scope = "function"
-testpaths = ["om/tests", "infra/tests", "services/api/tests", "workers/maintenance/tests"]
+testpaths = [
+    "om/tests",
+    "infra/tests",
+    "services/api/tests",
+    "workers/maintenance/tests",
+    "clients/python/tests",
+    "apps/cli/tests",
+]
 markers = [
     "integration: needs the local compose stack",
     "e2e: drives a running system end to end",
