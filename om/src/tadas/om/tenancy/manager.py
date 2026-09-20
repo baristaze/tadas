@@ -133,7 +133,10 @@ class TenancyManagerInterface(ABC):
 
     @abstractmethod
     async def service_contexts(self, rctx: RequestContext) -> list[OpContext]:
-        """Platform-internal: one service context per live tenant, for sweeps."""
+        """Platform-internal: one service context per live tenant, for sweeps.
+        Minted for the tenant, not for a member: it carries the tenant, the
+        service role, and the system user (`EMPTY_UUID`) as its user id, so a
+        tenant whose members have all left is still swept."""
         ...
 
     # The principal.

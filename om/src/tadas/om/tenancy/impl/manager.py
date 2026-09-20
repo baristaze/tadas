@@ -1,4 +1,3 @@
-import logging
 import secrets
 from datetime import timedelta
 from uuid import UUID
@@ -53,8 +52,6 @@ from tadas.om.tenancy.types.role import permissions_of
 from tadas.om.tenancy.types.session import Session
 from tadas.om.tenancy.types.socket_ticket import SocketTicket
 from tadas.om.tenancy.types.user import User
-
-log = logging.getLogger(__name__)
 
 TICKET_USED_KEY = "ticket-used:"
 """The cache remembers a redeemed ticket so a replay is refused without a
@@ -429,17 +426,21 @@ class TenancyManagerImpl(TenancyManagerInterface):
             after_id = page[-1].id
 
     async def service_contexts(self, rctx: RequestContext) -> list[OpContext]:
-        contexts: list[OpContext] = []
-        for org in await self._every_org():
-            if org.deleted_at is not None:
-                continue
-            try:
-                contexts.append(await self.service_context(rctx, org.id, org.created_by))
-            except InvalidCredential as error:
-                # The founding user was removed; this tenant waits for a live
-                # principal, the others are still swept.
-                log.warning("no service context for org %s: %s", org.id, error.message)
-        return contexts
+        # Minted for the tenant, not for a member: the system user is the actor
+        # and no user or membership is read, so it costs one read per page of
+        # tenants and a tenant whose members have all left is still swept.
+        return [
+            build_context(
+                rctx,
+                user_id=EMPTY_UUID,
+                org_id=org.id,
+                role=Role.SERVICE,
+                permissions=permissions_of(Role.SERVICE),
+                credential_kind=CredentialKind.INTERNAL,
+            )
+            for org in await self._every_org()
+            if org.deleted_at is None
+        ]
 
     # The principal.
 

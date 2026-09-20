@@ -51,7 +51,7 @@ class Role(str, Enum):
     ADMIN = "admin"
     MEMBER = "member"
     VIEWER = "viewer"
-    SERVICE = "service"  # a worker acting on a person's earlier request
+    SERVICE = "service"  # a worker: on a person's earlier request, or a sweep of a tenant
 
 
 class Permission(str, Enum):

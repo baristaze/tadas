@@ -9,7 +9,7 @@ import pytest
 from tadas.infra.cache import CacheInterface, CacheScope
 from tadas.infra.impl.local import InfraLocalImpl
 from tadas.infra.topics import EntityChangedPayload, TopicPayload, Topics
-from tadas.om.base import new_id, utcnow
+from tadas.om.base import EMPTY_UUID, new_id, utcnow
 from tadas.om.events.storage.impl.memory import EventStorageMemoryImpl
 from tadas.om.exceptions import (
     Conflict,
@@ -544,11 +544,39 @@ async def test_resume_and_service_contexts(manager: TenancyManagerImpl) -> None:
     assert len(contexts) == 2
     assert all(c.security.role is Role.SERVICE for c in contexts)
     assert all(c.security.credential_kind is CredentialKind.INTERNAL for c in contexts)
+    # Minted for the tenant: the system user is the actor, not the founder.
+    assert all(c.user_id == EMPTY_UUID for c in contexts)
 
     rebuilt = await manager.service_context(request(), org.id, ctx.user_id)
     assert rebuilt.user_id == ctx.user_id
     with pytest.raises(InvalidCredential):
         await manager.resume(request(), org.id, CredentialKind.SESSION_TOKEN, new_id())
+
+
+async def test_a_tenant_whose_members_have_all_left_is_still_swept(
+    manager: TenancyManagerImpl, storage: TenancyStorageMemoryImpl, infra: InfraLocalImpl
+) -> None:
+    owner, org = await manager.bootstrap(
+        request(), "Acme", "acme", "ann@example.test", "pw-1234", "Ann"
+    )
+    ann = await storage.read_user(org.id, owner.user_id)
+    assert ann is not None
+    now = utcnow()
+    await storage.write_user(
+        org.id, ann.model_copy(update={"deleted_at": now, "deleted_by": ann.id, "updated_at": now})
+    )
+    with pytest.raises(InvalidCredential):
+        await manager.service_context(request(), org.id, ann.id)
+
+    contexts = await manager.service_contexts(request())
+    assert [c.org_id for c in contexts] == [org.id]
+    ctx = contexts[0]
+    assert ctx.user_id == EMPTY_UUID and ctx.role is Role.SERVICE
+    # The context does the sweep's work: the one member who left is purged.
+    assert await manager.purge_deleted(ctx) == 0, "retention has not passed"
+    no_retention = make_manager(storage, infra, TenancyOptions(retention=timedelta(0)))
+    assert await no_retention.purge_deleted(ctx) == 2, "the user and the membership"
+    assert await storage.read_user(org.id, ann.id) is None
 
 
 async def test_a_socket_ticket_is_redeemed_exactly_once(manager: TenancyManagerImpl) -> None:
