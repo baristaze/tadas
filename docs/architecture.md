@@ -101,7 +101,10 @@ context on keeps the stage the callee needs.
   so a deleted org frees its slug, a removed member frees the identity
   and the membership, and the same value can be created again; the slug
   lookup reads the living. The api key hash stays a full index because it
-  digests a fresh random secret that is never created again. The seeding
+  digests a fresh random secret that is never created again. A partial
+  index serves none of the sweep's reads, which are the dead rows and a
+  deleted tenant's, so users and memberships each carry a plain
+  `(org_id, deleted_at)` index beside their unique one. The seeding
   transitions are named atomic creates:
   `bootstrap` lands the org, its first user, and the owner's membership in
   one commit (`create_org_with_owner`), `add_member` the user, the
