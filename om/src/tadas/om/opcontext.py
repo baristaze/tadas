@@ -134,6 +134,10 @@ class OpContext(RequestContext):
         return self.security.user_id
 
     @property
+    def role(self) -> Role:
+        return self.security.role
+
+    @property
     def credential_kind(self) -> CredentialKind:
         return self.security.credential_kind
 

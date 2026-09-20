@@ -96,6 +96,21 @@ async def test_api_key_creation_replays_on_the_same_idempotency_key(
     assert refused.status_code == 401
 
 
+async def test_a_member_cannot_mint_a_service_key(
+    client: httpx.AsyncClient, container: AppContainer, owner: dict[str, str]
+) -> None:
+    org_id = UUID((await client.get("/v1/orgs/current", headers=owner)).json()["id"])
+    await add_member(container, org_id, "bob@example.test", "pw-1234", Role.MEMBER)
+    bob = await sign_in_as(client, "bob@example.test", "pw-1234", org_id)
+    for headers in (bob, owner):
+        refused = await client.post(
+            "/v1/api-keys", headers=headers, json={"name": "svc", "role": "service"}
+        )
+        assert refused.status_code == 422, refused.text
+        assert refused.json()["error"]["code"] == "validation_failed"
+    assert (await client.get("/v1/api-keys", headers=owner)).json() == []
+
+
 async def test_api_key_ttl_is_bounded_on_the_wire(
     client: httpx.AsyncClient, owner: dict[str, str]
 ) -> None:

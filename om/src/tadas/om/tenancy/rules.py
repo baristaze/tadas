@@ -53,9 +53,21 @@ def verify_password(password: str, stored: str) -> bool:
 
 
 def role_at_most(requested: Role, ceiling: Role) -> bool:
-    """A credential never carries a role above its issuer's."""
+    """A credential never carries a role above its issuer's. The ladder holds
+    the person roles only: the service role is at most no person role and no
+    person role is at most it, so the answer is False whenever either side is
+    `Role.SERVICE`, and the operation that issues a credential refuses that
+    role by name before it asks."""
+    if requested is Role.SERVICE or ceiling is Role.SERVICE:
+        return False
     return ROLE_RANK[requested] <= ROLE_RANK[ceiling]
 
 
 def capped_role(requested: Role, ceiling: Role) -> Role:
+    """The requested role when it is at most the ceiling, else the ceiling. A
+    service role asked for is capped like any role above the ceiling; a
+    service role as the ceiling is refused, because a membership never
+    carries it and nothing is capped at a role that is not a rung."""
+    if ceiling is Role.SERVICE:
+        raise ValueError("the service role is not a rung of the ladder; nothing is capped at it")
     return requested if role_at_most(requested, ceiling) else ceiling

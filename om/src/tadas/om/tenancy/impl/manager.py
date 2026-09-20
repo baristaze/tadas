@@ -584,6 +584,8 @@ class TenancyManagerImpl(TenancyManagerInterface):
             raise Conflict(
                 f"api key {api_key_id} was issued once; its secret cannot be shown again"
             )
+        if role is Role.SERVICE:
+            raise ValidationFailed("service is not an api key role")
         if not role_at_most(role, ctx.security.role):
             raise NotAuthorized(f"cannot issue role {role.value} above {ctx.security.role.value}")
         if ttl is not None and not (timedelta(0) < ttl <= self._options.api_key_ttl):

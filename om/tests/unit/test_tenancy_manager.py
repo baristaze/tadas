@@ -289,6 +289,24 @@ async def test_api_keys_are_role_capped_and_revocable(
     assert all(p.org_id == org.id for p in seen)
 
 
+async def test_no_one_mints_a_service_key(
+    manager: TenancyManagerImpl, storage: TenancyStorageMemoryImpl
+) -> None:
+    # The service role holds MANAGE_MEMBERS and a member does not; it is refused
+    # by name before the ladder is asked, for the owner as for the member.
+    _, org = await manager.bootstrap(
+        request(), "Acme", "acme", "ann@example.test", "pw-1234", "Ann"
+    )
+    await add_member(storage, org.id, "bob@example.test", Role.MEMBER)
+    owner = await sign_in(manager, "ann@example.test", org.id)
+    member = await sign_in(manager, "bob@example.test", org.id)
+    assert not member.has(Permission.MANAGE_MEMBERS)
+    for ctx in (member, owner):
+        with pytest.raises(ValidationFailed):
+            await manager.create_api_key(ctx, "svc", Role.SERVICE)
+    assert await manager.get_api_keys(owner, limit=10) == []
+
+
 async def test_api_key_ttl_is_bounded_by_the_option(
     storage: TenancyStorageMemoryImpl, infra: InfraLocalImpl
 ) -> None:

@@ -199,7 +199,8 @@ class TenancyManagerInterface(ABC):
         ttl: timedelta | None = None,
         api_key_id: UUID | None = None,
     ) -> IssuedApiKey:
-        """`api_key_id`, when given, is the id a retried request carries; a key
+        """Role-capped at the caller's role; the service role is refused by name.
+        `api_key_id`, when given, is the id a retried request carries; a key
         that already exists under it raises Conflict, because its secret was
         shown once and cannot be shown again."""
         ...
