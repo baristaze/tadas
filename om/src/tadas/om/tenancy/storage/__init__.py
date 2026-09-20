@@ -90,10 +90,14 @@ class TenancyStorageInterface(ABC):
         ...
 
     @abstractmethod
-    async def read_memberships(self, org_id: UUID, limit: int) -> list[Membership]: ...
+    async def read_memberships(self, org_id: UUID, limit: int) -> list[Membership]:
+        """The tenant's live memberships, sorted by id; an ended one is hidden."""
+        ...
 
     @abstractmethod
-    async def read_membership_for_user(self, org_id: UUID, user_id: UUID) -> Membership | None: ...
+    async def read_membership_for_user(self, org_id: UUID, user_id: UUID) -> Membership | None:
+        """The user's live membership, or None when there is none or it ended."""
+        ...
 
     @abstractmethod
     async def write_membership(
@@ -148,8 +152,8 @@ class TenancyStorageInterface(ABC):
     @abstractmethod
     async def purge_deleted(self, org_id: UUID, before: datetime) -> int:
         """The one hard delete: removes the tenant's users soft-deleted before `before`
-        with their memberships, and its api keys revoked before `before`; returns
-        how many rows went."""
+        with their memberships (and any membership ended before `before`), and
+        its api keys revoked before `before`; returns how many rows went."""
         ...
 
     @abstractmethod

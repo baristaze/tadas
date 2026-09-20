@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.exc import IntegrityError
 
 from tadas.om.base import Identifiable
@@ -137,7 +137,7 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
     async def read_memberships(self, org_id: UUID, limit: int) -> list[Membership]:
         stmt = (
             select(Memberships)
-            .where(Memberships.org_id == org_id)
+            .where(Memberships.org_id == org_id, Memberships.deleted_at.is_(None))
             .order_by(Memberships.id)
             .limit(limit)
         )
@@ -147,7 +147,9 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
 
     async def read_membership_for_user(self, org_id: UUID, user_id: UUID) -> Membership | None:
         stmt = select(Memberships).where(
-            Memberships.org_id == org_id, Memberships.user_id == user_id
+            Memberships.org_id == org_id,
+            Memberships.user_id == user_id,
+            Memberships.deleted_at.is_(None),
         )
         async with self._session_for(stmt) as session:
             row = (await session.execute(stmt)).scalar_one_or_none()
@@ -254,13 +256,15 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
         async with self._session_for(gone_users) as session:
             user_ids = list((await session.execute(gone_users)).scalars().all())
             purged += len(user_ids)
-            if user_ids:
-                memberships = (
-                    delete(Memberships)
-                    .where(Memberships.org_id == org_id, Memberships.user_id.in_(user_ids))
-                    .returning(Memberships.id)
+            memberships = (
+                delete(Memberships)
+                .where(
+                    Memberships.org_id == org_id,
+                    or_(Memberships.user_id.in_(user_ids), Memberships.deleted_at < before),
                 )
-                purged += len((await session.execute(memberships)).scalars().all())
+                .returning(Memberships.id)
+            )
+            purged += len((await session.execute(memberships)).scalars().all())
             keys = (
                 delete(ApiKeys)
                 .where(ApiKeys.org_id == org_id, ApiKeys.deleted_at < before)

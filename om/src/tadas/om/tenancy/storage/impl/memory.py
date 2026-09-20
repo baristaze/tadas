@@ -130,11 +130,16 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
             )
 
     async def read_memberships(self, org_id: UUID, limit: int) -> list[Membership]:
-        return self._rows(self._memberships, org_id)[:limit]
+        return [m for m in self._rows(self._memberships, org_id) if m.deleted_at is None][:limit]
 
     async def read_membership_for_user(self, org_id: UUID, user_id: UUID) -> Membership | None:
         return next(
-            (m for m in self._rows(self._memberships, org_id) if m.user_id == user_id), None
+            (
+                m
+                for m in self._rows(self._memberships, org_id)
+                if m.user_id == user_id and m.deleted_at is None
+            ),
+            None,
         )
 
     async def write_membership(
@@ -233,7 +238,9 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
             if u.deleted_at is not None and u.deleted_at < before
         ]
         gone_memberships = [
-            m.id for m in self._rows(self._memberships, org_id) if m.user_id in gone_users
+            m.id
+            for m in self._rows(self._memberships, org_id)
+            if m.user_id in gone_users or (m.deleted_at is not None and m.deleted_at < before)
         ]
         gone_keys = [
             k.id

@@ -423,6 +423,34 @@ async def test_removing_a_member_soft_deletes_the_user_and_ends_access(
     assert (await manager.login(request(), "cid@example.test", "pw-1234")).memberships == ()
     with pytest.raises(NotFound):
         await manager.remove_member(admin, cid.id)
+    # The membership ended with the member: no list shows it, no role change reaches it.
+    assert [m.user_id for m in await manager.get_memberships(owner, limit=10)] == sorted(
+        [owner.user_id, bob.id]
+    )
+    with pytest.raises(NotFound):
+        await manager.update_membership_role(owner, cid.id, Role.VIEWER)
+    ended = await storage.read_membership_for_user(org.id, cid.id)
+    assert ended is None
+
+
+async def test_a_membership_needs_a_live_user_to_be_read_or_changed(
+    manager: TenancyManagerImpl, storage: TenancyStorageMemoryImpl
+) -> None:
+    _, org = await manager.bootstrap(
+        request(), "Acme", "acme", "ann@example.test", "pw-1234", "Ann"
+    )
+    owner = await sign_in(manager, "ann@example.test", org.id)
+    cid = await add_member(storage, org.id, "cid@example.test", Role.MEMBER)
+    # The user row goes while the membership row stays live: the membership is
+    # still not one to list or change.
+    now = utcnow()
+    await storage.write_user(
+        org.id, cid.model_copy(update={"deleted_at": now, "deleted_by": owner.user_id})
+    )
+    with pytest.raises(NotFound):
+        await manager.update_membership_role(owner, cid.id, Role.VIEWER)
+    with pytest.raises(NotFound):
+        await manager.remove_member(owner, cid.id)
 
 
 async def test_users_update_their_own_display_name(

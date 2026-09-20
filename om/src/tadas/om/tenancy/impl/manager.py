@@ -526,8 +526,8 @@ class TenancyManagerImpl(TenancyManagerInterface):
         ctx.require(Permission.MANAGE_MEMBERS)
         if user_id == ctx.user_id:
             raise ValidationFailed("a member cannot remove themselves")
-        user = await self._live_user(ctx, user_id)
         membership = await self._live_membership(ctx, user_id)
+        user = await self._live_user(ctx, user_id)
         if not role_at_most(membership.role, ctx.security.role):
             raise NotAuthorized("cannot remove a member above your own role")
         now = utcnow()
@@ -539,9 +539,17 @@ class TenancyManagerImpl(TenancyManagerInterface):
                 "updated_by": ctx.user_id,
             }
         )
-        await self._storage.write_membership(
-            ctx.org_id, membership.model_copy(update={"updated_at": now, "updated_by": ctx.user_id})
+        # The membership ends with the member: soft-deleted beside the user, so
+        # no read lists it and no role change reaches it during the retention.
+        ended = membership.model_copy(
+            update={
+                "deleted_at": now,
+                "deleted_by": ctx.user_id,
+                "updated_at": now,
+                "updated_by": ctx.user_id,
+            }
         )
+        await self._storage.write_membership(ctx.org_id, ended)
         await self._write_user(ctx, removed, "deleted")
         return removed
 
@@ -719,8 +727,11 @@ class TenancyManagerImpl(TenancyManagerInterface):
         return user
 
     async def _live_membership(self, ctx: OpContext, user_id: UUID) -> Membership:
+        """The membership of a live user, or NotFound: a removed member has no
+        membership to read or change, whatever the row says."""
+        await self._live_user(ctx, user_id)
         membership = await self._storage.read_membership_for_user(ctx.org_id, user_id)
-        if membership is None:
+        if membership is None or membership.deleted_at is not None:
             raise NotFound(f"membership of user {user_id} not found")
         return membership
 

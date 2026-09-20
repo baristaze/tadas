@@ -284,6 +284,25 @@ class TenancyStorageContract:
         assert await storage.read_membership_for_user(org.id, new_id()) is None
         assert await storage.read_memberships(org.id, limit=5) == [membership]
 
+    async def test_an_ended_membership_is_hidden_from_reads_and_purged_past_retention(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        org = make_org()
+        cut = utcnow()
+        live, ended = make_membership(new_id()), make_membership(new_id())
+        await storage.write_membership(org.id, live)
+        await storage.write_membership(org.id, ended)
+        await storage.write_membership(
+            org.id,
+            ended.model_copy(update={"deleted_at": cut - timedelta(days=1), "deleted_by": live.id}),
+        )
+        assert await storage.read_memberships(org.id, limit=10) == [live]
+        assert await storage.read_membership_for_user(org.id, ended.user_id) is None
+        assert await storage.read_membership_for_user(org.id, live.user_id) == live
+        assert await storage.purge_deleted(org.id, cut) == 1  # the ended membership
+        assert await storage.read_memberships(org.id, limit=10) == [live]
+        assert await storage.purge_deleted(org.id, cut) == 0
+
     async def test_session_lookup_by_hash_returns_the_tenant(
         self, storage: TenancyStorageInterface
     ) -> None:

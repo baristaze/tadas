@@ -177,7 +177,9 @@ class TenancyManagerInterface(ABC):
 
     @abstractmethod
     async def remove_member(self, ctx: OpContext, user_id: UUID) -> User:
-        """Soft-deletes the member's user in this org; their credentials stop resolving."""
+        """Soft-deletes the member's user in this org and ends their membership
+        with it; their credentials stop resolving, no list shows them, and no
+        role change reaches them."""
         ...
 
     # Credentials.

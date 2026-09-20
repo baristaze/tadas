@@ -222,6 +222,11 @@ async def test_members_are_promoted_and_removed_by_a_member_manager(
     assert (await client.get("/v1/me", headers=as_bob)).status_code == 401
     users = await client.get("/v1/users", headers=owner)
     assert [u["email"] for u in users.json()] == [OWNER["email"]]
+    # The membership ended with the member: not listed, not changeable.
+    memberships = await client.get("/v1/memberships", headers=owner)
+    assert str(bob.id) not in [m["user_id"] for m in memberships.json()]
+    gone = await client.patch(f"/v1/memberships/{bob.id}", headers=owner, json={"role": "viewer"})
+    assert gone.status_code == 404
 
 
 async def test_me_is_renamed_and_the_identity_is_read(
