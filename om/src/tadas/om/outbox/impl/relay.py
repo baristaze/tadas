@@ -101,6 +101,7 @@ class OutboxRelayImpl(OutboxRelayInterface):
         # second relay of the same row gets the same event back, same seq.
         event = Event(
             id=row.id,
+            org_id=row.org_id,
             kind=row.kind,
             target_id=row.target_id,
             payload=row.payload,
@@ -148,6 +149,7 @@ class OutboxRelayImpl(OutboxRelayInterface):
         OUTCOMES.labels(subsystem="outbox", outcome="dead_letter").inc()
         audit = Event(
             id=new_id(),
+            org_id=row.org_id,
             kind=DEAD_LETTER_KIND,
             target_id=row.id,
             payload={

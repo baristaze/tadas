@@ -41,10 +41,11 @@ class EventsManagerInterface(ABC):
 def audit_event(
     ctx: ProvenanceScope, event_id: UUID, kind: str, target_id: UUID, facts: Mapping[str, object]
 ) -> Event:
-    """An audit entry: the event shape plus the actor, the request, and the app,
-    which is all it reads from the context."""
+    """An audit entry: the event shape plus the tenant, the actor, the request,
+    and the app, which is all it reads from the context."""
     return Event(
         id=event_id,
+        org_id=ctx.org_id,
         kind=kind,
         target_id=target_id,
         payload=facts,

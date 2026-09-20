@@ -18,10 +18,11 @@ from tadas.om.tasks.storage import TasksStorageInterface
 NO_DELAY = timedelta(0)
 
 
-def make_row(target_id: UUID, *, age: timedelta = timedelta(minutes=1)) -> OutboxRow:
+def make_row(org_id: UUID, target_id: UUID, *, age: timedelta = timedelta(minutes=1)) -> OutboxRow:
     return OutboxRow(
         id=new_id(),
         created_at=utcnow() - age,
+        org_id=org_id,
         kind="tasks.task.created",
         target_id=target_id,
         payload={"title": "t"},
@@ -57,7 +58,7 @@ class OutboxStorageContract:
     ) -> None:
         org_a, org_b = new_id(), new_id()
         first, second = make_task(), make_task()
-        row_a, row_b = make_row(first.id), make_row(second.id)
+        row_a, row_b = make_row(org_a, first.id), make_row(org_b, second.id)
         await tasks.create_task(org_a, first, (row_a,))
         await tasks.create_task(org_b, second, (row_b,))
         claimed = await claim_all(outbox)
@@ -72,7 +73,7 @@ class OutboxStorageContract:
     ) -> None:
         org = new_id()
         task = make_task()
-        row = make_row(task.id)
+        row = make_row(org, task.id)
         await tasks.create_task(org, task, (row,))
         base, cap = timedelta(seconds=30), timedelta(seconds=100)
         now = utcnow()
@@ -92,7 +93,7 @@ class OutboxStorageContract:
     ) -> None:
         org = new_id()
         poison, fine = make_task(), make_task()
-        poison_row, fine_row = make_row(poison.id), make_row(fine.id)
+        poison_row, fine_row = make_row(org, poison.id), make_row(org, fine.id)
         await tasks.create_task(org, poison, (poison_row,))
         await tasks.create_task(org, fine, (fine_row,))
         claimed = await claim_all(outbox, backoff=timedelta(hours=1))
@@ -103,7 +104,7 @@ class OutboxStorageContract:
         await outbox.record_failure(org, poison_row.id, "bus down", None)
         await outbox.mark_done(org, fine_row.id)
         newer = make_task()
-        newer_row = make_row(newer.id)
+        newer_row = make_row(org, newer.id)
         await tasks.create_task(org, newer, (newer_row,))
         claimed = await claim_all(outbox)
         ids = {r.id for _, r in claimed}
@@ -123,7 +124,7 @@ class OutboxStorageContract:
         rows: list[OutboxRow] = []
         for _ in range(4):
             task = make_task()
-            row = make_row(task.id)
+            row = make_row(org, task.id)
             await tasks.create_task(org, task, (row,))
             rows.append(row)
         now = utcnow()
@@ -144,8 +145,8 @@ class OutboxStorageContract:
     ) -> None:
         org = new_id()
         young, old = make_task(), make_task()
-        young_row = make_row(young.id, age=timedelta(0))
-        old_row = make_row(old.id, age=timedelta(minutes=5))
+        young_row = make_row(org, young.id, age=timedelta(0))
+        old_row = make_row(org, old.id, age=timedelta(minutes=5))
         await tasks.create_task(org, young, (young_row,))
         await tasks.create_task(org, old, (old_row,))
         ids = {r.id for _, r in await claim_all(outbox, grace=timedelta(minutes=1))}
@@ -157,7 +158,7 @@ class OutboxStorageContract:
     ) -> None:
         org = new_id()
         task = make_task()
-        row = make_row(task.id)
+        row = make_row(org, task.id)
         await tasks.create_task(org, task, (row,))
         await outbox.mark_done(new_id(), row.id)  # another tenant: no effect
         assert row.id in {r.id for _, r in await claim_all(outbox)}
@@ -170,7 +171,7 @@ class OutboxStorageContract:
     ) -> None:
         org = new_id()
         task = make_task()
-        row = make_row(task.id)
+        row = make_row(org, task.id)
         await tasks.create_task(org, task, (row,))
         await outbox.record_failure(new_id(), row.id, "elsewhere", utcnow())  # another tenant
         assert row.id in {r.id for _, r in await claim_all(outbox)}
@@ -179,7 +180,7 @@ class OutboxStorageContract:
         assert row.id not in {r.id for _, r in await claim_all(outbox)}
         # Done rows stay done: a failure recorded afterwards changes nothing.
         done = make_task()
-        done_row = make_row(done.id)
+        done_row = make_row(org, done.id)
         await tasks.create_task(org, done, (done_row,))
         await outbox.mark_done(org, done_row.id)
         await outbox.record_failure(org, done_row.id, "too late", utcnow())
@@ -193,7 +194,7 @@ class OutboxStorageContract:
     ) -> None:
         org = new_id()
         done, pending = make_task(), make_task()
-        done_row, pending_row = make_row(done.id), make_row(pending.id)
+        done_row, pending_row = make_row(org, done.id), make_row(org, pending.id)
         await tasks.create_task(org, done, (done_row,))
         await tasks.create_task(org, pending, (pending_row,))
         await outbox.mark_done(org, done_row.id)

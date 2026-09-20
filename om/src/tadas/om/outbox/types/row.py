@@ -14,6 +14,7 @@ from tadas.om.opcontext import ProvenanceScope
 
 
 class OutboxRow(Identifiable, Created):
+    org_id: UUID  # carried on the row: the relay and the sweep run with no context
     kind: str  # "<namespace>.<entity>.<created|updated|deleted>"
     target_id: UUID  # the record that changed
     payload: FrozenMapping = Field(
@@ -36,10 +37,12 @@ def outbox_row(
     ctx: ProvenanceScope, kind: str, target_id: UUID, payload: Mapping[str, Any]
 ) -> OutboxRow:
     """The row a manager writes beside its core row, under the caller's provenance:
-    the actor, the request, and the app are all the row reads from the context."""
+    the tenant, the actor, the request, and the app are all the row reads from
+    the context."""
     return OutboxRow(
         id=new_id(),
         created_at=utcnow(),
+        org_id=ctx.org_id,
         kind=kind,
         target_id=target_id,
         payload=payload,

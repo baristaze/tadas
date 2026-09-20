@@ -16,9 +16,10 @@ class EventsManagerImpl(EventsManagerInterface):
 
     async def append_event(self, ctx: OpContext, event: Event) -> Event:
         ctx.require(Permission.WRITE)
-        # The provenance is the context's, whatever the caller built.
+        # The tenant and the provenance are the context's, whatever the caller built.
         stamped = event.model_copy(
             update={
+                "org_id": ctx.org_id,
                 "actor_id": ctx.user_id,
                 "request_id": ctx.request_id,
                 "app": ctx.app.type.value,

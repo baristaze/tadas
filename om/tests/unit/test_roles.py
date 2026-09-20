@@ -66,6 +66,7 @@ async def test_an_outbox_row_outside_the_core_role_is_refused() -> None:
     row = OutboxRow(
         id=new_id(),
         created_at=utcnow(),
+        org_id=new_id(),
         kind="work.item.created",
         target_id=new_id(),
         actor_id=new_id(),

@@ -33,6 +33,7 @@ def make_row(org_id: UUID, task: Task, action: str = "created") -> OutboxRow:
     return OutboxRow(
         id=new_id(),
         created_at=utcnow(),
+        org_id=org_id,
         kind=f"tasks.task.{action}",
         target_id=task.id,
         payload={"title": task.title},

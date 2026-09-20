@@ -13,6 +13,7 @@ from tadas.om.base import FrozenMapping, Identifiable
 
 
 class Event(Identifiable):
+    org_id: UUID  # carried on the event: the relay appends it with no context
     seq: int = 0  # per tenant, gapless; 0 until storage assigns it on append
     kind: str  # "<namespace>.<entity>.<created|updated|deleted>", or an audit kind
     target_id: UUID  # the record that changed
