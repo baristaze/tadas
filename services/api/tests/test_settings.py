@@ -56,8 +56,10 @@ LOCAL_DEFAULT_SERVES_THE_CLOUD = {
     "login_rate_limit": "the local budget is the budget",
     "login_rate_window_seconds": "the local window is the window",
     "realtime_send_buffer_size": "the local size is the size",
+    "realtime_control_buffer_size": "the local size is the size",
     "readiness_timeout_seconds": "shorter than every probe interval the deployment sets",
-    "admission_in_flight_limit": "the local bound is the bound until a replica is measured",
+    "admission_limit_reads": "the local bound is the bound until a replica is measured",
+    "admission_limit_writes": "the local bound is the bound until a replica is measured",
     "admission_retry_after_seconds": "the local wait is the wait",
 }
 

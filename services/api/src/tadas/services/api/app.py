@@ -55,11 +55,13 @@ def create_app(container: AppContainer | None = None) -> FastAPI:
     # where the operator reads that the process is refusing and how often. A
     # preflight is answered outside it and holds no slot, which is right for
     # the same reason it is not logged. What admission leaves outside itself
-    # is only the little the two middlewares above it do, and it takes the
-    # bound before routing, the request body, and every dependency.
+    # is only the little the two middlewares above it do, and it takes its
+    # lane's bound before routing, the request body, and every dependency:
+    # the lane is the method's, which the scope carries this far out.
     app.add_middleware(
         AdmissionMiddleware,
-        limit=settings.admission_in_flight_limit,
+        limit_reads=settings.admission_limit_reads,
+        limit_writes=settings.admission_limit_writes,
         retry_after=timedelta(seconds=settings.admission_retry_after_seconds),
     )
     app.add_middleware(RequestIdMiddleware)

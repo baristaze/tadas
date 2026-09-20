@@ -53,7 +53,8 @@ INTERNAL_ERROR = "internal_error"
 
 
 def new_send_buffer(websocket: WebSocket) -> SendBuffer:
-    return SendBuffer(container_of(websocket).settings.realtime_send_buffer_size)
+    settings = container_of(websocket).settings
+    return SendBuffer(settings.realtime_send_buffer_size, settings.realtime_control_buffer_size)
 
 
 SocketSendBuffer = Annotated[SendBuffer, Depends(new_send_buffer)]
