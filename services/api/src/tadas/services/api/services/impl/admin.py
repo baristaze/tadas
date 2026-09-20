@@ -1,16 +1,21 @@
 from uuid import UUID
 
 from tadas.om.idempotency.types.attempt import Attempt
-from tadas.om.opcontext import OperatorContext
+from tadas.om.opcontext import OperatorContext, OperatorPermission, OperatorRole
 from tadas.om.tasks.types.task import TaskStatus
 from tadas.om.tenancy import TenancyOperatorManagerInterface
 from tadas.services.api.services.admin import AdminServiceInterface
 from tadas.services.api.services.impl.tasks import decode_cursor as decode_task_cursor
 from tadas.services.api.services.impl.tasks import encode_cursor as encode_task_cursor
 from tadas.services.api.services.impl.tenancy import decode_cursor, encode_cursor
-from tadas.services.api.types.admin import AddMemberRequest, CreateOrgRequest, PlatformSizeView
+from tadas.services.api.types.admin import (
+    AddMemberRequest,
+    CreateOrgRequest,
+    OperatorView,
+    PlatformSizeView,
+)
 from tadas.services.api.types.common import clamp_limit
-from tadas.services.api.types.events import EventView
+from tadas.services.api.types.events import OperatorEventView
 from tadas.services.api.types.tasks import TaskPageView, TaskView
 from tadas.services.api.types.tenancy import OrgView, UserPageView, UserView
 
@@ -26,6 +31,10 @@ class AdminServiceImpl(AdminServiceInterface):
     async def get_orgs(self, admin: OperatorContext, limit: int) -> list[OrgView]:
         orgs = await self._tenancy.get_orgs(admin, clamp_limit(limit))
         return [OrgView.model_validate(o) for o in orgs]
+
+    async def me(self, admin: OperatorContext) -> OperatorView:
+        role = OperatorRole.WRITE if admin.has(OperatorPermission.WRITE) else OperatorRole.READ
+        return OperatorView(identity_id=admin.identity_id, email=admin.email, operator_role=role)
 
     async def size(self, admin: OperatorContext) -> PlatformSizeView:
         return PlatformSizeView.model_validate(await self._tenancy.size(admin))
@@ -84,9 +93,9 @@ class AdminServiceImpl(AdminServiceInterface):
 
     async def get_events(
         self, admin: OperatorContext, org_id: UUID, after_seq: int, limit: int
-    ) -> list[EventView]:
+    ) -> list[OperatorEventView]:
         events = await self._tenancy.get_events(admin, org_id, after_seq, clamp_limit(limit))
-        return [EventView.model_validate(e) for e in events]
+        return [OperatorEventView.model_validate(e) for e in events]
 
     async def delete_org(self, admin: OperatorContext, org_id: UUID) -> OrgView:
         return OrgView.model_validate(await self._tenancy.delete_org(admin, org_id))

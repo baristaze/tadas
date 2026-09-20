@@ -95,6 +95,21 @@ class MoveTaskRequest(BaseModel):
     version: Annotated[int, Field(ge=1, title='Version')]
 
 
+class OperatorEventView(BaseModel):
+    """
+    The same record as an operator reads it, with the two provenance fields
+    a tenant's own feed leaves out: the request that produced it and the app
+    it came from, which is what a support investigation correlates on.
+    """
+    actor_id: Annotated[UUID, Field(title='Actor Id')]
+    app: Annotated[str, Field(title='App')]
+    kind: Annotated[str, Field(title='Kind')]
+    produced_at: Annotated[AwareDatetime, Field(title='Produced At')]
+    request_id: Annotated[UUID, Field(title='Request Id')]
+    seq: Annotated[int, Field(title='Seq')]
+    target_id: Annotated[UUID, Field(title='Target Id')]
+
+
 class OperatorRole(StrEnum):
     """
     What an allowlist entry lets an operator do across every tenant. Write
@@ -103,6 +118,17 @@ class OperatorRole(StrEnum):
     """
     read = 'read'
     write = 'write'
+
+
+class OperatorView(BaseModel):
+    """
+    Who the operator plane admitted: the identity and what its allowlist
+    entry grants, so a skill checks it holds the entry it expects before it
+    reads anything.
+    """
+    email: Annotated[str, Field(title='Email')]
+    identity_id: Annotated[UUID, Field(title='Identity Id')]
+    operator_role: OperatorRole
 
 
 class OrgView(BaseModel):

@@ -4,10 +4,11 @@ are the tenant's own (`OrgView`, `UserPageView`, `TaskPageView`,
 in the path."""
 
 from datetime import datetime
+from uuid import UUID
 
 from pydantic import Field
 
-from tadas.om.opcontext import Role
+from tadas.om.opcontext import OperatorRole, Role
 from tadas.services.api.types.common import RequestBody, View
 
 
@@ -32,6 +33,16 @@ class AddMemberRequest(RequestBody):
     password: str = Field(min_length=1)
     display_name: str = Field(min_length=1, max_length=200)
     role: Role
+
+
+class OperatorView(View):
+    """Who the operator plane admitted: the identity and what its allowlist
+    entry grants, so a skill checks it holds the entry it expects before it
+    reads anything."""
+
+    identity_id: UUID
+    email: str
+    operator_role: OperatorRole
 
 
 class PlatformSizeView(View):

@@ -48,7 +48,8 @@ substitute.
 The env file `~/.config/tadas/ops/<env>.env` is owner-only and outside
 the repository. It holds `TADAS_API_URL`, `TADAS_OPERATOR_EMAIL`,
 `TADAS_OPERATOR_PASSWORD` (a `read` entry; the file's `write` entry,
-`TADAS_PROVISIONER_EMAIL`, belongs to the traffic generator alone), `TADAS_ERROR_TRACKER_URL`, and
+`TADAS_PROVISIONER_EMAIL` with `TADAS_PROVISIONER_PASSWORD`, belongs to
+the traffic generator alone), `TADAS_ERROR_TRACKER_URL`, and
 `TADAS_ERROR_TRACKER_TOKEN`. `local.env` points at the compose stack
 and adds the twins, `TADAS_PROMETHEUS_URL` and `TADAS_JAEGER_URL`, on
 the ports `.env` names. Read the file, use its values in commands, and
@@ -65,8 +66,8 @@ never print the password or the token.
    uv run tadas-ops size --env <env>
    ```
 
-   It prints tenants, users, and the product's main entity written in
-   the last day, through `GET /v1/admin/size` with the env file's
+   It prints tenants, users, and the entities written in the last day
+   (for a to-do product, the tasks and the events), through `GET /v1/admin/size` with the env file's
    operator identity. A platform of one tenant and one user is the
    developer. Every finding below is read against this number.
 3. Alarms. Cloud:
@@ -76,10 +77,18 @@ never print the password or the token.
      --profile tadas-<env>-investigate
    ```
 
-   Local has no alarm topic: run the six alarm conditions as
-   Prometheus queries against `$TADAS_PROMETHEUS_URL/api/v1/query`
-   (5xx ratio, targets up, p95 latency, running processes, and the
-   database's CPU and free storage where the exporter reports them).
+   Local has no alarm topic: run the alarm conditions as Prometheus
+   queries against `$TADAS_PROMETHEUS_URL/api/v1/query`, over the
+   window `[<since>]`:
+
+   - 5xx ratio: `sum(rate(tadas_http_requests_total{status=~"5.."}[<since>])) / sum(rate(tadas_http_requests_total[<since>]))`, alarm above 0.01
+   - targets up: `up{job!="prometheus"}`, alarm on any 0 (a host process
+     and a container are two targets of one job; one of them is down
+     by design)
+   - p95 latency: `histogram_quantile(0.95, sum by (le) (rate(tadas_http_request_seconds_bucket[<since>])))`, alarm above 1 s
+   - running processes: the `up` targets again, one per process
+   - the database's CPU and free storage: no local exporter; report
+     them as not read
    With `--alarm <name>`, start here and apply the first responder
    rule of step 10 before reading anything else.
 4. Request rate, error ratio, p95, by route. Cloud, one query per
@@ -100,9 +109,14 @@ never print the password or the token.
      --data-urlencode 'query=histogram_quantile(0.95, sum by (le, route) (rate(tadas_http_request_seconds_bucket[5m])))'
    ```
 
-5. Workers, queue, pool, cache: the outcome counters per kind, the
-   queue depth and the oldest age, pool checkouts and timeouts, cache
-   hits and misses, through the same two APIs. Cloud also reads the
+5. Workers, queue, pool, cache: one counter carries every outcome,
+   `tadas_outcomes_total{subsystem, outcome}` (subsystems `worker`,
+   `outbox`, `queue`, `cache`, `rate_limit`, `admission`,
+   `idempotency`), read as `sum by (subsystem, outcome)
+   (increase(tadas_outcomes_total[<since>]))`. Queue depth, the oldest
+   age, and pool checkouts have no metric; the cloud reads the queue
+   from `aws sqs get-queue-attributes` and the pool from the database's
+   connection count. Cloud also reads the
    running count against the desired count:
 
    ```bash
@@ -121,6 +135,13 @@ never print the password or the token.
      "$TADAS_ERROR_TRACKER_URL/api/0/organizations/<org>/issues/?statsPeriod=<since>"
    ```
 
+   `<org>` is the slug `GET /api/0/organizations/` lists (locally
+   `tadas`):
+
+   ```bash
+   curl -s -H "Authorization: Bearer $TADAS_ERROR_TRACKER_TOKEN" "$TADAS_ERROR_TRACKER_URL/api/0/organizations/"
+   ```
+
 7. Logs. Cloud, one log group per process, `/tadas/<env>/<process>`:
 
    ```bash
@@ -131,11 +152,16 @@ never print the password or the token.
    aws logs get-query-results --query-id <id> --profile tadas-<env>-investigate
    ```
 
-   Local: `docker compose -f deployment/local/docker-compose.yml logs
-   --since <since>` for the containers, and the host processes' log
-   files `scripts/dev.sh` writes. With `--request-id`, filter every
-   source on it: `filter request_id = "<id>"` in the cloud, `grep`
-   locally.
+   Local: `docker compose -f deployment/local/docker-compose.yml -f
+   deployment/local/docker-compose.full.yml logs --since <since> api
+   maintenance` from the repository root when the processes
+   run in containers. When they run on the host (`scripts/dev.sh`
+   writes no file; it logs to its terminal), `grep` the file the
+   process was started with, and say "not read" when there is none.
+   A local line carries the request id in brackets, `[<id>]`, or as
+   `"request_id"` when `TADAS_LOG_JSON` is on.
+   With `--request-id`, filter every source on it: `filter request_id
+   = "<id>"` in the cloud, `grep` locally.
 8. Traces. Cloud:
 
    ```bash
@@ -144,9 +170,22 @@ never print the password or the token.
      --filter-expression 'service("tadas-api") AND responsetime > 1'
    ```
 
-   Local: `curl -s "$TADAS_JAEGER_URL/api/traces?service=tadas-api&lookback=<since>&minDuration=1s&limit=20"`.
-   With `--request-id`, filter on the `request_id` annotation or tag
-   instead.
+   Local, Jaeger's v3 API (the service is the process name, `api`, and
+   the request id is the span attribute `tadas.request_id`):
+
+   ```bash
+   curl -sG "$TADAS_JAEGER_URL/api/v3/traces" \
+     --data-urlencode query.service_name=api \
+     --data-urlencode "query.start_time_min=<start, RFC 3339>" \
+     --data-urlencode "query.start_time_max=<end, RFC 3339>" \
+     --data-urlencode query.duration_min=1s
+   ```
+
+   and filter the spans on the attribute client-side; the query API
+   ignores attribute filters. An empty answer means the process ran
+   with no `TADAS_OTEL_ENDPOINT`, which is a finding, not an error.
+   With `--request-id`, filter on the `request_id` annotation in the
+   cloud and the `tadas.request_id` attribute locally instead.
 9. Cost, cloud only. The month to date against the budget:
 
    ```bash
@@ -199,7 +238,7 @@ never print the password or the token.
 - Requests: <rate>, error ratio <ratio>, p95 <ms> by route
 - Workers: <outcomes per kind>, queue depth <n>, oldest <age>
 - Pool and cache: <checkouts, timeouts, hits, misses>
-- Errors: <count>, top issue <title> (<request id>)
+- Errors: <count>, top issue <title> (<request id, or none>)
 - Cost: <month to date> of <budget> USD (cloud only)
 
 ## Findings

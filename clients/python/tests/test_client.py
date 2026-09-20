@@ -505,10 +505,21 @@ async def test_admin_tasks_names_the_list_and_pages_it() -> None:
 async def test_admin_events_replays_one_tenants_stream() -> None:
     org_id = UUID(ORG["id"])
     path = f"/v1/admin/orgs/{org_id}/events"
-    recorder = Recorder({path: httpx.Response(200, json=[EVENT])})
+    operator_event = {**EVENT, "request_id": str(uuid4()), "app": "portal"}
+    recorder = Recorder({path: httpx.Response(200, json=[operator_event])})
     async with client_over(recorder, token="lgn_1") as client:
         events = await client.admin_events(org_id, after_seq=3, limit=10)
     assert [e.seq for e in events] == [1] and events[0].kind == "tasks.task.created"
+    assert str(events[0].request_id) == operator_event["request_id"] and events[0].app == "portal"
     sent = recorder.requests[0]
     assert sent.method == "GET" and sent.url.path == path
     assert dict(sent.url.params) == {"after_seq": "3", "limit": "10"}
+
+
+async def test_admin_me_reads_the_operators_own_entry() -> None:
+    me = {"identity_id": str(uuid4()), "email": "sup@example.test", "operator_role": "read"}
+    recorder = Recorder({"/v1/admin/me": httpx.Response(200, json=me)})
+    async with client_over(recorder, token="lgn_1") as client:
+        view = await client.admin_me()
+    assert view.email == "sup@example.test" and view.operator_role.value == "read"
+    assert recorder.requests[0].headers["authorization"] == "Bearer lgn_1"

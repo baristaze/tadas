@@ -62,6 +62,7 @@ def routes(org_id: str) -> list[tuple[str, str, str, dict[str, Any]]]:
     passes its validation. The write ones name a fresh slug and email, so the
     write operator's call lands."""
     return [
+        ("read", "GET", "/v1/admin/me", {}),
         ("read", "GET", "/v1/admin/size", {}),
         ("read", "GET", "/v1/admin/orgs", {}),
         ("read", "GET", f"/v1/admin/orgs/{org_id}", {}),
@@ -171,6 +172,9 @@ async def test_an_operator_reads_one_tenant_and_leaves_a_trail(
         events = await client.get(f"/v1/admin/orgs/{org_id}/events", headers=reader)
         assert events.status_code == 200, events.text
         assert [e["seq"] for e in events.json()] == [1, 2, 3, 4]
+        # The operator's feed carries what the tenant's leaves out: the request
+        # that produced each record and the app it came from.
+        assert all(UUID(e["request_id"]) and e["app"] == "portal" for e in events.json())
         assert {e["kind"] for e in events.json()} == {
             "tasks.task.created",
             "tasks.task.updated",
@@ -261,3 +265,16 @@ async def test_the_creates_run_under_the_operators_idempotency_record(
         "bob@example.test",
         "otto@example.test",
     ]
+
+
+async def test_an_operator_reads_its_own_entry(
+    client: httpx.AsyncClient, reader: dict[str, str], writer: dict[str, str]
+) -> None:
+    """`/v1/admin/me` says who was admitted and what the entry grants, which is
+    the check a skill makes before its first read."""
+    mine = await client.get("/v1/admin/me", headers=reader)
+    assert mine.status_code == 200, mine.text
+    assert mine.json()["email"] == "sup@example.test"
+    assert mine.json()["operator_role"] == "read"
+    assert UUID(mine.json()["identity_id"])
+    assert (await client.get("/v1/admin/me", headers=writer)).json()["operator_role"] == "write"

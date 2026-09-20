@@ -14,13 +14,25 @@ from tadas.om.tasks.types.task import TaskStatus
 from tadas.services.api.gateway.admin import OperatorCtx
 from tadas.services.api.gateway.idempotency import OperatorIdem
 from tadas.services.api.gateway.resolve import AdminService
-from tadas.services.api.types.admin import AddMemberRequest, CreateOrgRequest, PlatformSizeView
+from tadas.services.api.types.admin import (
+    AddMemberRequest,
+    CreateOrgRequest,
+    OperatorView,
+    PlatformSizeView,
+)
 from tadas.services.api.types.common import LIMIT_DEFAULT
-from tadas.services.api.types.events import EventView
+from tadas.services.api.types.events import OperatorEventView
 from tadas.services.api.types.tasks import TaskPageView
 from tadas.services.api.types.tenancy import OrgView, UserPageView, UserView
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+
+
+@router.get("/me", response_model=OperatorView)
+async def operator_me(admin: OperatorCtx, service: AdminService) -> OperatorView:
+    """Who the plane admitted and what the entry grants; the check a skill
+    makes before its first read."""
+    return await service.me(admin)
 
 
 @router.get("/size", response_model=PlatformSizeView)
@@ -86,12 +98,12 @@ async def list_tasks(
     return await service.get_tasks(admin, org_id, status, cursor, limit)
 
 
-@router.get("/orgs/{org_id}/events", response_model=list[EventView])
+@router.get("/orgs/{org_id}/events", response_model=list[OperatorEventView])
 async def list_events(
     admin: OperatorCtx,
     service: AdminService,
     org_id: UUID,
     after_seq: Annotated[int, Query(ge=0)] = 0,
     limit: int = LIMIT_DEFAULT,
-) -> list[EventView]:
+) -> list[OperatorEventView]:
     return await service.get_events(admin, org_id, after_seq, limit)

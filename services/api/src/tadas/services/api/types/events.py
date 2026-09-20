@@ -20,6 +20,15 @@ class EventView(View):
     actor_id: UUID
 
 
+class OperatorEventView(EventView):
+    """The same record as an operator reads it, with the two provenance fields
+    a tenant's own feed leaves out: the request that produced it and the app
+    it came from, which is what a support investigation correlates on."""
+
+    request_id: UUID
+    app: str
+
+
 class EntityChangedView(View):
     """What a push says: which record changed, how, who changed it, and where
     it sits in the stream. Every push has a record, so `seq` is always present."""

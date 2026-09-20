@@ -572,6 +572,54 @@
         "title": "MoveTaskRequest",
         "type": "object"
       },
+      "OperatorEventView": {
+        "description": "The same record as an operator reads it, with the two provenance fields\na tenant's own feed leaves out: the request that produced it and the app\nit came from, which is what a support investigation correlates on.",
+        "properties": {
+          "actor_id": {
+            "format": "uuid",
+            "title": "Actor Id",
+            "type": "string"
+          },
+          "app": {
+            "title": "App",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "produced_at": {
+            "format": "date-time",
+            "title": "Produced At",
+            "type": "string"
+          },
+          "request_id": {
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          },
+          "seq": {
+            "title": "Seq",
+            "type": "integer"
+          },
+          "target_id": {
+            "format": "uuid",
+            "title": "Target Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "seq",
+          "kind",
+          "target_id",
+          "produced_at",
+          "actor_id",
+          "request_id",
+          "app"
+        ],
+        "title": "OperatorEventView",
+        "type": "object"
+      },
       "OperatorRole": {
         "description": "What an allowlist entry lets an operator do across every tenant. Write\nincludes read; the tenancy namespace's table says which permissions each\nrole holds, as it does for `Role`.",
         "enum": [
@@ -580,6 +628,30 @@
         ],
         "title": "OperatorRole",
         "type": "string"
+      },
+      "OperatorView": {
+        "description": "Who the operator plane admitted: the identity and what its allowlist\nentry grants, so a skill checks it holds the entry it expects before it\nreads anything.",
+        "properties": {
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "identity_id": {
+            "format": "uuid",
+            "title": "Identity Id",
+            "type": "string"
+          },
+          "operator_role": {
+            "$ref": "#/components/schemas/OperatorRole"
+          }
+        },
+        "required": [
+          "identity_id",
+          "email",
+          "operator_role"
+        ],
+        "title": "OperatorView",
+        "type": "object"
       },
       "OrgView": {
         "properties": {
@@ -1048,6 +1120,88 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/v1/admin/me": {
+      "get": {
+        "description": "Who the plane admitted and what the entry grants; the check a skill\nmakes before its first read.",
+        "operationId": "operator_me_v1_admin_me_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app-version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Version"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperatorView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Operator Me",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
     "/v1/admin/orgs": {
       "get": {
         "operationId": "list_orgs_v1_admin_orgs_get",
@@ -1520,7 +1674,7 @@
               "application/json": {
                 "schema": {
                   "items": {
-                    "$ref": "#/components/schemas/EventView"
+                    "$ref": "#/components/schemas/OperatorEventView"
                   },
                   "title": "Response List Events V1 Admin Orgs  Org Id  Events Get",
                   "type": "array"

@@ -20,6 +20,8 @@ from tadas.client.types import (
     IssuedSessionView,
     IssuedTicketView,
     MeView,
+    OperatorEventView,
+    OperatorView,
     OrgView,
     PlatformSizeView,
     Role,
@@ -399,6 +401,11 @@ class ApiClient:
     # The operator plane. The bearer is the operator's own sign-in (the login
     # token), never a tenant session; a caller sets `token` to it.
 
+    async def admin_me(self) -> OperatorView:
+        """Who the operator plane admitted and what the entry grants; the check a
+        skill makes before its first read."""
+        return OperatorView.model_validate(await self.request("GET", "/v1/admin/me"))
+
     async def admin_size(self) -> PlatformSizeView:
         return PlatformSizeView.model_validate(await self.request("GET", "/v1/admin/size"))
 
@@ -480,10 +487,10 @@ class ApiClient:
 
     async def admin_events(
         self, org_id: UUID, after_seq: int = 0, limit: int = LIMIT_MAX
-    ) -> list[EventView]:
+    ) -> list[OperatorEventView]:
         body = await self.request(
             "GET",
             f"/v1/admin/orgs/{org_id}/events",
             params={"after_seq": after_seq, "limit": limit},
         )
-        return [EventView.model_validate(e) for e in cast(list[Any], body)]
+        return [OperatorEventView.model_validate(e) for e in cast(list[Any], body)]

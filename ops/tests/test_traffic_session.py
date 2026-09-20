@@ -184,7 +184,12 @@ async def test_a_run_over_the_seeded_org_bounds_sessions_and_reports() -> None:
     assert any(
         r.route == "/v1/tasks" and r.method == "POST" and r.status == 201 for r in report.routes
     )
-    assert report.notes == ["orgs 0: the seeded org 'acme' and its two people"]
+    assert report.notes[0] == "orgs 0: the seeded org 'acme' and its two people"
+    # The run says what the profile did and hands out one request id to read
+    # the signals back by; the fake transport answers no x-request-id, so it
+    # says so instead of inventing one.
+    assert report.notes[1].startswith("profile light: 2 at once, think time")
+    assert report.notes[2].startswith("sample request id: ")
     assert len(result.outcomes) == 3 and all(o.write_request_ids for o in result.outcomes)
 
 

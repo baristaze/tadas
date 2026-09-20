@@ -522,6 +522,16 @@ async def run_traffic(
     finally:
         if transport is None:
             await inner.aclose()
+    notes.append(
+        f"profile {profile.name}: {profile.concurrency} at once, think time "
+        f"{profile.think_seconds[0]:.1f} to {profile.think_seconds[1]:.1f} s"
+    )
+    sample = next((i for o in outcomes for i in o.write_request_ids), None)
+    notes.append(
+        f"sample request id: {sample} (a POST /v1/tasks of the run; read the signals back by it)"
+        if sample
+        else "sample request id: none (no creating call of the run answered 201)"
+    )
     sessions = Sessions(
         completed=sum(o.completed for o in outcomes),
         failed=sum(1 for o in outcomes if o.failure),
