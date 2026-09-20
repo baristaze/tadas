@@ -44,13 +44,16 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
         return next((i for i in self._identities.values() if i.email == email), None)
 
     async def write_identity(self, identity: Identity) -> None:
+        self._require_email_free(identity)
+        self._identities[identity.id] = identity
+
+    def _require_email_free(self, identity: Identity) -> None:
         self._require_free(
             self._identities.values(),
             identity,
             lambda other: other.email == identity.email,
             "uq_identities_email",
         )
-        self._identities[identity.id] = identity
 
     async def read_org(self, org_id: UUID) -> Org | None:
         return self._get(self._orgs, org_id, org_id)
@@ -82,9 +85,17 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
             )
 
     async def create_org_with_owner(
-        self, org_id: UUID, org: Org, user: User, membership: Membership
+        self,
+        org_id: UUID,
+        org: Org,
+        user: User,
+        membership: Membership,
+        identity: Identity | None = None,
     ) -> None:
+        # Every check, then every write: the twin of one commit.
         async with self._lock:
+            if identity is not None:
+                self._require_email_free(identity)
             self._require_slug_free(org)
             self._require_live_identity_free(org_id, user)
             self._require_membership_free(org_id, membership)
@@ -93,18 +104,29 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
                     raise UniqueKeyTaken(f"{entity.id} is already written")
             if membership.id in self._memberships:
                 raise UniqueKeyTaken(f"{membership.id} is already written")
+            if identity is not None:
+                self._identities[identity.id] = identity
             self._put(self._orgs, org_id, org)
             self._put(self._users, org_id, user)
             self._put(self._memberships, org_id, membership)
 
     async def create_member(
-        self, org_id: UUID, user: User, membership: Membership, outbox_row: OutboxRow
+        self,
+        org_id: UUID,
+        user: User,
+        membership: Membership,
+        outbox_row: OutboxRow,
+        identity: Identity | None = None,
     ) -> None:
         async with self._lock:
+            if identity is not None:
+                self._require_email_free(identity)
             self._require_live_identity_free(org_id, user)
             self._require_membership_free(org_id, membership)
             if user.id in self._users or membership.id in self._memberships:
                 raise UniqueKeyTaken(f"{user.id} or {membership.id} is already written")
+            if identity is not None:
+                self._identities[identity.id] = identity
             self._put(self._users, org_id, user, outbox_row)
             self._put(self._memberships, org_id, membership)
 

@@ -111,10 +111,15 @@ class TenancyManagerImpl(TenancyManagerInterface):
         if await self._storage.read_org_by_slug(slug) is not None:
             raise Conflict(f"org slug {slug!r} is taken")
         now = utcnow()
+        # The identity as it should read once the tenant exists: new, or promoted
+        # to operator. It is not written here; it lands in the create below, so
+        # a slug taken meanwhile leaves no identity carrying this attempt's
+        # password or flag, and a retry with another password is not kept out.
         identity = await self._storage.read_identity_by_email(email)
+        to_write: Identity | None = None
         if identity is None:
             identity_id = new_id()
-            identity = Identity(
+            identity = to_write = Identity(
                 id=identity_id,
                 created_at=now,
                 updated_at=now,
@@ -124,12 +129,10 @@ class TenancyManagerImpl(TenancyManagerInterface):
                 password_hash=hash_password(password, secrets.token_bytes(16)),
                 is_operator=operator,
             )
-            await self._storage.write_identity(identity)
         elif operator and not identity.is_operator:
-            identity = identity.model_copy(
+            identity = to_write = identity.model_copy(
                 update={"is_operator": True, "updated_at": now, "updated_by": identity.id}
             )
-            await self._storage.write_identity(identity)
         user_id = new_id()
         org = Org(
             id=new_id(),
@@ -159,8 +162,9 @@ class TenancyManagerImpl(TenancyManagerInterface):
             user_id=user_id,
             role=Role.OWNER,
         )
-        # One commit: a slug taken meanwhile leaves no org without its owner.
-        await self._storage.create_org_with_owner(org.id, org, user, membership)
+        # One commit: a slug taken meanwhile leaves no org without its owner,
+        # and no identity without its org.
+        await self._storage.create_org_with_owner(org.id, org, user, membership, to_write)
         # The principal now exists; everything after this line runs under it.
         ctx = build_context(
             rctx,
@@ -202,10 +206,12 @@ class TenancyManagerImpl(TenancyManagerInterface):
         if not role_at_most(role, ctx.security.role):
             raise NotAuthorized(f"cannot grant role {role.value} above {ctx.security.role.value}")
         now = utcnow()
+        # A new identity lands in the create below, never before it.
         identity = await self._storage.read_identity_by_email(email)
+        to_write: Identity | None = None
         if identity is None:
             identity_id = new_id()
-            identity = Identity(
+            identity = to_write = Identity(
                 id=identity_id,
                 created_at=now,
                 updated_at=now,
@@ -214,7 +220,6 @@ class TenancyManagerImpl(TenancyManagerInterface):
                 email=email,
                 password_hash=hash_password(password, secrets.token_bytes(16)),
             )
-            await self._storage.write_identity(identity)
         for org_id, existing in await self._storage.read_users_by_identity(identity.id):
             if org_id == org.id and existing.deleted_at is None:
                 return ctx, existing, False
@@ -242,7 +247,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
         # so a concurrent add of the same person leaves no membership without
         # its user and no user without a membership.
         row = outbox_row(ctx, "tenancy.user.created", user.id, snapshot(user))
-        await self._storage.create_member(ctx.org_id, user, membership, row)
+        await self._storage.create_member(ctx.org_id, user, membership, row, to_write)
         await self._relay.relay(ctx.org_id, row)
         return ctx, user, True
 

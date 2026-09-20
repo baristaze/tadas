@@ -41,6 +41,7 @@ from tadas.om.tenancy.rules import DUMMY_PASSWORD_HASH, hash_password, hash_toke
 from tadas.om.tenancy.storage.impl.memory import TenancyStorageMemoryImpl
 from tadas.om.tenancy.types.identity import Identity
 from tadas.om.tenancy.types.membership import Membership
+from tadas.om.tenancy.types.org import Org
 from tadas.om.tenancy.types.socket_ticket import SocketPrincipal
 from tadas.om.tenancy.types.user import User
 
@@ -1069,6 +1070,65 @@ async def test_a_duplicate_email_the_read_missed_is_a_conflict_and_leaves_nothin
     assert raced.value.http_status == 409
     assert len(await storage.read_users(org.id, limit=10)) == 1
     assert len(await storage.read_memberships(org.id, limit=10)) == 1
+
+
+class RacedSlugStorage(TenancyStorageMemoryImpl):
+    """The read by slug misses: another request took the slug between our
+    read and our create, which is what the unique key is for."""
+
+    async def read_org_by_slug(self, slug: str) -> Org | None:
+        return None
+
+
+async def test_a_slug_taken_meanwhile_leaves_no_identity_behind(
+    infra: InfraLocalImpl, outbox: OutboxStorageMemoryImpl
+) -> None:
+    storage = RacedSlugStorage(outbox)
+    manager = make_manager(storage, infra, outbox=outbox)
+    await manager.bootstrap(request(), "Acme", "acme", "ann@example.test", "pw-1234", "Ann")
+    # A new person: the refused tenant leaves no identity holding this
+    # attempt's password, so a retry with another password is not kept out.
+    with pytest.raises(UniqueKeyTaken):
+        await manager.bootstrap(request(), "Acme 2", "acme", "bob@example.test", "pw-1", "Bob")
+    assert await storage.read_identity_by_email("bob@example.test") is None
+    _, again = await manager.bootstrap(
+        request(), "Bobs", "bobs", "bob@example.test", "pw-1234", "Bob"
+    )
+    assert again.slug == "bobs"
+    assert await sign_in(manager, "bob@example.test", again.id)
+    # An existing person asked to be promoted: the refused tenant promotes nobody.
+    with pytest.raises(UniqueKeyTaken):
+        await manager.bootstrap(
+            request(), "Ops", "acme", "ann@example.test", "pw-1234", "Ann", operator=True
+        )
+    ann = await storage.read_identity_by_email("ann@example.test")
+    assert ann is not None and not ann.is_operator
+
+
+class DownOnCreateStorage(TenancyStorageMemoryImpl):
+    """The create fails after every read: the twin of a database that went
+    away, or a key another request took."""
+
+    async def create_member(
+        self,
+        org_id: UUID,
+        user: User,
+        membership: Membership,
+        outbox_row: OutboxRow,
+        identity: Identity | None = None,
+    ) -> None:
+        raise UniqueKeyTaken("a key is taken")
+
+
+async def test_an_add_member_that_fails_leaves_no_identity_behind(
+    infra: InfraLocalImpl, outbox: OutboxStorageMemoryImpl
+) -> None:
+    storage = DownOnCreateStorage(outbox)
+    manager = make_manager(storage, infra, outbox=outbox)
+    await manager.bootstrap(request(), "Acme", "acme", "ann@example.test", "pw-1234", "Ann")
+    with pytest.raises(UniqueKeyTaken):
+        await manager.add_member(request(), "acme", "bob@example.test", "pw-1", "Bob", Role.MEMBER)
+    assert await storage.read_identity_by_email("bob@example.test") is None
 
 
 class RacedUserStorage(TenancyStorageMemoryImpl):

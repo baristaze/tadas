@@ -291,6 +291,39 @@ class TenancyStorageContract:
         assert await storage.read_user(other.id, loser.id) is None
         assert await storage.read_memberships(other.id, limit=10) == []
 
+    async def test_create_org_with_owner_lands_the_identity_in_the_same_commit(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        # A new identity lands with its tenant; when the slug is taken it does
+        # not land at all, and an existing identity is not promoted either.
+        org, identity = make_org(), make_identity()
+        owner = make_user(identity.id)
+        await storage.create_org_with_owner(
+            org.id, org, owner, make_membership(owner.id, Role.OWNER), identity
+        )
+        assert await storage.read_identity(identity.id) == identity
+        other = make_org("Other").model_copy(update={"slug": org.slug})
+        newcomer = make_identity()
+        loser = make_user(newcomer.id)
+        with pytest.raises(UniqueKeyTaken):
+            await storage.create_org_with_owner(
+                other.id, other, loser, make_membership(loser.id, Role.OWNER), newcomer
+            )
+        assert await storage.read_identity(newcomer.id) is None
+        promoted = identity.model_copy(update={"is_operator": True})
+        again = make_user(identity.id)
+        with pytest.raises(UniqueKeyTaken):
+            await storage.create_org_with_owner(
+                other.id, other, again, make_membership(again.id, Role.OWNER), promoted
+            )
+        assert await storage.read_identity(identity.id) == identity
+        # From a free slug the promotion lands with the tenant.
+        free = make_org("Free")
+        await storage.create_org_with_owner(
+            free.id, free, again, make_membership(again.id, Role.OWNER), promoted
+        )
+        assert await storage.read_identity(identity.id) == promoted
+
     async def test_create_member_lands_whole_or_not_at_all(
         self, storage: TenancyStorageInterface
     ) -> None:
@@ -315,6 +348,19 @@ class TenancyStorageContract:
             await storage.create_member(org.id, cid, make_membership(bob.id), make_user_row(cid))
         assert await storage.read_user(org.id, cid.id) is None
         assert len(await storage.read_memberships(org.id, limit=10)) == 1
+        # A new identity lands with the member, or not at all.
+        newcomer = make_identity()
+        dan = make_user(newcomer.id)
+        with pytest.raises(UniqueKeyTaken):
+            await storage.create_member(
+                org.id, dan, make_membership(bob.id), make_user_row(dan), newcomer
+            )
+        assert await storage.read_identity(newcomer.id) is None
+        await storage.create_member(
+            org.id, dan, make_membership(dan.id), make_user_row(dan), newcomer
+        )
+        assert await storage.read_identity(newcomer.id) == newcomer
+        assert await storage.read_user(org.id, dan.id) == dan
 
     async def test_users_by_identity_span_tenants(self, storage: TenancyStorageInterface) -> None:
         identity = make_identity()
@@ -362,7 +408,9 @@ class TenancyStorageContract:
         org = make_org()
         identity = make_identity()
         user = make_user(identity.id)
-        session = make_session(identity.id, user.id, "hash-revoked")
+        session = make_session(
+            identity.id, user.id, uuid4().hex
+        )  # unique across runs of a shared database
         await storage.write_session(org.id, session)
         revoked = session.model_copy(update={"revoked_at": utcnow()})
         await storage.write_session(org.id, revoked, make_session_row(revoked))

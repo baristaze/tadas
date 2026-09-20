@@ -55,21 +55,36 @@ class TenancyStorageInterface(ABC):
 
     @abstractmethod
     async def create_org_with_owner(
-        self, org_id: UUID, org: Org, user: User, membership: Membership
+        self,
+        org_id: UUID,
+        org: Org,
+        user: User,
+        membership: Membership,
+        identity: Identity | None = None,
     ) -> None:
         """A named atomic create: the org, its first user, and the owner's
         membership land in one commit or not at all, so a slug or an identity
-        taken meanwhile (`UniqueKeyTaken`) leaves no partial tenant behind."""
+        taken meanwhile (`UniqueKeyTaken`) leaves no partial tenant behind.
+        `identity`, when given, is the owner's identity as it should read once
+        the tenant exists (new, or promoted to operator) and lands in the same
+        commit: a tenant that is refused leaves no identity carrying a password
+        or a flag nobody asked for."""
         ...
 
     @abstractmethod
     async def create_member(
-        self, org_id: UUID, user: User, membership: Membership, outbox_row: OutboxRow
+        self,
+        org_id: UUID,
+        user: User,
+        membership: Membership,
+        outbox_row: OutboxRow,
+        identity: Identity | None = None,
     ) -> None:
         """A named atomic create: the user, their membership, and the outbox row
         land in one commit or not at all. A key taken meanwhile (one live user
         per identity, one membership per user) is `UniqueKeyTaken`, and nothing
-        lands, the outbox row included."""
+        lands, the outbox row included. `identity`, when given, is the person's
+        new identity and lands in the same commit, for the same reason."""
         ...
 
     @abstractmethod

@@ -10,7 +10,7 @@ from tadas.om.exceptions import Conflict, UniqueKeyTaken
 from tadas.om.outbox.storage.tables.outbox_rows import OutboxRows
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.storage.impl.pg_base import PgStorageBase, violated_constraint
-from tadas.om.storage.utils.translation import to_model, to_row
+from tadas.om.storage.utils.translation import apply_row, to_model, to_row
 from tadas.om.tenancy.storage import TenancyStorageInterface
 from tadas.om.tenancy.storage.tables.api_keys import ApiKeys
 from tadas.om.tenancy.storage.tables.identities import Identities
@@ -68,23 +68,52 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
         await self._upsert(Orgs, org_id, org)
 
     async def create_org_with_owner(
-        self, org_id: UUID, org: Org, user: User, membership: Membership
-    ) -> None:
-        await self._create_together(org_id, (Orgs, org), (Users, user), (Memberships, membership))
-
-    async def create_member(
-        self, org_id: UUID, user: User, membership: Membership, outbox_row: OutboxRow
+        self,
+        org_id: UUID,
+        org: Org,
+        user: User,
+        membership: Membership,
+        identity: Identity | None = None,
     ) -> None:
         await self._create_together(
-            org_id, (Users, user), (Memberships, membership), (OutboxRows, outbox_row)
+            org_id, (Orgs, org), (Users, user), (Memberships, membership), identity=identity
         )
 
-    async def _create_together(self, org_id: UUID, *rows: tuple[type[Any], Identifiable]) -> None:
+    async def create_member(
+        self,
+        org_id: UUID,
+        user: User,
+        membership: Membership,
+        outbox_row: OutboxRow,
+        identity: Identity | None = None,
+    ) -> None:
+        await self._create_together(
+            org_id,
+            (Users, user),
+            (Memberships, membership),
+            (OutboxRows, outbox_row),
+            identity=identity,
+        )
+
+    async def _create_together(
+        self,
+        org_id: UUID,
+        *rows: tuple[type[Any], Identifiable],
+        identity: Identity | None = None,
+    ) -> None:
         """The rows land in one commit or not at all; every table is in the
-        core role, which the session's role routing holds. A violated key is
+        core role, which the session's role routing holds. The identity, when
+        given, is written in the same commit: inserted when new, updated when
+        it exists (the global table has no tenant to check). A violated key is
         UniqueKeyTaken, never a driver error."""
         row_type = rows[0][0]
         async with self._session_for(row_type) as session:
+            if identity is not None:
+                existing = await session.get(Identities, identity.id)
+                if existing is None:
+                    session.add(to_row(identity, Identities))
+                else:
+                    apply_row(existing, identity)
             for table, entity in rows:
                 session.add(to_row(entity, table, org_id=org_id))
             try:
