@@ -73,9 +73,9 @@ class TenancyOptions(Platform):
     api_key_ttl: timedelta = MAX_API_KEY_TTL
     ticket_ttl: timedelta = timedelta(seconds=60)
     max_limit: int = 200
-    retention: timedelta = timedelta(
-        days=30
-    )  # removed members and revoked keys are purged after this
+    retention: timedelta = timedelta(days=30)
+    """Removed members, revoked keys, dead sessions, and spent socket tickets
+    are purged this long after they ended."""
 
 
 def mint_token(kind: CredentialKind) -> str:
@@ -564,9 +564,10 @@ class TenancyManagerImpl(TenancyManagerInterface):
 
     async def get_sessions(self, ctx: OpContext, limit: int) -> list[Session]:
         ctx.require(Permission.READ)
-        now = utcnow()
-        sessions = await self._storage.read_sessions(ctx.org_id, ctx.user_id, self._clamp(limit))
-        return [session for session in sessions if session.expires_at > now]
+        # Live at the storage: a page of dead sessions cannot hide a live one.
+        return await self._storage.read_sessions(
+            ctx.org_id, ctx.user_id, utcnow(), self._clamp(limit)
+        )
 
     async def revoke_session(self, ctx: OpContext, session_id: UUID) -> Session:
         ctx.require(Permission.READ)
@@ -589,10 +590,10 @@ class TenancyManagerImpl(TenancyManagerInterface):
 
     async def get_api_keys(self, ctx: OpContext, limit: int) -> list[ApiKey]:
         ctx.require(Permission.MANAGE_KEYS)
-        keys = await self._storage.read_api_keys(ctx.org_id, self._clamp(limit))
-        if ctx.has(Permission.MANAGE_MEMBERS):
-            return keys
-        return [key for key in keys if key.user_id == ctx.user_id]
+        # A member manager sees the tenant's keys; anyone else their own, filtered
+        # at the storage so a page of other people's keys cannot hide theirs.
+        own_only = None if ctx.has(Permission.MANAGE_MEMBERS) else ctx.user_id
+        return await self._storage.read_api_keys(ctx.org_id, self._clamp(limit), own_only)
 
     async def create_api_key(
         self,

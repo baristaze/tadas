@@ -156,12 +156,15 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
             "uq_memberships_org_id_user_id",
         )
 
-    async def read_sessions(self, org_id: UUID, user_id: UUID, limit: int) -> list[Session]:
-        return [
+    async def read_sessions(
+        self, org_id: UUID, user_id: UUID, live_at: datetime, limit: int
+    ) -> list[Session]:
+        live = [
             s
             for s in self._rows(self._sessions, org_id)
-            if s.user_id == user_id and s.revoked_at is None
-        ][:limit]
+            if s.user_id == user_id and s.revoked_at is None and s.expires_at > live_at
+        ]
+        return live[::-1][:limit]
 
     async def read_session(self, org_id: UUID, session_id: UUID) -> Session | None:
         return self._get(self._sessions, org_id, session_id)
@@ -185,8 +188,15 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
         )
         self._put(self._sessions, org_id, session)
 
-    async def read_api_keys(self, org_id: UUID, limit: int) -> list[ApiKey]:
-        return [k for k in self._rows(self._api_keys, org_id) if k.deleted_at is None][:limit]
+    async def read_api_keys(
+        self, org_id: UUID, limit: int, user_id: UUID | None = None
+    ) -> list[ApiKey]:
+        live = [
+            k
+            for k in self._rows(self._api_keys, org_id)
+            if k.deleted_at is None and (user_id is None or k.user_id == user_id)
+        ]
+        return live[::-1][:limit]
 
     async def read_api_key(self, org_id: UUID, api_key_id: UUID) -> ApiKey | None:
         return self._get(self._api_keys, org_id, api_key_id)
@@ -247,14 +257,32 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
             for k in self._rows(self._api_keys, org_id)
             if k.deleted_at is not None and k.deleted_at < before
         ]
+        gone_sessions = [
+            s.id
+            for s in self._rows(self._sessions, org_id)
+            if (s.revoked_at is not None and s.revoked_at < before) or s.expires_at < before
+        ]
+        gone_tickets = [
+            t.id
+            for t in self._rows(self._socket_tickets, org_id)
+            if (t.redeemed_at is not None and t.redeemed_at < before) or t.expires_at < before
+        ]
         for table, ids in (
             (self._users, gone_users),
             (self._memberships, gone_memberships),
             (self._api_keys, gone_keys),
+            (self._sessions, gone_sessions),
+            (self._socket_tickets, gone_tickets),
         ):
             for row_id in ids:
                 del table[row_id]
-        return len(gone_users) + len(gone_memberships) + len(gone_keys)
+        return (
+            len(gone_users)
+            + len(gone_memberships)
+            + len(gone_keys)
+            + len(gone_sessions)
+            + len(gone_tickets)
+        )
 
     async def write_socket_ticket(self, org_id: UUID, ticket: SocketTicket) -> None:
         self._require_free(

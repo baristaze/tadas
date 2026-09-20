@@ -550,6 +550,53 @@ async def test_sessions_are_listed_revoked_and_logged_out(
         await manager.authenticate(request(), first.token)
 
 
+async def test_a_page_of_dead_sessions_never_hides_a_live_one(
+    storage: TenancyStorageMemoryImpl, infra: InfraLocalImpl, outbox: OutboxStorageMemoryImpl
+) -> None:
+    manager = make_manager(storage, infra, TenancyOptions(max_limit=1), outbox=outbox)
+    _, org = await manager.bootstrap(
+        request(), "Acme", "acme", "ann@example.test", "pw-1234", "Ann"
+    )
+    login = await manager.login(request(), "ann@example.test", "pw-1234")
+    ictx = await manager.authenticate_login(request(), login.token)
+    older = await manager.authenticate(
+        request(), (await manager.exchange_login(ictx, org.id)).token
+    )
+    newer = await manager.authenticate(
+        request(), (await manager.exchange_login(ictx, org.id)).token
+    )
+    stale = await storage.read_session(org.id, older.security.credential_id)
+    assert stale is not None
+    await storage.write_session(
+        org.id, stale.model_copy(update={"expires_at": utcnow() - timedelta(seconds=1)})
+    )
+    # The page holds one session; the expired one must not be it.
+    assert [s.id for s in await manager.get_sessions(newer, limit=10)] == [
+        newer.security.credential_id
+    ]
+
+
+async def test_a_members_own_keys_are_found_behind_a_page_of_others(
+    storage: TenancyStorageMemoryImpl, infra: InfraLocalImpl, outbox: OutboxStorageMemoryImpl
+) -> None:
+    manager = make_manager(storage, infra, TenancyOptions(max_limit=2), outbox=outbox)
+    _, org = await manager.bootstrap(
+        request(), "Acme", "acme", "ann@example.test", "pw-1234", "Ann"
+    )
+    owner = await sign_in(manager, "ann@example.test", org.id)
+    await add_member(storage, org.id, "bob@example.test", Role.MEMBER)
+    bob = await sign_in(manager, "bob@example.test", org.id)
+    anns = [await manager.create_api_key(owner, "ci", Role.MEMBER) for _ in range(2)]
+    own = await manager.create_api_key(bob, "mine", Role.MEMBER)
+    # Bob sees his own key though the page is full of Ann's older ones.
+    assert [k.id for k in await manager.get_api_keys(bob, limit=10)] == [own.api_key.id]
+    # The member manager sees the tenant's newest page.
+    assert [k.id for k in await manager.get_api_keys(owner, limit=10)] == [
+        own.api_key.id,
+        anns[1].api_key.id,
+    ]
+
+
 async def test_the_identity_behind_the_caller(manager: TenancyManagerImpl) -> None:
     _, org = await manager.bootstrap(
         request(), "Acme", "acme", "ann@example.test", "pw-1234", "Ann"

@@ -1,5 +1,6 @@
 import asyncio
 from datetime import timedelta
+from unittest.mock import ANY
 from uuid import uuid4
 
 import pytest
@@ -314,22 +315,55 @@ class TenancyStorageContract:
         assert await storage.read_session(org.id, session.id) == session
         assert await storage.read_session_by_token_hash("missing") is None
 
-    async def test_sessions_of_a_user_hide_the_revoked_ones(
+    async def test_sessions_of_a_user_are_the_live_ones_newest_first(
         self, storage: TenancyStorageInterface
     ) -> None:
         org = make_org()
         identity_id, user_id = new_id(), new_id()
+        now = utcnow()
         sessions = [make_session(identity_id, user_id, uuid4().hex) for _ in range(3)]
         for session in reversed(sessions):
             await storage.write_session(org.id, session)
         await storage.write_session(org.id, make_session(identity_id, new_id(), uuid4().hex))
-        listed = await storage.read_sessions(org.id, user_id, limit=10)
-        assert listed == sorted(sessions, key=lambda s: s.id)
-        assert len(await storage.read_sessions(org.id, user_id, limit=2)) == 2
-        revoked = sessions[0].model_copy(update={"revoked_at": utcnow()})
+        listed = await storage.read_sessions(org.id, user_id, now, limit=10)
+        assert listed == sorted(sessions, key=lambda s: s.id, reverse=True)
+        assert len(await storage.read_sessions(org.id, user_id, now, limit=2)) == 2
+        revoked = sessions[0].model_copy(update={"revoked_at": now})
         await storage.write_session(org.id, revoked)
-        assert revoked not in await storage.read_sessions(org.id, user_id, limit=10)
+        assert revoked not in await storage.read_sessions(org.id, user_id, now, limit=10)
         assert await storage.read_session(org.id, revoked.id) == revoked
+        # Expiry is the storage's filter too, before the clamp: a page of dead
+        # sessions never hides a live one.
+        expired = [
+            make_session(identity_id, user_id, uuid4().hex, ttl=timedelta(seconds=-1))
+            for _ in range(3)
+        ]
+        for session in expired:
+            await storage.write_session(org.id, session)
+        live = make_session(identity_id, user_id, uuid4().hex)
+        await storage.write_session(org.id, live)
+        assert await storage.read_sessions(org.id, user_id, utcnow(), limit=1) == [live]
+        assert await storage.read_sessions(org.id, user_id, now - timedelta(hours=2), limit=10) == [
+            live,
+            *expired[::-1],
+            sessions[2],
+            sessions[1],
+        ]
+
+    async def test_api_keys_are_listed_newest_first_and_filtered_by_owner_before_the_clamp(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        org = make_org()
+        ann, bob = new_id(), new_id()
+        anns = [make_api_key(ann, uuid4().hex) for _ in range(2)]
+        bobs = make_api_key(bob, uuid4().hex)
+        for key in (*anns, bobs):
+            await storage.write_api_key(org.id, key)
+        assert await storage.read_api_keys(org.id, limit=10) == [bobs, anns[1], anns[0]]
+        assert await storage.read_api_keys(org.id, limit=2) == [bobs, anns[1]]
+        assert await storage.read_api_keys(org.id, limit=1, user_id=ann) == [anns[1]]
+        assert await storage.read_api_keys(org.id, limit=10, user_id=bob) == [bobs]
+        assert await storage.read_api_keys(org.id, limit=10, user_id=new_id()) == []
 
     async def test_issue_api_key_creates_once_and_reissues_the_secret_on_a_rerun(
         self, storage: TenancyStorageInterface
@@ -414,7 +448,42 @@ class TenancyStorageContract:
         live_key = make_api_key(kept.id, uuid4().hex)
         await storage.write_api_key(org.id, old_key)
         await storage.write_api_key(org.id, live_key)
-        assert await storage.purge_deleted(org.id, cut) == 3  # the user, its membership, the key
+        dead_sessions = [
+            make_session(new_id(), kept.id, uuid4().hex).model_copy(
+                update={"revoked_at": cut - timedelta(days=1)}
+            ),
+            make_session(new_id(), kept.id, uuid4().hex, ttl=timedelta(days=-1)),
+        ]
+        live_sessions = [
+            make_session(new_id(), kept.id, uuid4().hex),
+            make_session(new_id(), kept.id, uuid4().hex).model_copy(update={"revoked_at": cut}),
+        ]
+        for session in (*dead_sessions, *live_sessions):
+            await storage.write_session(org.id, session)
+        spent_tickets = [
+            make_socket_ticket(kept.id, uuid4().hex).model_copy(
+                update={"redeemed_at": cut - timedelta(days=1)}
+            ),
+            make_socket_ticket(kept.id, uuid4().hex, ttl=timedelta(days=-1)),
+        ]
+        fresh_tickets = [
+            make_socket_ticket(kept.id, uuid4().hex),
+            make_socket_ticket(kept.id, uuid4().hex).model_copy(update={"redeemed_at": cut}),
+        ]
+        for ticket in (*spent_tickets, *fresh_tickets):
+            await storage.write_socket_ticket(org.id, ticket)
+        # The user, its membership, the key, two sessions, two tickets.
+        assert await storage.purge_deleted(org.id, cut) == 7
+        for session in dead_sessions:
+            assert await storage.read_session(org.id, session.id) is None
+        for session in live_sessions:
+            assert await storage.read_session(org.id, session.id) == session
+        for ticket in spent_tickets:
+            assert await storage.consume_socket_ticket(ticket.ticket_hash, utcnow()) is None
+        assert (await storage.consume_socket_ticket(fresh_tickets[0].ticket_hash, utcnow())) == (
+            org.id,
+            ANY,
+        )
         assert await storage.read_user(org.id, gone.id) is None
         assert await storage.read_membership_for_user(org.id, gone.id) is None
         assert await storage.read_user(org.id, kept.id) == kept

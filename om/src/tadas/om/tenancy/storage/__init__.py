@@ -105,8 +105,12 @@ class TenancyStorageInterface(ABC):
     ) -> None: ...
 
     @abstractmethod
-    async def read_sessions(self, org_id: UUID, user_id: UUID, limit: int) -> list[Session]:
-        """One user's sessions that are not revoked, sorted by id."""
+    async def read_sessions(
+        self, org_id: UUID, user_id: UUID, live_at: datetime, limit: int
+    ) -> list[Session]:
+        """One user's sessions live at `live_at` (not revoked, not yet expired),
+        newest first, clamped after the filter so a live session is never
+        pushed out of the page by dead ones."""
         ...
 
     @abstractmethod
@@ -121,7 +125,12 @@ class TenancyStorageInterface(ABC):
     async def write_session(self, org_id: UUID, session: Session) -> None: ...
 
     @abstractmethod
-    async def read_api_keys(self, org_id: UUID, limit: int) -> list[ApiKey]: ...
+    async def read_api_keys(
+        self, org_id: UUID, limit: int, user_id: UUID | None = None
+    ) -> list[ApiKey]:
+        """The tenant's unrevoked keys, newest first; only `user_id`'s when given,
+        filtered before the clamp."""
+        ...
 
     @abstractmethod
     async def read_api_key(self, org_id: UUID, api_key_id: UUID) -> ApiKey | None: ...
@@ -152,8 +161,10 @@ class TenancyStorageInterface(ABC):
     @abstractmethod
     async def purge_deleted(self, org_id: UUID, before: datetime) -> int:
         """The one hard delete: removes the tenant's users soft-deleted before `before`
-        with their memberships (and any membership ended before `before`), and
-        its api keys revoked before `before`; returns how many rows went."""
+        with their memberships (and any membership ended before `before`), its
+        api keys revoked before `before`, its sessions revoked or expired before
+        `before`, and its socket tickets redeemed or expired before `before`;
+        returns how many rows went."""
         ...
 
     @abstractmethod

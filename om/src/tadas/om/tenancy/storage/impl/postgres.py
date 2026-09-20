@@ -160,15 +160,18 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
     ) -> None:
         await self._upsert(Memberships, org_id, membership, outbox_row)
 
-    async def read_sessions(self, org_id: UUID, user_id: UUID, limit: int) -> list[Session]:
+    async def read_sessions(
+        self, org_id: UUID, user_id: UUID, live_at: datetime, limit: int
+    ) -> list[Session]:
         stmt = (
             select(Sessions)
             .where(
                 Sessions.org_id == org_id,
                 Sessions.user_id == user_id,
                 Sessions.revoked_at.is_(None),
+                Sessions.expires_at > live_at,
             )
-            .order_by(Sessions.id)
+            .order_by(Sessions.id.desc())
             .limit(limit)
         )
         async with self._session_for(stmt) as session:
@@ -190,13 +193,17 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
     async def write_session(self, org_id: UUID, session: Session) -> None:
         await self._upsert(Sessions, org_id, session)
 
-    async def read_api_keys(self, org_id: UUID, limit: int) -> list[ApiKey]:
+    async def read_api_keys(
+        self, org_id: UUID, limit: int, user_id: UUID | None = None
+    ) -> list[ApiKey]:
         stmt = (
             select(ApiKeys)
             .where(ApiKeys.org_id == org_id, ApiKeys.deleted_at.is_(None))
-            .order_by(ApiKeys.id)
+            .order_by(ApiKeys.id.desc())
             .limit(limit)
         )
+        if user_id is not None:
+            stmt = stmt.where(ApiKeys.user_id == user_id)
         async with self._session_for(stmt) as session:
             result = await session.execute(stmt)
             return [to_model(row, ApiKey) for row in result.scalars()]
@@ -271,6 +278,24 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
                 .returning(ApiKeys.id)
             )
             purged += len((await session.execute(keys)).scalars().all())
+            sessions = (
+                delete(Sessions)
+                .where(
+                    Sessions.org_id == org_id,
+                    or_(Sessions.revoked_at < before, Sessions.expires_at < before),
+                )
+                .returning(Sessions.id)
+            )
+            purged += len((await session.execute(sessions)).scalars().all())
+            tickets = (
+                delete(SocketTickets)
+                .where(
+                    SocketTickets.org_id == org_id,
+                    or_(SocketTickets.redeemed_at < before, SocketTickets.expires_at < before),
+                )
+                .returning(SocketTickets.id)
+            )
+            purged += len((await session.execute(tickets)).scalars().all())
             await session.commit()
         return purged
 
