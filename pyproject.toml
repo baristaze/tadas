@@ -59,6 +59,5 @@ testpaths = [
 ]
 markers = [
     "integration: needs the local compose stack",
-    "e2e: drives a running system end to end",
     "slow: takes more than a few seconds",
 ]

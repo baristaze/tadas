@@ -11,6 +11,7 @@ import {
   useUpdateTask,
 } from "../../queries/tasks";
 import { useMe, useUsers } from "../../queries/tenancy";
+import { usePreferencesStore } from "../../store/preferences";
 import {
   canAdd,
   canWrite,
@@ -30,16 +31,6 @@ import {
   type Leaving,
 } from "./tasksModel";
 
-const SCOPE_STORAGE_KEY = "tadas.portal.taskScope";
-
-function rememberedScope(): TaskScope {
-  try {
-    return localStorage.getItem(SCOPE_STORAGE_KEY) === "team" ? "team" : "mine";
-  } catch {
-    return "mine";
-  }
-}
-
 export interface TaskEdit {
   title: string;
   notes: string;
@@ -50,7 +41,8 @@ export function useTasksVm() {
   const queryClient = useQueryClient();
   const me = useMe();
   const users = useUsers();
-  const [scope, setScope] = useState<TaskScope>(rememberedScope);
+  const scope = usePreferencesStore((s) => s.taskScope);
+  const setScope = usePreferencesStore((s) => s.setTaskScope);
   const open = useOpenTasks(scope);
   const done = useDoneTasks(scope);
   const create = useCreateTask();
@@ -170,11 +162,6 @@ export function useTasksVm() {
   const changeScope = (next: TaskScope) => {
     setScope(next);
     setEditingId(null);
-    try {
-      localStorage.setItem(SCOPE_STORAGE_KEY, next);
-    } catch {
-      // A private window keeps the choice for this page only.
-    }
   };
 
   // Only the open copy of a completed task leaves; the done copy is arriving.

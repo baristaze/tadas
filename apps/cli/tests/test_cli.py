@@ -3,11 +3,14 @@ short ids, assignees by name, JSON output, and the exit codes."""
 
 import json
 
+import httpx
 import pytest
 from api_support import OWNER
 from cli_support import BOB, Stack
+from typer.testing import CliRunner
 
 from tadas.apps.cli import config, main
+from tadas.client.client import ApiClient
 
 
 def test_login_keeps_a_session_and_whoami_reads_it(stack: Stack) -> None:
@@ -127,3 +130,34 @@ def test_the_client_is_built_with_the_timeout_from_the_environment(
         monkeypatch.setenv("TADAS_HTTP_TIMEOUT_SECONDS", bad)
         with pytest.raises(ValueError):
             config.timeout_seconds()
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [httpx.ConnectError("refused"), httpx.ReadTimeout("slow"), httpx.RemoteProtocolError("reset")],
+    ids=["refused", "timed out", "reset"],
+)
+def test_an_api_that_cannot_be_reached_is_exit_4(
+    monkeypatch: pytest.MonkeyPatch, failure: httpx.TransportError
+) -> None:
+    """Every failure of the wire, not only a refused connection, is exit 4."""
+
+    def raise_failure(request: httpx.Request) -> httpx.Response:
+        raise failure
+
+    monkeypatch.setattr(
+        main,
+        "build_client",
+        lambda _url, token: ApiClient(
+            "http://test",
+            app="cli",
+            app_version="cli@test",
+            token=token,
+            transport=httpx.MockTransport(raise_failure),
+        ),
+    )
+    result = CliRunner().invoke(
+        main.app, ["ls"], env={"TADAS_API_URL": "http://test", "TADAS_TOKEN": "ses_1"}
+    )
+    assert result.exit_code == 4, result.output
+    assert result.output.startswith("cannot reach the API:")

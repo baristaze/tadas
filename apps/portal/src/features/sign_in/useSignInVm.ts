@@ -1,13 +1,16 @@
-import { ApiError, type MembershipChoiceView } from "../../api";
+import type { MembershipChoiceView } from "../../api";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { errorMessage } from "../../app/errorMessage";
 import { useExchangeSession, useLogin } from "../../queries/tenancy";
+import { useNoticesStore } from "../../store/notices";
 import { useSessionStore } from "../../store/session";
 import { checkCredentials, chooseOrg, type OrgChoice } from "./signInModel";
 
 export function useSignInVm() {
   const navigate = useNavigate();
   const setSession = useSessionStore((s) => s.setSession);
+  const notify = useNoticesStore((s) => s.notify);
   const login = useLogin();
   const exchange = useExchangeSession();
   const [email, setEmail] = useState("");
@@ -37,12 +40,19 @@ export function useSignInVm() {
       if (next.kind === "single") await enter(issued.token, next.membership);
       if (next.kind === "none") setError("This account belongs to no organization yet.");
     } catch (caught) {
-      setError(caught instanceof ApiError ? `${caught.message} (${caught.requestId ?? "no id"})` : "Sign-in failed.");
+      setError(errorMessage(caught, "Sign-in failed."));
     }
   };
 
+  // Choosing an org can be refused too (the login token expired, the API is
+  // away); the refusal is said the same way a failed write is.
   const pick = async (membership: MembershipChoiceView) => {
-    if (loginToken) await enter(loginToken, membership);
+    if (!loginToken) return;
+    try {
+      await enter(loginToken, membership);
+    } catch (caught) {
+      notify(errorMessage(caught, "Sign-in failed."));
+    }
   };
 
   return {

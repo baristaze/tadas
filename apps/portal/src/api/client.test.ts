@@ -19,6 +19,14 @@ function jsonResponse(status: number, body: unknown, headers: Record<string, str
   });
 }
 
+function textResponse(status: number, body: string, contentType = "text/html"): Response {
+  return new Response(body, {
+    status,
+    statusText: status === 502 ? "Bad Gateway" : "",
+    headers: { "content-type": contentType, "x-request-id": "req_9" },
+  });
+}
+
 function client(overrides: Partial<ClientOptions> = {}) {
   return createClient({
     baseUrl: "https://api.example.test/",
@@ -100,5 +108,59 @@ describe("transport client deadline", () => {
     const failure = await client({ fetchImpl }).get("/v1/tasks/x").catch((error: unknown) => error);
     expect(failure).toBeInstanceOf(ApiError);
     expect(failure).toMatchObject({ status: 404, code: "not_found", requestId: "req_1" });
+  });
+});
+
+describe("transport client response handling", () => {
+  it("turns a proxy's HTML 502 into a typed error carrying the status", async () => {
+    const fetchImpl: typeof fetch = () => Promise.resolve(textResponse(502, "<html>Bad Gateway</html>"));
+    const failure = await client({ fetchImpl }).get("/v1/tasks").catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(ApiError);
+    expect(failure).toMatchObject({ status: 502, code: "unknown_error", requestId: "req_9" });
+    expect((failure as ApiError).message).toBe("Bad Gateway");
+  });
+
+  it("names the status when a 504 comes with no status text", async () => {
+    const fetchImpl: typeof fetch = () =>
+      Promise.resolve(new Response("timeout", { status: 504, headers: { "content-type": "text/plain" } }));
+    const failure = await client({ fetchImpl }).get("/v1/tasks").catch((error: unknown) => error);
+    expect(failure).toMatchObject({ status: 504, code: "unknown_error", message: "HTTP 504" });
+  });
+
+  it("clears authentication on a 401 whose body is not JSON", async () => {
+    const onUnauthorized = vi.fn();
+    const fetchImpl: typeof fetch = () => Promise.resolve(textResponse(401, "Unauthorized", "text/plain"));
+    const failure = await client({ fetchImpl, onUnauthorized }).get("/v1/me").catch((error: unknown) => error);
+    expect(onUnauthorized).toHaveBeenCalledTimes(1);
+    expect(failure).toBeInstanceOf(ApiError);
+    expect(failure).toMatchObject({ status: 401 });
+  });
+
+  it("clears authentication on a 401 with the envelope too", async () => {
+    const onUnauthorized = vi.fn();
+    const fetchImpl: typeof fetch = () =>
+      Promise.resolve(jsonResponse(401, { error: { code: "not_authenticated", message: "no", request_id: "r" } }));
+    await client({ fetchImpl, onUnauthorized }).get("/v1/me").catch(() => undefined);
+    expect(onUnauthorized).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses a success whose body is not JSON with a typed error, never a SyntaxError", async () => {
+    const fetchImpl: typeof fetch = () => Promise.resolve(textResponse(200, "<html>captive portal</html>"));
+    const failure = await client({ fetchImpl }).get("/v1/tasks").catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(ApiError);
+    expect(failure).toMatchObject({ status: 200, code: "not_json", requestId: "req_9" });
+  });
+
+  it("treats a JSON error body that does not parse as an error with the status", async () => {
+    const fetchImpl: typeof fetch = () =>
+      Promise.resolve(new Response("{not json", { status: 500, headers: { "content-type": "application/json" } }));
+    const failure = await client({ fetchImpl }).get("/v1/tasks").catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(ApiError);
+    expect(failure).toMatchObject({ status: 500, code: "unknown_error" });
+  });
+
+  it("returns nothing for an empty success", async () => {
+    const fetchImpl: typeof fetch = () => Promise.resolve(new Response(null, { status: 204 }));
+    await expect(client({ fetchImpl }).del("/v1/tasks/t1")).resolves.toBeUndefined();
   });
 });

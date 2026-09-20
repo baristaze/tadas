@@ -19,7 +19,6 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-# Application processes are appended here by the scaffold steps that add them.
 uv run --package tadas-api tadas-api serve --port "${TADAS_PORT:-8000}" &
 pids+=($!)
 uv run --package tadas-maintenance tadas-maintenance serve &

@@ -14,15 +14,24 @@ Zustand, one realtime channel.
   `src/queries/keys.ts`. The first key element is the entity name the
   server pushes, so a push invalidates by convention.
 - Client state lives in Zustand (`src/store/`): the session token, the
-  connection status. The token is kept in memory and in the tab's
-  session storage, so a reload survives and a closed tab forgets; never
-  in local storage.
+  connection status, the transient notices a failed write leaves
+  (`notices.ts`, rendered by `src/app/Notices.tsx` over the kit's
+  `Banner`; a view-model never swallows a mutation error), and the
+  preferences kept across visits (`preferences.ts`, the task scope,
+  persisted in local storage). The token is kept in memory and in the
+  tab's session storage, so a reload survives and a closed tab forgets;
+  never in local storage, which is for preferences only. No feature
+  reads a storage directly; a store does.
 - One screen is `src/features/<screen>/`: `<Screen>Page.tsx` renders,
   `use<Screen>Vm.ts` decides, `<screen>Model.ts` computes and is unit
   tested without React.
-- `src/realtime/RealtimeProvider.tsx` owns the one socket. Envelopes
-  (`envelopes.ts`) route into the query cache (`router.ts`), never into
-  components. The ping interval comes from
+- `src/realtime/RealtimeProvider.tsx` owns the one socket; the loop
+  itself (ticket, reconnect with backoff, the stream cursor and its
+  replay) is `channel.ts`, without React, run in its test over a fake
+  socket and fake timers. A socket counts as connected once the hello
+  frame arrives, so a server that accepts and closes at once still
+  backs off. Envelopes (`envelopes.ts`) route into the query cache
+  (`router.ts`), never into components. The ping interval comes from
   `deployment/realtime-timeouts.json`.
 - Design tokens and the kit live in `src/design/`; the operator console
   imports them from here.

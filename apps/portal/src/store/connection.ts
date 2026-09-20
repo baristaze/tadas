@@ -3,7 +3,7 @@ import { create } from "zustand";
 
 export type ConnectionStatus = "connecting" | "open" | "degraded" | "closed";
 
-interface ConnectionState {
+export interface ConnectionState {
   status: ConnectionStatus;
   failedCycles: number;
   setStatus: (status: ConnectionStatus) => void;
