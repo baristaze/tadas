@@ -25,3 +25,26 @@ output "production_deploy_role_arn" {
 output "state_bucket" {
   value = aws_s3_bucket.state.bucket
 }
+
+# What the create script writes into ~/.aws/config, one profile per role per
+# environment, chained from the operators user's key.
+
+output "staging_investigate_role_arn" {
+  description = "The role_arn of the tadas-staging-investigate profile."
+  value       = module.staging_investigate_role.arn
+}
+
+output "production_investigate_role_arn" {
+  description = "The role_arn of the tadas-production-investigate profile."
+  value       = module.production_investigate_role.arn
+}
+
+output "operators_user_name" {
+  description = "The IAM user the create script mints an access key for; the source_profile of every investigate profile."
+  value       = aws_iam_user.operators.name
+}
+
+output "dns_name_servers" {
+  description = "The zone's name servers, to set at the registrar once; empty when the zone is not created here."
+  value       = var.create_dns_zone ? aws_route53_zone.this[0].name_servers : []
+}
