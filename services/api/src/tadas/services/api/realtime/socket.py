@@ -13,6 +13,7 @@ from collections.abc import Callable
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
+from fastapi.websockets import WebSocketState
 from pydantic import ValidationError
 
 from tadas.infra.topics import Topics
@@ -58,6 +59,19 @@ async def settle(task: asyncio.Task[None]) -> None:
         await task
 
 
+async def close_quietly(websocket: WebSocket, code: int = 1000, reason: str | None = None) -> None:
+    """Sends the close frame when there is still a peer to send it to. A peer
+    that left first, or a close already sent, is the normal end of a socket:
+    the server raises its disconnect error on a send after the peer is gone
+    (an `OSError`, which Starlette turns into a 1006 disconnect), and
+    Starlette refuses a second close with a `RuntimeError`. None of them
+    is an error of this handler."""
+    if WebSocketState.DISCONNECTED in (websocket.client_state, websocket.application_state):
+        return
+    with contextlib.suppress(RuntimeError, WebSocketDisconnect, OSError):
+        await websocket.close(code=code, reason=reason)
+
+
 @router.post("/tickets", response_model=IssuedTicketView, status_code=201)
 async def mint_ticket(ctx: Ctx, realtime: RealtimeService) -> IssuedTicketView:
     return await realtime.issue_ticket(ctx)
@@ -71,10 +85,17 @@ async def serve_commands(
     subscriptions: dict[Topics, Callable[[], None]],
 ) -> None:
     """The inbound loop: subscribe, unsubscribe, ping. Returns when the peer
-    leaves or stays silent past the idle timeout."""
+    leaves or stays silent past the idle timeout. A command is a text frame;
+    any other frame is a bad command, answered and survived."""
     try:
         while True:
-            raw = await asyncio.wait_for(websocket.receive_text(), timeout=IDLE_TIMEOUT_SECONDS)
+            message = await asyncio.wait_for(websocket.receive(), timeout=IDLE_TIMEOUT_SECONDS)
+            if message["type"] == "websocket.disconnect":
+                return
+            raw = message.get("text")
+            if raw is None:
+                buffer.offer(ErrorEnvelope(code="bad_command", message="a command is a text frame"))
+                continue
             try:
                 command = ClientCommand.model_validate_json(raw)
                 topic = Topics(command.topic) if command.topic is not None else None
@@ -134,8 +155,7 @@ async def channel(
         if ended.done():
             await settle(commands)
             await settle(drainer)
-            with contextlib.suppress(RuntimeError):
-                await websocket.close(code=CLOSE_UNAUTHENTICATED, reason=ended.result())
+            await close_quietly(websocket, code=CLOSE_UNAUTHENTICATED, reason=ended.result())
         else:
             commands.result()
     finally:
@@ -145,5 +165,4 @@ async def channel(
         for unsubscribe in subscriptions.values():
             unsubscribe()
         await settle(drainer)
-        with contextlib.suppress(RuntimeError):
-            await websocket.close()
+        await close_quietly(websocket)
