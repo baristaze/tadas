@@ -36,8 +36,8 @@ shapes: a helper the impls share, a method with a `WHERE` of its own,
 a list, a page, the bulk write. The fast gate runs the memory impls,
 so these are the queries a run here reaches. The Postgres queries carry
 the same predicates in SQL and the same cases run over them under
-`make test-integration`; a control against those is run on the compose
-stack and recorded here the same way.
+`make test-integration`; a control against those runs on the compose
+stack and is recorded here the same way.
 
 ## The last run: 2026-09-20, over the memory impls
 
@@ -62,6 +62,22 @@ alone; `mark_done` by `test_mark_done_is_per_tenant_and_idempotent`
 alone; `read_sessions` by
 `test_the_session_reads_and_writes_are_tenant_scoped` and the list's own
 ordering case.
+
+## The last run over Postgres: 2026-09-20
+
+Two queries, one at a time, each against `make test-integration` on the
+compose stack. Both failed the suite.
+
+| Query | What the suite reported |
+|-------|-------------------------|
+| `TasksStoragePostgresImpl._live`, the helper the two task lists share | 5 failed, 116 passed, 1 skipped |
+| `TenancyStoragePostgresImpl.read_sessions`, a list with its own `WHERE` | 1 failed, 120 passed, 1 skipped |
+
+The same cases catch the same shapes over SQL as over the dicts. The
+helper takes the two task lists, the cursor, the create, and the bulk
+write down with it; the list with its own `WHERE` is caught by
+`test_the_session_reads_and_writes_are_tenant_scoped` alone, which is
+what a narrow probe should look like.
 
 ## The hole the control found
 
