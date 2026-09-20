@@ -1,0 +1,251 @@
+# Production is the `release` branch, moved only by a fast-forward from
+# `main` (release.yml). A push to `release` plans production, waits for a
+# person's approval on that plan, and applies exactly it. Nothing is built
+# here: the images are the digests staging tagged with this commit and the
+# portal is the build staging kept for it, so a release commit staging never
+# built is refused before anything is planned, and `release` must be an
+# ancestor of `main`, or someone committed to it.
+#
+# The approval is the `production` GitHub environment's required reviewer:
+# the `apply` job binds to it and waits there, with the plan in the `plan`
+# job's summary and in the `production-plan` artifact. The jobs before it
+# carry no environment and present the branch (`ref:refs/heads/release`) to
+# the deploy role, which trusts exactly that subject for the read-and-plan
+# work; only a job in the `production` environment applies.
+#
+# Inside the apply the migration runs as a one-off task on the new API image
+# before the services roll (the service module orders it); a migration that
+# fails ends the apply with the old tasks still serving, and the apply waits
+# until the new tasks serve, so a rollout ECS rolls back fails the job.
+#
+# The saved plan goes to the state bucket, next to the state it was computed
+# against and under the same access: a plan file carries sensitive values
+# unmasked, and a workflow artifact of a public repository is downloadable
+# by anyone. The text rendering, in which Terraform masks them, is the
+# reviewer's copy.
+name: deploy-production
+
+on:
+  push:
+    branches: [release]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+  # The guard reads the production environment's protection rules.
+  actions: read
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-1
+  TERRAFORM_VERSION: "1.16.3"
+
+jobs:
+  guard:
+    name: release is a prefix of main and the cloud is configured
+    runs-on: ubuntu-latest
+    steps:
+      - name: this is the release branch
+        if: github.ref != 'refs/heads/release'
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          echo "::error::production deploys from refs/heads/release only, not $REF"
+          exit 1
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: release is an ancestor of main
+        env:
+          SHA: ${{ github.sha }}
+        run: |
+          git fetch --quiet origin main
+          if git merge-base --is-ancestor "$SHA" origin/main; then
+            echo "\`$SHA\` is on \`main\`: release is a prefix of main." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::error::$SHA is not an ancestor of main. release moves only by a fast-forward from main (release.yml); a commit made on release is not deployed. Reset release to a main commit and dispatch release.yml."
+            exit 1
+          fi
+      # The approval gate is a setting outside the repository; this makes its
+      # absence a failed run instead of an unreviewed apply.
+      - name: the production environment requires a reviewer
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          if ! rules="$(gh api "repos/$REPOSITORY/environments/production" --jq '[.protection_rules[]? | .type] | join(",")' 2>&1)"; then
+            echo "::error::the production environment cannot be read ($rules): create it with a required reviewer (the deploy runbook) before releasing"
+            exit 1
+          fi
+          case ",$rules," in
+            *,required_reviewers,*)
+              echo "The \`production\` environment requires a reviewer; the apply waits for one." >> "$GITHUB_STEP_SUMMARY" ;;
+            *)
+              echo "::error::the production environment has no required-reviewers rule (rules: '$rules'); without it the apply would run unreviewed. Add the reviewer (the deploy runbook) before releasing."
+              exit 1 ;;
+          esac
+      - name: the cloud is configured
+        env:
+          AWS_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+          DNS_ZONE_NAME: ${{ vars.DNS_ZONE_NAME }}
+        run: |
+          missing=""
+          for name in AWS_DEPLOY_ROLE_ARN TF_STATE_BUCKET DNS_ZONE_NAME; do
+            [ -n "${!name}" ] || missing="${missing:+$missing, }$name"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::the repository variables $missing are empty: there is no cloud to release to (deployment/terraform/shared)"
+            exit 1
+          fi
+
+  resolve:
+    name: what staging built for this commit
+    needs: guard
+    runs-on: ubuntu-latest
+    outputs:
+      api_image: ${{ steps.images.outputs.api_image }}
+      maintenance_image: ${{ steps.images.outputs.maintenance_image }}
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - uses: aws-actions/amazon-ecr-login@v2
+        id: ecr
+      - name: the image digests staging tagged with this commit
+        id: images
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          SHA: ${{ github.sha }}
+        run: |
+          resolve() {
+            local digest
+            if ! digest="$(aws ecr describe-images --repository-name "$1" \
+                --image-ids "imageTag=$SHA" \
+                --query 'imageDetails[0].imageDigest' --output text 2>/dev/null)" || [ -z "$digest" ] || [ "$digest" = "None" ]; then
+              echo "::error::$1 has no image tagged $SHA: staging never built this commit. Release a commit deploy-staging ran on main, or rerun deploy-staging for it first."
+              exit 1
+            fi
+            echo "$REGISTRY/$1@$digest"
+          }
+          api_image="$(resolve tadas-api)"
+          maintenance_image="$(resolve tadas-maintenance)"
+          echo "api_image=$api_image" >> "$GITHUB_OUTPUT"
+          echo "maintenance_image=$maintenance_image" >> "$GITHUB_OUTPUT"
+          echo "Images staging built for \`$SHA\`: \`$api_image\`, \`$maintenance_image\`." >> "$GITHUB_STEP_SUMMARY"
+      - name: the portal build staging kept for this commit
+        env:
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+          SHA: ${{ github.sha }}
+        run: |
+          if ! aws s3api head-object --bucket "$TF_STATE_BUCKET" --key "builds/portal/$SHA/index.html" >/dev/null 2>&1; then
+            echo "::error::the state bucket holds no portal build under builds/portal/$SHA: staging never built this commit."
+            exit 1
+          fi
+          echo "Portal: \`s3://$TF_STATE_BUCKET/builds/portal/$SHA\`." >> "$GITHUB_STEP_SUMMARY"
+
+  plan:
+    name: plan production
+    needs: resolve
+    runs-on: ubuntu-latest
+    outputs:
+      plan_key: ${{ steps.plan.outputs.plan_key }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+      - name: plan production
+        id: plan
+        env:
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+          DNS_ZONE_NAME: ${{ vars.DNS_ZONE_NAME }}
+          API_IMAGE: ${{ needs.resolve.outputs.api_image }}
+          MAINTENANCE_IMAGE: ${{ needs.resolve.outputs.maintenance_image }}
+          SHA: ${{ github.sha }}
+          RUN: ${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          terraform -chdir=deployment/terraform/environments/prod init -input=false \
+            -backend-config="bucket=$TF_STATE_BUCKET" \
+            -backend-config="key=environments/prod/terraform.tfstate" \
+            -backend-config="region=$AWS_REGION" \
+            -backend-config="use_lockfile=true"
+          terraform -chdir=deployment/terraform/environments/prod plan -input=false -out=tfplan \
+            -var "api_image=$API_IMAGE" \
+            -var "maintenance_image=$MAINTENANCE_IMAGE" \
+            -var "dns_zone_name=$DNS_ZONE_NAME" \
+            -var "api_domain_name=api.$DNS_ZONE_NAME" \
+            -var "app_domain_name=app.$DNS_ZONE_NAME"
+          terraform -chdir=deployment/terraform/environments/prod show -no-color tfplan > plan.txt
+          plan_key="plans/environments/prod/$SHA-$RUN.tfplan"
+          aws s3 cp deployment/terraform/environments/prod/tfplan "s3://$TF_STATE_BUCKET/$plan_key"
+          echo "plan_key=$plan_key" >> "$GITHUB_OUTPUT"
+          {
+            echo "## production plan for \`$SHA\`"
+            echo ""
+            echo "Images: \`$API_IMAGE\`, \`$MAINTENANCE_IMAGE\`."
+            echo ""
+            grep -E '^(Plan:|No changes\.)' plan.txt || echo "See the plan below."
+            echo ""
+            echo "<details><summary>terraform show</summary>"
+            echo ""
+            echo '```'
+            head -c 900000 plan.txt
+            [ "$(wc -c < plan.txt)" -le 900000 ] || echo "... (truncated; the production-plan artifact holds the whole text)"
+            echo '```'
+            echo "</details>"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: production-plan
+          path: plan.txt
+          if-no-files-found: error
+          retention-days: 90
+
+  apply:
+    name: apply the approved plan, migrate, and publish
+    needs: [resolve, plan]
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v7
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+      # Exactly the approved plan: Terraform refuses it once the state moved.
+      # The migration runs inside, on the new API task definition, before
+      # either service rolls.
+      - name: apply the approved plan (migrate, then roll)
+        env:
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+          PLAN_KEY: ${{ needs.plan.outputs.plan_key }}
+        run: |
+          terraform -chdir=deployment/terraform/environments/prod init -input=false \
+            -backend-config="bucket=$TF_STATE_BUCKET" \
+            -backend-config="key=environments/prod/terraform.tfstate" \
+            -backend-config="region=$AWS_REGION" \
+            -backend-config="use_lockfile=true"
+          aws s3 cp "s3://$TF_STATE_BUCKET/$PLAN_KEY" deployment/terraform/environments/prod/tfplan
+          terraform -chdir=deployment/terraform/environments/prod apply -input=false tfplan
+      - name: fetch the portal build staging kept for this commit
+        env:
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+          SHA: ${{ github.sha }}
+        run: aws s3 sync "s3://$TF_STATE_BUCKET/builds/portal/$SHA" portal-dist
+      - name: publish the same portal to production
+        run: scripts/deploy_portal.sh deployment/terraform/environments/prod portal-dist

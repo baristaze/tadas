@@ -427,7 +427,7 @@ everything in-process for tests.
 - `terraform/`: every cloud resource. `modules/` holds one module per
   resource family (`network`, `cluster`, `database`, `cache`, `queue`,
   `buckets`, `secrets`, `load_balancer`, `certificate`, `domain_records`,
-  `portal`, `service`); `environments/dev` and `environments/prod`
+  `portal`, `service`); `environments/staging` and `environments/prod`
   instantiate the same graph and differ only in variables, including
   the image digests; `shared/` holds the registry, the state bucket, and
   the deploy role. The load balancer's idle timeout is read from
@@ -442,29 +442,43 @@ everything in-process for tests.
 - `.github/workflows/ci.yml`: the fast gate, the integration job (which
   runs `make migrate-check` right after `make migrate`), an image build
   per Dockerfile, and `terraform fmt -check` plus `validate` per root.
-  `deploy.yml` builds and pushes both images by digest and the portal
-  once, plans dev (the plan goes to the job summary, its text to the
-  `dev-plan` artifact, the saved plan to the state bucket), pauses for
-  `human_approval`, applies the approved plan, runs the migration as a
-  one-off task (`scripts/cloud_migrate.sh`), publishes the portal
-  (`scripts/deploy_portal.sh`), and then, behind the `production`
-  environment's approval, applies production with the same digests and
-  publishes the same portal files. Its first job checks the repository
+- Two branches, two deploy workflows, one approval
+  ([ADR 0008](adr/0008-main-is-staging-release-is-production.md)).
+  `main` is staging: `deploy-staging.yml` follows every green `ci` run
+  on `main`, builds and pushes both images tagged by the commit `ci`
+  ran, keeps the portal build by the commit in the state bucket, and
+  plans and applies staging with no approval (the plan text goes to the
+  job summary and the `staging-plan` artifact). `release` is production,
+  moved only by a fast-forward from `main` that `release.yml` makes when
+  a person dispatches it (a pull request into `release` fails its one
+  check). A push to `release` runs `deploy-production.yml`: a guard that
+  refuses unless `release` is an ancestor of `main` and the `production`
+  environment carries a required-reviewers rule, a job that resolves the
+  digests and the portal build staging made for that commit and refuses
+  a commit staging never built, a plan job (text to the
+  `production-plan` artifact, the saved plan to the state bucket), and,
+  behind the `production` environment's approval, an apply of exactly
+  that plan and the publication of the same portal files. Nothing is
+  rebuilt for production. The migration is inside the apply: the
+  `service` module runs the API's `pre_rollout_command` as a one-off
+  task on every new task definition before the service rolls, the
+  worker rolls after it, and every service waits for steady state, so a
+  failed migration or a rolled-back rollout fails the apply with the old
+  tasks still serving; a migration is compatible with the release before
+  it (expand and contract), so the old tasks serve the new schema
+  meanwhile. The first job of each workflow checks the repository
   variables (`AWS_DEPLOY_ROLE_ARN`, `TF_STATE_BUCKET`, `DNS_ZONE_NAME`);
-  while they are empty every cloud job is skipped, the summary says so,
-  and the run stays green.
-- `.github/workflows/human_approval.yml`: the pause, a reusable workflow
-  with one job bound to the `human_approval` GitHub environment, whose
-  required reviewer is the owner. A job requires it with `needs:` after
-  `uses: ./.github/workflows/human_approval.yml`; Approve lets the run
-  go on, Reject cancels what needs it. `deploy.yml` requires it in one
-  place, before the first `terraform apply`. `human_approval_smoke.yml`
-  is its self-test, run by hand. [The deploy runbook](runbooks/deploy.md)
-  says what to check at the pause.
+  while they are empty staging skips every cloud job, says so in the
+  summary, and stays green, and production fails. [The deploy
+  runbook](runbooks/deploy.md) says how to cut a release, what to check
+  at the approval, and how to roll back.
 - Public names are inputs: the API at `api_domain_name` (the load balancer,
-  e.g. `api.tadas.fyi`, `dev-api.tadas.fyi` for dev) and the portal at
+  e.g. `api.tadas.fyi`, `api.staging.tadas.fyi` for staging) and the portal at
   `app_domain_name` (a private S3 bucket behind CloudFront, e.g.
-  `app.tadas.fyi`), with certificates and records in one Route 53 zone. The
+  `app.tadas.fyi`), with certificates and records in one Route 53 zone.
+  Each environment has one base domain, the zone for production and
+  `staging.` under it for staging, and the workflows derive both names
+  from the one `DNS_ZONE_NAME` variable. The
   portal reads `/config.json`, written per environment by Terraform, before
   it renders, and calls the API cross-origin; locally it falls back to the
   `VITE_` build variables. The distribution's response headers policy,

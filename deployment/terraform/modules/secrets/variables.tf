@@ -4,7 +4,7 @@ variable "environment" {
 }
 
 variable "prefix" {
-  description = "Name prefix of every secret this environment owns, e.g. tadas/dev/."
+  description = "Name prefix of every secret this environment owns, e.g. tadas/staging/."
   type        = string
 }
 

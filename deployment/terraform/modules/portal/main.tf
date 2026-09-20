@@ -2,7 +2,7 @@
 # CloudFront distribution at the app's domain name. The API has a domain of its
 # own, which the portal calls cross-origin. The build carries no environment:
 # every setting it needs is in /config.json, written here per environment, so
-# production serves the exact files dev already served.
+# production serves the exact files staging already served.
 
 locals {
   tags         = { "tadas:environment" = var.environment }
