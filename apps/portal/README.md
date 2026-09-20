@@ -14,9 +14,11 @@ Zustand, one realtime channel.
   `src/queries/keys.ts`. The first key element is the entity name the
   server pushes, so a push invalidates by convention.
 - Client state lives in Zustand (`src/store/`): the session token, the
-  connection status. The token is kept in memory and in the tab's
-  session storage, so a reload survives and a closed tab forgets; never
-  in local storage.
+  connection status, the transient notices a failed write leaves
+  (`notices.ts`, rendered by `src/app/Notices.tsx` over the kit's
+  `Banner`; a view-model never swallows a mutation error). The token is
+  kept in memory and in the tab's session storage, so a reload survives
+  and a closed tab forgets; never in local storage.
 - One screen is `src/features/<screen>/`: `<Screen>Page.tsx` renders,
   `use<Screen>Vm.ts` decides, `<screen>Model.ts` computes and is unit
   tested without React.
