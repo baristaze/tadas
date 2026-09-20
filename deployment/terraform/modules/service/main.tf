@@ -8,12 +8,19 @@
 # to X-Ray. It is not essential: a collector failure never stops the process.
 
 data "aws_region" "current" {}
+data "aws_caller_identity" "current" {}
+data "aws_partition" "current" {}
 
 locals {
   tags = {
     "tadas:service"     = var.name
     "tadas:environment" = var.environment
   }
+
+  # The ceiling `shared` declares for every role a deploy run creates. The
+  # deploy role is refused a CreateRole that does not carry it, so a
+  # compromised deploy run cannot mint a task role wider than itself.
+  permissions_boundary = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:policy/tadas-task-boundary-${var.environment}"
 
   collector_name = "otel-collector"
 
@@ -144,9 +151,10 @@ data "aws_iam_policy_document" "assume_ecs_tasks" {
 }
 
 resource "aws_iam_role" "execution" {
-  name               = "tadas-${var.environment}-${var.name}-execution"
-  assume_role_policy = data.aws_iam_policy_document.assume_ecs_tasks.json
-  tags               = local.tags
+  name                 = "tadas-${var.environment}-${var.name}-execution"
+  assume_role_policy   = data.aws_iam_policy_document.assume_ecs_tasks.json
+  permissions_boundary = local.permissions_boundary
+  tags                 = local.tags
 }
 
 resource "aws_iam_role_policy_attachment" "execution" {
@@ -172,9 +180,10 @@ resource "aws_iam_role_policy" "execution_secrets" {
 }
 
 resource "aws_iam_role" "task" {
-  name               = "tadas-${var.environment}-${var.name}-task"
-  assume_role_policy = data.aws_iam_policy_document.assume_ecs_tasks.json
-  tags               = local.tags
+  name                 = "tadas-${var.environment}-${var.name}-task"
+  assume_role_policy   = data.aws_iam_policy_document.assume_ecs_tasks.json
+  permissions_boundary = local.permissions_boundary
+  tags                 = local.tags
 }
 
 resource "aws_iam_role_policy_attachment" "task" {

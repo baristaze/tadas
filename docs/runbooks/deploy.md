@@ -8,7 +8,7 @@ Two branches, two workflows, one approval.
   keeps the portal build by the commit, and plans and applies staging
   with no approval. A merge is the deployment. A pull request never
   deploys, a fork's branch least of all: `ci` runs on every pull
-  request, and a `workflow_run` carries this repository's deploy role
+  request, and a `workflow_run` carries this repository's staging role
   whatever the code it followed.
 - `release` is production. It moves only by a fast-forward from `main`,
   which `.github/workflows/release.yml` makes when a person dispatches
@@ -23,6 +23,58 @@ The approval is the `production` GitHub environment's required reviewer,
 the owner. The environment is created outside the repository, not by
 Terraform, since it is what protects the deploy role's use; the
 production workflow fails before it plans when the rule is missing.
+
+## One credential per environment
+
+Three roles, declared in `deployment/terraform/shared`, and each trusts
+exactly one subject:
+
+| Role | Assumed by a job that declares | On ref | May |
+|------|--------------------------------|--------|-----|
+| `tadas-deploy-staging` | `environment: staging` | `refs/heads/main` | apply staging |
+| `tadas-plan-production` | `environment: production-plan` | `refs/heads/release` | read production, plan it |
+| `tadas-deploy-production` | `environment: production` | `refs/heads/release` | apply production |
+
+A GitHub job presents `repo:<owner>/<name>:environment:<name>` in its
+token only when it declares that environment, and presents its branch
+when it declares none. So the gate on the `production` environment is
+the gate on the credential: a job that has not waited for the reviewer
+never produces the subject the applying role trusts, and a staging run,
+which waits for nobody by design, holds a credential that reaches no
+production state, secret, bucket, queue, or database.
+
+Each role's permissions stop at what its environment owns: names
+beginning `tadas-<environment>`, secrets under `tadas/<environment>/`,
+log groups under `/tadas/<environment>/`, its own key in the state
+bucket, and the record names under its own base domain. Everything
+tagged as the other environment is denied outright, and so is any path
+by which a role could widen itself: the deploy roles, the OIDC trust,
+a new user or access key, and a task role created without the
+`tadas-task-boundary-<environment>` permissions boundary.
+
+`tadas-plan-production` runs the jobs before the approval. It changes
+nothing: it reads production, takes the state lock while it plans, and
+writes the plan file the reviewer approves. It does read production's
+secrets, because a plan reads the state and the state holds the
+database password in clear. The approval holds the write, not the read.
+
+Set once, by hand:
+
+- Settings, Environments: `staging` (no rule, deployment branch
+  `main`), `production-plan` (no rule, deployment branch `release`),
+  `production` (required reviewer, deployment branch `release`). A
+  reviewer on `production-plan` would hold the plan the reviewer is
+  meant to read, so leave it without one.
+- Settings, Variables: `AWS_STAGING_ROLE_ARN`,
+  `AWS_PRODUCTION_PLAN_ROLE_ARN`, `AWS_PRODUCTION_ROLE_ARN`,
+  `TF_STATE_BUCKET`, `DNS_ZONE_NAME`. The three role ARNs are outputs
+  of the `shared` root. Setting the wrong ARN in one of them does not
+  cross the boundary: the role refuses a subject it does not trust.
+- In AWS, apply `deployment/terraform/shared` once, by a person, with
+  an administrator profile. It creates the OIDC provider, the two task
+  boundaries, and the three roles. `shared` is never applied by a
+  deploy run; every deploy role denies the calls that would change the
+  registry, the state bucket, or the trust.
 
 ## Cut a release
 
@@ -132,8 +184,8 @@ gh api -X PUT repos/{owner}/{repo}/environments/production \
 JSON
 ```
 
-The `staging` environment exists with no rule; the deploy role trusts
-its name.
+The `staging` and `production-plan` environments exist with no rule;
+each role trusts the name of the one it belongs to.
 
 ## What to expect
 
@@ -148,8 +200,10 @@ its name.
 ## When it fails
 
 - `deploy-staging` skipped every cloud job although the account exists:
-  set `AWS_DEPLOY_ROLE_ARN`, `TF_STATE_BUCKET`, `DNS_ZONE_NAME` as
-  repository variables (deployment/terraform/modules/README.md). The
+  set `AWS_STAGING_ROLE_ARN`, `TF_STATE_BUCKET`, `DNS_ZONE_NAME` as
+  repository variables (deployment/terraform/modules/README.md).
+  `deploy-production` wants `AWS_PRODUCTION_PLAN_ROLE_ARN` and
+  `AWS_PRODUCTION_ROLE_ARN` instead of the staging one. The
   public names follow the zone: `api.staging.<zone>`,
   `app.staging.<zone>`, `api.<zone>`, `app.<zone>`. `deploy-production`
   fails, not skips, on the same condition.
@@ -168,5 +222,12 @@ its name.
   the same tag twice.
 - `apply` says the saved plan is stale: someone applied production in
   between. Rerun the workflow; a fresh plan comes back for review.
+- A job fails at `configure-aws-credentials` with "Not authorized to
+  perform sts:AssumeRoleWithWebIdentity": the token's subject is not
+  the one the role trusts. Either the job lost its `environment:` line,
+  or it is running on a ref the role does not allow (`main` for
+  staging, `release` for production), or the environment was renamed.
+  A `workflow_dispatch` of `deploy-staging` on a branch other than
+  `main` fails here by design.
 - `release.yml`'s push is refused by a ruleset: set `RELEASE_DEPLOY_KEY`
   as above.

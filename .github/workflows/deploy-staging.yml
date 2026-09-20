@@ -12,10 +12,17 @@
 # at. The portal build holds no environment; each environment's /config.json,
 # written by Terraform, does.
 #
-# Credentials come from the deploy role in deployment/terraform/shared through
-# GitHub's OIDC provider, presented as the `staging` environment; the role's
-# ARN and the state bucket are repository variables, and so is the zone
-# (DNS_ZONE_NAME, e.g. tadas.fyi). The public names follow the zone:
+# Credentials come from the staging deploy role in
+# deployment/terraform/shared through GitHub's OIDC provider. That role is
+# staging's and no more: it trusts one subject, a job of this repository that
+# declares `environment: staging` and runs on `main`, and its permissions stop
+# at what staging owns. Production's state, secrets, and database are outside
+# it, which is what lets a merge deploy with no approval. Every job here that
+# touches the cloud therefore declares the environment; a job without it
+# presents its branch instead and is refused by the role's trust.
+#
+# The role's ARN and the state bucket are repository variables, and so is the
+# zone (DNS_ZONE_NAME, e.g. tadas.fyi). The public names follow the zone:
 # api.staging.<zone> and app.staging.<zone> here, api.<zone> and app.<zone>
 # in production.
 #
@@ -50,8 +57,8 @@ jobs:
     # triggering run's head branch alone: a pull request opened from a fork's
     # `main` matches it. A `workflow_run` always runs in the base repository,
     # with its variables and its OIDC identity, so without the two checks
-    # below a fork's commit would be built and applied under a role that
-    # holds AdministratorAccess. Only a push to this repository deploys.
+    # below a fork's commit would be built and applied under staging's own
+    # credential. Only a push to this repository deploys.
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event.workflow_run.conclusion == 'success' &&
@@ -74,17 +81,17 @@ jobs:
       - name: check the repository variables
         id: check
         env:
-          AWS_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          AWS_STAGING_ROLE_ARN: ${{ vars.AWS_STAGING_ROLE_ARN }}
           TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
           DNS_ZONE_NAME: ${{ vars.DNS_ZONE_NAME }}
         run: |
           missing=""
-          for name in AWS_DEPLOY_ROLE_ARN TF_STATE_BUCKET DNS_ZONE_NAME; do
+          for name in AWS_STAGING_ROLE_ARN TF_STATE_BUCKET DNS_ZONE_NAME; do
             [ -n "${!name}" ] || missing="${missing:+$missing, }$name"
           done
           if [ -z "$missing" ]; then
             echo "configured=true" >> "$GITHUB_OUTPUT"
-            echo "The cloud deployment is configured: the deploy role is \`$AWS_DEPLOY_ROLE_ARN\`." >> "$GITHUB_STEP_SUMMARY"
+            echo "The cloud deployment is configured: staging deploys under \`$AWS_STAGING_ROLE_ARN\`." >> "$GITHUB_STEP_SUMMARY"
           else
             echo "configured=false" >> "$GITHUB_OUTPUT"
             echo "**The cloud deployment is not configured.** The repository variables \`$missing\` are empty, so every job that touches the cloud is skipped; only the portal builds. Set them once the account exists (deployment/terraform/shared)." >> "$GITHUB_STEP_SUMMARY"
@@ -105,7 +112,7 @@ jobs:
           ref: ${{ needs.cloud.outputs.sha }}
       - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
-          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          role-to-assume: ${{ vars.AWS_STAGING_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
       - uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2.1.7
         id: ecr
@@ -192,7 +199,7 @@ jobs:
       - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         if: needs.cloud.outputs.configured == 'true'
         with:
-          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          role-to-assume: ${{ vars.AWS_STAGING_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
       - name: keep the build by the commit
         if: needs.cloud.outputs.configured == 'true'
@@ -213,7 +220,7 @@ jobs:
           ref: ${{ needs.cloud.outputs.sha }}
       - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
-          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          role-to-assume: ${{ vars.AWS_STAGING_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
       - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
         with:

@@ -14,13 +14,16 @@ Three kinds of root live under this folder:
   registry by the commit `release` points at.
 - `shared/`: account-level resources every environment uses: the image
   registry (production promotes the digests staging already ran), the state
-  bucket, and the deploy role that GitHub's OIDC provider may assume.
+  bucket, and one deploy role per environment behind GitHub's OIDC
+  provider, each trusting a single subject and scoped to what its own
+  environment owns (the deploy runbook has the table).
 - `modules/`: one module per resource family, each with `versions.tf`,
   `variables.tf`, `main.tf`, and `outputs.tf`.
 
 | Module          | Declares                                                        |
 |-----------------|-----------------------------------------------------------------|
 | `environment`   | One environment whole: every module below, wired                |
+| `deploy_role`   | One environment's deploy role: its OIDC trust and its fences     |
 | `network`       | VPC, public and private subnets, NAT, the security groups        |
 | `cluster`       | The container cluster services and workers run on               |
 | `database`      | Postgres, its subnet group, the generated master password       |
@@ -70,8 +73,11 @@ terraform -chdir=deployment/terraform/environments/staging init \
 The `use_lockfile` option needs Terraform 1.10 or later, which the
 roots require. `shared/` creates the state bucket itself: apply it once with local
 state, then run `init -migrate-state` against the bucket it made. No
-root holds credentials; a developer's AWS profile or the deploy role's
-OIDC session provides them.
+root holds credentials; a developer's AWS profile or an environment's
+deploy role provides them through its OIDC session. `shared/` is applied
+by a person with an administrator profile and never by a deploy run:
+every deploy role denies the calls that would change the registry, the
+state bucket, or the trust that issues the roles.
 
 ## Domains
 
