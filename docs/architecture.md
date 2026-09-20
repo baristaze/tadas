@@ -521,9 +521,15 @@ everything in-process for tests.
   is minted and belongs in neither the access log nor the metrics.
   The chain is CORS, then the request id, then admission, then the
   router. Admission is the bound on what this process has in flight
-  (`gateway/admission.py`, `TADAS_ADMISSION_IN_FLIGHT_LIMIT`): past it a
-  request is refused at once with `Unavailable` (503, code
-  `unavailable`) in the one envelope and a `Retry-After` of
+  (`gateway/admission.py`), and it is two bounds: a read lane for `GET`
+  and `HEAD` (`TADAS_ADMISSION_LIMIT_READS`) and a write lane for every
+  other method (`TADAS_ADMISSION_LIMIT_WRITES`), counted apart so that a
+  read storm, which is what a client replaying its backlog after an
+  outage is, cannot take every slot from the commands. A method the
+  process does not know is a write, since the cheaper budget is not the
+  one to hand an invented method. Past a lane's bound a request is
+  refused at once with `Unavailable` (503, code `unavailable`) in the
+  one envelope, naming the lane that is full, and a `Retry-After` of
   `TADAS_ADMISSION_RETRY_AFTER_SECONDS`, so a saturated process answers
   and says why instead of queueing work it cannot start. It is not the
   rate limit beside it, and the two fail in opposite directions: a rate
@@ -533,11 +539,14 @@ everything in-process for tests.
   inside CORS because a browser has to read the refusal and its header,
   and inside the request id because a refusal is an answer of this API
   like any other, with an id to correlate on, a line in the access log,
-  and a count of its own (`admission` / `admitted`, `refused`). The
-  three operational routes are never refused, since a saturated process
-  must still be able to say that it is saturated and the collector must
-  still be able to read by how much, and a socket holds no slot, a bound
-  a long-lived connection can fill being no bound on requests.
+  and a count per lane (`admission_reads` and `admission_writes` /
+  `admitted`, `refused`; a lane is a subsystem of its own, since the one
+  outcome counter carries the two labels every subsystem shares). The
+  three operational routes are never refused in either lane, since a
+  saturated process must still be able to say that it is saturated and
+  the collector must still be able to read by how much, and a socket
+  holds no slot, a bound a long-lived connection can fill being no bound
+  on requests.
   `/healthz` answers from the process alone and `/readyz` asks storage
   whether it can serve a request right now, under
   `TADAS_READINESS_TIMEOUT_SECONDS`, shorter than the interval it is

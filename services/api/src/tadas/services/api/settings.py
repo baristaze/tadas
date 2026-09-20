@@ -41,14 +41,20 @@ class ApiSettings(StorageSettings, InfraSettings):
     # exhausted pool makes the probe answer "not ready" instead of making it
     # stop answering. Seconds.
     readiness_timeout_seconds: float = 2.0
-    # Admission: the requests this process keeps in flight at once, and what
-    # a refusal past that tells the client to wait. The bound is a multiple
-    # of what the process can actually work on, which is the declared size of
-    # the pool it opens per role and no more, since the pools carry no
-    # overflow. A burst still waits briefly on a checkout, which has a bound
-    # of its own, and only a flood is refused; it is not the login rate
-    # limit, which is fairness between subjects and fails open.
-    admission_in_flight_limit: int = 64
+    # Admission: the requests this process keeps in flight at once, counted
+    # in two budgets, and what a refusal past either tells the client to
+    # wait. Reads (GET, HEAD) and writes are budgeted apart so that a read
+    # storm, which is what a client that was offline replaying its backlog
+    # is, cannot take every slot from the commands. Together they are the one
+    # bound the process had, which is a multiple of what it can actually work
+    # on: the declared size of the pool it opens per role and no more, since
+    # the pools carry no overflow. Reads are the many and writes the few, so
+    # that is how the bound is split. A burst still waits briefly on a
+    # checkout, which has a bound of its own, and only a flood is refused; it
+    # is not the login rate limit, which is fairness between subjects and
+    # fails open.
+    admission_limit_reads: int = Field(default=48, gt=0)
+    admission_limit_writes: int = Field(default=16, gt=0)
     admission_retry_after_seconds: int = 1
 
     @field_validator("trusted_proxies")
