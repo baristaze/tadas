@@ -3,7 +3,7 @@ from datetime import timedelta
 from uuid import UUID
 
 import pytest
-from contracts.idempotency_storage import attempt_of, make_record
+from contracts.idempotency_storage import attempt_minted_at, attempt_of, make_record
 
 from tadas.om.base import new_id, utcnow
 from tadas.om.exceptions import (
@@ -216,6 +216,23 @@ async def test_an_abandoned_pending_record_is_taken_over_with_its_target_id() ->
     assert replayed.status == 201, "finished: replay it"
 
 
+async def test_a_marker_handed_on_runs_its_lease_from_the_attempt(
+    storage: IdempotencyStorageMemoryImpl, manager: IdempotencyManagerImpl
+) -> None:
+    # A marker born an hour ago and handed to its second attempt a moment ago:
+    # the lease runs from the attempt, so the marker is held and the next retry
+    # waits for it. Measured from the marker, it was stale the instant it
+    # changed hands and a third attempt would take it over at once.
+    ctx = context()
+    handed_on = make_record(ctx.user_id, "k", utcnow() - timedelta(hours=1)).model_copy(
+        update={"attempt_id": attempt_minted_at(utcnow())}
+    )
+    await storage.write_record(ctx.org_id, handed_on)
+    with pytest.raises(IdempotencyInProgress):
+        await manager.begin(ctx, "k", handed_on.request_digest, new_id())
+    assert await storage.read_record(ctx.org_id, ctx.user_id, "k") == handed_on
+
+
 async def test_a_slow_attempt_that_lost_the_marker_is_refused(
     storage: IdempotencyStorageMemoryImpl, manager: IdempotencyManagerImpl
 ) -> None:
@@ -226,9 +243,12 @@ async def test_a_slow_attempt_that_lost_the_marker_is_refused(
     # holds, and the retry's outcome is the one every later retry replays.
     ctx = context()
     target = new_id()
-    slow = await manager.begin(ctx, "k", "d", target)
-    stale = slow.model_copy(update={"created_at": utcnow() - timedelta(minutes=5)})
-    await storage.write_record(ctx.org_id, stale)  # the lease passed while it ran
+    # The marker and the attempt that holds it are five minutes old, and that
+    # attempt is still running: the lease passed while it ran.
+    slow = make_record(ctx.user_id, "k", utcnow() - timedelta(minutes=5)).model_copy(
+        update={"target_id": target, "request_digest": "d"}
+    )
+    await storage.write_record(ctx.org_id, slow)
 
     retry = await manager.begin(ctx, "k", "d", new_id())
     assert retry.pending and retry.target_id == target

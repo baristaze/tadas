@@ -52,14 +52,13 @@ class IdempotencyStorageMemoryImpl(MemoryStorageBase, IdempotencyStorageInterfac
             return True
 
     async def purge_records(
-        self, org_id: UUID, finished_before: datetime, pending_before: datetime
+        self, org_id: UUID, finished_before: datetime, attempts_before: UUID
     ) -> int:
         async with self._lock:
             gone = [
                 record.id
                 for record in self._rows(self._records, org_id)
-                if record.created_at
-                < (pending_before if record.pending and not record.released else finished_before)
+                if _past_its_cut(record, finished_before, attempts_before)
             ]
             for record_id in gone:
                 del self._records[record_id]
@@ -70,8 +69,7 @@ class IdempotencyStorageMemoryImpl(MemoryStorageBase, IdempotencyStorageInterfac
         org_id: UUID,
         user_id: UUID,
         key: str,
-        abandoned_before: datetime,
-        restarted_at: datetime,
+        abandoned_before: UUID,
         attempt_id: UUID,
     ) -> IdempotencyRecord | None:
         async with self._lock:
@@ -79,22 +77,23 @@ class IdempotencyStorageMemoryImpl(MemoryStorageBase, IdempotencyStorageInterfac
             if (
                 stored is None
                 or not stored.pending
-                or stored.released
-                or stored.created_at >= abandoned_before
+                or stored.attempt_id is None
+                or stored.attempt_id >= abandoned_before
             ):
                 return None
-            taken = stored.model_copy(update={"created_at": restarted_at, "attempt_id": attempt_id})
+            # The new token starts the lease; the birth time stays as written.
+            taken = stored.model_copy(update={"attempt_id": attempt_id})
             self._put(self._records, org_id, taken)
             return taken
 
     async def rearm_released(
-        self, org_id: UUID, user_id: UUID, key: str, restarted_at: datetime, attempt_id: UUID
+        self, org_id: UUID, user_id: UUID, key: str, attempt_id: UUID
     ) -> IdempotencyRecord | None:
         async with self._lock:
             stored = self._find(org_id, user_id, key)
             if stored is None or not stored.released:
                 return None
-            armed = stored.model_copy(update={"created_at": restarted_at, "attempt_id": attempt_id})
+            armed = stored.model_copy(update={"attempt_id": attempt_id})
             self._put(self._records, org_id, armed)
             return armed
 
@@ -103,3 +102,13 @@ class IdempotencyStorageMemoryImpl(MemoryStorageBase, IdempotencyStorageInterfac
             if record.user_id == user_id and record.key == key:
                 return record
         return None
+
+
+def _past_its_cut(
+    record: IdempotencyRecord, finished_before: datetime, attempts_before: UUID
+) -> bool:
+    """A held pending marker is measured from its attempt, like the lease is; a
+    finished or a released one from its birth, by the retention."""
+    if record.pending and record.attempt_id is not None:
+        return record.attempt_id < attempts_before
+    return record.created_at < finished_before
