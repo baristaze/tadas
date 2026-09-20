@@ -2,7 +2,7 @@ from collections.abc import Callable, Iterable
 from datetime import datetime
 from uuid import UUID
 
-from tadas.om.exceptions import Conflict, UniqueKeyTaken
+from tadas.om.exceptions import Conflict, NotFound, UniqueKeyTaken
 from tadas.om.outbox.storage import OutboxLandingInterface
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.storage.impl.memory_base import HasId, MemoryStorageBase, MemoryTable
@@ -44,13 +44,16 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
         return next((i for i in self._identities.values() if i.email == email), None)
 
     async def write_identity(self, identity: Identity) -> None:
+        self._require_email_free(identity)
+        self._identities[identity.id] = identity
+
+    def _require_email_free(self, identity: Identity) -> None:
         self._require_free(
             self._identities.values(),
             identity,
             lambda other: other.email == identity.email,
             "uq_identities_email",
         )
-        self._identities[identity.id] = identity
 
     async def read_org(self, org_id: UUID) -> Org | None:
         return self._get(self._orgs, org_id, org_id)
@@ -67,9 +70,9 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
             orgs = [org for org in orgs if org.id > after_id]
         return orgs[:limit]
 
-    async def write_org(self, org_id: UUID, org: Org) -> None:
+    async def write_org(self, org_id: UUID, org: Org, outbox_row: OutboxRow | None = None) -> None:
         self._require_slug_free(org)
-        self._put(self._orgs, org_id, org)
+        self._put(self._orgs, org_id, org, outbox_row)
 
     def _require_slug_free(self, org: Org) -> None:
         # uq_orgs_slug: unique among the living, so a deleted org frees its slug.
@@ -82,9 +85,17 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
             )
 
     async def create_org_with_owner(
-        self, org_id: UUID, org: Org, user: User, membership: Membership
+        self,
+        org_id: UUID,
+        org: Org,
+        user: User,
+        membership: Membership,
+        identity: Identity | None = None,
     ) -> None:
+        # Every check, then every write: the twin of one commit.
         async with self._lock:
+            if identity is not None:
+                self._require_email_free(identity)
             self._require_slug_free(org)
             self._require_live_identity_free(org_id, user)
             self._require_membership_free(org_id, membership)
@@ -93,18 +104,40 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
                     raise UniqueKeyTaken(f"{entity.id} is already written")
             if membership.id in self._memberships:
                 raise UniqueKeyTaken(f"{membership.id} is already written")
+            if identity is not None:
+                self._identities[identity.id] = identity
             self._put(self._orgs, org_id, org)
             self._put(self._users, org_id, user)
             self._put(self._memberships, org_id, membership)
 
     async def create_member(
-        self, org_id: UUID, user: User, membership: Membership, outbox_row: OutboxRow
+        self,
+        org_id: UUID,
+        user: User,
+        membership: Membership,
+        outbox_row: OutboxRow,
+        identity: Identity | None = None,
     ) -> None:
         async with self._lock:
+            if identity is not None:
+                self._require_email_free(identity)
             self._require_live_identity_free(org_id, user)
             self._require_membership_free(org_id, membership)
             if user.id in self._users or membership.id in self._memberships:
                 raise UniqueKeyTaken(f"{user.id} or {membership.id} is already written")
+            if identity is not None:
+                self._identities[identity.id] = identity
+            self._put(self._users, org_id, user, outbox_row)
+            self._put(self._memberships, org_id, membership)
+
+    async def remove_member(
+        self, org_id: UUID, user: User, membership: Membership, outbox_row: OutboxRow
+    ) -> None:
+        async with self._lock:
+            if self._get(self._users, org_id, user.id) is None:
+                raise NotFound(f"user {user.id} is not in {org_id}")
+            if self._get(self._memberships, org_id, membership.id) is None:
+                raise NotFound(f"membership {membership.id} is not in {org_id}")
             self._put(self._users, org_id, user, outbox_row)
             self._put(self._memberships, org_id, membership)
 
@@ -269,7 +302,7 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
         gone_keys = [
             k.id
             for k in self._rows(self._api_keys, org_id)
-            if k.deleted_at is not None and k.deleted_at < before
+            if (k.deleted_at is not None and k.deleted_at < before) or k.expires_at < before
         ]
         gone_sessions = [
             s.id
@@ -297,6 +330,22 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
             + len(gone_sessions)
             + len(gone_tickets)
         )
+
+    async def purge_tenant(self, org_id: UUID) -> int:
+        return (
+            self._drop_tenant(self._users, org_id)
+            + self._drop_tenant(self._memberships, org_id)
+            + self._drop_tenant(self._api_keys, org_id)
+            + self._drop_tenant(self._sessions, org_id)
+            + self._drop_tenant(self._socket_tickets, org_id)
+        )
+
+    @classmethod
+    def _drop_tenant[E: HasId](cls, table: MemoryTable[E], org_id: UUID) -> int:
+        gone = [row.id for row in cls._rows(table, org_id)]
+        for row_id in gone:
+            del table[row_id]
+        return len(gone)
 
     async def write_socket_ticket(self, org_id: UUID, ticket: SocketTicket) -> None:
         self._require_free(

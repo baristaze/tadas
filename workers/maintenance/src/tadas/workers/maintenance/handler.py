@@ -11,10 +11,8 @@ log = logging.getLogger(__name__)
 
 
 class NoopHandlerImpl(WorkHandlerInterface):
-    """Idempotent by construction: handling the same item twice changes nothing."""
-
-    def __init__(self) -> None:
-        self.handled: list[WorkItem] = []
+    """Idempotent by construction: handling the same item twice changes nothing.
+    It holds nothing per item: it runs for the life of the worker."""
 
     async def handle(self, ctx: OpContext, item: WorkItem) -> None:
         log.info(
@@ -24,4 +22,3 @@ class NoopHandlerImpl(WorkHandlerInterface):
             ctx.org_id,
             item.attempts,
         )
-        self.handled.append(item)

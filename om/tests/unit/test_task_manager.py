@@ -282,10 +282,11 @@ async def test_move_places_after_an_anchor_or_at_the_top(manager: TasksManagerIm
     assert await open_titles(manager, ctx, TaskScope.TEAM) == ["a", "c", "b"]
     await move(manager, ctx, b.id, after_id=None)  # to the top
     assert await open_titles(manager, ctx, TaskScope.TEAM) == ["b", "a", "c"]
-    for _ in range(30):  # halving stays ordered through many moves into one gap
+    for _ in range(60):  # halving stays ordered through many moves into one gap
         await move(manager, ctx, c.id, after_id=b.id)
+        assert await open_titles(manager, ctx, TaskScope.TEAM) == ["b", "c", "a"]
         await move(manager, ctx, a.id, after_id=b.id)
-    assert await open_titles(manager, ctx, TaskScope.TEAM) == ["b", "a", "c"]
+        assert await open_titles(manager, ctx, TaskScope.TEAM) == ["b", "a", "c"]
 
     with pytest.raises(ValidationFailed):
         await move(manager, ctx, a.id, after_id=a.id)
@@ -483,3 +484,38 @@ async def test_a_failed_relay_leaves_the_row_for_the_sweep(
     assert await working.relay_pending(10) == 1
     assert await claim_all(outbox) == []
     assert [e.seq for e in await events.get_events(ctx, after_seq=0, limit=10)] == [1]
+
+
+async def test_a_gap_closed_at_float_precision_renumbers_the_open_list(
+    manager: TasksManagerImpl, events: EventsManagerImpl, outbox: OutboxStorageMemoryImpl
+) -> None:
+    # Fifty-odd moves into the same gap halve it down to nothing: the midpoint
+    # then equals the anchor, and the (position, id) tie-break would put the
+    # moved task before it. The list is renumbered instead, every row that
+    # changed is announced, and the order reads as the move meant it.
+    ctx = context(Role.MEMBER)
+    c = await manager.create_task(ctx, make_task(ctx, "c"))
+    b = await manager.create_task(ctx, make_task(ctx, "b"))
+    a = await manager.create_task(ctx, make_task(ctx, "a"))
+    await move(manager, ctx, a.id, after_id=b.id)
+    moved, expected, moves = a, ["b", "a", "c"], 0
+    while [t.position for t in await open_page(manager, ctx)] != [0.0, 1.0, 2.0]:
+        moved, expected = (c, ["b", "c", "a"]) if moved is a else (a, ["b", "a", "c"])
+        await move(manager, ctx, moved.id, after_id=b.id)
+        assert await open_titles(manager, ctx, TaskScope.TEAM) == expected
+        moves += 1
+        assert moves < 200, "the gap never closed"
+    assert 40 < moves < 120, "a gap of one closes after fifty-odd halvings"
+    # The renumbering is a write per task whose position changed, each announced
+    # and recorded like any update, with nothing left pending in the outbox.
+    recorded = await events.get_events(ctx, after_seq=0, limit=1000)
+    renumbering = [e for e in recorded if e.payload["position"] in (0.0, 1.0, 2.0)][-3:]
+    assert {e.target_id for e in renumbering} == {a.id, b.id, c.id}
+    assert all(e.kind == "tasks.task.updated" for e in renumbering)
+    assert await claim_all(outbox) == []
+    # Halving starts afresh from whole numbers, so the next moves stay ordered.
+    for _ in range(10):
+        await move(manager, ctx, c.id, after_id=b.id)
+        assert await open_titles(manager, ctx, TaskScope.TEAM) == ["b", "c", "a"]
+        await move(manager, ctx, a.id, after_id=b.id)
+        assert await open_titles(manager, ctx, TaskScope.TEAM) == ["b", "a", "c"]

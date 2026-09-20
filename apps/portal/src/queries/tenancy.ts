@@ -8,6 +8,7 @@ import type {
   IssuedSessionView,
   LoginRequest,
   MeView,
+  SessionView,
   UserView,
 } from "../api";
 import { api } from "../app/api";
@@ -55,6 +56,11 @@ export function useLogin() {
     mutationFn: (body: LoginRequest) =>
       api.post<IssuedLoginView>("/v1/auth/login", body, { token: null }),
   });
+}
+
+/** Revokes the session the token names; the server answers with the session, revoked. */
+export function useLogout() {
+  return useMutation({ mutationFn: () => api.post<SessionView>("/v1/auth/logout") });
 }
 
 export function useExchangeSession() {

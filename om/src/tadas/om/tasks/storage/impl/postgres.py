@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from datetime import datetime
 from uuid import UUID
 
@@ -110,21 +111,33 @@ class TasksStoragePostgresImpl(PgStorageBase, TasksStorageInterface):
     async def update_task(
         self, org_id: UUID, task: Task, expected_version: int, outbox_row: OutboxRow
     ) -> None:
+        await self.update_tasks(org_id, [(task, expected_version, outbox_row)])
+
+    async def update_tasks(
+        self, org_id: UUID, updates: Sequence[tuple[Task, int, OutboxRow]]
+    ) -> None:
         # The compare-and-set is the statement itself: the version is in the
         # WHERE, so two writers from one snapshot cannot both land. The outbox
-        # row joins the commit only when the update hit a row.
-        values = {k: v for k, v in to_values(task, Tasks).items() if k != "id"}
-        stmt = (
-            update(Tasks)
-            .where(Tasks.id == task.id, Tasks.org_id == org_id, Tasks.version == expected_version)
-            .values(**values)
-            .returning(Tasks.id)
-        )
-        async with self._session_for(stmt) as session:
-            if (await session.execute(stmt)).scalar_one_or_none() is None:
-                await session.rollback()
-                raise await self._why_not(session, org_id, task.id, expected_version)
-            session.add(to_row(outbox_row, OutboxRows, org_id=org_id))
+        # rows join the commit only when every update hit a row; one that
+        # missed rolls the transaction back with nothing landed.
+        async with self._session_for(Tasks) as session:
+            for task, expected_version, _ in updates:
+                values = {k: v for k, v in to_values(task, Tasks).items() if k != "id"}
+                stmt = (
+                    update(Tasks)
+                    .where(
+                        Tasks.id == task.id,
+                        Tasks.org_id == org_id,
+                        Tasks.version == expected_version,
+                    )
+                    .values(**values)
+                    .returning(Tasks.id)
+                )
+                if (await session.execute(stmt)).scalar_one_or_none() is None:
+                    await session.rollback()
+                    raise await self._why_not(session, org_id, task.id, expected_version)
+            for _, _, outbox_row in updates:
+                session.add(to_row(outbox_row, OutboxRows, org_id=org_id))
             await session.commit()
 
     @staticmethod

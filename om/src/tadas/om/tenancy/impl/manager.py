@@ -27,7 +27,7 @@ from tadas.om.opcontext import (
     build_context,
 )
 from tadas.om.outbox import OutboxRelayInterface
-from tadas.om.outbox.types.row import outbox_row, snapshot
+from tadas.om.outbox.types.row import OutboxRow, outbox_row, snapshot
 from tadas.om.tenancy.manager import TenancyManagerInterface
 from tadas.om.tenancy.rules import (
     DUMMY_PASSWORD_HASH,
@@ -111,10 +111,15 @@ class TenancyManagerImpl(TenancyManagerInterface):
         if await self._storage.read_org_by_slug(slug) is not None:
             raise Conflict(f"org slug {slug!r} is taken")
         now = utcnow()
+        # The identity as it should read once the tenant exists: new, or promoted
+        # to operator. It is not written here; it lands in the create below, so
+        # a slug taken meanwhile leaves no identity carrying this attempt's
+        # password or flag, and a retry with another password is not kept out.
         identity = await self._storage.read_identity_by_email(email)
+        to_write: Identity | None = None
         if identity is None:
             identity_id = new_id()
-            identity = Identity(
+            identity = to_write = Identity(
                 id=identity_id,
                 created_at=now,
                 updated_at=now,
@@ -124,12 +129,10 @@ class TenancyManagerImpl(TenancyManagerInterface):
                 password_hash=hash_password(password, secrets.token_bytes(16)),
                 is_operator=operator,
             )
-            await self._storage.write_identity(identity)
         elif operator and not identity.is_operator:
-            identity = identity.model_copy(
+            identity = to_write = identity.model_copy(
                 update={"is_operator": True, "updated_at": now, "updated_by": identity.id}
             )
-            await self._storage.write_identity(identity)
         user_id = new_id()
         org = Org(
             id=new_id(),
@@ -159,8 +162,9 @@ class TenancyManagerImpl(TenancyManagerInterface):
             user_id=user_id,
             role=Role.OWNER,
         )
-        # One commit: a slug taken meanwhile leaves no org without its owner.
-        await self._storage.create_org_with_owner(org.id, org, user, membership)
+        # One commit: a slug taken meanwhile leaves no org without its owner,
+        # and no identity without its org.
+        await self._storage.create_org_with_owner(org.id, org, user, membership, to_write)
         # The principal now exists; everything after this line runs under it.
         ctx = build_context(
             rctx,
@@ -202,10 +206,12 @@ class TenancyManagerImpl(TenancyManagerInterface):
         if not role_at_most(role, ctx.security.role):
             raise NotAuthorized(f"cannot grant role {role.value} above {ctx.security.role.value}")
         now = utcnow()
+        # A new identity lands in the create below, never before it.
         identity = await self._storage.read_identity_by_email(email)
+        to_write: Identity | None = None
         if identity is None:
             identity_id = new_id()
-            identity = Identity(
+            identity = to_write = Identity(
                 id=identity_id,
                 created_at=now,
                 updated_at=now,
@@ -214,7 +220,6 @@ class TenancyManagerImpl(TenancyManagerInterface):
                 email=email,
                 password_hash=hash_password(password, secrets.token_bytes(16)),
             )
-            await self._storage.write_identity(identity)
         for org_id, existing in await self._storage.read_users_by_identity(identity.id):
             if org_id == org.id and existing.deleted_at is None:
                 return ctx, existing, False
@@ -242,7 +247,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
         # so a concurrent add of the same person leaves no membership without
         # its user and no user without a membership.
         row = outbox_row(ctx, "tenancy.user.created", user.id, snapshot(user))
-        await self._storage.create_member(ctx.org_id, user, membership, row)
+        await self._storage.create_member(ctx.org_id, user, membership, row, to_write)
         await self._relay.relay(ctx.org_id, row)
         return ctx, user, True
 
@@ -446,18 +451,20 @@ class TenancyManagerImpl(TenancyManagerInterface):
     async def service_contexts(self, rctx: RequestContext) -> list[OpContext]:
         # Minted for the tenant, not for a member: the system user is the actor
         # and no user or membership is read, so it costs one read per page of
-        # tenants and a tenant whose members have all left is still swept.
+        # tenants and a tenant whose members have all left is still swept. So
+        # is a deleted tenant: its rows and its claimed work are the sweep's to
+        # settle. The system scope comes first: login credentials live under it.
+        scopes = [EMPTY_UUID, *(org.id for org in await self._every_org())]
         return [
             build_context(
                 rctx,
                 user_id=EMPTY_UUID,
-                org_id=org.id,
+                org_id=org_id,
                 role=Role.SERVICE,
                 permissions=permissions_of(Role.SERVICE),
                 credential_kind=CredentialKind.INTERNAL,
             )
-            for org in await self._every_org()
-            if org.deleted_at is None
+            for org_id in scopes
         ]
 
     # The principal.
@@ -540,6 +547,11 @@ class TenancyManagerImpl(TenancyManagerInterface):
         user = await self._live_user(ctx, user_id)
         if not role_at_most(membership.role, ctx.security.role):
             raise NotAuthorized("cannot remove a member above your own role")
+        # Their credentials go first, each revoked with its outbox row the way
+        # a revocation is, so no key of theirs stays listed. A failure here
+        # leaves a member with fewer credentials, which the next remove_member
+        # finishes.
+        revocations = await self._revoke_credentials_of(ctx, user_id)
         now = utcnow()
         removed = user.model_copy(
             update={
@@ -549,8 +561,9 @@ class TenancyManagerImpl(TenancyManagerInterface):
                 "updated_by": ctx.user_id,
             }
         )
-        # The membership ends with the member: soft-deleted beside the user, so
-        # no read lists it and no role change reaches it during the retention.
+        # The membership ends with the member: soft-deleted beside the user in
+        # one commit, so no read lists it, no role change reaches it during
+        # the retention, and no failure leaves a live user without one.
         ended = membership.model_copy(
             update={
                 "deleted_at": now,
@@ -559,9 +572,49 @@ class TenancyManagerImpl(TenancyManagerInterface):
                 "updated_by": ctx.user_id,
             }
         )
-        await self._storage.write_membership(ctx.org_id, ended)
-        await self._write_user(ctx, removed, "deleted")
+        row = outbox_row(ctx, "tenancy.user.deleted", removed.id, snapshot(removed))
+        await self._storage.remove_member(ctx.org_id, removed, ended, row)
+        # The removal is announced first, so a socket of theirs closes because
+        # their membership ended, not because a credential was revoked; then
+        # each revocation, as the record it is. Every row is durable already:
+        # whatever a crash leaves unrelayed, the sweep relays.
+        await self._relay.relay(ctx.org_id, row)
+        for revocation in revocations:
+            await self._relay.relay(ctx.org_id, revocation)
         return removed
+
+    async def _revoke_credentials_of(self, ctx: OpContext, user_id: UUID) -> list[OutboxRow]:
+        """Revokes every live session and every unrevoked api key of the user,
+        a page at a time until none is left, each landing with its outbox row;
+        returns the rows, for the caller to relay in the order it means."""
+        rows: list[OutboxRow] = []
+        page = self._options.max_limit
+        while sessions := await self._storage.read_sessions(ctx.org_id, user_id, utcnow(), page):
+            now = utcnow()
+            for session in sessions:
+                revoked = session.model_copy(
+                    update={"revoked_at": now, "updated_at": now, "updated_by": ctx.user_id}
+                )
+                row = self._session_row(ctx, revoked, "revoked")
+                await self._storage.write_session(ctx.org_id, revoked, row)
+                rows.append(row)
+        while keys := await self._storage.read_api_keys(ctx.org_id, page, user_id):
+            now = utcnow()
+            for api_key in keys:
+                revoked_key = api_key.model_copy(
+                    update={
+                        "deleted_at": now,
+                        "deleted_by": ctx.user_id,
+                        "updated_at": now,
+                        "updated_by": ctx.user_id,
+                    }
+                )
+                row = outbox_row(
+                    ctx, "tenancy.api_key.deleted", revoked_key.id, self._key_snapshot(revoked_key)
+                )
+                await self._storage.write_api_key(ctx.org_id, revoked_key, row)
+                rows.append(row)
+        return rows
 
     # Credentials.
 
@@ -662,7 +715,12 @@ class TenancyManagerImpl(TenancyManagerInterface):
 
     async def purge_deleted(self, ctx: OpContext) -> int:
         ctx.require(Permission.MANAGE_MEMBERS)
-        return await self._storage.purge_deleted(ctx.org_id, utcnow() - self._options.retention)
+        before = utcnow() - self._options.retention
+        org = await self._storage.read_org(ctx.org_id)
+        if org is not None and org.deleted_at is not None and org.deleted_at < before:
+            # The tenant itself is past the retention: every row of it goes.
+            return await self._storage.purge_tenant(ctx.org_id)
+        return await self._storage.purge_deleted(ctx.org_id, before)
 
     async def issue_ticket(self, ctx: OpContext) -> IssuedTicket:
         ctx.require(Permission.READ)
@@ -696,14 +754,18 @@ class TenancyManagerImpl(TenancyManagerInterface):
         await self._storage.write_user(ctx.org_id, user, row)
         await self._relay.relay(ctx.org_id, row)
 
-    async def _write_session(self, ctx: OpContext, session: Session, action: str) -> None:
+    @staticmethod
+    def _session_row(ctx: OpContext, session: Session, action: str) -> OutboxRow:
         # The snapshot never carries the hash; the event is a record, not a credential.
-        row = outbox_row(
+        return outbox_row(
             ctx,
             f"tenancy.session.{action}",
             session.id,
             snapshot(session, exclude=frozenset({"token_hash"})),
         )
+
+    async def _write_session(self, ctx: OpContext, session: Session, action: str) -> None:
+        row = self._session_row(ctx, session, action)
         await self._storage.write_session(ctx.org_id, session, row)
         await self._relay.relay(ctx.org_id, row)
 
@@ -772,11 +834,22 @@ class TenancyManagerImpl(TenancyManagerInterface):
         return org, user, membership
 
     async def _principal_in(self, org_id: UUID, identity_id: UUID) -> tuple[Org, User, Membership]:
+        """The principal a verified identity is in `org_id`, or NotAuthorized: the
+        sign-in is good, the tenant is not theirs, so a client keeps its login
+        and picks another tenant. A gone org, user, or membership is refused the
+        same way; InvalidCredential is for a credential that fails, and a login
+        that names a tenant it cannot enter has not failed."""
         users = await self._storage.read_users_by_identity(identity_id)
-        user_id = next((user.id for user_org, user in users if user_org == org_id), None)
-        if user_id is None:
+        user = next((user for user_org, user in users if user_org == org_id), None)
+        if user is None:
             raise NotAuthorized("this identity is not a member of that org")
-        return await self._principal(org_id, user_id)
+        org = await self._storage.read_org(org_id)
+        if org is None or org.deleted_at is not None:
+            raise NotAuthorized("that org is gone")
+        membership = await self._storage.read_membership_for_user(org_id, user.id)
+        if membership is None:
+            raise NotAuthorized("this identity is no longer a member of that org")
+        return org, user, membership
 
     async def _memberships_of(self, identity_id: UUID) -> tuple[OrgMembership, ...]:
         found: list[OrgMembership] = []

@@ -92,15 +92,23 @@ class WorkerLoop:
         try:
             await self._claim_until_stopped()
         finally:
+            # Every step of the shutdown runs whatever the step before it met, and
+            # `wait_drained()` returns whatever happened: a step that fails is logged.
             unsubscribe()
-            await self._drain()
-            heartbeat.cancel()
-            sweep.cancel()
-            for task in (heartbeat, sweep):
-                with contextlib.suppress(asyncio.CancelledError):
-                    await task
-            await self._mark_offline()
-            self._drained.set()
+            try:
+                await self._drain()
+                heartbeat.cancel()
+                sweep.cancel()
+                for timer, ended in zip(
+                    (heartbeat, sweep),
+                    await asyncio.gather(heartbeat, sweep, return_exceptions=True),
+                    strict=True,
+                ):
+                    if isinstance(ended, Exception):
+                        log.error("%s ended with %r", timer.get_name(), ended)
+                await self._mark_offline()
+            finally:
+                self._drained.set()
 
     def stop(self) -> None:
         self._stopping.set()
@@ -150,8 +158,16 @@ class WorkerLoop:
         ctx, item = claimed
         task = asyncio.create_task(self._run_item(ctx, item), name=f"work-{item.id}")
         self._running[task] = (ctx, item)
-        task.add_done_callback(lambda done: self._running.pop(done, None))
+        task.add_done_callback(self._on_item_done)
         return True
+
+    def _on_item_done(self, task: asyncio.Task[None]) -> None:
+        """A finished item frees a slot, so the claimer is woken: the poll interval
+        bounds how long a queue waits for a worker, not how fast one drains it."""
+        self._running.pop(task, None)
+        if not task.cancelled() and (error := task.exception()) is not None:
+            log.error("work task %s ended with %r", task.get_name(), error)
+        self._wake.set()
 
     # Running one item.
 
@@ -207,24 +223,31 @@ class WorkerLoop:
     async def _renew_lease(
         self, ctx: OpContext, item: WorkItem, owner: asyncio.Task[None] | None
     ) -> None:
-        """Renews every third of the lease, each renewal bounded by that interval so
-        a stalled one counts as failed. A renewal refused with LeaseLost is
-        definitive: another worker holds the item now, so the owner is cancelled
-        at once. Any other failure (a timeout, an engine out of reach) is retried,
-        and once half the lease has passed since the last renewal that succeeded,
-        the owner is cancelled before the lease expires so two workers never
-        advance the same record."""
+        """Renews a third of the lease after the last renewal that succeeded. The
+        fence is half the lease after it: every attempt is bounded by the time
+        left to the fence, a failed one is retried halfway between the first
+        attempt and the fence, and at the fence the owner is cancelled, half
+        the lease before it expires, so two workers never advance the same
+        record. A renewal refused with LeaseLost is definitive: another worker
+        holds the item now, so the owner is cancelled at once."""
         lease = self._options.lease
-        interval = lease / 3
+        interval = (lease / 3).total_seconds()
+        fence = (lease / 2).total_seconds()
+        retry = (fence - interval) / 2
         clock = asyncio.get_running_loop().time
         renewed_at = clock()
+        pause = interval
         while True:
-            await asyncio.sleep(interval.total_seconds())
+            await asyncio.sleep(pause)
+            left = renewed_at + fence - clock()
+            if left <= 0:
+                if owner is not None:
+                    owner.cancel()
+                return
             try:
-                await asyncio.wait_for(
-                    self._work.extend_lease(ctx, item, lease), timeout=interval.total_seconds()
-                )
+                await asyncio.wait_for(self._work.extend_lease(ctx, item, lease), timeout=left)
                 renewed_at = clock()
+                pause = interval
             except LeaseLost as error:
                 log.warning("lease on %s is held elsewhere: %s", item.id, error)
                 if owner is not None:
@@ -232,10 +255,7 @@ class WorkerLoop:
                 return
             except Exception as error:
                 log.warning("lease renewal failed on %s: %r", item.id, error)
-                if clock() - renewed_at >= (lease / 2).total_seconds():
-                    if owner is not None:
-                        owner.cancel()
-                    return
+                pause = min(retry, max(renewed_at + fence - clock(), 0))
 
     # Liveness.
 
@@ -245,10 +265,18 @@ class WorkerLoop:
             await asyncio.sleep(self._options.heartbeat_interval.total_seconds())
 
     async def _heartbeat_once(self) -> None:
+        """One beat, bounded by the interval: a store that stalls or raises counts
+        as a beat that did not stick, the same as one whose reads come back empty."""
         key = f"worker:{self._options.worker_id}"
         ttl = self._options.heartbeat_interval * 3
-        await self._liveness.put(EMPTY_UUID, key, b"online", ttl)
-        if await self._liveness.get(EMPTY_UUID, key) is None:
+        try:
+            async with asyncio.timeout(self._options.heartbeat_interval.total_seconds()):
+                await self._liveness.put(EMPTY_UUID, key, b"online", ttl)
+                stored = await self._liveness.get(EMPTY_UUID, key) is not None
+        except Exception as error:
+            log.warning("heartbeat failed: %r", error)
+            stored = False
+        if not stored:
             self._heartbeat_failures += 1
             if (
                 self._heartbeat_failures >= self._options.heartbeat_failure_limit
@@ -264,7 +292,13 @@ class WorkerLoop:
         self.paused = False
 
     async def _mark_offline(self) -> None:
-        await self._liveness.invalidate(EMPTY_UUID, f"worker:{self._options.worker_id}")
+        """Bounded like a beat: a key that cannot be removed expires on its own."""
+        key = f"worker:{self._options.worker_id}"
+        try:
+            async with asyncio.timeout(self._options.heartbeat_interval.total_seconds()):
+                await self._liveness.invalidate(EMPTY_UUID, key)
+        except Exception as error:
+            log.warning("could not mark offline; the liveness key expires on its own: %r", error)
         self.online = False
 
     # Maintenance.
@@ -309,9 +343,10 @@ class WorkerLoop:
     # Shutdown.
 
     async def _drain(self) -> None:
+        """Cancels every running item and awaits them all: one whose return is
+        refused by a database that is down ends with an error, which
+        `_on_item_done` logs, and stops none of the others."""
         tasks = list(self._running)
         for task in tasks:
             task.cancel()
-        for task in tasks:
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
+        await asyncio.gather(*tasks, return_exceptions=True)

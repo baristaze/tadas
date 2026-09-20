@@ -5,6 +5,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import type { IssuedTicketView } from "../api";
 import { useEffect, type ReactNode } from "react";
 import { api } from "../app/api";
+import { forgetSession } from "../app/forgetSession";
 import { Banner } from "../design/kit";
 import { EVENTS_PAGE, fetchEventsAfter } from "../queries/events";
 import { useConnectionStore } from "../store/connection";
@@ -28,7 +29,7 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
       refreshAll: () => queryClient.invalidateQueries(),
       connection: useConnectionStore,
       pageSize: EVENTS_PAGE,
-      onUnauthenticated: () => useSessionStore.getState().clear(),
+      onUnauthenticated: forgetSession,
     });
     return () => channel.stop();
   }, [token, queryClient]);

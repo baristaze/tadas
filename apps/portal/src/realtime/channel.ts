@@ -158,6 +158,10 @@ export function openChannel(deps: ChannelDeps): Channel {
     stopPolling();
   };
 
+  // A drop is a status change on its own: the store never says open without
+  // a socket, whatever the backoff and the ticket request go on to do. The
+  // first failed cycle is a reconnect in progress; from the second on the
+  // channel is degraded and polls until a socket settles.
   const scheduleReconnect = () => {
     if (stopped) return;
     attempt += 1;
@@ -165,13 +169,16 @@ export function openChannel(deps: ChannelDeps): Channel {
     if (deps.connection.getState().failedCycles > 1) {
       connection.setStatus("degraded");
       startPolling();
+    } else {
+      connection.setStatus("connecting");
     }
     reconnectTimer = setTimeout(() => void connect(), backoffDelay(attempt));
   };
 
+  // The first connect says so; a reconnect keeps the status its drop set.
   const connect = async () => {
     if (stopped) return;
-    connection.setStatus(attempt === 0 ? "connecting" : deps.connection.getState().status);
+    if (attempt === 0) connection.setStatus("connecting");
     let ticket: string;
     try {
       ticket = await deps.requestTicket();
@@ -205,6 +212,8 @@ export function openChannel(deps: ChannelDeps): Channel {
       clearStableTimer();
       if (socket === opened) socket = null;
       if (event.code === CLOSE_UNAUTHENTICATED) {
+        // No reconnect follows, so the status says so before the sign-out.
+        connection.setStatus("closed");
         deps.onUnauthenticated?.();
         return;
       }

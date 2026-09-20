@@ -2,15 +2,16 @@ import logging
 from collections.abc import Sequence
 from datetime import timedelta
 from typing import Any
+from uuid import UUID
 
 from pydantic import ValidationError
 
 from tadas.infra.observability import OUTCOMES
 from tadas.infra.topics import EntityChangedPayload, Topics, TopicsInterface, WorkAvailablePayload
-from tadas.om.base import Platform, new_id, utcnow
+from tadas.om.base import EMPTY_UUID, Platform, new_id, utcnow
 from tadas.om.events import EventsManagerInterface
 from tadas.om.events.manager import audit_event
-from tadas.om.exceptions import LeaseLost, NotFound, ValidationFailed
+from tadas.om.exceptions import InvalidCredential, LeaseLost, NotFound, ValidationFailed
 from tadas.om.opcontext import OpContext, Permission, RequestContext
 from tadas.om.tenancy import TenancyManagerInterface
 from tadas.om.work.manager import WorkManagerInterface
@@ -95,12 +96,20 @@ class WorkManagerImpl(WorkManagerInterface):
         worker_id: str,
         lease: timedelta,
     ) -> tuple[OpContext, WorkItem] | None:
-        found = await self._storage.claim_next(lane, kinds, worker_id, lease)
-        if found is None:
-            return None
-        org_id, item = found
-        ctx = await self._tenancy.service_context(rctx, org_id, item.created_by)
-        return ctx, item
+        while True:
+            found = await self._storage.claim_next(lane, kinds, worker_id, lease)
+            if found is None:
+                return None
+            org_id, item = found
+            try:
+                ctx = await self._tenancy.service_context(rctx, org_id, item.created_by)
+            except InvalidCredential as error:
+                # The claim is written and the tenant is gone: no retry can
+                # bring it back, and a row left claimed would stay so, since
+                # the worker that holds it has no context to settle it under.
+                await self._fail_orphan(org_id, item, str(error))
+                continue
+            return ctx, item
 
     async def complete(self, ctx: OpContext, item: WorkItem) -> WorkItem:
         return await self._transition(
@@ -214,6 +223,29 @@ class WorkManagerImpl(WorkManagerInterface):
         if written is None:
             raise LeaseLost(f"work item {item.id} was taken from {item.claimed_by} mid-write")
         return written
+
+    async def _fail_orphan(self, org_id: UUID, item: WorkItem, reason: str) -> None:
+        """Fails a claimed item whose tenant is gone, conditionally on the claim
+        just written, as the system user. It is a dead letter without an audit
+        event: the tenant's stream is not one to write into any more, so the
+        log line and the counter are its record."""
+        assert item.claim_token is not None
+        now = utcnow()
+        failed = item.model_copy(
+            update={
+                "status": WorkStatus.FAILED,
+                "claimed_by": None,
+                "claim_token": None,
+                "lease_expires_at": None,
+                "last_error": reason,
+                "updated_at": now,
+                "updated_by": EMPTY_UUID,
+            }
+        )
+        if await self._storage.write_item_if_held(org_id, item.claim_token, failed) is None:
+            return  # taken from under this claim meanwhile; whoever holds it settles it
+        OUTCOMES.labels(subsystem="work", outcome="dead_letter").inc()
+        log.error("work item %s (%s) failed for good: %s", item.id, item.kind.value, reason)
 
     async def _dead_letter(self, ctx: OpContext, item: WorkItem) -> None:
         """A failed item is a dead letter: an audit event names it in the tenant's

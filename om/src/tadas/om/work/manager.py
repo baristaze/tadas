@@ -31,7 +31,10 @@ class WorkManagerInterface(ABC):
     ) -> tuple[OpContext, WorkItem] | None:
         """Platform-internal: claims the oldest available item on the lane and rebuilds the
         enqueuer's principal under the service role, refining the request stage the
-        worker minted for this claim; returns the context with the item."""
+        worker minted for this claim; returns the context with the item. An item
+        whose tenant is gone cannot be run and cannot be retried into existence:
+        it is failed in the same call, with the reason, and the claim moves on
+        to the next item, so no row stays claimed with nobody to settle it."""
         ...
 
     @abstractmethod
@@ -77,6 +80,7 @@ class WorkManagerInterface(ABC):
 
     @abstractmethod
     async def maintenance_contexts(self, rctx: RequestContext) -> list[OpContext]:
-        """Platform-internal: one service context per live tenant, for the sweep, each
-        refining the request stage the worker minted for this pass."""
+        """Platform-internal: the tenancy manager's service contexts (the system
+        scope first, then every tenant), for the sweep, each refining the request
+        stage the worker minted for this pass."""
         ...

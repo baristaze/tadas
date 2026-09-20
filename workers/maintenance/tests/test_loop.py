@@ -6,7 +6,14 @@ from pathlib import Path
 from uuid import UUID
 
 import pytest
-from worker_support import build_container, fast_options, make_item, request, sign_in
+from worker_support import (
+    RecordingHandler,
+    build_container,
+    fast_options,
+    make_item,
+    request,
+    sign_in,
+)
 
 from tadas.infra.cache import CacheInterface, CacheScope
 from tadas.infra.observability import request_id_var
@@ -22,7 +29,6 @@ from tadas.om.work.impl.manager import WorkOptions
 from tadas.om.work.types.handler import WorkHandlerInterface
 from tadas.om.work.types.work_item import WorkItem, WorkKind, WorkStatus
 from tadas.workers.maintenance.container import WorkerContainer
-from tadas.workers.maintenance.handler import NoopHandlerImpl
 from tadas.workers.maintenance.loop import LoopOptions, WorkerLoop
 
 
@@ -109,6 +115,35 @@ class FailingWork(LeaseLosingWork):
         raise RuntimeError("engine out of reach")
 
 
+class FailThenStallWork(LeaseLosingWork):
+    """Decorates the real manager: the first renewal fails fast, every later one
+    hangs, as an engine that refuses once and then stops answering behaves."""
+
+    async def extend_lease(self, ctx: OpContext, item: WorkItem, lease: timedelta) -> WorkItem:
+        self.renewals += 1
+        if self.renewals == 1:
+            raise RuntimeError("engine out of reach")
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+
+class FailingReleaseWork(LeaseLosingWork):
+    """Decorates the real manager: renewals go through, but every release fails
+    for a reason that says nothing about the lease, as a database down at
+    shutdown behaves."""
+
+    def __init__(self, inner: WorkManagerInterface) -> None:
+        super().__init__(inner)
+        self.releases = 0
+
+    async def extend_lease(self, ctx: OpContext, item: WorkItem, lease: timedelta) -> WorkItem:
+        return await self._inner.extend_lease(ctx, item, lease)
+
+    async def release(self, ctx: OpContext, item: WorkItem) -> WorkItem:
+        self.releases += 1
+        raise RuntimeError("engine out of reach")
+
+
 class MissingLiveness(CacheInterface):
     """A liveness store whose writes never stick, as an unreachable backend behaves."""
 
@@ -132,6 +167,34 @@ class MissingLiveness(CacheInterface):
 
     async def close(self) -> None:
         return None
+
+
+class StallingLiveness(MissingLiveness):
+    """A liveness store whose every call hangs, as an unreachable backend behaves
+    before its socket times out."""
+
+    async def get(self, org_id: UUID, key: str) -> bytes | None:
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+    async def put(self, org_id: UUID, key: str, value: bytes, ttl: timedelta) -> None:
+        await asyncio.Event().wait()
+
+    async def invalidate(self, org_id: UUID, key: str) -> None:
+        await asyncio.Event().wait()
+
+
+class RaisingLiveness(MissingLiveness):
+    """A liveness store whose every call raises, as a backend that refuses connections behaves."""
+
+    async def get(self, org_id: UUID, key: str) -> bytes | None:
+        raise RuntimeError("connection refused")
+
+    async def put(self, org_id: UUID, key: str, value: bytes, ttl: timedelta) -> None:
+        raise RuntimeError("connection refused")
+
+    async def invalidate(self, org_id: UUID, key: str) -> None:
+        raise RuntimeError("connection refused")
 
 
 def start_loop(
@@ -197,6 +260,24 @@ async def test_claims_within_capacity_and_completes(tmp_path: Path) -> None:
     assert all(rid and rid != str(ctx.request_id) for rid in handler.request_ids.values())
 
 
+async def test_a_finished_item_wakes_the_claimer(tmp_path: Path) -> None:
+    # Every item is queued before the loop starts, so no announcement wakes it:
+    # with one slot, the second and third claims happen only because a finished
+    # item wakes the claimer, never because the poll interval (an hour) passed.
+    container = build_container(tmp_path)
+    ctx = await sign_in(container)
+    items = [make_item(ctx) for _ in range(3)]
+    for item in items:
+        await container.managers.work.enqueue(ctx, item)
+    handler = SlowHandler(hold=0.05)
+    loop, task = start_loop(
+        container, handler, fast_options(capacity=1, poll_interval=timedelta(hours=1))
+    )
+    await until(lambda: len(handler.finished) == 3)
+    loop.stop()
+    await task
+
+
 async def test_lease_is_renewed_while_an_item_runs(tmp_path: Path) -> None:
     container = build_container(tmp_path)
     ctx = await sign_in(container)
@@ -244,7 +325,7 @@ async def test_a_lost_lease_cancels_the_task_at_once(tmp_path: Path) -> None:
 async def test_any_other_renewal_failure_cancels_after_half_the_lease(tmp_path: Path) -> None:
     # A renewal that fails for any other reason says nothing about who holds
     # the item, so it is retried; the task is cancelled once half the lease has
-    # passed without a renewal, still before the lease expires.
+    # passed without a renewal, half the lease before it expires.
     container = build_container(tmp_path)
     ctx = await sign_in(container)
     handler = SlowHandler(hold=5.0)
@@ -257,8 +338,10 @@ async def test_any_other_renewal_failure_cancels_after_half_the_lease(tmp_path: 
     started = asyncio.get_running_loop().time()
     await until(lambda: len(handler.cancelled) == 1, within=2.0)
     cancelled = asyncio.get_running_loop().time()
-    assert failing.renewals == 2, "the first failure is retried, the second is past half the lease"
-    assert (lease / 2).total_seconds() <= cancelled - started < lease.total_seconds()
+    assert failing.renewals == 2, (
+        "the first failure is retried once; the fence comes before a third"
+    )
+    assert (lease / 3).total_seconds() < cancelled - started < (lease * 2 / 3).total_seconds()
     assert handler.finished == []
     loop.stop()
     await task
@@ -284,6 +367,29 @@ async def test_a_stalled_renewal_counts_as_failed_and_cancels_in_time(tmp_path: 
     await task
 
 
+async def test_a_renewal_that_stalls_after_a_failure_still_cancels_in_time(tmp_path: Path) -> None:
+    # A fast failure a third of the lease in is retried; the retry stalls. Each
+    # attempt is bounded by the time left to the fence at half the lease, so
+    # the task is cancelled there, not when the lease has already expired.
+    container = build_container(tmp_path)
+    ctx = await sign_in(container)
+    handler = SlowHandler(hold=5.0)
+    work = FailThenStallWork(container.managers.work)
+    lease = timedelta(seconds=0.9)
+    loop, task = start_loop(container, handler, fast_options(lease=lease), work=work)
+    item = make_item(ctx)
+    await container.managers.work.enqueue(ctx, item)
+    await until(lambda: len(handler.started) == 1)
+    started = asyncio.get_running_loop().time()
+    await until(lambda: len(handler.cancelled) == 1, within=2.0)
+    cancelled = asyncio.get_running_loop().time()
+    assert work.renewals == 2, "the fast failure is retried once, the retry stalls"
+    assert cancelled - started < (lease * 2 / 3).total_seconds(), "fenced at half the lease"
+    assert handler.finished == []
+    loop.stop()
+    await task
+
+
 async def test_sweep_requeues_stale_items_per_tenant(tmp_path: Path) -> None:
     container = build_container(tmp_path)
     ctx = await sign_in(container)
@@ -293,7 +399,7 @@ async def test_sweep_requeues_stale_items_per_tenant(tmp_path: Path) -> None:
         request(), "default", [WorkKind.NOOP], "gone-worker", timedelta(seconds=-1)
     )
     assert lost is not None
-    handler = NoopHandlerImpl()
+    handler = RecordingHandler()
     loop, task = start_loop(container, handler, fast_options())
     await until(lambda: [h.id for h in handler.handled] == [item.id])
     loop.stop()
@@ -347,7 +453,7 @@ async def test_sweep_reaches_a_tenant_whose_members_have_all_left(tmp_path: Path
         ann.model_copy(update={"deleted_at": now, "deleted_by": ann.id, "updated_at": now}),
     )
 
-    loop, task = start_loop(container, NoopHandlerImpl(), fast_options())
+    loop, task = start_loop(container, RecordingHandler(), fast_options())
     await until(lambda: loop.sweeps >= 1)
     loop.stop()
     await task
@@ -376,7 +482,7 @@ async def test_sweep_relays_the_outbox_and_purges_done_rows(tmp_path: Path) -> N
     outbox = container.storage.get_outbox_storage()
     assert [r.id for _, r in await claim_all(outbox)] == [row.id]
     loop, task_ = start_loop(
-        container, NoopHandlerImpl(), fast_options(outbox_retention=timedelta(0))
+        container, RecordingHandler(), fast_options(outbox_retention=timedelta(0))
     )
     await until(lambda: loop.sweeps >= 2)
     loop.stop()
@@ -424,7 +530,7 @@ async def test_a_lost_lease_is_never_written_over(tmp_path: Path) -> None:
 async def test_heartbeat_failure_pauses_claiming(tmp_path: Path) -> None:
     container = build_container(tmp_path)
     ctx = await sign_in(container)
-    handler = NoopHandlerImpl()
+    handler = RecordingHandler()
     loop, task = start_loop(container, handler, fast_options(), liveness=MissingLiveness())
     await until(lambda: loop.paused)
     await container.managers.work.enqueue(ctx, make_item(ctx))
@@ -458,6 +564,64 @@ async def test_stop_drains_first_and_goes_offline_last(tmp_path: Path) -> None:
     assert loop.sweeps >= 1
 
 
+async def test_stop_goes_offline_even_when_a_release_fails(tmp_path: Path) -> None:
+    # The database is down at shutdown: returning the item fails with an error
+    # that says nothing about the lease. The drain still awaits every item,
+    # the heartbeat and the sweep still end, the worker still goes offline,
+    # and `run()` still returns.
+    container = build_container(tmp_path)
+    ctx = await sign_in(container)
+    handler = SlowHandler(hold=5.0)
+    work = FailingReleaseWork(container.managers.work)
+    loop, task = start_loop(container, handler, fast_options(capacity=2), work=work)
+    liveness = container.infra.get_cache(CacheScope.WORKER_LIVENESS)
+    items = [make_item(ctx), make_item(ctx)]
+    for item in items:
+        await container.managers.work.enqueue(ctx, item)
+    await until(lambda: len(handler.started) == 2)
+    await until(lambda: loop.online)
+    loop.stop()
+    await asyncio.wait_for(task, 2.0)
+    await asyncio.wait_for(loop.wait_drained(), 1.0)
+    assert sorted(handler.cancelled) == sorted(item.id for item in items)
+    assert work.releases == 2, "every item was awaited, the first failure stopped nothing"
+    assert loop.running == 0
+    assert await liveness.get(EMPTY_UUID, "worker:maintenance-test") is None
+    assert loop.online is False
+    names = {t.get_name() for t in asyncio.all_tasks()}
+    assert not names & {"heartbeat", "sweep"}, "the timers were cancelled"
+
+
+async def test_a_stalled_liveness_store_counts_as_a_failed_heartbeat(tmp_path: Path) -> None:
+    # Each heartbeat is bounded by its interval, so a store that never answers
+    # pauses claiming the way one whose writes never stick does, and the stop
+    # still returns although marking offline hangs too.
+    container = build_container(tmp_path)
+    ctx = await sign_in(container)
+    handler = RecordingHandler()
+    loop, task = start_loop(container, handler, fast_options(), liveness=StallingLiveness())
+    await until(lambda: loop.paused)
+    await container.managers.work.enqueue(ctx, make_item(ctx))
+    await asyncio.sleep(0.2)
+    assert handler.handled == [], "a worker whose heartbeats stall claims nothing new"
+    loop.stop()
+    await asyncio.wait_for(task, 2.0)
+    await asyncio.wait_for(loop.wait_drained(), 1.0)
+
+
+async def test_a_raising_liveness_store_counts_as_a_failed_heartbeat(tmp_path: Path) -> None:
+    container = build_container(tmp_path)
+    await sign_in(container)
+    loop, task = start_loop(
+        container, RecordingHandler(), fast_options(), liveness=RaisingLiveness()
+    )
+    await until(lambda: loop.paused)
+    loop.stop()
+    await asyncio.wait_for(task, 2.0)
+    await asyncio.wait_for(loop.wait_drained(), 1.0)
+    assert loop.online is False
+
+
 def test_outbox_retention_outlives_the_database_backup_retention() -> None:
     """A role restored to an earlier point than its siblings is reconciled by
     relaying the outbox again, so done rows must survive as long as a backup can
@@ -486,7 +650,7 @@ async def test_sweep_purges_settled_work_items_and_finished_idempotency_records(
     begun = await container.managers.idempotency.begin(ctx, "k", "d", new_id())
     assert begun.attempt_id is not None
     await container.managers.idempotency.finish(ctx, "k", begun.attempt_id, 201, "{}")
-    handler = NoopHandlerImpl()
+    handler = RecordingHandler()
     loop, task = start_loop(container, handler, fast_options())
     await until(lambda: [h.id for h in handler.handled] == [item.id])
     sweeps = loop.sweeps

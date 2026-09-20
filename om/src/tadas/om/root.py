@@ -59,7 +59,7 @@ def build_managers(storage: StorageInterface, infra: InfraInterface) -> Managers
     )
     idempotency = IdempotencyManagerImpl(storage.get_idempotency_storage(), IdempotencyOptions())
     tenancy_operator = TenancyOperatorManagerImpl(
-        storage.get_tenancy_storage(), TenancyOperatorOptions()
+        storage.get_tenancy_storage(), outbox, TenancyOperatorOptions()
     )
     return Managers(
         tenancy=tenancy,

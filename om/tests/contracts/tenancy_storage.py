@@ -15,7 +15,7 @@ from contracts.factories import (
     make_user,
 )
 from tadas.om.base import new_id, utcnow
-from tadas.om.exceptions import Conflict, TenantMismatch, UniqueKeyTaken
+from tadas.om.exceptions import Conflict, NotFound, TenantMismatch, UniqueKeyTaken
 from tadas.om.opcontext import Role
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.tenancy.storage import TenancyStorageInterface
@@ -77,6 +77,51 @@ class TenancyStorageContract:
         assert await storage.read_org(org.id) == org
         assert await storage.read_org_by_slug(org.slug) == org
         assert org in await storage.read_orgs(limit=1000)
+
+    async def test_an_org_write_lands_its_outbox_row_beside_it(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        org = make_org()
+        await storage.write_org(org.id, org)
+        deleted = org.model_copy(update={"deleted_at": utcnow(), "deleted_by": new_id()})
+        row = OutboxRow(
+            id=new_id(),
+            created_at=utcnow(),
+            kind="tenancy.org.deleted",
+            target_id=org.id,
+            payload={"slug": org.slug},
+            actor_id=new_id(),
+            request_id=new_id(),
+            app="portal",
+        )
+        await storage.write_org(org.id, deleted, row)
+        assert await storage.read_org(org.id) == deleted
+        assert await storage.read_org_by_slug(org.slug) is None
+
+    async def test_purge_tenant_takes_every_row_of_the_tenant_and_keeps_the_org(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        org, other = make_org(), make_org("Other")
+        await storage.write_org(org.id, org)
+        await storage.write_org(other.id, other)
+        for tenant in (org, other):
+            user = make_user(make_identity().id)
+            await storage.create_member(
+                tenant.id, user, make_membership(user.id), make_user_row(user)
+            )
+            await storage.write_api_key(tenant.id, make_api_key(user.id, uuid4().hex))
+            await storage.write_session(tenant.id, make_session(new_id(), user.id, uuid4().hex))
+            await storage.write_socket_ticket(tenant.id, make_socket_ticket(user.id, uuid4().hex))
+        assert await storage.purge_tenant(org.id) == 5
+        assert await storage.read_users(org.id, limit=10) == []
+        assert await storage.read_memberships(org.id, limit=10) == []
+        assert await storage.read_api_keys(org.id, limit=10) == []
+        assert await storage.read_org(org.id) == org
+        assert await storage.purge_tenant(org.id) == 0
+        # The other tenant is untouched.
+        assert len(await storage.read_users(other.id, limit=10)) == 1
+        assert len(await storage.read_memberships(other.id, limit=10)) == 1
+        assert len(await storage.read_api_keys(other.id, limit=10)) == 1
 
     async def test_reads_are_tenant_scoped(self, storage: TenancyStorageInterface) -> None:
         org_a, org_b = make_org("A"), make_org("B")
@@ -291,6 +336,39 @@ class TenancyStorageContract:
         assert await storage.read_user(other.id, loser.id) is None
         assert await storage.read_memberships(other.id, limit=10) == []
 
+    async def test_create_org_with_owner_lands_the_identity_in_the_same_commit(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        # A new identity lands with its tenant; when the slug is taken it does
+        # not land at all, and an existing identity is not promoted either.
+        org, identity = make_org(), make_identity()
+        owner = make_user(identity.id)
+        await storage.create_org_with_owner(
+            org.id, org, owner, make_membership(owner.id, Role.OWNER), identity
+        )
+        assert await storage.read_identity(identity.id) == identity
+        other = make_org("Other").model_copy(update={"slug": org.slug})
+        newcomer = make_identity()
+        loser = make_user(newcomer.id)
+        with pytest.raises(UniqueKeyTaken):
+            await storage.create_org_with_owner(
+                other.id, other, loser, make_membership(loser.id, Role.OWNER), newcomer
+            )
+        assert await storage.read_identity(newcomer.id) is None
+        promoted = identity.model_copy(update={"is_operator": True})
+        again = make_user(identity.id)
+        with pytest.raises(UniqueKeyTaken):
+            await storage.create_org_with_owner(
+                other.id, other, again, make_membership(again.id, Role.OWNER), promoted
+            )
+        assert await storage.read_identity(identity.id) == identity
+        # From a free slug the promotion lands with the tenant.
+        free = make_org("Free")
+        await storage.create_org_with_owner(
+            free.id, free, again, make_membership(again.id, Role.OWNER), promoted
+        )
+        assert await storage.read_identity(identity.id) == promoted
+
     async def test_create_member_lands_whole_or_not_at_all(
         self, storage: TenancyStorageInterface
     ) -> None:
@@ -315,6 +393,43 @@ class TenancyStorageContract:
             await storage.create_member(org.id, cid, make_membership(bob.id), make_user_row(cid))
         assert await storage.read_user(org.id, cid.id) is None
         assert len(await storage.read_memberships(org.id, limit=10)) == 1
+        # A new identity lands with the member, or not at all.
+        newcomer = make_identity()
+        dan = make_user(newcomer.id)
+        with pytest.raises(UniqueKeyTaken):
+            await storage.create_member(
+                org.id, dan, make_membership(bob.id), make_user_row(dan), newcomer
+            )
+        assert await storage.read_identity(newcomer.id) is None
+        await storage.create_member(
+            org.id, dan, make_membership(dan.id), make_user_row(dan), newcomer
+        )
+        assert await storage.read_identity(newcomer.id) == newcomer
+        assert await storage.read_user(org.id, dan.id) == dan
+
+    async def test_remove_member_lands_whole_or_not_at_all(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        org, other = make_org(), make_org("Other")
+        bob = make_user(make_identity().id)
+        membership = make_membership(bob.id)
+        await storage.create_member(org.id, bob, membership, make_user_row(bob))
+        gone = utcnow()
+        removed = bob.model_copy(update={"deleted_at": gone, "deleted_by": bob.id})
+        ended = membership.model_copy(update={"deleted_at": gone, "deleted_by": bob.id})
+        # A membership that is not there, or a user of another tenant: nothing lands.
+        with pytest.raises(NotFound):
+            await storage.remove_member(
+                org.id, removed, make_membership(bob.id), make_user_row(bob)
+            )
+        with pytest.raises((NotFound, TenantMismatch)):
+            await storage.remove_member(other.id, removed, ended, make_user_row(bob))
+        assert await storage.read_user(org.id, bob.id) == bob
+        assert await storage.read_membership_for_user(org.id, bob.id) == membership
+        await storage.remove_member(org.id, removed, ended, make_user_row(bob))
+        assert await storage.read_user(org.id, bob.id) == removed
+        assert await storage.read_membership_for_user(org.id, bob.id) is None
+        assert await storage.read_users(org.id, limit=10) == []
 
     async def test_users_by_identity_span_tenants(self, storage: TenancyStorageInterface) -> None:
         identity = make_identity()
@@ -362,7 +477,9 @@ class TenancyStorageContract:
         org = make_org()
         identity = make_identity()
         user = make_user(identity.id)
-        session = make_session(identity.id, user.id, "hash-revoked")
+        session = make_session(
+            identity.id, user.id, uuid4().hex
+        )  # unique across runs of a shared database
         await storage.write_session(org.id, session)
         revoked = session.model_copy(update={"revoked_at": utcnow()})
         await storage.write_session(org.id, revoked, make_session_row(revoked))
@@ -509,8 +626,12 @@ class TenancyStorageContract:
         old_key = make_api_key(kept.id, uuid4().hex).model_copy(
             update={"deleted_at": cut - timedelta(days=1), "deleted_by": kept.id}
         )
+        expired_key = make_api_key(kept.id, uuid4().hex).model_copy(
+            update={"expires_at": cut - timedelta(days=1)}
+        )
         live_key = make_api_key(kept.id, uuid4().hex)
         await storage.write_api_key(org.id, old_key)
+        await storage.write_api_key(org.id, expired_key)
         await storage.write_api_key(org.id, live_key)
         dead_sessions = [
             make_session(new_id(), kept.id, uuid4().hex).model_copy(
@@ -536,8 +657,8 @@ class TenancyStorageContract:
         ]
         for ticket in (*spent_tickets, *fresh_tickets):
             await storage.write_socket_ticket(org.id, ticket)
-        # The user, its membership, the key, two sessions, two tickets.
-        assert await storage.purge_deleted(org.id, cut) == 7
+        # The user, its membership, two keys, two sessions, two tickets.
+        assert await storage.purge_deleted(org.id, cut) == 8
         for session in dead_sessions:
             assert await storage.read_session(org.id, session.id) is None
         for session in live_sessions:
@@ -553,5 +674,6 @@ class TenancyStorageContract:
         assert await storage.read_user(org.id, kept.id) == kept
         assert await storage.read_membership_for_user(org.id, kept.id) is not None
         assert await storage.read_api_key(org.id, old_key.id) is None
+        assert await storage.read_api_key(org.id, expired_key.id) is None
         assert await storage.read_api_key(org.id, live_key.id) == live_key
         assert await storage.purge_deleted(org.id, cut) == 0

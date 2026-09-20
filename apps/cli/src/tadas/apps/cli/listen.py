@@ -1,13 +1,18 @@
 """The realtime mode: one channel, every task change told as a line as it
 happens. The push says which task changed and who did it; the task itself
 is fetched, since a push is a hint and the record is the truth. A deleted
-task cannot be fetched, so the listener remembers every task it has seen."""
+task cannot be fetched, so the listener remembers every task it has seen.
+A read that fails is that change's failure, not the stream's: it is told on
+stderr, the change is skipped, and the task's next change shows its state.
+Only a dead credential (401) ends the listener."""
 
 import sys
 from collections.abc import AsyncIterable, Callable
 from datetime import datetime
 from typing import TextIO
 from uuid import UUID
+
+import httpx
 
 from tadas.apps.cli.model import describe, is_mine
 from tadas.client.client import ApiClient, ApiError
@@ -21,6 +26,16 @@ OpenChannel = Callable[[ApiClient, Callable[[State], None]], Changes]
 
 def open_channel(client: ApiClient, on_state: Callable[[State], None]) -> Changes:
     return Channel(client, on_state=on_state)
+
+
+ReadFailure = (ApiError, httpx.TransportError)
+"""What a read the listener makes per change can fail with."""
+
+
+def ends_the_listener(error: Exception) -> bool:
+    """A 401 says the credential is dead; nothing read from here on would
+    succeed, and the channel is about to be refused the same way."""
+    return isinstance(error, ApiError) and error.status == 401
 
 
 class Names:
@@ -41,7 +56,13 @@ class Names:
 
     async def resolve(self, user_id: UUID) -> str:
         if user_id not in self._names:
-            await self.load()
+            try:
+                await self.load()
+            except ReadFailure as error:
+                if ends_the_listener(error):
+                    raise
+                # The change is still told; the actor stays someone until the
+                # next miss refreshes the names.
         return self.of(user_id)
 
 
@@ -89,7 +110,14 @@ async def listen(
         if change.entity != "task":
             continue
         before = known.get(change.target_id)
-        after = await _fetch(client, change.target_id) if change.action != "deleted" else None
+        try:
+            after = await _fetch(client, change.target_id) if change.action != "deleted" else None
+        except ReadFailure as error:
+            if ends_the_listener(error):
+                raise
+            line = f"a change was not shown, the task could not be read: {error}"
+            print(f"{clock():%H:%M:%S}  {line}", file=err, flush=True)
+            continue
         if after is None:
             known.pop(change.target_id, None)
         else:
@@ -102,9 +130,12 @@ async def listen(
 
 
 async def _fetch(client: ApiClient, task_id: UUID) -> TaskView | None:
+    """The task, or None when it is gone: deleted between the push and the
+    read, which is told from what the listener remembers. Any other failure
+    is the caller's to weigh."""
     try:
         return await client.task(task_id)
     except ApiError as error:
-        if error.status == 404:  # deleted between the push and the read
+        if error.status == 404:
             return None
         raise

@@ -9,11 +9,21 @@ from tadas.infra.aws_errors import translated
 from tadas.infra.observability import OUTCOMES
 from tadas.infra.queues import QueueDepth, QueueInterface, QueueMessage, Queues
 
+LONG_POLL_MAX = timedelta(seconds=20)
+"""The hosted queue's own ceiling on a receive's wait."""
+
+LONG_POLL_MARGIN = timedelta(seconds=2)
+"""A long poll ends this far before the client's read timeout. An empty queue
+answers at the wait's end plus a round trip; a wait at or past the read timeout
+turns every empty poll into a read timeout instead of an empty answer."""
+
 
 class QueueSqsImpl(QueueInterface):
     """The hosted queue moves a message to its dead-letter queue itself, after
     the redrive policy's receive count, so that transition is not observable
-    here; `depth()` reports the dead-lettered count."""
+    here; `depth()` reports the dead-lettered count. A receive's wait is capped
+    below the client's read timeout, so the timeout from settings bounds every
+    call, a long poll included."""
 
     def __init__(
         self,
@@ -34,6 +44,7 @@ class QueueSqsImpl(QueueInterface):
             ),
         )
         self._queue_prefix = queue_prefix
+        self._max_wait = max(timedelta(0), min(LONG_POLL_MAX, timeout - LONG_POLL_MARGIN))
         self._urls: dict[str, str] = {}
 
     def _client(self) -> Any:
@@ -70,7 +81,7 @@ class QueueSqsImpl(QueueInterface):
             response = await sqs.receive_message(
                 QueueUrl=await self._url(sqs, self._name(queue)),
                 MaxNumberOfMessages=max(1, min(max_messages, 10)),
-                WaitTimeSeconds=int(min(wait.total_seconds(), 20)),
+                WaitTimeSeconds=int(min(wait, self._max_wait).total_seconds()),
                 VisibilityTimeout=int(visibility.total_seconds()),
                 AttributeNames=["ApproximateReceiveCount"],
             )

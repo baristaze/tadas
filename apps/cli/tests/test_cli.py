@@ -1,7 +1,9 @@
 """Command mode against the whole API in-process: sign in, the task verbs,
 short ids, assignees by name, JSON output, and the exit codes."""
 
+import asyncio
 import json
+from pathlib import Path
 
 import httpx
 import pytest
@@ -32,6 +34,82 @@ def test_login_keeps_a_session_and_whoami_reads_it(stack: Stack) -> None:
     assert out.exit_code == 0 and out.output == "signed out\n"
     assert config.load_session() is None
     assert stack.tadas("logout", token=None).output == "no session to forget\n"
+
+
+def test_logout_forgets_a_session_the_api_already_revoked(stack: Stack) -> None:
+    """A session revoked elsewhere, or expired, answers 401: there is nothing
+    left to revoke, so the file goes and the command succeeds."""
+    stack.tadas("login", "--email", OWNER["email"], "--password", OWNER["password"], token=None)
+    session = config.load_session()
+    assert session is not None
+
+    async def revoke_elsewhere() -> None:
+        async with stack.client(session.token) as client:
+            await client.logout()
+
+    asyncio.run(revoke_elsewhere())
+    out = stack.tadas("logout", token=None)
+    assert out.exit_code == 0, out.output
+    assert out.output == "signed out; the session was already gone (not_authenticated)\n"
+    assert config.load_session() is None
+
+
+def test_logout_revokes_the_kept_session_and_leaves_the_environments_token_alone(
+    stack: Stack,
+) -> None:
+    stack.tadas("login", "--email", OWNER["email"], "--password", OWNER["password"], token=None)
+    session = config.load_session()
+    assert session is not None
+    bob = stack.session_token(BOB["email"], BOB["password"])
+
+    out = stack.tadas("logout", token=bob)  # TADAS_TOKEN is Bob's; the file is Ann's
+    assert out.exit_code == 0 and out.output == "signed out\n"
+    assert config.load_session() is None
+    assert stack.tadas("whoami", token=bob).exit_code == 0
+    assert stack.tadas("whoami", token=session.token).exit_code == 3
+
+    again = stack.tadas("logout", token=bob)
+    assert again.exit_code == 0
+    assert again.output == "no session to forget; TADAS_TOKEN is the environment's, unset it\n"
+    assert stack.tadas("whoami", token=bob).exit_code == 0
+
+
+def test_logout_forgets_the_session_when_the_api_cannot_be_reached(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The revoke did not happen, which the exit code says; the file goes
+    anyway, so the next command is not run as a session the caller gave up."""
+    monkeypatch.setenv("TADAS_HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("TADAS_TOKEN", raising=False)
+    config.save_session(
+        config.Session(
+            api_url="http://test",
+            token="ses_kept",
+            email="ann@example.test",
+            display_name="Ann",
+            org_slug="acme",
+            org_name="Acme",
+        )
+    )
+
+    def raise_failure(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("refused")
+
+    monkeypatch.setattr(
+        main,
+        "build_client",
+        lambda _url, token: ApiClient(
+            "http://test",
+            app="cli",
+            app_version="cli@test",
+            token=token,
+            transport=httpx.MockTransport(raise_failure),
+        ),
+    )
+    result = CliRunner().invoke(main.app, ["logout"])
+    assert result.exit_code == 4, result.output
+    assert result.output.startswith("session forgotten, not revoked; cannot reach the API:")
+    assert config.load_session() is None
 
 
 def test_a_wrong_password_is_refused_with_exit_1(stack: Stack) -> None:

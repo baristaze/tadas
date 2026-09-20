@@ -1,9 +1,10 @@
 import { useMemo, useState } from "react";
 import { errorMessage } from "../../app/errorMessage";
-import { useApiKeys, useCreateApiKey, useMe, useRevokeApiKey, useUsers } from "../../queries/tenancy";
+import { forgetSession } from "../../app/forgetSession";
+import { useApiKeys, useCreateApiKey, useLogout, useMe, useRevokeApiKey, useUsers } from "../../queries/tenancy";
 import { useNoticesStore } from "../../store/notices";
-import { useSessionStore } from "../../store/session";
 import { apiKeyRows, canManageKeys, memberRows, signedInAs } from "./settingsModel";
+import { signOut } from "./signOut";
 
 export function useSettingsVm() {
   const me = useMe();
@@ -11,7 +12,7 @@ export function useSettingsVm() {
   const apiKeys = useApiKeys();
   const createKey = useCreateApiKey();
   const revokeKey = useRevokeApiKey();
-  const clearSession = useSessionStore((s) => s.clear);
+  const logout = useLogout();
   const notify = useNoticesStore((s) => s.notify);
   const [newKeyName, setNewKeyName] = useState("");
   const [issuedKey, setIssuedKey] = useState<string | null>(null);
@@ -35,6 +36,11 @@ export function useSettingsVm() {
   const revokeApiKey = (id: string) =>
     revokeKey.mutate(id, { onError: (caught) => notify(errorMessage(caught, "The key was not revoked.")) });
 
+  // The server session is revoked, then the token and the cache go; the
+  // realtime channel closes with the token. A sign-out finishes here even
+  // when the server cannot be reached.
+  const leave = () => void signOut({ revoke: () => logout.mutateAsync(), forget: forgetSession, report: notify });
+
   return {
     signedInAs: signedInAs(me.data),
     loading: me.isPending || users.isPending || apiKeys.isPending,
@@ -49,6 +55,7 @@ export function useSettingsVm() {
     createApiKey,
     creating: createKey.isPending,
     revokeApiKey,
-    signOut: clearSession,
+    signOut: leave,
+    signingOut: logout.isPending,
   };
 }

@@ -1,16 +1,58 @@
-import { QueryClient } from "@tanstack/react-query";
+import { QueryClient, type QueryKey } from "@tanstack/react-query";
 import { describe, expect, it } from "vitest";
+import { keys } from "../queries/keys";
 import { parseEnvelope } from "./envelopes";
 import { routeEnvelope } from "./router";
 
+function recording() {
+  const queryClient = new QueryClient();
+  const seen: QueryKey[] = [];
+  queryClient.invalidateQueries = (filters) => {
+    seen.push(filters?.queryKey ?? []);
+    return Promise.resolve();
+  };
+  return { queryClient, seen };
+}
+
+function pushOf(kind: string) {
+  const envelope = parseEnvelope(
+    JSON.stringify({
+      type: "event",
+      sent_at: null,
+      topic: "entity_changed",
+      payload: { kind, target_id: "x", seq: 3, actor_id: "u1" },
+    }),
+  );
+  expect(envelope).not.toBeNull();
+  return envelope!;
+}
+
+/** Every kind the service pushes on the entity_changed topic. */
+const SERVER_KINDS = [
+  "tasks.task.created",
+  "tasks.task.updated",
+  "tasks.task.deleted",
+  "tenancy.api_key.created",
+  "tenancy.api_key.deleted",
+  "tenancy.membership.updated",
+  "tenancy.session.revoked",
+  "tenancy.user.deleted",
+];
+
+/** Every key some query reads under, with one sample argument per factory. */
+function queryKeys(node: unknown): QueryKey[] {
+  if (typeof node === "function") return [(node as (arg: unknown) => QueryKey)("sample")];
+  if (Array.isArray(node)) return [node as QueryKey];
+  if (typeof node === "object" && node !== null) return Object.values(node).flatMap(queryKeys);
+  return [];
+}
+
+const isPrefixOf = (prefix: QueryKey, key: QueryKey) =>
+  prefix.length <= key.length && prefix.every((part, index) => Object.is(part, key[index]));
+
 describe("routeEnvelope", () => {
   it("invalidates queries by the entity name inside the push's kind, ignoring unknown fields", () => {
-    const queryClient = new QueryClient();
-    const seen: unknown[] = [];
-    queryClient.invalidateQueries = (filters) => {
-      seen.push(filters);
-      return Promise.resolve();
-    };
+    const { queryClient, seen } = recording();
     const envelope = parseEnvelope(
       JSON.stringify({
         type: "event",
@@ -20,8 +62,33 @@ describe("routeEnvelope", () => {
       }),
     );
     expect(envelope).not.toBeNull();
-    expect(routeEnvelope(queryClient, envelope!)).toEqual({ invalidated: ["api_key"] });
-    expect(seen).toEqual([{ queryKey: ["api_key"] }]);
+    expect(routeEnvelope(queryClient, envelope!)).toEqual({ invalidated: [keys.apiKeys.all] });
+    expect(seen).toEqual([keys.apiKeys.all]);
+  });
+
+  it("refreshes who the user is when a membership changes, since the role rides the me query", () => {
+    // A user demoted to viewer loses the add, edit, and drag controls on the
+    // push, not on the next reload.
+    const { queryClient, seen } = recording();
+    expect(routeEnvelope(queryClient, pushOf("tenancy.membership.updated"))).toEqual({ invalidated: [keys.me] });
+    expect(seen).toEqual([keys.me]);
+  });
+
+  it("invalidates nothing for a revoked session, which no query reads", () => {
+    // This session's own revocation arrives as a 4401 close, not as a push.
+    const { queryClient, seen } = recording();
+    expect(routeEnvelope(queryClient, pushOf("tenancy.session.revoked"))).toEqual({ invalidated: [] });
+    expect(seen).toEqual([]);
+  });
+
+  it("routes every kind the server pushes to a key some query reads under", () => {
+    const used = queryKeys(keys);
+    for (const kind of SERVER_KINDS) {
+      const { queryClient } = recording();
+      for (const routed of routeEnvelope(queryClient, pushOf(kind)).invalidated) {
+        expect(used.some((key) => isPrefixOf(routed, key)), `${kind} routes to ${JSON.stringify(routed)}`).toBe(true);
+      }
+    }
   });
 
   it("ignores frames that are not pushes and rejects malformed ones", () => {

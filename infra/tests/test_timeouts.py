@@ -6,13 +6,19 @@ site. The cases below then build each client and read the timeout back."""
 
 import ast
 import subprocess
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import timedelta
 from pathlib import Path
+from typing import Any
 
 import aioboto3
+import pytest
 
+from tadas.infra.aws_clients import client_config
 from tadas.infra.buckets.s3 import BucketsS3Impl
 from tadas.infra.observability import span_exporter
+from tadas.infra.queues import Queues
 from tadas.infra.queues.sqs import QueueSqsImpl
 from tadas.infra.secrets.aws import SecretsAwsImpl
 
@@ -123,3 +129,61 @@ def test_the_trace_exporter_is_bounded_by_the_timeout() -> None:
     exporter = span_exporter("http://127.0.0.1:1/", timedelta(seconds=3))
     assert exporter._timeout == 3.0  # pyright: ignore[reportPrivateUsage] (read back, not set)
     assert exporter._endpoint == "http://127.0.0.1:1/v1/traces"  # pyright: ignore[reportPrivateUsage]
+
+
+class RecordingSqs:
+    """Answers an empty queue and keeps the arguments of every receive."""
+
+    def __init__(self) -> None:
+        self.receives: list[dict[str, Any]] = []
+
+    async def get_queue_url(self, **kwargs: Any) -> dict[str, Any]:
+        return {"QueueUrl": "http://queue"}
+
+    async def receive_message(self, **kwargs: Any) -> dict[str, Any]:
+        self.receives.append(kwargs)
+        return {}
+
+
+class RecordingSession:
+    def __init__(self, sqs: RecordingSqs) -> None:
+        self._sqs = sqs
+
+    def client(self, service: str, **kwargs: Any) -> Any:
+        @asynccontextmanager
+        async def open_client() -> AsyncIterator[Any]:
+            yield self._sqs
+
+        return open_client()
+
+
+@pytest.mark.parametrize("timeout_seconds", [1.0, 2.5, 10.0, 21.0, 60.0])
+async def test_the_sqs_long_poll_stays_below_the_read_timeout(timeout_seconds: float) -> None:
+    """A long poll on an empty queue is the endpoint holding the response on
+    purpose, so its wait sits below the client's read timeout: otherwise every
+    empty poll ends in a read timeout, never in an empty answer. The hosted
+    queue caps the wait at twenty seconds on its side."""
+    timeout = timedelta(seconds=timeout_seconds)
+    sqs = RecordingSqs()
+    queue = QueueSqsImpl(
+        RecordingSession(sqs),  # type: ignore[arg-type]
+        endpoint_url=None,
+        region="r",
+        queue_prefix="t-",
+        timeout=timeout,
+    )
+    asked = (timedelta(0), timedelta(seconds=5), timedelta(seconds=20), timedelta(minutes=5))
+    await queue.start()
+    try:
+        for wait in asked:
+            assert await queue.receive(Queues.WEBHOOKS, 1, wait, timedelta(seconds=30)) == []
+    finally:
+        await queue.close()
+    waits = [call["WaitTimeSeconds"] for call in sqs.receives]
+    config: Any = client_config(timeout)  # botocore's Config carries its options untyped
+    read_timeout = config.read_timeout
+    assert all(0 <= w < read_timeout and w <= 20 for w in waits), (waits, read_timeout)
+    assert waits[0] == 0
+    assert waits == sorted(waits), "a longer wait asked for never polls shorter"
+    if timeout_seconds > 21:
+        assert waits[-1] == 20, "a generous read timeout leaves the hosted queue's cap in force"

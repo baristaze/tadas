@@ -1,6 +1,9 @@
 """The one settings object of the API process: storage, infra, and the
 knobs that belong to this service, all under the TADAS_ prefix."""
 
+import ipaddress
+
+from pydantic import field_validator
 from pydantic_settings import SettingsConfigDict
 
 from tadas.infra.impl.settings import InfraSettings
@@ -15,11 +18,28 @@ class ApiSettings(StorageSettings, InfraSettings):
     host: str = "127.0.0.1"
     port: int = 8000
     cors_origins: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
-    # The proxies whose X-Forwarded-For names the client, as addresses, CIDR
-    # blocks, or "*". Empty, the peer is the client and the header is ignored;
-    # the cloud passes the VPC block the load balancer lives in.
+    # The proxies whose X-Forwarded-For names the client, as addresses or
+    # CIDR blocks; never "*", which trusts every peer and so lets any caller
+    # choose its own address for the login rate limit. Empty, the peer is the
+    # client and the header is ignored; the cloud passes the VPC block the
+    # load balancer lives in.
     trusted_proxies: list[str] = []
 
     login_rate_limit: int = 10
     login_rate_window_seconds: int = 60
     realtime_send_buffer_size: int = 256
+
+    @field_validator("trusted_proxies")
+    @classmethod
+    def proxies_are_addresses_or_blocks(cls, proxies: list[str]) -> list[str]:
+        """Each proxy is an address or a CIDR block. uvicorn takes a wildcard as
+        trust in every peer, and a name it cannot parse as a literal host, so
+        both are refused here, where the mistake is one line to find."""
+        for proxy in proxies:
+            try:
+                ipaddress.ip_network(proxy)
+            except ValueError:
+                raise ValueError(
+                    f"trusted_proxies names {proxy!r}; each proxy is an address or a CIDR block"
+                ) from None
+        return proxies

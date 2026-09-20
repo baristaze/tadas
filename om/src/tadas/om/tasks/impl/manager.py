@@ -5,13 +5,13 @@ from tadas.om.base import PROVENANCE_FIELDS, Platform, utcnow
 from tadas.om.exceptions import NotFound, ValidationFailed
 from tadas.om.opcontext import OpContext, Permission
 from tadas.om.outbox import OutboxRelayInterface
-from tadas.om.outbox.types.row import outbox_row, snapshot
+from tadas.om.outbox.types.row import OutboxRow, outbox_row, snapshot
 from tadas.om.tasks.manager import TasksManagerInterface
-from tadas.om.tasks.rules import position_after, top_position
+from tadas.om.tasks.rules import is_between, position_after, renumbered, top_position
 from tadas.om.tasks.storage import TasksStorageInterface
 from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor, TaskFilter
 from tadas.om.tasks.types.page import TaskPage
-from tadas.om.tasks.types.task import Task, TaskStatus
+from tadas.om.tasks.types.task import Task, TaskScope, TaskStatus
 from tadas.om.tenancy import TenancyManagerInterface
 
 
@@ -119,6 +119,8 @@ class TasksManagerImpl(TasksManagerInterface):
                 raise ValidationFailed("a task can only be placed after an open task")
             positions = await self._storage.read_open_positions(ctx.org_id, exclude=task_id)
             position = position_after(anchor.position, positions)
+            if not is_between(anchor.position, position, positions):
+                return await self._renumber(ctx, task, anchor, version)
         moved = task.model_copy(
             update={
                 "position": position,
@@ -168,6 +170,51 @@ class TasksManagerImpl(TasksManagerInterface):
 
     async def _top_position(self, ctx: OpContext, exclude: UUID) -> float:
         return top_position(await self._storage.read_open_positions(ctx.org_id, exclude=exclude))
+
+    async def _renumber(self, ctx: OpContext, task: Task, anchor: Task, version: int) -> Task:
+        """The gap after the anchor has closed at float precision, so the open
+        list is renumbered with the task in its place: one write, conditioned
+        on every row's version, and one outbox row per task whose position
+        changed, since a client sorts by what it hears."""
+        ordered = [t for t in await self._every_open_task(ctx) if t.id != task.id]
+        at = next(index for index, t in enumerate(ordered) if t.id == anchor.id) + 1
+        ordered.insert(at, task.model_copy(update={"version": version}))
+        now = utcnow()
+        updates: list[tuple[Task, int, OutboxRow]] = []
+        moved = task
+        for current, position in zip(ordered, renumbered(len(ordered)), strict=True):
+            if current.id != task.id and current.position == position:
+                continue
+            placed = current.model_copy(
+                update={
+                    "position": position,
+                    "updated_at": now,
+                    "updated_by": ctx.user_id,
+                    "version": current.version + 1,
+                }
+            )
+            row = outbox_row(ctx, "tasks.task.updated", placed.id, snapshot(placed))
+            updates.append((placed, current.version, row))
+            if current.id == task.id:
+                moved = placed
+        await self._storage.update_tasks(ctx.org_id, updates)
+        for _, _, row in updates:
+            await self._relay.relay(ctx.org_id, row)
+        return moved
+
+    async def _every_open_task(self, ctx: OpContext) -> list[Task]:
+        """Every open task of the org, top first, a page at a time."""
+        criterion = TaskFilter(scope=TaskScope.TEAM, user_id=ctx.user_id)
+        tasks: list[Task] = []
+        after: OpenTaskCursor | None = None
+        while True:
+            page = await self._storage.read_open_tasks(
+                ctx.org_id, criterion, after, self._options.max_limit
+            )
+            tasks.extend(page)
+            if len(page) < self._options.max_limit:
+                return tasks
+            after = OpenTaskCursor(position=page[-1].position, id=page[-1].id)
 
     async def _verify(self, ctx: OpContext, task: Task) -> None:
         if not task.title.strip():

@@ -35,6 +35,21 @@ class FailingSubscriber:
         self.closed = True
 
 
+class DroppingSubscriber:
+    """Hands out its messages, then the driver gives up."""
+
+    def __init__(self, messages: list[Message]) -> None:
+        self._messages = list(messages)
+
+    async def get_pubsub_message(self) -> Any:
+        if self._messages:
+            return self._messages.pop(0)
+        raise GlideError("connection dropped")
+
+    async def close(self) -> None:
+        pass
+
+
 class DeliveringSubscriber:
     """Hands out its messages, then waits until closed."""
 
@@ -61,25 +76,38 @@ def failures_counted() -> float:
     )
 
 
-async def test_a_failed_listener_reconnects_and_keeps_delivering(
-    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-) -> None:
-    sent = WorkAvailablePayload(
+def work_available() -> WorkAvailablePayload:
+    return WorkAvailablePayload(
         idempotency_key=new_id(), produced_at=utcnow(), org_id=new_id(), lane="default", kind="NOOP"
     )
-    first = FailingSubscriber()
-    second = DeliveringSubscriber([Message("tadas:topics:work_available", sent)])
-    subscribers: list[Any] = [first, second]
+
+
+def listener_over(
+    monkeypatch: pytest.MonkeyPatch, subscribers: list[Any], backoff: tuple[float, ...]
+) -> tuple[TopicsValkeyImpl, list[Any]]:
+    """A listener whose subscribers are handed out in order; the ones opened so
+    far are the second value."""
+    remaining = list(subscribers)
     opened: list[Any] = []
 
     async def open_next(self: TopicsValkeyImpl) -> Any:
-        subscriber = subscribers.pop(0)
+        subscriber = remaining.pop(0)
         opened.append(subscriber)
         return subscriber
 
     monkeypatch.setattr(TopicsValkeyImpl, "_open_subscriber", open_next)
-    monkeypatch.setattr(TopicsValkeyImpl, "RECONNECT_BACKOFF_SECONDS", (0.01,))
+    monkeypatch.setattr(TopicsValkeyImpl, "RECONNECT_BACKOFF_SECONDS", backoff)
     topics = TopicsValkeyImpl(ValkeyConnection("valkey://127.0.0.1:1/0", timedelta(seconds=1)))
+    return topics, opened
+
+
+async def test_a_failed_listener_reconnects_and_keeps_delivering(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    sent = work_available()
+    first = FailingSubscriber()
+    second = DeliveringSubscriber([Message("tadas:topics:work_available", sent)])
+    topics, opened = listener_over(monkeypatch, [first, second], (0.01,))
     received: asyncio.Queue[TopicPayload] = asyncio.Queue()
 
     async def handler(payload: TopicPayload) -> None:
@@ -99,3 +127,39 @@ async def test_a_failed_listener_reconnects_and_keeps_delivering(
     assert warnings == [
         "topics listener failed (GlideError: connection reset by the server); reconnecting in 0.0s"
     ]
+
+
+async def test_a_received_message_resets_the_backoff(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Consecutive failures climb the backoff; a message proves the bus healthy
+    and the next failure starts from the first step again, so a listener that
+    hiccups a few times over its life never waits the full ladder."""
+    channel = "tadas:topics:work_available"
+    first, last = work_available(), work_available()
+    subscribers: list[Any] = [
+        FailingSubscriber(),
+        FailingSubscriber(),
+        DroppingSubscriber([Message(channel, first)]),
+        DeliveringSubscriber([Message(channel, last)]),
+    ]
+    topics, opened = listener_over(monkeypatch, subscribers, (0.01, 0.06))
+    received: asyncio.Queue[TopicPayload] = asyncio.Queue()
+
+    async def handler(payload: TopicPayload) -> None:
+        await received.put(payload)
+
+    topics.subscribe(Topics.WORK_AVAILABLE, "test", handler)
+    before = failures_counted()
+    with caplog.at_level(logging.WARNING, logger="tadas.infra.topics.valkey"):
+        await topics.start()
+        got = [await asyncio.wait_for(received.get(), timeout=2) for _ in range(2)]
+    await topics.close()
+
+    assert got == [first, last]
+    assert opened == subscribers
+    assert failures_counted() == before + 3
+    delays = [
+        r.getMessage().rsplit(" in ", 1)[1] for r in caplog.records if r.levelno == logging.WARNING
+    ]
+    assert delays == ["0.0s", "0.1s", "0.0s"]

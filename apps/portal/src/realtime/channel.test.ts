@@ -119,6 +119,7 @@ describe("reconnect backoff", () => {
     h.sockets[0]!.receive(hello(3));
     await flush();
     h.sockets[0]!.drop(CLOSE_UNAUTHENTICATED);
+    expect(useConnectionStore.getState().status).toBe("closed");
     await vi.advanceTimersByTimeAsync(60_000);
     expect(h.onUnauthenticated).toHaveBeenCalledTimes(1);
     expect(h.requestTicket).toHaveBeenCalledTimes(1);
@@ -162,6 +163,38 @@ describe("reconnect backoff", () => {
     // Back to the first delay.
     await vi.advanceTimersByTimeAsync(1_000);
     expect(h.requestTicket).toHaveBeenCalledTimes(3);
+  });
+
+  it("says connecting the moment an open socket drops, through the backoff and the ticket request", async () => {
+    // The indicator never says live without a socket: a drop is a status
+    // change on its own, not something the next successful connect fixes.
+    const h = harness();
+    channel = h.channel;
+    await flush();
+    h.sockets[0]!.accept();
+    h.sockets[0]!.receive(hello(5));
+    expect(useConnectionStore.getState().status).toBe("open");
+    h.requestTicket.mockImplementation(() => new Promise(() => undefined));
+    h.sockets[0]!.drop();
+    expect(useConnectionStore.getState().status).toBe("connecting");
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(h.requestTicket).toHaveBeenCalledTimes(2);
+    expect(useConnectionStore.getState().status).toBe("connecting");
+  });
+
+  it("says degraded from the second failed cycle on, through the ticket request too", async () => {
+    const h = harness();
+    channel = h.channel;
+    await flush();
+    h.sockets[0]!.accept();
+    h.sockets[0]!.drop();
+    await vi.advanceTimersByTimeAsync(1_000);
+    h.sockets[1]!.accept();
+    h.sockets[1]!.drop();
+    expect(useConnectionStore.getState().status).toBe("degraded");
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(h.requestTicket).toHaveBeenCalledTimes(3);
+    expect(useConnectionStore.getState().status).toBe("degraded");
   });
 
   it("counts a socket that stays open long enough as connected even without a hello", async () => {

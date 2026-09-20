@@ -19,7 +19,7 @@ else in Python calls `/v1/*`.
 - `stream.py` is the pure placement rule (next, seen, gap), the same cases
   the portal's `stream.ts` pins.
 - `realtime.py` is the channel: a ticket, one subscription, pings at the
-  interval the hello names, gaps replayed from `/v1/events`, reconnects
+  interval the hello names from a timer of their own, gaps replayed from `/v1/events`, reconnects
   with backoff. `async for change in Channel(client)` yields every change
   once, in stream order.
 

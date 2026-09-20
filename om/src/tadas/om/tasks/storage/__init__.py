@@ -3,6 +3,7 @@ tasks never appear in a list. The filter and the cursor arrive as the value
 objects the manager received, unchanged."""
 
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from datetime import datetime
 from uuid import UUID
 
@@ -58,4 +59,14 @@ class TasksStorageInterface(ABC):
         (the named atomic write) when the stored row is at `expected_version`, and
         raises `VersionMismatch` when it is at another version or is gone, landing
         nothing. It never inserts: a missing row is a row that moved."""
+        ...
+
+    @abstractmethod
+    async def update_tasks(
+        self, org_id: UUID, updates: Sequence[tuple[Task, int, OutboxRow]]
+    ) -> None:
+        """The same compare-and-set over many tasks: every task lands with its
+        outbox row, each against its own expected version, in one commit, or
+        none does and `VersionMismatch` is raised. The renumbering of an open
+        list is this write: a list renumbered halfway is out of order."""
         ...

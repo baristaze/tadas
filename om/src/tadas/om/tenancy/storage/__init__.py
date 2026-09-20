@@ -51,25 +51,53 @@ class TenancyStorageInterface(ABC):
         ...
 
     @abstractmethod
-    async def write_org(self, org_id: UUID, org: Org) -> None: ...
+    async def write_org(self, org_id: UUID, org: Org, outbox_row: OutboxRow | None = None) -> None:
+        """Lands the row and its outbox row together: the deletion of an org is
+        announced the way any change is, so the tenant's sockets hear of it."""
+        ...
 
     @abstractmethod
     async def create_org_with_owner(
-        self, org_id: UUID, org: Org, user: User, membership: Membership
+        self,
+        org_id: UUID,
+        org: Org,
+        user: User,
+        membership: Membership,
+        identity: Identity | None = None,
     ) -> None:
         """A named atomic create: the org, its first user, and the owner's
         membership land in one commit or not at all, so a slug or an identity
-        taken meanwhile (`UniqueKeyTaken`) leaves no partial tenant behind."""
+        taken meanwhile (`UniqueKeyTaken`) leaves no partial tenant behind.
+        `identity`, when given, is the owner's identity as it should read once
+        the tenant exists (new, or promoted to operator) and lands in the same
+        commit: a tenant that is refused leaves no identity carrying a password
+        or a flag nobody asked for."""
         ...
 
     @abstractmethod
     async def create_member(
-        self, org_id: UUID, user: User, membership: Membership, outbox_row: OutboxRow
+        self,
+        org_id: UUID,
+        user: User,
+        membership: Membership,
+        outbox_row: OutboxRow,
+        identity: Identity | None = None,
     ) -> None:
         """A named atomic create: the user, their membership, and the outbox row
         land in one commit or not at all. A key taken meanwhile (one live user
         per identity, one membership per user) is `UniqueKeyTaken`, and nothing
-        lands, the outbox row included."""
+        lands, the outbox row included. `identity`, when given, is the person's
+        new identity and lands in the same commit, for the same reason."""
+        ...
+
+    @abstractmethod
+    async def remove_member(
+        self, org_id: UUID, user: User, membership: Membership, outbox_row: OutboxRow
+    ) -> None:
+        """A named atomic write: the soft-deleted user, their ended membership,
+        and the outbox row land in one commit or not at all, so a failure never
+        leaves a live user without a membership, which no list, purge, or
+        retry would reach. Both rows must exist in the tenant."""
         ...
 
     @abstractmethod
@@ -168,9 +196,18 @@ class TenancyStorageInterface(ABC):
     async def purge_deleted(self, org_id: UUID, before: datetime) -> int:
         """The one hard delete: removes the tenant's users soft-deleted before `before`
         with their memberships (and any membership ended before `before`), its
-        api keys revoked before `before`, its sessions revoked or expired before
-        `before`, and its socket tickets redeemed or expired before `before`;
-        returns how many rows went."""
+        api keys revoked or expired before `before`, its sessions revoked or
+        expired before `before`, and its socket tickets redeemed or expired
+        before `before`; returns how many rows went."""
+        ...
+
+    @abstractmethod
+    async def purge_tenant(self, org_id: UUID) -> int:
+        """The hard delete of a deleted tenant's rows once the retention has
+        passed: every user, membership, api key, session, and socket ticket of
+        the tenant, whatever its state; returns how many rows went. The org row
+        stays as the record that the tenant existed, so the operator plane
+        still lists it and no new tenant takes its id."""
         ...
 
     @abstractmethod

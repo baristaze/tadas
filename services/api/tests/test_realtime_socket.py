@@ -3,15 +3,20 @@ handshake failure: the socket is accepted first, then the ticket is
 redeemed. An admitted socket lives as long as the credential behind its
 ticket and no longer."""
 
+import asyncio
 import logging
 from datetime import timedelta
 from pathlib import Path
 from uuid import UUID
 
+import httpx
 import pytest
-from api_support import OWNER, add_member, build_container, run, seed_request
+from api_support import OWNER, add_member, build_container, run, seed_request, sign_in_as
+from httpx import ASGITransport
 from starlette.testclient import TestClient, WebSocketTestSession
+from starlette.types import Message, Scope
 from starlette.websockets import WebSocketDisconnect
+from uvicorn.protocols.utils import ClientDisconnected
 
 from tadas.om.base import utcnow
 from tadas.om.opcontext import Role
@@ -19,6 +24,7 @@ from tadas.om.tenancy.rules import hash_token
 from tadas.services.api.app import create_app
 from tadas.services.api.container import AppContainer
 from tadas.services.api.gateway.auth import CLOSE_UNAUTHENTICATED
+from tadas.services.api.realtime.envelopes import ErrorEnvelope
 from tadas.services.api.realtime.send_buffer import SendBuffer
 from tadas.services.api.services.realtime import CREDENTIAL_REVOKED, MEMBERSHIP_ENDED
 
@@ -64,6 +70,84 @@ def test_a_client_that_drops_mid_stream_is_not_an_error(
             with tc.websocket_connect(f"/v1/realtime?ticket={ticket}"):
                 pass  # the client leaves at once
     assert [r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR] == []
+
+
+async def test_the_close_after_the_peer_left_is_not_an_error(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The app driven the way uvicorn drives it: once the peer's disconnect
+    has been read, every send raises the server's disconnect error, which
+    Starlette turns into a 1006 disconnect. The handler's own close after
+    that is the normal end of a socket: nothing escapes the app and nothing
+    is logged as an error."""
+    container = build_container(tmp_path)
+    _, org = await container.managers.tenancy.bootstrap(
+        seed_request(), "Acme", "acme", OWNER["email"], OWNER["password"], OWNER["name"]
+    )
+    app = create_app(container)
+    async with app.router.lifespan_context(app):
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            headers = await sign_in_as(client, OWNER["email"], OWNER["password"], org.id)
+            ticket = (await client.post("/v1/realtime/tickets", headers=headers)).json()["ticket"]
+        inbound: asyncio.Queue[Message] = asyncio.Queue()
+        outbound: list[Message] = []
+        gone = False
+
+        async def receive() -> Message:
+            nonlocal gone
+            message = await inbound.get()
+            if message["type"] == "websocket.disconnect":
+                gone = True
+            return message
+
+        async def send(message: Message) -> None:
+            if gone:
+                raise ClientDisconnected()
+            outbound.append(message)
+
+        await inbound.put({"type": "websocket.connect"})
+        await inbound.put({"type": "websocket.disconnect", "code": 1001})
+        with caplog.at_level(logging.ERROR):
+            await app(socket_scope(ticket), receive, send)
+    assert [m["type"] for m in outbound] == ["websocket.accept", "websocket.send"]
+    assert [r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR] == []
+
+
+def socket_scope(ticket: str) -> Scope:
+    """The ASGI scope of a socket handshake on the channel route."""
+    return {
+        "type": "websocket",
+        "asgi": {"version": "3.0", "spec_version": "2.3"},
+        "http_version": "1.1",
+        "scheme": "ws",
+        "path": "/v1/realtime",
+        "raw_path": b"/v1/realtime",
+        "root_path": "",
+        "query_string": f"ticket={ticket}".encode(),
+        "headers": [(b"host", b"test")],
+        "client": ("127.0.0.1", 40000),
+        "server": ("test", 80),
+        "subprotocols": [],
+    }
+
+
+def test_a_binary_frame_is_a_bad_command_and_the_socket_stays_open(tmp_path: Path) -> None:
+    container = build_container(tmp_path)
+    _, org = run(
+        container.managers.tenancy.bootstrap(
+            seed_request(), "Acme", "acme", OWNER["email"], OWNER["password"], OWNER["name"]
+        )
+    )
+    with TestClient(create_app(container)) as tc:
+        owner = sign_in(tc, OWNER["email"], OWNER["password"], org.id)
+        with open_socket(tc, owner) as ws:
+            assert ws.receive_json()["type"] == "hello"
+            ws.send_bytes(b"\x00\x01")
+            refused = ErrorEnvelope.model_validate(ws.receive_json())
+            assert refused.code == "bad_command"
+            ws.send_json({"op": "ping"})
+            assert ws.receive_json()["type"] == "pong"
 
 
 def session_token_expiring_in(container: AppContainer, seconds: float) -> str:

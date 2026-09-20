@@ -15,6 +15,14 @@ CLOUD_BACKENDS = {
 }
 
 
+@pytest.fixture(autouse=True)
+def _away_from_the_checkout(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """The settings read `.env` from the working directory, and the
+    checkout's, which `make up` writes, names the compose stack; a test
+    builds its settings from its own values alone."""
+    monkeypatch.chdir(tmp_path)
+
+
 def local_settings(tmp_path: Path, **overrides: object) -> InfraSettings:
     base = {
         "environment": "local",
