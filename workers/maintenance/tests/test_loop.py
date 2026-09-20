@@ -1,4 +1,5 @@
 import asyncio
+import re
 from collections.abc import Callable, Sequence
 from datetime import timedelta
 from pathlib import Path
@@ -336,3 +337,17 @@ async def test_stop_drains_first_and_goes_offline_last(tmp_path: Path) -> None:
     assert stored.last_error == "returned: worker stopping"
     assert await liveness.get(EMPTY_UUID, "worker:maintenance-test") is None
     assert loop.sweeps >= 1
+
+
+def test_outbox_retention_outlives_the_database_backup_retention() -> None:
+    """A role restored to an earlier point than its siblings is reconciled by
+    relaying the outbox again, so done rows must survive as long as a backup can
+    be old. The bound is the database module's `backup_retention_days`."""
+    variables = (
+        Path(__file__).resolve().parents[3] / "deployment/terraform/modules/database/variables.tf"
+    ).read_text()
+    block = variables.split('variable "backup_retention_days"', 1)[1].split("}", 1)[0]
+    match = re.search(r"default\s*=\s*(\d+)", block)
+    assert match is not None
+    backup_days = int(match.group(1))
+    assert LoopOptions(worker_id="w").outbox_retention > timedelta(days=backup_days)

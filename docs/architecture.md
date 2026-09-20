@@ -119,9 +119,10 @@ the system scope as a value (`SYSTEM_SCOPE`, equal to the model's
 `EMPTY_UUID`; a unit test holds the two together). Topics today:
 `work_available` (`lane`, `kind`) and `entity_changed` (`kind`,
 `target_id`, `seq`); `TopicPayload` is a frozen base declared in infra
-with `extra="ignore"`, so a consumer ignores a field it does not know
-and producers and consumers roll out in either order. A topic is best
-effort. Every capability interface declares `start()` and `close()`; the
+with `extra="ignore"`, so a consumer ignores a field it does not know;
+a payload gains only optional, defaulted fields, so an old producer's
+message and a queued row written before a deploy still parse, and the
+two sides roll out in either order. A topic is best effort. Every capability interface declares `start()` and `close()`; the
 roots call them unconditionally and only the Valkey topic listener does
 anything in them.
 
@@ -178,7 +179,9 @@ everything in-process for tests.
   live tenant, then purge the tenant's soft-deleted tasks, removed
   members, and revoked api keys past their retention (the one hard
   delete, 30 days by default), then relay the pending outbox rows and
-  purge the done ones). `tadas-maintenance serve | health`: the
+  purge the done ones after eight days, which outlives the seven-day
+  database backup retention, so a role restored to an earlier point
+  than its siblings is reconciled by relaying the outbox again). `tadas-maintenance serve | health`: the
   image's `HEALTHCHECK` runs `health`, which reads the serving worker's
   liveness key through the same cache and exits non-zero when it is
   missing. It serves its own `/metrics` on `TADAS_METRICS_PORT` (9464).
