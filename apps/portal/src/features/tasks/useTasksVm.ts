@@ -52,6 +52,10 @@ export function useTasksVm() {
   const [leaving, setLeaving] = useState<Leaving[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // One save at a time. The ref refuses the second write before any render
+  // can happen; the flag is what disables the button.
+  const [saving, setSaving] = useState(false);
+  const savingNow = useRef(false);
   const timers = useRef(new Set<ReturnType<typeof setTimeout>>());
 
   useEffect(() => {
@@ -147,8 +151,15 @@ export function useTasksVm() {
     }
   };
 
+  // The form stays open until the server answers, so without the guard a
+  // second submit of the same draft (Enter in the title field, then a click
+  // on Save, or a double click) sends a second write naming the version the
+  // first is already bumping, and the answer is a refusal that reads as
+  // someone else's change when nobody else touched the task.
   const save = async (task: TaskView, edit: TaskEdit) => {
-    if (!canAdd(edit.title)) return;
+    if (!canAdd(edit.title) || savingNow.current) return;
+    savingNow.current = true;
+    setSaving(true);
     try {
       const saved = await update.mutateAsync({
         id: task.id,
@@ -169,6 +180,8 @@ export function useTasksVm() {
         setError("This task changed while you were editing. Copy your draft before closing and reopening the editor to load the latest task.");
       }
     } finally {
+      savingNow.current = false;
+      setSaving(false);
       refresh();
     }
   };
@@ -215,6 +228,7 @@ export function useTasksVm() {
     setTitle,
     add,
     adding: create.isPending,
+    saving,
     canWrite: canWrite(me.data),
     loading: open.isPending || done.isPending,
     error: error ?? open.error?.message ?? done.error?.message ?? null,

@@ -122,3 +122,17 @@ it("says the first tick was refused even after a second tick started", async () 
   });
   expect(vm().error).toBe(STALE_MESSAGE);
 });
+
+it("sends one write for a draft submitted twice before the first answers", async () => {
+  await mount();
+  const edit = { version: 1, title: "Alpha edited", notes: "", assigneeId: null };
+  await act(async () => {
+    void vm().save(alpha, edit);
+    void vm().save(alpha, edit);
+  });
+  expect(net.writes).toHaveLength(1);
+  expect(vm().saving).toBe(true);
+  await act(async () => void net.writes[0]!.resolve({ ...alpha, title: "Alpha edited", version: 2 }));
+  expect(vm().saving).toBe(false);
+  expect(vm().error).toBeNull();
+});

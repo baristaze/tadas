@@ -81,6 +81,7 @@ function TaskGroups({ vm }: { vm: TasksVm }) {
     listMountedAt,
     canWrite: vm.canWrite,
     editing: vm.editingId === entry.task.id,
+    saving: vm.saving,
     assigneeOptions: vm.assigneeOptions,
     onEdit: () => vm.startEditing(entry.task.id),
     onCancelEdit: vm.stopEditing,

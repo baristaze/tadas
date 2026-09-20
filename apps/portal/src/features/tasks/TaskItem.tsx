@@ -22,6 +22,7 @@ export function TaskItem({
   listMountedAt,
   canWrite,
   editing,
+  saving,
   assigneeOptions,
   drag,
   onToggle,
@@ -36,6 +37,7 @@ export function TaskItem({
   listMountedAt: number;
   canWrite: boolean;
   editing: boolean;
+  saving: boolean;
   assigneeOptions: { value: string; label: string }[];
   drag?: DragProps;
   onToggle: () => void;
@@ -114,7 +116,7 @@ export function TaskItem({
           ) : null}
         </span>
       </div>
-      {editing ? <EditForm key={task.id} version={task.version} row={row} assigneeOptions={assigneeOptions} onSave={onSave} onCancel={onCancelEdit} onDelete={onDelete} /> : null}
+      {editing ? <EditForm key={task.id} version={task.version} row={row} saving={saving} assigneeOptions={assigneeOptions} onSave={onSave} onCancel={onCancelEdit} onDelete={onDelete} /> : null}
     </li>
   );
 }
@@ -122,6 +124,7 @@ export function TaskItem({
 function EditForm({
   version,
   row,
+  saving,
   assigneeOptions,
   onSave,
   onCancel,
@@ -129,6 +132,7 @@ function EditForm({
 }: {
   version: number;
   row: TaskRow;
+  saving: boolean;
   assigneeOptions: { value: string; label: string }[];
   onSave: (edit: TaskEdit) => void;
   onCancel: () => void;
@@ -152,7 +156,9 @@ function EditForm({
       <TextArea label="Notes" value={notes} onChange={setNotes} />
       <Select label="Assigned to" value={assigneeId} options={assigneeOptions} onChange={setAssigneeId} />
       <div style={{ display: "flex", gap: tokens.space.sm }}>
-        <Button type="submit" disabled={!title.trim()}>
+        {/* The draft names the version it was opened at, so a second submit
+            of the same draft would be refused as someone else's change. */}
+        <Button type="submit" disabled={!title.trim() || saving}>
           Save
         </Button>
         <Button tone="plain" onClick={onCancel}>
