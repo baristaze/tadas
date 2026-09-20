@@ -136,6 +136,10 @@ make test-integration  # the same storage contracts over Postgres, plus migratio
 - `infra/` cache, buckets, topics, queues, secrets, observability
 - `services/` web services; `workers/` background roles; `apps/` clients: the
   portal, with its generated API types and one transport client under
-  `src/api/`, and the CLI; `clients/python/` the one Python client
-- `deployment/` compose, images, Terraform
+  `src/api/` (a deadline on every call; the session in the tab's session
+  storage, never local storage), and the CLI; `clients/python/` the one
+  Python client
+- `deployment/` compose, images, Terraform; the portal's distribution
+  sends the security headers, a `Content-Security-Policy` naming its own
+  origin and the API among them
 - `docs/` as built, ADRs, runbooks; `scripts/` dev.sh and the cloud migration runner

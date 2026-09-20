@@ -207,7 +207,12 @@ everything in-process for tests.
   through every route's `errorElement` and React's root error hooks. The
   API is reached through `src/api/`: the committed `openapi.json` at the
   app root, generated types behind the facade `types.ts`, one transport
-  client. Every push and every event record carry `actor_id`, so a client
+  client, which puts a deadline on every call (`requestTimeoutMs` in the
+  runtime config, 30 seconds by default) and rejects a call that runs
+  out with `RequestTimeout`. The session token lives in memory and in
+  the tab's session storage, so a reload survives and a closed tab
+  forgets; never in local storage, and a token an earlier build left
+  there is dropped on load. Every push and every event record carry `actor_id`, so a client
   can say who changed what, and the hello frame and every pong carry
   the stream position (`seq`), so a client replays from there after a
   reconnect even when no push reached it before the drop, and a push
@@ -284,7 +289,16 @@ everything in-process for tests.
   `app.tadas.fyi`), with certificates and records in one Route 53 zone. The
   portal reads `/config.json`, written per environment by Terraform, before
   it renders, and calls the API cross-origin; locally it falls back to the
-  `VITE_` build variables.
+  `VITE_` build variables. The distribution's response headers policy,
+  declared beside it in the portal module, sends the security headers:
+  a `Content-Security-Policy` that names the page's own origin, the API
+  over HTTPS and over the websocket (both from `api_url`), the error
+  reporter's origin when a DSN is set, and nothing else, with no unsafe
+  directive because the build has no inline script or style; plus
+  `nosniff`, `DENY` framing, the referrer policy, and HSTS. An offline
+  `terraform test` in the module pins the header. The local nginx sends
+  no such header: the API and GlitchTip origins it would name are build
+  arguments the static config cannot read.
 
 ## Checks
 
