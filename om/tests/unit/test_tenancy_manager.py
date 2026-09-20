@@ -966,4 +966,5 @@ async def test_a_raced_add_member_leaves_no_membership_without_its_user(
     assert sorted(m.user_id for m in await storage.read_memberships(org.id, limit=10)) == sorted(
         [bob.id, org.created_by]
     )
-    assert await outbox.read_pending(10) == []  # the losing add announced nothing
+    pending = await outbox.claim_pending(10, utcnow(), timedelta(0), timedelta(0), timedelta(0))
+    assert pending == []  # the losing add announced nothing

@@ -1181,6 +1181,7 @@
             "schema": {
               "anyOf": [
                 {
+                  "maxLength": 255,
                   "type": "string"
                 },
                 {
@@ -2739,6 +2740,7 @@
             "schema": {
               "anyOf": [
                 {
+                  "maxLength": 255,
                   "type": "string"
                 },
                 {
