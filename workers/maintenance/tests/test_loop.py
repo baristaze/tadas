@@ -127,6 +127,23 @@ class FailThenStallWork(LeaseLosingWork):
         raise AssertionError("unreachable")
 
 
+class FailingReleaseWork(LeaseLosingWork):
+    """Decorates the real manager: renewals go through, but every release fails
+    for a reason that says nothing about the lease, as a database down at
+    shutdown behaves."""
+
+    def __init__(self, inner: WorkManagerInterface) -> None:
+        super().__init__(inner)
+        self.releases = 0
+
+    async def extend_lease(self, ctx: OpContext, item: WorkItem, lease: timedelta) -> WorkItem:
+        return await self._inner.extend_lease(ctx, item, lease)
+
+    async def release(self, ctx: OpContext, item: WorkItem) -> WorkItem:
+        self.releases += 1
+        raise RuntimeError("engine out of reach")
+
+
 class MissingLiveness(CacheInterface):
     """A liveness store whose writes never stick, as an unreachable backend behaves."""
 
@@ -150,6 +167,34 @@ class MissingLiveness(CacheInterface):
 
     async def close(self) -> None:
         return None
+
+
+class StallingLiveness(MissingLiveness):
+    """A liveness store whose every call hangs, as an unreachable backend behaves
+    before its socket times out."""
+
+    async def get(self, org_id: UUID, key: str) -> bytes | None:
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+    async def put(self, org_id: UUID, key: str, value: bytes, ttl: timedelta) -> None:
+        await asyncio.Event().wait()
+
+    async def invalidate(self, org_id: UUID, key: str) -> None:
+        await asyncio.Event().wait()
+
+
+class RaisingLiveness(MissingLiveness):
+    """A liveness store whose every call raises, as a backend that refuses connections behaves."""
+
+    async def get(self, org_id: UUID, key: str) -> bytes | None:
+        raise RuntimeError("connection refused")
+
+    async def put(self, org_id: UUID, key: str, value: bytes, ttl: timedelta) -> None:
+        raise RuntimeError("connection refused")
+
+    async def invalidate(self, org_id: UUID, key: str) -> None:
+        raise RuntimeError("connection refused")
 
 
 def start_loop(
@@ -517,6 +562,64 @@ async def test_stop_drains_first_and_goes_offline_last(tmp_path: Path) -> None:
     assert stored.last_error == "returned: worker stopping"
     assert await liveness.get(EMPTY_UUID, "worker:maintenance-test") is None
     assert loop.sweeps >= 1
+
+
+async def test_stop_goes_offline_even_when_a_release_fails(tmp_path: Path) -> None:
+    # The database is down at shutdown: returning the item fails with an error
+    # that says nothing about the lease. The drain still awaits every item,
+    # the heartbeat and the sweep still end, the worker still goes offline,
+    # and `run()` still returns.
+    container = build_container(tmp_path)
+    ctx = await sign_in(container)
+    handler = SlowHandler(hold=5.0)
+    work = FailingReleaseWork(container.managers.work)
+    loop, task = start_loop(container, handler, fast_options(capacity=2), work=work)
+    liveness = container.infra.get_cache(CacheScope.WORKER_LIVENESS)
+    items = [make_item(ctx), make_item(ctx)]
+    for item in items:
+        await container.managers.work.enqueue(ctx, item)
+    await until(lambda: len(handler.started) == 2)
+    await until(lambda: loop.online)
+    loop.stop()
+    await asyncio.wait_for(task, 2.0)
+    await asyncio.wait_for(loop.wait_drained(), 1.0)
+    assert sorted(handler.cancelled) == sorted(item.id for item in items)
+    assert work.releases == 2, "every item was awaited, the first failure stopped nothing"
+    assert loop.running == 0
+    assert await liveness.get(EMPTY_UUID, "worker:maintenance-test") is None
+    assert loop.online is False
+    names = {t.get_name() for t in asyncio.all_tasks()}
+    assert not names & {"heartbeat", "sweep"}, "the timers were cancelled"
+
+
+async def test_a_stalled_liveness_store_counts_as_a_failed_heartbeat(tmp_path: Path) -> None:
+    # Each heartbeat is bounded by its interval, so a store that never answers
+    # pauses claiming the way one whose writes never stick does, and the stop
+    # still returns although marking offline hangs too.
+    container = build_container(tmp_path)
+    ctx = await sign_in(container)
+    handler = RecordingHandler()
+    loop, task = start_loop(container, handler, fast_options(), liveness=StallingLiveness())
+    await until(lambda: loop.paused)
+    await container.managers.work.enqueue(ctx, make_item(ctx))
+    await asyncio.sleep(0.2)
+    assert handler.handled == [], "a worker whose heartbeats stall claims nothing new"
+    loop.stop()
+    await asyncio.wait_for(task, 2.0)
+    await asyncio.wait_for(loop.wait_drained(), 1.0)
+
+
+async def test_a_raising_liveness_store_counts_as_a_failed_heartbeat(tmp_path: Path) -> None:
+    container = build_container(tmp_path)
+    await sign_in(container)
+    loop, task = start_loop(
+        container, RecordingHandler(), fast_options(), liveness=RaisingLiveness()
+    )
+    await until(lambda: loop.paused)
+    loop.stop()
+    await asyncio.wait_for(task, 2.0)
+    await asyncio.wait_for(loop.wait_drained(), 1.0)
+    assert loop.online is False
 
 
 def test_outbox_retention_outlives_the_database_backup_retention() -> None:

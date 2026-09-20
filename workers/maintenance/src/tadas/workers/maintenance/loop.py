@@ -92,15 +92,23 @@ class WorkerLoop:
         try:
             await self._claim_until_stopped()
         finally:
+            # Every step of the shutdown runs whatever the step before it met, and
+            # `wait_drained()` returns whatever happened: a step that fails is logged.
             unsubscribe()
-            await self._drain()
-            heartbeat.cancel()
-            sweep.cancel()
-            for task in (heartbeat, sweep):
-                with contextlib.suppress(asyncio.CancelledError):
-                    await task
-            await self._mark_offline()
-            self._drained.set()
+            try:
+                await self._drain()
+                heartbeat.cancel()
+                sweep.cancel()
+                for timer, ended in zip(
+                    (heartbeat, sweep),
+                    await asyncio.gather(heartbeat, sweep, return_exceptions=True),
+                    strict=True,
+                ):
+                    if isinstance(ended, Exception):
+                        log.error("%s ended with %r", timer.get_name(), ended)
+                await self._mark_offline()
+            finally:
+                self._drained.set()
 
     def stop(self) -> None:
         self._stopping.set()
@@ -257,10 +265,18 @@ class WorkerLoop:
             await asyncio.sleep(self._options.heartbeat_interval.total_seconds())
 
     async def _heartbeat_once(self) -> None:
+        """One beat, bounded by the interval: a store that stalls or raises counts
+        as a beat that did not stick, the same as one whose reads come back empty."""
         key = f"worker:{self._options.worker_id}"
         ttl = self._options.heartbeat_interval * 3
-        await self._liveness.put(EMPTY_UUID, key, b"online", ttl)
-        if await self._liveness.get(EMPTY_UUID, key) is None:
+        try:
+            async with asyncio.timeout(self._options.heartbeat_interval.total_seconds()):
+                await self._liveness.put(EMPTY_UUID, key, b"online", ttl)
+                stored = await self._liveness.get(EMPTY_UUID, key) is not None
+        except Exception as error:
+            log.warning("heartbeat failed: %r", error)
+            stored = False
+        if not stored:
             self._heartbeat_failures += 1
             if (
                 self._heartbeat_failures >= self._options.heartbeat_failure_limit
@@ -276,7 +292,13 @@ class WorkerLoop:
         self.paused = False
 
     async def _mark_offline(self) -> None:
-        await self._liveness.invalidate(EMPTY_UUID, f"worker:{self._options.worker_id}")
+        """Bounded like a beat: a key that cannot be removed expires on its own."""
+        key = f"worker:{self._options.worker_id}"
+        try:
+            async with asyncio.timeout(self._options.heartbeat_interval.total_seconds()):
+                await self._liveness.invalidate(EMPTY_UUID, key)
+        except Exception as error:
+            log.warning("could not mark offline; the liveness key expires on its own: %r", error)
         self.online = False
 
     # Maintenance.
@@ -321,9 +343,10 @@ class WorkerLoop:
     # Shutdown.
 
     async def _drain(self) -> None:
+        """Cancels every running item and awaits them all: one whose return is
+        refused by a database that is down ends with an error, which
+        `_on_item_done` logs, and stops none of the others."""
         tasks = list(self._running)
         for task in tasks:
             task.cancel()
-        for task in tasks:
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
+        await asyncio.gather(*tasks, return_exceptions=True)
