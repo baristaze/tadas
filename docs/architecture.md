@@ -353,7 +353,35 @@ context on keeps the stage the callee needs.
 
 Every table belongs to one database role (`core`, `activity`, `queue`,
 `admin`); the map in `tadas.om.storage.roles` decides the schema, the
-pool, and the migration chain. Migrations are hand-written SQL under
+pool, and the migration chain.
+
+Every table also belongs to one tenancy scope, and that map, in
+`tadas.om.storage.scopes`, decides the row-level security policy it
+carries: `system` for a global table (no policy), `org` for rows that
+belong to a tenant, `both` for rows that belong to a tenant and to a
+person in it, and `identity` for rows that belong to an identity and no
+tenant, which no table is today. The policy is the second fence
+([ADR 0016](adr/0016-row-level-security-is-the-second-fence.md)). The
+first one is the predicate in the query, and it is the only one the
+business layer relies on: no manager and no impl assumes a policy
+exists, and the cross-tenant cases of the contract suites run unchanged
+over Postgres. The policy is what catches the predicate that went
+missing. `PgStorageBase._session_for` is the funnel every statement
+already passes, and it takes the scope of the call, so the tenant is
+named once per transaction and not once per query: it writes
+`app.org_id`, and `app.user_id` when the call narrows to one person,
+with `set_config(..., true)`, which dies with the transaction. Each
+policy is `FOR ALL`, `USING` and `WITH CHECK` the same expression, with
+`FORCE ROW LEVEL SECURITY` so the owner is held too, and the
+application's login is never a superuser and never carries `BYPASSRLS`,
+either of which walks past every policy. A transaction that names no
+tenant reads nothing and is refused every write: fail closed, with the
+silent read the accepted price. `EMPTY_UUID` as the tenant is the system
+scope, the cross-tenant sweeps and the login lookups, spelled at the
+call site and held to the enumerated exceptions by
+`om/tests/unit/test_session_scope.py`. What proves the policy is live
+rather than merely enabled is the two-run negative control in
+[the tenant isolation runbook](runbooks/tenant-isolation.md). Migrations are hand-written SQL under
 `om/migrations/sql/<role>/` with Alembic wrappers; `core`, `activity`,
 and `queue` have chains today, and `admin` has no table yet. Each role's
 pool carries bounds of its own: a size, how long a checkout waits before
@@ -917,7 +945,15 @@ sets nor lists, with a reason, as one it leaves at the local default.
 `make migrate-check` compares
 every role's ORM metadata with the migrated schema; it needs the compose
 database, so CI's integration job runs it and the fast gate does not
-([ADR 0003](adr/0003-migrate-check-in-the-integration-job.md)).
+([ADR 0003](adr/0003-migrate-check-in-the-integration-job.md)). It
+compares tables, columns, and indexes, and a policy is invisible to it,
+so `om/tests/unit/test_scopes.py` holds the scope map to the tables and
+to the migration chain in the fast gate, and
+`om/tests/integration/test_row_level_security.py` reads `pg_class` and
+`pg_policies` off the migrated database and asserts every table holds
+what its scope declares, that the login is neither a superuser nor
+`BYPASSRLS`, and that a transaction with no scope reads nothing and is
+refused its writes.
 
 ## Decisions
 
