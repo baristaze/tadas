@@ -451,18 +451,22 @@ class TenancyManagerImpl(TenancyManagerInterface):
     async def service_contexts(self, rctx: RequestContext) -> list[OpContext]:
         # Minted for the tenant, not for a member: the system user is the actor
         # and no user or membership is read, so it costs one read per page of
-        # tenants and a tenant whose members have all left is still swept.
+        # tenants and a tenant whose members have all left is still swept. The
+        # system scope comes first: login credentials are stored under it.
+        scopes = [
+            EMPTY_UUID,
+            *(org.id for org in await self._every_org() if org.deleted_at is None),
+        ]
         return [
             build_context(
                 rctx,
                 user_id=EMPTY_UUID,
-                org_id=org.id,
+                org_id=org_id,
                 role=Role.SERVICE,
                 permissions=permissions_of(Role.SERVICE),
                 credential_kind=CredentialKind.INTERNAL,
             )
-            for org in await self._every_org()
-            if org.deleted_at is None
+            for org_id in scopes
         ]
 
     # The principal.

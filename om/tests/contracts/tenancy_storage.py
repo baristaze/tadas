@@ -581,8 +581,12 @@ class TenancyStorageContract:
         old_key = make_api_key(kept.id, uuid4().hex).model_copy(
             update={"deleted_at": cut - timedelta(days=1), "deleted_by": kept.id}
         )
+        expired_key = make_api_key(kept.id, uuid4().hex).model_copy(
+            update={"expires_at": cut - timedelta(days=1)}
+        )
         live_key = make_api_key(kept.id, uuid4().hex)
         await storage.write_api_key(org.id, old_key)
+        await storage.write_api_key(org.id, expired_key)
         await storage.write_api_key(org.id, live_key)
         dead_sessions = [
             make_session(new_id(), kept.id, uuid4().hex).model_copy(
@@ -608,8 +612,8 @@ class TenancyStorageContract:
         ]
         for ticket in (*spent_tickets, *fresh_tickets):
             await storage.write_socket_ticket(org.id, ticket)
-        # The user, its membership, the key, two sessions, two tickets.
-        assert await storage.purge_deleted(org.id, cut) == 7
+        # The user, its membership, two keys, two sessions, two tickets.
+        assert await storage.purge_deleted(org.id, cut) == 8
         for session in dead_sessions:
             assert await storage.read_session(org.id, session.id) is None
         for session in live_sessions:
@@ -625,5 +629,6 @@ class TenancyStorageContract:
         assert await storage.read_user(org.id, kept.id) == kept
         assert await storage.read_membership_for_user(org.id, kept.id) is not None
         assert await storage.read_api_key(org.id, old_key.id) is None
+        assert await storage.read_api_key(org.id, expired_key.id) is None
         assert await storage.read_api_key(org.id, live_key.id) == live_key
         assert await storage.purge_deleted(org.id, cut) == 0

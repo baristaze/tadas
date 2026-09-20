@@ -142,8 +142,10 @@ class TenancyManagerInterface(ABC):
 
     @abstractmethod
     async def service_contexts(self, rctx: RequestContext) -> list[OpContext]:
-        """Platform-internal: one service context per live tenant, for sweeps.
-        Minted for the tenant, not for a member: it carries the tenant, the
+        """Platform-internal: one service context per tenant, for sweeps, with
+        one for the system scope (`EMPTY_UUID` as the org) first, since login
+        credentials live there and a sweep that never visits it lets them pile
+        up. Minted for the tenant, not for a member: it carries the tenant, the
         service role, and the system user (`EMPTY_UUID`) as its user id, so a
         tenant whose members have all left is still swept."""
         ...
@@ -230,10 +232,11 @@ class TenancyManagerInterface(ABC):
     @abstractmethod
     async def purge_deleted(self, ctx: OpContext) -> int:
         """The sweep, for one tenant: hard-deletes removed members (and their
-        memberships), revoked api keys, revoked or expired sessions, and
-        redeemed or expired socket tickets past the retention period; returns
-        how many rows went. Erasing a person is this purge; personal data lives
-        in named fields (`email`, `display_name`)."""
+        memberships), revoked or expired api keys, revoked or expired sessions,
+        and redeemed or expired socket tickets past the retention period;
+        returns how many rows went. Under the system scope it is the expired
+        login credentials that go. Erasing a person is this purge; personal
+        data lives in named fields (`email`, `display_name`)."""
         ...
 
     @abstractmethod

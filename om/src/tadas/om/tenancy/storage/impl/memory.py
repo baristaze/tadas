@@ -302,7 +302,7 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
         gone_keys = [
             k.id
             for k in self._rows(self._api_keys, org_id)
-            if k.deleted_at is not None and k.deleted_at < before
+            if (k.deleted_at is not None and k.deleted_at < before) or k.expires_at < before
         ]
         gone_sessions = [
             s.id

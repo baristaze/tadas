@@ -321,7 +321,10 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
             purged += len((await session.execute(memberships)).scalars().all())
             keys = (
                 delete(ApiKeys)
-                .where(ApiKeys.org_id == org_id, ApiKeys.deleted_at < before)
+                .where(
+                    ApiKeys.org_id == org_id,
+                    or_(ApiKeys.deleted_at < before, ApiKeys.expires_at < before),
+                )
                 .returning(ApiKeys.id)
             )
             purged += len((await session.execute(keys)).scalars().all())

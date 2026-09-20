@@ -77,6 +77,7 @@ class WorkManagerInterface(ABC):
 
     @abstractmethod
     async def maintenance_contexts(self, rctx: RequestContext) -> list[OpContext]:
-        """Platform-internal: one service context per live tenant, for the sweep, each
-        refining the request stage the worker minted for this pass."""
+        """Platform-internal: the tenancy manager's service contexts (the system
+        scope first, then every tenant), for the sweep, each refining the request
+        stage the worker minted for this pass."""
         ...

@@ -7,7 +7,7 @@ from contracts.work_storage import make_item
 
 from tadas.infra.impl.local import InfraLocalImpl
 from tadas.infra.topics import EntityChangedPayload, TopicPayload, Topics, WorkAvailablePayload
-from tadas.om.base import new_id, utcnow
+from tadas.om.base import EMPTY_UUID, new_id, utcnow
 from tadas.om.exceptions import DuplicateWorkItem, LeaseLost, NotFound, ValidationFailed
 from tadas.om.opcontext import AppContext, AppType, CredentialKind, OpContext, RequestContext, Role
 from tadas.om.root import Managers, build_managers
@@ -228,10 +228,11 @@ async def test_requeue_stale_runs_per_tenant_under_a_maintenance_context(
     )
 
     contexts = await managers.work.maintenance_contexts(request())
-    assert [c.org_id for c in contexts] == [ctx.org_id]
+    assert [c.org_id for c in contexts] == [EMPTY_UUID, ctx.org_id]
     assert all(c.security.role is Role.SERVICE for c in contexts)
-    assert await managers.work.requeue_stale(contexts[0]) == 2
-    assert await managers.work.requeue_stale(contexts[0]) == 0
+    assert await managers.work.requeue_stale(contexts[0]) == 0, "nothing queued under the system"
+    assert await managers.work.requeue_stale(contexts[1]) == 2
+    assert await managers.work.requeue_stale(contexts[1]) == 0
 
     again = await managers.work.claim(request(), "default", [WorkKind.NOOP], "w2", LEASE)
     assert again is not None and again[1].attempts == 2 and again[1].id != exhausted.id

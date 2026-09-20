@@ -184,7 +184,7 @@ async def test_service_and_socket_contexts_refine_the_request_they_are_given(
     rctx = request()
     service = await manager.service_context(rctx, org.id, owner.user_id)
     assert service.security.role is Role.SERVICE and service.request_id == rctx.request_id
-    assert [c.request_id for c in await manager.service_contexts(rctx)] == [rctx.request_id]
+    assert {c.request_id for c in await manager.service_contexts(rctx)} == {rctx.request_id}
 
     login = await manager.login(request(), "ann@example.test", "pw-1234")
     ictx = await manager.authenticate_login(request(), login.token)

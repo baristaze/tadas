@@ -193,9 +193,9 @@ class TenancyStorageInterface(ABC):
     async def purge_deleted(self, org_id: UUID, before: datetime) -> int:
         """The one hard delete: removes the tenant's users soft-deleted before `before`
         with their memberships (and any membership ended before `before`), its
-        api keys revoked before `before`, its sessions revoked or expired before
-        `before`, and its socket tickets redeemed or expired before `before`;
-        returns how many rows went."""
+        api keys revoked or expired before `before`, its sessions revoked or
+        expired before `before`, and its socket tickets redeemed or expired
+        before `before`; returns how many rows went."""
         ...
 
     @abstractmethod
