@@ -15,7 +15,7 @@ COMPOSE ?= docker compose $(COMPOSE_ENV) -f deployment/local/docker-compose.yml
 COMPOSE_FULL := $(COMPOSE) -f deployment/local/docker-compose.full.yml
 ROLES := core activity queue admin
 
-.PHONY: help setup up down reset urls infra-up devx-up stack-up infra-down migrate seed demo-gif demo-cli-gif migrate-check check lint format-check typecheck test-unit test-integration openapi
+.PHONY: help setup up down reset urls infra-up devx-up stack-up infra-down infra-reset migrate seed demo-gif demo-cli-gif migrate-check check lint format-check typecheck test-unit test-integration openapi
 
 # This Makefile alone, never $(MAKEFILE_LIST): the includes above put
 # .env.example and .env in that list, and grep prefixes every match with the
@@ -40,8 +40,9 @@ up: .env ## Everything: stack, migrations, seed, app containers, dashboards; kee
 down: ## Stop every local container; the data stays for the next `make up`
 	$(COMPOSE_FULL) --profile devx down --remove-orphans
 
+# Names every file and profile so no container of any of them is left behind.
 reset: ## Wipe every container and all local data, then `make up`
-	$(MAKE) --no-print-directory infra-down
+	$(COMPOSE_FULL) --profile devx down -v --remove-orphans
 	$(MAKE) --no-print-directory up
 
 urls: ## Print the local URLs and the seeded sign-in
@@ -70,9 +71,14 @@ devx-up: ## The local stack plus developer dashboards (pgweb, Valkey Admin, Elas
 stack-up: ## The local stack plus the api, maintenance, and portal containers
 	$(COMPOSE_FULL) up -d --build --wait
 
-# Names every file and profile so no container of any of them is left behind.
-infra-down: ## Stop every local container, dashboards and app containers too, and drop the volumes
-	$(COMPOSE_FULL) --profile devx down -v --remove-orphans
+# The shortcuts above are the developer's path; these are the steps they wrap,
+# which is what CI and a developer debugging one of them run one at a time.
+infra-down: ## Stop the dependencies; the data stays, as after `make down`
+	$(COMPOSE) down --remove-orphans
+
+infra-reset: ## Recreate the dependencies with their volumes removed, and nothing else
+	$(COMPOSE) down -v --remove-orphans
+	$(MAKE) --no-print-directory infra-up
 
 # The local targets (migrate, migrate-check, seed, test-integration) refuse a
 # database whose host is not local, so a stray .env never points them at a
