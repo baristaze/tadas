@@ -47,7 +47,7 @@ async def mint_ticket(ctx: Ctx, realtime: RealtimeService) -> TicketView:
 async def channel(
     websocket: WebSocket, ctx: SocketCtx, realtime: RealtimeService, buffer: SocketSendBuffer
 ) -> None:
-    await websocket.accept()
+    # The gateway accepted the socket before it redeemed the ticket.
     drainer = asyncio.create_task(buffer.drain(websocket), name=f"send-buffer-{ctx.user_id}")
     subscriptions: dict[Topics, Callable[[], None]] = {}
     buffer.offer(

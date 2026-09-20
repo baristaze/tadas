@@ -198,8 +198,12 @@ everything in-process for tests.
   bearer (a session token or an api key), `Identity` is
   `authenticate_login` over it (the sign-in credential, on the tenant
   choice and the operator gate), `OperatorCtx` is `admit_operator` over the
-  identity, and the socket builds the request stage from its scope and
-  redeems its ticket. The login route takes the request stage alone.
+  identity, and the socket builds the request stage from its scope,
+  accepts the handshake, and then redeems its ticket: a refusal is a
+  close with code 4401 on the open socket, which both clients read as
+  "sign in again" (a close before the accept would reach the wire as an
+  HTTP 403 handshake failure, indistinguishable from any other refusal).
+  The login route takes the request stage alone.
   Per socket the process keeps one bounded send buffer
   (`realtime/send_buffer.py`, `TADAS_REALTIME_SEND_BUFFER_SIZE`) and a
   drainer; a full buffer drops the oldest frame and the client replays.

@@ -16,6 +16,7 @@ import { behind, eventEnvelope, isLastPage, place, type Cursor } from "./stream"
 import { backoffDelay, DEGRADED_POLL_INTERVAL_MS, PING_INTERVAL_MS } from "./timeouts";
 
 const TOPICS = ["entity_changed"];
+const CLOSE_UNAUTHENTICATED = 4401;
 
 export function RealtimeProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
@@ -154,11 +155,18 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
         if (envelope.type === "hello" && cursor === null) cursor = envelope.seq;
         enqueue(() => deliver(envelope));
       };
-      socket.onclose = () => {
+      socket.onclose = (event) => {
         if (pingTimer) clearInterval(pingTimer);
         pingTimer = null;
         socket = null;
-        if (!stopped) scheduleReconnect();
+        if (stopped) return;
+        // 4401: the credential behind the ticket is gone; reconnecting would
+        // not help, so the session ends and the sign-in screen takes over.
+        if (event.code === CLOSE_UNAUTHENTICATED) {
+          useSessionStore.getState().clear();
+          return;
+        }
+        scheduleReconnect();
       };
       socket.onerror = () => socket?.close();
     };
