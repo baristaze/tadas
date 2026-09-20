@@ -10,16 +10,22 @@
 name: tadas
 
 services:
+  # The superuser is `postgres` and the application's login is `tadas`, which
+  # the init script creates as LOGIN NOSUPERUSER NOBYPASSRLS and makes the
+  # owner of the database. A superuser walks past every row-level security
+  # policy, so the second fence only exists for a login that is not one. The
+  # init script runs on an empty data directory: `make reset` after a pull.
   postgres:
     image: postgres:18-alpine
     environment:
-      POSTGRES_USER: tadas
-      POSTGRES_PASSWORD: tadas
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
       POSTGRES_DB: tadas
     ports:
       - "127.0.0.1:55432:5432"
     volumes:
       - postgres:/var/lib/postgresql
+      - ./postgres/initdb:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U tadas -d tadas"]
       interval: 2s
@@ -73,7 +79,10 @@ services:
     profiles: [devx]
     restart: unless-stopped
     environment:
-      PGWEB_DATABASE_URL: postgres://tadas:tadas@postgres:5432/tadas?sslmode=disable
+      # The superuser, not the application's login: `tadas` is fenced by the
+      # row-level security policies and a browser with no tenant set reads
+      # nothing. A local dashboard is a place to look at every row.
+      PGWEB_DATABASE_URL: postgres://postgres:postgres@postgres:5432/tadas?sslmode=disable
     ports:
       - "127.0.0.1:${TADAS_PGWEB_PORT:-58081}:8081"
     depends_on:
@@ -157,13 +166,15 @@ services:
     image: postgres:18-alpine
     profiles: [devx]
     environment:
-      PGPASSWORD: tadas
+      PGPASSWORD: postgres
+    # The superuser creates the database and hands it to the application's
+    # login, which is not allowed to create one of its own.
     command:
       - sh
       - -c
       - >-
-        psql -h postgres -U tadas -d tadas -tAc "select 1 from pg_database where datname = 'glitchtip'" | grep -q 1
-        || psql -h postgres -U tadas -d tadas -c "create database glitchtip"
+        psql -h postgres -U postgres -d postgres -tAc "select 1 from pg_database where datname = 'glitchtip'" | grep -q 1
+        || psql -h postgres -U postgres -d postgres -c "create database glitchtip owner tadas"
     depends_on:
       postgres:
         condition: service_healthy

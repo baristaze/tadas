@@ -23,7 +23,7 @@ The data services' ports are fixed, since the `TADAS_*_URL` knobs name them.
 |---------|---------------|----------------------------|---------|
 | portal | http://localhost:55173 | `portal:8080` | `owner@example.test` (owner) or `bob@example.test` (member), both `tadas-local` (after `make seed`) |
 | api | http://127.0.0.1:8000 (`/docs`, `/metrics`, `/healthz`) | `api:8000` | |
-| postgres | `127.0.0.1:55432` | `postgres:5432` | `tadas` / `tadas`, database `tadas` |
+| postgres | `127.0.0.1:55432` | `postgres:5432` | `tadas` / `tadas`, database `tadas`; the superuser is `postgres` / `postgres` |
 | valkey | `127.0.0.1:56379` | `valkey:6379` | none: user `default`, no password |
 | elasticmq (SQS) | http://127.0.0.1:59324 | `elasticmq:9324` | any key |
 | minio (S3) | http://127.0.0.1:59000 | `minio:9000` | `tadas` / `tadastadas` |
@@ -40,6 +40,17 @@ The data services' ports are fixed, since the `TADAS_*_URL` knobs name them.
 
 `maintenance` publishes no port; its healthcheck reads its liveness key in
 Valkey, and Prometheus scrapes its `/metrics` inside the network.
+
+Postgres has two logins. `tadas` is the application's: every process, every
+migration and every test connects as it, and the init script in
+`postgres/initdb/` creates it `LOGIN NOSUPERUSER NOBYPASSRLS` and makes it the
+owner of the database. Either attribute would walk past every row-level
+security policy, and those policies are the second tenant fence, so a login
+that carries one turns the fence into a drawing. `postgres` is the superuser,
+for the things a fenced login may not do: creating GlitchTip's database, and
+pgweb, which is there to show every row. The init script runs once, on an
+empty data directory, so a stack that was up before it existed needs
+`make reset`.
 
 The local Valkey has no authentication: every client is the built-in
 `default` user, with no password and full access. Valkey Admin still asks
