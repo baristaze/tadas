@@ -11,7 +11,9 @@ from tadas.om.storage.tables.base import Base, IdentifiableMixin
 class Events(IdentifiableMixin, Base):
     __tablename__ = "events"
     # A stream read by seq: org_id leads the one compound index, so it gets no
-    # index of its own, and the read by id is served by the primary key.
+    # index of its own, and the read by id is served by the primary key. The
+    # unique (org_id, seq) is a guard on the cursor row's invariant; the append
+    # takes its number from the cursor, never from this index.
     __org_id_index__ = False
     __table_args__ = (Index("uq_events_org_id_seq", "org_id", "seq", unique=True),)
     seq: Mapped[int]

@@ -1,51 +1,57 @@
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
-from sqlalchemy import func, insert, literal, select
+from sqlalchemy import Table, insert, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 
 from tadas.om.events.storage import EventStorageInterface
+from tadas.om.events.storage.tables.event_cursors import EventCursors
 from tadas.om.events.storage.tables.events import Events
 from tadas.om.events.types.event import Event
-from tadas.om.exceptions import Conflict
-from tadas.om.storage.impl.pg_base import PgStorageBase
+from tadas.om.exceptions import TenantMismatch, UniqueKeyTaken
+from tadas.om.storage.impl.pg_base import PgStorageBase, violated_constraint
 from tadas.om.storage.utils.translation import to_model, to_values
-
-APPEND_RETRIES = 32
-"""Two appenders in one tenant race on the unique (org_id, seq); the loser
-computes the next seq again. The retries are bounded so a broken index
-surfaces as a Conflict instead of a spin."""
 
 
 class EventStoragePostgresImpl(PgStorageBase, EventStorageInterface):
     async def append(self, org_id: UUID, event: Event) -> Event:
-        for _ in range(APPEND_RETRIES):
+        # The next number comes from the tenant's cursor row, `head + 1` under
+        # the row's lock, in the same transaction as the event: two appends to
+        # one tenant queue on the lock and each leaves with the next number. The
+        # first append inserts the row. Never `MAX(seq) + 1` and a retry on the
+        # unique index: on a busy tenant that loop is a Conflict generator.
+        take_next = (
+            pg_insert(EventCursors)
+            .values(org_id=org_id, head=1)
+            .on_conflict_do_update(
+                index_elements=[EventCursors.org_id],
+                set_={"head": EventCursors.head + 1},
+            )
+            .returning(EventCursors.head)
+        )
+        async with self._session_for(Events) as session:
+            head = (await session.execute(take_next)).scalar_one()
+            values: dict[str, Any] = {**to_values(event, Events), "org_id": org_id, "seq": head}
+            stmt = insert(Events).values(values).returning(Events)
             try:
-                return await self._append_once(org_id, event)
-            except IntegrityError:
-                # Either the seq race or the id already appended; the second
-                # case is the relay running twice and returns what is stored.
+                row = (await session.execute(stmt)).scalar_one()
+                appended = to_model(row, Event)
+                await session.commit()
+            except IntegrityError as error:
+                # The rollback returns the number with it, so the stream stays gapless.
+                await session.rollback()
+                constraint = violated_constraint(error)
+                if constraint != cast(Table, Events.__table__).primary_key.name:
+                    raise UniqueKeyTaken(
+                        f"events {event.id}: {constraint or 'a unique key'} is taken"
+                    ) from error
+                # The id is already appended: the relay ran twice, and the
+                # second run returns what is stored.
                 stored = await self._read(org_id, event.id)
-                if stored is not None:
-                    return stored
-                continue
-        raise Conflict(f"could not append event {event.id} for org {org_id}")
-
-    async def _append_once(self, org_id: UUID, event: Event) -> Event:
-        columns = Events.__table__.c
-        values: dict[str, Any] = {**to_values(event, Events), "org_id": org_id}
-        values.pop("seq", None)
-        next_seq = func.coalesce(func.max(Events.seq), 0) + 1
-        names = [*values, "seq"]
-        source = select(
-            *(literal(values[name], columns[name].type).label(name) for name in values),
-            next_seq.label("seq"),
-        ).where(Events.org_id == org_id)
-        stmt = insert(Events).from_select(names, source).returning(Events)
-        async with self._session_for(stmt) as session:
-            row = (await session.execute(stmt)).scalar_one()
-            appended = to_model(row, Event)
-            await session.commit()
+                if stored is None:
+                    raise TenantMismatch(f"events {event.id} is not in {org_id}") from error
+                return stored
             return appended
 
     async def _read(self, org_id: UUID, event_id: UUID) -> Event | None:
@@ -66,6 +72,7 @@ class EventStoragePostgresImpl(PgStorageBase, EventStorageInterface):
             return [to_model(row, Event) for row in result.scalars()]
 
     async def read_head(self, org_id: UUID) -> int:
-        stmt = select(func.coalesce(func.max(Events.seq), 0)).where(Events.org_id == org_id)
+        # The cursor row is the head: one row, never a scan of the stream.
+        stmt = select(EventCursors.head).where(EventCursors.org_id == org_id)
         async with self._session_for(stmt) as session:
             return int(await session.scalar(stmt) or 0)

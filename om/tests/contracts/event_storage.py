@@ -67,7 +67,33 @@ class EventStorageContract:
     async def test_concurrent_appends_never_share_or_skip_a_seq(
         self, storage: EventStorageInterface
     ) -> None:
+        # N appends race on one tenant's cursor and leave with 1..N: no gap, no
+        # duplicate, and the head is the last of them.
+        org, n = new_id(), 32
+        appended = await asyncio.gather(*(storage.append(org, make_event()) for _ in range(n)))
+        assert sorted(e.seq for e in appended) == list(range(1, n + 1))
+        assert [e.seq for e in await storage.read_after(org, 0, n * 2)] == list(range(1, n + 1))
+        assert await storage.read_head(org) == n
+
+    async def test_concurrent_appends_keep_one_cursor_per_tenant(
+        self, storage: EventStorageInterface
+    ) -> None:
+        # Two tenants racing at once never see each other's numbers.
+        org_a, org_b, n = new_id(), new_id(), 16
+        appended = await asyncio.gather(
+            *(storage.append(org, make_event()) for org in (org_a, org_b) * n)
+        )
+        assert sorted(e.seq for e in appended[0::2]) == list(range(1, n + 1))
+        assert sorted(e.seq for e in appended[1::2]) == list(range(1, n + 1))
+        assert await storage.read_head(org_a) == n
+        assert await storage.read_head(org_b) == n
+
+    async def test_a_retried_append_consumes_no_seq(self, storage: EventStorageInterface) -> None:
+        # The retry of an appended id rolls back, and the number it took goes
+        # back with it: the next event is 2, not 3.
         org = new_id()
-        appended = await asyncio.gather(*(storage.append(org, make_event()) for _ in range(10)))
-        assert sorted(e.seq for e in appended) == list(range(1, 11))
-        assert [e.seq for e in await storage.read_after(org, 0, 20)] == list(range(1, 11))
+        event = make_event()
+        await storage.append(org, event)
+        await storage.append(org, event)
+        assert (await storage.append(org, make_event())).seq == 2
+        assert await storage.read_head(org) == 2

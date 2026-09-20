@@ -209,9 +209,16 @@ context on keeps the stage the callee needs.
   `activity` role: `Event(Identifiable)` with `seq` (per tenant, gapless,
   assigned by the append, the one number storage assigns), `kind`
   (`<namespace>.<entity>.<action>`, or an audit kind), `target_id`, a
-  `payload`, and the actor and request that produced it. The append is
+  `payload`, and the actor and request that produced it. The append
+  takes the number from the tenant's cursor row in `event_cursors`,
+  `head + 1` under the row's lock inside the append's own transaction,
+  so two appends to one tenant queue on the row and a rollback returns
+  the number with it; it never computes `MAX(seq) + 1` and retries on
+  the unique `(org_id, seq)` index, which stays as a guard. The cursor
+  row is also the tenant's head seq: `read_head`, the number the first
+  frame and every pong carry, reads that one row. The append is
   idempotent on the event id, so relaying an outbox row twice appends
-  once. No update, no delete. The entity events reach the stream through
+  once and consumes no number. No update, no delete. The entity events reach the stream through
   the event storage, from the outbox relay; the manager's `append` is for
   an audit entry (the work manager's dead letter), requires `WRITE`, and
   stamps the actor, the request, and the app from the context, never
