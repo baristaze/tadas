@@ -30,6 +30,7 @@ import {
 } from "./tasksModel";
 
 export interface TaskEdit {
+  version: number;
   title: string;
   notes: string;
   assigneeId: string | null;
@@ -145,7 +146,7 @@ export function useTasksVm() {
           title: edit.title.trim(),
           notes: edit.notes,
           assignee_id: edit.assigneeId,
-          version: task.version,
+          version: edit.version,
         },
       });
       editOpen((data) => pagesWithTaskReplaced(data, saved));
@@ -154,6 +155,9 @@ export function useTasksVm() {
       setError(null);
     } catch (cause) {
       fail(cause);
+      if (isStale(cause)) {
+        setError("This task changed while you were editing. Copy your draft before closing and reopening the editor to load the latest task.");
+      }
     } finally {
       refresh();
     }

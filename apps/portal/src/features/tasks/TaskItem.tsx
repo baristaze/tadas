@@ -114,24 +114,28 @@ export function TaskItem({
           ) : null}
         </span>
       </div>
-      {editing ? <EditForm key={task.updated_at} row={row} assigneeOptions={assigneeOptions} onSave={onSave} onCancel={onCancelEdit} onDelete={onDelete} /> : null}
+      {editing ? <EditForm key={task.id} version={task.version} row={row} assigneeOptions={assigneeOptions} onSave={onSave} onCancel={onCancelEdit} onDelete={onDelete} /> : null}
     </li>
   );
 }
 
 function EditForm({
+  version,
   row,
   assigneeOptions,
   onSave,
   onCancel,
   onDelete,
 }: {
+  version: number;
   row: TaskRow;
   assigneeOptions: { value: string; label: string }[];
   onSave: (edit: TaskEdit) => void;
   onCancel: () => void;
   onDelete: () => void;
 }) {
+  // A draft belongs to the version first opened, even when realtime refreshes the row.
+  const [draftVersion] = useState(version);
   const [title, setTitle] = useState(row.title);
   const [notes, setNotes] = useState(row.notes);
   const [assigneeId, setAssigneeId] = useState(row.assigneeId ?? "");
@@ -140,7 +144,7 @@ function EditForm({
       className="tadas-arriving"
       onSubmit={(event) => {
         event.preventDefault();
-        onSave({ title, notes, assigneeId: assigneeId || null });
+        onSave({ title, notes, assigneeId: assigneeId || null, version: draftVersion });
       }}
       style={{ display: "grid", gap: tokens.space.md, padding: `${tokens.space.md} 0 ${tokens.space.sm} 26px` }}
     >

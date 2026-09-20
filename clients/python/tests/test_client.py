@@ -181,3 +181,21 @@ def test_every_call_and_the_socket_open_carry_the_timeout() -> None:
     default = ApiClient("http://test", app="cli", app_version="v")
     assert default.timeout == DEFAULT_TIMEOUT_SECONDS
     assert default._http.timeout == httpx.Timeout(DEFAULT_TIMEOUT_SECONDS)
+
+
+async def test_a_401_from_an_old_request_keeps_the_replacement_token() -> None:
+    async def respond(request: httpx.Request) -> httpx.Response:
+        assert request.headers["Authorization"] == "Bearer ses_old"
+        client.token = "ses_new"  # another sign-in completed while this request was in flight
+        return httpx.Response(401, text="nope")
+
+    async with ApiClient(
+        "http://test",
+        app="cli",
+        app_version="cli@test",
+        token="ses_old",
+        transport=httpx.MockTransport(respond),
+    ) as client:
+        with pytest.raises(ApiError):
+            await client.me()
+        assert client.token == "ses_new"

@@ -177,3 +177,29 @@ describe("transport client response handling", () => {
     await expect(client({ fetchImpl }).del("/v1/tasks/t1")).resolves.toBeUndefined();
   });
 });
+
+it("keeps a replacement session when an older request returns 401", async () => {
+  let token = "ses_old";
+  let respond!: (response: Response) => void;
+  const onUnauthorized = vi.fn();
+  const api = client({
+    getToken: () => token, onUnauthorized,
+    fetchImpl: () => new Promise((resolve) => { respond = resolve; }),
+  });
+  const pending = api.get("/v1/me").catch((error: unknown) => error);
+  token = "ses_new";
+  respond(textResponse(401, "Unauthorized"));
+  expect(await pending).toMatchObject({ status: 401 });
+  expect(onUnauthorized).not.toHaveBeenCalled();
+});
+
+it("keeps the session when a separate login credential is refused", async () => {
+  const onUnauthorized = vi.fn();
+  const api = client({
+    onUnauthorized,
+    fetchImpl: async () => textResponse(401, "Unauthorized"),
+  });
+  await expect(api.post("/v1/auth/sessions", { org_id: "o1" }, { token: "login_expired" }))
+    .rejects.toMatchObject({ status: 401 });
+  expect(onUnauthorized).not.toHaveBeenCalled();
+});
