@@ -128,7 +128,11 @@ jobs:
             if ! digest="$(aws ecr describe-images --repository-name "$1" \
                 --image-ids "imageTag=$SHA" \
                 --query 'imageDetails[0].imageDigest' --output text 2>/dev/null)" || [ -z "$digest" ] || [ "$digest" = "None" ]; then
-              echo "::error::$1 has no image tagged $SHA: staging never built this commit. Release a commit deploy-staging ran on main, or rerun deploy-staging for it first."
+              # To stderr: the function is called in a command substitution,
+              # so anything on stdout is captured into the image variable and
+              # the annotation the runbook tells operators to look for never
+              # reaches the log.
+              echo "::error::$1 has no image tagged $SHA: staging never built this commit. Release a commit deploy-staging ran on main, or rerun deploy-staging for it first." >&2
               exit 1
             fi
             echo "$REGISTRY/$1@$digest"

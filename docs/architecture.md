@@ -189,6 +189,14 @@ context on keeps the stage the callee needs.
   storage method that inserts it (`issue_api_key`, one conditional write
   on the issuer's row, no second outbox row), and returns a fresh
   `IssuedApiKey` with the same id; the old secret stops authenticating.
+  That write has two more guards in its own `WHERE`, because a re-mint is
+  destructive where an insert is not. A revoked row is never re-minted,
+  so a rerun cannot put a live secret back on a key somebody revoked in
+  between. And a row created after this attempt began is never re-minted:
+  an attempt that ran past the pending lease is a zombie whose `finish`
+  will be refused anyway, and the key the retry that took the marker over
+  already handed to the caller must not be overwritten behind it. Both
+  are a `Conflict` and change nothing.
   `finish` and `release` are conditional on the attempt token in the
   statement itself: the storage reports what matched (the record, or
   `None`; a bool for the release) and the manager refuses a lost attempt
@@ -276,7 +284,13 @@ concurrency stays opt-in: `tasks` is the one table that carries a
 `version`, because a task is edited from two windows and two terminals
 at once ([ADR 0009](adr/0009-tasks-carry-a-version.md)); every other
 table has no concurrent edits that matter, so there the last writer
-wins.
+wins. Last writer wins does not extend to undoing a delete: every
+update is a read, a copy, and a write of the whole entity, so a delete
+that commits in between would be put back by a copy still carrying
+`deleted_at = None`, leaving (for a user) a live row with no live
+membership, listed but unable to sign in and past every sweep. Both
+storage bases refuse it with `RowDeleted`, a `Conflict`; there is no
+restore in this domain, and the caller reads the row again.
 
 ## Infrastructure (`infra/`)
 
@@ -366,7 +380,13 @@ everything in-process for tests.
   observability middleware, while the id is still in hand, so the 500
   carries the request id header, the log line the id, and the request
   counter the status; Starlette's own catch-all stays as the last
-  resort. uvicorn's access log is off: the middleware writes one line
+  resort. CORS sits outside that middleware, so the envelope it writes
+  carries the headers a browser needs to read it, as a refusal from the
+  same origin already did; a preflight is answered before the request id
+  is minted and belongs in neither the access log nor the metrics.
+  Starlette's own `HTTPException`, which it raises for a path that
+  matches nothing (404) and a method a route does not take (405), is
+  presented as the envelope too, not as its default `{"detail": ...}`. uvicorn's access log is off: the middleware writes one line
   per request by route template, and uvicorn's remaining lines lose
   their query string, so the socket ticket, which travels as a query
   parameter, is never logged.

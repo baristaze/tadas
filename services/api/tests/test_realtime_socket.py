@@ -18,6 +18,7 @@ from starlette.types import Message, Scope
 from starlette.websockets import WebSocketDisconnect
 from uvicorn.protocols.utils import ClientDisconnected
 
+from tadas.infra.exceptions import BackendFailed
 from tadas.om.base import utcnow
 from tadas.om.opcontext import Role
 from tadas.om.tenancy.rules import hash_token
@@ -267,3 +268,38 @@ def test_revoking_an_api_key_closes_the_socket_it_opened(tmp_path: Path) -> None
                 ws.receive_json()
     assert closed.value.code == CLOSE_UNAUTHENTICATED
     assert closed.value.reason == CREDENTIAL_REVOKED
+
+
+def test_a_hello_that_cannot_read_the_head_leaves_no_task_behind(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The head read is the socket's first I/O and it can fail: a database out
+    of reach is exactly when every client reconnects at once. The drainer must
+    not exist yet when it does, or each of those reconnects leaves a task
+    waiting on its buffer for the life of the process."""
+    container = build_container(tmp_path)
+    _, org = run(
+        container.managers.tenancy.bootstrap(
+            seed_request(), "Acme", "acme", OWNER["email"], OWNER["password"], OWNER["name"]
+        )
+    )
+
+    async def unreachable(self: object, ctx: object) -> int:
+        raise BackendFailed("postgres", "read_head", "connection refused")
+
+    monkeypatch.setattr(type(container.services.get_realtime_service()), "head", unreachable)
+
+    drains: list[str] = []
+    real_drain = SendBuffer.drain
+
+    async def counted_drain(self: SendBuffer, websocket: object) -> None:
+        drains.append("started")
+        await real_drain(self, websocket)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(SendBuffer, "drain", counted_drain)
+    with TestClient(create_app(container)) as tc:
+        headers = sign_in(tc, OWNER["email"], OWNER["password"], org.id)
+        with pytest.raises(WebSocketDisconnect):
+            with open_socket(tc, headers) as ws:
+                ws.receive_json()  # the hello that the failed read never built
+    assert drains == [], "the drainer was created before the read that failed"

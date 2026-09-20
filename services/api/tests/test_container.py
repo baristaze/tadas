@@ -13,6 +13,7 @@ from tadas.om.storage.impl.memory import StorageMemoryImpl
 from tadas.services.api import container as container_module
 from tadas.services.api.app import create_app
 from tadas.services.api.container import AppContainer
+from tadas.services.api.main import main
 
 
 async def test_managers_are_built_once_for_any_number_of_requests(
@@ -44,3 +45,32 @@ async def test_managers_are_built_once_for_any_number_of_requests(
     assert len(calls) == 1
     # Every router resolves the same frozen object the container built.
     assert app.state.container.managers is container.managers
+
+
+@pytest.mark.parametrize("role", ["owner", "service"])
+def test_add_member_refuses_a_role_no_membership_can_take(
+    role: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The ops CLI's --role choices are the roles `update_membership_role`
+    accepts. OWNER is the org's own, minted by bootstrap, and SERVICE is the
+    role a sweep's context carries, which the manager refuses outright: either
+    one offered here would fail with an uncaught ValidationFailed instead of a
+    usage message."""
+    with pytest.raises(SystemExit) as exit_code:
+        main(
+            [
+                "add-member",
+                "--slug",
+                "acme",
+                "--email",
+                "a@b.test",
+                "--password",
+                "pw-1234",
+                "--name",
+                "A",
+                "--role",
+                role,
+            ]
+        )
+    assert exit_code.value.code == 2
+    assert "invalid choice" in capsys.readouterr().err

@@ -70,7 +70,7 @@ class Api:
         return ApiClient(self.base, app="portal", app_version="portal@demo", token=token)
 
     async def session(self, email: str, password: str) -> dict[str, Any]:
-        """What the portal keeps in localStorage once someone has signed in."""
+        """What the portal keeps in session storage once someone has signed in."""
         async with self._client() as client:
             login = await client.login(email, password)
             org = login.memberships[0].org
@@ -199,9 +199,13 @@ async def open_window(
     await cdp.send("Page.navigate", {"url": f"{portal}/sign-in"}, window.session)
     await window.wait_for("document.readyState === 'complete'")
     stored = json.dumps(json.dumps(await api.session(email, password)))
+    scope = json.dumps(json.dumps({"state": {"taskScope": "team"}, "version": 0}))
+    # The bearer lives in the tab's session storage, and the portal drops a
+    # session it finds in local storage on load; the scope is a preference and
+    # stays in local storage.
     await window.js(
-        f"localStorage.setItem('tadas.portal.session', {stored});"
-        "localStorage.setItem('tadas.portal.taskScope', 'team'); true"
+        f"sessionStorage.setItem('tadas.portal.session', {stored});"
+        f"localStorage.setItem('tadas.portal.preferences', {scope}); true"
     )
     await cdp.send("Page.navigate", {"url": f"{portal}/"}, window.session)
     await window.wait_for(

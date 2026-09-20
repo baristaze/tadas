@@ -2,8 +2,8 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import Index
-from sqlalchemy.orm import Mapped
+from sqlalchemy import BigInteger, Index
+from sqlalchemy.orm import Mapped, mapped_column
 
 from tadas.om.storage.tables.base import Base, IdentifiableMixin
 
@@ -16,7 +16,8 @@ class Events(IdentifiableMixin, Base):
     # takes its number from the cursor, never from this index.
     __org_id_index__ = False
     __table_args__ = (Index("uq_events_org_id_seq", "org_id", "seq", unique=True),)
-    seq: Mapped[int]
+    # The same number as the cursor row's head, and the same width.
+    seq: Mapped[int] = mapped_column(BigInteger)
     kind: Mapped[str]
     target_id: Mapped[UUID]
     produced_at: Mapped[datetime]

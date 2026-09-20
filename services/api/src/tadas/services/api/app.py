@@ -35,7 +35,14 @@ def create_app(container: AppContainer | None = None) -> FastAPI:
     app = FastAPI(title="Tadas API", version=settings.version, lifespan=lifespan)
     app.state.container = container
 
-    # Middleware, innermost first: CORS answers preflights inside the request id.
+    # Middleware, innermost first. CORS is outermost, so every answer a
+    # browser gets carries the headers that let it read the body: the request
+    # id middleware writes the 500 envelope itself, and outside CORS that
+    # envelope, its code, and its request id would be blocked by the browser
+    # while a 401 from the same origin came through. A preflight is answered
+    # before the request id is minted, which is right: it is not a request of
+    # this API and it belongs in neither the access log nor the metrics.
+    app.add_middleware(RequestIdMiddleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
@@ -43,7 +50,6 @@ def create_app(container: AppContainer | None = None) -> FastAPI:
         allow_headers=["*"],
         expose_headers=["x-request-id", "Retry-After", "Idempotent-Replayed"],
     )
-    app.add_middleware(RequestIdMiddleware)
     register_error_handlers(app)
 
     api = APIRouter(prefix=API_PREFIX)

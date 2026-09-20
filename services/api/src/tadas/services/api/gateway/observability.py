@@ -109,7 +109,6 @@ class RequestIdMiddleware:
                 response = error_response(request_id, 500, *INTERNAL_ERROR)
                 await response(scope, receive, send_with_request_id)
             finally:
-                request_id_var.reset(token)
                 template = route_template_of(scope) or "unmatched"
                 span.update_name(f"{method} {template}")
                 span.set_attribute("http.route", template)
@@ -122,3 +121,6 @@ class RequestIdMiddleware:
                     # a query string (the socket ticket rides in one) is never
                     # written out.
                     log.info("%s %s %d %.1fms", method, template, status["code"], elapsed * 1000)
+                # Last, after every line this request writes: the access line
+                # above carries the id only while the context still holds it.
+                request_id_var.reset(token)

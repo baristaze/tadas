@@ -27,6 +27,6 @@ COPY deployment/docker/entrypoint.sh /entrypoint.sh
 ENV PATH="/app/.venv/bin:$PATH" PYTHONUNBUFFERED=1
 USER tadas
 HEALTHCHECK --interval=10s --timeout=5s --start-period=30s \
-  CMD python -c "import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:9464/healthz').status == 200 else 1)"
+  CMD python -c "import os, urllib.request, sys; port = os.environ.get('TADAS_METRICS_PORT', '9464'); sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:%s/healthz' % port).status == 200 else 1)"
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["tadas-maintenance", "serve"]

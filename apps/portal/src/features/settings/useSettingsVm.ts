@@ -9,7 +9,8 @@ import { signOut } from "./signOut";
 export function useSettingsVm() {
   const me = useMe();
   const users = useUsers();
-  const apiKeys = useApiKeys();
+  const mayManageKeys = canManageKeys(me.data);
+  const apiKeys = useApiKeys(mayManageKeys);
   const createKey = useCreateApiKey();
   const revokeKey = useRevokeApiKey();
   const logout = useLogout();
@@ -43,11 +44,11 @@ export function useSettingsVm() {
 
   return {
     signedInAs: signedInAs(me.data),
-    loading: me.isPending || users.isPending || apiKeys.isPending,
-    error: me.error ?? users.error ?? apiKeys.error,
+    loading: me.isPending || users.isPending || (mayManageKeys && apiKeys.isPending),
+    error: me.error ?? users.error ?? (mayManageKeys ? apiKeys.error : null),
     members,
     keys,
-    canManageKeys: canManageKeys(me.data),
+    canManageKeys: mayManageKeys,
     newKeyName,
     setNewKeyName,
     issuedKey,

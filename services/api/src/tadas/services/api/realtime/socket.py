@@ -129,11 +129,13 @@ async def channel(
     # The gateway accepted the socket before it redeemed the ticket.
     ctx = principal.ctx
     loop = asyncio.get_running_loop()
+    # The head is read before the drainer exists: a task created first and a
+    # read that raises after it leave the drainer waiting on the buffer for
+    # the life of the process, one more on every reconnect through an outage.
+    head = await realtime.head(ctx)
     drainer = asyncio.create_task(buffer.drain(websocket), name=f"send-buffer-{ctx.user_id}")
     subscriptions: dict[Topics, Callable[[], None]] = {}
-    buffer.offer(
-        HelloEnvelope(org_id=ctx.org_id, user_id=ctx.user_id, seq=await realtime.head(ctx))
-    )
+    buffer.offer(HelloEnvelope(org_id=ctx.org_id, user_id=ctx.user_id, seq=head))
 
     # The socket's authority ends with the credential behind its ticket: at
     # its expiry the socket is closed with 4401, whatever the client does.

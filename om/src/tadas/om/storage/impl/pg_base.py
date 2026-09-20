@@ -16,13 +16,14 @@ from sqlalchemy.sql.util import find_tables
 from tadas.om.base import Identifiable
 from tadas.om.exceptions import (
     CrossRoleStatement,
+    RowDeleted,
     TenantMismatch,
     UniqueKeyTaken,
 )
 from tadas.om.outbox.storage.tables.outbox_rows import OutboxRows
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.storage.roles import DatabaseRole, role_for
-from tadas.om.storage.utils.translation import apply_row, to_row
+from tadas.om.storage.utils.translation import apply_row, to_row, undeletes
 
 SessionFactory = async_sessionmaker[AsyncSession]
 
@@ -79,7 +80,14 @@ class PgStorageBase:
         """Insert or update by id, refusing to overwrite another tenant's row, then
         commit. An `outbox_row` is inserted in the same commit: the core row and
         its handoff land together or not at all (the transactional outbox), which
-        is why every table with an outbox row lives in the `core` role."""
+        is why every table with an outbox row lives in the `core` role.
+
+        A write never brings a soft-deleted row back. Every update here is a
+        read, a copy, and a write of the whole entity, so a delete that commits
+        between the read and the write would otherwise be undone by an
+        `updated_at` copy that still carries `deleted_at = NULL`. There is no
+        restore in this domain; `RowDeleted` says the row went while the
+        caller was holding it, and the caller reads it again."""
         entity_id = entity.id
         if outbox_row is not None and role_of(row_type) is not role_of(OutboxRows):
             raise CrossRoleStatement(
@@ -92,6 +100,8 @@ class PgStorageBase:
             else:
                 if row.org_id != org_id:
                     raise TenantMismatch(f"{row_type.__tablename__} {entity_id} is not in {org_id}")
+                if undeletes(row, entity):
+                    raise RowDeleted(f"{row_type.__tablename__} {entity_id} was deleted")
                 apply_row(row, entity)
             if outbox_row is not None:
                 session.add(to_row(outbox_row, OutboxRows, org_id=org_id))

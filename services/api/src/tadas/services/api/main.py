@@ -192,8 +192,12 @@ def main(argv: list[str] | None = None) -> int:
     p_member.add_argument("--email", required=True)
     p_member.add_argument("--password", required=True, help="kept only for a new identity")
     p_member.add_argument("--name", required=True)
+    # Neither OWNER (the org's own, minted by bootstrap) nor SERVICE (the role
+    # a sweep's context carries, which update_membership_role refuses).
     p_member.add_argument(
-        "--role", default="member", choices=[r.value for r in Role if r is not Role.OWNER]
+        "--role",
+        default="member",
+        choices=[r.value for r in Role if r not in (Role.OWNER, Role.SERVICE)],
     )
 
     p_openapi = sub.add_parser("openapi", help="emit the OpenAPI document")

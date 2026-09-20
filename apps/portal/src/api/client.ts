@@ -139,7 +139,10 @@ export function createClient(options: ClientOptions): ApiClient {
     // JSON: a 401 clears authentication whatever its body says, and a proxy's
     // HTML 502 or 504 is a typed error with the status, not a parse failure.
     const requestId = response.headers.get("x-request-id");
-    if (response.status === 401) options.onUnauthorized();
+    // Only a 401 on a request that presented a bearer says the session is
+    // gone. Signing in presents none, so a mistyped password on /sign-in
+    // (reachable while signed in) must not clear the session behind it.
+    if (response.status === 401 && token) options.onUnauthorized();
     const parsed = isJson(response.headers.get("content-type")) ? parseJson(text) : undefined;
     if (!response.ok) {
       if (isErrorEnvelope(parsed)) {

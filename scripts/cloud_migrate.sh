@@ -26,8 +26,10 @@ task_arn="$(aws ecs run-task \
 echo "migration task $task_arn started on $cluster"
 aws ecs wait tasks-stopped --cluster "$cluster" --tasks "$task_arn"
 
+# By name, not by position: the task definition also carries the telemetry
+# sidecar and ECS does not order `containers`.
 exit_code="$(aws ecs describe-tasks --cluster "$cluster" --tasks "$task_arn" \
-  --query 'tasks[0].containers[0].exitCode' --output text)"
+  --query "tasks[0].containers[?name=='api'] | [0].exitCode" --output text)"
 reason="$(aws ecs describe-tasks --cluster "$cluster" --tasks "$task_arn" \
   --query 'tasks[0].stoppedReason' --output text)"
 

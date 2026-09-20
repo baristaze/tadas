@@ -57,3 +57,40 @@ async def test_a_refusal_still_names_its_reason(client: httpx.AsyncClient) -> No
     refused = await client.get("/v1/tasks")
     assert refused.status_code == 401
     assert refused.json()["error"]["message"] == "missing bearer credential"
+
+
+async def test_a_404_and_a_405_answer_the_envelope(client: httpx.AsyncClient) -> None:
+    """Starlette raises its own HTTPException for a path it does not match and
+    a method a route does not take. They are refusals like any other, so they
+    carry the envelope and the request id, not `{"detail": ...}`."""
+    missing = await client.get("/v1/no-such-thing")
+    assert missing.status_code == 404
+    body = missing.json()["error"]
+    assert body["code"] == "not_found"
+    assert body["request_id"] == missing.headers["x-request-id"]
+
+    wrong_method = await client.delete("/v1/events")
+    assert wrong_method.status_code == 405
+    assert wrong_method.json()["error"]["code"] == "method_not_allowed"
+
+
+async def test_a_500_is_answered_inside_cors(app: FastAPI, client: httpx.AsyncClient) -> None:
+    """The request-id middleware writes the 500 envelope itself. Outside CORS
+    the browser blocks that body and the x-request-id it carries, while a 401
+    from the same origin comes through, so a failure reaches the portal as a
+    fetch error with nothing to report."""
+
+    @app.get("/cors-boom", include_in_schema=False)
+    async def cors_boom() -> None:
+        raise RuntimeError("the pool is gone")
+
+    origin = {"Origin": "http://localhost:5173"}
+    failed = await client.get("/cors-boom", headers=origin)
+    assert failed.status_code == 500
+    assert failed.headers["access-control-allow-origin"] == "http://localhost:5173"
+    assert "x-request-id" in failed.headers["access-control-expose-headers"].lower()
+
+    # The same headers a refusal already carried.
+    refused = await client.get("/v1/events", headers=origin)
+    assert refused.status_code == 401
+    assert refused.headers["access-control-allow-origin"] == "http://localhost:5173"

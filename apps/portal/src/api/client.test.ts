@@ -144,6 +144,19 @@ describe("transport client response handling", () => {
     expect(onUnauthorized).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps the session on a 401 from a request that presented no bearer", async () => {
+    // Signing in presents none, and /sign-in is reachable while signed in, so
+    // a mistyped password there must not sign the person out of the tab.
+    const onUnauthorized = vi.fn();
+    const fetchImpl: typeof fetch = () =>
+      Promise.resolve(jsonResponse(401, { error: { code: "invalid_credential", message: "no", request_id: "r" } }));
+    const failure = await client({ fetchImpl, onUnauthorized })
+      .request("POST", "/v1/auth/login", { email: "a@b.test", password: "wrong" }, { token: null })
+      .catch((error: unknown) => error);
+    expect(onUnauthorized).not.toHaveBeenCalled();
+    expect(failure).toMatchObject({ status: 401, code: "invalid_credential" });
+  });
+
   it("refuses a success whose body is not JSON with a typed error, never a SyntaxError", async () => {
     const fetchImpl: typeof fetch = () => Promise.resolve(textResponse(200, "<html>captive portal</html>"));
     const failure = await client({ fetchImpl }).get("/v1/tasks").catch((error: unknown) => error);
