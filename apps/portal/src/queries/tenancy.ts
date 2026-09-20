@@ -1,6 +1,8 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect } from "react";
 import type {
   AddApiKeyRequest,
+  ApiKeyPageView,
   ApiKeyView,
   ExchangeSessionRequest,
   IssuedApiKeyView,
@@ -9,34 +11,78 @@ import type {
   LoginRequest,
   MeView,
   SessionView,
+  UserPageView,
   UserView,
 } from "../api";
 import { api } from "../app/api";
 import { keys } from "./keys";
 
-const LIMIT = 100;
+/** Both lists are paged by the server's cursor; these are page sizes, not
+ * ceilings, so nothing is hidden past the end of the first page. The member
+ * list is read whole (below), so it asks for the largest page the server
+ * gives; the key list is read a page at a time on the screen that shows it. */
+const USERS_PAGE_SIZE = 200;
+export const API_KEYS_PAGE_SIZE = 50;
 
 export function useMe() {
   return useQuery({ queryKey: keys.me, queryFn: ({ signal }) => api.get<MeView>("/v1/me", { signal }) });
 }
 
+/** Every member of the org, page after page. The list is not a screen of its
+ * own: it names the people on tasks and fills the assignee picker, and a
+ * member missing from it reads as "someone" and cannot be assigned, so this
+ * follows the cursor to the end rather than stopping at one page. The pages
+ * loaded so far are returned as they arrive. */
 export function useUsers() {
-  return useQuery({
-    queryKey: keys.users.list(LIMIT),
-    queryFn: ({ signal }) => api.get<UserView[]>(`/v1/users?limit=${LIMIT}`, { signal }),
+  const query = useInfiniteQuery({
+    queryKey: keys.users.list(USERS_PAGE_SIZE),
+    initialPageParam: null as string | null,
+    getNextPageParam: (last: UserPageView) => last.next_cursor,
+    queryFn: ({ pageParam, signal }) => {
+      const cursor = pageParam ? `&cursor=${encodeURIComponent(pageParam)}` : "";
+      return api.get<UserPageView>(`/v1/users?limit=${USERS_PAGE_SIZE}${cursor}`, { signal });
+    },
   });
+  const { hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage } = query;
+  // A page that failed is not asked for again on its own: retries are the
+  // client's, and re-firing here on every render would be a loop against a
+  // server that just refused. The pages in hand are what the app shows, and
+  // the next invalidation starts the walk over.
+  const walking = hasNextPage && !isFetchNextPageError;
+  useEffect(() => {
+    if (walking && !isFetchingNextPage) void fetchNextPage();
+  }, [walking, isFetchingNextPage, fetchNextPage]);
+  return {
+    ...query,
+    data: query.data?.pages.flatMap((page) => page.items) as UserView[] | undefined,
+    /** Pending until the whole list is in hand: a caller that maps ids to
+     * names would otherwise render "someone" for a member still on the way. */
+    isPending: query.isPending || walking,
+  };
 }
 
 /** Only a member who may manage keys asks for them: `GET /v1/api-keys`
  * refuses anyone else, and a refusal nobody can act on is not an error to
  * show. Disabled, the query stays pending and never fetches, so a caller
- * reads `enabled` and not `isPending` to know whether to wait. */
+ * reads `enabled` and not `isPending` to know whether to wait. The list is
+ * paged on demand: the screen shows the first page and asks for the next. */
 export function useApiKeys(enabled = true) {
-  return useQuery({
-    queryKey: keys.apiKeys.list(LIMIT),
-    queryFn: ({ signal }) => api.get<ApiKeyView[]>(`/v1/api-keys?limit=${LIMIT}`, { signal }),
+  const query = useInfiniteQuery({
+    queryKey: keys.apiKeys.list(API_KEYS_PAGE_SIZE),
+    initialPageParam: null as string | null,
+    getNextPageParam: (last: ApiKeyPageView) => last.next_cursor,
+    queryFn: ({ pageParam, signal }) => {
+      const cursor = pageParam ? `&cursor=${encodeURIComponent(pageParam)}` : "";
+      return api.get<ApiKeyPageView>(`/v1/api-keys?limit=${API_KEYS_PAGE_SIZE}${cursor}`, {
+        signal,
+      });
+    },
     enabled,
   });
+  return {
+    ...query,
+    data: query.data?.pages.flatMap((page) => page.items) as ApiKeyView[] | undefined,
+  };
 }
 
 export function useCreateApiKey() {

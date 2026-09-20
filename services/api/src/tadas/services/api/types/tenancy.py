@@ -106,6 +106,23 @@ class ApiKeyView(View):
     deleted_at: datetime | None
 
 
+class UserPageView(View):
+    """One page of the tenant's members. `next_cursor` fetches the next page
+    and is null on the last one, so a client reads every member instead of
+    whatever a fixed limit happened to cover."""
+
+    items: list[UserView]
+    next_cursor: str | None
+
+
+class ApiKeyPageView(View):
+    """One page of the api key list, newest first; `next_cursor` as on
+    `UserPageView`."""
+
+    items: list[ApiKeyView]
+    next_cursor: str | None
+
+
 class AddApiKeyRequest(RequestBody):
     name: str
     role: Role

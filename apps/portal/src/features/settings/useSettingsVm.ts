@@ -49,6 +49,11 @@ export function useSettingsVm() {
     members,
     keys,
     canManageKeys: mayManageKeys,
+    // The key list is paged: the screen shows a page and asks for the next,
+    // so a key past the first page is still there to revoke.
+    hasMoreKeys: apiKeys.hasNextPage,
+    loadingMoreKeys: apiKeys.isFetchingNextPage,
+    showMoreKeys: () => void apiKeys.fetchNextPage(),
     newKeyName,
     setNewKeyName,
     issuedKey,

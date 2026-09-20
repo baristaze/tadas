@@ -19,6 +19,7 @@ from tadas.om.tenancy.types.identity import Identity
 from tadas.om.tenancy.types.issued import IssuedApiKey, IssuedLogin, IssuedSession, IssuedTicket
 from tadas.om.tenancy.types.membership import Membership
 from tadas.om.tenancy.types.org import Org
+from tadas.om.tenancy.types.page import ApiKeyPage, UserPage
 from tadas.om.tenancy.types.session import Session
 from tadas.om.tenancy.types.socket_ticket import SocketPrincipal
 from tadas.om.tenancy.types.user import User
@@ -168,7 +169,10 @@ class TenancyManagerInterface(ABC):
         ...
 
     @abstractmethod
-    async def get_users(self, ctx: OpContext, limit: int) -> list[User]: ...
+    async def get_users(self, ctx: OpContext, after: UUID | None, limit: int) -> UserPage:
+        """The tenant's members, by id, a page at a time: `after` is the id the
+        previous page ended on, and `has_more` says another follows."""
+        ...
 
     @abstractmethod
     async def get_user(self, ctx: OpContext, user_id: UUID) -> User: ...
@@ -206,9 +210,9 @@ class TenancyManagerInterface(ABC):
         ...
 
     @abstractmethod
-    async def get_api_keys(self, ctx: OpContext, limit: int) -> list[ApiKey]:
+    async def get_api_keys(self, ctx: OpContext, after: UUID | None, limit: int) -> ApiKeyPage:
         """The tenant's unrevoked keys for a member manager, the caller's own
-        otherwise; newest first."""
+        otherwise; newest first, a page at a time, as `get_users` pages."""
         ...
 
     @abstractmethod

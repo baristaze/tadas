@@ -13,6 +13,7 @@ from tadas.services.api.gateway.resolve import TenancyService
 from tadas.services.api.types.common import LIMIT_DEFAULT
 from tadas.services.api.types.tenancy import (
     AddApiKeyRequest,
+    ApiKeyPageView,
     ApiKeyView,
     ExchangeSessionRequest,
     IdentityView,
@@ -26,6 +27,7 @@ from tadas.services.api.types.tenancy import (
     SessionView,
     UpdateMembershipRequest,
     UpdateMeRequest,
+    UserPageView,
     UserView,
 )
 
@@ -69,11 +71,11 @@ async def current_org(ctx: Ctx, tenancy: TenancyService) -> OrgView:
     return await tenancy.get_org(ctx)
 
 
-@router.get("/users", response_model=list[UserView])
+@router.get("/users", response_model=UserPageView)
 async def list_users(
-    ctx: Ctx, tenancy: TenancyService, limit: int = LIMIT_DEFAULT
-) -> list[UserView]:
-    return await tenancy.get_users(ctx, limit)
+    ctx: Ctx, tenancy: TenancyService, cursor: str | None = None, limit: int = LIMIT_DEFAULT
+) -> UserPageView:
+    return await tenancy.get_users(ctx, cursor, limit)
 
 
 @router.get("/memberships", response_model=list[MembershipView])
@@ -107,11 +109,11 @@ async def revoke_session(ctx: Ctx, tenancy: TenancyService, session_id: UUID) ->
     return await tenancy.revoke_session(ctx, session_id)
 
 
-@router.get("/api-keys", response_model=list[ApiKeyView])
+@router.get("/api-keys", response_model=ApiKeyPageView)
 async def list_api_keys(
-    ctx: Ctx, tenancy: TenancyService, limit: int = LIMIT_DEFAULT
-) -> list[ApiKeyView]:
-    return await tenancy.get_api_keys(ctx, limit)
+    ctx: Ctx, tenancy: TenancyService, cursor: str | None = None, limit: int = LIMIT_DEFAULT
+) -> ApiKeyPageView:
+    return await tenancy.get_api_keys(ctx, cursor, limit)
 
 
 @router.post("/api-keys", response_model=IssuedApiKeyView, status_code=201)

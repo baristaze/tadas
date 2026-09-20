@@ -138,7 +138,7 @@ async def _user(client: ApiClient, reference: str) -> UserView:
     """`me`, an email, or a display name, over the org's members."""
     if reference == "me":
         return (await client.me()).user
-    users = await client.users()
+    users = await client.every_user()
     wanted = reference.lower()
     matches = [u for u in users if wanted in (u.email.lower(), u.display_name.lower())]
     if len(matches) != 1:
@@ -257,7 +257,7 @@ def ls(
         if as_json:
             typer.echo(json.dumps([t.model_dump(mode="json") for t in tasks], indent=2))
             return
-        names = {u.id: u.display_name for u in await client.users()}
+        names = {u.id: u.display_name for u in await client.every_user()}
         typer.echo(task_table(tasks, lambda uid: names.get(uid, "someone") if uid else "-"))
 
     run(go, api)

@@ -1,12 +1,15 @@
+import base64
 from datetime import timedelta
 from uuid import UUID
 
+from tadas.om.exceptions import ValidationFailed
 from tadas.om.opcontext import IdentityContext, OpContext, RequestContext
 from tadas.om.tenancy import TenancyManagerInterface
 from tadas.services.api.services.tenancy import TenancyServiceInterface
 from tadas.services.api.types.common import clamp_limit
 from tadas.services.api.types.tenancy import (
     AddApiKeyRequest,
+    ApiKeyPageView,
     ApiKeyView,
     ExchangeSessionRequest,
     IdentityView,
@@ -21,8 +24,30 @@ from tadas.services.api.types.tenancy import (
     SessionView,
     UpdateMembershipRequest,
     UpdateMeRequest,
+    UserPageView,
     UserView,
 )
+
+
+def encode_cursor(listed: str, entity_id: UUID) -> str:
+    """Opaque on the wire: the list a cursor belongs to and the id its page
+    ended on. The tenancy lists are ordered by id - members ascending, keys
+    newest first - so the id is the whole mark, as a task list encodes its
+    (position, id) or (updated_at, id)."""
+    return base64.urlsafe_b64encode(f"{listed}|{entity_id}".encode()).decode().rstrip("=")
+
+
+def decode_cursor(listed: str, cursor: str) -> UUID:
+    """The cursor of the list asked for; one from another list, or from
+    nowhere, is refused rather than read as an id."""
+    try:
+        raw = base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4)).decode()
+        issued_for, entity_id = raw.split("|")
+        if issued_for != listed:
+            raise ValueError(issued_for)
+        return UUID(entity_id)
+    except ValueError:
+        raise ValidationFailed("the cursor is not one this list issued") from None
 
 
 class TenancyServiceImpl(TenancyServiceInterface):
@@ -69,9 +94,16 @@ class TenancyServiceImpl(TenancyServiceInterface):
     async def get_org(self, ctx: OpContext) -> OrgView:
         return OrgView.model_validate(await self._tenancy.get_org(ctx))
 
-    async def get_users(self, ctx: OpContext, limit: int) -> list[UserView]:
-        users = await self._tenancy.get_users(ctx, clamp_limit(limit))
-        return [UserView.model_validate(u) for u in users]
+    async def get_users(self, ctx: OpContext, cursor: str | None, limit: int) -> UserPageView:
+        # The public page size is clamped here and again by the manager; the
+        # manager's lookahead past it is what makes `has_more` true.
+        limit = clamp_limit(limit)
+        after = decode_cursor("users", cursor) if cursor else None
+        page = await self._tenancy.get_users(ctx, after, limit)
+        return UserPageView(
+            items=[UserView.model_validate(u) for u in page.items],
+            next_cursor=encode_cursor("users", page.items[-1].id) if page.has_more else None,
+        )
 
     async def get_memberships(self, ctx: OpContext, limit: int) -> list[MembershipView]:
         memberships = await self._tenancy.get_memberships(ctx, clamp_limit(limit))
@@ -93,9 +125,14 @@ class TenancyServiceImpl(TenancyServiceInterface):
     async def revoke_session(self, ctx: OpContext, session_id: UUID) -> SessionView:
         return SessionView.model_validate(await self._tenancy.revoke_session(ctx, session_id))
 
-    async def get_api_keys(self, ctx: OpContext, limit: int) -> list[ApiKeyView]:
-        keys = await self._tenancy.get_api_keys(ctx, clamp_limit(limit))
-        return [ApiKeyView.model_validate(k) for k in keys]
+    async def get_api_keys(self, ctx: OpContext, cursor: str | None, limit: int) -> ApiKeyPageView:
+        limit = clamp_limit(limit)
+        after = decode_cursor("api-keys", cursor) if cursor else None
+        page = await self._tenancy.get_api_keys(ctx, after, limit)
+        return ApiKeyPageView(
+            items=[ApiKeyView.model_validate(k) for k in page.items],
+            next_cursor=encode_cursor("api-keys", page.items[-1].id) if page.has_more else None,
+        )
 
     async def create_api_key(
         self, ctx: OpContext, body: AddApiKeyRequest, api_key_id: UUID

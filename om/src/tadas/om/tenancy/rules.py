@@ -1,9 +1,12 @@
-"""Pure rules of the tenancy namespace: credential parsing, hashing, and the
-role cap. Values in, values out; no clock, no storage, no settings."""
+"""Pure rules of the tenancy namespace: credential parsing, hashing, the
+role cap, and where a list cursor cuts. Values in, values out; no clock, no
+storage, no settings. Both storage impls call the cursor rules; the
+relational one spells them in SQL and names the rule it mirrors."""
 
 import hashlib
 import hmac
 from datetime import timedelta
+from uuid import UUID
 
 from tadas.om.opcontext import CredentialKind, Role
 from tadas.om.tenancy.types.role import ROLE_RANK
@@ -82,3 +85,16 @@ def capped_role(requested: Role, ceiling: Role) -> Role:
     if ceiling is Role.SERVICE:
         raise ValueError("the service role is not a rung of the ladder; nothing is capped at it")
     return requested if role_at_most(requested, ceiling) else ceiling
+
+
+def is_after_in_id_order(entity_id: UUID, cursor: UUID) -> bool:
+    """A list read by id ascending - the tenant's users - puts a row on the
+    next page when its id sorts strictly after the cursor's."""
+    return entity_id > cursor
+
+
+def is_after_newest_first(entity_id: UUID, cursor: UUID) -> bool:
+    """A list read newest first - sessions, api keys - is by id descending,
+    since an id is minted in time order; a row is on the next page when its
+    id sorts strictly before the cursor's."""
+    return entity_id < cursor

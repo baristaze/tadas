@@ -84,7 +84,7 @@ class TasksManagerImpl(TasksManagerInterface):
     async def update_task(self, ctx: OpContext, task: Task) -> Task:
         ctx.require(Permission.WRITE)
         current = await self.get_task(ctx, task.id)  # existence and tenancy, or NotFound
-        await self._verify(ctx, task)
+        await self._verify(ctx, task, current)
         # The copy starts from the stored row: the caller's entity supplies the
         # fields a caller may change, the provenance stays as stored, and the
         # version is the caller's plus one: the write is conditioned on the
@@ -223,12 +223,19 @@ class TasksManagerImpl(TasksManagerInterface):
                 return tasks
             after = OpenTaskCursor(position=page[-1].position, id=page[-1].id)
 
-    async def _verify(self, ctx: OpContext, task: Task) -> None:
+    async def _verify(self, ctx: OpContext, task: Task, current: Task | None = None) -> None:
+        """What a caller may not write. The assignee is checked when the
+        assignment changes, never over one already stored: a member removed
+        from the org leaves their tasks assigned, and marking such a task done
+        or editing its title is an update about something else, which the
+        assignment must not refuse. Assigning or reassigning is checked, and
+        clearing the assignee is always allowed."""
         if not task.title.strip():
             raise ValidationFailed("a task needs a title")
-        if task.assignee_id is not None:
+        assigned = task.assignee_id
+        if assigned is not None and (current is None or assigned != current.assignee_id):
             try:
-                await self._tenancy.get_user(ctx, task.assignee_id)
+                await self._tenancy.get_user(ctx, assigned)
             except NotFound:
                 raise ValidationFailed("the assignee is not a member of this org") from None
 

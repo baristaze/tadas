@@ -9,6 +9,7 @@ from uuid import UUID
 from tadas.om.opcontext import IdentityContext, OpContext, RequestContext
 from tadas.services.api.types.tenancy import (
     AddApiKeyRequest,
+    ApiKeyPageView,
     ApiKeyView,
     ExchangeSessionRequest,
     IdentityView,
@@ -22,6 +23,7 @@ from tadas.services.api.types.tenancy import (
     SessionView,
     UpdateMembershipRequest,
     UpdateMeRequest,
+    UserPageView,
     UserView,
 )
 
@@ -55,7 +57,10 @@ class TenancyServiceInterface(ABC):
     async def get_org(self, ctx: OpContext) -> OrgView: ...
 
     @abstractmethod
-    async def get_users(self, ctx: OpContext, limit: int) -> list[UserView]: ...
+    async def get_users(self, ctx: OpContext, cursor: str | None, limit: int) -> UserPageView:
+        """One page of the tenant's members; `cursor` is the previous page's
+        `next_cursor`, opaque and refused when it is not one this list issued."""
+        ...
 
     @abstractmethod
     async def get_memberships(self, ctx: OpContext, limit: int) -> list[MembershipView]: ...
@@ -75,7 +80,9 @@ class TenancyServiceInterface(ABC):
     async def revoke_session(self, ctx: OpContext, session_id: UUID) -> SessionView: ...
 
     @abstractmethod
-    async def get_api_keys(self, ctx: OpContext, limit: int) -> list[ApiKeyView]: ...
+    async def get_api_keys(self, ctx: OpContext, cursor: str | None, limit: int) -> ApiKeyPageView:
+        """One page of the api key list; `cursor` as on `get_users`."""
+        ...
 
     @abstractmethod
     async def create_api_key(

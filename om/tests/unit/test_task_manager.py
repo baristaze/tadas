@@ -274,6 +274,28 @@ async def test_the_assignee_must_be_a_member(manager: TasksManagerImpl, members:
     assert unassigned.assignee_id is None
 
 
+async def test_an_update_keeps_an_assignee_who_left_the_org(
+    manager: TasksManagerImpl, members: Members
+) -> None:
+    """The assignee is checked when the assignment changes, not over one
+    already stored. Removing a member leaves their tasks assigned to them, and
+    every other edit of such a task - done, reopened, retitled - must still
+    land; only a new assignment is held to membership."""
+    org = make_org()
+    ann = context(Role.MEMBER, org, members)
+    bob = context(Role.MEMBER, org, members)
+    task = await manager.create_task(ann, make_task(ann, "hand over", assignee_id=bob.user_id))
+    del members.users[bob.user_id]  # bob is removed from the org
+    done = await manager.update_task(ann, task.model_copy(update={"status": TaskStatus.DONE}))
+    assert done.status is TaskStatus.DONE and done.assignee_id == bob.user_id
+    retitled = await manager.update_task(ann, done.model_copy(update={"title": "handed over"}))
+    assert retitled.title == "handed over" and retitled.assignee_id == bob.user_id
+    with pytest.raises(ValidationFailed):  # a new assignment is still checked
+        await manager.update_task(ann, retitled.model_copy(update={"assignee_id": new_id()}))
+    cleared = await manager.update_task(ann, retitled.model_copy(update={"assignee_id": None}))
+    assert cleared.assignee_id is None
+
+
 async def test_move_places_after_an_anchor_or_at_the_top(manager: TasksManagerImpl) -> None:
     ctx = context(Role.MEMBER)
     c = await manager.create_task(ctx, make_task(ctx, "c"))

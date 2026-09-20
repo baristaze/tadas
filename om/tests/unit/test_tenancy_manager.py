@@ -189,7 +189,7 @@ async def test_bootstrap_produces_the_owners_context(manager: TenancyManagerImpl
     # The owner's context refines the request stage the seeding minted.
     assert ctx.app.type is AppType.CLI and ctx.request_id == seed.request_id
     assert (await manager.get_org(ctx)) == org
-    assert [u.id for u in await manager.get_users(ctx, limit=10)] == [ctx.user_id]
+    assert [u.id for u in (await manager.get_users(ctx, None, limit=10)).items] == [ctx.user_id]
     issued = await manager.create_api_key(ctx, "seed", Role.MEMBER)
     assert issued.api_key.created_by == ctx.user_id
 
@@ -212,7 +212,7 @@ async def test_bootstrap_login_exchange_authenticate(manager: TenancyManagerImpl
     assert ctx.security.credential_kind is CredentialKind.SESSION_TOKEN
     assert ctx.has(Permission.MANAGE_MEMBERS)
     assert (await manager.get_org(ctx)) == org
-    assert [u.id for u in await manager.get_users(ctx, limit=10)] == [issued.user.id]
+    assert [u.id for u in (await manager.get_users(ctx, None, limit=10)).items] == [issued.user.id]
 
 
 async def test_bootstrap_refuses_a_taken_slug(manager: TenancyManagerImpl) -> None:
@@ -380,7 +380,9 @@ async def test_api_keys_are_role_capped_and_revocable(
     for role in (Role.MEMBER, Role.OWNER):
         with pytest.raises(NotAuthorized):
             await manager.create_api_key(key_ctx, "successor", role)
-    assert [k.id for k in await manager.get_api_keys(owner, limit=10)] == [issued.api_key.id]
+    assert [k.id for k in (await manager.get_api_keys(owner, None, limit=10)).items] == [
+        issued.api_key.id
+    ]
     revoked = await manager.revoke_api_key(owner, issued.api_key.id)
     assert revoked.deleted_at is not None
     with pytest.raises(CredentialExpired):
@@ -404,7 +406,7 @@ async def test_no_one_mints_a_service_key(
     for ctx in (member, owner):
         with pytest.raises(ValidationFailed):
             await manager.create_api_key(ctx, "svc", Role.SERVICE)
-    assert await manager.get_api_keys(owner, limit=10) == []
+    assert (await manager.get_api_keys(owner, None, limit=10)).items == []
 
 
 async def test_a_rerun_of_the_create_reissues_the_secret_on_the_same_key(
@@ -434,7 +436,7 @@ async def test_a_rerun_of_the_create_reissues_the_secret_on_the_same_key(
     assert (await manager.authenticate(request(), again.key)).credential_id == api_key_id
     with pytest.raises(InvalidCredential):
         await manager.authenticate(request(), first.key)
-    assert [k.id for k in await manager.get_api_keys(owner, limit=10)] == [api_key_id]
+    assert [k.id for k in (await manager.get_api_keys(owner, None, limit=10)).items] == [api_key_id]
     assert len(seen) == 1, "the key was announced once"
 
 
@@ -514,7 +516,7 @@ async def test_removing_a_member_soft_deletes_the_user_and_ends_access(
     removed = await manager.remove_member(admin, cid.id)
     assert removed.deleted_at is not None and removed.deleted_by == admin.user_id
     assert removed.updated_at == removed.deleted_at
-    assert [u.id for u in await manager.get_users(owner, limit=10)] == sorted(
+    assert [u.id for u in (await manager.get_users(owner, None, limit=10)).items] == sorted(
         [owner.user_id, bob.id]
     )
     with pytest.raises(CredentialExpired):  # revoked with the member
@@ -547,11 +549,13 @@ async def test_removing_a_member_revokes_their_credentials_and_announces_each(
     bobs = await sign_in(manager, "bob@example.test", org.id)
     other = await sign_in(manager, "bob@example.test", org.id)
     key = await manager.create_api_key(bobs, "ci", Role.MEMBER)
-    assert key.api_key.id in [k.id for k in await manager.get_api_keys(owner, limit=10)]
+    assert key.api_key.id in [
+        k.id for k in (await manager.get_api_keys(owner, None, limit=10)).items
+    ]
 
     await manager.remove_member(owner, bob.id)
     # No key of theirs stays listed for a manager, and no session of theirs is live.
-    assert [k.user_id for k in await manager.get_api_keys(owner, limit=10)] == []
+    assert [k.user_id for k in (await manager.get_api_keys(owner, None, limit=10)).items] == []
     assert await storage.read_sessions(org.id, bob.id, utcnow(), 10) == []
     stored = await storage.read_api_key(org.id, key.api_key.id)
     assert stored is not None and stored.deleted_at is not None
@@ -606,7 +610,7 @@ async def test_a_removal_that_fails_leaves_the_member_whole(
     cid = await add_member(storage, org.id, "cid@example.test", Role.MEMBER)
     with pytest.raises(RuntimeError):
         await manager.remove_member(owner, cid.id)
-    assert cid.id in [u.id for u in await manager.get_users(owner, limit=10)]
+    assert cid.id in [u.id for u in (await manager.get_users(owner, None, limit=10)).items]
     assert cid.id in [m.user_id for m in await manager.get_memberships(owner, limit=10)]
     _, _, created = await manager.add_member(
         request(), "acme", "cid@example.test", "pw-1234", "Cid", Role.MEMBER
@@ -615,7 +619,7 @@ async def test_a_removal_that_fails_leaves_the_member_whole(
     storage.down = False
     removed = await manager.remove_member(owner, cid.id)
     assert removed.deleted_at is not None
-    assert cid.id not in [u.id for u in await manager.get_users(owner, limit=10)]
+    assert cid.id not in [u.id for u in (await manager.get_users(owner, None, limit=10)).items]
     assert await storage.read_membership_for_user(org.id, cid.id) is None
 
 
@@ -809,9 +813,11 @@ async def test_a_members_own_keys_are_found_behind_a_page_of_others(
     anns = [await manager.create_api_key(owner, "ci", Role.MEMBER) for _ in range(2)]
     own = await manager.create_api_key(bob, "mine", Role.MEMBER)
     # Bob sees his own key though the page is full of Ann's older ones.
-    assert [k.id for k in await manager.get_api_keys(bob, limit=10)] == [own.api_key.id]
+    assert [k.id for k in (await manager.get_api_keys(bob, None, limit=10)).items] == [
+        own.api_key.id
+    ]
     # The member manager sees the tenant's newest page.
-    assert [k.id for k in await manager.get_api_keys(owner, limit=10)] == [
+    assert [k.id for k in (await manager.get_api_keys(owner, None, limit=10)).items] == [
         own.api_key.id,
         anns[1].api_key.id,
     ]
@@ -926,9 +932,9 @@ async def test_a_deleted_orgs_rows_are_purged_once_the_retention_has_passed(
     assert await manager.purge_deleted(sweep) == 0
     no_retention = make_manager(storage, infra, TenancyOptions(retention=timedelta(0)))
     assert await no_retention.purge_deleted(sweep) == 5, "user, membership, key, session, ticket"
-    assert await storage.read_users(org.id, limit=10) == []
+    assert await storage.read_users(org.id, None, limit=10) == []
     assert await storage.read_memberships(org.id, limit=10) == []
-    assert await storage.read_api_keys(org.id, limit=10) == []
+    assert await storage.read_api_keys(org.id, None, limit=10) == []
     assert await storage.read_sessions(org.id, ann.user_id, utcnow(), 10) == []
     tombstone = await storage.read_org(org.id)
     assert tombstone is not None and tombstone.deleted_at is not None
@@ -1041,7 +1047,9 @@ async def test_expired_api_keys_are_purged_like_revoked_ones(
     ctx = await sign_in(manager, "ann@example.test", org.id)
     expired = await manager.create_api_key(ctx, "short", Role.MEMBER, ttl=timedelta(seconds=1))
     await asyncio.sleep(1.01)
-    assert [k.id for k in await manager.get_api_keys(ctx, limit=10)] == [expired.api_key.id]
+    assert [k.id for k in (await manager.get_api_keys(ctx, None, limit=10)).items] == [
+        expired.api_key.id
+    ]
     no_retention = make_manager(storage, infra, TenancyOptions(retention=timedelta(0)))
     sweep = next(c for c in await manager.service_contexts(request()) if c.org_id == org.id)
     assert await no_retention.purge_deleted(sweep) == 1
@@ -1169,7 +1177,9 @@ async def test_add_member_seeds_a_second_person_once(manager: TenancyManagerImpl
         request(), "acme", "bob@example.test", "other-pw", "Robert", Role.ADMIN
     )
     assert not created_again and again.id == bob.id and again.display_name == "Bob"
-    assert sorted(u.display_name for u in await manager.get_users(owner, limit=10)) == [
+    assert sorted(
+        u.display_name for u in (await manager.get_users(owner, None, limit=10)).items
+    ) == [
         "Ann",
         "Bob",
     ]
@@ -1249,7 +1259,7 @@ async def test_a_duplicate_email_the_read_missed_is_a_conflict_and_leaves_nothin
     with pytest.raises(UniqueKeyTaken) as raced:
         await manager.add_member(request(), "acme", "ann@example.test", "pw", "Ann", Role.MEMBER)
     assert raced.value.http_status == 409
-    assert len(await storage.read_users(org.id, limit=10)) == 1
+    assert len(await storage.read_users(org.id, None, limit=10)) == 1
     assert len(await storage.read_memberships(org.id, limit=10)) == 1
 
 
@@ -1334,7 +1344,7 @@ async def test_a_raced_add_member_leaves_no_membership_without_its_user(
     assert created
     with pytest.raises(UniqueKeyTaken):
         await manager.add_member(request(), "acme", "bob@example.test", "pw", "Bob", Role.ADMIN)
-    assert [u.id for u in await storage.read_users(org.id, limit=10)] == sorted(
+    assert [u.id for u in await storage.read_users(org.id, None, limit=10)] == sorted(
         [bob.id, org.created_by]
     )
     assert sorted(m.user_id for m in await storage.read_memberships(org.id, limit=10)) == sorted(
@@ -1342,3 +1352,52 @@ async def test_a_raced_add_member_leaves_no_membership_without_its_user(
     )
     pending = await outbox.claim_pending(10, utcnow(), timedelta(0), timedelta(0), timedelta(0))
     assert pending == []  # the losing add announced nothing
+
+
+async def test_every_api_key_is_reachable_a_page_at_a_time(
+    manager: TenancyManagerImpl,
+) -> None:
+    """A list answers a page and says whether another follows; the page a
+    caller asks for is a page size, never a ceiling past which a live key
+    stops being listed and so cannot be revoked."""
+    owner, _ = await manager.bootstrap(
+        request(), "Acme", "acme", "ann@example.test", "pw-1234", "Ann"
+    )
+    issued = [await manager.create_api_key(owner, f"key-{i}", Role.MEMBER) for i in range(7)]
+    newest_first = [k.api_key.id for k in issued][::-1]
+    paged: list[UUID] = []
+    after: UUID | None = None
+    while True:
+        page = await manager.get_api_keys(owner, after, limit=3)
+        paged += [k.id for k in page.items]
+        if not page.has_more:
+            break
+        after = page.items[-1].id
+    assert paged == newest_first
+    # The oldest key is on the last page, not lost behind the first.
+    last = await manager.get_api_keys(owner, newest_first[-2], limit=3)
+    assert [k.id for k in last.items] == [newest_first[-1]] and not last.has_more
+
+
+async def test_every_member_is_reachable_a_page_at_a_time(
+    manager: TenancyManagerImpl, storage: TenancyStorageMemoryImpl
+) -> None:
+    """The member list pages the same way, so the people a task may be
+    assigned to are not whatever the first page happened to hold."""
+    _, org = await manager.bootstrap(
+        request(), "Acme", "acme", "ann@example.test", "pw-1234", "Ann"
+    )
+    for index in range(4):
+        await add_member(storage, org.id, f"member-{index}@example.test", Role.MEMBER)
+    owner = await sign_in(manager, "ann@example.test", org.id)
+    every = sorted(u.id for u in (await manager.get_users(owner, None, limit=50)).items)
+    assert len(every) == 5
+    paged: list[UUID] = []
+    after: UUID | None = None
+    while True:
+        page = await manager.get_users(owner, after, limit=2)
+        paged += [u.id for u in page.items]
+        if not page.has_more:
+            break
+        after = page.items[-1].id
+    assert paged == every
