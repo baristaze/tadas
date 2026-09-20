@@ -3,7 +3,10 @@ may retry. The gateway begins a record before it runs a creating request
 and finishes it with the outcome; a retry gets the stored record back. The
 record names the attempt that holds it, and finish and release are that
 attempt's alone: an attempt that ran past the pending lease and lost the
-marker to a retry is refused, like a worker whose lease has passed."""
+marker to a retry is refused, like a worker whose lease has passed. A
+failure releases the attempt and keeps the record, so the retry reruns on
+the id the record carries and a row the failed attempt left behind is found,
+not repeated."""
 
 from abc import ABC, abstractmethod
 from uuid import UUID
@@ -20,9 +23,11 @@ class IdempotencyManagerInterface(ABC):
         """Writes a pending record for (tenant, user, key) carrying `target_id`, the
         id the create will use, and a freshly minted `attempt_id`, and returns it:
         a pending record is the caller's to run, with the record's `target_id`,
-        which a take-over keeps from the abandoned first attempt, and the
-        record's `attempt_id`, which a take-over replaces; a finished record is
-        replayed. Raises IdempotencyInProgress while another attempt holds the
+        which a re-arm and a take-over keep from the first attempt, and the
+        record's `attempt_id`, which they replace; a finished record is replayed.
+        A released record (no attempt, no outcome) is re-armed in one conditional
+        write; a record another attempt holds is taken over only past the pending
+        lease. Raises IdempotencyInProgress while another attempt holds the
         marker within its lease, and IdempotencyKeyReused when the stored record
         has another digest."""
         ...
@@ -42,15 +47,18 @@ class IdempotencyManagerInterface(ABC):
 
     @abstractmethod
     async def purge(self, ctx: OpContext) -> int:
-        """The sweep, for one tenant: deletes finished records past the retention
-        and pending ones past ten times the pending lease, a marker no retry
-        came back for; returns how many. A key purged is a key free again."""
+        """The sweep, for one tenant: deletes finished and released records past
+        the retention and held pending ones past ten times the pending lease, a
+        marker no retry came back for; returns how many. A key purged is a key
+        free again."""
         ...
 
     @abstractmethod
     async def release(self, ctx: OpContext, key: str, attempt_id: UUID) -> None:
-        """Drops the pending record `begin` wrote, because the attempt failed in a
-        way a retry may change; the next attempt begins afresh on the same key.
+        """Clears the attempt from the pending record `begin` wrote, because the
+        attempt failed in a way a retry may change. The record stays, with its
+        digest and its `target_id`, so the next attempt re-arms it and reruns on
+        the same id: a row the failed attempt left behind is found, not repeated.
         One write conditional on `attempt_id` still holding the record; raises
         IdempotencyAttemptLost when it does not, so an attempt that lost the
         marker cannot release what a retry now holds."""

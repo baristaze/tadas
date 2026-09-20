@@ -138,7 +138,16 @@ context on keeps the stage the callee needs.
   has passed. The gateway logs and counts the refusal (`attempt_lost`)
   and answers with what the attempt produced, which is the row the retry
   found. A failure (a `5xx`) is not an outcome: the marker is released
-  and the retry runs again; a refusal (a `4xx`) is stored and replayed,
+  and the retry runs again. The release keeps the record with its digest
+  and its target id and clears only the attempt, so a released marker
+  has no attempt and no outcome; the next retry re-arms it in one
+  conditional write on that state (a new attempt token, the lease
+  restarted) and reruns with the marker's id, so the retry that follows
+  a failure after the row landed finds the row instead of creating a
+  second one, and of two retries racing for a released marker exactly
+  one re-arms it while the other is told to wait. A held marker is
+  taken over only past the pending lease; a released one is re-armed at
+  once, never taken over. A refusal (a `4xx`) is stored and replayed,
   its envelope rewritten with the replaying request's id, the one its
   header carries. The stored outcome of a create that issued a secret is
   the view with the secret absent: a wire view declares its secret fields
@@ -147,10 +156,10 @@ context on keeps the stage the callee needs.
   carries the key, a replay answers with the row, `key` null, and
   `Idempotent-Replayed: true`, and the secret exists in one place, as a
   digest. The key lands in a unique index, so the gateway refuses one
-  longer than 255 characters with a 422. The sweep purges finished records
-  after the idempotency retention (24 hours; a retry that late begins
-  afresh) and pending ones past ten times the pending lease, a marker no
-  retry came back for.
+  longer than 255 characters with a 422. The sweep purges finished and
+  released records after the idempotency retention (24 hours; a retry
+  that late begins afresh) and held pending ones past ten times the
+  pending lease, a marker no retry came back for.
 - `outbox`: the transactional outbox. A manager that writes a core row
   hands the storage an `OutboxRow` (`kind`, `target_id`, the record's
   snapshot as `payload`, the actor and the request) and the storage base

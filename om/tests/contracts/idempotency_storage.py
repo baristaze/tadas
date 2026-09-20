@@ -24,6 +24,12 @@ def make_record(
     )
 
 
+def attempt_of(record: IdempotencyRecord) -> UUID:
+    """The attempt that holds the record; a released record has none."""
+    assert record.attempt_id is not None, "the record is released"
+    return record.attempt_id
+
+
 class IdempotencyStorageContract:
     @pytest.fixture
     def storage(self) -> IdempotencyStorageInterface:
@@ -78,17 +84,17 @@ class IdempotencyStorageContract:
 
         # A stale attempt (one that lost the marker) and another tenant change nothing.
         assert await finish(org, new_id(), "stale") is None
-        assert await finish(new_id(), record.attempt_id, "elsewhere") is None
+        assert await finish(new_id(), attempt_of(record), "elsewhere") is None
         assert await storage.read_record(org, record.user_id, record.key) == record
         # The holder finishes it once; the outcome is then nobody's to rewrite.
-        finished = await finish(org, record.attempt_id, '{"id":"x"}')
+        finished = await finish(org, attempt_of(record), '{"id":"x"}')
         assert finished is not None and finished.status == 201 and finished.body == '{"id":"x"}'
         assert finished.attempt_id == record.attempt_id
         assert await storage.read_record(org, record.user_id, record.key) == finished
-        assert await finish(org, record.attempt_id, "again") is None
+        assert await finish(org, attempt_of(record), "again") is None
         assert await storage.read_record(org, record.user_id, record.key) == finished
 
-    async def test_release_is_conditional_on_the_attempt_and_keeps_a_finished_record(
+    async def test_release_keeps_the_record_and_clears_only_the_attempt(
         self, storage: IdempotencyStorageInterface
     ) -> None:
         org_id, user_id = new_id(), new_id()
@@ -99,16 +105,105 @@ class IdempotencyStorageContract:
             return await storage.release_pending(org, user_id, key, attempt_id)
 
         # A stale attempt and another tenant release nothing.
+        assert pending.attempt_id is not None
         assert not await release(org_id, "k-pending", new_id())
         assert not await release(new_id(), "k-pending", pending.attempt_id)
         assert await storage.read_record(org_id, user_id, "k-pending") == pending
+        # The holder releases it: the record stays with its digest and its
+        # target id, and only the attempt goes.
         assert await release(org_id, "k-pending", pending.attempt_id)
-        assert await storage.read_record(org_id, user_id, "k-pending") is None
+        released = await storage.read_record(org_id, user_id, "k-pending")
+        assert released == pending.model_copy(update={"attempt_id": None})
+        assert released is not None and released.released and released.pending
+        # Released, it is nobody's: the same attempt cannot release it again
+        # or finish it, and it stays as it is.
         assert not await release(org_id, "k-pending", pending.attempt_id)
+        assert (
+            await storage.finish_pending(
+                org_id, user_id, "k-pending", pending.attempt_id, 201, "{}"
+            )
+            is None
+        )
+        assert await storage.read_record(org_id, user_id, "k-pending") == released
+        # A finished record is never released.
         finished = make_record(user_id, "k-done").model_copy(update={"status": 201, "body": "{}"})
         await storage.write_record(org_id, finished)
+        assert finished.attempt_id is not None
         assert not await release(org_id, "k-done", finished.attempt_id)
         assert await storage.read_record(org_id, user_id, "k-done") == finished
+
+    async def test_rearm_is_one_conditional_write_on_a_released_marker(
+        self, storage: IdempotencyStorageInterface
+    ) -> None:
+        org = new_id()
+        record = make_record()
+        await storage.write_record(org, record)
+        later = utcnow() + timedelta(minutes=5)
+
+        async def rearm(org_id: UUID, attempt_id: UUID | None = None) -> IdempotencyRecord | None:
+            return await storage.rearm_released(
+                org_id, record.user_id, record.key, later, attempt_id or new_id()
+            )
+
+        # Held: a marker with an attempt is not re-armed, whatever its age.
+        assert await rearm(org) is None
+        assert await storage.read_record(org, record.user_id, record.key) == record
+        assert record.attempt_id is not None
+        assert await storage.release_pending(org, record.user_id, record.key, record.attempt_id)
+        # Released: the re-arm stamps its own attempt and restarts the lease in
+        # the one write, and keeps the digest and the target id; another
+        # tenant's is never matched.
+        assert await rearm(new_id()) is None
+        second_attempt = new_id()
+        armed = await rearm(org, second_attempt)
+        assert armed is not None and armed.pending and not armed.released
+        assert armed.attempt_id == second_attempt and armed.created_at == later
+        assert armed.target_id == record.target_id
+        assert armed.request_digest == record.request_digest
+        assert await storage.read_record(org, record.user_id, record.key) == armed
+        # Re-armed, it is held again: not re-armed twice, and the attempt that
+        # released it can neither finish nor release it.
+        assert await rearm(org) is None
+        assert (
+            await storage.finish_pending(
+                org, record.user_id, record.key, record.attempt_id, 201, "{}"
+            )
+            is None
+        )
+        assert not await storage.release_pending(org, record.user_id, record.key, record.attempt_id)
+        assert await storage.read_record(org, record.user_id, record.key) == armed
+        # The re-armed attempt finishes it; a finished record is never re-armed.
+        finished = await storage.finish_pending(
+            org, record.user_id, record.key, second_attempt, 201, "{}"
+        )
+        assert finished is not None and finished.status == 201
+        assert await rearm(org) is None
+        assert await storage.read_record(org, record.user_id, record.key) == finished
+
+    async def test_a_raced_rearm_admits_exactly_one(
+        self, storage: IdempotencyStorageInterface
+    ) -> None:
+        # Two retries find the same released marker at the same moment. The
+        # re-arm is one conditional write, so exactly one of them holds the
+        # marker afterwards, and the record names that one's attempt.
+        org = new_id()
+        record = make_record().model_copy(update={"attempt_id": None})
+        await storage.write_record(org, record)
+        restarted_at = utcnow()
+        attempts = [new_id(), new_id()]
+        outcomes = await asyncio.gather(
+            *(
+                storage.rearm_released(org, record.user_id, record.key, restarted_at, attempt_id)
+                for attempt_id in attempts
+            )
+        )
+        winners = [armed for armed in outcomes if armed is not None]
+        assert len(winners) == 1
+        stored = await storage.read_record(org, record.user_id, record.key)
+        assert stored is not None and stored == winners[0]
+        assert stored.attempt_id in attempts
+        assert stored.pending and stored.created_at == restarted_at
+        assert stored.target_id == record.target_id
 
     async def test_take_over_is_one_conditional_write(
         self, storage: IdempotencyStorageInterface
@@ -139,12 +234,20 @@ class IdempotencyStorageContract:
         # The first attempt lost the marker: its finish and its release are refused.
         assert (
             await storage.finish_pending(
-                org, record.user_id, record.key, record.attempt_id, 201, "{}"
+                org, record.user_id, record.key, attempt_of(record), 201, "{}"
             )
             is None
         )
-        assert not await storage.release_pending(org, record.user_id, record.key, record.attempt_id)
+        assert not await storage.release_pending(
+            org, record.user_id, record.key, attempt_of(record)
+        )
         assert await storage.read_record(org, record.user_id, record.key) == taken
+        # A released marker is re-armed, never taken over, however old it is.
+        assert taken.attempt_id is not None
+        assert await storage.release_pending(org, record.user_id, record.key, taken.attempt_id)
+        assert await take_over(org, later + timedelta(minutes=1)) is None
+        released = await storage.read_record(org, record.user_id, record.key)
+        assert released is not None and released.released
         # A finished record is never taken over, and another tenant's is never matched.
         await storage.write_record(org, taken.model_copy(update={"status": 200, "body": "{}"}))
         assert await take_over(org, later) is None
@@ -176,7 +279,7 @@ class IdempotencyStorageContract:
         assert stored.attempt_id in attempts
         assert stored.pending and stored.created_at == restarted_at
 
-    async def test_purge_counts_finished_past_the_cut_and_pending_past_theirs(
+    async def test_purge_counts_finished_and_released_past_the_cut_and_pending_past_theirs(
         self, storage: IdempotencyStorageInterface
     ) -> None:
         org, other_org = new_id(), new_id()
@@ -189,20 +292,24 @@ class IdempotencyStorageContract:
         )
         abandoned = make_record(key="abandoned", created_at=now - timedelta(hours=1))
         live_pending = make_record(key="live")
+        # A released marker lives as long as a finished one: past the
+        # retention a retry begins afresh, within it the retry re-arms it.
+        old_released = make_record(key="old-released", created_at=now - timedelta(days=2))
+        old_released = old_released.model_copy(update={"attempt_id": None})
+        fresh_released = make_record(key="new-released", created_at=now - timedelta(hours=1))
+        fresh_released = fresh_released.model_copy(update={"attempt_id": None})
         elsewhere = make_record(key="old-done", created_at=now - timedelta(days=2)).model_copy(
             update={"status": 201, "body": "{}"}
         )
-        for record in (old_finished, fresh_finished, abandoned, live_pending):
+        mine = (old_finished, fresh_finished, abandoned, live_pending, old_released, fresh_released)
+        for record in mine:
             await storage.write_record(org, record)
         await storage.write_record(other_org, elsewhere)
         purged = await storage.purge_records(
             org, now - timedelta(days=1), now - timedelta(minutes=20)
         )
-        assert purged == 2
-        kept = [
-            await storage.read_record(org, r.user_id, r.key)
-            for r in (old_finished, fresh_finished, abandoned, live_pending)
-        ]
-        assert kept == [None, fresh_finished, None, live_pending]
+        assert purged == 3
+        kept = [await storage.read_record(org, r.user_id, r.key) for r in mine]
+        assert kept == [None, fresh_finished, None, live_pending, None, fresh_released]
         assert await storage.read_record(other_org, elsewhere.user_id, elsewhere.key) == elsewhere
         assert await storage.purge_records(org, now - timedelta(days=1), now) == 0

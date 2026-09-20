@@ -2,14 +2,17 @@
 is recorded per tenant and per user under the key, on the same durable
 primitive the queue handlers dedupe on, and replayed on a retry. Only an
 outcome a retry cannot change is recorded: a refusal is replayed, a failure
-releases the marker so the retry runs again on the same id. A key seen with
-a different request is refused; a key whose first request is still running
-is told to wait. The marker names its attempt: an attempt that ran past the
-pending lease and lost the marker to a retry is refused when it finishes or
-releases, and the refusal is logged and swallowed here, because the retry
-owns the marker now and whatever the slow attempt wrote is the row the retry
-found. A view that declares secret fields is stored with them absent: the
-secret is shown once, on the first response, and a replay says so."""
+releases the marker so the retry runs again on the same id: the release
+keeps the marker with its digest and its id and clears only the attempt, so
+a retry after a failure that came once the row had landed finds the row
+instead of creating a second one. A key seen with a different request is
+refused; a key whose first request is still running is told to wait. The
+marker names its attempt: an attempt that ran past the pending lease and
+lost the marker to a retry is refused when it finishes or releases, and the
+refusal is logged and swallowed here, because the retry owns the marker now
+and whatever the slow attempt wrote is the row the retry found. A view that
+declares secret fields is stored with them absent: the secret is shown once,
+on the first response, and a replay says so."""
 
 import hashlib
 import logging
@@ -50,8 +53,9 @@ class Idempotency:
     without being recorded: `run` begins the record, calls the handler with
     the id the create uses, and finishes the record with whatever the handler
     produced. The id is minted here, before the marker, and travels on it, so
-    a retry that takes over an abandoned marker creates on the same id and a
-    crash between the create and `finish` cannot end in two rows."""
+    a retry that re-arms a released marker or takes over an abandoned one
+    creates on the same id, and neither a failure after the create nor a crash
+    between the create and `finish` can end in two rows."""
 
     def __init__(
         self,
@@ -88,6 +92,7 @@ class Idempotency:
                 headers={REPLAYED_HEADER: "true"},
             )
         attempt_id = record.attempt_id
+        assert attempt_id is not None, "begin hands back a marker it armed"
         try:
             view = await handler(record.target_id)
         except PlatformException as error:
@@ -100,8 +105,9 @@ class Idempotency:
                 )
             raise
         except Exception:
-            # A failure is not an outcome: the marker goes, and the retry runs the
-            # request again on the same id instead of replaying the failure for good.
+            # A failure is not an outcome: the attempt goes, the marker stays,
+            # and the retry runs the request again on the same id instead of
+            # replaying the failure for good.
             await self._release(attempt_id)
             raise
         body = view.model_dump_json()

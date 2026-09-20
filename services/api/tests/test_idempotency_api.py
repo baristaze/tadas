@@ -1,7 +1,8 @@
 """Edge idempotency over the durable record: a retry replays, a reused key
 with another body is refused, keys are personal, a request still running
-answers 409 to its own retry, and one that runs past the pending lease loses
-the marker to the retry and cannot finish or release it."""
+answers 409 to its own retry, a failure after the row landed is followed by
+a retry that finds the row, and a request that runs past the pending lease
+loses the marker to the retry and cannot finish or release it."""
 
 import asyncio
 from datetime import timedelta
@@ -148,6 +149,47 @@ async def test_a_failure_is_not_an_outcome_the_retry_runs_again(
     assert replay.status_code == 201 and replay.headers["Idempotent-Replayed"] == "true"
     listed = await client.get("/v1/tasks", headers=owner)
     assert [t["id"] for t in listed.json()["items"]] == [retry.json()["id"]]
+
+
+async def test_a_failure_after_the_row_landed_does_not_create_twice(
+    client: httpx.AsyncClient,
+    container: AppContainer,
+    owner: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The create committed, then the attempt failed before it answered (a 5xx
+    # between the commit and the response). The release keeps the marker with
+    # its id and clears only the attempt, so the retry re-arms it at once, no
+    # lease to wait out, and reruns on the same id: the create finds its own
+    # row and returns it, and the retry answers with that one row.
+    original = container.managers.tasks.create_task
+    failed = False
+
+    async def fail_after_the_row_landed(ctx, task):
+        nonlocal failed
+        created = await original(ctx, task)
+        if not failed:
+            failed = True
+            raise RuntimeError("the connection dropped after the commit")
+        return created
+
+    monkeypatch.setattr(container.managers.tasks, "create_task", fail_after_the_row_landed)
+    headers = {**owner, "Idempotency-Key": "landed-1"}
+    first = await client.post("/v1/tasks", headers=headers, json=BODY)
+    assert first.status_code == 500 and failed
+    listed = await client.get("/v1/tasks", headers=owner)
+    assert len(listed.json()["items"]) == 1, "the row landed before the failure"
+    landed = listed.json()["items"][0]["id"]
+
+    retry = await client.post("/v1/tasks", headers=headers, json=BODY)
+    assert retry.status_code == 201, retry.text
+    assert "Idempotent-Replayed" not in retry.headers
+    assert retry.json()["id"] == landed, "the retry answers with the row that landed"
+    listed = await client.get("/v1/tasks", headers=owner)
+    assert [t["id"] for t in listed.json()["items"]] == [landed]
+    replay = await client.post("/v1/tasks", headers=headers, json=BODY)
+    assert replay.status_code == 201 and replay.headers["Idempotent-Replayed"] == "true"
+    assert replay.json() == retry.json()
 
 
 async def test_without_a_key_every_request_creates(
