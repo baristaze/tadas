@@ -102,6 +102,9 @@ class EventStorageContract:
             await storage.append_event(org_b, event.model_copy(update={"kind": "stolen"}))
         assert await storage.read_after(org_a, 0, 10) == [appended]
         assert await storage.read_after(org_b, 0, 10) == []
+        # The refusal spends nothing: an id another tenant owns never moves
+        # this tenant's cursor, so the next append here is still the first.
+        assert await storage.read_head(org_b) == 0
 
     async def test_many_appends_never_share_or_skip_a_seq(
         self, storage: EventStorageInterface
