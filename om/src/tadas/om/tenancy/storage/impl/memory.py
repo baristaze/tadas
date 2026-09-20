@@ -2,7 +2,7 @@ from collections.abc import Callable, Iterable
 from datetime import datetime
 from uuid import UUID
 
-from tadas.om.exceptions import Conflict, UniqueKeyTaken
+from tadas.om.exceptions import Conflict, NotFound, UniqueKeyTaken
 from tadas.om.outbox.storage import OutboxLandingInterface
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.storage.impl.memory_base import HasId, MemoryStorageBase, MemoryTable
@@ -127,6 +127,17 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
                 raise UniqueKeyTaken(f"{user.id} or {membership.id} is already written")
             if identity is not None:
                 self._identities[identity.id] = identity
+            self._put(self._users, org_id, user, outbox_row)
+            self._put(self._memberships, org_id, membership)
+
+    async def remove_member(
+        self, org_id: UUID, user: User, membership: Membership, outbox_row: OutboxRow
+    ) -> None:
+        async with self._lock:
+            if self._get(self._users, org_id, user.id) is None:
+                raise NotFound(f"user {user.id} is not in {org_id}")
+            if self._get(self._memberships, org_id, membership.id) is None:
+                raise NotFound(f"membership {membership.id} is not in {org_id}")
             self._put(self._users, org_id, user, outbox_row)
             self._put(self._memberships, org_id, membership)
 

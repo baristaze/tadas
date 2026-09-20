@@ -15,7 +15,7 @@ from contracts.factories import (
     make_user,
 )
 from tadas.om.base import new_id, utcnow
-from tadas.om.exceptions import Conflict, TenantMismatch, UniqueKeyTaken
+from tadas.om.exceptions import Conflict, NotFound, TenantMismatch, UniqueKeyTaken
 from tadas.om.opcontext import Role
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.tenancy.storage import TenancyStorageInterface
@@ -361,6 +361,30 @@ class TenancyStorageContract:
         )
         assert await storage.read_identity(newcomer.id) == newcomer
         assert await storage.read_user(org.id, dan.id) == dan
+
+    async def test_remove_member_lands_whole_or_not_at_all(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        org, other = make_org(), make_org("Other")
+        bob = make_user(make_identity().id)
+        membership = make_membership(bob.id)
+        await storage.create_member(org.id, bob, membership, make_user_row(bob))
+        gone = utcnow()
+        removed = bob.model_copy(update={"deleted_at": gone, "deleted_by": bob.id})
+        ended = membership.model_copy(update={"deleted_at": gone, "deleted_by": bob.id})
+        # A membership that is not there, or a user of another tenant: nothing lands.
+        with pytest.raises(NotFound):
+            await storage.remove_member(
+                org.id, removed, make_membership(bob.id), make_user_row(bob)
+            )
+        with pytest.raises((NotFound, TenantMismatch)):
+            await storage.remove_member(other.id, removed, ended, make_user_row(bob))
+        assert await storage.read_user(org.id, bob.id) == bob
+        assert await storage.read_membership_for_user(org.id, bob.id) == membership
+        await storage.remove_member(org.id, removed, ended, make_user_row(bob))
+        assert await storage.read_user(org.id, bob.id) == removed
+        assert await storage.read_membership_for_user(org.id, bob.id) is None
+        assert await storage.read_users(org.id, limit=10) == []
 
     async def test_users_by_identity_span_tenants(self, storage: TenancyStorageInterface) -> None:
         identity = make_identity()

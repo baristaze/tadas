@@ -88,6 +88,16 @@ class TenancyStorageInterface(ABC):
         ...
 
     @abstractmethod
+    async def remove_member(
+        self, org_id: UUID, user: User, membership: Membership, outbox_row: OutboxRow
+    ) -> None:
+        """A named atomic write: the soft-deleted user, their ended membership,
+        and the outbox row land in one commit or not at all, so a failure never
+        leaves a live user without a membership, which no list, purge, or
+        retry would reach. Both rows must exist in the tenant."""
+        ...
+
+    @abstractmethod
     async def read_users(self, org_id: UUID, limit: int) -> list[User]: ...
 
     @abstractmethod

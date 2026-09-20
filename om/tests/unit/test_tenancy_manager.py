@@ -6,6 +6,7 @@ from pathlib import Path
 from uuid import UUID
 
 import pytest
+from contracts.outbox_storage import claim_all
 
 from tadas.infra.cache import CacheInterface, CacheScope
 from tadas.infra.impl.local import InfraLocalImpl
@@ -511,7 +512,7 @@ async def test_removing_a_member_soft_deletes_the_user_and_ends_access(
     assert [u.id for u in await manager.get_users(owner, limit=10)] == sorted(
         [owner.user_id, bob.id]
     )
-    with pytest.raises(InvalidCredential):
+    with pytest.raises(CredentialExpired):  # revoked with the member
         await manager.authenticate(request(), cid_session.token)
     assert (await manager.login(request(), "cid@example.test", "pw-1234")).memberships == ()
     with pytest.raises(NotFound):
@@ -524,6 +525,93 @@ async def test_removing_a_member_soft_deletes_the_user_and_ends_access(
         await manager.update_membership_role(owner, cid.id, Role.VIEWER)
     ended = await storage.read_membership_for_user(org.id, cid.id)
     assert ended is None
+
+
+async def test_removing_a_member_revokes_their_credentials_and_announces_each(
+    storage: TenancyStorageMemoryImpl, infra: InfraLocalImpl, outbox: OutboxStorageMemoryImpl
+) -> None:
+    relay = SpyRelay(OutboxRelayImpl(outbox, EventStorageMemoryImpl(), infra.get_topics()))
+    manager = TenancyManagerImpl(
+        storage, relay, infra.get_cache(CacheScope.REALTIME_TICKET), TenancyOptions()
+    )
+    _, org = await manager.bootstrap(
+        request(), "Acme", "acme", "ann@example.test", "pw-1234", "Ann"
+    )
+    owner = await sign_in(manager, "ann@example.test", org.id)
+    bob = await add_member(storage, org.id, "bob@example.test", Role.MEMBER)
+    bobs = await sign_in(manager, "bob@example.test", org.id)
+    other = await sign_in(manager, "bob@example.test", org.id)
+    key = await manager.create_api_key(bobs, "ci", Role.MEMBER)
+    assert key.api_key.id in [k.id for k in await manager.get_api_keys(owner, limit=10)]
+
+    await manager.remove_member(owner, bob.id)
+    # No key of theirs stays listed for a manager, and no session of theirs is live.
+    assert [k.user_id for k in await manager.get_api_keys(owner, limit=10)] == []
+    assert await storage.read_sessions(org.id, bob.id, utcnow(), 10) == []
+    stored = await storage.read_api_key(org.id, key.api_key.id)
+    assert stored is not None and stored.deleted_at is not None
+    assert stored.deleted_by == owner.user_id
+    # The removal is announced first, so their sockets close as a membership
+    # that ended; then each revocation, the way a revocation is.
+    kinds = [(r.kind, r.target_id) for _, r in relay.rows if r.actor_id == owner.user_id]
+    assert kinds[0] == ("tenancy.user.deleted", bob.id)
+    assert sorted(kinds[1:]) == sorted(
+        [
+            ("tenancy.session.revoked", bobs.security.credential_id),
+            ("tenancy.session.revoked", other.security.credential_id),
+            ("tenancy.api_key.deleted", key.api_key.id),
+        ]
+    )
+    assert await claim_all(outbox) == []
+
+
+class DownOnRemoveStorage(TenancyStorageMemoryImpl):
+    """The writes that end a member fail while `down`: the twin of a database
+    that went away between two statements."""
+
+    down = True
+
+    async def write_user(
+        self, org_id: UUID, user: User, outbox_row: OutboxRow | None = None
+    ) -> None:
+        if self.down and user.deleted_at is not None:
+            raise RuntimeError("storage is down")
+        await super().write_user(org_id, user, outbox_row)
+
+    async def remove_member(
+        self, org_id: UUID, user: User, membership: Membership, outbox_row: OutboxRow
+    ) -> None:
+        if self.down:
+            raise RuntimeError("storage is down")
+        await super().remove_member(org_id, user, membership, outbox_row)
+
+
+async def test_a_removal_that_fails_leaves_the_member_whole(
+    infra: InfraLocalImpl, outbox: OutboxStorageMemoryImpl
+) -> None:
+    # The user and the membership go in one write: a failure leaves both, so
+    # the member is still listed, still a member, and the next remove finishes
+    # the job. Their credentials may already be revoked; that is recoverable.
+    storage = DownOnRemoveStorage(outbox)
+    manager = make_manager(storage, infra, outbox=outbox)
+    _, org = await manager.bootstrap(
+        request(), "Acme", "acme", "ann@example.test", "pw-1234", "Ann"
+    )
+    owner = await sign_in(manager, "ann@example.test", org.id)
+    cid = await add_member(storage, org.id, "cid@example.test", Role.MEMBER)
+    with pytest.raises(RuntimeError):
+        await manager.remove_member(owner, cid.id)
+    assert cid.id in [u.id for u in await manager.get_users(owner, limit=10)]
+    assert cid.id in [m.user_id for m in await manager.get_memberships(owner, limit=10)]
+    _, _, created = await manager.add_member(
+        request(), "acme", "cid@example.test", "pw-1234", "Cid", Role.MEMBER
+    )
+    assert not created, "still a member"
+    storage.down = False
+    removed = await manager.remove_member(owner, cid.id)
+    assert removed.deleted_at is not None
+    assert cid.id not in [u.id for u in await manager.get_users(owner, limit=10)]
+    assert await storage.read_membership_for_user(org.id, cid.id) is None
 
 
 async def test_a_membership_needs_a_live_user_to_be_read_or_changed(

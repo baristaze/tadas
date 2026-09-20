@@ -6,7 +6,7 @@ from sqlalchemy import delete, or_, select, update
 from sqlalchemy.exc import IntegrityError
 
 from tadas.om.base import Identifiable
-from tadas.om.exceptions import Conflict, UniqueKeyTaken
+from tadas.om.exceptions import Conflict, NotFound, TenantMismatch, UniqueKeyTaken
 from tadas.om.outbox.storage.tables.outbox_rows import OutboxRows
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.storage.impl.pg_base import PgStorageBase, violated_constraint
@@ -124,6 +124,22 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
                     f"{row_type.__tablename__} and its siblings: "
                     f"{violated_constraint(error) or 'a unique key'} is taken"
                 ) from error
+
+    async def remove_member(
+        self, org_id: UUID, user: User, membership: Membership, outbox_row: OutboxRow
+    ) -> None:
+        # Two updates and the outbox row in one commit; a row that is missing
+        # or another tenant's lands nothing.
+        async with self._session_for(Users) as session:
+            for table, entity in ((Users, user), (Memberships, membership)):
+                row = await session.get(table, entity.id)
+                if row is None:
+                    raise NotFound(f"{table.__tablename__} {entity.id} not found")
+                if row.org_id != org_id:
+                    raise TenantMismatch(f"{table.__tablename__} {entity.id} is not in {org_id}")
+                apply_row(row, entity)
+            session.add(to_row(outbox_row, OutboxRows, org_id=org_id))
+            await session.commit()
 
     async def read_users(self, org_id: UUID, limit: int) -> list[User]:
         stmt = (
