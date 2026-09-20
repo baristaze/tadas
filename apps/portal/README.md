@@ -16,9 +16,12 @@ Zustand, one realtime channel.
 - Client state lives in Zustand (`src/store/`): the session token, the
   connection status, the transient notices a failed write leaves
   (`notices.ts`, rendered by `src/app/Notices.tsx` over the kit's
-  `Banner`; a view-model never swallows a mutation error). The token is
-  kept in memory and in the tab's session storage, so a reload survives
-  and a closed tab forgets; never in local storage.
+  `Banner`; a view-model never swallows a mutation error), and the
+  preferences kept across visits (`preferences.ts`, the task scope,
+  persisted in local storage). The token is kept in memory and in the
+  tab's session storage, so a reload survives and a closed tab forgets;
+  never in local storage, which is for preferences only. No feature
+  reads a storage directly; a store does.
 - One screen is `src/features/<screen>/`: `<Screen>Page.tsx` renders,
   `use<Screen>Vm.ts` decides, `<screen>Model.ts` computes and is unit
   tested without React.
