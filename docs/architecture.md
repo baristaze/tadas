@@ -778,7 +778,12 @@ everything in-process for tests.
   application containers, the portal among them.
 - `docker/`: one two-stage image per process, non-root, with a
   healthcheck (`/healthz` for the API and, on its metrics port, the
-  worker; `/` for the portal's nginx).
+  worker; `/` for the portal's nginx). That probe decides whether the
+  process is alive and should be restarted, which is liveness. Whether
+  to send it traffic is readiness, a question the API's target group
+  asks `/readyz` instead, so a replica that is up but cannot reach its
+  database leaves the rotation without being killed and comes back when
+  it can serve again.
 - `terraform/`: every cloud resource. `modules/` holds one module per
   resource family (`network`, `cluster`, `database`, `cache`, `queue`,
   `buckets`, `secrets`, `load_balancer`, `certificate`, `domain_records`,
@@ -788,7 +793,11 @@ everything in-process for tests.
   the deploy role. The load balancer's idle timeout is read from
   `deployment/realtime-timeouts.json`, the file the api pins its
   protocol ping against and the api and the portal pin the client's
-  ping interval against. The worker's service instance
+  ping interval against. The API's target group polls `/readyz`, and
+  the readiness deadline is shorter than the poll's own timeout, so the
+  answer always arrives inside a poll and a database that hangs reads as
+  a replica that is not ready rather than as one that stopped answering.
+  The worker's service instance
   caps a rollout at 100% of desired because a worker holds leases. Every
   task runs an ADOT collector sidecar that scrapes the process's
   `/metrics` into CloudWatch (namespace `Tadas`) and forwards its traces to
