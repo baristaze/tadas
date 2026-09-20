@@ -33,6 +33,8 @@ log = logging.getLogger(__name__)
 
 REPLAYED_HEADER = "Idempotent-Replayed"
 JSON = "application/json"
+KEY_MAX_LENGTH = 255
+"""The key lands in a unique index; a longer one is refused at the edge (422)."""
 
 
 def request_digest(method: str, path: str, body: bytes) -> str:
@@ -74,8 +76,13 @@ class Idempotency:
             raise
         if record.status is not None and record.body is not None:
             OUTCOMES.labels(subsystem="idempotency", outcome="replayed").inc()
+            body = record.body
+            if record.status >= 400:
+                # A replayed refusal names this request, as its header does,
+                # not the attempt that first produced it.
+                body = self._with_request_id(body)
             return Response(
-                content=record.body,
+                content=body,
                 status_code=record.status,
                 media_type=JSON,
                 headers={REPLAYED_HEADER: "true"},
@@ -134,6 +141,15 @@ class Idempotency:
         error = ErrorBody(code=code, message=message, request_id=self._ctx.request_id)
         return ErrorResponse(error=error).model_dump_json()
 
+    def _with_request_id(self, body: str) -> str:
+        """The stored refusal with this request's id in its envelope; a body that
+        is not an envelope is replayed as stored."""
+        try:
+            stored = ErrorResponse.model_validate_json(body)
+        except ValueError:
+            return body
+        return self._error_body(stored.error.code, stored.error.message)
+
 
 def stored_body(view: BaseModel) -> str:
     """The outcome as the marker stores it: the view with every field it
@@ -153,7 +169,7 @@ def _json(view: BaseModel, status: int) -> Response:
 async def idempotency(
     request: Request,
     ctx: Ctx,
-    idempotency_key: Annotated[str | None, Header()] = None,
+    idempotency_key: Annotated[str | None, Header(max_length=KEY_MAX_LENGTH)] = None,
 ) -> Idempotency:
     digest = request_digest(request.method, request.url.path, await request.body())
     return Idempotency(container_of(request).managers.idempotency, ctx, idempotency_key, digest)
