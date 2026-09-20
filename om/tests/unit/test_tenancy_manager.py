@@ -837,3 +837,34 @@ async def test_a_duplicate_email_the_read_missed_is_a_conflict_and_leaves_nothin
     assert raced.value.http_status == 409
     assert len(await storage.read_users(org.id, limit=10)) == 1
     assert len(await storage.read_memberships(org.id, limit=10)) == 1
+
+
+class RacedUserStorage(TenancyStorageMemoryImpl):
+    """The read of the identity's users misses: another request added the same
+    person between our read and our write."""
+
+    async def read_users_by_identity(self, identity_id: UUID) -> list[tuple[UUID, User]]:
+        return []
+
+
+async def test_a_raced_add_member_leaves_no_membership_without_its_user(
+    infra: InfraLocalImpl, outbox: OutboxStorageMemoryImpl
+) -> None:
+    storage = RacedUserStorage(outbox)
+    manager = make_manager(storage, infra, outbox=outbox)
+    _, org = await manager.bootstrap(
+        request(), "Acme", "acme", "ann@example.test", "pw-1234", "Ann"
+    )
+    _, bob, created = await manager.add_member(
+        request(), "acme", "bob@example.test", "pw-1234", "Bob", Role.MEMBER
+    )
+    assert created
+    with pytest.raises(UniqueKeyTaken):
+        await manager.add_member(request(), "acme", "bob@example.test", "pw", "Bob", Role.ADMIN)
+    assert [u.id for u in await storage.read_users(org.id, limit=10)] == sorted(
+        [bob.id, org.created_by]
+    )
+    assert sorted(m.user_id for m in await storage.read_memberships(org.id, limit=10)) == sorted(
+        [bob.id, org.created_by]
+    )
+    assert await outbox.read_pending(10) == []  # the losing add announced nothing

@@ -138,7 +138,6 @@ class TenancyManagerImpl(TenancyManagerInterface):
             updated_by=user_id,
             slug=slug,
         )
-        await self._storage.write_org(org.id, org)
         user = User(
             id=user_id,
             created_at=now,
@@ -149,7 +148,6 @@ class TenancyManagerImpl(TenancyManagerInterface):
             email=email,
             display_name=display_name,
         )
-        await self._storage.write_user(org.id, user)
         membership = Membership(
             id=new_id(),
             created_at=now,
@@ -159,7 +157,8 @@ class TenancyManagerImpl(TenancyManagerInterface):
             user_id=user_id,
             role=Role.OWNER,
         )
-        await self._storage.write_membership(org.id, membership)
+        # One commit: a slug taken meanwhile leaves no org without its owner.
+        await self._storage.create_org_with_owner(org.id, org, user, membership)
         # The principal now exists; everything after this line runs under it.
         ctx = build_context(
             rctx,
@@ -228,19 +227,21 @@ class TenancyManagerImpl(TenancyManagerInterface):
             email=email,
             display_name=display_name,
         )
-        await self._storage.write_membership(
-            ctx.org_id,
-            Membership(
-                id=new_id(),
-                created_at=now,
-                updated_at=now,
-                created_by=ctx.user_id,
-                updated_by=ctx.user_id,
-                user_id=user_id,
-                role=role,
-            ),
+        membership = Membership(
+            id=new_id(),
+            created_at=now,
+            updated_at=now,
+            created_by=ctx.user_id,
+            updated_by=ctx.user_id,
+            user_id=user_id,
+            role=role,
         )
-        await self._write_user(ctx, user, "created")
+        # One commit: the user, the membership, and the outbox row land together,
+        # so a concurrent add of the same person leaves no membership without
+        # its user and no user without a membership.
+        row = outbox_row(ctx, "tenancy.user.created", user.id, snapshot(user))
+        await self._storage.create_member(ctx.org_id, user, membership, row)
+        await self._relay.relay(ctx.org_id, row)
         return ctx, user, True
 
     async def login(self, rctx: RequestContext, email: str, password: str) -> IssuedLogin:

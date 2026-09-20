@@ -53,6 +53,25 @@ class TenancyStorageInterface(ABC):
     async def write_org(self, org_id: UUID, org: Org) -> None: ...
 
     @abstractmethod
+    async def create_org_with_owner(
+        self, org_id: UUID, org: Org, user: User, membership: Membership
+    ) -> None:
+        """A named atomic create: the org, its first user, and the owner's
+        membership land in one commit or not at all, so a slug or an identity
+        taken meanwhile (`UniqueKeyTaken`) leaves no partial tenant behind."""
+        ...
+
+    @abstractmethod
+    async def create_member(
+        self, org_id: UUID, user: User, membership: Membership, outbox_row: OutboxRow
+    ) -> None:
+        """A named atomic create: the user, their membership, and the outbox row
+        land in one commit or not at all. A key taken meanwhile (one live user
+        per identity, one membership per user) is `UniqueKeyTaken`, and nothing
+        lands, the outbox row included."""
+        ...
+
+    @abstractmethod
     async def read_users(self, org_id: UUID, limit: int) -> list[User]: ...
 
     @abstractmethod

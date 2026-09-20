@@ -19,6 +19,7 @@ from tadas.om.opcontext import Role
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.tenancy.storage import TenancyStorageInterface
 from tadas.om.tenancy.types.api_key import ApiKey
+from tadas.om.tenancy.types.user import User
 
 
 def make_key_row(api_key: ApiKey) -> OutboxRow:
@@ -33,6 +34,19 @@ def make_key_row(api_key: ApiKey) -> OutboxRow:
         actor_id=api_key.user_id,
         request_id=new_id(),
         app="api",
+    )
+
+
+def make_user_row(user: User) -> OutboxRow:
+    return OutboxRow(
+        id=new_id(),
+        created_at=utcnow(),
+        kind="tenancy.user.created",
+        target_id=user.id,
+        payload={"display_name": user.display_name},
+        actor_id=user.created_by,
+        request_id=new_id(),
+        app="cli",
     )
 
 
@@ -123,11 +137,12 @@ class TenancyStorageContract:
     # holds the key passes.
 
     async def test_identity_email_is_unique(self, storage: TenancyStorageInterface) -> None:
-        identity = make_identity("ann@example.test")
+        email = f"{uuid4().hex}@example.test"
+        identity = make_identity(email)
         await storage.write_identity(identity)
         with pytest.raises(UniqueKeyTaken):
-            await storage.write_identity(make_identity("ann@example.test"))
-        assert await storage.read_identity_by_email("ann@example.test") == identity
+            await storage.write_identity(make_identity(email))
+        assert await storage.read_identity_by_email(email) == identity
         promoted = identity.model_copy(update={"is_operator": True})
         await storage.write_identity(promoted)
         assert await storage.read_identity(identity.id) == promoted
@@ -202,6 +217,53 @@ class TenancyStorageContract:
             org.id,
             ticket.model_copy(update={"redeemed_at": redeemed_at}),
         )
+
+    async def test_create_org_with_owner_lands_whole_or_not_at_all(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        org = make_org()
+        owner = make_user(make_identity().id)
+        await storage.create_org_with_owner(
+            org.id, org, owner, make_membership(owner.id, Role.OWNER)
+        )
+        assert await storage.read_org(org.id) == org
+        assert await storage.read_user(org.id, owner.id) == owner
+        assert (await storage.read_membership_for_user(org.id, owner.id)) is not None
+        # The slug taken meanwhile: no org, no user, no membership of the loser.
+        other = make_org("Other").model_copy(update={"slug": org.slug})
+        loser = make_user(make_identity().id)
+        with pytest.raises(UniqueKeyTaken):
+            await storage.create_org_with_owner(
+                other.id, other, loser, make_membership(loser.id, Role.OWNER)
+            )
+        assert await storage.read_org(other.id) is None
+        assert await storage.read_user(other.id, loser.id) is None
+        assert await storage.read_memberships(other.id, limit=10) == []
+
+    async def test_create_member_lands_whole_or_not_at_all(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        org = make_org()
+        identity = make_identity()
+        bob = make_user(identity.id)
+        await storage.create_member(org.id, bob, make_membership(bob.id), make_user_row(bob))
+        assert await storage.read_user(org.id, bob.id) == bob
+        assert (await storage.read_membership_for_user(org.id, bob.id)) is not None
+        # The same identity added again meanwhile: the user key refuses it and
+        # the membership does not land either.
+        again = make_user(identity.id)
+        with pytest.raises(UniqueKeyTaken):
+            await storage.create_member(
+                org.id, again, make_membership(again.id), make_user_row(again)
+            )
+        assert await storage.read_user(org.id, again.id) is None
+        assert await storage.read_membership_for_user(org.id, again.id) is None
+        # A membership the user already holds: the user does not land either.
+        cid = make_user(make_identity().id)
+        with pytest.raises(UniqueKeyTaken):
+            await storage.create_member(org.id, cid, make_membership(bob.id), make_user_row(cid))
+        assert await storage.read_user(org.id, cid.id) is None
+        assert len(await storage.read_memberships(org.id, limit=10)) == 1
 
     async def test_users_by_identity_span_tenants(self, storage: TenancyStorageInterface) -> None:
         identity = make_identity()

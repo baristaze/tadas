@@ -1,12 +1,16 @@
 from datetime import datetime
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import delete, select, update
+from sqlalchemy.exc import IntegrityError
 
+from tadas.om.base import Identifiable
 from tadas.om.exceptions import Conflict, UniqueKeyTaken
+from tadas.om.outbox.storage.tables.outbox_rows import OutboxRows
 from tadas.om.outbox.types.row import OutboxRow
-from tadas.om.storage.impl.pg_base import PgStorageBase
-from tadas.om.storage.utils.translation import to_model
+from tadas.om.storage.impl.pg_base import PgStorageBase, violated_constraint
+from tadas.om.storage.utils.translation import to_model, to_row
 from tadas.om.tenancy.storage import TenancyStorageInterface
 from tadas.om.tenancy.storage.tables.api_keys import ApiKeys
 from tadas.om.tenancy.storage.tables.identities import Identities
@@ -62,6 +66,35 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
 
     async def write_org(self, org_id: UUID, org: Org) -> None:
         await self._upsert(Orgs, org_id, org)
+
+    async def create_org_with_owner(
+        self, org_id: UUID, org: Org, user: User, membership: Membership
+    ) -> None:
+        await self._create_together(org_id, (Orgs, org), (Users, user), (Memberships, membership))
+
+    async def create_member(
+        self, org_id: UUID, user: User, membership: Membership, outbox_row: OutboxRow
+    ) -> None:
+        await self._create_together(
+            org_id, (Users, user), (Memberships, membership), (OutboxRows, outbox_row)
+        )
+
+    async def _create_together(self, org_id: UUID, *rows: tuple[type[Any], Identifiable]) -> None:
+        """The rows land in one commit or not at all; every table is in the
+        core role, which the session's role routing holds. A violated key is
+        UniqueKeyTaken, never a driver error."""
+        row_type = rows[0][0]
+        async with self._session_for(row_type) as session:
+            for table, entity in rows:
+                session.add(to_row(entity, table, org_id=org_id))
+            try:
+                await session.commit()
+            except IntegrityError as error:
+                await session.rollback()
+                raise UniqueKeyTaken(
+                    f"{row_type.__tablename__} and its siblings: "
+                    f"{violated_constraint(error) or 'a unique key'} is taken"
+                ) from error
 
     async def read_users(self, org_id: UUID, limit: int) -> list[User]:
         stmt = (

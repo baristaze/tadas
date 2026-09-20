@@ -70,6 +70,35 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
         )
         self._put(self._orgs, org_id, org)
 
+    async def create_org_with_owner(
+        self, org_id: UUID, org: Org, user: User, membership: Membership
+    ) -> None:
+        async with self._lock:
+            self._require_free(
+                self._every(self._orgs), org, lambda other: other.slug == org.slug, "uq_orgs_slug"
+            )
+            self._require_live_identity_free(org_id, user)
+            self._require_membership_free(org_id, membership)
+            for table, entity in ((self._orgs, org), (self._users, user)):
+                if entity.id in table:
+                    raise UniqueKeyTaken(f"{entity.id} is already written")
+            if membership.id in self._memberships:
+                raise UniqueKeyTaken(f"{membership.id} is already written")
+            self._put(self._orgs, org_id, org)
+            self._put(self._users, org_id, user)
+            self._put(self._memberships, org_id, membership)
+
+    async def create_member(
+        self, org_id: UUID, user: User, membership: Membership, outbox_row: OutboxRow
+    ) -> None:
+        async with self._lock:
+            self._require_live_identity_free(org_id, user)
+            self._require_membership_free(org_id, membership)
+            if user.id in self._users or membership.id in self._memberships:
+                raise UniqueKeyTaken(f"{user.id} or {membership.id} is already written")
+            self._put(self._users, org_id, user, outbox_row)
+            self._put(self._memberships, org_id, membership)
+
     async def read_users(self, org_id: UUID, limit: int) -> list[User]:
         return [u for u in self._rows(self._users, org_id) if u.deleted_at is None][:limit]
 
