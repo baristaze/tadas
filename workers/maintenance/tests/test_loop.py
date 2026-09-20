@@ -93,6 +93,15 @@ class StallingWork(LeaseLosingWork):
         raise AssertionError("unreachable")
 
 
+class FailingWork(LeaseLosingWork):
+    """Decorates the real manager: every renewal fails for a reason that says
+    nothing about who holds the item, as an engine out of reach behaves."""
+
+    async def extend_lease(self, ctx: OpContext, item: WorkItem, lease: timedelta) -> WorkItem:
+        self.renewals += 1
+        raise RuntimeError("engine out of reach")
+
+
 class MissingLiveness(CacheInterface):
     """A liveness store whose writes never stick, as an unreachable backend behaves."""
 
@@ -194,18 +203,47 @@ async def test_lease_is_renewed_while_an_item_runs(tmp_path: Path) -> None:
     await task
 
 
-async def test_lease_loss_cancels_the_task_before_the_lease_expires(tmp_path: Path) -> None:
+async def test_a_lost_lease_cancels_the_task_at_once(tmp_path: Path) -> None:
+    # A renewal refused with LeaseLost is definitive: another worker holds the
+    # item, so the task is cancelled on the first refusal, a third of the lease
+    # in, and not once half the lease has passed.
     container = build_container(tmp_path)
     ctx = await sign_in(container)
     handler = SlowHandler(hold=5.0)
     losing = LeaseLosingWork(container.managers.work)
-    loop, task = start_loop(
-        container, handler, fast_options(lease=timedelta(seconds=0.6)), work=losing
-    )
+    lease = timedelta(seconds=0.9)
+    loop, task = start_loop(container, handler, fast_options(lease=lease), work=losing)
     item = make_item(ctx)
     await container.managers.work.enqueue(ctx, item)
+    await until(lambda: len(handler.started) == 1)
+    started = asyncio.get_running_loop().time()
     await until(lambda: len(handler.cancelled) == 1, within=2.0)
-    assert losing.renewals >= 1
+    cancelled = asyncio.get_running_loop().time()
+    assert losing.renewals == 1, "the first refusal is the answer"
+    assert cancelled - started < (lease / 2).total_seconds(), "at once, not after half the lease"
+    assert handler.finished == []
+    loop.stop()
+    await task
+
+
+async def test_any_other_renewal_failure_cancels_after_half_the_lease(tmp_path: Path) -> None:
+    # A renewal that fails for any other reason says nothing about who holds
+    # the item, so it is retried; the task is cancelled once half the lease has
+    # passed without a renewal, still before the lease expires.
+    container = build_container(tmp_path)
+    ctx = await sign_in(container)
+    handler = SlowHandler(hold=5.0)
+    failing = FailingWork(container.managers.work)
+    lease = timedelta(seconds=0.9)
+    loop, task = start_loop(container, handler, fast_options(lease=lease), work=failing)
+    item = make_item(ctx)
+    await container.managers.work.enqueue(ctx, item)
+    await until(lambda: len(handler.started) == 1)
+    started = asyncio.get_running_loop().time()
+    await until(lambda: len(handler.cancelled) == 1, within=2.0)
+    cancelled = asyncio.get_running_loop().time()
+    assert failing.renewals == 2, "the first failure is retried, the second is past half the lease"
+    assert (lease / 2).total_seconds() <= cancelled - started < lease.total_seconds()
     assert handler.finished == []
     loop.stop()
     await task
@@ -250,6 +288,59 @@ async def test_sweep_requeues_stale_items_per_tenant(tmp_path: Path) -> None:
     assert stored.attempts == 2, "the sweep kept the lost attempt; the rerun spent one more"
 
 
+async def test_a_departed_members_queued_item_still_runs(tmp_path: Path) -> None:
+    container = build_container(tmp_path)
+    ctx = await sign_in(container)
+    item = make_item(ctx)
+    await container.managers.work.enqueue(ctx, item)
+    tenancy_storage = container.storage.get_tenancy_storage()
+    ann = await tenancy_storage.read_user(ctx.org_id, ctx.user_id)
+    assert ann is not None
+    now = utcnow()
+    await tenancy_storage.write_user(
+        ctx.org_id,
+        ann.model_copy(update={"deleted_at": now, "deleted_by": ann.id, "updated_at": now}),
+    )
+
+    handler = SlowHandler(hold=0)
+    loop, task = start_loop(container, handler, fast_options())
+    await until(lambda: handler.finished == [item.id])
+    loop.stop()
+    await task
+    stored = await container.storage.get_work_storage().read_item(ctx.org_id, item.id)
+    assert stored is not None and stored.status is WorkStatus.DONE
+    assert stored.created_by == ctx.user_id, "the attribution survived the hop"
+
+
+async def test_sweep_reaches_a_tenant_whose_members_have_all_left(tmp_path: Path) -> None:
+    # The stale item sits on a lane this loop never claims from, so what moves
+    # it is the sweep alone; the tenant's only member is gone by then.
+    container = build_container(tmp_path)
+    ctx = await sign_in(container)
+    item = make_item(ctx).model_copy(update={"lane": "other"})
+    await container.managers.work.enqueue(ctx, item)
+    lost = await container.managers.work.claim(
+        request(), "other", [WorkKind.NOOP], "gone-worker", timedelta(seconds=-1)
+    )
+    assert lost is not None
+    tenancy_storage = container.storage.get_tenancy_storage()
+    ann = await tenancy_storage.read_user(ctx.org_id, ctx.user_id)
+    assert ann is not None
+    now = utcnow()
+    await tenancy_storage.write_user(
+        ctx.org_id,
+        ann.model_copy(update={"deleted_at": now, "deleted_by": ann.id, "updated_at": now}),
+    )
+
+    loop, task = start_loop(container, NoopHandlerImpl(), fast_options())
+    await until(lambda: loop.sweeps >= 1)
+    loop.stop()
+    await task
+    stored = await container.storage.get_work_storage().read_item(ctx.org_id, item.id)
+    assert stored is not None and stored.status is WorkStatus.QUEUED
+    assert stored.claimed_by is None and stored.updated_by == EMPTY_UUID
+
+
 async def test_sweep_relays_the_outbox_and_purges_done_rows(tmp_path: Path) -> None:
     # A row a crash left behind: written with its core row, never relayed.
     container = build_container(tmp_path)
@@ -282,10 +373,17 @@ async def test_sweep_relays_the_outbox_and_purges_done_rows(tmp_path: Path) -> N
 
 
 async def test_a_lost_lease_is_never_written_over(tmp_path: Path) -> None:
+    # The second fence: the handler finishes before any renewal runs (the
+    # lease is long), and the completion itself is refused because the claim
+    # is no longer this worker's.
     container = build_container(tmp_path)
     ctx = await sign_in(container)
     handler = SlowHandler(hold=0.3)
-    loop, task = start_loop(container, handler, fast_options(sweep_interval=timedelta(hours=1)))
+    loop, task = start_loop(
+        container,
+        handler,
+        fast_options(sweep_interval=timedelta(hours=1), lease=timedelta(seconds=3)),
+    )
     item = make_item(ctx)
     await container.managers.work.enqueue(ctx, item)
     await until(lambda: len(handler.started) == 1)

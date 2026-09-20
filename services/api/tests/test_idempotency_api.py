@@ -1,6 +1,7 @@
 """Edge idempotency over the durable record: a retry replays, a reused key
-with another body is refused, keys are personal, and a request still
-running answers 409 to its own retry."""
+with another body is refused, keys are personal, a request still running
+answers 409 to its own retry, and one that runs past the pending lease loses
+the marker to the retry and cannot finish or release it."""
 
 import asyncio
 from datetime import timedelta
@@ -151,12 +152,12 @@ async def test_a_crash_between_the_create_and_finish_does_not_create_twice(
     original_finish = manager.finish
     crashed = False
 
-    async def crash_once(ctx, key, status, body):
+    async def crash_once(ctx, key, attempt_id, status, body):
         nonlocal crashed
         if not crashed:
             crashed = True
             raise RuntimeError("the process died before finish")
-        return await original_finish(ctx, key, status, body)
+        return await original_finish(ctx, key, attempt_id, status, body)
 
     monkeypatch.setattr(manager, "finish", crash_once)
     headers = {**owner, "Idempotency-Key": "crash-1"}
@@ -166,6 +167,51 @@ async def test_a_crash_between_the_create_and_finish_does_not_create_twice(
     retry = await client.post("/v1/tasks", headers=headers, json=BODY)
     assert retry.status_code == 201, retry.text
     assert "Idempotent-Replayed" not in retry.headers
+    listed = await client.get("/v1/tasks", headers=owner)
+    assert [t["id"] for t in listed.json()["items"]] == [retry.json()["id"]]
+    replay = await client.post("/v1/tasks", headers=headers, json=BODY)
+    assert replay.status_code == 201 and replay.headers["Idempotent-Replayed"] == "true"
+    assert replay.json() == retry.json()
+
+
+async def test_an_attempt_that_runs_past_the_pending_lease_loses_the_marker(
+    client: httpx.AsyncClient,
+    container: AppContainer,
+    owner: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The first attempt is still running when its pending lease passes. The
+    # retry takes the marker over and creates on the marker's id; the first
+    # attempt then finds its own id already written, returns the row as
+    # stored, and its finish is refused because the retry holds the marker.
+    # One row exists, both callers hold it, and the retry's outcome replays.
+    manager = container.managers.idempotency
+    monkeypatch.setattr(manager, "_options", IdempotencyOptions(pending_ttl=timedelta(0)))
+    original_create = container.managers.tasks.create_task
+    entered, release = asyncio.Event(), asyncio.Event()
+    held = False
+
+    async def slow_once(ctx, task):
+        nonlocal held
+        if not held:
+            held = True
+            entered.set()
+            await release.wait()
+        return await original_create(ctx, task)
+
+    monkeypatch.setattr(container.managers.tasks, "create_task", slow_once)
+    headers = {**owner, "Idempotency-Key": "slow-2"}
+    first = asyncio.create_task(client.post("/v1/tasks", headers=headers, json=BODY))
+    await asyncio.wait_for(entered.wait(), timeout=5)
+
+    retry = await client.post("/v1/tasks", headers=headers, json=BODY)
+    assert retry.status_code == 201, retry.text
+    assert "Idempotent-Replayed" not in retry.headers
+
+    release.set()
+    slow = await first
+    assert slow.status_code == 201, slow.text
+    assert slow.json() == retry.json(), "the slow attempt found the row the retry created"
     listed = await client.get("/v1/tasks", headers=owner)
     assert [t["id"] for t in listed.json()["items"]] == [retry.json()["id"]]
     replay = await client.post("/v1/tasks", headers=headers, json=BODY)

@@ -29,6 +29,10 @@ APP_VERSION_HEADER = "X-App-Version"
 IDEMPOTENCY_HEADER = "Idempotency-Key"
 REQUEST_ID_HEADER = "x-request-id"
 LIMIT_MAX = 200
+DEFAULT_TIMEOUT_SECONDS = 30.0
+"""Every call out carries a timeout: the caller's settings name one per
+client, and a caller that names none gets this one, so no call goes out
+without one."""
 
 AppName = Literal["portal", "admin", "cli", "api"]
 
@@ -95,12 +99,13 @@ class ApiClient:
         app_version: str,
         token: str | None = None,
         transport: httpx.AsyncBaseTransport | None = None,
-        timeout: float = 30.0,
+        timeout: float = DEFAULT_TIMEOUT_SECONDS,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.app = app
         self.app_version = app_version
         self.token = token
+        self.timeout = timeout  # seconds, per request; the socket's open shares it
         self._http = httpx.AsyncClient(
             base_url=self.base_url,
             transport=transport,

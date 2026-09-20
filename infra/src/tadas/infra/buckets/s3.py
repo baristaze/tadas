@@ -4,6 +4,7 @@ from uuid import UUID
 
 import aioboto3
 
+from tadas.infra.aws_clients import client_config
 from tadas.infra.aws_errors import ClientError, error_code, translated
 from tadas.infra.buckets import BlobNotFound, Buckets, BucketsInterface, object_key
 
@@ -20,14 +21,18 @@ class BucketsS3Impl(BucketsInterface):
         endpoint_url: str | None,
         region: str,
         bucket_prefix: str,
+        timeout: timedelta,
     ) -> None:
         self._session = session
         self._endpoint_url = endpoint_url
         self._region = region
         self._bucket_prefix = bucket_prefix
+        self._config = client_config(timeout)
 
     def _client(self) -> Any:
-        return self._session.client("s3", endpoint_url=self._endpoint_url, region_name=self._region)
+        return self._session.client(
+            "s3", endpoint_url=self._endpoint_url, region_name=self._region, config=self._config
+        )
 
     def _bucket(self, bucket: Buckets) -> str:
         return f"{self._bucket_prefix}-{bucket.value}"

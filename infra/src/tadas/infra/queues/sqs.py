@@ -4,6 +4,7 @@ from typing import Any
 
 import aioboto3
 
+from tadas.infra.aws_clients import client_config
 from tadas.infra.aws_errors import translated
 from tadas.infra.observability import OUTCOMES
 from tadas.infra.queues import QueueDepth, QueueInterface, QueueMessage, Queues
@@ -21,16 +22,18 @@ class QueueSqsImpl(QueueInterface):
         endpoint_url: str | None,
         region: str,
         queue_prefix: str,
+        timeout: timedelta,
     ) -> None:
         self._session = session
         self._endpoint_url = endpoint_url
         self._region = region
         self._queue_prefix = queue_prefix
+        self._config = client_config(timeout)
         self._urls: dict[str, str] = {}
 
     def _client(self) -> Any:
         return self._session.client(
-            "sqs", endpoint_url=self._endpoint_url, region_name=self._region
+            "sqs", endpoint_url=self._endpoint_url, region_name=self._region, config=self._config
         )
 
     async def _url(self, sqs: Any, name: str) -> str:

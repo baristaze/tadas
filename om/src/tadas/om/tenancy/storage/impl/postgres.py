@@ -176,6 +176,34 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
             row = (await session.execute(stmt)).scalar_one_or_none()
             return None if row is None else (row.org_id, to_model(row, ApiKey))
 
+    async def issue_api_key(
+        self, org_id: UUID, api_key: ApiKey, outbox_row: OutboxRow
+    ) -> tuple[ApiKey, bool]:
+        if await self._insert(ApiKeys, org_id, api_key, outbox_row):
+            return api_key, True
+        # The rerun: one conditional statement re-mints the secret on the issuer's row.
+        stmt = (
+            update(ApiKeys)
+            .where(
+                ApiKeys.org_id == org_id,
+                ApiKeys.id == api_key.id,
+                ApiKeys.user_id == api_key.user_id,
+            )
+            .values(
+                key_hash=api_key.key_hash,
+                updated_at=api_key.updated_at,
+                updated_by=api_key.updated_by,
+            )
+            .returning(ApiKeys)
+        )
+        async with self._session_for(stmt) as session:
+            row = (await session.execute(stmt)).scalar_one_or_none()
+            if row is None:
+                raise Conflict(f"api key {api_key.id} was issued by another member")
+            reissued = to_model(row, ApiKey)
+            await session.commit()
+            return reissued, False
+
     async def write_api_key(
         self, org_id: UUID, api_key: ApiKey, outbox_row: OutboxRow | None = None
     ) -> None:

@@ -1,6 +1,7 @@
-import logging
 import secrets
+from collections.abc import Mapping
 from datetime import timedelta
+from typing import Any
 from uuid import UUID
 
 from tadas.infra.cache import CacheInterface
@@ -53,8 +54,6 @@ from tadas.om.tenancy.types.role import permissions_of
 from tadas.om.tenancy.types.session import Session
 from tadas.om.tenancy.types.socket_ticket import SocketTicket
 from tadas.om.tenancy.types.user import User
-
-log = logging.getLogger(__name__)
 
 TICKET_USED_KEY = "ticket-used:"
 """The cache remembers a redeemed ticket so a replay is refused without a
@@ -405,15 +404,20 @@ class TenancyManagerImpl(TenancyManagerInterface):
         return await self.resume(rctx, org_id, behind.credential_kind, behind.credential_id)
 
     async def service_context(self, rctx: RequestContext, org_id: UUID, user_id: UUID) -> OpContext:
-        org, user, membership = await self._principal(org_id, user_id)
+        # Minted for the tenant on the service role's authority; the person is
+        # the attribution, not the authority: they authorized the work once, at
+        # enqueue, so neither their user nor their membership is read, and a
+        # member who has left does not stop the work they asked for.
+        org = await self._storage.read_org(org_id)
+        if org is None or org.deleted_at is not None:
+            raise InvalidCredential("the org is gone")
         return build_context(
             rctx,
-            user_id=user.id,
+            user_id=user_id,
             org_id=org.id,
             role=Role.SERVICE,
             permissions=permissions_of(Role.SERVICE),
             credential_kind=CredentialKind.INTERNAL,
-            teams=membership.teams,
         )
 
     async def _every_org(self) -> list[Org]:
@@ -429,17 +433,21 @@ class TenancyManagerImpl(TenancyManagerInterface):
             after_id = page[-1].id
 
     async def service_contexts(self, rctx: RequestContext) -> list[OpContext]:
-        contexts: list[OpContext] = []
-        for org in await self._every_org():
-            if org.deleted_at is not None:
-                continue
-            try:
-                contexts.append(await self.service_context(rctx, org.id, org.created_by))
-            except InvalidCredential as error:
-                # The founding user was removed; this tenant waits for a live
-                # principal, the others are still swept.
-                log.warning("no service context for org %s: %s", org.id, error.message)
-        return contexts
+        # Minted for the tenant, not for a member: the system user is the actor
+        # and no user or membership is read, so it costs one read per page of
+        # tenants and a tenant whose members have all left is still swept.
+        return [
+            build_context(
+                rctx,
+                user_id=EMPTY_UUID,
+                org_id=org.id,
+                role=Role.SERVICE,
+                permissions=permissions_of(Role.SERVICE),
+                credential_kind=CredentialKind.INTERNAL,
+            )
+            for org in await self._every_org()
+            if org.deleted_at is None
+        ]
 
     # The principal.
 
@@ -579,11 +587,8 @@ class TenancyManagerImpl(TenancyManagerInterface):
         api_key_id: UUID | None = None,
     ) -> IssuedApiKey:
         ctx.require(Permission.MANAGE_KEYS)
-        api_key_id = api_key_id or new_id()
-        if await self._storage.read_api_key(ctx.org_id, api_key_id) is not None:
-            raise Conflict(
-                f"api key {api_key_id} was issued once; its secret cannot be shown again"
-            )
+        if role is Role.SERVICE:
+            raise ValidationFailed("service is not an api key role")
         if not role_at_most(role, ctx.security.role):
             raise NotAuthorized(f"cannot issue role {role.value} above {ctx.security.role.value}")
         if ttl is not None and not (timedelta(0) < ttl <= self._options.api_key_ttl):
@@ -593,7 +598,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
         now = utcnow()
         key = mint_token(CredentialKind.API_KEY)
         api_key = ApiKey(
-            id=api_key_id,
+            id=api_key_id or new_id(),
             name=name,
             created_at=now,
             updated_at=now,
@@ -604,8 +609,15 @@ class TenancyManagerImpl(TenancyManagerInterface):
             role=role,
             expires_at=now + (ttl or self._options.api_key_ttl),
         )
-        await self._write_api_key(ctx, api_key, "created")
-        return IssuedApiKey(key=key, api_key=api_key)
+        # A create that issues a secret: the row as stored is not enough on a
+        # rerun, because the secret is a digest there and was shown to no one
+        # (the marker stored no outcome). The one storage method inserts the
+        # key, or re-mints the secret on the row the id already names.
+        row = outbox_row(ctx, "tenancy.api_key.created", api_key.id, self._key_snapshot(api_key))
+        stored, created = await self._storage.issue_api_key(ctx.org_id, api_key, row)
+        if created:
+            await self._relay.relay(ctx.org_id, row)
+        return IssuedApiKey(key=key, api_key=stored)
 
     async def revoke_api_key(self, ctx: OpContext, api_key_id: UUID) -> ApiKey:
         ctx.require(Permission.MANAGE_KEYS)
@@ -662,10 +674,13 @@ class TenancyManagerImpl(TenancyManagerInterface):
         await self._storage.write_user(ctx.org_id, user, row)
         await self._relay.relay(ctx.org_id, row)
 
-    async def _write_api_key(self, ctx: OpContext, api_key: ApiKey, action: str) -> None:
+    @staticmethod
+    def _key_snapshot(api_key: ApiKey) -> Mapping[str, Any]:
         # The snapshot never carries the hash; the event is a record, not a credential.
-        payload = snapshot(api_key, exclude=frozenset({"key_hash"}))
-        row = outbox_row(ctx, f"tenancy.api_key.{action}", api_key.id, payload)
+        return snapshot(api_key, exclude=frozenset({"key_hash"}))
+
+    async def _write_api_key(self, ctx: OpContext, api_key: ApiKey, action: str) -> None:
+        row = outbox_row(ctx, f"tenancy.api_key.{action}", api_key.id, self._key_snapshot(api_key))
         await self._storage.write_api_key(ctx.org_id, api_key, row)
         await self._relay.relay(ctx.org_id, row)
 

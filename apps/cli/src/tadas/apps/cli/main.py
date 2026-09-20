@@ -36,7 +36,13 @@ def app_version() -> str:
 
 def build_client(api_url: str, token: str | None) -> ApiClient:
     """The one place a client is built; tests replace it with one over a test transport."""
-    return ApiClient(api_url, app="cli", app_version=app_version(), token=token)
+    return ApiClient(
+        api_url,
+        app="cli",
+        app_version=app_version(),
+        token=token,
+        timeout=config.timeout_seconds(),
+    )
 
 
 app = typer.Typer(

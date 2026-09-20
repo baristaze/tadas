@@ -4,6 +4,7 @@ parses the URL and connects to nothing; the shared client is created by
 start() or by the first command, whichever comes first, and close() ends it."""
 
 import asyncio
+from datetime import timedelta
 from urllib.parse import unquote, urlsplit
 
 from glide import GlideClient, GlideClientConfiguration, NodeAddress, ServerCredentials
@@ -12,7 +13,7 @@ _TLS_BY_SCHEME = {"valkey": False, "valkeys": True}
 
 
 class ValkeyConnection:
-    def __init__(self, url: str) -> None:
+    def __init__(self, url: str, timeout: timedelta) -> None:
         parts = urlsplit(url)
         if parts.scheme not in _TLS_BY_SCHEME or not parts.hostname:
             raise ValueError(
@@ -27,6 +28,7 @@ class ValkeyConnection:
             if parts.password
             else None
         )
+        self._request_timeout_ms = int(timeout.total_seconds() * 1000)
         self._client: GlideClient | None = None
         self._creating = asyncio.Lock()
         self._closed = False
@@ -36,11 +38,13 @@ class ValkeyConnection:
     ) -> GlideClientConfiguration:
         """The shared client connects lazily, so a server that is down costs the
         first command, not the boot. A subscriber connects at once: a lazy client
-        never subscribes until something else sends it a command."""
+        never subscribes until something else sends it a command. Every request
+        is bounded by the timeout from settings."""
         return GlideClientConfiguration(
             [self._address],
             use_tls=self._use_tls,
             credentials=self._credentials,
+            request_timeout=self._request_timeout_ms,
             database_id=self._database_id,
             pubsub_subscriptions=pubsub,
             lazy_connect=pubsub is None,

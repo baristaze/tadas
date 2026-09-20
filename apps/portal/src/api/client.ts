@@ -1,6 +1,6 @@
 // One transport client: bearer, app header, the error envelope parsed into
-// a typed error carrying the request id, and a 401 that clears authentication.
-// The one file in the app that may call fetch.
+// a typed error carrying the request id, a 401 that clears authentication,
+// and a deadline on every call. The one file in the app that may call fetch.
 
 export interface ErrorEnvelope {
   error: { code: string; message: string; request_id: string };
@@ -20,10 +20,27 @@ export class ApiError extends Error {
   }
 }
 
+/** A call that did not finish, headers and body, within the client's deadline. */
+export class RequestTimeout extends Error {
+  readonly method: string;
+  readonly path: string;
+  readonly timeoutMs: number;
+
+  constructor(method: string, path: string, timeoutMs: number) {
+    super(`${method} ${path} did not finish within ${timeoutMs} ms`);
+    this.name = "RequestTimeout";
+    this.method = method;
+    this.path = path;
+    this.timeoutMs = timeoutMs;
+  }
+}
+
 export interface ClientOptions {
   baseUrl: string;
   app: "portal" | "admin" | "cli" | "api";
   appVersion: string;
+  /** Every call is abandoned after this many milliseconds; no call goes out without one. */
+  timeoutMs: number;
   getToken: () => string | null;
   onUnauthorized: () => void;
   fetchImpl?: typeof fetch;
@@ -71,15 +88,38 @@ export function createClient(options: ClientOptions): ApiClient {
     if (body !== undefined) headers.set("Content-Type", "application/json");
     if (requestOptions.idempotencyKey) headers.set("Idempotency-Key", requestOptions.idempotencyKey);
 
-    const response = await fetchImpl(`${baseUrl}${path}`, {
-      method,
-      headers,
-      body: body === undefined ? undefined : JSON.stringify(body),
-      signal: requestOptions.signal,
-    });
+    // One signal for the whole call: the deadline, and the caller's own
+    // signal when it hands one over. Reading the body counts against the
+    // deadline too, so the timer runs until the body is in.
+    const controller = new AbortController();
+    const timer = setTimeout(
+      () => controller.abort(new RequestTimeout(method, path, options.timeoutMs)),
+      options.timeoutMs,
+    );
+    const callerSignal = requestOptions.signal;
+    const forwardAbort = () => controller.abort(callerSignal?.reason);
+    if (callerSignal?.aborted) forwardAbort();
+    else callerSignal?.addEventListener("abort", forwardAbort, { once: true });
+
+    let response: Response;
+    let text: string;
+    try {
+      response = await fetchImpl(`${baseUrl}${path}`, {
+        method,
+        headers,
+        body: body === undefined ? undefined : JSON.stringify(body),
+        signal: controller.signal,
+      });
+      text = response.status === 204 ? "" : await response.text();
+    } catch (error) {
+      // A fetch aborted by the deadline reports the reason it was aborted with.
+      throw controller.signal.aborted ? controller.signal.reason : error;
+    } finally {
+      clearTimeout(timer);
+      callerSignal?.removeEventListener("abort", forwardAbort);
+    }
     const requestId = response.headers.get("x-request-id");
     if (response.status === 204) return undefined as T;
-    const text = await response.text();
     const parsed: unknown = text ? JSON.parse(text) : null;
     if (!response.ok) {
       if (response.status === 401) options.onUnauthorized();

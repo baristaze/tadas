@@ -9,7 +9,7 @@ import pytest
 from tadas.infra.cache import CacheInterface, CacheScope
 from tadas.infra.impl.local import InfraLocalImpl
 from tadas.infra.topics import EntityChangedPayload, TopicPayload, Topics
-from tadas.om.base import new_id, utcnow
+from tadas.om.base import EMPTY_UUID, new_id, utcnow
 from tadas.om.events.storage.impl.memory import EventStorageMemoryImpl
 from tadas.om.exceptions import (
     Conflict,
@@ -289,6 +289,55 @@ async def test_api_keys_are_role_capped_and_revocable(
     assert all(p.org_id == org.id for p in seen)
 
 
+async def test_no_one_mints_a_service_key(
+    manager: TenancyManagerImpl, storage: TenancyStorageMemoryImpl
+) -> None:
+    # The service role holds MANAGE_MEMBERS and a member does not; it is refused
+    # by name before the ladder is asked, for the owner as for the member.
+    _, org = await manager.bootstrap(
+        request(), "Acme", "acme", "ann@example.test", "pw-1234", "Ann"
+    )
+    await add_member(storage, org.id, "bob@example.test", Role.MEMBER)
+    owner = await sign_in(manager, "ann@example.test", org.id)
+    member = await sign_in(manager, "bob@example.test", org.id)
+    assert not member.has(Permission.MANAGE_MEMBERS)
+    for ctx in (member, owner):
+        with pytest.raises(ValidationFailed):
+            await manager.create_api_key(ctx, "svc", Role.SERVICE)
+    assert await manager.get_api_keys(owner, limit=10) == []
+
+
+async def test_a_rerun_of_the_create_reissues_the_secret_on_the_same_key(
+    manager: TenancyManagerImpl, infra: InfraLocalImpl
+) -> None:
+    seen: list[TopicPayload] = []
+
+    async def record(payload: TopicPayload) -> None:
+        seen.append(payload)
+
+    infra.get_topics().subscribe(Topics.ENTITY_CHANGED, "test", record)
+    _, org = await manager.bootstrap(
+        request(), "Acme", "acme", "ann@example.test", "pw-1234", "Ann"
+    )
+    owner = await sign_in(manager, "ann@example.test", org.id)
+    api_key_id = new_id()
+    first = await manager.create_api_key(owner, "ci", Role.MEMBER, api_key_id=api_key_id)
+    assert (await manager.authenticate(request(), first.key)).credential_id == api_key_id
+
+    # The retry that took over an abandoned marker runs the create again on
+    # the id the marker carries: same row, fresh secret, and the first secret,
+    # which reached no one, stops authenticating.
+    again = await manager.create_api_key(owner, "ci", Role.MEMBER, api_key_id=api_key_id)
+    assert again.key != first.key
+    assert again.api_key.id == api_key_id
+    assert again.api_key.created_at == first.api_key.created_at
+    assert (await manager.authenticate(request(), again.key)).credential_id == api_key_id
+    with pytest.raises(InvalidCredential):
+        await manager.authenticate(request(), first.key)
+    assert [k.id for k in await manager.get_api_keys(owner, limit=10)] == [api_key_id]
+    assert len(seen) == 1, "the key was announced once"
+
+
 async def test_api_key_ttl_is_bounded_by_the_option(
     storage: TenancyStorageMemoryImpl, infra: InfraLocalImpl
 ) -> None:
@@ -526,11 +575,69 @@ async def test_resume_and_service_contexts(manager: TenancyManagerImpl) -> None:
     assert len(contexts) == 2
     assert all(c.security.role is Role.SERVICE for c in contexts)
     assert all(c.security.credential_kind is CredentialKind.INTERNAL for c in contexts)
+    # Minted for the tenant: the system user is the actor, not the founder.
+    assert all(c.user_id == EMPTY_UUID for c in contexts)
 
     rebuilt = await manager.service_context(request(), org.id, ctx.user_id)
     assert rebuilt.user_id == ctx.user_id
     with pytest.raises(InvalidCredential):
         await manager.resume(request(), org.id, CredentialKind.SESSION_TOKEN, new_id())
+
+
+async def test_a_claim_for_a_departed_members_item_still_runs_under_their_name(
+    manager: TenancyManagerImpl,
+    storage: TenancyStorageMemoryImpl,
+    operator: TenancyOperatorManagerImpl,
+) -> None:
+    owner, org = await manager.bootstrap(
+        request(), "Acme", "acme", "ann@example.test", "pw-1234", "Ann"
+    )
+    ann = await storage.read_user(org.id, owner.user_id)
+    assert ann is not None
+    now = utcnow()
+    await storage.write_user(
+        org.id, ann.model_copy(update={"deleted_at": now, "deleted_by": ann.id, "updated_at": now})
+    )
+    # The person authorized the work at enqueue; the claim keeps them as the
+    # attribution and runs on the service role's authority.
+    ctx = await manager.service_context(request(), org.id, ann.id)
+    assert ctx.user_id == ann.id and ctx.role is Role.SERVICE
+    assert ctx.credential_kind is CredentialKind.INTERNAL and ctx.has(Permission.WRITE)
+    # Only the tenant must be live.
+    await manager.bootstrap(
+        request(), "Ops", "ops", "root@example.test", "pw-1234", "Root", operator=True
+    )
+    admin = await manager.admit_operator(
+        await manager.authenticate_login(
+            request(), (await manager.login(request(), "root@example.test", "pw-1234")).token
+        )
+    )
+    await operator.delete_org(admin, org.id)
+    with pytest.raises(InvalidCredential):
+        await manager.service_context(request(), org.id, ann.id)
+
+
+async def test_a_tenant_whose_members_have_all_left_is_still_swept(
+    manager: TenancyManagerImpl, storage: TenancyStorageMemoryImpl, infra: InfraLocalImpl
+) -> None:
+    owner, org = await manager.bootstrap(
+        request(), "Acme", "acme", "ann@example.test", "pw-1234", "Ann"
+    )
+    ann = await storage.read_user(org.id, owner.user_id)
+    assert ann is not None
+    now = utcnow()
+    await storage.write_user(
+        org.id, ann.model_copy(update={"deleted_at": now, "deleted_by": ann.id, "updated_at": now})
+    )
+    contexts = await manager.service_contexts(request())
+    assert [c.org_id for c in contexts] == [org.id]
+    ctx = contexts[0]
+    assert ctx.user_id == EMPTY_UUID and ctx.role is Role.SERVICE
+    # The context does the sweep's work: the one member who left is purged.
+    assert await manager.purge_deleted(ctx) == 0, "retention has not passed"
+    no_retention = make_manager(storage, infra, TenancyOptions(retention=timedelta(0)))
+    assert await no_retention.purge_deleted(ctx) == 2, "the user and the membership"
+    assert await storage.read_user(org.id, ann.id) is None
 
 
 async def test_a_socket_ticket_is_redeemed_exactly_once(manager: TenancyManagerImpl) -> None:
