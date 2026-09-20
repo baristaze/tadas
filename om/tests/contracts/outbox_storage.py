@@ -68,6 +68,23 @@ class OutboxStorageContract:
         assert [row.attempts for row in mine] == [1, 1]
         assert (await tasks.read_task(org_a, first.id)) == first
 
+    async def test_a_claimed_row_names_its_own_tenant(
+        self, tasks: TasksStorageInterface, outbox: OutboxStorageInterface
+    ) -> None:
+        """The relay runs with no context, so the tenant is on the row and not
+        beside it: what the claim hands back is enough to relay, to mark done,
+        and to publish under. A row that names another tenant is landed under
+        the one the write names."""
+        org = new_id()
+        task = make_task()
+        row = make_row(new_id(), task.id)
+        await tasks.create_task(org, task, (row,))
+        claimed = [r for r in await claim_all(outbox) if r.id == row.id]
+        assert [r.org_id for r in claimed] == [org]
+        # The tenant the row names is the one the rest of the namespace takes.
+        await outbox.mark_done(claimed[0].org_id, claimed[0].id)
+        assert row.id not in {r.id for r in await claim_all(outbox)}
+
     async def test_a_claim_spends_an_attempt_and_sets_the_next_with_a_growing_delay(
         self, tasks: TasksStorageInterface, outbox: OutboxStorageInterface
     ) -> None:

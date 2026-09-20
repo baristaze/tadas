@@ -57,6 +57,17 @@ class EventStorageContract:
         assert await storage.read_after(org_b, 0, 10) == [elsewhere]
         assert await storage.read_after(new_id(), 0, 10) == []
 
+    async def test_an_appended_event_names_its_own_tenant(
+        self, storage: EventStorageInterface
+    ) -> None:
+        """The relay appends with no context and a client replays records, so
+        the tenant is on the event and not beside it. An event that names
+        another tenant is appended under the one the caller names."""
+        org = new_id()
+        appended = await storage.append_event(org, make_event(new_id()))
+        assert appended.org_id == org
+        assert [e.org_id for e in await storage.read_after(org, 0, 10)] == [org]
+
     async def test_append_is_idempotent_on_the_id(self, storage: EventStorageInterface) -> None:
         # The outbox relay appends under the row's id; relaying twice appends once.
         org = new_id()

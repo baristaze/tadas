@@ -85,11 +85,13 @@ async def test_an_append_is_a_write_and_carries_the_contexts_provenance(
     with pytest.raises(NotAuthorized):
         await manager.append_event(viewer, make_event(viewer.org_id))
     assert await manager.get_head(viewer) == 0
-    # A caller-built event names whoever it likes; the row records the context.
+    # A caller-built event names whatever tenant and whoever it likes; the row
+    # records the context.
     member = context(Role.MEMBER)
     foreign = make_event(new_id(), "work.item.failed")
     appended = await manager.append_event(member, foreign)
-    assert (appended.actor_id, appended.request_id, appended.app) == (
+    assert (appended.org_id, appended.actor_id, appended.request_id, appended.app) == (
+        member.org_id,
         member.user_id,
         member.request_id,
         "portal",
@@ -100,7 +102,8 @@ async def test_an_append_is_a_write_and_carries_the_contexts_provenance(
         foreign.target_id,
         foreign.payload,
     )
-    assert appended.actor_id != foreign.actor_id and appended.request_id != foreign.request_id
+    assert appended.org_id != foreign.org_id and appended.actor_id != foreign.actor_id
+    assert appended.request_id != foreign.request_id
     assert await manager.get_events(member, after_seq=0, limit=10) == [appended]
 
 
