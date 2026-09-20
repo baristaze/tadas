@@ -1,9 +1,10 @@
 """The channel over a fake socket: order, gaps replayed from the stream,
-reconnects that replay after the cursor, silence answered with a ping, and a
+reconnects that replay after the cursor, pings on their own timer, and a
 refused ticket that stops."""
 
 import asyncio
 import json
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -48,6 +49,9 @@ def hello_at(seq: int) -> str:
     return json.dumps({**json.loads(HELLO), "seq": seq})
 
 
+QUICK_HELLO = json.dumps({**json.loads(HELLO), "ping_interval_seconds": 0})
+"""An interval of 0 is clamped to `MIN_PING_SECONDS`, which a test shortens."""
+
 SUBSCRIBED = json.dumps({"type": "subscribed", "sent_at": None, "topic": "entity_changed"})
 
 
@@ -55,21 +59,24 @@ def pong(seq: int) -> str:
     return json.dumps({"type": "pong", "sent_at": None, "seq": seq})
 
 
+PING = '{"op": "ping"}'
+
+
 class FakeSocket:
     """Frames in order; a `Close` entry ends the session the way the server
-    would. Once the frames run out the socket is silent: the first read waits
-    (until the channel gives up on it), the next one gets a push."""
+    would. Once the frames run out the socket is silent until the channel
+    pings, and the ping is answered with a push, so a test that reads past
+    the script holds the channel to pinging through silence."""
 
     def __init__(self, frames: list[str | Close]) -> None:
         self.frames = list(frames)
-        self.silent_reads = 0
         self.sent: list[str] = []
+        self._pinged = asyncio.Event()
 
     async def recv(self) -> str | bytes:
         if not self.frames:
-            self.silent_reads += 1
-            if self.silent_reads == 1:
-                await asyncio.sleep(3600)
+            await self._pinged.wait()
+            self._pinged.clear()
             self.frames.append(push(1))
         frame = self.frames.pop(0)
         if isinstance(frame, Close):
@@ -78,6 +85,32 @@ class FakeSocket:
 
     async def send(self, message: str) -> None:
         self.sent.append(message)
+        if message == PING:
+            self._pinged.set()
+
+
+class BusySocket:
+    """A hello, then a push every `every` seconds without end: a read never
+    waits long enough for silence to be noticed. Records when each ping is sent."""
+
+    def __init__(self, every: float) -> None:
+        self.every = every
+        self.seq = 0
+        self.sent: list[str] = []
+        self.pinged_at: list[float] = []
+
+    async def recv(self) -> str | bytes:
+        if self.seq == 0:
+            self.seq = 1
+            return QUICK_HELLO
+        await asyncio.sleep(self.every)
+        self.seq += 1
+        return push(self.seq - 1)
+
+    async def send(self, message: str) -> None:
+        self.sent.append(message)
+        if message == PING:
+            self.pinged_at.append(time.monotonic())
 
 
 def transport(
@@ -134,7 +167,7 @@ async def collect(channel: Channel, count: int) -> list[int]:
     return seqs
 
 
-def connect_to(sockets: list[FakeSocket], urls: list[str]) -> Connect:
+def connect_to(sockets: list[SocketLike], urls: list[str]) -> Connect:
     @asynccontextmanager
     async def connect(url: str, headers: dict[str, str]) -> AsyncIterator[SocketLike]:
         urls.append(url)
@@ -255,9 +288,34 @@ async def test_a_4401_mid_stream_stops_the_channel_after_what_arrived() -> None:
 
 async def test_silence_is_answered_with_a_ping(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(realtime, "MIN_PING_SECONDS", 0.01)
-    hello = json.loads(HELLO)
-    hello["ping_interval_seconds"] = 0  # clamped to the minimum, which the test shortens
-    socket = FakeSocket([json.dumps(hello)])
+    socket = FakeSocket([QUICK_HELLO])
     channel = Channel(client_over([]), connect=connect_to([socket], []))
     assert await collect(channel, 1) == [1]
-    assert socket.sent[1:] == ['{"op": "ping"}']
+    assert socket.sent[1:] == [PING]
+
+
+async def test_pings_keep_their_schedule_while_frames_flow(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The server counts only what the client sends as a sign of life, so a
+    socket busy with pushes still pings every interval, from its own timer."""
+    monkeypatch.setattr(realtime, "MIN_PING_SECONDS", 0.02)
+    socket = BusySocket(every=0.004)  # five pushes per interval
+    channel = Channel(client_over([]), connect=connect_to([socket], []))
+    assert await collect(channel, 50) == list(range(1, 51))  # about ten intervals
+    assert len(socket.pinged_at) >= 5
+    gaps = [b - a for a, b in zip(socket.pinged_at, socket.pinged_at[1:], strict=False)]
+    assert all(gap < 0.02 * 3 for gap in gaps), gaps
+
+
+async def test_a_hello_starts_the_backoff_over(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A quiet listener whose socket drops after every hello is not backed
+    off further each time: the hello says the server is there."""
+    monkeypatch.setattr(realtime, "BACKOFF_SECONDS", (0.0, 3600.0))
+    sockets: list[SocketLike] = [
+        FakeSocket([hello_at(1), SUBSCRIBED, Close(1006, "gone")]),
+        FakeSocket([hello_at(1), SUBSCRIBED, Close(1006, "gone")]),
+        FakeSocket([hello_at(1), SUBSCRIBED, push(2)]),
+    ]
+    states: list[str] = []
+    channel = Channel(client_over([]), on_state=states.append, connect=connect_to(sockets, []))
+    assert await asyncio.wait_for(collect(channel, 1), 5) == [2]
+    assert states == ["connecting", "open", "reconnecting", "open", "reconnecting", "open"]

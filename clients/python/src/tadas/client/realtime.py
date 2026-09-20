@@ -1,13 +1,14 @@
 """The one channel: a socket opened on a single-use ticket, one subscription
-to `entity_changed`, pings at the interval the hello names, and an async
-iterator of changes in stream order. A push ahead of the cursor is a replay
-of `/v1/events` after it, never a skip; a dropped socket reconnects with
-backoff and replays the same way, so a consumer sees every change once."""
+to `entity_changed`, pings at the interval the hello names from a timer of
+their own, and an async iterator of changes in stream order. A push ahead of
+the cursor is a replay of `/v1/events` after it, never a skip; a dropped
+socket reconnects with backoff and replays the same way, so a consumer sees
+every change once."""
 
 import asyncio
 import logging
 from collections.abc import AsyncIterator, Callable
-from contextlib import AbstractAsyncContextManager
+from contextlib import AbstractAsyncContextManager, suppress
 from typing import Literal, Protocol
 
 import httpx
@@ -67,6 +68,7 @@ class Channel:
         self._client = client
         self._on_state = on_state or (lambda _: None)
         self._connect = connect or self._connect_default
+        self._attempt = 0
         self.cursor: Cursor = None
         self.state: State = "closed"
 
@@ -88,12 +90,11 @@ class Channel:
             self._on_state(state)
 
     async def __aiter__(self) -> AsyncIterator[EntityChanged]:
-        attempt = 0
+        self._attempt = 0
         while True:
-            self._set("connecting" if attempt == 0 else "reconnecting")
+            self._set("connecting" if self.state == "closed" else "reconnecting")
             try:
                 async for change in self._session():
-                    attempt = 0
                     yield change
             except ChannelRefused:
                 self._set("closed")
@@ -115,8 +116,8 @@ class Channel:
                 TimeoutError,
             ) as error:
                 log.info("channel dropped: %s", error)
-            delay = BACKOFF_SECONDS[min(attempt, len(BACKOFF_SECONDS) - 1)]
-            attempt += 1
+            delay = BACKOFF_SECONDS[min(self._attempt, len(BACKOFF_SECONDS) - 1)]
+            self._attempt += 1
             self._set("reconnecting")
             await asyncio.sleep(delay)
 
@@ -128,33 +129,50 @@ class Channel:
                 hello = parse_envelope(await socket.recv())
                 if not isinstance(hello, HelloEnvelope):
                     raise websockets.exceptions.ProtocolError("expected hello")
+                # The server is there: the next drop starts the backoff over,
+                # whether or not a push arrives in between.
+                self._attempt = 0
                 await socket.send(subscribe_command(ENTITY_CHANGED))
                 self._set("open")
-                if self.cursor is None:
-                    # The first session starts where the stream stands; a later
-                    # reconnect then has a position to replay from even if no
-                    # push ever reached this session.
-                    self.cursor = hello.seq
-                else:
-                    # Anything that happened while the socket was down.
-                    async for change in self._replay(self.cursor):
-                        yield change
                 interval = max(float(hello.ping_interval_seconds), MIN_PING_SECONDS)
-                async for change in self._frames(socket, interval):
-                    yield change
+                keepalive = asyncio.create_task(self._keepalive(socket, interval))
+                try:
+                    if self.cursor is None:
+                        # The first session starts where the stream stands; a later
+                        # reconnect then has a position to replay from even if no
+                        # push ever reached this session.
+                        self.cursor = hello.seq
+                    else:
+                        # Anything that happened while the socket was down.
+                        async for change in self._replay(self.cursor):
+                            yield change
+                    async for change in self._frames(socket):
+                        yield change
+                finally:
+                    keepalive.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await keepalive
         except websockets.exceptions.ConnectionClosed as closed:
             if closed.rcvd is not None and closed.rcvd.code == CLOSE_UNAUTHENTICATED:
                 raise ChannelRefused(closed.rcvd.reason) from None
             raise
 
-    async def _frames(self, socket: SocketLike, interval: float) -> AsyncIterator[EntityChanged]:
+    async def _keepalive(self, socket: SocketLike, interval: float) -> None:
+        """A ping every `interval`, on a timer of its own, whatever comes in.
+        The server counts only what the client sends as a sign of life, so a
+        socket busy with pushes, or one mid-replay, would idle out without
+        it. A send that fails is left to the reader, which sees the same
+        closed socket."""
         while True:
+            await asyncio.sleep(interval)
             try:
-                raw = await asyncio.wait_for(socket.recv(), timeout=interval)
-            except TimeoutError:
                 await socket.send(PING_COMMAND)
-                continue
-            envelope = parse_envelope(raw)
+            except OSError, websockets.exceptions.WebSocketException:
+                return
+
+    async def _frames(self, socket: SocketLike) -> AsyncIterator[EntityChanged]:
+        while True:
+            envelope = parse_envelope(await socket.recv())
             if isinstance(envelope, ErrorEnvelope):
                 log.warning("channel error %s: %s", envelope.code, envelope.message)
             if isinstance(envelope, PongEnvelope):
