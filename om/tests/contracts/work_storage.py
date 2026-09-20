@@ -1,3 +1,4 @@
+import asyncio
 from datetime import timedelta
 from uuid import UUID
 
@@ -54,6 +55,26 @@ class WorkStorageContract:
         assert claimed.lease_expires_at is not None and claimed.lease_expires_at > utcnow()
         assert claimed.payload == {}
         assert await storage.claim_next(lane, [WorkKind.NOOP], "w2", LEASE) is None
+        assert await storage.read_item(org, item.id) == claimed
+
+    async def test_a_raced_claim_admits_exactly_one(
+        self, storage: WorkStorageInterface, lane: str
+    ) -> None:
+        # Two workers claim the one available item at the same moment. The
+        # claim is one statement, so exactly one of them holds the item
+        # afterwards, and the row names that worker with one attempt spent.
+        org = new_id()
+        item = make_item(lane=lane)
+        await storage.write_item(org, item)
+        outcomes = await asyncio.gather(
+            storage.claim_next(lane, [WorkKind.NOOP], "w1", LEASE),
+            storage.claim_next(lane, [WorkKind.NOOP], "w2", LEASE),
+        )
+        winners = [claimed for claimed in outcomes if claimed is not None]
+        assert len(winners) == 1
+        claimed_org, claimed = winners[0]
+        assert claimed_org == org and claimed.id == item.id
+        assert claimed.claimed_by in ("w1", "w2") and claimed.attempts == 1
         assert await storage.read_item(org, item.id) == claimed
 
     async def test_claim_takes_the_oldest_available_in_its_queue(
