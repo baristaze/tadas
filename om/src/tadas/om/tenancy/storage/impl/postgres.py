@@ -272,13 +272,16 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
     ) -> tuple[ApiKey, bool]:
         if await self._insert(ApiKeys, org_id, api_key, outbox_row):
             return api_key, True
-        # The rerun: one conditional statement re-mints the secret on the issuer's row.
+        # The rerun: one conditional statement re-mints the secret on the
+        # issuer's row, with both fences of the interface in its own WHERE.
         stmt = (
             update(ApiKeys)
             .where(
                 ApiKeys.org_id == org_id,
                 ApiKeys.id == api_key.id,
                 ApiKeys.user_id == api_key.user_id,
+                ApiKeys.deleted_at.is_(None),
+                ApiKeys.created_at <= api_key.created_at,
             )
             .values(
                 key_hash=api_key.key_hash,
@@ -290,7 +293,7 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
         async with self._session_for(stmt) as session:
             row = (await session.execute(stmt)).scalar_one_or_none()
             if row is None:
-                raise Conflict(f"api key {api_key.id} was issued by another member")
+                raise Conflict(f"api key {api_key.id} cannot be re-minted")
             reissued = to_model(row, ApiKey)
             await session.commit()
             return reissued, False

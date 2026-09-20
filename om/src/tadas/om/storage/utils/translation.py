@@ -47,3 +47,13 @@ def to_values(entity: BaseModel, row_type: type[Any]) -> dict[str, Any]:
             value = value.value
         values[name] = value
     return values
+
+
+def undeletes(stored: Any, entity: Any) -> bool:
+    """True when writing `entity` over `stored` would clear a soft delete.
+    Takes a table row or an entity on either side: both spell the field
+    `deleted_at`, and a type without one is never soft-deleted."""
+    return (
+        getattr(stored, "deleted_at", None) is not None
+        and getattr(entity, "deleted_at", None) is None
+    )

@@ -4,11 +4,26 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# .env is a dotenv file, not a shell script: `make up` copies .env.example
+# over, and values there are unquoted words (SEED_NAME=Local Owner) and JSON
+# (TADAS_CORS_ORIGINS=["http://..."]). Sourcing it runs the second word as a
+# command and strips the quotes out of the first. Read it the way
+# pydantic-settings and compose do instead: one KEY=VALUE per line, comments
+# and blanks skipped, one layer of matching quotes removed, no expansion.
 if [ -f .env ]; then
-  set -a
-  # shellcheck disable=SC1091
-  source .env
-  set +a
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="${line%$'\r'}"
+    case "$line" in ''|'#'*) continue ;; esac
+    [ "${line#*=}" = "$line" ] && continue
+    key="${line%%=*}"
+    value="${line#*=}"
+    case "$key" in ''|*[!A-Za-z0-9_]*) continue ;; esac
+    case "$value" in
+      \"*\") value="${value:1:${#value}-2}" ;;
+      \'*\') value="${value:1:${#value}-2}" ;;
+    esac
+    export "$key=$value"
+  done < .env
 fi
 
 pids=()

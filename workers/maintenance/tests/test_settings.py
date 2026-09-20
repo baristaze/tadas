@@ -10,6 +10,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from tadas.workers.maintenance.settings import MaintenanceSettings
 
@@ -106,3 +107,26 @@ def test_every_setting_the_cloud_needs_is_wired(environment: Path) -> None:
         if field not in MaintenanceSettings.model_fields
     )
     assert not stale, f"exceptions naming no field: {stale}"
+
+
+BOUNDED = (
+    "worker_capacity",
+    "worker_lease_seconds",
+    "worker_heartbeat_seconds",
+    "worker_heartbeat_failure_limit",
+    "worker_sweep_seconds",
+    "worker_poll_seconds",
+)
+
+
+@pytest.mark.parametrize("field", BOUNDED)
+def test_a_count_or_a_duration_of_zero_is_refused(field: str) -> None:
+    """Zero is not a smaller setting here but a broken one: a lease of zero
+    cancels every item as `lease_lost` the moment it is claimed, a heartbeat
+    of zero never lets the claim loop run, and a capacity of zero claims
+    nothing. The process refuses to start rather than run that way."""
+    base = {"database_url_core": "postgresql+asyncpg://t/t"}
+    with pytest.raises(ValidationError):
+        MaintenanceSettings.model_validate({**base, field: 0})
+    with pytest.raises(ValidationError):
+        MaintenanceSettings.model_validate({**base, field: -1})

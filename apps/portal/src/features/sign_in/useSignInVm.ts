@@ -1,14 +1,15 @@
 import type { MembershipChoiceView } from "../../api";
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { errorMessage } from "../../app/errorMessage";
 import { useExchangeSession, useLogin } from "../../queries/tenancy";
 import { useNoticesStore } from "../../store/notices";
 import { useSessionStore } from "../../store/session";
-import { checkCredentials, chooseOrg, type OrgChoice } from "./signInModel";
+import { checkCredentials, chooseOrg, landingPath, type OrgChoice } from "./signInModel";
 
 export function useSignInVm() {
   const navigate = useNavigate();
+  const location = useLocation();
   const setSession = useSessionStore((s) => s.setSession);
   const notify = useNoticesStore((s) => s.notify);
   const login = useLogin();
@@ -22,7 +23,7 @@ export function useSignInVm() {
   const enter = async (token: string, membership: MembershipChoiceView) => {
     const issued = await exchange.mutateAsync({ loginToken: token, body: { org_id: membership.org.id } });
     setSession(issued.token, issued.org.slug);
-    navigate("/", { replace: true });
+    navigate(landingPath((location.state as { from?: unknown } | null)?.from), { replace: true });
   };
 
   const submit = async () => {

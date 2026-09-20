@@ -9,6 +9,7 @@ import logging
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from tadas.infra.exceptions import InfraException
 from tadas.om.exceptions import PlatformException
@@ -17,6 +18,10 @@ from tadas.services.api.gateway.observability import request_id_of
 from tadas.services.api.gateway.ratelimit import RateLimited
 
 log = logging.getLogger(__name__)
+
+STARLETTE_CODES = {404: "not_found", 405: "method_not_allowed"}
+"""The stable codes for the two Starlette raises for itself; anything else it
+raises is presented under `http_error` with its own status."""
 
 
 def envelope(
@@ -33,10 +38,19 @@ def presented(
     """A refusal (4xx) tells the client what was wrong. A failure (5xx) is
     the process's problem: its message names backends, hosts, and codes the
     client cannot act on, so it goes to the log under the request id and the
-    client reads "internal error" with the exception's own code and status."""
+    client reads "internal error" with the exception's own code and status.
+
+    These handlers are reached from a socket too, where the scope carries no
+    method, so the line is written from the scope and not from a `Request`
+    attribute that only an HTTP scope has."""
     if exc.http_status >= 500:
         log.error(
-            "%s on %s %s: %s", exc.code, request.method, request.url.path, exc.message, exc_info=exc
+            "%s on %s %s: %s",
+            exc.code,
+            request.scope.get("method", "WEBSOCKET"),
+            request.scope.get("path", "-"),
+            exc.message,
+            exc_info=exc,
         )
         return envelope(request, exc.http_status, exc.code, INTERNAL_ERROR[1], headers)
     return envelope(request, exc.http_status, exc.code, exc.message, headers)
@@ -56,6 +70,15 @@ def register_error_handlers(app: FastAPI) -> None:
         # it) but carries the same status and code, so it is presented alike
         # (ADR 0005).
         return presented(request, exc)
+
+    @app.exception_handler(StarletteHTTPException)
+    async def http_exception(request: Request, exc: StarletteHTTPException) -> JSONResponse:
+        # Starlette raises its own for an unmatched path (404) and a method a
+        # route does not take (405). They are refusals like any other and get
+        # the envelope, not the `{"detail": ...}` its default handler writes.
+        code = STARLETTE_CODES.get(exc.status_code, "http_error")
+        message = exc.detail if isinstance(exc.detail, str) else code.replace("_", " ")
+        return envelope(request, exc.status_code, code, message, dict(exc.headers or {}))
 
     @app.exception_handler(RequestValidationError)
     async def request_validation(request: Request, exc: RequestValidationError) -> JSONResponse:

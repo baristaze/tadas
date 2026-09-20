@@ -1,6 +1,6 @@
 import type { MembershipChoiceView } from "../../api";
 import { describe, expect, it } from "vitest";
-import { checkCredentials, chooseOrg } from "./signInModel";
+import { checkCredentials, chooseOrg, landingPath } from "./signInModel";
 
 const membership = (name: string): MembershipChoiceView => ({
   org: { id: name, name, slug: name.toLowerCase(), created_at: "2026-01-01T00:00:00Z" },
@@ -25,5 +25,25 @@ describe("chooseOrg", () => {
       "Acme",
       "Zeta",
     ]);
+  });
+});
+
+describe("where signing in lands", () => {
+  it("returns to the page RequireAuth turned away", () => {
+    expect(landingPath("/settings")).toBe("/settings");
+  });
+
+  it("falls back to the task list when there is nothing to return to", () => {
+    expect(landingPath(undefined)).toBe("/");
+    expect(landingPath(null)).toBe("/");
+    expect(landingPath("")).toBe("/");
+    expect(landingPath("/sign-in")).toBe("/");
+  });
+
+  it("takes only an in-app absolute path, never a destination from elsewhere", () => {
+    expect(landingPath("//evil.example.test")).toBe("/");
+    expect(landingPath("https://evil.example.test")).toBe("/");
+    expect(landingPath("settings")).toBe("/");
+    expect(landingPath({ pathname: "/settings" })).toBe("/");
   });
 });

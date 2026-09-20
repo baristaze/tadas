@@ -39,11 +39,11 @@ def resolve(reference: str, tasks: Sequence[TaskView]) -> TaskView:
 
 def task_line(task: TaskView, name_of: NameOf) -> str:
     assignee = name_of(task.assignee_id) if task.assignee_id else "-"
-    return f"{short_id(task.id)}  {task.status.value:<5}  {assignee:<12}  {task.title}"
+    return f"{short_id(task.id)}  {task.status.value:<6}  {assignee:<12}  {task.title}"
 
 
 def task_table(tasks: Sequence[TaskView], name_of: NameOf) -> str:
-    header = f"{'ID':<{SHORT_ID}}  {'STATUS':<5}  {'ASSIGNEE':<12}  TITLE"
+    header = f"{'ID':<{SHORT_ID}}  {'STATUS':<6}  {'ASSIGNEE':<12}  TITLE"
     return "\n".join([header, *(task_line(t, name_of) for t in tasks)])
 
 

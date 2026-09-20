@@ -15,7 +15,7 @@ from contracts.factories import (
     make_user,
 )
 from tadas.om.base import new_id, utcnow
-from tadas.om.exceptions import Conflict, NotFound, TenantMismatch, UniqueKeyTaken
+from tadas.om.exceptions import Conflict, NotFound, RowDeleted, TenantMismatch, UniqueKeyTaken
 from tadas.om.opcontext import Role
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.tenancy.storage import TenancyStorageInterface
@@ -169,6 +169,27 @@ class TenancyStorageContract:
         await storage.write_user(org.id, gone)
         assert await storage.read_users(org.id, limit=10) == []
         assert await storage.read_user(org.id, user.id) == gone
+
+    async def test_a_write_never_brings_a_deleted_row_back(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        """Every update is a read, a copy, and a write of the whole entity, so
+        a delete that commits between the read and the write would be undone by
+        a copy still carrying `deleted_at = None`, leaving a live user with no
+        live membership: listed, unable to sign in, and past every sweep. There
+        is no restore in this domain, so the write is refused instead."""
+        org = make_org()
+        user = make_user(make_identity().id)
+        await storage.write_user(org.id, user)
+        held = await storage.read_user(org.id, user.id)
+        assert held is not None
+        gone = user.model_copy(update={"deleted_at": utcnow(), "deleted_by": user.id})
+        await storage.write_user(org.id, gone)
+        renamed = held.model_copy(update={"display_name": "Renamed", "updated_at": utcnow()})
+        with pytest.raises(RowDeleted):
+            await storage.write_user(org.id, renamed)
+        assert await storage.read_user(org.id, user.id) == gone
+        assert await storage.read_users(org.id, limit=10) == []
 
     async def test_one_live_user_per_identity_in_a_tenant(
         self, storage: TenancyStorageInterface
@@ -579,6 +600,41 @@ class TenancyStorageContract:
         with pytest.raises(Conflict):
             await storage.issue_api_key(org.id, other, make_key_row(other))
         assert await storage.read_api_key(org.id, api_key.id) == stored
+
+    async def test_a_rerun_never_re_mints_a_revoked_key(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        """A create retried after the key was revoked must not put a live
+        secret back on a dead row and answer 201 with it."""
+        org = make_org()
+        user_id = new_id()
+        api_key = make_api_key(user_id, uuid4().hex)
+        await storage.issue_api_key(org.id, api_key, make_key_row(api_key))
+        revoked = api_key.model_copy(update={"deleted_at": utcnow(), "deleted_by": user_id})
+        await storage.write_api_key(org.id, revoked)
+        rerun = api_key.model_copy(update={"key_hash": uuid4().hex, "updated_at": utcnow()})
+        with pytest.raises(Conflict):
+            await storage.issue_api_key(org.id, rerun, make_key_row(rerun))
+        assert await storage.read_api_key(org.id, api_key.id) == revoked
+        assert await storage.read_api_key_by_hash(rerun.key_hash) is None
+
+    async def test_a_rerun_never_re_mints_a_row_a_later_attempt_created(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        """An attempt that ran past the idempotency marker's pending lease is
+        a zombie: the retry that took the marker over already handed its key
+        to the caller, and the zombie's rerun must not overwrite it."""
+        org = make_org()
+        user_id = new_id()
+        stalled = make_api_key(user_id, uuid4().hex)
+        # The retry began later, so its row is the newer of the two.
+        later = stalled.created_at + timedelta(minutes=3)
+        winner = stalled.model_copy(update={"key_hash": uuid4().hex, "created_at": later})
+        await storage.issue_api_key(org.id, winner, make_key_row(winner))
+        with pytest.raises(Conflict):
+            await storage.issue_api_key(org.id, stalled, make_key_row(stalled))
+        assert await storage.read_api_key_by_hash(winner.key_hash) == (org.id, winner)
+        assert await storage.read_api_key_by_hash(stalled.key_hash) is None
 
     async def test_api_key_lookup_by_hash_returns_the_tenant(
         self, storage: TenancyStorageInterface

@@ -23,3 +23,13 @@ export function chooseOrg(memberships: MembershipChoiceView[]): OrgChoice {
   if (memberships.length === 1) return { kind: "single", membership: first };
   return { kind: "several", memberships: [...memberships].sort((a, b) => a.org.name.localeCompare(b.org.name)) };
 }
+
+
+/** Where to land after signing in: the page RequireAuth turned away, when it
+ * named one of ours, and the task list otherwise. What the history state
+ * carries is not trusted as a destination; only an in-app absolute path is. */
+export function landingPath(from: unknown): string {
+  if (typeof from !== "string") return "/";
+  if (!from.startsWith("/") || from.startsWith("//") || from === "/sign-in") return "/";
+  return from;
+}

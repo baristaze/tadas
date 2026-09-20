@@ -112,7 +112,15 @@ export function useTasksVm() {
     later(() => setLeaving((current) => current.filter((l) => l.task.id !== task.id)));
     update.mutate(
       { id: task.id, body: { status: "done", version: task.version } },
-      { onError: fail, onSettled: refresh },
+      {
+        // The row the server wrote replaces the optimistic one: it carries
+        // the version the write bumped, and without it un-ticking or editing
+        // the task before the refetch lands is refused as someone else's
+        // change (`reopen` and `add` do the same).
+        onSuccess: (completed) => editDone((data) => pagesWithTaskOnTop(data, completed)),
+        onError: fail,
+        onSettled: refresh,
+      },
     );
   };
 

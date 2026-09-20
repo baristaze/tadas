@@ -88,7 +88,12 @@ def test_a_short_id_resolves_when_unique() -> None:
 
 
 def test_the_table_has_a_header_and_one_line_per_task() -> None:
+    """Every column of the header starts where its values do: "STATUS" is six
+    characters, so a five-wide column pushed ASSIGNEE and TITLE one over."""
     a = task(id="0199a4c0-0000-7000-8000-000000000001", assignee_id=BOB)
     lines = task_table([a], name_of).splitlines()
-    assert lines[0].startswith("ID        STATUS  ASSIGNEE")
-    assert lines[1] == "00000001  open   Bob           Migrate DB"
+    assert lines[0] == "ID        STATUS  ASSIGNEE      TITLE"
+    assert lines[1] == "00000001  open    Bob           Migrate DB"
+    for column in ("STATUS", "ASSIGNEE", "TITLE"):
+        assert lines[0].index(column) == len(lines[0].split(column)[0])
+    assert lines[0].index("ASSIGNEE") == lines[1].index("Bob")

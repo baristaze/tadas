@@ -8,9 +8,10 @@ from collections.abc import Iterator
 from typing import Protocol, TypeVar
 from uuid import UUID
 
-from tadas.om.exceptions import TenantMismatch
+from tadas.om.exceptions import RowDeleted, TenantMismatch
 from tadas.om.outbox.storage import OutboxLandingInterface
 from tadas.om.outbox.types.row import OutboxRow
+from tadas.om.storage.utils.translation import undeletes
 
 
 class HasId(Protocol):
@@ -35,6 +36,8 @@ class MemoryStorageBase:
         existing = table.get(entity.id)
         if existing is not None and existing[0] != org_id:
             raise TenantMismatch(f"{entity.id} is not in {org_id}")
+        if existing is not None and undeletes(existing[1], entity):
+            raise RowDeleted(f"{entity.id} was deleted")
         if outbox_row is not None:
             if self._outbox is None:
                 raise RuntimeError("this memory storage was built without an outbox to land in")

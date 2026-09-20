@@ -69,6 +69,15 @@ class CrossRoleStatement(StorageException):
     code = "cross_role_statement"
 
 
+class RowDeleted(StorageException, Conflict):
+    """A write would have brought a soft-deleted row back. Every update is a
+    read, a copy, and a write of the whole entity, so a delete that commits in
+    between would otherwise be undone; there is no restore in this domain, and
+    the caller reads the row again."""
+
+    code = "row_deleted"
+
+
 class TenancyException(PlatformException): ...
 
 

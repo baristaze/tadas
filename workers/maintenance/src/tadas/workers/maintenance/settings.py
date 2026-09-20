@@ -24,9 +24,14 @@ class MaintenanceSettings(StorageSettings, InfraSettings):
     metrics_port: int = 9464
     worker_id: str = Field(default_factory=default_worker_id)
     worker_lane: str = "default"
-    worker_capacity: int = 4
-    worker_lease_seconds: int = 60
-    worker_heartbeat_seconds: int = 10
-    worker_heartbeat_failure_limit: int = 3
-    worker_sweep_seconds: int = 30
-    worker_poll_seconds: int = 5
+    # Every one of these is a count or a duration the loop divides or waits
+    # on, so zero is not a smaller setting but a broken one: a lease of zero
+    # cancels each item as `lease_lost` the moment it is claimed, a heartbeat
+    # of zero never lets the claim loop run, and a capacity of zero claims
+    # nothing at all. The process refuses to start instead.
+    worker_capacity: int = Field(default=4, gt=0)
+    worker_lease_seconds: int = Field(default=60, gt=0)
+    worker_heartbeat_seconds: int = Field(default=10, gt=0)
+    worker_heartbeat_failure_limit: int = Field(default=3, gt=0)
+    worker_sweep_seconds: int = Field(default=30, gt=0)
+    worker_poll_seconds: int = Field(default=5, gt=0)

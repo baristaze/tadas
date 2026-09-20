@@ -183,8 +183,16 @@ class TenancyStorageInterface(ABC):
         a create that issues a secret, it writes the new `key_hash` (with
         `updated_at` and `updated_by`) onto that row instead, lands no outbox
         row, and returns `(the row as stored, False)`; the row keeps its name,
-        role, expiry, and issuer. An id written under another issuer raises
-        Conflict and changes nothing."""
+        role, expiry, and issuer.
+
+        The re-mint is fenced two ways, both in the statement. A revoked row is
+        never re-minted, so a rerun cannot put a live secret back on a key
+        somebody revoked in between. And a row created after this attempt
+        began is never re-minted: an attempt that ran past the idempotency
+        marker's pending lease is a zombie whose `finish` will be refused, and
+        the key the retry that took the marker over handed to the caller must
+        not be overwritten behind it. Both raise Conflict and change nothing,
+        as does an id written under another issuer."""
         ...
 
     @abstractmethod

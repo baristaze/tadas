@@ -22,8 +22,12 @@ task_arn="$(aws ecs run-task \
 echo "pre-rollout task $task_arn ($COMMAND) started on $CLUSTER"
 aws ecs wait tasks-stopped --cluster "$CLUSTER" --tasks "$task_arn"
 
+# The task runs the command beside the telemetry sidecar, and ECS does not
+# order `containers`, so the exit code is read from the container by name: a
+# collector that exits 0 must not pass a migration that failed, and one killed
+# on shutdown (137) must not fail a migration that worked.
 exit_code="$(aws ecs describe-tasks --cluster "$CLUSTER" --tasks "$task_arn" \
-  --query 'tasks[0].containers[0].exitCode' --output text)"
+  --query "tasks[0].containers[?name=='$CONTAINER'] | [0].exitCode" --output text)"
 reason="$(aws ecs describe-tasks --cluster "$CLUSTER" --tasks "$task_arn" \
   --query 'tasks[0].stoppedReason' --output text)"
 

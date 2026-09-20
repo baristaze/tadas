@@ -27,10 +27,15 @@ export function useUsers() {
   });
 }
 
-export function useApiKeys() {
+/** Only a member who may manage keys asks for them: `GET /v1/api-keys`
+ * refuses anyone else, and a refusal nobody can act on is not an error to
+ * show. Disabled, the query stays pending and never fetches, so a caller
+ * reads `enabled` and not `isPending` to know whether to wait. */
+export function useApiKeys(enabled = true) {
   return useQuery({
     queryKey: keys.apiKeys.list(LIMIT),
     queryFn: () => api.get<ApiKeyView[]>(`/v1/api-keys?limit=${LIMIT}`),
+    enabled,
   });
 }
 
