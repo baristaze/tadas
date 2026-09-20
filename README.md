@@ -145,16 +145,43 @@ dispatches the `release` workflow, which fast-forwards `release` to
 `release`. [docs/runbooks/deploy.md](docs/runbooks/deploy.md) has the
 steps, the rollback, and the protection to set on the branch.
 
+## Operate
+
+People steer, agents maintain. Every operational task is a skill a
+person runs with an agent, and the safety boundary is the credential
+the skill holds: an operator reads every signal and writes nothing,
+because a change is a pull request. [ops/README.md](ops/README.md) has
+the roles, the profiles, the signals in both twins, the `tadas-ops`
+binary, and the nine skills (`ops-investigate`, `ops-watch`,
+`ops-root-cause`, `ops-infra-as-code`, `ops-cloud-deployment-create`,
+`ops-cloud-deployment-nuke`, `ops-simulate-traffic`,
+`stress-test-create-or-update`, `stress-test-run`). Each procedure a
+person follows by hand is a runbook under
+[docs/runbooks/](docs/runbooks/README.md).
+
 ## Layout
 
-- `om/` the object model: entities, managers, storage, migrations
+- `om/` the object model: entities, managers, storage, migrations;
+  [om/README.md](om/README.md) names the nouns for a reader with no
+  code, and each namespace carries a README of its own
 - `infra/` cache, buckets, topics, queues, secrets, observability
-- `services/` web services; `workers/` background roles; `apps/` clients: the
+  ([infra/README.md](infra/README.md))
+- `services/` web services ([services/api/README.md](services/api/README.md));
+  `workers/` background roles
+  ([workers/maintenance/README.md](workers/maintenance/README.md));
+  `apps/` clients: the
   portal, with its generated API types and one transport client under
   `src/api/` (a deadline on every call; the session in the tab's session
   storage, never local storage), and the CLI; `clients/python/` the one
   Python client
-- `deployment/` compose, images, Terraform; the portal's distribution
+- `deployment/` compose, images, Terraform
+  ([deployment/README.md](deployment/README.md)); the portal's distribution
   sends the security headers, a `Content-Security-Policy` naming its own
   origin and the API among them
+- `ops/` the operators' package and the stress scenarios
+  ([ops/README.md](ops/README.md))
 - `docs/` as built, ADRs, runbooks; `scripts/` dev.sh, the portal publisher, and the by-hand migration runner
+- `llms.txt` the knowledge map: which documents each audience is
+  served (platform developers, platform operators, tenant users and
+  admins); a document is served by being listed there, never by its
+  folder
