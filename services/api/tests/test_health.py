@@ -5,6 +5,8 @@ import asyncio
 import time
 from collections.abc import AsyncIterator
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 
 import httpx
 import pytest
@@ -74,12 +76,12 @@ async def test_the_readiness_deadline_interrupts_a_pool_wait() -> None:
     the greenlet, so the wait ends at the deadline and not at the pool's own
     timeout. This pins that, on the same pool class the async engine builds."""
 
-    class Connection:
-        def close(self) -> None: ...
+    def connection() -> Any:
+        """As much of a DBAPI connection as handing one out and taking it
+        back needs; nothing in this test runs a statement on it."""
+        return SimpleNamespace(close=lambda: None, rollback=lambda: None)
 
-        def rollback(self) -> None: ...
-
-    pool = AsyncAdaptedQueuePool(Connection, pool_size=1, max_overflow=0, timeout=30)
+    pool = AsyncAdaptedQueuePool(connection, pool_size=1, max_overflow=0, timeout=30)
     held = await greenlet_spawn(pool.connect)
     started = time.perf_counter()
     with pytest.raises(TimeoutError):

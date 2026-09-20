@@ -37,7 +37,9 @@ def build_container(
     settings it overrides, and one that needs storage to behave a certain way
     passes its own root."""
     settings = ApiSettings.model_validate({"environment": "test", **overrides})
-    return AppContainer.for_tests(storage or StorageMemoryImpl(), InfraLocalImpl(tmp_path), settings)
+    return AppContainer.for_tests(
+        storage or StorageMemoryImpl(), InfraLocalImpl(tmp_path), settings
+    )
 
 
 async def sign_in_as(

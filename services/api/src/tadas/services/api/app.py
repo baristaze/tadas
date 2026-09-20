@@ -5,6 +5,7 @@ and the lifespan that starts and closes the container."""
 import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import timedelta
 
 from fastapi import APIRouter, FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,6 +13,7 @@ from fastapi.responses import JSONResponse
 
 from tadas.infra.observability import metrics_exposition
 from tadas.services.api.container import AppContainer, boot
+from tadas.services.api.gateway.admission import AdmissionMiddleware
 from tadas.services.api.gateway.errors import register_error_handlers
 from tadas.services.api.gateway.observability import RequestIdMiddleware
 from tadas.services.api.routers import all_routers
@@ -43,6 +45,23 @@ def create_app(container: AppContainer | None = None) -> FastAPI:
     # while a 401 from the same origin came through. A preflight is answered
     # before the request id is minted, which is right: it is not a request of
     # this API and it belongs in neither the access log nor the metrics.
+    #
+    # Admission goes inside both, and for the same two reasons. Inside CORS,
+    # because its refusal is an answer a browser has to read, Retry-After
+    # included, and outside CORS the browser would see a network error where
+    # the process said "come back". Inside the request id, because a refusal
+    # is an answer of this API like any other: it carries the id the caller
+    # correlates on, it is counted, and it is in the access log, which is
+    # where the operator reads that the process is refusing and how often. A
+    # preflight is answered outside it and holds no slot, which is right for
+    # the same reason it is not logged. What admission leaves outside itself
+    # is only the little the two middlewares above it do, and it takes the
+    # bound before routing, the request body, and every dependency.
+    app.add_middleware(
+        AdmissionMiddleware,
+        limit=settings.admission_in_flight_limit,
+        retry_after=timedelta(seconds=settings.admission_retry_after_seconds),
+    )
     app.add_middleware(RequestIdMiddleware)
     app.add_middleware(
         CORSMiddleware,
