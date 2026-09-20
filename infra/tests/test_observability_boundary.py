@@ -13,6 +13,10 @@ from collections.abc import Iterator
 from pathlib import Path
 
 VARIABLE = "request_id_var"
+CAUSE_VARIABLE = "caused_by_request_id_var"
+"""The request that caused the work, on the lines of a run that a handoff
+started. It is the request id's sibling and it lives under the same boundary,
+so the same two scans run over it."""
 
 READER = "tadas.infra.observability"
 """The log filter and the error tagger live here. A reader anywhere else is
@@ -41,7 +45,7 @@ def sources() -> Iterator[tuple[str, Path]]:
             yield ".".join(parts), path
 
 
-def calls(tree: ast.AST, attribute: str) -> list[ast.Call]:
+def calls(tree: ast.AST, attribute: str, variable: str = VARIABLE) -> list[ast.Call]:
     return [
         node
         for node in ast.walk(tree)
@@ -49,7 +53,7 @@ def calls(tree: ast.AST, attribute: str) -> list[ast.Call]:
         and isinstance(node.func, ast.Attribute)
         and node.func.attr == attribute
         and isinstance(node.func.value, ast.Name)
-        and node.func.value.id == VARIABLE
+        and node.func.value.id == variable
     ]
 
 
@@ -89,4 +93,37 @@ def test_an_entry_point_that_sets_the_request_id_gives_the_token_back() -> None:
     assert leaked == [], (
         f"{VARIABLE} is set without a reset in a finally: {leaked}. A request "
         "id that outlives its unit of work is worse than none: it is wrong."
+    )
+
+
+def test_the_causing_request_is_read_only_where_the_log_lines_are_written() -> None:
+    readers = [
+        module
+        for module, path in sources()
+        if calls(ast.parse(path.read_text()), "get", CAUSE_VARIABLE) and module != READER
+    ]
+    assert readers == [], (
+        f"{CAUSE_VARIABLE} is read outside {READER}: {readers}. The cause an "
+        "operation acts on is `caused_by_request_id` on its context."
+    )
+
+
+def test_an_entry_point_that_sets_the_causing_request_gives_the_token_back() -> None:
+    leaked = []
+    for module, path in sources():
+        tree = ast.parse(path.read_text())
+        for function in functions(tree):
+            if not calls(function, "set", CAUSE_VARIABLE):
+                continue
+            returned = any(
+                calls(handler, "reset", CAUSE_VARIABLE)
+                for node in ast.walk(function)
+                if isinstance(node, ast.Try)
+                for handler in node.finalbody
+            )
+            if not returned:
+                leaked.append(f"{module}.{function.name}")
+    assert leaked == [], (
+        f"{CAUSE_VARIABLE} is set without a reset in a finally: {leaked}. A "
+        "cause that outlives its run names the wrong request on the next one."
     )
