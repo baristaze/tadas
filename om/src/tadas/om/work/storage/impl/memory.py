@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 from uuid import UUID
 
 from tadas.om.base import utcnow
-from tadas.om.exceptions import DuplicateWorkItem
+from tadas.om.exceptions import DuplicateWorkItem, TenantMismatch
 from tadas.om.storage.impl.memory_base import MemoryStorageBase, MemoryTable
 from tadas.om.work.rules import attempts_after_claim, is_exhausted, stagger_delay
 from tadas.om.work.storage import WorkStorageInterface
@@ -15,11 +15,17 @@ class WorkStorageMemoryImpl(MemoryStorageBase, WorkStorageInterface):
         super().__init__()
         self._items: MemoryTable[WorkItem] = {}
 
-    async def write_item(self, org_id: UUID, item: WorkItem) -> None:
-        for _, existing in self._items.values():
-            if existing.idempotency_key == item.idempotency_key and existing.id != item.id:
-                raise DuplicateWorkItem(f"idempotency key {item.idempotency_key} is taken")
-        self._put(self._items, org_id, item)
+    async def create_item(self, org_id: UUID, item: WorkItem) -> bool:
+        async with self._lock:
+            found = self._items.get(item.id)
+            if found is not None:
+                if found[0] != org_id:
+                    raise TenantMismatch(f"work item {item.id} is not in {org_id}")
+                return False
+            for _, existing in self._items.values():
+                if existing.idempotency_key == item.idempotency_key:
+                    raise DuplicateWorkItem(f"idempotency key {item.idempotency_key} is taken")
+            return self._insert(self._items, org_id, item)
 
     async def write_item_if_held(
         self, org_id: UUID, worker_id: str, item: WorkItem

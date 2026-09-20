@@ -13,8 +13,11 @@ from tadas.om.work.types.work_item import WorkItem, WorkKind
 
 class WorkStorageInterface(ABC):
     @abstractmethod
-    async def write_item(self, org_id: UUID, item: WorkItem) -> None:
-        """Raises DuplicateWorkItem when another item carries the same idempotency key."""
+    async def create_item(self, org_id: UUID, item: WorkItem) -> bool:
+        """The create primitive: inserts the row and commits; False when the id is
+        already written, in which case nothing changes, the claim on the row
+        included. Raises DuplicateWorkItem when another item carries the same
+        idempotency key, TenantMismatch when the id is another tenant's row."""
         ...
 
     @abstractmethod

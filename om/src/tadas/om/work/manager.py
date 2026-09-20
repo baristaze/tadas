@@ -12,8 +12,12 @@ from tadas.om.work.types.work_item import WorkItem, WorkKind
 class WorkManagerInterface(ABC):
     @abstractmethod
     async def enqueue(self, ctx: OpContext, item: WorkItem) -> WorkItem:
-        """Raises ValidationFailed when the payload is not the shape WORK_PAYLOADS
-        fixes for the kind, DuplicateWorkItem on a reused idempotency key."""
+        """A create: the copy stamps the actor, the timestamps, status QUEUED, and
+        zero attempts, and clears every claim field, whatever the caller sent. An
+        id already written returns the row as stored, so a retried enqueue never
+        resets a claim. Raises ValidationFailed when the payload is not the shape
+        WORK_PAYLOADS fixes for the kind, DuplicateWorkItem on a reused
+        idempotency key."""
         ...
 
     @abstractmethod

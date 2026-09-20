@@ -5,7 +5,7 @@ from uuid import UUID
 from sqlalchemy import DateTime, Interval, case, func, literal, select, update
 
 from tadas.om.base import utcnow
-from tadas.om.exceptions import DuplicateWorkItem, UniqueKeyTaken
+from tadas.om.exceptions import DuplicateWorkItem, TenantMismatch
 from tadas.om.storage.impl.pg_base import PgStorageBase
 from tadas.om.storage.utils.translation import to_model, to_values
 from tadas.om.work.storage import WorkStorageInterface
@@ -14,11 +14,18 @@ from tadas.om.work.types.work_item import WorkItem, WorkKind, WorkStatus
 
 
 class WorkStoragePostgresImpl(PgStorageBase, WorkStorageInterface):
-    async def write_item(self, org_id: UUID, item: WorkItem) -> None:
-        try:
-            await self._upsert(WorkItems, org_id, item)
-        except UniqueKeyTaken as error:
-            raise DuplicateWorkItem(f"idempotency key {item.idempotency_key} is taken") from error
+    async def create_item(self, org_id: UUID, item: WorkItem) -> bool:
+        if await self._insert(WorkItems, org_id, item):
+            return True
+        # The insert was refused: by the id, which is a retry and reports False,
+        # or by the unique index on the idempotency key, which is a conflict.
+        async with self._session_for(WorkItems) as session:
+            row = await session.get(WorkItems, item.id)
+        if row is None:
+            raise DuplicateWorkItem(f"idempotency key {item.idempotency_key} is taken")
+        if row.org_id != org_id:
+            raise TenantMismatch(f"work item {item.id} is not in {org_id}")
+        return False
 
     async def write_item_if_held(
         self, org_id: UUID, worker_id: str, item: WorkItem

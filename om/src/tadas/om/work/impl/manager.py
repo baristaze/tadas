@@ -51,18 +51,39 @@ class WorkManagerImpl(WorkManagerInterface):
             WORK_PAYLOADS[item.kind].model_validate(item.payload)
         except ValidationError as error:
             raise ValidationFailed(f"payload of {item.kind.value} work: {error}"[:500]) from None
-        await self._storage.write_item(ctx.org_id, item)
+        now = utcnow()
+        queued = item.model_copy(
+            update={
+                "created_at": now,
+                "updated_at": now,
+                "created_by": ctx.user_id,
+                "updated_by": ctx.user_id,
+                "status": WorkStatus.QUEUED,
+                "attempts": 0,
+                "claimed_by": None,
+                "lease_expires_at": None,
+                "last_error": None,
+            }
+        )
+        if not await self._storage.create_item(ctx.org_id, queued):
+            # Ids are minted above storage, so the only way to present one twice
+            # is a retry, and a retry must not create twice: the insert reported
+            # the id and nothing changed, a claim on the row included, so the
+            # row as stored is the answer and it was announced when it landed.
+            existing = await self._storage.read_item(ctx.org_id, queued.id)
+            assert existing is not None
+            return existing
         await self._topics.publish(
             Topics.WORK_AVAILABLE,
             WorkAvailablePayload(
-                idempotency_key=item.idempotency_key,
-                produced_at=utcnow(),
+                idempotency_key=queued.idempotency_key,
+                produced_at=now,
                 org_id=ctx.org_id,
-                lane=item.lane,
-                kind=item.kind.value,
+                lane=queued.lane,
+                kind=queued.kind.value,
             ),
         )
-        return item
+        return queued
 
     async def claim(
         self,

@@ -44,7 +44,7 @@ class WorkStorageContract:
     ) -> None:
         org: UUID = new_id()
         item = make_item(lane=lane)
-        await storage.write_item(org, item)
+        await storage.create_item(org, item)
         first = await storage.claim_next(lane, [WorkKind.NOOP], "w1", LEASE)
         assert first is not None
         claimed_org, claimed = first
@@ -65,7 +65,7 @@ class WorkStorageContract:
         # afterwards, and the row names that worker with one attempt spent.
         org = new_id()
         item = make_item(lane=lane)
-        await storage.write_item(org, item)
+        await storage.create_item(org, item)
         outcomes = await asyncio.gather(
             storage.claim_next(lane, [WorkKind.NOOP], "w1", LEASE),
             storage.claim_next(lane, [WorkKind.NOOP], "w2", LEASE),
@@ -85,7 +85,7 @@ class WorkStorageContract:
         elsewhere = make_item(lane=lane + "-other")
         first, second = make_item(lane=lane), make_item(lane=lane)
         for item in (later, elsewhere, second, first):
-            await storage.write_item(org, item)
+            await storage.create_item(org, item)
         claimed = await storage.claim_next(lane, [WorkKind.NOOP], "w1", LEASE)
         assert claimed is not None and claimed[1].id == min(first.id, second.id)
         claimed = await storage.claim_next(lane, [WorkKind.NOOP], "w1", LEASE)
@@ -99,14 +99,14 @@ class WorkStorageContract:
         stale = [make_item(lane=lane) for _ in range(3)]
         stale[1] = stale[1].model_copy(update={"max_attempts": 1})
         for item in stale:
-            await storage.write_item(org_a, item)
+            await storage.create_item(org_a, item)
         elsewhere = make_item(lane=lane)
-        await storage.write_item(org_b, elsewhere)
+        await storage.create_item(org_b, elsewhere)
         expired = timedelta(seconds=-1)
         for _ in range(4):
             assert await storage.claim_next(lane, [WorkKind.NOOP], "w1", expired) is not None
         live = make_item(lane=lane)
-        await storage.write_item(org_a, live)
+        await storage.create_item(org_a, live)
         assert await storage.claim_next(lane, [WorkKind.NOOP], "w1", LEASE) is not None
 
         now = utcnow()
@@ -133,7 +133,7 @@ class WorkStorageContract:
         self, storage: WorkStorageInterface, lane: str
     ) -> None:
         org, other_org = new_id(), new_id()
-        await storage.write_item(org, make_item(lane=lane))
+        await storage.create_item(org, make_item(lane=lane))
         claimed = await storage.claim_next(lane, [WorkKind.NOOP], "w1", LEASE)
         assert claimed is not None
         held = claimed[1]
@@ -147,19 +147,34 @@ class WorkStorageContract:
         assert await storage.read_item(org, held.id) == done
         assert await storage.write_item_if_held(org, "w1", done) is None
 
+    async def test_create_reports_an_existing_id_and_changes_nothing(
+        self, storage: WorkStorageInterface, lane: str
+    ) -> None:
+        # The create primitive: a second create on the same id is a retry, and
+        # a retry neither overwrites the row nor resets the claim on it.
+        org = new_id()
+        item = make_item(lane=lane)
+        assert await storage.create_item(org, item)
+        claimed = await storage.claim_next(lane, [WorkKind.NOOP], "w1", LEASE)
+        assert claimed is not None
+        assert not await storage.create_item(org, item.model_copy(update={"last_error": "again"}))
+        assert await storage.read_item(org, item.id) == claimed[1]
+
     async def test_idempotency_key_is_unique(self, storage: WorkStorageInterface) -> None:
         org = new_id()
         item = make_item()
-        await storage.write_item(org, item)
+        assert await storage.create_item(org, item)
         duplicate = make_item().model_copy(update={"idempotency_key": item.idempotency_key})
         with pytest.raises(DuplicateWorkItem):
-            await storage.write_item(org, duplicate)
-        await storage.write_item(org, item.model_copy(update={"last_error": "same row"}))
+            await storage.create_item(org, duplicate)
+        assert await storage.read_item(org, duplicate.id) is None
+        assert await storage.read_item(org, item.id) == item
 
     async def test_reads_and_writes_are_tenant_scoped(self, storage: WorkStorageInterface) -> None:
         org_a, org_b = new_id(), new_id()
         item = make_item()
-        await storage.write_item(org_a, item)
+        await storage.create_item(org_a, item)
         assert await storage.read_item(org_b, item.id) is None
         with pytest.raises(TenantMismatch):
-            await storage.write_item(org_b, item)
+            await storage.create_item(org_b, item)
+        assert await storage.read_item(org_a, item.id) == item
