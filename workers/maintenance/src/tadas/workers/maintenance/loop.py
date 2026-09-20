@@ -215,24 +215,31 @@ class WorkerLoop:
     async def _renew_lease(
         self, ctx: OpContext, item: WorkItem, owner: asyncio.Task[None] | None
     ) -> None:
-        """Renews every third of the lease, each renewal bounded by that interval so
-        a stalled one counts as failed. A renewal refused with LeaseLost is
-        definitive: another worker holds the item now, so the owner is cancelled
-        at once. Any other failure (a timeout, an engine out of reach) is retried,
-        and once half the lease has passed since the last renewal that succeeded,
-        the owner is cancelled before the lease expires so two workers never
-        advance the same record."""
+        """Renews a third of the lease after the last renewal that succeeded. The
+        fence is half the lease after it: every attempt is bounded by the time
+        left to the fence, a failed one is retried halfway between the first
+        attempt and the fence, and at the fence the owner is cancelled, half
+        the lease before it expires, so two workers never advance the same
+        record. A renewal refused with LeaseLost is definitive: another worker
+        holds the item now, so the owner is cancelled at once."""
         lease = self._options.lease
-        interval = lease / 3
+        interval = (lease / 3).total_seconds()
+        fence = (lease / 2).total_seconds()
+        retry = (fence - interval) / 2
         clock = asyncio.get_running_loop().time
         renewed_at = clock()
+        pause = interval
         while True:
-            await asyncio.sleep(interval.total_seconds())
+            await asyncio.sleep(pause)
+            left = renewed_at + fence - clock()
+            if left <= 0:
+                if owner is not None:
+                    owner.cancel()
+                return
             try:
-                await asyncio.wait_for(
-                    self._work.extend_lease(ctx, item, lease), timeout=interval.total_seconds()
-                )
+                await asyncio.wait_for(self._work.extend_lease(ctx, item, lease), timeout=left)
                 renewed_at = clock()
+                pause = interval
             except LeaseLost as error:
                 log.warning("lease on %s is held elsewhere: %s", item.id, error)
                 if owner is not None:
@@ -240,10 +247,7 @@ class WorkerLoop:
                 return
             except Exception as error:
                 log.warning("lease renewal failed on %s: %r", item.id, error)
-                if clock() - renewed_at >= (lease / 2).total_seconds():
-                    if owner is not None:
-                        owner.cancel()
-                    return
+                pause = min(retry, max(renewed_at + fence - clock(), 0))
 
     # Liveness.
 

@@ -115,6 +115,18 @@ class FailingWork(LeaseLosingWork):
         raise RuntimeError("engine out of reach")
 
 
+class FailThenStallWork(LeaseLosingWork):
+    """Decorates the real manager: the first renewal fails fast, every later one
+    hangs, as an engine that refuses once and then stops answering behaves."""
+
+    async def extend_lease(self, ctx: OpContext, item: WorkItem, lease: timedelta) -> WorkItem:
+        self.renewals += 1
+        if self.renewals == 1:
+            raise RuntimeError("engine out of reach")
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+
 class MissingLiveness(CacheInterface):
     """A liveness store whose writes never stick, as an unreachable backend behaves."""
 
@@ -268,7 +280,7 @@ async def test_a_lost_lease_cancels_the_task_at_once(tmp_path: Path) -> None:
 async def test_any_other_renewal_failure_cancels_after_half_the_lease(tmp_path: Path) -> None:
     # A renewal that fails for any other reason says nothing about who holds
     # the item, so it is retried; the task is cancelled once half the lease has
-    # passed without a renewal, still before the lease expires.
+    # passed without a renewal, half the lease before it expires.
     container = build_container(tmp_path)
     ctx = await sign_in(container)
     handler = SlowHandler(hold=5.0)
@@ -281,8 +293,10 @@ async def test_any_other_renewal_failure_cancels_after_half_the_lease(tmp_path: 
     started = asyncio.get_running_loop().time()
     await until(lambda: len(handler.cancelled) == 1, within=2.0)
     cancelled = asyncio.get_running_loop().time()
-    assert failing.renewals == 2, "the first failure is retried, the second is past half the lease"
-    assert (lease / 2).total_seconds() <= cancelled - started < lease.total_seconds()
+    assert failing.renewals == 2, (
+        "the first failure is retried once; the fence comes before a third"
+    )
+    assert (lease / 3).total_seconds() < cancelled - started < (lease * 2 / 3).total_seconds()
     assert handler.finished == []
     loop.stop()
     await task
@@ -303,6 +317,29 @@ async def test_a_stalled_renewal_counts_as_failed_and_cancels_in_time(tmp_path: 
     cancelled = asyncio.get_running_loop().time()
     assert cancelled - started < lease.total_seconds(), "cancelled before the lease expired"
     assert stalling.renewals >= 1
+    assert handler.finished == []
+    loop.stop()
+    await task
+
+
+async def test_a_renewal_that_stalls_after_a_failure_still_cancels_in_time(tmp_path: Path) -> None:
+    # A fast failure a third of the lease in is retried; the retry stalls. Each
+    # attempt is bounded by the time left to the fence at half the lease, so
+    # the task is cancelled there, not when the lease has already expired.
+    container = build_container(tmp_path)
+    ctx = await sign_in(container)
+    handler = SlowHandler(hold=5.0)
+    work = FailThenStallWork(container.managers.work)
+    lease = timedelta(seconds=0.9)
+    loop, task = start_loop(container, handler, fast_options(lease=lease), work=work)
+    item = make_item(ctx)
+    await container.managers.work.enqueue(ctx, item)
+    await until(lambda: len(handler.started) == 1)
+    started = asyncio.get_running_loop().time()
+    await until(lambda: len(handler.cancelled) == 1, within=2.0)
+    cancelled = asyncio.get_running_loop().time()
+    assert work.renewals == 2, "the fast failure is retried once, the retry stalls"
+    assert cancelled - started < (lease * 2 / 3).total_seconds(), "fenced at half the lease"
     assert handler.finished == []
     loop.stop()
     await task
