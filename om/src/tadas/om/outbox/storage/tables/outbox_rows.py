@@ -10,8 +10,8 @@ from tadas.om.storage.tables.base import Base, CreatedMixin, IdentifiableMixin
 
 class OutboxRows(IdentifiableMixin, CreatedMixin, Base):
     __tablename__ = "outbox_rows"
-    # The sweep reads pending rows across tenants, oldest first, and purges
-    # done ones by time; both walk (done_at, id), so org_id keeps its own index.
+    # The sweep claims pending rows across tenants, oldest first, and purges
+    # settled ones by time; both walk (done_at, id), so org_id keeps its own index.
     __table_args__ = (Index("ix_outbox_rows_done_at_id", "done_at", "id"),)
     kind: Mapped[str]
     target_id: Mapped[UUID]
@@ -20,3 +20,7 @@ class OutboxRows(IdentifiableMixin, CreatedMixin, Base):
     request_id: Mapped[UUID]
     app: Mapped[str]
     done_at: Mapped[datetime | None]
+    attempts: Mapped[int]
+    next_attempt_at: Mapped[datetime | None]
+    last_error: Mapped[str | None]
+    failed_at: Mapped[datetime | None]

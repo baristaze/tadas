@@ -91,14 +91,23 @@ context on keeps the stage the callee needs.
   outside the per-tenant sweep today.
 - `work`: the table-backed work queue in the `queue` role; a row's
   routing field is its `lane`, payload shapes are fixed per `WorkKind`
-  by `WORK_PAYLOADS`, enqueue validates against it and publishes
-  `work_available`, the claim is one `SELECT ... FOR UPDATE SKIP LOCKED`
-  statement on the lane and returns the enqueuer's principal. Every
-  transition is conditional on the claim (`claimed_by` in the statement),
-  so a worker whose lease has passed is refused with `LeaseLost`, a
-  `Conflict`; a failed item is a dead letter, named by a
-  `work.item.failed` event in the tenant's stream and counted on the
-  outcome counter.
+  by `WORK_PAYLOADS`. Enqueue is a create: it validates the payload, and
+  the manager's copy stamps the actor from the context, the timestamps,
+  status `QUEUED`, zero attempts, and clears every claim field whatever
+  the caller sent; the insert reports an existing id and changes nothing,
+  so a retried enqueue returns the row as stored, claim intact, and a
+  reused idempotency key is `DuplicateWorkItem`, a `Conflict`. A fresh
+  row publishes `work_available`. The claim is one `SELECT ... FOR UPDATE
+  SKIP LOCKED` statement on the lane that mints a `claim_token` on the row
+  and returns the enqueuer's principal. Every transition (complete, fail,
+  defer, release, extend_lease) is conditional on the token in the
+  statement itself, not on the worker's name, because one worker can hold
+  one item twice across a requeue: a worker whose lease has passed is
+  refused with `LeaseLost`, a `Conflict`, and hands the item back without
+  spending an attempt; the requeue clears the token. A failed item is a
+  dead letter, named by a `work.item.failed` event in the tenant's
+  stream and counted on the outcome counter. Done or failed items are
+  purged by the sweep after the work retention (30 days).
 - `tasks`: the to-do items (`Task`: title, notes, status), listed by a
   `TaskFilter` (team or mine) and paged by a `TaskCursor`, both passed
   unchanged from the manager to storage; the visibility, cursor, and
@@ -129,7 +138,19 @@ context on keeps the stage the callee needs.
   has passed. The gateway logs and counts the refusal (`attempt_lost`)
   and answers with what the attempt produced, which is the row the retry
   found. A failure (a `5xx`) is not an outcome: the marker is released
-  and the retry runs again; a refusal (a `4xx`) is stored and replayed.
+  and the retry runs again; a refusal (a `4xx`) is stored and replayed,
+  its envelope rewritten with the replaying request's id, the one its
+  header carries. The stored outcome of a create that issued a secret is
+  the view with the secret absent: a wire view declares its secret fields
+  (`View.secret_fields`; `IssuedApiKeyView` names `key`) and the gateway
+  strips them before `finish`, for any route, so the first response alone
+  carries the key, a replay answers with the row, `key` null, and
+  `Idempotent-Replayed: true`, and the secret exists in one place, as a
+  digest. The key lands in a unique index, so the gateway refuses one
+  longer than 255 characters with a 422. The sweep purges finished records
+  after the idempotency retention (24 hours; a retry that late begins
+  afresh) and pending ones past ten times the pending lease, a marker no
+  retry came back for.
 - `outbox`: the transactional outbox. A manager that writes a core row
   hands the storage an `OutboxRow` (`kind`, `target_id`, the record's
   snapshot as `payload`, the actor and the request) and the storage base
@@ -140,7 +161,19 @@ context on keeps the stage the callee needs.
   which appends the `Event` under the row's id, publishes
   `entity_changed` with `(kind, target_id, seq)`, and marks the row done.
   A relay that fails is logged and counted, never raised; the
-  maintenance sweep relays whatever is pending and purges done rows.
+  maintenance sweep claims whatever is pending. The claim is one
+  statement (`FOR UPDATE SKIP LOCKED`, oldest first) over rows neither
+  done nor failed, whose next attempt is due, and older than the grace
+  (a younger row is the request path's to relay), so two sweeps relay
+  disjoint sets; it spends an attempt and sets `next_attempt_at` with a
+  delay that doubles per attempt, so a row that will not relay waits on
+  its own and starves nothing behind it. A failed relay keeps its
+  `last_error`; past the relay's `max_attempts` the row is failed for
+  good (`failed_at`), logged, counted as `dead_letter`, and named by an
+  `outbox.row.failed` event under the row's own provenance, best effort,
+  since the stream may be what is failing. The grace, the backoff, and
+  the attempt limit are `OutboxOptions`. Done and failed rows are purged
+  after the outbox retention.
 - `events`: the append-only stream behind every realtime push, in the
   `activity` role: `Event(Identifiable)` with `seq` (per tenant, gapless,
   assigned by the append, the one number storage assigns), `kind`
@@ -177,18 +210,35 @@ with `extra="ignore"`, so a consumer ignores a field it does not know;
 a payload gains only optional, defaulted fields, so an old producer's
 message and a queued row written before a deploy still parse, and the
 two sides roll out in either order. A topic is best effort. Every capability interface declares `start()` and `close()`; the
-roots call them unconditionally and only the Valkey topic listener does
-anything in them.
+roots call them unconditionally: the Valkey topic listener opens its
+subscriber in `start()`, and each hosted impl (S3, SQS, Secrets Manager)
+opens its one client there, holds it through an exit stack for every
+call, and closes it in `close()`; nothing opens a client per call, and a
+call before `start()` is refused. A listener the driver fails is not
+left dead: the failure is counted (`topics` / `listener_failed`) and
+logged, the subscriber is dropped, and a new one is opened after a
+backoff that grows with consecutive failures.
 
 - The queue impls count `sent`, `received`, `deleted`, and, in the
   memory twin where the transition is visible, `dead_lettered` on the
   outcome counter, with a log line naming the message and the queue;
   the twin does not deduplicate on `dedup_id`, exactly like SQS. The
   cache impls count `hit` and `miss` on `get`, and Valkey `unreachable`.
-- The AWS impls translate every driver error into `BackendFailed`, an
-  `InfraException` leaf (`tadas.infra.exceptions`), through the one
-  module that names botocore (`tadas.infra.aws_errors`); not-found
-  codes keep their `NotFound` shape.
+  On Valkey, `increment` is one server-side script (count, and set the
+  window when the key has none), so a counter is never left without a
+  window by a failure between two commands. Each infra root builds one
+  cache per `CacheScope` in its constructor, like every other member
+  (ADR 0007), so the boot line names every scope.
+- The AWS impls translate every driver error into an `InfraException`
+  leaf (`tadas.infra.exceptions`) through the one module that names
+  botocore (`tadas.infra.aws_errors`): a service answer the impl cannot
+  map is `BackendFailed` under its error code; an endpoint, connection,
+  or timeout failure is `BackendUnreachable` (503) under the driver's
+  error class; any other driver error is `BackendFailed` under that
+  class. Not-found codes keep their `NotFound` shape. The hosted secrets
+  impl answers `has` with a describe, never a fetch of the value, and
+  `put` is a create with a new version on `ResourceExistsException`,
+  not a read followed by a write.
 - Environment names are one set, shared with Terraform: `local` and
   `test` allow the local backends; `dev`, `staging`, and `production`
   refuse them; any other name is refused at boot. The local secrets
@@ -216,6 +266,21 @@ everything in-process for tests.
   edge idempotency), routers for tenancy, tasks, and the operator plane
   under `/v1/admin/*`, health and metrics outside `/v1`, and the
   realtime channel at `/v1/realtime` opened with a single-use ticket.
+  The client address is the peer's, or the one `X-Forwarded-For` names
+  when the peer is one of `TADAS_TRUSTED_PROXIES` (empty locally; the
+  VPC block in the cloud, where the load balancer lives), so behind the
+  load balancer the login limit still counts per client and a peer
+  outside it cannot pick its own address. The envelope carries the
+  exception's code and status; for a status of 500 or more its message
+  is `internal error` and the real one goes to the log under the
+  request id. An unhandled exception is answered inside the
+  observability middleware, while the id is still in hand, so the 500
+  carries the request id header, the log line the id, and the request
+  counter the status; Starlette's own catch-all stays as the last
+  resort. uvicorn's access log is off: the middleware writes one line
+  per request by route template, and uvicorn's remaining lines lose
+  their query string, so the socket ticket, which travels as a query
+  parameter, is never logged.
   The gateway mints the request stage once per request
   (`request_context`: the request id the middleware stamped, `X-App`
   and `X-App-Version`, the current trace id) and asks the tenancy
@@ -223,11 +288,17 @@ everything in-process for tests.
   bearer (a session token or an api key), `Identity` is
   `authenticate_login` over it (the sign-in credential, on the tenant
   choice and the operator gate), `OperatorCtx` is `admit_operator` over the
-  identity, and the socket builds the request stage from its scope and
-  redeems its ticket. The login route takes the request stage alone.
+  identity, and the socket builds the request stage from its scope,
+  accepts the handshake, and then redeems its ticket: a refusal is a
+  close with code 4401 on the open socket, which both clients read as
+  "sign in again" (a close before the accept would reach the wire as an
+  HTTP 403 handshake failure, indistinguishable from any other refusal).
+  The login route takes the request stage alone.
   Per socket the process keeps one bounded send buffer
   (`realtime/send_buffer.py`, `TADAS_REALTIME_SEND_BUFFER_SIZE`) and a
   drainer; a full buffer drops the oldest frame and the client replays.
+  A peer that drops mid-stream ends the drainer with a disconnect; the
+  teardown treats that as the normal end of a socket, not an error.
   No service calls another today, so no internal credential is minted;
   `CredentialKind.INTERNAL` is what the seeding and the worker's service
   contexts carry. The sweep's service contexts are minted for the tenant,
@@ -251,14 +322,20 @@ everything in-process for tests.
   maintenance sweep (requeue stale leases under one service context per
   live tenant, then purge the tenant's soft-deleted tasks, removed
   members with their ended memberships, revoked api keys, dead sessions,
-  and spent socket tickets past their retention (the one hard
-  delete, 30 days by default), then relay the pending outbox rows and
-  purge the done ones after eight days, which outlives the seven-day
-  database backup retention, so a role restored to an earlier point
-  than its siblings is reconciled by relaying the outbox again). `tadas-maintenance serve | health`: the
-  image's `HEALTHCHECK` runs `health`, which reads the serving worker's
-  liveness key through the same cache and exits non-zero when it is
-  missing. It serves its own `/metrics` on `TADAS_METRICS_PORT` (9464).
+  and spent socket tickets past their retention (the one hard delete,
+  30 days by default), its finished idempotency records and abandoned
+  markers, and its done or failed work items, then claim and relay the
+  pending outbox rows, one attempt each with a growing delay, and purge
+  the done and failed ones after eight days, which outlives the
+  seven-day database backup retention, so a role restored to an earlier
+  point than its siblings is reconciled by relaying the outbox again).
+  `tadas-maintenance serve | health`.
+  The serving process answers `/metrics` and `/healthz` on
+  `TADAS_METRICS_PORT` (9464) from one thread: `/healthz` reads the
+  loop's own liveness key through the process's cache, on its event
+  loop, so the container probe costs one cache read and boots nothing;
+  the image's `HEALTHCHECK` and the task definition ask that URL, and
+  `health` asks it by hand.
 - Every Python process builds its roots whole at boot, once: storage,
   infra, then every manager, in dependency order; a request constructs
   nothing. The cost is the imports (about 450 ms, once per process);
@@ -345,8 +422,8 @@ everything in-process for tests.
   Jaeger, and a seeded GlitchTip) and a second file that adds the
   application containers, the portal among them.
 - `docker/`: one two-stage image per process, non-root, with a
-  healthcheck (`/healthz` for the API, `tadas-maintenance health` for
-  the worker, `/` for the portal's nginx).
+  healthcheck (`/healthz` for the API and, on its metrics port, the
+  worker; `/` for the portal's nginx).
 - `terraform/`: every cloud resource. `modules/` holds one module per
   resource family (`network`, `cluster`, `database`, `cache`, `queue`,
   `buckets`, `secrets`, `load_balancer`, `certificate`, `domain_records`,

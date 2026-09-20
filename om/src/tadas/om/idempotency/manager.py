@@ -41,6 +41,13 @@ class IdempotencyManagerInterface(ABC):
         ...
 
     @abstractmethod
+    async def purge(self, ctx: OpContext) -> int:
+        """The sweep, for one tenant: deletes finished records past the retention
+        and pending ones past ten times the pending lease, a marker no retry
+        came back for; returns how many. A key purged is a key free again."""
+        ...
+
+    @abstractmethod
     async def release(self, ctx: OpContext, key: str, attempt_id: UUID) -> None:
         """Drops the pending record `begin` wrote, because the attempt failed in a
         way a retry may change; the next attempt begins afresh on the same key.

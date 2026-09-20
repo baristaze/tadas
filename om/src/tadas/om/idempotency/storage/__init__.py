@@ -45,6 +45,16 @@ class IdempotencyStorageInterface(ABC):
         ...
 
     @abstractmethod
+    async def purge_records(
+        self, org_id: UUID, finished_before: datetime, pending_before: datetime
+    ) -> int:
+        """For the sweep, per tenant: deletes finished records that began before
+        `finished_before` and pending ones that began before `pending_before`
+        (a marker no retry ever came back for); returns how many. The one hard
+        delete of the namespace."""
+        ...
+
+    @abstractmethod
     async def take_over_pending(
         self,
         org_id: UUID,

@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import and_, delete, or_, select, update
 
 from tadas.om.exceptions import DuplicateIdempotencyKey, UniqueKeyTaken
 from tadas.om.idempotency.storage import IdempotencyStorageInterface
@@ -69,6 +69,31 @@ class IdempotencyStoragePostgresImpl(PgStorageBase, IdempotencyStorageInterface)
             released = (await session.execute(stmt)).scalar_one_or_none() is not None
             await session.commit()
             return released
+
+    async def purge_records(
+        self, org_id: UUID, finished_before: datetime, pending_before: datetime
+    ) -> int:
+        stmt = (
+            delete(IdempotencyRecords)
+            .where(
+                IdempotencyRecords.org_id == org_id,
+                or_(
+                    and_(
+                        IdempotencyRecords.status.is_not(None),
+                        IdempotencyRecords.created_at < finished_before,
+                    ),
+                    and_(
+                        IdempotencyRecords.status.is_(None),
+                        IdempotencyRecords.created_at < pending_before,
+                    ),
+                ),
+            )
+            .returning(IdempotencyRecords.id)
+        )
+        async with self._session_for(stmt) as session:
+            purged = len((await session.execute(stmt)).scalars().all())
+            await session.commit()
+            return purged
 
     async def take_over_pending(
         self,

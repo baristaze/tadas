@@ -179,3 +179,34 @@ async def test_a_slow_attempt_that_lost_the_marker_is_refused(
 
 async def test_a_record_written_by_hand_carries_its_attempt() -> None:
     assert make_record().attempt_id != make_record().attempt_id
+
+
+async def test_purge_takes_finished_records_past_the_retention_and_abandoned_markers(
+    storage: IdempotencyStorageMemoryImpl,
+) -> None:
+    options = IdempotencyOptions(pending_ttl=timedelta(minutes=2), retention=timedelta(hours=1))
+    manager = IdempotencyManagerImpl(storage, options)
+    ctx = context()
+    now = utcnow()
+    # Finished an hour and a bit ago: past the retention. Finished just now: kept.
+    stale = make_record(ctx.user_id, "stale", now - timedelta(minutes=61)).model_copy(
+        update={"status": 201, "body": "{}"}
+    )
+    await storage.write_record(ctx.org_id, stale)
+    fresh = await manager.begin(ctx, "fresh", "d", new_id())
+    await manager.finish(ctx, "fresh", fresh.attempt_id, 201, "{}")
+    # Pending for eleven leases: no retry came back. Pending for three: a
+    # retry may still take it over, so it stays.
+    forgotten = make_record(ctx.user_id, "forgotten", now - timedelta(minutes=22))
+    recent = make_record(ctx.user_id, "recent", now - timedelta(minutes=6))
+    await storage.write_record(ctx.org_id, forgotten)
+    await storage.write_record(ctx.org_id, recent)
+    assert await manager.purge(ctx) == 2
+    assert await storage.read_record(ctx.org_id, ctx.user_id, "stale") is None
+    assert await storage.read_record(ctx.org_id, ctx.user_id, "forgotten") is None
+    assert (await storage.read_record(ctx.org_id, ctx.user_id, "fresh")) is not None
+    assert await storage.read_record(ctx.org_id, ctx.user_id, "recent") == recent
+    # A purged key is free again: the next begin runs the request anew.
+    assert (await manager.begin(ctx, "stale", "d", new_id())).pending
+    with pytest.raises(NotAuthorized):
+        await manager.purge(context(Role.VIEWER, ctx.org_id))

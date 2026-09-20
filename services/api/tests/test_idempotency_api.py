@@ -51,7 +51,29 @@ async def test_a_refusal_is_replayed_too(client: httpx.AsyncClient, owner: dict[
     second = await client.post("/v1/tasks", headers=headers, json={"title": "   "})
     assert second.status_code == 422
     assert second.headers["Idempotent-Replayed"] == "true"
-    assert second.json() == first.json()
+    # The replayed refusal names the replaying request, as its header does.
+    assert second.json()["error"]["request_id"] == second.headers["x-request-id"]
+    assert second.json()["error"]["request_id"] != first.json()["error"]["request_id"]
+    assert {k: v for k, v in second.json()["error"].items() if k != "request_id"} == {
+        k: v for k, v in first.json()["error"].items() if k != "request_id"
+    }
+
+
+async def test_a_key_longer_than_the_cap_is_refused(
+    client: httpx.AsyncClient, owner: dict[str, str]
+) -> None:
+    longest = await client.post(
+        "/v1/tasks", headers={**owner, "Idempotency-Key": "k" * 255}, json=BODY
+    )
+    assert longest.status_code == 201, longest.text
+    too_long = await client.post(
+        "/v1/tasks", headers={**owner, "Idempotency-Key": "k" * 256}, json=BODY
+    )
+    assert too_long.status_code == 422, too_long.text
+    assert too_long.json()["error"]["code"] == "validation_failed"
+    assert "idempotency-key" in too_long.json()["error"]["message"]
+    listed = await client.get("/v1/tasks", headers=owner)
+    assert [t["id"] for t in listed.json()["items"]] == [longest.json()["id"]]
 
 
 async def test_keys_are_personal_inside_a_tenant(
