@@ -788,10 +788,12 @@ everything in-process for tests.
 - `terraform/`: every cloud resource. `modules/` holds one module per
   resource family (`network`, `cluster`, `database`, `cache`, `queue`,
   `buckets`, `secrets`, `load_balancer`, `certificate`, `domain_records`,
-  `portal`, `service`); `environments/staging` and `environments/prod`
-  instantiate the same graph and differ only in variables, including
-  the image digests; `shared/` holds the registry, the state bucket, and
-  the deploy role. The load balancer's idle timeout is read from
+  `portal`, `service`, `alarms`, `dashboard`); `environments/staging`
+  and `environments/prod` instantiate the same graph and differ only in
+  variables, including the image digests, the autoscaling flip, and
+  the alarm address; `shared/` holds the registry, the state bucket,
+  the zone, the deploy roles, the investigate roles and the operators'
+  user, and the budget (see [Operations](#operations-ops-claudeskills)). The load balancer's idle timeout is read from
   `deployment/realtime-timeouts.json`, the file the api pins its
   protocol ping against and the api and the portal pin the client's
   ping interval against. The API's target group polls `/readyz`, and
@@ -844,7 +846,8 @@ everything in-process for tests.
   `production-plan`, which carries no reviewer. The first job of each
   workflow checks the repository variables (`AWS_STAGING_ROLE_ARN` for
   staging, `AWS_PRODUCTION_PLAN_ROLE_ARN` and `AWS_PRODUCTION_ROLE_ARN`
-  for production, and `TF_STATE_BUCKET` and `DNS_ZONE_NAME` for both);
+  for production, and `TF_STATE_BUCKET`, `DNS_ZONE_NAME`, and
+  `ALARM_EMAIL` for both);
   while they are empty staging skips every cloud job, says so in the
   summary, and stays green, and production fails. [The deploy
   runbook](runbooks/deploy.md) says how to cut a release, what to check
@@ -868,6 +871,101 @@ everything in-process for tests.
   `terraform test` in the module pins the header. The local nginx sends
   no such header: the API and GlitchTip origins it would name are build
   arguments the static config cannot read.
+
+## Operations (`ops/`, `.claude/skills/`)
+
+People steer, agents maintain. Every operational task is a skill a
+person runs with an agent, and the boundary is the credential the
+skill holds. [ops/README.md](../ops/README.md) is the operator's own
+page; this section says what exists.
+
+- **Roles.** Four, as "Operator Roles" names them. The administrator is
+  a person under the `tadas-admin` profile, and only
+  `scripts/cloud_create.sh` and `scripts/cloud_nuke.sh` run under it.
+  The deployers are the three OIDC roles of
+  [ADR 0013](adr/0013-each-environment-has-its-own-deploy-credential.md).
+  The investigators are `tadas-investigate-staging` and
+  `tadas-investigate-production`, declared by `modules/investigate_role`
+  in `shared/`: `ReadOnlyAccess`, the log, trace, metric, cost, and
+  budget reads spelled out, the state bucket's environment prefix so
+  `terraform plan -lock=false` runs, and fences that deny every
+  `secretsmanager:GetSecretValue`, every object of a data bucket,
+  `rds-db:connect`, the other environment by tag, and every `iam:*`
+  write. The supporter holds no role of its own: it is the investigate
+  profile plus an operator identity whose allowlist entry is read
+  ([ADR 0017](adr/0017-the-operator-allowlist-carries-a-role.md)).
+  The principal an agent holds is the IAM user `tadas-operators`, whose
+  one permission is `sts:AssumeRole` on the investigate roles
+  ([ADR 0016](adr/0016-the-operators-principal-is-one-user-that-only-assumes.md)).
+- **Credentials.** Four profiles in `~/.aws/config`: `tadas-admin`,
+  `tadas-operators`, `tadas-staging-investigate`,
+  `tadas-production-investigate`, the last two chaining from the user.
+  Everything else an operator reaches lives in
+  `~/.config/tadas/ops/<env>.env`, owner-only: the API's URL, the
+  operator identity, the error tracker's URL and token, and for
+  `local` the Prometheus and Jaeger URLs of the `devx` profile. Every
+  skill verifies the profile it holds with `sts get-caller-identity`
+  before it reads, and refuses a wider one.
+- **Skills.** The nine of "Operational Skills", under `.claude/skills/`,
+  copied from the guideline's templates with the product's name:
+  `ops-investigate`, `ops-watch`, `ops-root-cause`, `ops-infra-as-code`,
+  `ops-cloud-deployment-create`, `ops-cloud-deployment-nuke`,
+  `ops-simulate-traffic`, `stress-test-create-or-update`,
+  `stress-test-run`. Every one takes `--env local|staging|production`,
+  and `local` reads the compose stack's twins, so each is exercised
+  with no cloud. The first responder is an agent: `ops-investigate` and
+  `ops-watch` read the platform's size (`tadas-ops size`) before they
+  escalate an alarm, and a platform of one tenant and one user is the
+  developer at work.
+- **Dashboards and alarms.** `modules/dashboard` declares the CloudWatch
+  dashboard `tadas-<env>` from a template whose five panels carry the
+  titles of the local Grafana dashboard
+  (`deployment/local/grafana/dashboards/tadas-overview.json`), and
+  `infra/tests/test_dashboard_parity.py` holds the titles equal.
+  `modules/alarms` declares the SNS topic `tadas-<env>-alarms`, the
+  email subscription from `alarm_email`, and six alarms: the load
+  balancer's 5xx ratio, its unhealthy targets, its p95, the database's
+  CPU and free storage, and each service running below its desired
+  count. [runbooks/operate.md](runbooks/operate.md) reads them.
+- **Scale-out.** Every service declares an autoscaling target and a
+  CPU target-tracking policy in `modules/service`, created only when
+  its `autoscaling.enabled` is true. The environment module ANDs each
+  service's own `enabled` (true by default) with the root's
+  `autoscaling_enabled`, which both roots set to `false`: the one flip.
+  `desired_count` stays the truth an apply resets to, and the policy
+  raises it from there ([runbooks/scale.md](runbooks/scale.md)).
+- **Cost.** `shared/` declares a monthly budget (`monthly_budget_usd`,
+  300 by default) with alerts at 50, 80, and 100 percent actual and
+  100 percent forecast to `owner_email`, and a cost anomaly monitor
+  by service with a daily subscription above 20 dollars of impact.
+  Every log group has a retention and every resource carries
+  `tadas:environment` from the provider's default tags.
+- **Create and nuke.** `scripts/cloud_create.sh <env>` is the
+  administrator's one run: the state backend, `shared`, the operators'
+  key and the profiles, the GitHub variables and environments, the
+  first deploy through the pipeline, and the smoke command.
+  `scripts/cloud_nuke.sh <env>` refuses `production` unless
+  `--confirm production` is typed and `environments/prod/main.tf` on
+  `origin/main` reads `database_deletion_protection = false`; it
+  applies `destroyable=true`, destroys, and names what remains. Both
+  take `--dry-run`, and `infra/tests/test_cloud_scripts.py` runs the
+  dry runs and the refusals. Neither has run against an account yet.
+- **Traffic, stress, and the round trip.** `ops/` is the `tadas-ops`
+  distribution: `tadas.ops.traffic` plays realistic sessions over
+  `clients/python` at four profiles; `tadas.ops.stress` runs a scenario
+  from `ops/stress/` with a ramp and a target; `tadas.ops.signals` is
+  one `SignalsInterface` with `SignalsLocalImpl` (Prometheus, Jaeger,
+  GlitchTip, the process's own log stream) and `SignalsCloudImpl`
+  (CloudWatch Logs Insights, CloudWatch metrics on namespace `Tadas`,
+  X-Ray, Sentry). `ops/tests/test_telemetry_roundtrip.py`, marker
+  `telemetry`, starts the API as a real process, drives one session,
+  and reads every signal back by request id; `make test-telemetry`
+  runs it and CI's `telemetry` job runs it with thirty seconds of
+  light traffic (`make traffic PROFILE=light DURATION=30`).
+- **Documents.** A README at every level (`om/README.md` for a reader
+  with no code, one per namespace, `infra/`, `services/api/`,
+  `workers/maintenance/`, `deployment/`, `ops/`), and `llms.txt` at the
+  root names what each audience is served.
 
 ## Checks
 
