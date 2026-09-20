@@ -211,3 +211,30 @@ class WorkStorageContract:
         with pytest.raises(TenantMismatch):
             await storage.create_item(org_b, item)
         assert await storage.read_item(org_a, item.id) == item
+
+    async def test_purge_settled_counts_done_and_failed_past_the_cut(
+        self, storage: WorkStorageInterface, lane: str
+    ) -> None:
+        org, other_org = new_id(), new_id()
+        long_ago = utcnow() - timedelta(days=2)
+        old = {
+            "updated_at": long_ago,
+            "claim_token": None,
+            "claimed_by": None,
+            "lease_expires_at": None,
+        }
+        old_done = make_item(lane=lane).model_copy(update={**old, "status": WorkStatus.DONE})
+        old_failed = make_item(lane=lane).model_copy(update={**old, "status": WorkStatus.FAILED})
+        old_queued = make_item(lane=lane).model_copy(update={**old, "status": WorkStatus.QUEUED})
+        fresh_done = make_item(lane=lane).model_copy(update={"status": WorkStatus.DONE})
+        elsewhere = make_item(lane=lane).model_copy(update={**old, "status": WorkStatus.DONE})
+        for item in (old_done, old_failed, old_queued, fresh_done):
+            await storage.create_item(org, item)
+        await storage.create_item(other_org, elsewhere)
+        assert await storage.purge_settled(org, utcnow() - timedelta(days=1)) == 2
+        assert await storage.read_item(org, old_done.id) is None
+        assert await storage.read_item(org, old_failed.id) is None
+        assert await storage.read_item(org, old_queued.id) == old_queued
+        assert await storage.read_item(org, fresh_done.id) == fresh_done
+        assert await storage.read_item(other_org, elsewhere.id) == elsewhere
+        assert await storage.purge_settled(org, utcnow() - timedelta(days=1)) == 0

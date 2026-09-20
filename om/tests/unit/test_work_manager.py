@@ -1,3 +1,4 @@
+import asyncio
 from datetime import timedelta
 from pathlib import Path
 
@@ -342,3 +343,30 @@ async def test_a_retry_that_still_has_attempts_is_not_a_dead_letter(
     requeued = await managers.work.fail(work_ctx, claimed_item, "again")
     assert requeued.status is WorkStatus.QUEUED
     assert await managers.events.get_events(ctx, after_seq=0, limit=10) == []
+
+
+async def test_purge_settled_takes_done_and_failed_items_past_the_retention(
+    managers: Managers, storage: StorageMemoryImpl, ctx: OpContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for _ in range(2):
+        await managers.work.enqueue(ctx, make_item().model_copy(update={"created_by": ctx.user_id}))
+    exhausted = make_item().model_copy(update={"created_by": ctx.user_id, "max_attempts": 1})
+    await managers.work.enqueue(ctx, exhausted)
+    first = await managers.work.claim(request(), "default", [WorkKind.NOOP], "w1", LEASE)
+    second = await managers.work.claim(request(), "default", [WorkKind.NOOP], "w1", LEASE)
+    third = await managers.work.claim(request(), "default", [WorkKind.NOOP], "w1", LEASE)
+    assert first is not None and second is not None and third is not None
+    done = await managers.work.complete(first[0], first[1])
+    failed = await managers.work.fail(third[0], third[1], "boom")
+    assert failed.status is WorkStatus.FAILED
+    # Under the default retention nothing is old enough; with none, the done
+    # and the failed items go and the one still claimed stays.
+    assert await managers.work.purge_settled(ctx) == 0
+    monkeypatch.setattr(managers.work, "_options", WorkOptions(retention=timedelta(0)))
+    await asyncio.sleep(0.001)
+    assert await managers.work.purge_settled(ctx) == 2
+    storage_ = storage.get_work_storage()
+    assert await storage_.read_item(ctx.org_id, done.id) is None
+    assert await storage_.read_item(ctx.org_id, failed.id) is None
+    held = await storage_.read_item(ctx.org_id, second[1].id)
+    assert held is not None and held.status is WorkStatus.CLAIMED

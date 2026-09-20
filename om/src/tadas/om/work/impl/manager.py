@@ -28,6 +28,7 @@ class WorkOptions(Platform):
     base_retry_delay: timedelta = timedelta(seconds=30)
     max_retry_delay: timedelta = timedelta(minutes=15)
     stale_stagger: timedelta = timedelta(seconds=5)
+    retention: timedelta = timedelta(days=30)  # a done or failed item is purged after this
 
 
 class WorkManagerImpl(WorkManagerInterface):
@@ -163,6 +164,10 @@ class WorkManagerImpl(WorkManagerInterface):
             if item.status is WorkStatus.FAILED:
                 await self._dead_letter(ctx, item)
         return len(requeued)
+
+    async def purge_settled(self, ctx: OpContext) -> int:
+        ctx.require(Permission.WRITE)
+        return await self._storage.purge_settled(ctx.org_id, utcnow() - self._options.retention)
 
     async def maintenance_contexts(self, rctx: RequestContext) -> list[OpContext]:
         return await self._tenancy.service_contexts(rctx)

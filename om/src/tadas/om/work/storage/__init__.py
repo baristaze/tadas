@@ -50,4 +50,11 @@ class WorkStorageInterface(ABC):
         ...
 
     @abstractmethod
+    async def purge_settled(self, org_id: UUID, before: datetime) -> int:
+        """For the sweep, per tenant: deletes items done or failed whose last
+        change was before `before`; returns how many. The one hard delete of the
+        namespace."""
+        ...
+
+    @abstractmethod
     async def read_item(self, org_id: UUID, item_id: UUID) -> WorkItem | None: ...

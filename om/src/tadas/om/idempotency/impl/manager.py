@@ -21,6 +21,11 @@ class IdempotencyOptions(Platform):
     marker and its outcome, or belongs to an attempt still running past its
     lease; the next retry takes it over and runs the request again, so the
     marker never suppresses work for good."""
+    retention: timedelta = timedelta(hours=24)
+    """A finished record is purged after this: a retry that late begins afresh."""
+    abandoned_after: int = 10
+    """A pending record older than this many pending leases had no retry come
+    back for it and is purged."""
 
 
 class IdempotencyManagerImpl(IdempotencyManagerInterface):
@@ -74,6 +79,15 @@ class IdempotencyManagerImpl(IdempotencyManagerInterface):
                 ) from None
             return stored
         return pending
+
+    async def purge(self, ctx: OpContext) -> int:
+        ctx.require(Permission.WRITE)
+        now = utcnow()
+        return await self._storage.purge_records(
+            ctx.org_id,
+            now - self._options.retention,
+            now - self._options.pending_ttl * self._options.abandoned_after,
+        )
 
     async def release(self, ctx: OpContext, key: str, attempt_id: UUID) -> None:
         ctx.require(Permission.WRITE)

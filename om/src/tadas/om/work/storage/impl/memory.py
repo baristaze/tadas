@@ -102,5 +102,16 @@ class WorkStorageMemoryImpl(MemoryStorageBase, WorkStorageInterface):
                 changed.append(requeued)
         return changed
 
+    async def purge_settled(self, org_id: UUID, before: datetime) -> int:
+        async with self._lock:
+            gone = [
+                item.id
+                for item in self._rows(self._items, org_id)
+                if item.status in (WorkStatus.DONE, WorkStatus.FAILED) and item.updated_at < before
+            ]
+            for item_id in gone:
+                del self._items[item_id]
+            return len(gone)
+
     async def read_item(self, org_id: UUID, item_id: UUID) -> WorkItem | None:
         return self._get(self._items, org_id, item_id)

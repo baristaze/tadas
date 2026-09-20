@@ -70,6 +70,12 @@ class WorkManagerInterface(ABC):
         ...
 
     @abstractmethod
+    async def purge_settled(self, ctx: OpContext) -> int:
+        """The sweep, for one tenant: deletes items done or failed past the
+        retention; returns how many. The one hard delete of the namespace."""
+        ...
+
+    @abstractmethod
     async def maintenance_contexts(self, rctx: RequestContext) -> list[OpContext]:
         """Platform-internal: one service context per live tenant, for the sweep, each
         refining the request stage the worker minted for this pass."""

@@ -5,17 +5,20 @@ from datetime import timedelta
 from pathlib import Path
 from uuid import UUID
 
+import pytest
 from worker_support import build_container, fast_options, make_item, request, sign_in
 
 from tadas.infra.cache import CacheInterface, CacheScope
 from tadas.infra.observability import request_id_var
 from tadas.om.base import EMPTY_UUID, new_id, utcnow
 from tadas.om.exceptions import LeaseLost
+from tadas.om.idempotency.impl.manager import IdempotencyOptions
 from tadas.om.opcontext import OpContext, RequestContext
 from tadas.om.outbox.storage import OutboxStorageInterface
 from tadas.om.outbox.types.row import OutboxRow, outbox_row, snapshot
 from tadas.om.tasks.types.task import Task
 from tadas.om.work import WorkManagerInterface
+from tadas.om.work.impl.manager import WorkOptions
 from tadas.om.work.types.handler import WorkHandlerInterface
 from tadas.om.work.types.work_item import WorkItem, WorkKind, WorkStatus
 from tadas.workers.maintenance.container import WorkerContainer
@@ -81,6 +84,9 @@ class LeaseLosingWork(WorkManagerInterface):
     async def requeue_stale(self, ctx: OpContext) -> int:
         return await self._inner.requeue_stale(ctx)
 
+    async def purge_settled(self, ctx: OpContext) -> int:
+        return await self._inner.purge_settled(ctx)
+
     async def maintenance_contexts(self, rctx: RequestContext) -> list[OpContext]:
         return await self._inner.maintenance_contexts(rctx)
 
@@ -142,6 +148,8 @@ def start_loop(
         purges={
             "tasks": container.managers.tasks.purge_deleted,
             "tenancy": container.managers.tenancy.purge_deleted,
+            "idempotency": container.managers.idempotency.purge,
+            "work": container.managers.work.purge_settled,
         },
         handlers={WorkKind.NOOP: handler},
         topics=container.infra.get_topics(),
@@ -462,3 +470,28 @@ def test_outbox_retention_outlives_the_database_backup_retention() -> None:
     assert match is not None
     backup_days = int(match.group(1))
     assert LoopOptions(worker_id="w").outbox_retention > timedelta(days=backup_days)
+
+
+async def test_sweep_purges_settled_work_items_and_finished_idempotency_records(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    container = build_container(tmp_path)
+    ctx = await sign_in(container)
+    monkeypatch.setattr(container.managers.work, "_options", WorkOptions(retention=timedelta(0)))
+    monkeypatch.setattr(
+        container.managers.idempotency, "_options", IdempotencyOptions(retention=timedelta(0))
+    )
+    item = make_item(ctx)
+    await container.managers.work.enqueue(ctx, item)
+    begun = await container.managers.idempotency.begin(ctx, "k", "d", new_id())
+    await container.managers.idempotency.finish(ctx, "k", begun.attempt_id, 201, "{}")
+    handler = NoopHandlerImpl()
+    loop, task = start_loop(container, handler, fast_options())
+    await until(lambda: [h.id for h in handler.handled] == [item.id])
+    sweeps = loop.sweeps
+    await until(lambda: loop.sweeps >= sweeps + 2)
+    loop.stop()
+    await task
+    assert await container.storage.get_work_storage().read_item(ctx.org_id, item.id) is None
+    idempotency = container.storage.get_idempotency_storage()
+    assert await idempotency.read_record(ctx.org_id, ctx.user_id, "k") is None

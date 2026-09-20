@@ -2,7 +2,7 @@ from collections.abc import Sequence
 from datetime import datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import DateTime, Interval, case, func, literal, select, update
+from sqlalchemy import DateTime, Interval, case, delete, func, literal, select, update
 
 from tadas.om.base import new_id, utcnow
 from tadas.om.exceptions import DuplicateWorkItem, TenantMismatch
@@ -129,6 +129,21 @@ class WorkStoragePostgresImpl(PgStorageBase, WorkStorageInterface):
             changed = sorted((to_model(row, WorkItem) for row in rows), key=lambda item: item.id)
             await session.commit()
             return changed
+
+    async def purge_settled(self, org_id: UUID, before: datetime) -> int:
+        stmt = (
+            delete(WorkItems)
+            .where(
+                WorkItems.org_id == org_id,
+                WorkItems.status.in_([WorkStatus.DONE.value, WorkStatus.FAILED.value]),
+                WorkItems.updated_at < before,
+            )
+            .returning(WorkItems.id)
+        )
+        async with self._session_for(stmt) as session:
+            purged = len((await session.execute(stmt)).scalars().all())
+            await session.commit()
+            return purged
 
     async def read_item(self, org_id: UUID, item_id: UUID) -> WorkItem | None:
         stmt = select(WorkItems).where(WorkItems.org_id == org_id, WorkItems.id == item_id)
