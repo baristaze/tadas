@@ -51,6 +51,7 @@ class WorkStorageContract:
         assert claimed_org == org
         assert claimed.status is WorkStatus.CLAIMED
         assert claimed.claimed_by == "w1"
+        assert claimed.claim_token is not None
         assert claimed.attempts == 1
         assert claimed.lease_expires_at is not None and claimed.lease_expires_at > utcnow()
         assert claimed.payload == {}
@@ -75,6 +76,7 @@ class WorkStorageContract:
         claimed_org, claimed = winners[0]
         assert claimed_org == org and claimed.id == item.id
         assert claimed.claimed_by in ("w1", "w2") and claimed.attempts == 1
+        assert claimed.claim_token is not None
         assert await storage.read_item(org, item.id) == claimed
 
     async def test_claim_takes_the_oldest_available_in_its_queue(
@@ -115,6 +117,7 @@ class WorkStorageContract:
         assert [item.id for item in changed] == sorted(item.id for item in stale)
         for position, item in enumerate(changed):
             assert item.claimed_by is None and item.lease_expires_at is None
+            assert item.claim_token is None
             assert item.last_error == "lease expired" and item.updated_at == now
             assert item.updated_by == SWEEPER
             if item.max_attempts == 1:
@@ -129,7 +132,7 @@ class WorkStorageContract:
         assert other is not None and other.status is WorkStatus.CLAIMED
         assert await storage.requeue_stale(org_a, utcnow(), stagger, SWEEPER) == []
 
-    async def test_write_if_held_refuses_a_row_this_worker_does_not_hold(
+    async def test_write_if_held_is_conditional_on_the_claim_token(
         self, storage: WorkStorageInterface, lane: str
     ) -> None:
         org, other_org = new_id(), new_id()
@@ -137,15 +140,45 @@ class WorkStorageContract:
         claimed = await storage.claim_next(lane, [WorkKind.NOOP], "w1", LEASE)
         assert claimed is not None
         held = claimed[1]
+        assert held.claim_token is not None
         done = held.model_copy(
-            update={"status": WorkStatus.DONE, "claimed_by": None, "lease_expires_at": None}
+            update={
+                "status": WorkStatus.DONE,
+                "claimed_by": None,
+                "claim_token": None,
+                "lease_expires_at": None,
+            }
         )
-        assert await storage.write_item_if_held(org, "w2", done) is None
-        assert await storage.write_item_if_held(other_org, "w1", done) is None
+        assert await storage.write_item_if_held(org, new_id(), done) is None
+        assert await storage.write_item_if_held(other_org, held.claim_token, done) is None
         assert await storage.read_item(org, held.id) == held
-        assert await storage.write_item_if_held(org, "w1", done) == done
+        assert await storage.write_item_if_held(org, held.claim_token, done) == done
         assert await storage.read_item(org, held.id) == done
-        assert await storage.write_item_if_held(org, "w1", done) is None
+        assert await storage.write_item_if_held(org, held.claim_token, done) is None
+
+    async def test_a_re_claim_after_a_requeue_mints_a_new_token(
+        self, storage: WorkStorageInterface, lane: str
+    ) -> None:
+        # The same worker holds the same item twice: its lease expired, the
+        # sweep handed the item back, and it claimed the item again. The first
+        # claim's copy carries the old token and cannot settle the second claim.
+        org = new_id()
+        await storage.create_item(org, make_item(lane=lane))
+        first = await storage.claim_next(lane, [WorkKind.NOOP], "w1", timedelta(seconds=-1))
+        assert first is not None
+        stale = first[1]
+        assert stale.claim_token is not None
+        assert len(await storage.requeue_stale(org, utcnow(), timedelta(0), SWEEPER)) == 1
+        second = await storage.claim_next(lane, [WorkKind.NOOP], "w1", LEASE)
+        assert second is not None
+        fresh = second[1]
+        assert fresh.claimed_by == stale.claimed_by == "w1"
+        assert fresh.claim_token is not None and fresh.claim_token != stale.claim_token
+        stale_done = stale.model_copy(update={"status": WorkStatus.DONE, "claim_token": None})
+        assert await storage.write_item_if_held(org, stale.claim_token, stale_done) is None
+        assert await storage.read_item(org, fresh.id) == fresh
+        fresh_done = fresh.model_copy(update={"status": WorkStatus.DONE, "claim_token": None})
+        assert await storage.write_item_if_held(org, fresh.claim_token, fresh_done) == fresh_done
 
     async def test_create_reports_an_existing_id_and_changes_nothing(
         self, storage: WorkStorageInterface, lane: str

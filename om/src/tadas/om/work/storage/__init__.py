@@ -1,7 +1,8 @@
 """Storage of the work queue. The claim is the one named atomic method and
 the one cross-tenant read; every other operation takes org_id first. The
-writes that move a claimed item are conditional on the claim still being
-this worker's, so a lost lease can never be written over."""
+claim mints a token, and the writes that move a claimed item are conditional
+on that token still being on the row, so a lost lease can never be written
+over, not even by the worker that held the item before and holds it again."""
 
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
@@ -22,10 +23,10 @@ class WorkStorageInterface(ABC):
 
     @abstractmethod
     async def write_item_if_held(
-        self, org_id: UUID, worker_id: str, item: WorkItem
+        self, org_id: UUID, claim_token: UUID, item: WorkItem
     ) -> WorkItem | None:
         """One conditional statement: writes `item` over its row only while the row
-        is still claimed by `worker_id`; returns None when it is not."""
+        is still claimed under `claim_token`; returns None when it is not."""
         ...
 
     @abstractmethod
@@ -33,7 +34,8 @@ class WorkStorageInterface(ABC):
         self, lane: str, kinds: Sequence[WorkKind], worker_id: str, lease: timedelta
     ) -> tuple[UUID, WorkItem] | None:
         """Cross-tenant claim, one statement: the oldest available row on the lane,
-        skipping locked ones, stamped with the claim and the lease."""
+        skipping locked ones, stamped with the claim, a freshly minted claim
+        token, and the lease."""
         ...
 
     @abstractmethod
@@ -42,7 +44,8 @@ class WorkStorageInterface(ABC):
     ) -> list[WorkItem]:
         """One conditional statement: every claimed item of the tenant whose lease
         expired before `now` goes back to the queue, staggered by its position, or
-        fails when its attempts are spent; returns the items it changed, by id.
+        fails when its attempts are spent, its claim token cleared either way so
+        the holder it had is refused; returns the items it changed, by id.
         `updated_by` is the sweep's principal."""
         ...
 

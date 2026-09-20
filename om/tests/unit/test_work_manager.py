@@ -137,9 +137,46 @@ async def test_extend_lease_and_lease_loss(managers: Managers, ctx: OpContext) -
     extended = await managers.work.extend_lease(claimed[0], claimed[1], timedelta(minutes=5))
     assert extended.lease_expires_at is not None
     assert extended.lease_expires_at > utcnow() + timedelta(minutes=4)
-    stolen = claimed[1].model_copy(update={"claimed_by": "w2"})
+    # The token is the fence, not the worker's name: a copy under another
+    # token is refused, and so is one that carries no token at all.
+    stolen = claimed[1].model_copy(update={"claim_token": new_id()})
     with pytest.raises(LeaseLost):
         await managers.work.extend_lease(claimed[0], stolen, LEASE)
+    with pytest.raises(LeaseLost):
+        await managers.work.extend_lease(
+            claimed[0], claimed[1].model_copy(update={"claim_token": None}), LEASE
+        )
+
+
+async def test_the_same_worker_re_claiming_after_a_requeue_refuses_its_stale_copy(
+    managers: Managers, ctx: OpContext
+) -> None:
+    # A worker whose lease expired, whose item the sweep requeued, and which
+    # claims the same item again: the stale task's completion carries the old
+    # token and is refused; the new claim is settled by its own token.
+    await managers.work.enqueue(ctx, make_item().model_copy(update={"created_by": ctx.user_id}))
+    first = await managers.work.claim(
+        request(), "default", [WorkKind.NOOP], "w1", timedelta(seconds=-1)
+    )
+    assert first is not None
+    stale_ctx, stale = first
+    assert await managers.work.requeue_stale(ctx) == 1
+    second = await managers.work.claim(request(), "default", [WorkKind.NOOP], "w1", LEASE)
+    assert second is not None
+    fresh_ctx, fresh = second
+    assert fresh.claimed_by == stale.claimed_by == "w1"
+    assert fresh.claim_token != stale.claim_token
+    for stale_write in (
+        managers.work.complete(stale_ctx, stale),
+        managers.work.fail(stale_ctx, stale, "boom"),
+        managers.work.extend_lease(stale_ctx, stale, LEASE),
+        managers.work.release(stale_ctx, stale),
+    ):
+        with pytest.raises(LeaseLost):
+            await stale_write
+    assert (await managers.work.extend_lease(fresh_ctx, fresh, LEASE)).status is WorkStatus.CLAIMED
+    done = await managers.work.complete(fresh_ctx, fresh)
+    assert done.status is WorkStatus.DONE and done.claim_token is None
 
 
 async def test_transitions_refuse_a_lost_lease_and_a_missing_item(

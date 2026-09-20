@@ -4,7 +4,7 @@ from uuid import UUID
 
 from sqlalchemy import DateTime, Interval, case, func, literal, select, update
 
-from tadas.om.base import utcnow
+from tadas.om.base import new_id, utcnow
 from tadas.om.exceptions import DuplicateWorkItem, TenantMismatch
 from tadas.om.storage.impl.pg_base import PgStorageBase
 from tadas.om.storage.utils.translation import to_model, to_values
@@ -28,7 +28,7 @@ class WorkStoragePostgresImpl(PgStorageBase, WorkStorageInterface):
         return False
 
     async def write_item_if_held(
-        self, org_id: UUID, worker_id: str, item: WorkItem
+        self, org_id: UUID, claim_token: UUID, item: WorkItem
     ) -> WorkItem | None:
         values = to_values(item, WorkItems)
         values.pop("id", None)
@@ -38,7 +38,7 @@ class WorkStoragePostgresImpl(PgStorageBase, WorkStorageInterface):
                 WorkItems.id == item.id,
                 WorkItems.org_id == org_id,
                 WorkItems.status == WorkStatus.CLAIMED.value,
-                WorkItems.claimed_by == worker_id,
+                WorkItems.claim_token == claim_token,
             )
             .values(**values)
             .returning(WorkItems)
@@ -74,6 +74,7 @@ class WorkStoragePostgresImpl(PgStorageBase, WorkStorageInterface):
             .values(
                 status=WorkStatus.CLAIMED.value,
                 claimed_by=worker_id,
+                claim_token=new_id(),
                 lease_expires_at=now + lease,
                 attempts=WorkItems.attempts + 1,  # rules.attempts_after_claim, in SQL
                 updated_at=now,
@@ -115,6 +116,7 @@ class WorkStoragePostgresImpl(PgStorageBase, WorkStorageInterface):
                 status=case((exhausted, WorkStatus.FAILED.value), else_=WorkStatus.QUEUED.value),
                 available_at=case((exhausted, WorkItems.available_at), else_=staggered),
                 claimed_by=None,
+                claim_token=None,
                 lease_expires_at=None,
                 last_error="lease expired",
                 updated_at=now,
