@@ -217,11 +217,28 @@ context on keeps the stage the callee needs.
   That write has two more guards in its own `WHERE`, because a re-mint is
   destructive where an insert is not. A revoked row is never re-minted,
   so a rerun cannot put a live secret back on a key somebody revoked in
-  between. And a row created after this attempt began is never re-minted:
-  an attempt that ran past the pending lease is a zombie whose `finish`
-  will be refused anyway, and the key the retry that took the marker over
-  already handed to the caller must not be overwritten behind it. Both
-  are a `Conflict` and change nothing.
+  between. And the digest lands only while the marker on that id still
+  holds the attempt making the write: an attempt that ran past the
+  pending lease lost the marker to the retry that took it over, that
+  retry has already handed its key to the caller, and the zombie's
+  `finish` will be refused anyway, so its re-mint is refused here too.
+  The fence is the marker's liveness and no clock is: two attempts can
+  stamp one `created_at`, and a skewed clock orders them backwards, so
+  there is nothing to compare and only a marker to ask. Both are a
+  `Conflict` and change nothing.
+  That makes the re-mint the one write outside the `idempotency`
+  namespace that reads a marker. The marker is one of the two system
+  rows every namespace touches, the outbox row being the other, so the
+  read is the crossing the outbox row already is: the Postgres impl
+  reads it in the same statement (both tables are in the `core` role,
+  so no statement spans two), and the memory impl asks the markers the
+  storage root hands it, through `AttemptFenceInterface`, the way it
+  lands outbox rows through `OutboxLandingInterface`. The fence reads
+  `(org_id, target_id)`, which the markers carry an index for; the
+  unique index beside it leads with the key the caller sent and cannot
+  serve it. The attempt travels from the gateway to the write on
+  `Attempt`, the pair of the id the create uses and the token of the
+  marker holding it, which `Idempotency.run` hands its handler.
   `finish` and `release` are conditional on the attempt token in the
   statement itself: the storage reports what matched (the record, or
   `None`; a bool for the release) and the manager refuses a lost attempt

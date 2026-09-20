@@ -181,7 +181,7 @@ class TenancyStorageInterface(ABC):
 
     @abstractmethod
     async def issue_api_key(
-        self, org_id: UUID, api_key: ApiKey, outbox_row: OutboxRow
+        self, org_id: UUID, api_key: ApiKey, outbox_row: OutboxRow, attempt_id: UUID | None
     ) -> tuple[ApiKey, bool]:
         """The create of a key: lands the key and its outbox row together and
         returns `(api_key, True)`. When the id is already written, the rerun of
@@ -190,14 +190,27 @@ class TenancyStorageInterface(ABC):
         row, and returns `(the row as stored, False)`; the row keeps its name,
         role, expiry, and issuer.
 
-        The re-mint is fenced two ways, both in the statement. A revoked row is
-        never re-minted, so a rerun cannot put a live secret back on a key
-        somebody revoked in between. And a row created after this attempt
-        began is never re-minted: an attempt that ran past the idempotency
-        marker's pending lease is a zombie whose `finish` will be refused, and
-        the key the retry that took the marker over handed to the caller must
-        not be overwritten behind it. Both raise Conflict and change nothing,
-        as does an id written under another issuer."""
+        The re-mint is the one write of a rerun that changes what is stored, so
+        it is fenced two ways, both in the statement. A revoked row is never
+        re-minted, so a rerun cannot put a live secret back on a key somebody
+        revoked in between. And the digest lands only while the idempotency
+        marker on `api_key.id` still holds `attempt_id`, the attempt making the
+        write: an attempt that ran past the marker's pending lease lost it to
+        the retry that took it over, that retry has already handed its key to
+        the caller, and the zombie's `finish` will be refused, so its re-mint
+        is refused here too. The marker's liveness is the fence and no clock
+        is, because two attempts can carry one `created_at` and a skewed clock
+        can order them backwards; there is nothing to compare, only a marker to
+        ask. `attempt_id` is None when the request carried no key, which leaves
+        no marker to hold anything and so no rerun to admit. Every refusal is
+        Conflict and changes nothing, as does an id written under another
+        issuer.
+
+        The marker is one of the two system rows every namespace touches, the
+        way the outbox row is, so reading it here is the same crossing landing
+        an outbox row already is: the Postgres impl reads it in this
+        statement's own WHERE, the memory impl asks the markers the storage
+        root hands it (`AttemptFenceInterface`)."""
         ...
 
     @abstractmethod

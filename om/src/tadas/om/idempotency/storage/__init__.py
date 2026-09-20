@@ -15,6 +15,20 @@ from uuid import UUID
 from tadas.om.idempotency.types.record import IdempotencyRecord
 
 
+class AttemptFenceInterface(ABC):
+    """What another namespace's storage needs from the markers to fence the one
+    write of a rerun that changes what is stored: whether the marker still
+    holds the attempt making the write. The Postgres impls read the marker in
+    their own WHERE, in the same statement; the memory impls ask here, which is
+    the twin of that, the way the outbox has a landing of its own."""
+
+    @abstractmethod
+    def holds(self, org_id: UUID, target_id: UUID, attempt_id: UUID) -> bool:
+        """Whether this tenant has a marker on `target_id` that is still
+        pending and still held by `attempt_id`."""
+        ...
+
+
 class IdempotencyStorageInterface(ABC):
     @abstractmethod
     async def write_record(self, org_id: UUID, record: IdempotencyRecord) -> None:

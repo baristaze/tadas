@@ -7,6 +7,7 @@ from sqlalchemy.exc import IntegrityError
 
 from tadas.om.base import Identifiable
 from tadas.om.exceptions import Conflict, NotFound, TenantMismatch, UniqueKeyTaken
+from tadas.om.idempotency.storage.tables.idempotency_records import IdempotencyRecords
 from tadas.om.outbox.storage.tables.outbox_rows import OutboxRows
 from tadas.om.outbox.types.row import OutboxRow, announced
 from tadas.om.storage.impl.pg_base import PgStorageBase, violated_constraint
@@ -272,12 +273,28 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
             return None if row is None else (row.org_id, to_model(row, ApiKey))
 
     async def issue_api_key(
-        self, org_id: UUID, api_key: ApiKey, outbox_row: OutboxRow
+        self, org_id: UUID, api_key: ApiKey, outbox_row: OutboxRow, attempt_id: UUID | None
     ) -> tuple[ApiKey, bool]:
         if await self._insert(ApiKeys, org_id, api_key, announced(outbox_row)):
             return api_key, True
+        if attempt_id is None:
+            # No key, no marker, nothing holding this attempt: nothing to fence
+            # the re-mint with, so there is no re-mint.
+            raise Conflict(f"api key {api_key.id} cannot be re-minted")
         # The rerun: one conditional statement re-mints the secret on the
-        # issuer's row, with both fences of the interface in its own WHERE.
+        # issuer's row, with both fences of the interface in its own WHERE. The
+        # second reads the marker; both tables are in the `core` role, so the
+        # statement stays inside one role and one commit.
+        held = (
+            select(IdempotencyRecords.id)
+            .where(
+                IdempotencyRecords.org_id == org_id,
+                IdempotencyRecords.target_id == api_key.id,
+                IdempotencyRecords.attempt_id == attempt_id,
+                IdempotencyRecords.status.is_(None),
+            )
+            .exists()
+        )
         stmt = (
             update(ApiKeys)
             .where(
@@ -285,7 +302,7 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
                 ApiKeys.id == api_key.id,
                 ApiKeys.user_id == api_key.user_id,
                 ApiKeys.deleted_at.is_(None),
-                ApiKeys.created_at <= api_key.created_at,
+                held,
             )
             .values(
                 key_hash=api_key.key_hash,

@@ -16,6 +16,7 @@ from tadas.om.exceptions import (
     NotFound,
     ValidationFailed,
 )
+from tadas.om.idempotency.types.attempt import Attempt
 from tadas.om.opcontext import (
     CredentialKind,
     IdentityContext,
@@ -666,7 +667,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
         name: str,
         role: Role,
         ttl: timedelta | None = None,
-        api_key_id: UUID | None = None,
+        attempt: Attempt | None = None,
     ) -> IssuedApiKey:
         ctx.require(Permission.MANAGE_KEYS)
         # A key never mints its successor. Revoking a leaked key has to end the
@@ -686,7 +687,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
         now = utcnow()
         key = mint_token(CredentialKind.API_KEY)
         api_key = ApiKey(
-            id=api_key_id or new_id(),
+            id=attempt.target_id if attempt else new_id(),
             name=name,
             created_at=now,
             updated_at=now,
@@ -700,9 +701,12 @@ class TenancyManagerImpl(TenancyManagerInterface):
         # A create that issues a secret: the row as stored is not enough on a
         # rerun, because the secret is a digest there and was shown to no one
         # (the marker stored no outcome). The one storage method inserts the
-        # key, or re-mints the secret on the row the id already names.
+        # key, or re-mints the secret on the row the id already names, and the
+        # re-mint lands only while the marker still holds this attempt.
         row = outbox_row(ctx, "tenancy.api_key.created", api_key.id, self._key_snapshot(api_key))
-        stored, created = await self._storage.issue_api_key(ctx.org_id, api_key, row)
+        stored, created = await self._storage.issue_api_key(
+            ctx.org_id, api_key, row, attempt.attempt_id if attempt else None
+        )
         if created:
             await self._relay.relay(ctx.org_id, row)
         return IssuedApiKey(key=key, api_key=stored)

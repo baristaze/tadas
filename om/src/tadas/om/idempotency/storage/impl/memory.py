@@ -2,18 +2,32 @@ from datetime import datetime
 from uuid import UUID
 
 from tadas.om.exceptions import DuplicateIdempotencyKey
-from tadas.om.idempotency.storage import IdempotencyStorageInterface
+from tadas.om.idempotency.storage import AttemptFenceInterface, IdempotencyStorageInterface
 from tadas.om.idempotency.types.record import IdempotencyRecord
 from tadas.om.storage.impl.memory_base import MemoryStorageBase, MemoryTable
 
 
-class IdempotencyStorageMemoryImpl(MemoryStorageBase, IdempotencyStorageInterface):
+class IdempotencyStorageMemoryImpl(
+    MemoryStorageBase, IdempotencyStorageInterface, AttemptFenceInterface
+):
     """Every conditional write reads and writes under the one lock with no
     await in between, so two callers racing for a record never both match."""
 
     def __init__(self) -> None:
         super().__init__()
         self._records: MemoryTable[IdempotencyRecord] = {}
+
+    def holds(self, org_id: UUID, target_id: UUID, attempt_id: UUID) -> bool:
+        # The memory twin of reading the marker inside the other namespace's
+        # statement: no await, so the answer cannot go stale before the caller
+        # writes under its own lock.
+        return any(
+            row_org == org_id
+            and record.target_id == target_id
+            and record.pending
+            and record.attempt_id == attempt_id
+            for row_org, record in self._records.values()
+        )
 
     async def write_record(self, org_id: UUID, record: IdempotencyRecord) -> None:
         async with self._lock:

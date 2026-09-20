@@ -3,6 +3,7 @@ from datetime import datetime
 from uuid import UUID
 
 from tadas.om.exceptions import Conflict, NotFound, UniqueKeyTaken
+from tadas.om.idempotency.storage import AttemptFenceInterface
 from tadas.om.outbox.storage import OutboxLandingInterface
 from tadas.om.outbox.types.row import OutboxRow, announced
 from tadas.om.storage.impl.memory_base import HasId, MemoryStorageBase, MemoryTable
@@ -18,8 +19,13 @@ from tadas.om.tenancy.types.user import User
 
 
 class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
-    def __init__(self, outbox: OutboxLandingInterface | None = None) -> None:
+    def __init__(
+        self,
+        outbox: OutboxLandingInterface | None = None,
+        markers: AttemptFenceInterface | None = None,
+    ) -> None:
         super().__init__(outbox)
+        self._markers = markers
         self._identities: dict[UUID, Identity] = {}
         self._orgs: MemoryTable[Org] = {}
         self._users: MemoryTable[User] = {}
@@ -262,7 +268,7 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
         )
 
     async def issue_api_key(
-        self, org_id: UUID, api_key: ApiKey, outbox_row: OutboxRow
+        self, org_id: UUID, api_key: ApiKey, outbox_row: OutboxRow, attempt_id: UUID | None
     ) -> tuple[ApiKey, bool]:
         async with self._lock:
             self._require_key_hash_free(api_key)
@@ -273,7 +279,7 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
                 stored is None
                 or stored.user_id != api_key.user_id
                 or stored.deleted_at is not None
-                or stored.created_at > api_key.created_at
+                or not self._attempt_holds(org_id, api_key.id, attempt_id)
             ):
                 raise Conflict(f"api key {api_key.id} cannot be re-minted")
             reissued = stored.model_copy(
@@ -291,6 +297,16 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
     ) -> None:
         self._require_key_hash_free(api_key)
         self._put(self._api_keys, org_id, api_key, announced(outbox_row))
+
+    def _attempt_holds(self, org_id: UUID, target_id: UUID, attempt_id: UUID | None) -> bool:
+        """The twin of the marker read inside the Postgres statement's WHERE.
+        No key means no marker and so no rerun to admit; a storage built with
+        no markers to ask cannot fence the write and so never re-mints."""
+        if attempt_id is None:
+            return False
+        if self._markers is None:
+            raise RuntimeError("this memory storage was built without markers to fence on")
+        return self._markers.holds(org_id, target_id, attempt_id)
 
     def _require_key_hash_free(self, api_key: ApiKey) -> None:
         self._require_free(
