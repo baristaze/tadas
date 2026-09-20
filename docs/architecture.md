@@ -70,14 +70,23 @@ context on keeps the stage the callee needs.
   replay is refused without a round trip.
 - `work`: the table-backed work queue in the `queue` role; a row's
   routing field is its `lane`, payload shapes are fixed per `WorkKind`
-  by `WORK_PAYLOADS`, enqueue validates against it and publishes
-  `work_available`, the claim is one `SELECT ... FOR UPDATE SKIP LOCKED`
-  statement on the lane and returns the enqueuer's principal. Every
-  transition is conditional on the claim (`claimed_by` in the statement),
-  so a worker whose lease has passed is refused with `LeaseLost`, a
-  `Conflict`; a failed item is a dead letter, named by a
-  `work.item.failed` event in the tenant's stream and counted on the
-  outcome counter.
+  by `WORK_PAYLOADS`. Enqueue is a create: it validates the payload, and
+  the manager's copy stamps the actor from the context, the timestamps,
+  status `QUEUED`, zero attempts, and clears every claim field whatever
+  the caller sent; the insert reports an existing id and changes nothing,
+  so a retried enqueue returns the row as stored, claim intact, and a
+  reused idempotency key is `DuplicateWorkItem`, a `Conflict`. A fresh
+  row publishes `work_available`. The claim is one `SELECT ... FOR UPDATE
+  SKIP LOCKED` statement on the lane that mints a `claim_token` on the row
+  and returns the enqueuer's principal. Every transition (complete, fail,
+  defer, release, extend_lease) is conditional on the token in the
+  statement itself, not on the worker's name, because one worker can hold
+  one item twice across a requeue: a worker whose lease has passed is
+  refused with `LeaseLost`, a `Conflict`, and hands the item back without
+  spending an attempt; the requeue clears the token. A failed item is a
+  dead letter, named by a `work.item.failed` event in the tenant's
+  stream and counted on the outcome counter. Done or failed items are
+  purged by the sweep after the work retention (30 days).
 - `tasks`: the to-do items (`Task`: title, notes, status), listed by a
   `TaskFilter` (team or mine) and paged by a `TaskCursor`, both passed
   unchanged from the manager to storage; the visibility, cursor, and
@@ -108,7 +117,19 @@ context on keeps the stage the callee needs.
   has passed. The gateway logs and counts the refusal (`attempt_lost`)
   and answers with what the attempt produced, which is the row the retry
   found. A failure (a `5xx`) is not an outcome: the marker is released
-  and the retry runs again; a refusal (a `4xx`) is stored and replayed.
+  and the retry runs again; a refusal (a `4xx`) is stored and replayed,
+  its envelope rewritten with the replaying request's id, the one its
+  header carries. The stored outcome of a create that issued a secret is
+  the view with the secret absent: a wire view declares its secret fields
+  (`View.secret_fields`; `IssuedApiKeyView` names `key`) and the gateway
+  strips them before `finish`, for any route, so the first response alone
+  carries the key, a replay answers with the row, `key` null, and
+  `Idempotent-Replayed: true`, and the secret exists in one place, as a
+  digest. The key lands in a unique index, so the gateway refuses one
+  longer than 255 characters with a 422. The sweep purges finished records
+  after the idempotency retention (24 hours; a retry that late begins
+  afresh) and pending ones past ten times the pending lease, a marker no
+  retry came back for.
 - `outbox`: the transactional outbox. A manager that writes a core row
   hands the storage an `OutboxRow` (`kind`, `target_id`, the record's
   snapshot as `payload`, the actor and the request) and the storage base
@@ -119,7 +140,19 @@ context on keeps the stage the callee needs.
   which appends the `Event` under the row's id, publishes
   `entity_changed` with `(kind, target_id, seq)`, and marks the row done.
   A relay that fails is logged and counted, never raised; the
-  maintenance sweep relays whatever is pending and purges done rows.
+  maintenance sweep claims whatever is pending. The claim is one
+  statement (`FOR UPDATE SKIP LOCKED`, oldest first) over rows neither
+  done nor failed, whose next attempt is due, and older than the grace
+  (a younger row is the request path's to relay), so two sweeps relay
+  disjoint sets; it spends an attempt and sets `next_attempt_at` with a
+  delay that doubles per attempt, so a row that will not relay waits on
+  its own and starves nothing behind it. A failed relay keeps its
+  `last_error`; past the relay's `max_attempts` the row is failed for
+  good (`failed_at`), logged, counted as `dead_letter`, and named by an
+  `outbox.row.failed` event under the row's own provenance, best effort,
+  since the stream may be what is failing. The grace, the backoff, and
+  the attempt limit are `OutboxOptions`. Done and failed rows are purged
+  after the outbox retention.
 - `events`: the append-only stream behind every realtime push, in the
   `activity` role: `Event(Identifiable)` with `seq` (per tenant, gapless,
   assigned by the append, the one number storage assigns), `kind`
@@ -226,10 +259,13 @@ everything in-process for tests.
   maintenance sweep (requeue stale leases under one service context per
   live tenant, then purge the tenant's soft-deleted tasks, removed
   members, and revoked api keys past their retention (the one hard
-  delete, 30 days by default), then relay the pending outbox rows and
-  purge the done ones after eight days, which outlives the seven-day
-  database backup retention, so a role restored to an earlier point
-  than its siblings is reconciled by relaying the outbox again). `tadas-maintenance serve | health`: the
+  delete, 30 days by default), its finished idempotency records and
+  abandoned markers, and its done or failed work items, then claim and
+  relay the pending outbox rows, one attempt each with a growing delay,
+  and purge the done and failed ones after eight days, which outlives
+  the seven-day database backup retention, so a role restored to an
+  earlier point than its siblings is reconciled by relaying the outbox
+  again). `tadas-maintenance serve | health`: the
   image's `HEALTHCHECK` runs `health`, which reads the serving worker's
   liveness key through the same cache and exits non-zero when it is
   missing. It serves its own `/metrics` on `TADAS_METRICS_PORT` (9464).
