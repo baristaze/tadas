@@ -1,3 +1,4 @@
+from datetime import timedelta
 from uuid import UUID
 
 from tadas.om.base import new_id, utcnow
@@ -68,7 +69,9 @@ def make_membership(user_id: UUID, role: Role = Role.MEMBER) -> Membership:
     )
 
 
-def make_session(identity_id: UUID, user_id: UUID, token_hash: str) -> Session:
+def make_session(
+    identity_id: UUID, user_id: UUID, token_hash: str, ttl: timedelta = timedelta(hours=1)
+) -> Session:
     now = utcnow()
     return Session(
         id=new_id(),
@@ -80,7 +83,7 @@ def make_session(identity_id: UUID, user_id: UUID, token_hash: str) -> Session:
         user_id=user_id,
         token_hash=token_hash,
         credential_kind=CredentialKind.SESSION_TOKEN,
-        expires_at=now,
+        expires_at=now + ttl,
     )
 
 
@@ -100,7 +103,9 @@ def make_api_key(user_id: UUID, key_hash: str) -> ApiKey:
     )
 
 
-def make_socket_ticket(user_id: UUID, ticket_hash: str) -> SocketTicket:
+def make_socket_ticket(
+    user_id: UUID, ticket_hash: str, ttl: timedelta = timedelta(minutes=1)
+) -> SocketTicket:
     now = utcnow()
     return SocketTicket(
         id=new_id(),
@@ -109,5 +114,5 @@ def make_socket_ticket(user_id: UUID, ticket_hash: str) -> SocketTicket:
         ticket_hash=ticket_hash,
         credential_kind=CredentialKind.SESSION_TOKEN,
         credential_id=new_id(),
-        expires_at=now,
+        expires_at=now + ttl,
     )

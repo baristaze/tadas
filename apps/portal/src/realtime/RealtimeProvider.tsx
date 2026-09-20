@@ -2,7 +2,7 @@
 // channel.ts, without React, and this component gives it the query cache, the
 // transport client, and the connection store, and shows the degraded banner.
 import { useQueryClient } from "@tanstack/react-query";
-import type { TicketView } from "../api";
+import type { IssuedTicketView } from "../api";
 import { useEffect, type ReactNode } from "react";
 import { api } from "../app/api";
 import { Banner } from "../design/kit";
@@ -20,7 +20,7 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!token) return;
     const channel = openChannel({
-      requestTicket: async () => (await api.post<TicketView>("/v1/realtime/tickets")).ticket,
+      requestTicket: async () => (await api.post<IssuedTicketView>("/v1/realtime/tickets")).ticket,
       openSocket: (ticket) =>
         new WebSocket(api.websocketUrl(`/v1/realtime?ticket=${encodeURIComponent(ticket)}`)),
       fetchEventsAfter,
@@ -28,6 +28,7 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
       refreshAll: () => queryClient.invalidateQueries(),
       connection: useConnectionStore,
       pageSize: EVENTS_PAGE,
+      onUnauthenticated: () => useSessionStore.getState().clear(),
     });
     return () => channel.stop();
   }, [token, queryClient]);

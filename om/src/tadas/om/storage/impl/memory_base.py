@@ -4,6 +4,7 @@ outbox memory storage the root handed this impl, the twin of "in the same
 commit"."""
 
 import asyncio
+from collections.abc import Iterator
 from typing import Protocol, TypeVar
 from uuid import UUID
 
@@ -71,3 +72,9 @@ class MemoryStorageBase:
     @staticmethod
     def _rows_across_tenants(table: MemoryTable[E]) -> list[tuple[UUID, E]]:
         return sorted(table.values(), key=lambda pair: pair[1].id)
+
+    @staticmethod
+    def _every(table: MemoryTable[E]) -> Iterator[E]:
+        """Every entity of a table, any tenant, unordered: for a key that is
+        unique across tenants (a token hash, a slug)."""
+        return (entity for _, entity in table.values())

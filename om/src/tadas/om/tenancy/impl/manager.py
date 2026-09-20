@@ -1,3 +1,4 @@
+import asyncio
 import secrets
 from collections.abc import Mapping
 from datetime import timedelta
@@ -29,6 +30,7 @@ from tadas.om.outbox import OutboxRelayInterface
 from tadas.om.outbox.types.row import outbox_row, snapshot
 from tadas.om.tenancy.manager import TenancyManagerInterface
 from tadas.om.tenancy.rules import (
+    DUMMY_PASSWORD_HASH,
     MAX_API_KEY_TTL,
     PREFIX_FOR_KIND,
     capped_role,
@@ -71,9 +73,9 @@ class TenancyOptions(Platform):
     api_key_ttl: timedelta = MAX_API_KEY_TTL
     ticket_ttl: timedelta = timedelta(seconds=60)
     max_limit: int = 200
-    retention: timedelta = timedelta(
-        days=30
-    )  # removed members and revoked keys are purged after this
+    retention: timedelta = timedelta(days=30)
+    """Removed members, revoked keys, dead sessions, and spent socket tickets
+    are purged this long after they ended."""
 
 
 def mint_token(kind: CredentialKind) -> str:
@@ -138,7 +140,6 @@ class TenancyManagerImpl(TenancyManagerInterface):
             updated_by=user_id,
             slug=slug,
         )
-        await self._storage.write_org(org.id, org)
         user = User(
             id=user_id,
             created_at=now,
@@ -149,7 +150,6 @@ class TenancyManagerImpl(TenancyManagerInterface):
             email=email,
             display_name=display_name,
         )
-        await self._storage.write_user(org.id, user)
         membership = Membership(
             id=new_id(),
             created_at=now,
@@ -159,7 +159,8 @@ class TenancyManagerImpl(TenancyManagerInterface):
             user_id=user_id,
             role=Role.OWNER,
         )
-        await self._storage.write_membership(org.id, membership)
+        # One commit: a slug taken meanwhile leaves no org without its owner.
+        await self._storage.create_org_with_owner(org.id, org, user, membership)
         # The principal now exists; everything after this line runs under it.
         ctx = build_context(
             rctx,
@@ -228,24 +229,31 @@ class TenancyManagerImpl(TenancyManagerInterface):
             email=email,
             display_name=display_name,
         )
-        await self._storage.write_membership(
-            ctx.org_id,
-            Membership(
-                id=new_id(),
-                created_at=now,
-                updated_at=now,
-                created_by=ctx.user_id,
-                updated_by=ctx.user_id,
-                user_id=user_id,
-                role=role,
-            ),
+        membership = Membership(
+            id=new_id(),
+            created_at=now,
+            updated_at=now,
+            created_by=ctx.user_id,
+            updated_by=ctx.user_id,
+            user_id=user_id,
+            role=role,
         )
-        await self._write_user(ctx, user, "created")
+        # One commit: the user, the membership, and the outbox row land together,
+        # so a concurrent add of the same person leaves no membership without
+        # its user and no user without a membership.
+        row = outbox_row(ctx, "tenancy.user.created", user.id, snapshot(user))
+        await self._storage.create_member(ctx.org_id, user, membership, row)
+        await self._relay.relay(ctx.org_id, row)
         return ctx, user, True
 
     async def login(self, rctx: RequestContext, email: str, password: str) -> IssuedLogin:
         identity = await self._storage.read_identity_by_email(email)
-        if identity is None or not verify_password(password, identity.password_hash):
+        # The hash is verified on a miss too, against a fixed dummy, so an
+        # unknown email costs what a wrong password costs; scrypt runs off the
+        # event loop, so a sign-in never stalls every other request.
+        stored = DUMMY_PASSWORD_HASH if identity is None else identity.password_hash
+        verified = await asyncio.to_thread(verify_password, password, stored)
+        if identity is None or not verified:
             raise InvalidCredential("email or password is wrong")
         now = utcnow()
         token = mint_token(CredentialKind.LOGIN)
@@ -525,8 +533,8 @@ class TenancyManagerImpl(TenancyManagerInterface):
         ctx.require(Permission.MANAGE_MEMBERS)
         if user_id == ctx.user_id:
             raise ValidationFailed("a member cannot remove themselves")
-        user = await self._live_user(ctx, user_id)
         membership = await self._live_membership(ctx, user_id)
+        user = await self._live_user(ctx, user_id)
         if not role_at_most(membership.role, ctx.security.role):
             raise NotAuthorized("cannot remove a member above your own role")
         now = utcnow()
@@ -538,9 +546,17 @@ class TenancyManagerImpl(TenancyManagerInterface):
                 "updated_by": ctx.user_id,
             }
         )
-        await self._storage.write_membership(
-            ctx.org_id, membership.model_copy(update={"updated_at": now, "updated_by": ctx.user_id})
+        # The membership ends with the member: soft-deleted beside the user, so
+        # no read lists it and no role change reaches it during the retention.
+        ended = membership.model_copy(
+            update={
+                "deleted_at": now,
+                "deleted_by": ctx.user_id,
+                "updated_at": now,
+                "updated_by": ctx.user_id,
+            }
         )
+        await self._storage.write_membership(ctx.org_id, ended)
         await self._write_user(ctx, removed, "deleted")
         return removed
 
@@ -548,9 +564,10 @@ class TenancyManagerImpl(TenancyManagerInterface):
 
     async def get_sessions(self, ctx: OpContext, limit: int) -> list[Session]:
         ctx.require(Permission.READ)
-        now = utcnow()
-        sessions = await self._storage.read_sessions(ctx.org_id, ctx.user_id, self._clamp(limit))
-        return [session for session in sessions if session.expires_at > now]
+        # Live at the storage: a page of dead sessions cannot hide a live one.
+        return await self._storage.read_sessions(
+            ctx.org_id, ctx.user_id, utcnow(), self._clamp(limit)
+        )
 
     async def revoke_session(self, ctx: OpContext, session_id: UUID) -> Session:
         ctx.require(Permission.READ)
@@ -573,10 +590,10 @@ class TenancyManagerImpl(TenancyManagerInterface):
 
     async def get_api_keys(self, ctx: OpContext, limit: int) -> list[ApiKey]:
         ctx.require(Permission.MANAGE_KEYS)
-        keys = await self._storage.read_api_keys(ctx.org_id, self._clamp(limit))
-        if ctx.has(Permission.MANAGE_MEMBERS):
-            return keys
-        return [key for key in keys if key.user_id == ctx.user_id]
+        # A member manager sees the tenant's keys; anyone else their own, filtered
+        # at the storage so a page of other people's keys cannot hide theirs.
+        own_only = None if ctx.has(Permission.MANAGE_MEMBERS) else ctx.user_id
+        return await self._storage.read_api_keys(ctx.org_id, self._clamp(limit), own_only)
 
     async def create_api_key(
         self,
@@ -718,8 +735,11 @@ class TenancyManagerImpl(TenancyManagerInterface):
         return user
 
     async def _live_membership(self, ctx: OpContext, user_id: UUID) -> Membership:
+        """The membership of a live user, or NotFound: a removed member has no
+        membership to read or change, whatever the row says."""
+        await self._live_user(ctx, user_id)
         membership = await self._storage.read_membership_for_user(ctx.org_id, user_id)
-        if membership is None:
+        if membership is None or membership.deleted_at is not None:
             raise NotFound(f"membership of user {user_id} not found")
         return membership
 

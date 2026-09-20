@@ -1,12 +1,16 @@
 from datetime import datetime
+from typing import Any
 from uuid import UUID
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, or_, select, update
+from sqlalchemy.exc import IntegrityError
 
+from tadas.om.base import Identifiable
 from tadas.om.exceptions import Conflict, UniqueKeyTaken
+from tadas.om.outbox.storage.tables.outbox_rows import OutboxRows
 from tadas.om.outbox.types.row import OutboxRow
-from tadas.om.storage.impl.pg_base import PgStorageBase
-from tadas.om.storage.utils.translation import to_model
+from tadas.om.storage.impl.pg_base import PgStorageBase, violated_constraint
+from tadas.om.storage.utils.translation import to_model, to_row
 from tadas.om.tenancy.storage import TenancyStorageInterface
 from tadas.om.tenancy.storage.tables.api_keys import ApiKeys
 from tadas.om.tenancy.storage.tables.identities import Identities
@@ -63,6 +67,35 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
     async def write_org(self, org_id: UUID, org: Org) -> None:
         await self._upsert(Orgs, org_id, org)
 
+    async def create_org_with_owner(
+        self, org_id: UUID, org: Org, user: User, membership: Membership
+    ) -> None:
+        await self._create_together(org_id, (Orgs, org), (Users, user), (Memberships, membership))
+
+    async def create_member(
+        self, org_id: UUID, user: User, membership: Membership, outbox_row: OutboxRow
+    ) -> None:
+        await self._create_together(
+            org_id, (Users, user), (Memberships, membership), (OutboxRows, outbox_row)
+        )
+
+    async def _create_together(self, org_id: UUID, *rows: tuple[type[Any], Identifiable]) -> None:
+        """The rows land in one commit or not at all; every table is in the
+        core role, which the session's role routing holds. A violated key is
+        UniqueKeyTaken, never a driver error."""
+        row_type = rows[0][0]
+        async with self._session_for(row_type) as session:
+            for table, entity in rows:
+                session.add(to_row(entity, table, org_id=org_id))
+            try:
+                await session.commit()
+            except IntegrityError as error:
+                await session.rollback()
+                raise UniqueKeyTaken(
+                    f"{row_type.__tablename__} and its siblings: "
+                    f"{violated_constraint(error) or 'a unique key'} is taken"
+                ) from error
+
     async def read_users(self, org_id: UUID, limit: int) -> list[User]:
         stmt = (
             select(Users)
@@ -97,12 +130,14 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
             await self._upsert(Users, org_id, user, outbox_row)
         except UniqueKeyTaken as error:
             # uq_users_org_id_identity_id_live: one live user per identity in a tenant.
-            raise Conflict(f"identity {user.identity_id} already has a live user") from error
+            raise UniqueKeyTaken(
+                f"identity {user.identity_id} already has a live user in this org"
+            ) from error
 
     async def read_memberships(self, org_id: UUID, limit: int) -> list[Membership]:
         stmt = (
             select(Memberships)
-            .where(Memberships.org_id == org_id)
+            .where(Memberships.org_id == org_id, Memberships.deleted_at.is_(None))
             .order_by(Memberships.id)
             .limit(limit)
         )
@@ -112,7 +147,9 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
 
     async def read_membership_for_user(self, org_id: UUID, user_id: UUID) -> Membership | None:
         stmt = select(Memberships).where(
-            Memberships.org_id == org_id, Memberships.user_id == user_id
+            Memberships.org_id == org_id,
+            Memberships.user_id == user_id,
+            Memberships.deleted_at.is_(None),
         )
         async with self._session_for(stmt) as session:
             row = (await session.execute(stmt)).scalar_one_or_none()
@@ -123,15 +160,18 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
     ) -> None:
         await self._upsert(Memberships, org_id, membership, outbox_row)
 
-    async def read_sessions(self, org_id: UUID, user_id: UUID, limit: int) -> list[Session]:
+    async def read_sessions(
+        self, org_id: UUID, user_id: UUID, live_at: datetime, limit: int
+    ) -> list[Session]:
         stmt = (
             select(Sessions)
             .where(
                 Sessions.org_id == org_id,
                 Sessions.user_id == user_id,
                 Sessions.revoked_at.is_(None),
+                Sessions.expires_at > live_at,
             )
-            .order_by(Sessions.id)
+            .order_by(Sessions.id.desc())
             .limit(limit)
         )
         async with self._session_for(stmt) as session:
@@ -153,13 +193,17 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
     async def write_session(self, org_id: UUID, session: Session) -> None:
         await self._upsert(Sessions, org_id, session)
 
-    async def read_api_keys(self, org_id: UUID, limit: int) -> list[ApiKey]:
+    async def read_api_keys(
+        self, org_id: UUID, limit: int, user_id: UUID | None = None
+    ) -> list[ApiKey]:
         stmt = (
             select(ApiKeys)
             .where(ApiKeys.org_id == org_id, ApiKeys.deleted_at.is_(None))
-            .order_by(ApiKeys.id)
+            .order_by(ApiKeys.id.desc())
             .limit(limit)
         )
+        if user_id is not None:
+            stmt = stmt.where(ApiKeys.user_id == user_id)
         async with self._session_for(stmt) as session:
             result = await session.execute(stmt)
             return [to_model(row, ApiKey) for row in result.scalars()]
@@ -219,19 +263,39 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
         async with self._session_for(gone_users) as session:
             user_ids = list((await session.execute(gone_users)).scalars().all())
             purged += len(user_ids)
-            if user_ids:
-                memberships = (
-                    delete(Memberships)
-                    .where(Memberships.org_id == org_id, Memberships.user_id.in_(user_ids))
-                    .returning(Memberships.id)
+            memberships = (
+                delete(Memberships)
+                .where(
+                    Memberships.org_id == org_id,
+                    or_(Memberships.user_id.in_(user_ids), Memberships.deleted_at < before),
                 )
-                purged += len((await session.execute(memberships)).scalars().all())
+                .returning(Memberships.id)
+            )
+            purged += len((await session.execute(memberships)).scalars().all())
             keys = (
                 delete(ApiKeys)
                 .where(ApiKeys.org_id == org_id, ApiKeys.deleted_at < before)
                 .returning(ApiKeys.id)
             )
             purged += len((await session.execute(keys)).scalars().all())
+            sessions = (
+                delete(Sessions)
+                .where(
+                    Sessions.org_id == org_id,
+                    or_(Sessions.revoked_at < before, Sessions.expires_at < before),
+                )
+                .returning(Sessions.id)
+            )
+            purged += len((await session.execute(sessions)).scalars().all())
+            tickets = (
+                delete(SocketTickets)
+                .where(
+                    SocketTickets.org_id == org_id,
+                    or_(SocketTickets.redeemed_at < before, SocketTickets.expires_at < before),
+                )
+                .returning(SocketTickets.id)
+            )
+            purged += len((await session.execute(tickets)).scalars().all())
             await session.commit()
         return purged
 

@@ -14,13 +14,13 @@ from tadas.client.types import (
     EventView,
     IssuedLoginView,
     IssuedSessionView,
+    IssuedTicketView,
     MeView,
     SessionView,
     TaskPageView,
     TaskScope,
     TaskStatus,
     TaskView,
-    TicketView,
     UserView,
 )
 
@@ -263,5 +263,5 @@ class ApiClient:
         )
         return [EventView.model_validate(e) for e in cast(list[Any], body)]
 
-    async def ticket(self) -> TicketView:
-        return TicketView.model_validate(await self.request("POST", "/v1/realtime/tickets"))
+    async def ticket(self) -> IssuedTicketView:
+        return IssuedTicketView.model_validate(await self.request("POST", "/v1/realtime/tickets"))

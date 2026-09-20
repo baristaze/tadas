@@ -3,10 +3,15 @@ from uuid import UUID
 from sqlalchemy import Index
 from sqlalchemy.orm import Mapped
 
-from tadas.om.storage.tables.base import Base, IdentifiableMixin, TrackableMixin
+from tadas.om.storage.tables.base import (
+    Base,
+    IdentifiableMixin,
+    SoftDeletableMixin,
+    TrackableMixin,
+)
 
 
-class Memberships(IdentifiableMixin, TrackableMixin, Base):
+class Memberships(IdentifiableMixin, TrackableMixin, SoftDeletableMixin, Base):
     __tablename__ = "memberships"
     # org_id leads the unique compound index, so it gets no index of its own.
     __org_id_index__ = False

@@ -59,8 +59,15 @@ async def test_get_events_clamps_the_limit_and_tolerates_a_negative_cursor(
 
 async def test_the_stream_is_read_with_read_and_is_append_only(manager: EventsManagerImpl) -> None:
     # An append-only entity: no update, no delete, and the read needs READ.
-    viewer = context(Role.VIEWER)
-    await manager.append(viewer, make_event())
+    member = context(Role.MEMBER)
+    viewer = member.model_copy(
+        update={
+            "security": member.security.model_copy(
+                update={"role": Role.VIEWER, "permissions": permissions_of(Role.VIEWER)}
+            )
+        }
+    )
+    await manager.append(member, make_event())
     assert [e.seq for e in await manager.get_events(viewer, after_seq=0, limit=10)] == [1]
     assert not hasattr(manager, "update_event") and not hasattr(manager, "delete_event")
     no_read = viewer.model_copy(
@@ -68,6 +75,33 @@ async def test_the_stream_is_read_with_read_and_is_append_only(manager: EventsMa
     )
     with pytest.raises(NotAuthorized):
         await manager.get_events(no_read, after_seq=0, limit=10)
+
+
+async def test_an_append_is_a_write_and_carries_the_contexts_provenance(
+    manager: EventsManagerImpl,
+) -> None:
+    # A viewer reads the stream and appends nothing to it.
+    viewer = context(Role.VIEWER)
+    with pytest.raises(NotAuthorized):
+        await manager.append(viewer, make_event())
+    assert await manager.get_head(viewer) == 0
+    # A caller-built event names whoever it likes; the row records the context.
+    member = context(Role.MEMBER)
+    foreign = make_event("work.item.failed")
+    appended = await manager.append(member, foreign)
+    assert (appended.actor_id, appended.request_id, appended.app) == (
+        member.user_id,
+        member.request_id,
+        "portal",
+    )
+    assert (appended.id, appended.kind, appended.target_id, appended.payload) == (
+        foreign.id,
+        foreign.kind,
+        foreign.target_id,
+        foreign.payload,
+    )
+    assert appended.actor_id != foreign.actor_id and appended.request_id != foreign.request_id
+    assert await manager.get_events(member, after_seq=0, limit=10) == [appended]
 
 
 async def test_the_head_is_the_last_seq_of_the_callers_tenant(manager: EventsManagerImpl) -> None:

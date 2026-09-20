@@ -1,10 +1,11 @@
+from collections.abc import Callable, Iterable
 from datetime import datetime
 from uuid import UUID
 
-from tadas.om.exceptions import Conflict
+from tadas.om.exceptions import Conflict, UniqueKeyTaken
 from tadas.om.outbox.storage import OutboxLandingInterface
 from tadas.om.outbox.types.row import OutboxRow
-from tadas.om.storage.impl.memory_base import MemoryStorageBase, MemoryTable
+from tadas.om.storage.impl.memory_base import HasId, MemoryStorageBase, MemoryTable
 from tadas.om.tenancy.storage import TenancyStorageInterface
 from tadas.om.tenancy.types.api_key import ApiKey
 from tadas.om.tenancy.types.identity import Identity
@@ -26,6 +27,16 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
         self._api_keys: MemoryTable[ApiKey] = {}
         self._socket_tickets: MemoryTable[SocketTicket] = {}
 
+    @staticmethod
+    def _require_free[E: HasId](
+        rows: Iterable[E], entity: E, taken_by: Callable[[E], bool], key: str
+    ) -> None:
+        """The memory twin of a unique index: refuses the write when another row
+        (never the entity's own, so an update by copy passes) holds the key."""
+        for other in rows:
+            if other.id != entity.id and taken_by(other):
+                raise UniqueKeyTaken(f"{key} is taken")
+
     async def read_identity(self, identity_id: UUID) -> Identity | None:
         return self._identities.get(identity_id)
 
@@ -33,6 +44,12 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
         return next((i for i in self._identities.values() if i.email == email), None)
 
     async def write_identity(self, identity: Identity) -> None:
+        self._require_free(
+            self._identities.values(),
+            identity,
+            lambda other: other.email == identity.email,
+            "uq_identities_email",
+        )
         self._identities[identity.id] = identity
 
     async def read_org(self, org_id: UUID) -> Org | None:
@@ -48,7 +65,39 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
         return orgs[:limit]
 
     async def write_org(self, org_id: UUID, org: Org) -> None:
+        self._require_free(
+            self._every(self._orgs), org, lambda other: other.slug == org.slug, "uq_orgs_slug"
+        )
         self._put(self._orgs, org_id, org)
+
+    async def create_org_with_owner(
+        self, org_id: UUID, org: Org, user: User, membership: Membership
+    ) -> None:
+        async with self._lock:
+            self._require_free(
+                self._every(self._orgs), org, lambda other: other.slug == org.slug, "uq_orgs_slug"
+            )
+            self._require_live_identity_free(org_id, user)
+            self._require_membership_free(org_id, membership)
+            for table, entity in ((self._orgs, org), (self._users, user)):
+                if entity.id in table:
+                    raise UniqueKeyTaken(f"{entity.id} is already written")
+            if membership.id in self._memberships:
+                raise UniqueKeyTaken(f"{membership.id} is already written")
+            self._put(self._orgs, org_id, org)
+            self._put(self._users, org_id, user)
+            self._put(self._memberships, org_id, membership)
+
+    async def create_member(
+        self, org_id: UUID, user: User, membership: Membership, outbox_row: OutboxRow
+    ) -> None:
+        async with self._lock:
+            self._require_live_identity_free(org_id, user)
+            self._require_membership_free(org_id, membership)
+            if user.id in self._users or membership.id in self._memberships:
+                raise UniqueKeyTaken(f"{user.id} or {membership.id} is already written")
+            self._put(self._users, org_id, user, outbox_row)
+            self._put(self._memberships, org_id, membership)
 
     async def read_users(self, org_id: UUID, limit: int) -> list[User]:
         return [u for u in self._rows(self._users, org_id) if u.deleted_at is None][:limit]
@@ -67,35 +116,55 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
         self, org_id: UUID, user: User, outbox_row: OutboxRow | None = None
     ) -> None:
         async with self._lock:
-            if user.deleted_at is None:
-                for other in self._rows(self._users, org_id):
-                    if (
-                        other.id != user.id
-                        and other.identity_id == user.identity_id
-                        and other.deleted_at is None
-                    ):
-                        raise Conflict(f"identity {user.identity_id} already has a live user")
+            self._require_live_identity_free(org_id, user)
             self._put(self._users, org_id, user, outbox_row)
 
+    def _require_live_identity_free(self, org_id: UUID, user: User) -> None:
+        # uq_users_org_id_identity_id_live: one live user per identity in a tenant.
+        if user.deleted_at is None:
+            self._require_free(
+                self._rows(self._users, org_id),
+                user,
+                lambda other: other.identity_id == user.identity_id and other.deleted_at is None,
+                f"identity {user.identity_id} already has a live user in this org",
+            )
+
     async def read_memberships(self, org_id: UUID, limit: int) -> list[Membership]:
-        return self._rows(self._memberships, org_id)[:limit]
+        return [m for m in self._rows(self._memberships, org_id) if m.deleted_at is None][:limit]
 
     async def read_membership_for_user(self, org_id: UUID, user_id: UUID) -> Membership | None:
         return next(
-            (m for m in self._rows(self._memberships, org_id) if m.user_id == user_id), None
+            (
+                m
+                for m in self._rows(self._memberships, org_id)
+                if m.user_id == user_id and m.deleted_at is None
+            ),
+            None,
         )
 
     async def write_membership(
         self, org_id: UUID, membership: Membership, outbox_row: OutboxRow | None = None
     ) -> None:
+        self._require_membership_free(org_id, membership)
         self._put(self._memberships, org_id, membership, outbox_row)
 
-    async def read_sessions(self, org_id: UUID, user_id: UUID, limit: int) -> list[Session]:
-        return [
+    def _require_membership_free(self, org_id: UUID, membership: Membership) -> None:
+        self._require_free(
+            self._rows(self._memberships, org_id),
+            membership,
+            lambda other: other.user_id == membership.user_id,
+            "uq_memberships_org_id_user_id",
+        )
+
+    async def read_sessions(
+        self, org_id: UUID, user_id: UUID, live_at: datetime, limit: int
+    ) -> list[Session]:
+        live = [
             s
             for s in self._rows(self._sessions, org_id)
-            if s.user_id == user_id and s.revoked_at is None
-        ][:limit]
+            if s.user_id == user_id and s.revoked_at is None and s.expires_at > live_at
+        ]
+        return live[::-1][:limit]
 
     async def read_session(self, org_id: UUID, session_id: UUID) -> Session | None:
         return self._get(self._sessions, org_id, session_id)
@@ -111,10 +180,23 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
         )
 
     async def write_session(self, org_id: UUID, session: Session) -> None:
+        self._require_free(
+            self._every(self._sessions),
+            session,
+            lambda other: other.token_hash == session.token_hash,
+            "uq_sessions_token_hash",
+        )
         self._put(self._sessions, org_id, session)
 
-    async def read_api_keys(self, org_id: UUID, limit: int) -> list[ApiKey]:
-        return [k for k in self._rows(self._api_keys, org_id) if k.deleted_at is None][:limit]
+    async def read_api_keys(
+        self, org_id: UUID, limit: int, user_id: UUID | None = None
+    ) -> list[ApiKey]:
+        live = [
+            k
+            for k in self._rows(self._api_keys, org_id)
+            if k.deleted_at is None and (user_id is None or k.user_id == user_id)
+        ]
+        return live[::-1][:limit]
 
     async def read_api_key(self, org_id: UUID, api_key_id: UUID) -> ApiKey | None:
         return self._get(self._api_keys, org_id, api_key_id)
@@ -129,6 +211,7 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
         self, org_id: UUID, api_key: ApiKey, outbox_row: OutboxRow
     ) -> tuple[ApiKey, bool]:
         async with self._lock:
+            self._require_key_hash_free(api_key)
             if self._insert(self._api_keys, org_id, api_key, outbox_row):
                 return api_key, True
             stored = self._get(self._api_keys, org_id, api_key.id)
@@ -147,7 +230,16 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
     async def write_api_key(
         self, org_id: UUID, api_key: ApiKey, outbox_row: OutboxRow | None = None
     ) -> None:
+        self._require_key_hash_free(api_key)
         self._put(self._api_keys, org_id, api_key, outbox_row)
+
+    def _require_key_hash_free(self, api_key: ApiKey) -> None:
+        self._require_free(
+            self._every(self._api_keys),
+            api_key,
+            lambda other: other.key_hash == api_key.key_hash,
+            "uq_api_keys_key_hash",
+        )
 
     async def purge_deleted(self, org_id: UUID, before: datetime) -> int:
         gone_users = [
@@ -156,23 +248,49 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
             if u.deleted_at is not None and u.deleted_at < before
         ]
         gone_memberships = [
-            m.id for m in self._rows(self._memberships, org_id) if m.user_id in gone_users
+            m.id
+            for m in self._rows(self._memberships, org_id)
+            if m.user_id in gone_users or (m.deleted_at is not None and m.deleted_at < before)
         ]
         gone_keys = [
             k.id
             for k in self._rows(self._api_keys, org_id)
             if k.deleted_at is not None and k.deleted_at < before
         ]
+        gone_sessions = [
+            s.id
+            for s in self._rows(self._sessions, org_id)
+            if (s.revoked_at is not None and s.revoked_at < before) or s.expires_at < before
+        ]
+        gone_tickets = [
+            t.id
+            for t in self._rows(self._socket_tickets, org_id)
+            if (t.redeemed_at is not None and t.redeemed_at < before) or t.expires_at < before
+        ]
         for table, ids in (
             (self._users, gone_users),
             (self._memberships, gone_memberships),
             (self._api_keys, gone_keys),
+            (self._sessions, gone_sessions),
+            (self._socket_tickets, gone_tickets),
         ):
             for row_id in ids:
                 del table[row_id]
-        return len(gone_users) + len(gone_memberships) + len(gone_keys)
+        return (
+            len(gone_users)
+            + len(gone_memberships)
+            + len(gone_keys)
+            + len(gone_sessions)
+            + len(gone_tickets)
+        )
 
     async def write_socket_ticket(self, org_id: UUID, ticket: SocketTicket) -> None:
+        self._require_free(
+            self._every(self._socket_tickets),
+            ticket,
+            lambda other: other.ticket_hash == ticket.ticket_hash,
+            "uq_socket_tickets_ticket_hash",
+        )
         self._put(self._socket_tickets, org_id, ticket)
 
     async def consume_socket_ticket(

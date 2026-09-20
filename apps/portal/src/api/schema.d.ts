@@ -502,6 +502,17 @@ export interface components {
             token: string;
             user: components["schemas"]["UserView"];
         };
+        /**
+         * IssuedTicketView
+         * @description Carries the freshly minted socket ticket in the clear, once; redeeming
+         *     it opens the channel and re-checks the credential behind it.
+         */
+        IssuedTicketView: {
+            /** Expires In Seconds */
+            expires_in_seconds: number;
+            /** Ticket */
+            ticket: string;
+        };
         /** LoginRequest */
         LoginRequest: {
             /** Email */
@@ -657,13 +668,6 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
-        };
-        /** TicketView */
-        TicketView: {
-            /** Expires In Seconds */
-            expires_in_seconds: number;
-            /** Ticket */
-            ticket: string;
         };
         /** UpdateMeRequest */
         UpdateMeRequest: {
@@ -1311,7 +1315,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["TicketView"];
+                    "application/json": components["schemas"]["IssuedTicketView"];
                 };
             };
             /** @description Validation Error */

@@ -67,7 +67,28 @@ context on keeps the stage the callee needs.
   manager, `TenancyOperatorManagerInterface`, which takes `OperatorContext`
   and nothing else. A socket ticket is a row; redeeming it is one conditional
   update on its hash, and the cache only remembers a redeemed one so a
-  replay is refused without a round trip.
+  replay is refused without a round trip. Every unique key the schema
+  declares (an identity's email, an org's slug, one live user per identity
+  and one membership per user in a tenant, the hashes of sessions, api
+  keys, and socket tickets) is refused by both storage impls as
+  `UniqueKeyTaken`, a `Conflict` (409), so a race the read did not see is
+  never a driver error and never mistaken for a retry: the Postgres
+  create primitive reports an existing id only when the primary key is the
+  violated constraint. The seeding transitions are named atomic creates:
+  `bootstrap` lands the org, its first user, and the owner's membership in
+  one commit (`create_org_with_owner`), `add_member` the user, the
+  membership, and the outbox row (`create_member`), so a concurrent
+  duplicate leaves no partial tenant behind. Removing a member ends their
+  membership with them: it is soft-deleted beside the user, hidden from
+  every read, and out of reach of a role change. A sign-in verifies the
+  password against a fixed dummy hash when the email is unknown, so the
+  response time does not say which emails exist, and runs scrypt off the
+  event loop. Sessions and api keys are listed newest first and filtered
+  at the storage (live at the instant asked; a member's own keys), so a
+  page of dead rows never hides a live one; the purge also removes
+  sessions revoked or expired and socket tickets redeemed or expired past
+  the retention. Login credentials, stored under the system scope, are
+  outside the per-tenant sweep today.
 - `work`: the table-backed work queue in the `queue` role; a row's
   routing field is its `lane`, payload shapes are fixed per `WorkKind`
   by `WORK_PAYLOADS`, enqueue validates against it and publishes
@@ -126,7 +147,11 @@ context on keeps the stage the callee needs.
   (`<namespace>.<entity>.<action>`, or an audit kind), `target_id`, a
   `payload`, and the actor and request that produced it. The append is
   idempotent on the event id, so relaying an outbox row twice appends
-  once. No update, no delete.
+  once. No update, no delete. The entity events reach the stream through
+  the event storage, from the outbox relay; the manager's `append` is for
+  an audit entry (the work manager's dead letter), requires `WRITE`, and
+  stamps the actor, the request, and the app from the context, never
+  from the caller's event.
 
 Every table belongs to one database role (`core`, `activity`, `queue`,
 `admin`); the map in `tadas.om.storage.roles` decides the schema, the
@@ -225,7 +250,8 @@ everything in-process for tests.
   expires), a liveness heartbeat in the cache, and the
   maintenance sweep (requeue stale leases under one service context per
   live tenant, then purge the tenant's soft-deleted tasks, removed
-  members, and revoked api keys past their retention (the one hard
+  members with their ended memberships, revoked api keys, dead sessions,
+  and spent socket tickets past their retention (the one hard
   delete, 30 days by default), then relay the pending outbox rows and
   purge the done ones after eight days, which outlives the seven-day
   database backup retention, so a role restored to an earlier point
@@ -401,6 +427,13 @@ client construction that names no timeout. The storage contracts race
 the named atomic methods, not only call them: two claimers and two
 take-overs run at once through `asyncio.gather` and exactly one wins,
 over memory in the fast gate and over Postgres in the integration job.
+The same contracts hold every unique key the schema declares to both
+impls (a duplicate raises `UniqueKeyTaken` and the row that holds the
+key is unchanged; an update by copy of that row passes), and show that
+a named atomic create lands whole or not at all.
+`services/api/tests/test_public_types.py` reads the emitted OpenAPI
+document and fails on a view that carries a token, a key, or a ticket
+without the `Issued` prefix.
 Each process's `tests/test_settings.py` (and `infra/tests/`) reads
 `.env.example` and fails on a settings field it does not document, and
 reads every Terraform environment and fails on a field the cloud neither

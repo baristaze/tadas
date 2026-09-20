@@ -41,6 +41,17 @@ def hash_password(password: str, salt: bytes) -> str:
     return f"scrypt${salt.hex()}${digest.hex()}"
 
 
+DUMMY_PASSWORD_HASH = (
+    "scrypt$000102030405060708090a0b0c0d0e0f$"
+    "6e4b2a03fcd2540436bfc7373ac964ddf9c36b407915201ad5a06f53bf74600c"
+    "fe8d883942761592340c6a42909826638155e1d2c649d6b4d773967e17439de9"
+)
+"""A stored hash to verify against when the email is unknown, so a miss
+costs the same scrypt as a wrong password and the response time does not
+say which emails exist. The outcome of that verification is discarded; a
+sign-in with an unknown email is refused whatever it says."""
+
+
 def verify_password(password: str, stored: str) -> bool:
     try:
         scheme, salt_hex, _digest = stored.split("$", 2)

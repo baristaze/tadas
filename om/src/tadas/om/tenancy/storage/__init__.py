@@ -53,6 +53,25 @@ class TenancyStorageInterface(ABC):
     async def write_org(self, org_id: UUID, org: Org) -> None: ...
 
     @abstractmethod
+    async def create_org_with_owner(
+        self, org_id: UUID, org: Org, user: User, membership: Membership
+    ) -> None:
+        """A named atomic create: the org, its first user, and the owner's
+        membership land in one commit or not at all, so a slug or an identity
+        taken meanwhile (`UniqueKeyTaken`) leaves no partial tenant behind."""
+        ...
+
+    @abstractmethod
+    async def create_member(
+        self, org_id: UUID, user: User, membership: Membership, outbox_row: OutboxRow
+    ) -> None:
+        """A named atomic create: the user, their membership, and the outbox row
+        land in one commit or not at all. A key taken meanwhile (one live user
+        per identity, one membership per user) is `UniqueKeyTaken`, and nothing
+        lands, the outbox row included."""
+        ...
+
+    @abstractmethod
     async def read_users(self, org_id: UUID, limit: int) -> list[User]: ...
 
     @abstractmethod
@@ -71,10 +90,14 @@ class TenancyStorageInterface(ABC):
         ...
 
     @abstractmethod
-    async def read_memberships(self, org_id: UUID, limit: int) -> list[Membership]: ...
+    async def read_memberships(self, org_id: UUID, limit: int) -> list[Membership]:
+        """The tenant's live memberships, sorted by id; an ended one is hidden."""
+        ...
 
     @abstractmethod
-    async def read_membership_for_user(self, org_id: UUID, user_id: UUID) -> Membership | None: ...
+    async def read_membership_for_user(self, org_id: UUID, user_id: UUID) -> Membership | None:
+        """The user's live membership, or None when there is none or it ended."""
+        ...
 
     @abstractmethod
     async def write_membership(
@@ -82,8 +105,12 @@ class TenancyStorageInterface(ABC):
     ) -> None: ...
 
     @abstractmethod
-    async def read_sessions(self, org_id: UUID, user_id: UUID, limit: int) -> list[Session]:
-        """One user's sessions that are not revoked, sorted by id."""
+    async def read_sessions(
+        self, org_id: UUID, user_id: UUID, live_at: datetime, limit: int
+    ) -> list[Session]:
+        """One user's sessions live at `live_at` (not revoked, not yet expired),
+        newest first, clamped after the filter so a live session is never
+        pushed out of the page by dead ones."""
         ...
 
     @abstractmethod
@@ -98,7 +125,12 @@ class TenancyStorageInterface(ABC):
     async def write_session(self, org_id: UUID, session: Session) -> None: ...
 
     @abstractmethod
-    async def read_api_keys(self, org_id: UUID, limit: int) -> list[ApiKey]: ...
+    async def read_api_keys(
+        self, org_id: UUID, limit: int, user_id: UUID | None = None
+    ) -> list[ApiKey]:
+        """The tenant's unrevoked keys, newest first; only `user_id`'s when given,
+        filtered before the clamp."""
+        ...
 
     @abstractmethod
     async def read_api_key(self, org_id: UUID, api_key_id: UUID) -> ApiKey | None: ...
@@ -129,8 +161,10 @@ class TenancyStorageInterface(ABC):
     @abstractmethod
     async def purge_deleted(self, org_id: UUID, before: datetime) -> int:
         """The one hard delete: removes the tenant's users soft-deleted before `before`
-        with their memberships, and its api keys revoked before `before`; returns
-        how many rows went."""
+        with their memberships (and any membership ended before `before`), its
+        api keys revoked before `before`, its sessions revoked or expired before
+        `before`, and its socket tickets redeemed or expired before `before`;
+        returns how many rows went."""
         ...
 
     @abstractmethod

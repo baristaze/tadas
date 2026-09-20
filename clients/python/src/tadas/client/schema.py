@@ -60,6 +60,15 @@ class IdentityView(BaseModel):
     is_operator: Annotated[bool, Field(title='Is Operator')]
 
 
+class IssuedTicketView(BaseModel):
+    """
+    Carries the freshly minted socket ticket in the clear, once; redeeming
+    it opens the channel and re-checks the credential behind it.
+    """
+    expires_in_seconds: Annotated[int, Field(title='Expires In Seconds')]
+    ticket: Annotated[str, Field(title='Ticket')]
+
+
 class LoginRequest(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -136,11 +145,6 @@ class TaskView(BaseModel):
     status: TaskStatus
     title: Annotated[str, Field(title='Title')]
     updated_at: Annotated[AwareDatetime, Field(title='Updated At')]
-
-
-class TicketView(BaseModel):
-    expires_in_seconds: Annotated[int, Field(title='Expires In Seconds')]
-    ticket: Annotated[str, Field(title='Ticket')]
 
 
 class UpdateMeRequest(BaseModel):

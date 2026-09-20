@@ -177,14 +177,16 @@ class TenancyManagerInterface(ABC):
 
     @abstractmethod
     async def remove_member(self, ctx: OpContext, user_id: UUID) -> User:
-        """Soft-deletes the member's user in this org; their credentials stop resolving."""
+        """Soft-deletes the member's user in this org and ends their membership
+        with it; their credentials stop resolving, no list shows them, and no
+        role change reaches them."""
         ...
 
     # Credentials.
 
     @abstractmethod
     async def get_sessions(self, ctx: OpContext, limit: int) -> list[Session]:
-        """The caller's own live sessions in this org."""
+        """The caller's own live sessions in this org, newest first."""
         ...
 
     @abstractmethod
@@ -196,7 +198,10 @@ class TenancyManagerInterface(ABC):
         ...
 
     @abstractmethod
-    async def get_api_keys(self, ctx: OpContext, limit: int) -> list[ApiKey]: ...
+    async def get_api_keys(self, ctx: OpContext, limit: int) -> list[ApiKey]:
+        """The tenant's unrevoked keys for a member manager, the caller's own
+        otherwise; newest first."""
+        ...
 
     @abstractmethod
     async def create_api_key(
@@ -221,9 +226,10 @@ class TenancyManagerInterface(ABC):
     @abstractmethod
     async def purge_deleted(self, ctx: OpContext) -> int:
         """The sweep, for one tenant: hard-deletes removed members (and their
-        memberships) and revoked api keys past the retention period; returns how
-        many rows went. Erasing a person is this purge; personal data lives in
-        named fields (`email`, `display_name`)."""
+        memberships), revoked api keys, revoked or expired sessions, and
+        redeemed or expired socket tickets past the retention period; returns
+        how many rows went. Erasing a person is this purge; personal data lives
+        in named fields (`email`, `display_name`)."""
         ...
 
     @abstractmethod

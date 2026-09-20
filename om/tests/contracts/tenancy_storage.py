@@ -1,5 +1,6 @@
 import asyncio
 from datetime import timedelta
+from unittest.mock import ANY
 from uuid import uuid4
 
 import pytest
@@ -14,10 +15,12 @@ from contracts.factories import (
     make_user,
 )
 from tadas.om.base import new_id, utcnow
-from tadas.om.exceptions import Conflict, TenantMismatch
+from tadas.om.exceptions import Conflict, TenantMismatch, UniqueKeyTaken
+from tadas.om.opcontext import Role
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.tenancy.storage import TenancyStorageInterface
 from tadas.om.tenancy.types.api_key import ApiKey
+from tadas.om.tenancy.types.user import User
 
 
 def make_key_row(api_key: ApiKey) -> OutboxRow:
@@ -32,6 +35,19 @@ def make_key_row(api_key: ApiKey) -> OutboxRow:
         actor_id=api_key.user_id,
         request_id=new_id(),
         app="api",
+    )
+
+
+def make_user_row(user: User) -> OutboxRow:
+    return OutboxRow(
+        id=new_id(),
+        created_at=utcnow(),
+        kind="tenancy.user.created",
+        target_id=user.id,
+        payload={"display_name": user.display_name},
+        actor_id=user.created_by,
+        request_id=new_id(),
+        app="cli",
     )
 
 
@@ -101,7 +117,7 @@ class TenancyStorageContract:
         identity = make_identity()
         user = make_user(identity.id)
         await storage.write_user(org.id, user)
-        with pytest.raises(Conflict):
+        with pytest.raises(UniqueKeyTaken):
             await storage.write_user(org.id, make_user(identity.id))
         # The same identity in another tenant, and again here once the first is gone.
         await storage.write_user(other_org.id, make_user(identity.id))
@@ -115,6 +131,140 @@ class TenancyStorageContract:
         assert await storage.read_identity(identity.id) == identity
         assert await storage.read_identity_by_email(identity.email) == identity
         assert await storage.read_identity_by_email("nobody@example.test") is None
+
+    # Every unique key the schema declares has a case here, so the memory impl
+    # refuses what the engine refuses: the write raises UniqueKeyTaken and the
+    # row that held the key is unchanged. An update by copy of the row that
+    # holds the key passes.
+
+    async def test_identity_email_is_unique(self, storage: TenancyStorageInterface) -> None:
+        email = f"{uuid4().hex}@example.test"
+        identity = make_identity(email)
+        await storage.write_identity(identity)
+        with pytest.raises(UniqueKeyTaken):
+            await storage.write_identity(make_identity(email))
+        assert await storage.read_identity_by_email(email) == identity
+        promoted = identity.model_copy(update={"is_operator": True})
+        await storage.write_identity(promoted)
+        assert await storage.read_identity(identity.id) == promoted
+
+    async def test_org_slug_is_unique(self, storage: TenancyStorageInterface) -> None:
+        org = make_org()
+        await storage.write_org(org.id, org)
+        other = make_org("Other").model_copy(update={"slug": org.slug})
+        with pytest.raises(UniqueKeyTaken):
+            await storage.write_org(other.id, other)
+        assert await storage.read_org(other.id) is None
+        assert await storage.read_org_by_slug(org.slug) == org
+        renamed = org.model_copy(update={"name": "Renamed"})
+        await storage.write_org(org.id, renamed)
+        assert await storage.read_org_by_slug(org.slug) == renamed
+
+    async def test_one_membership_per_user_in_a_tenant(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        org, other_org = make_org(), make_org("Other")
+        membership = make_membership(new_id())
+        await storage.write_membership(org.id, membership)
+        with pytest.raises(UniqueKeyTaken):
+            await storage.write_membership(org.id, make_membership(membership.user_id))
+        assert await storage.read_memberships(org.id, limit=10) == [membership]
+        # The same user id in another tenant is another key.
+        await storage.write_membership(other_org.id, make_membership(membership.user_id))
+        promoted = membership.model_copy(update={"role": Role.ADMIN})
+        await storage.write_membership(org.id, promoted)
+        assert await storage.read_membership_for_user(org.id, membership.user_id) == promoted
+
+    async def test_session_token_hash_is_unique(self, storage: TenancyStorageInterface) -> None:
+        org, other_org = make_org(), make_org("Other")
+        token_hash = uuid4().hex
+        session = make_session(new_id(), new_id(), token_hash)
+        await storage.write_session(org.id, session)
+        with pytest.raises(UniqueKeyTaken):
+            await storage.write_session(other_org.id, make_session(new_id(), new_id(), token_hash))
+        assert await storage.read_session_by_token_hash(token_hash) == (org.id, session)
+        revoked = session.model_copy(update={"revoked_at": utcnow()})
+        await storage.write_session(org.id, revoked)
+        assert await storage.read_session(org.id, session.id) == revoked
+
+    async def test_api_key_hash_is_unique(self, storage: TenancyStorageInterface) -> None:
+        org, other_org = make_org(), make_org("Other")
+        key_hash = uuid4().hex
+        api_key = make_api_key(new_id(), key_hash)
+        await storage.write_api_key(org.id, api_key)
+        with pytest.raises(UniqueKeyTaken):
+            await storage.write_api_key(other_org.id, make_api_key(new_id(), key_hash))
+        # The create refuses it too, and lands nothing under the new id.
+        minted = make_api_key(new_id(), key_hash)
+        with pytest.raises(UniqueKeyTaken):
+            await storage.issue_api_key(org.id, minted, make_key_row(minted))
+        assert await storage.read_api_key(org.id, minted.id) is None
+        assert await storage.read_api_key_by_hash(key_hash) == (org.id, api_key)
+        renamed = api_key.model_copy(update={"name": "renamed"})
+        await storage.write_api_key(org.id, renamed)
+        assert await storage.read_api_key(org.id, api_key.id) == renamed
+
+    async def test_socket_ticket_hash_is_unique(self, storage: TenancyStorageInterface) -> None:
+        org, other_org = make_org(), make_org("Other")
+        ticket_hash = uuid4().hex
+        ticket = make_socket_ticket(new_id(), ticket_hash)
+        await storage.write_socket_ticket(org.id, ticket)
+        with pytest.raises(UniqueKeyTaken):
+            await storage.write_socket_ticket(
+                other_org.id, make_socket_ticket(new_id(), ticket_hash)
+            )
+        redeemed_at = utcnow()
+        assert await storage.consume_socket_ticket(ticket_hash, redeemed_at) == (
+            org.id,
+            ticket.model_copy(update={"redeemed_at": redeemed_at}),
+        )
+
+    async def test_create_org_with_owner_lands_whole_or_not_at_all(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        org = make_org()
+        owner = make_user(make_identity().id)
+        await storage.create_org_with_owner(
+            org.id, org, owner, make_membership(owner.id, Role.OWNER)
+        )
+        assert await storage.read_org(org.id) == org
+        assert await storage.read_user(org.id, owner.id) == owner
+        assert (await storage.read_membership_for_user(org.id, owner.id)) is not None
+        # The slug taken meanwhile: no org, no user, no membership of the loser.
+        other = make_org("Other").model_copy(update={"slug": org.slug})
+        loser = make_user(make_identity().id)
+        with pytest.raises(UniqueKeyTaken):
+            await storage.create_org_with_owner(
+                other.id, other, loser, make_membership(loser.id, Role.OWNER)
+            )
+        assert await storage.read_org(other.id) is None
+        assert await storage.read_user(other.id, loser.id) is None
+        assert await storage.read_memberships(other.id, limit=10) == []
+
+    async def test_create_member_lands_whole_or_not_at_all(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        org = make_org()
+        identity = make_identity()
+        bob = make_user(identity.id)
+        await storage.create_member(org.id, bob, make_membership(bob.id), make_user_row(bob))
+        assert await storage.read_user(org.id, bob.id) == bob
+        assert (await storage.read_membership_for_user(org.id, bob.id)) is not None
+        # The same identity added again meanwhile: the user key refuses it and
+        # the membership does not land either.
+        again = make_user(identity.id)
+        with pytest.raises(UniqueKeyTaken):
+            await storage.create_member(
+                org.id, again, make_membership(again.id), make_user_row(again)
+            )
+        assert await storage.read_user(org.id, again.id) is None
+        assert await storage.read_membership_for_user(org.id, again.id) is None
+        # A membership the user already holds: the user does not land either.
+        cid = make_user(make_identity().id)
+        with pytest.raises(UniqueKeyTaken):
+            await storage.create_member(org.id, cid, make_membership(bob.id), make_user_row(cid))
+        assert await storage.read_user(org.id, cid.id) is None
+        assert len(await storage.read_memberships(org.id, limit=10)) == 1
 
     async def test_users_by_identity_span_tenants(self, storage: TenancyStorageInterface) -> None:
         identity = make_identity()
@@ -135,6 +285,25 @@ class TenancyStorageContract:
         assert await storage.read_membership_for_user(org.id, new_id()) is None
         assert await storage.read_memberships(org.id, limit=5) == [membership]
 
+    async def test_an_ended_membership_is_hidden_from_reads_and_purged_past_retention(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        org = make_org()
+        cut = utcnow()
+        live, ended = make_membership(new_id()), make_membership(new_id())
+        await storage.write_membership(org.id, live)
+        await storage.write_membership(org.id, ended)
+        await storage.write_membership(
+            org.id,
+            ended.model_copy(update={"deleted_at": cut - timedelta(days=1), "deleted_by": live.id}),
+        )
+        assert await storage.read_memberships(org.id, limit=10) == [live]
+        assert await storage.read_membership_for_user(org.id, ended.user_id) is None
+        assert await storage.read_membership_for_user(org.id, live.user_id) == live
+        assert await storage.purge_deleted(org.id, cut) == 1  # the ended membership
+        assert await storage.read_memberships(org.id, limit=10) == [live]
+        assert await storage.purge_deleted(org.id, cut) == 0
+
     async def test_session_lookup_by_hash_returns_the_tenant(
         self, storage: TenancyStorageInterface
     ) -> None:
@@ -146,22 +315,55 @@ class TenancyStorageContract:
         assert await storage.read_session(org.id, session.id) == session
         assert await storage.read_session_by_token_hash("missing") is None
 
-    async def test_sessions_of_a_user_hide_the_revoked_ones(
+    async def test_sessions_of_a_user_are_the_live_ones_newest_first(
         self, storage: TenancyStorageInterface
     ) -> None:
         org = make_org()
         identity_id, user_id = new_id(), new_id()
+        now = utcnow()
         sessions = [make_session(identity_id, user_id, uuid4().hex) for _ in range(3)]
         for session in reversed(sessions):
             await storage.write_session(org.id, session)
         await storage.write_session(org.id, make_session(identity_id, new_id(), uuid4().hex))
-        listed = await storage.read_sessions(org.id, user_id, limit=10)
-        assert listed == sorted(sessions, key=lambda s: s.id)
-        assert len(await storage.read_sessions(org.id, user_id, limit=2)) == 2
-        revoked = sessions[0].model_copy(update={"revoked_at": utcnow()})
+        listed = await storage.read_sessions(org.id, user_id, now, limit=10)
+        assert listed == sorted(sessions, key=lambda s: s.id, reverse=True)
+        assert len(await storage.read_sessions(org.id, user_id, now, limit=2)) == 2
+        revoked = sessions[0].model_copy(update={"revoked_at": now})
         await storage.write_session(org.id, revoked)
-        assert revoked not in await storage.read_sessions(org.id, user_id, limit=10)
+        assert revoked not in await storage.read_sessions(org.id, user_id, now, limit=10)
         assert await storage.read_session(org.id, revoked.id) == revoked
+        # Expiry is the storage's filter too, before the clamp: a page of dead
+        # sessions never hides a live one.
+        expired = [
+            make_session(identity_id, user_id, uuid4().hex, ttl=timedelta(seconds=-1))
+            for _ in range(3)
+        ]
+        for session in expired:
+            await storage.write_session(org.id, session)
+        live = make_session(identity_id, user_id, uuid4().hex)
+        await storage.write_session(org.id, live)
+        assert await storage.read_sessions(org.id, user_id, utcnow(), limit=1) == [live]
+        assert await storage.read_sessions(org.id, user_id, now - timedelta(hours=2), limit=10) == [
+            live,
+            *expired[::-1],
+            sessions[2],
+            sessions[1],
+        ]
+
+    async def test_api_keys_are_listed_newest_first_and_filtered_by_owner_before_the_clamp(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        org = make_org()
+        ann, bob = new_id(), new_id()
+        anns = [make_api_key(ann, uuid4().hex) for _ in range(2)]
+        bobs = make_api_key(bob, uuid4().hex)
+        for key in (*anns, bobs):
+            await storage.write_api_key(org.id, key)
+        assert await storage.read_api_keys(org.id, limit=10) == [bobs, anns[1], anns[0]]
+        assert await storage.read_api_keys(org.id, limit=2) == [bobs, anns[1]]
+        assert await storage.read_api_keys(org.id, limit=1, user_id=ann) == [anns[1]]
+        assert await storage.read_api_keys(org.id, limit=10, user_id=bob) == [bobs]
+        assert await storage.read_api_keys(org.id, limit=10, user_id=new_id()) == []
 
     async def test_issue_api_key_creates_once_and_reissues_the_secret_on_a_rerun(
         self, storage: TenancyStorageInterface
@@ -246,7 +448,42 @@ class TenancyStorageContract:
         live_key = make_api_key(kept.id, uuid4().hex)
         await storage.write_api_key(org.id, old_key)
         await storage.write_api_key(org.id, live_key)
-        assert await storage.purge_deleted(org.id, cut) == 3  # the user, its membership, the key
+        dead_sessions = [
+            make_session(new_id(), kept.id, uuid4().hex).model_copy(
+                update={"revoked_at": cut - timedelta(days=1)}
+            ),
+            make_session(new_id(), kept.id, uuid4().hex, ttl=timedelta(days=-1)),
+        ]
+        live_sessions = [
+            make_session(new_id(), kept.id, uuid4().hex),
+            make_session(new_id(), kept.id, uuid4().hex).model_copy(update={"revoked_at": cut}),
+        ]
+        for session in (*dead_sessions, *live_sessions):
+            await storage.write_session(org.id, session)
+        spent_tickets = [
+            make_socket_ticket(kept.id, uuid4().hex).model_copy(
+                update={"redeemed_at": cut - timedelta(days=1)}
+            ),
+            make_socket_ticket(kept.id, uuid4().hex, ttl=timedelta(days=-1)),
+        ]
+        fresh_tickets = [
+            make_socket_ticket(kept.id, uuid4().hex),
+            make_socket_ticket(kept.id, uuid4().hex).model_copy(update={"redeemed_at": cut}),
+        ]
+        for ticket in (*spent_tickets, *fresh_tickets):
+            await storage.write_socket_ticket(org.id, ticket)
+        # The user, its membership, the key, two sessions, two tickets.
+        assert await storage.purge_deleted(org.id, cut) == 7
+        for session in dead_sessions:
+            assert await storage.read_session(org.id, session.id) is None
+        for session in live_sessions:
+            assert await storage.read_session(org.id, session.id) == session
+        for ticket in spent_tickets:
+            assert await storage.consume_socket_ticket(ticket.ticket_hash, utcnow()) is None
+        assert (await storage.consume_socket_ticket(fresh_tickets[0].ticket_hash, utcnow())) == (
+            org.id,
+            ANY,
+        )
         assert await storage.read_user(org.id, gone.id) is None
         assert await storage.read_membership_for_user(org.id, gone.id) is None
         assert await storage.read_user(org.id, kept.id) == kept
