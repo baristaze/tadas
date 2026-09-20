@@ -16,8 +16,8 @@ from sqlalchemy import (
     tuple_,
     update,
 )
-from sqlalchemy.ext.asyncio import AsyncSession
 
+from tadas.om.base import EMPTY_UUID
 from tadas.om.exceptions import TenantMismatch, VersionMismatch
 from tadas.om.outbox.storage.tables.outbox_rows import OutboxRows
 from tadas.om.outbox.types.row import OutboxRow
@@ -66,7 +66,7 @@ class TasksStoragePostgresImpl(PgStorageBase, TasksStorageInterface):
         if after is not None:
             stmt = stmt.where(_after(after))
         stmt = stmt.order_by(Tasks.position, Tasks.id).limit(limit)
-        async with self._session_for(stmt) as session:
+        async with self._session_for(stmt, org_id) as session:
             result = await session.execute(stmt)
             return [to_model(row, Task) for row in result.scalars()]
 
@@ -77,7 +77,7 @@ class TasksStoragePostgresImpl(PgStorageBase, TasksStorageInterface):
         if before is not None:
             stmt = stmt.where(_before(before))
         stmt = stmt.order_by(Tasks.updated_at.desc(), Tasks.id.desc()).limit(limit)
-        async with self._session_for(stmt) as session:
+        async with self._session_for(stmt, org_id) as session:
             result = await session.execute(stmt)
             return [to_model(row, Task) for row in result.scalars()]
 
@@ -88,12 +88,12 @@ class TasksStoragePostgresImpl(PgStorageBase, TasksStorageInterface):
         if exclude is not None:
             stmt = stmt.where(Tasks.id != exclude)
         stmt = stmt.order_by(Tasks.position, Tasks.id)
-        async with self._session_for(stmt) as session:
+        async with self._session_for(stmt, org_id) as session:
             return [(position, task_id) for position, task_id in (await session.execute(stmt))]
 
     async def read_task(self, org_id: UUID, task_id: UUID) -> Task | None:
         stmt = select(Tasks).where(Tasks.org_id == org_id, Tasks.id == task_id)
-        async with self._session_for(stmt) as session:
+        async with self._session_for(stmt, org_id) as session:
             row = (await session.execute(stmt)).scalar_one_or_none()
             return None if row is None else to_model(row, Task)
 
@@ -103,14 +103,14 @@ class TasksStoragePostgresImpl(PgStorageBase, TasksStorageInterface):
             .where(Tasks.org_id == org_id, Tasks.deleted_at < before)
             .returning(Tasks.id)
         )
-        async with self._session_for(stmt) as session:
+        async with self._session_for(stmt, org_id) as session:
             purged = len((await session.execute(stmt)).scalars().all())
             await session.commit()
             return purged
 
     async def purge_tenant(self, org_id: UUID) -> int:
         stmt = delete(Tasks).where(Tasks.org_id == org_id).returning(Tasks.id)
-        async with self._session_for(stmt) as session:
+        async with self._session_for(stmt, org_id) as session:
             purged = len((await session.execute(stmt)).scalars().all())
             await session.commit()
             return purged
@@ -132,7 +132,7 @@ class TasksStoragePostgresImpl(PgStorageBase, TasksStorageInterface):
         # WHERE, so two writers from one snapshot cannot both land. The outbox
         # rows join the commit only when every update hit a row; one that
         # missed rolls the transaction back with nothing landed.
-        async with self._session_for(Tasks) as session:
+        async with self._session_for(Tasks, org_id) as session:
             for task, expected_version, _ in updates:
                 values = {k: v for k, v in to_values(task, Tasks).items() if k != "id"}
                 stmt = (
@@ -147,22 +147,31 @@ class TasksStoragePostgresImpl(PgStorageBase, TasksStorageInterface):
                 )
                 if (await session.execute(stmt)).scalar_one_or_none() is None:
                     await session.rollback()
-                    raise await self._why_not(session, org_id, task.id, expected_version)
+                    raise await self._why_not(org_id, task.id, expected_version)
             for _, _, outbox_rows in updates:
                 for outbox_row in outbox_rows:
                     session.add(to_row(outbox_row, OutboxRows, org_id=org_id))
             await session.commit()
 
-    @staticmethod
     async def _why_not(
-        session: AsyncSession, org_id: UUID, task_id: UUID, expected_version: int
+        self, org_id: UUID, task_id: UUID, expected_version: int
     ) -> TenantMismatch | VersionMismatch:
-        """Which of the three conditions the compare-and-set missed. The row
-        was read after the failed statement, so the version it names is a
-        report, never a value to retry with."""
-        found = (
-            await session.execute(select(Tasks.org_id, Tasks.version).where(Tasks.id == task_id))
-        ).one_or_none()
+        """Which of the three conditions the compare-and-set missed: the row is
+        gone, it is another tenant's, or it has moved. The row is read after
+        the failed statement, so the version it names is a report, never a
+        value to retry with.
+
+        The question is cross-tenant by nature. It asks where a row this
+        tenant could not write is, and a transaction narrowed to this tenant
+        cannot tell "another tenant holds it" from "nobody does": the policy
+        answers both with no row. So the read takes the system scope, spelled
+        here, in a session of its own, since the rollback above already ended
+        the transaction the settings lived in. It reads two columns of one id
+        and reports which condition missed, which is what it reported before
+        the policy existed."""
+        stmt = select(Tasks.org_id, Tasks.version).where(Tasks.id == task_id)
+        async with self._session_for(stmt, EMPTY_UUID) as session:
+            found = (await session.execute(stmt)).one_or_none()
         if found is None:
             return VersionMismatch(f"task {task_id} is gone")
         if found.org_id != org_id:

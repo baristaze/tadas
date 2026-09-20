@@ -30,7 +30,7 @@ class EventStoragePostgresImpl(PgStorageBase, EventStorageInterface):
             )
             .returning(EventCursors.head)
         )
-        async with self._session_for(Events) as session:
+        async with self._session_for(Events, org_id) as session:
             head = (await session.execute(take_next)).scalar_one()
             values: dict[str, Any] = {**to_values(event, Events), "org_id": org_id, "seq": head}
             stmt = insert(Events).values(values).returning(Events)
@@ -56,7 +56,7 @@ class EventStoragePostgresImpl(PgStorageBase, EventStorageInterface):
 
     async def _read(self, org_id: UUID, event_id: UUID) -> Event | None:
         stmt = select(Events).where(Events.org_id == org_id, Events.id == event_id)
-        async with self._session_for(stmt) as session:
+        async with self._session_for(stmt, org_id) as session:
             row = (await session.execute(stmt)).scalar_one_or_none()
             return None if row is None else to_model(row, Event)
 
@@ -67,12 +67,12 @@ class EventStoragePostgresImpl(PgStorageBase, EventStorageInterface):
             .order_by(Events.seq)
             .limit(limit)
         )
-        async with self._session_for(stmt) as session:
+        async with self._session_for(stmt, org_id) as session:
             result = await session.execute(stmt)
             return [to_model(row, Event) for row in result.scalars()]
 
     async def read_head(self, org_id: UUID) -> int:
         # The cursor row is the head: one row, never a scan of the stream.
         stmt = select(EventCursors.head).where(EventCursors.org_id == org_id)
-        async with self._session_for(stmt) as session:
+        async with self._session_for(stmt, org_id) as session:
             return int(await session.scalar(stmt) or 0)

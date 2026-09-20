@@ -25,9 +25,12 @@ class WorkStoragePostgresImpl(PgStorageBase, WorkStorageInterface):
                 return True
         except UniqueKeyTaken:
             return False
-        async with self._session_for(WorkItems) as session:
+        async with self._session_for(WorkItems, org_id) as session:
             row = await session.get(WorkItems, item.id)
-        if row is not None and row.org_id != org_id:
+        if row is None or row.org_id != org_id:
+            # The id is taken and this tenant cannot read it: another tenant
+            # holds it. The read says so when it returns the row, and the
+            # policy says so by returning none.
             raise TenantMismatch(f"work item {item.id} is not in {org_id}")
         return False
 
@@ -47,7 +50,7 @@ class WorkStoragePostgresImpl(PgStorageBase, WorkStorageInterface):
             .values(**values)
             .returning(WorkItems)
         )
-        async with self._session_for(stmt) as session:
+        async with self._session_for(stmt, org_id) as session:
             row = (await session.execute(stmt)).scalar_one_or_none()
             if row is None:
                 return None
@@ -86,7 +89,7 @@ class WorkStoragePostgresImpl(PgStorageBase, WorkStorageInterface):
             )
             .returning(WorkItems)
         )
-        async with self._session_for(stmt) as session:
+        async with self._session_for(stmt, EMPTY_UUID) as session:
             row = (await session.execute(stmt)).scalar_one_or_none()
             if row is None:
                 return None
@@ -129,7 +132,7 @@ class WorkStoragePostgresImpl(PgStorageBase, WorkStorageInterface):
             )
             .returning(WorkItems)
         )
-        async with self._session_for(stmt) as session:
+        async with self._session_for(stmt, org_id) as session:
             rows = (await session.execute(stmt)).scalars().all()
             changed = sorted((to_model(row, WorkItem) for row in rows), key=lambda item: item.id)
             await session.commit()
@@ -145,22 +148,22 @@ class WorkStoragePostgresImpl(PgStorageBase, WorkStorageInterface):
             )
             .returning(WorkItems.id)
         )
-        async with self._session_for(stmt) as session:
+        async with self._session_for(stmt, org_id) as session:
             purged = len((await session.execute(stmt)).scalars().all())
             await session.commit()
             return purged
 
     async def read_item(self, org_id: UUID, item_id: UUID) -> WorkItem | None:
         stmt = select(WorkItems).where(WorkItems.org_id == org_id, WorkItems.id == item_id)
-        return await self._one(stmt)
+        return await self._one(stmt, org_id)
 
     async def read_item_by_key(self, org_id: UUID, idempotency_key: UUID) -> WorkItem | None:
         stmt = select(WorkItems).where(
             WorkItems.org_id == org_id, WorkItems.idempotency_key == idempotency_key
         )
-        return await self._one(stmt)
+        return await self._one(stmt, org_id)
 
-    async def _one(self, stmt: Select[tuple[WorkItems]]) -> WorkItem | None:
-        async with self._session_for(stmt) as session:
+    async def _one(self, stmt: Select[tuple[WorkItems]], org_id: UUID) -> WorkItem | None:
+        async with self._session_for(stmt, org_id) as session:
             row = (await session.execute(stmt)).scalar_one_or_none()
             return None if row is None else to_model(row, WorkItem)
