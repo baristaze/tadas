@@ -497,8 +497,9 @@ everything in-process for tests.
   by prefix, `NotAuthenticated` (401) when none or an invalid one is
   presented, request id, error envelope, rate limits keyed on the
   credential id or, on an unauthenticated route, the client address,
-  edge idempotency), routers for tenancy, tasks, and the operator plane
-  under `/v1/admin/*`, health and metrics outside `/v1`, and the
+  admission, edge idempotency), routers for tenancy, tasks, and the
+  operator plane
+  under `/v1/admin/*`, health and readiness and metrics outside `/v1`, and the
   realtime channel at `/v1/realtime` opened with a single-use ticket.
   The client address is the peer's, or the one `X-Forwarded-For` names
   when the peer is one of `TADAS_TRUSTED_PROXIES` (empty locally; the
@@ -517,6 +518,30 @@ everything in-process for tests.
   carries the headers a browser needs to read it, as a refusal from the
   same origin already did; a preflight is answered before the request id
   is minted and belongs in neither the access log nor the metrics.
+  The chain is CORS, then the request id, then admission, then the
+  router. Admission is the bound on what this process has in flight
+  (`gateway/admission.py`, `TADAS_ADMISSION_IN_FLIGHT_LIMIT`): past it a
+  request is refused at once with `Unavailable` (503, code
+  `unavailable`) in the one envelope and a `Retry-After` of
+  `TADAS_ADMISSION_RETRY_AFTER_SECONDS`, so a saturated process answers
+  and says why instead of queueing work it cannot start. It is not the
+  rate limit beside it, and the two fail in opposite directions: a rate
+  limit is fairness between subjects, counted in the shared cache, and
+  fails open, while admission is the process defending itself, counted
+  in its own memory on the one event loop, and fails closed. It sits
+  inside CORS because a browser has to read the refusal and its header,
+  and inside the request id because a refusal is an answer of this API
+  like any other, with an id to correlate on, a line in the access log,
+  and a count of its own (`admission` / `admitted`, `refused`). The
+  three operational routes are never refused, since a saturated process
+  must still be able to say that it is saturated and the collector must
+  still be able to read by how much, and a socket holds no slot, a bound
+  a long-lived connection can fill being no bound on requests.
+  `/healthz` answers from the process alone and `/readyz` asks storage
+  whether it can serve a request right now, under
+  `TADAS_READINESS_TIMEOUT_SECONDS`, shorter than the interval it is
+  polled on: the deadline answers 503 and `ready: false`, so a hung
+  database makes the probe say no rather than stop answering.
   Starlette's own `HTTPException`, which it raises for a path that
   matches nothing (404) and a method a route does not take (405), is
   presented as the envelope too, not as its default `{"detail": ...}`. uvicorn's access log is off: the middleware writes one line
