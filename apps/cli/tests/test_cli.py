@@ -271,3 +271,51 @@ def test_an_api_that_cannot_be_reached_is_exit_4(
     )
     assert result.exit_code == 4, result.output
     assert result.output.startswith("cannot reach the API:")
+
+
+@pytest.mark.parametrize(
+    "bad",
+    ["soon", "0", "-1", "1e", " "],
+    ids=["word", "zero", "negative", "half a number", "blank"],
+)
+def test_a_timeout_the_environment_got_wrong_is_a_usage_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, bad: str
+) -> None:
+    """A setting the environment got wrong is the caller's input, so it is
+    exit 2 and one line, inside the exit-code contract, for every command:
+    the signed-in ones, `login`, and `logout`."""
+    monkeypatch.setenv("TADAS_HOME", str(tmp_path / "home"))
+    environment = {
+        "TADAS_API_URL": "http://127.0.0.1:1",
+        "TADAS_TOKEN": "ses_1",
+        "TADAS_HTTP_TIMEOUT_SECONDS": bad,
+    }
+    runner = CliRunner()
+    for command in (["ls"], ["listen"], ["login", "--email", "a@b.test", "--password", "pw"]):
+        result = runner.invoke(main.app, command, env=environment, catch_exceptions=False)
+        assert result.exit_code == 2, f"{command}: {result.output}"
+        assert result.output.startswith("TADAS_HTTP_TIMEOUT_SECONDS"), result.output
+
+
+def test_a_bad_timeout_does_not_forget_the_session_logout_could_not_revoke(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`logout` forgets the session whatever the API answers, but a setting
+    the environment got wrong means the API was never asked: the session
+    stays, so the caller fixes the setting and signs out for real."""
+    monkeypatch.setenv("TADAS_HOME", str(tmp_path / "home"))
+    session = config.Session(
+        api_url="http://127.0.0.1:1",
+        token="ses_1",
+        email="ann@example.test",
+        display_name="Ann",
+        org_slug="acme",
+        org_name="Acme",
+    )
+    config.save_session(session)
+    result = CliRunner().invoke(
+        main.app, ["logout"], env={"TADAS_HTTP_TIMEOUT_SECONDS": "soon"}, catch_exceptions=False
+    )
+    assert result.exit_code == 2, result.output
+    assert result.output.startswith("TADAS_HTTP_TIMEOUT_SECONDS")
+    assert config.load_session() == session

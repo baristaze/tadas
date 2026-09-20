@@ -25,6 +25,7 @@ from tadas.client.realtime import ChannelRefused
 from tadas.client.types import TaskScope, TaskStatus, TaskView, UserView
 
 EXIT_REFUSED = 1
+EXIT_USAGE = 2
 EXIT_NOT_SIGNED_IN = 3
 EXIT_UNREACHABLE = 4
 
@@ -60,10 +61,19 @@ Json = Annotated[bool, typer.Option("--json", help="Print the API's view as JSON
 Ref = Annotated[str, typer.Argument(help="A task id, or the short id `ls` shows (its tail).")]
 
 
+def setting[T](read: Callable[[], T]) -> T:
+    """A setting is read through here wherever it is read outside `_run`, so
+    a value the environment got wrong is a usage error there too."""
+    try:
+        return read()
+    except config.BadSetting as error:
+        _fail(str(error), EXIT_USAGE)
+
+
 def run[T](work: Callable[[ApiClient], Coroutine[Any, Any, T]], api: str | None = None) -> T:
     """Runs one command's coroutine under a signed-in client and turns what
     goes wrong into a line on stderr and an exit code."""
-    bearer = config.token()
+    bearer = setting(config.token)
     if bearer is None:
         _fail("not signed in; run `tadas login`", EXIT_NOT_SIGNED_IN)
 
@@ -79,6 +89,10 @@ def _run[T](coroutine: Coroutine[Any, Any, T], *, signed_in: bool = False) -> T:
     password was wrong."""
     try:
         return asyncio.run(coroutine)
+    except config.BadSetting as error:
+        # The environment names something the CLI cannot use. Nothing was
+        # asked of the API, and the caller fixes it where they set it.
+        _fail(str(error), EXIT_USAGE)
     except ApiError as error:
         if error.status == 401 and signed_in:
             _fail(
@@ -196,13 +210,18 @@ def logout(api: Api = None) -> None:
     environment's credential, not the CLI's to revoke, and is left alone."""
     session = config.load_session()
     if session is None:
-        hint = "; TADAS_TOKEN is the environment's, unset it" if config.token() else ""
+        hint = "; TADAS_TOKEN is the environment's, unset it" if setting(config.token) else ""
         typer.echo(f"no session to forget{hint}")
         return
 
+    # Before the file is touched: a setting the environment got wrong means
+    # the API is never asked, and a session nobody tried to revoke is not
+    # forgotten over a typo.
+    client = setting(lambda: build_client(api or session.api_url, session.token))
+
     async def revoke() -> str:
         # The token goes back to the API that issued it and nowhere else.
-        async with build_client(api or session.api_url, session.token) as client:
+        async with client:
             try:
                 await client.logout()
             except ApiError as error:
@@ -294,9 +313,9 @@ def edit(
 ) -> None:
     """Change a task's title, notes, or assignee."""
     if assignee and unassign:
-        _fail("--assignee and --unassign exclude each other", 2)
+        _fail("--assignee and --unassign exclude each other", EXIT_USAGE)
     if title is None and notes is None and assignee is None and not unassign:
-        _fail("nothing to change; give --title, --notes, --assignee, or --unassign", 2)
+        _fail("nothing to change; give --title, --notes, --assignee, or --unassign", EXIT_USAGE)
 
     async def go(client: ApiClient) -> None:
         task = await _task(client, ref)
@@ -358,7 +377,7 @@ def mv(
 ) -> None:
     """Move an open task within the open list."""
     if (after is None) == (not top):
-        _fail("give exactly one of --after and --top", 2)
+        _fail("give exactly one of --after and --top", EXIT_USAGE)
 
     async def go(client: ApiClient) -> None:
         task = await _task(client, ref)

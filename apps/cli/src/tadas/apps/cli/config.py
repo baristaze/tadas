@@ -15,6 +15,12 @@ DEFAULT_TIMEOUT_SECONDS = 30.0
 SESSION_FILE = "session.json"
 
 
+class BadSetting(ValueError):
+    """A setting the environment names cannot be used. That is the caller's
+    input, not a failure of the run, so the CLI tells it in one line and
+    exits 2, the way it tells any other usage error."""
+
+
 @dataclass(frozen=True)
 class Session:
     api_url: str
@@ -76,9 +82,9 @@ def timeout_seconds() -> float:
     try:
         seconds = float(raw)
     except ValueError:
-        raise ValueError(f"TADAS_HTTP_TIMEOUT_SECONDS is not a number: {raw!r}") from None
+        raise BadSetting(f"TADAS_HTTP_TIMEOUT_SECONDS is not a number: {raw!r}") from None
     if seconds <= 0:
-        raise ValueError(f"TADAS_HTTP_TIMEOUT_SECONDS must be positive: {raw!r}")
+        raise BadSetting(f"TADAS_HTTP_TIMEOUT_SECONDS must be positive: {raw!r}")
     return seconds
 
 
