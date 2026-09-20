@@ -1,8 +1,9 @@
 """The events swimlane: the append-only stream behind every realtime push.
 The outbox relay appends one event per entity write through the event
-storage; an audit producer appends through this manager under its context.
-A client replays the stream from the last sequence it saw. Append-only: no
-update, no delete."""
+storage; an audit producer (the work manager's dead letter) appends through
+this manager under its context, which stamps the provenance. A client
+replays the stream from the last sequence it saw. Append-only: no update,
+no delete."""
 
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
@@ -16,9 +17,13 @@ from tadas.om.opcontext import OpContext, ProvenanceScope
 class EventsManagerInterface(ABC):
     @abstractmethod
     async def append(self, ctx: OpContext, event: Event) -> Event:
-        """Appends an audit event under the caller's tenant; the write it records
-        was authorized by the manager that made it, so READ is enough. Idempotent
-        on `event.id`: an id already appended returns the stored event."""
+        """Appends an audit event under the caller's tenant. An append is a
+        write, so WRITE is required, and the provenance the row records (the
+        actor, the request, the app) is stamped from the context, never taken
+        from the caller's event. The entity events behind every push are not
+        appended here: the outbox relay writes them through the event storage.
+        Idempotent on `event.id`: an id already appended returns the stored
+        event."""
         ...
 
     @abstractmethod
