@@ -351,3 +351,46 @@ describe("stream cursor", () => {
     expect(channel.cursor()).toBe(6);
   });
 });
+
+it("ignores an old session's late authentication close after a new session opens", async () => {
+  const first = harness();
+  await flush();
+  first.sockets[0]!.accept();
+  // Browser close is asynchronous; its final close event may arrive after cleanup.
+  first.sockets[0]!.close = vi.fn();
+  first.channel.stop();
+  const second = harness();
+  channel = second.channel;
+  await flush();
+  second.sockets[0]!.accept();
+  second.sockets[0]!.receive(hello(0));
+  first.sockets[0]!.drop(CLOSE_UNAUTHENTICATED);
+  expect(first.onUnauthenticated).not.toHaveBeenCalled();
+  expect(useConnectionStore.getState().status).toBe("open");
+});
+
+it("does not apply or continue a replay that finishes after stop", async () => {
+  let resolvePage!: (page: EventView[]) => void;
+  const socket = new FakeSocket();
+  const route = vi.fn();
+  const fetchEventsAfter = vi.fn(() => new Promise<EventView[]>((resolve) => { resolvePage = resolve; }));
+  channel = openChannel({
+    requestTicket: async () => "tkt", openSocket: () => socket,
+    fetchEventsAfter, route, refreshAll: async () => undefined,
+    connection: useConnectionStore, pageSize: 1,
+  });
+  await flush();
+  socket.accept();
+  await flush();
+  socket.receive(hello(0));
+  await flush();
+  route.mockClear();
+  socket.receive(push(2));
+  await flush();
+  channel.stop();
+  resolvePage([event(1)]);
+  await flush();
+  expect(route).not.toHaveBeenCalled();
+  expect(fetchEventsAfter).toHaveBeenCalledTimes(1);
+  expect(channel.cursor()).toBe(0);
+});

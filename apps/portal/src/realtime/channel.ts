@@ -88,13 +88,14 @@ export function openChannel(deps: ChannelDeps): Channel {
   // cursor stays where it is, and the next push or pong retries from there.
   const replay = async (after: number): Promise<void> => {
     let from = after;
-    for (;;) {
+    while (!stopped) {
       let page: EventView[];
       try {
         page = await deps.fetchEventsAfter(from, deps.pageSize);
       } catch {
         return;
       }
+      if (stopped) return;
       // One route per entity, not per record: routing invalidates every query
       // the entity is read from, so a page of two hundred task records that
       // each triggered a route would cancel and restart the list refetch two
@@ -120,6 +121,7 @@ export function openChannel(deps: ChannelDeps): Channel {
     const gap = apply(envelope);
     if (gap === null) return;
     await replay(gap);
+    if (stopped) return;
     if (apply(envelope) === null) return;
     // Still ahead of the cursor: the push is worth routing either way, but
     // the cursor never moves past seqs that were not replayed, so the next
@@ -128,7 +130,7 @@ export function openChannel(deps: ChannelDeps): Channel {
   };
 
   const enqueue = (work: () => Promise<void>) => {
-    inbox = inbox.then(work).catch(() => undefined);
+    inbox = inbox.then(() => stopped ? undefined : work()).catch(() => undefined);
   };
 
   // What a reconnect and a degraded poll both do: catch up from the cursor.
@@ -201,12 +203,14 @@ export function openChannel(deps: ChannelDeps): Channel {
     const opened = deps.openSocket(ticket);
     socket = opened;
     opened.onopen = () => {
+      if (stopped || socket !== opened) return;
       for (const topic of TOPICS) send({ op: "subscribe", topic });
       enqueue(catchUp);
       pingTimer = setInterval(() => send({ op: "ping" }), PING_INTERVAL_MS);
       stableTimer = setTimeout(settle, STABLE_OPEN_MS);
     };
     opened.onmessage = (message) => {
+      if (stopped || socket !== opened) return;
       const envelope = parseEnvelope(String(message.data));
       if (!envelope) return;
       if (envelope.type === "hello") {
@@ -218,6 +222,7 @@ export function openChannel(deps: ChannelDeps): Channel {
       enqueue(() => deliver(envelope));
     };
     opened.onclose = (event) => {
+      if (stopped || socket !== opened) return;
       if (pingTimer) clearInterval(pingTimer);
       pingTimer = null;
       clearStableTimer();
@@ -237,6 +242,7 @@ export function openChannel(deps: ChannelDeps): Channel {
 
   return {
     stop: () => {
+      if (stopped) return;
       stopped = true;
       if (pingTimer) clearInterval(pingTimer);
       if (reconnectTimer) clearTimeout(reconnectTimer);

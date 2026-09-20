@@ -157,7 +157,8 @@ class ApiClient:
         if idempotency_key:
             headers[IDEMPOTENCY_HEADER] = idempotency_key
         response = await self._http.request(method, path, json=json, params=params, headers=headers)
-        if response.status_code == 401 and isinstance(token, Unset):
+        # A delayed refusal belongs to the bearer sent, never a newer sign-in.
+        if response.status_code == 401 and isinstance(token, Unset) and self.token == bearer:
             self.token = None
         if response.is_error:
             raise _error_of(response)
