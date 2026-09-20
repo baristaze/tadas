@@ -1,9 +1,13 @@
 """One transport client: bearer, app header, the error envelope parsed into a
 typed error carrying the request id, an idempotency key on every creating
-call, and the operating system's trust store. The one module in the package
-that sends a request; every operation is a method that returns a typed view."""
+call, the one retry, and the operating system's trust store. The one module in
+the package that sends a request; every operation is a method that returns a
+typed view."""
 
+import asyncio
+import random
 import ssl
+from collections.abc import Callable
 from typing import Any, Literal, cast
 from uuid import UUID, uuid4
 
@@ -34,8 +38,60 @@ DEFAULT_TIMEOUT_SECONDS = 30.0
 """Every call out carries a timeout: the caller's settings name one per
 client, and a caller that names none gets this one, so no call goes out
 without one."""
+DEFAULT_RETRIES = 2
+"""Extra attempts a retryable failure gets. The caller's settings name this
+one per client too, beside the timeout, so no caller wraps this client in a
+second retry; 0 sends every call exactly once."""
+DEFAULT_BACKOFF_SECONDS = 0.25
+"""The wait before the first extra attempt. It doubles per attempt."""
+MAX_BACKOFF_SECONDS = 5.0
+"""However far the doubling runs, no wait between attempts is longer."""
+
+RETRYABLE_STATUSES = frozenset({502, 503, 504})
+"""The answers that say the API could not serve this call and may serve the
+next one: its own `unavailable`, and the two a proxy sends when the origin
+refused the connection or did not answer in time. Every other status is a
+decision, and a decision does not change because it is asked for again."""
+
+SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+"""Methods with no effect on the API, so a second attempt costs a read."""
+
+RETRYABLE_FAILURES = (httpx.TimeoutException, httpx.NetworkError)
+"""The wire failing before the API decided: the timeout, and a connection that
+was refused, reset, or lost. Every other transport failure stands as it is."""
 
 AppName = Literal["portal", "admin", "cli", "api"]
+
+
+def may_retry(method: str, idempotency_key: str | None = None) -> bool:
+    """Whether this request may be sent twice. A safe method may. A creating
+    call under an idempotency key may, because the API records the outcome
+    under the key and replays it, so the second attempt finds the row the
+    first one made instead of making another. Everything else may not: a POST
+    with no key, a PATCH, and a DELETE all carry an effect that a lost answer
+    leaves in doubt, and a duplicate write costs more than the failure the
+    caller is told about."""
+    verb = method.upper()
+    if verb in SAFE_METHODS:
+        return True
+    return verb == "POST" and bool(idempotency_key)
+
+
+def retry_delay_seconds(
+    attempt: int,
+    base: float = DEFAULT_BACKOFF_SECONDS,
+    jitter: Callable[[], float] = random.random,
+) -> float:
+    """The wait before attempt `attempt` (1 is the first retry): the base
+    doubled per attempt and capped, then halved and topped up from `jitter`.
+    Half the window is fixed and half is jitter, so callers that failed
+    together do not return together, and the shortest wait of one attempt is
+    still the longest wait of the one before it, which is what makes the
+    growth assertable. `jitter` is a function of no arguments answering
+    between 0 and 1; a test hands one in and asserts both ends of the
+    window."""
+    full = min(base * 2 ** max(0, attempt - 1), MAX_BACKOFF_SECONDS)
+    return full / 2 + (full / 2) * jitter()
 
 
 class Unset:
@@ -101,12 +157,18 @@ class ApiClient:
         token: str | None = None,
         transport: httpx.AsyncBaseTransport | None = None,
         timeout: float = DEFAULT_TIMEOUT_SECONDS,
+        retries: int = DEFAULT_RETRIES,
+        backoff_seconds: float = DEFAULT_BACKOFF_SECONDS,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.app = app
         self.app_version = app_version
         self.token = token
         self.timeout = timeout  # seconds, per request; the socket's open shares it
+        # The retry arrives with the rest, so it is one client's policy and no
+        # caller adds a second round of attempts on top of it.
+        self.retries = retries
+        self.backoff_seconds = backoff_seconds
         self._http = httpx.AsyncClient(
             base_url=self.base_url,
             transport=transport,
@@ -148,8 +210,47 @@ class ApiClient:
         token: str | Unset | None = UNSET,
         idempotency_key: str | None = None,
     ) -> Any:
-        """The one call every operation goes through. Raises `ApiError` on any
-        non-2xx; a 401 clears the client's token, since it will not work again."""
+        """The one call every operation goes through, and the one place a
+        request is sent again. Raises `ApiError` on any non-2xx; a 401 clears
+        the client's token, since it will not work again.
+
+        A request the API may see twice, and a failure that can differ on a
+        second attempt, is retried up to `retries` times, spaced by a delay
+        that grows and carries jitter. Anything else is raised as it is: a
+        refusal is a decision the API made, and a write the API records no
+        outcome for would be a second write."""
+        bound = self.retries if may_retry(method, idempotency_key) else 0
+        for attempt in range(bound + 1):
+            try:
+                return await self._attempt(
+                    method,
+                    path,
+                    json=json,
+                    params=params,
+                    token=token,
+                    idempotency_key=idempotency_key,
+                )
+            except ApiError as error:
+                if attempt == bound or error.status not in RETRYABLE_STATUSES:
+                    raise
+            except RETRYABLE_FAILURES:
+                if attempt == bound:
+                    raise
+            await asyncio.sleep(retry_delay_seconds(attempt + 1, self.backoff_seconds))
+        raise AssertionError("the loop returns or raises on its last attempt")
+
+    async def _attempt(
+        self,
+        method: str,
+        path: str,
+        *,
+        json: Any = None,
+        params: dict[str, Any] | None = None,
+        token: str | Unset | None = UNSET,
+        idempotency_key: str | None = None,
+    ) -> Any:
+        """One attempt: the headers this client puts on every call, the send,
+        and the answer turned into a view or a typed error."""
         headers: dict[str, str] = {}
         bearer = self.token if isinstance(token, Unset) else token
         if bearer:
