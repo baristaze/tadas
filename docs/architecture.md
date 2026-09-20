@@ -650,8 +650,8 @@ See [docs/adr/](adr/).
 
 ### Considered
 
-Shapes a sibling system (xtadas, the one-shot scaffold benchmark) has and
-this one does not, judged and not taken, or not yet:
+Shapes a sibling system, scaffolded in one shot from the guideline, has
+and this one does not, judged and not taken, or not yet:
 
 - **A TypeScript client as its own workspace package** (`clients/api-client`
   beside `clients/python`). "Clients Live in One Place" read literally; the
