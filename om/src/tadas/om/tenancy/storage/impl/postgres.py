@@ -9,7 +9,7 @@ from tadas.om.base import Identifiable
 from tadas.om.exceptions import Conflict, NotFound, TenantMismatch, UniqueKeyTaken
 from tadas.om.idempotency.storage.tables.idempotency_records import IdempotencyRecords
 from tadas.om.outbox.storage.tables.outbox_rows import OutboxRows
-from tadas.om.outbox.types.row import OutboxRow, announced
+from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.storage.impl.pg_base import PgStorageBase, violated_constraint
 from tadas.om.storage.utils.translation import apply_row, to_model, to_row
 from tadas.om.tenancy.storage import TenancyStorageInterface
@@ -65,8 +65,10 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
             result = await session.execute(stmt)
             return [to_model(row, Org) for row in result.scalars()]
 
-    async def write_org(self, org_id: UUID, org: Org, outbox_row: OutboxRow | None = None) -> None:
-        await self._upsert(Orgs, org_id, org, announced(outbox_row))
+    async def write_org(
+        self, org_id: UUID, org: Org, outbox_rows: tuple[OutboxRow, ...] = ()
+    ) -> None:
+        await self._upsert(Orgs, org_id, org, outbox_rows)
 
     async def create_org_with_owner(
         self,
@@ -85,14 +87,14 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
         org_id: UUID,
         user: User,
         membership: Membership,
-        outbox_row: OutboxRow,
+        outbox_rows: tuple[OutboxRow, ...],
         identity: Identity | None = None,
     ) -> None:
         await self._create_together(
             org_id,
             (Users, user),
             (Memberships, membership),
-            (OutboxRows, outbox_row),
+            *((OutboxRows, row) for row in outbox_rows),
             identity=identity,
         )
 
@@ -127,9 +129,9 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
                 ) from error
 
     async def remove_member(
-        self, org_id: UUID, user: User, membership: Membership, outbox_row: OutboxRow
+        self, org_id: UUID, user: User, membership: Membership, outbox_rows: tuple[OutboxRow, ...]
     ) -> None:
-        # Two updates and the outbox row in one commit; a row that is missing
+        # Two updates and the outbox rows in one commit; a row that is missing
         # or another tenant's lands nothing.
         async with self._session_for(Users) as session:
             for table, entity in ((Users, user), (Memberships, membership)):
@@ -139,7 +141,8 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
                 if row.org_id != org_id:
                     raise TenantMismatch(f"{table.__tablename__} {entity.id} is not in {org_id}")
                 apply_row(row, entity)
-            session.add(to_row(outbox_row, OutboxRows, org_id=org_id))
+            for outbox_row in outbox_rows:
+                session.add(to_row(outbox_row, OutboxRows, org_id=org_id))
             await session.commit()
 
     async def read_users(self, org_id: UUID, after: UUID | None, limit: int) -> list[User]:
@@ -172,10 +175,10 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
             return [(row.org_id, to_model(row, User)) for row in result.scalars()]
 
     async def write_user(
-        self, org_id: UUID, user: User, outbox_row: OutboxRow | None = None
+        self, org_id: UUID, user: User, outbox_rows: tuple[OutboxRow, ...] = ()
     ) -> None:
         try:
-            await self._upsert(Users, org_id, user, announced(outbox_row))
+            await self._upsert(Users, org_id, user, outbox_rows)
         except UniqueKeyTaken as error:
             # uq_users_org_id_identity_id_live: one live user per identity in a tenant.
             raise UniqueKeyTaken(
@@ -204,9 +207,9 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
             return None if row is None else to_model(row, Membership)
 
     async def write_membership(
-        self, org_id: UUID, membership: Membership, outbox_row: OutboxRow | None = None
+        self, org_id: UUID, membership: Membership, outbox_rows: tuple[OutboxRow, ...] = ()
     ) -> None:
-        await self._upsert(Memberships, org_id, membership, announced(outbox_row))
+        await self._upsert(Memberships, org_id, membership, outbox_rows)
 
     async def read_sessions(
         self, org_id: UUID, user_id: UUID, live_at: datetime, limit: int
@@ -239,9 +242,9 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
             return None if row is None else (row.org_id, to_model(row, Session))
 
     async def write_session(
-        self, org_id: UUID, session: Session, outbox_row: OutboxRow | None = None
+        self, org_id: UUID, session: Session, outbox_rows: tuple[OutboxRow, ...] = ()
     ) -> None:
-        await self._upsert(Sessions, org_id, session, announced(outbox_row))
+        await self._upsert(Sessions, org_id, session, outbox_rows)
 
     async def read_api_keys(
         self, org_id: UUID, after: UUID | None, limit: int, user_id: UUID | None = None
@@ -273,9 +276,13 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
             return None if row is None else (row.org_id, to_model(row, ApiKey))
 
     async def issue_api_key(
-        self, org_id: UUID, api_key: ApiKey, outbox_row: OutboxRow, attempt_id: UUID | None
+        self,
+        org_id: UUID,
+        api_key: ApiKey,
+        outbox_rows: tuple[OutboxRow, ...],
+        attempt_id: UUID | None,
     ) -> tuple[ApiKey, bool]:
-        if await self._insert(ApiKeys, org_id, api_key, announced(outbox_row)):
+        if await self._insert(ApiKeys, org_id, api_key, outbox_rows):
             return api_key, True
         if attempt_id is None:
             # No key, no marker, nothing holding this attempt: nothing to fence
@@ -320,9 +327,9 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
             return reissued, False
 
     async def write_api_key(
-        self, org_id: UUID, api_key: ApiKey, outbox_row: OutboxRow | None = None
+        self, org_id: UUID, api_key: ApiKey, outbox_rows: tuple[OutboxRow, ...] = ()
     ) -> None:
-        await self._upsert(ApiKeys, org_id, api_key, announced(outbox_row))
+        await self._upsert(ApiKeys, org_id, api_key, outbox_rows)
 
     async def purge_deleted(self, org_id: UUID, before: datetime) -> int:
         gone_users = (

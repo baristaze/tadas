@@ -51,9 +51,12 @@ class TenancyStorageInterface(ABC):
         ...
 
     @abstractmethod
-    async def write_org(self, org_id: UUID, org: Org, outbox_row: OutboxRow | None = None) -> None:
-        """Lands the row and its outbox row together: the deletion of an org is
-        announced the way any change is, so the tenant's sockets hear of it."""
+    async def write_org(
+        self, org_id: UUID, org: Org, outbox_rows: tuple[OutboxRow, ...] = ()
+    ) -> None:
+        """Lands the row and the outbox rows that announce it together: the
+        deletion of an org is announced the way any change is, so the tenant's
+        sockets hear of it."""
         ...
 
     @abstractmethod
@@ -80,22 +83,22 @@ class TenancyStorageInterface(ABC):
         org_id: UUID,
         user: User,
         membership: Membership,
-        outbox_row: OutboxRow,
+        outbox_rows: tuple[OutboxRow, ...],
         identity: Identity | None = None,
     ) -> None:
-        """A named atomic create: the user, their membership, and the outbox row
+        """A named atomic create: the user, their membership, and the outbox rows
         land in one commit or not at all. A key taken meanwhile (one live user
         per identity, one membership per user) is `UniqueKeyTaken`, and nothing
-        lands, the outbox row included. `identity`, when given, is the person's
+        lands, the outbox rows included. `identity`, when given, is the person's
         new identity and lands in the same commit, for the same reason."""
         ...
 
     @abstractmethod
     async def remove_member(
-        self, org_id: UUID, user: User, membership: Membership, outbox_row: OutboxRow
+        self, org_id: UUID, user: User, membership: Membership, outbox_rows: tuple[OutboxRow, ...]
     ) -> None:
         """A named atomic write: the soft-deleted user, their ended membership,
-        and the outbox row land in one commit or not at all, so a failure never
+        and the outbox rows land in one commit or not at all, so a failure never
         leaves a live user without a membership, which no list, purge, or
         retry would reach. Both rows must exist in the tenant."""
         ...
@@ -117,9 +120,10 @@ class TenancyStorageInterface(ABC):
 
     @abstractmethod
     async def write_user(
-        self, org_id: UUID, user: User, outbox_row: OutboxRow | None = None
+        self, org_id: UUID, user: User, outbox_rows: tuple[OutboxRow, ...] = ()
     ) -> None:
-        """Lands the row and its outbox row together; so do the other writes below."""
+        """Lands the row and the outbox rows that announce it together, so they
+        land in one statement with it; so do the other writes below."""
         ...
 
     @abstractmethod
@@ -134,7 +138,7 @@ class TenancyStorageInterface(ABC):
 
     @abstractmethod
     async def write_membership(
-        self, org_id: UUID, membership: Membership, outbox_row: OutboxRow | None = None
+        self, org_id: UUID, membership: Membership, outbox_rows: tuple[OutboxRow, ...] = ()
     ) -> None: ...
 
     @abstractmethod
@@ -156,7 +160,7 @@ class TenancyStorageInterface(ABC):
 
     @abstractmethod
     async def write_session(
-        self, org_id: UUID, session: Session, outbox_row: OutboxRow | None = None
+        self, org_id: UUID, session: Session, outbox_rows: tuple[OutboxRow, ...] = ()
     ) -> None:
         """A revocation is a session write with a handoff: the row announcing
         it lands beside the session, so the socket it opened hears of it."""
@@ -181,9 +185,13 @@ class TenancyStorageInterface(ABC):
 
     @abstractmethod
     async def issue_api_key(
-        self, org_id: UUID, api_key: ApiKey, outbox_row: OutboxRow, attempt_id: UUID | None
+        self,
+        org_id: UUID,
+        api_key: ApiKey,
+        outbox_rows: tuple[OutboxRow, ...],
+        attempt_id: UUID | None,
     ) -> tuple[ApiKey, bool]:
-        """The create of a key: lands the key and its outbox row together and
+        """The create of a key: lands the key and its outbox rows together and
         returns `(api_key, True)`. When the id is already written, the rerun of
         a create that issues a secret, it writes the new `key_hash` (with
         `updated_at` and `updated_by`) onto that row instead, lands no outbox
@@ -215,7 +223,7 @@ class TenancyStorageInterface(ABC):
 
     @abstractmethod
     async def write_api_key(
-        self, org_id: UUID, api_key: ApiKey, outbox_row: OutboxRow | None = None
+        self, org_id: UUID, api_key: ApiKey, outbox_rows: tuple[OutboxRow, ...] = ()
     ) -> None: ...
 
     @abstractmethod

@@ -55,6 +55,6 @@ class TenancyOperatorManagerImpl(TenancyOperatorManagerInterface):
             request_id=admin.request_id,
             app=admin.app.type.value,
         )
-        await self._storage.write_org(org_id, deleted, row)
+        await self._storage.write_org(org_id, deleted, (row,))
         await self._relay.relay(org_id, row)
         return deleted

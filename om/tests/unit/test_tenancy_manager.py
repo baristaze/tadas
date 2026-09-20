@@ -625,18 +625,18 @@ class DownOnRemoveStorage(TenancyStorageMemoryImpl):
     down = True
 
     async def write_user(
-        self, org_id: UUID, user: User, outbox_row: OutboxRow | None = None
+        self, org_id: UUID, user: User, outbox_rows: tuple[OutboxRow, ...] = ()
     ) -> None:
         if self.down and user.deleted_at is not None:
             raise RuntimeError("storage is down")
-        await super().write_user(org_id, user, outbox_row)
+        await super().write_user(org_id, user, outbox_rows)
 
     async def remove_member(
-        self, org_id: UUID, user: User, membership: Membership, outbox_row: OutboxRow
+        self, org_id: UUID, user: User, membership: Membership, outbox_rows: tuple[OutboxRow, ...]
     ) -> None:
         if self.down:
             raise RuntimeError("storage is down")
-        await super().remove_member(org_id, user, membership, outbox_row)
+        await super().remove_member(org_id, user, membership, outbox_rows)
 
 
 async def test_a_removal_that_fails_leaves_the_member_whole(
@@ -1349,7 +1349,7 @@ class DownOnCreateStorage(TenancyStorageMemoryImpl):
         org_id: UUID,
         user: User,
         membership: Membership,
-        outbox_row: OutboxRow,
+        outbox_rows: tuple[OutboxRow, ...],
         identity: Identity | None = None,
     ) -> None:
         raise UniqueKeyTaken("a key is taken")
