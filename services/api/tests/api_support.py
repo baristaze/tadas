@@ -13,11 +13,13 @@ from tadas.infra.impl.local import InfraLocalImpl
 from tadas.om.base import new_id, utcnow
 from tadas.om.opcontext import AppContext, AppType, RequestContext, Role
 from tadas.om.storage.impl.memory import StorageMemoryImpl
+from tadas.om.storage.root import StorageInterface
 from tadas.om.tenancy.rules import hash_password
 from tadas.om.tenancy.types.identity import Identity
 from tadas.om.tenancy.types.membership import Membership
 from tadas.om.tenancy.types.user import User
 from tadas.services.api.container import AppContainer
+from tadas.services.api.settings import ApiSettings
 
 OWNER = {"email": "ann@example.test", "password": "pw-1234", "name": "Ann"}
 
@@ -27,8 +29,15 @@ def seed_request() -> RequestContext:
     return RequestContext(request_id=new_id(), app=AppContext(type=AppType.CLI, version="cli@test"))
 
 
-def build_container(tmp_path: Path) -> AppContainer:
-    return AppContainer.for_tests(StorageMemoryImpl(), InfraLocalImpl(tmp_path))
+def build_container(
+    tmp_path: Path, storage: StorageInterface | None = None, **overrides: object
+) -> AppContainer:
+    """The test container over the memory storage root and the local infra
+    root. A test that needs a bound or a deadline of its own names the
+    settings it overrides, and one that needs storage to behave a certain way
+    passes its own root."""
+    settings = ApiSettings.model_validate({"environment": "test", **overrides})
+    return AppContainer.for_tests(storage or StorageMemoryImpl(), InfraLocalImpl(tmp_path), settings)
 
 
 async def sign_in_as(

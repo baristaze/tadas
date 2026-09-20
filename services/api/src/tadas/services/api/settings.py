@@ -28,6 +28,12 @@ class ApiSettings(StorageSettings, InfraSettings):
     login_rate_limit: int = 10
     login_rate_window_seconds: int = 60
     realtime_send_buffer_size: int = 256
+    # The readiness probe's own deadline, shorter than the interval it is
+    # polled on (the container probe asks every 10 seconds and gives up at 3,
+    # the load balancer every 15 and gives up at 5), so a hung database or an
+    # exhausted pool makes the probe answer "not ready" instead of making it
+    # stop answering. Seconds.
+    readiness_timeout_seconds: float = 2.0
 
     @field_validator("trusted_proxies")
     @classmethod

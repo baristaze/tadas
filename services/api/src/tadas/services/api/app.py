@@ -2,10 +2,11 @@
 container, middleware in a fixed order, routers under /v1, health routes,
 and the lifespan that starts and closes the container."""
 
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import APIRouter, FastAPI, Request, Response
+from fastapi import APIRouter, FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -62,8 +63,21 @@ def create_app(container: AppContainer | None = None) -> FastAPI:
         return {"status": "ok", "version": settings.version}
 
     @app.get("/readyz", include_in_schema=False)
-    async def readyz(request: Request) -> JSONResponse:
-        ready = await container.storage.healthcheck()
+    async def readyz() -> JSONResponse:
+        """The storage healthcheck under a deadline of its own, shorter than
+        the interval the probe is polled on: a probe that waits on the
+        dependency it reports on stops answering exactly when the answer
+        matters, and an orchestrator reads a probe that hangs as a timeout
+        rather than as the negative answer it is. So the deadline answers
+        here, 503 and `ready: false`; it never raises and never hangs. The
+        deadline reaches the wait itself: `healthcheck` catches `Exception`
+        and a cancellation is not one, so an exhausted pool is interrupted
+        where it waits rather than kept until it gives up on its own."""
+        try:
+            async with asyncio.timeout(settings.readiness_timeout_seconds):
+                ready = await container.storage.healthcheck()
+        except TimeoutError:
+            ready = False
         return JSONResponse(status_code=200 if ready else 503, content={"ready": ready})
 
     @app.get("/metrics", include_in_schema=False)
