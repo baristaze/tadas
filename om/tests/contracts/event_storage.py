@@ -3,6 +3,7 @@ tenant fence's evidence: each one presents another tenant's identifier and
 asserts that nothing is found and nothing changes. The negative control that
 says what they catch is in `docs/runbooks/tenant-isolation.md`."""
 
+from datetime import timedelta
 from uuid import UUID
 
 import pytest
@@ -67,6 +68,21 @@ class EventStorageContract:
         assert await storage.read_after(org_a, 0, 2) == appended[:2]
         assert await storage.read_after(org_b, 0, 10) == [elsewhere]
         assert await storage.read_after(new_id(), 0, 10) == []
+
+    async def test_the_count_since_a_moment_spans_every_tenant(
+        self, storage: EventStorageInterface
+    ) -> None:
+        """The traffic figure the platform's size reads: events produced at or
+        after the cut, in whichever tenant's stream."""
+        cut = utcnow()
+        assert await storage.count_since(cut) == 0
+        org_a, org_b = new_id(), new_id()
+        await storage.append_event(org_a, make_event(org_a))
+        await storage.append_event(org_b, make_event(org_b))
+        earlier = make_event(org_b).model_copy(update={"produced_at": cut - timedelta(hours=25)})
+        await storage.append_event(org_b, earlier)
+        assert await storage.count_since(cut) == 2
+        assert await storage.count_since(cut - timedelta(days=2)) == 3
 
     async def test_an_appended_event_names_its_own_tenant(
         self, storage: EventStorageInterface

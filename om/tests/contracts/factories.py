@@ -2,7 +2,7 @@ from datetime import timedelta
 from uuid import UUID
 
 from tadas.om.base import new_id, utcnow
-from tadas.om.opcontext import CredentialKind, Role
+from tadas.om.opcontext import CredentialKind, OperatorRole, Role
 from tadas.om.tenancy.types.api_key import ApiKey
 from tadas.om.tenancy.types.identity import Identity
 from tadas.om.tenancy.types.membership import Membership
@@ -26,7 +26,9 @@ def make_org(name: str = "Acme") -> Org:
     )
 
 
-def make_identity(email: str | None = None, *, operator: bool = False) -> Identity:
+def make_identity(
+    email: str | None = None, *, operator_role: OperatorRole | None = None
+) -> Identity:
     now = utcnow()
     identity_id = new_id()
     return Identity(
@@ -37,7 +39,7 @@ def make_identity(email: str | None = None, *, operator: bool = False) -> Identi
         updated_by=identity_id,
         email=email or f"{identity_id.hex[-12:]}@example.test",
         password_hash="scrypt$00$00",
-        is_operator=operator,
+        operator_role=operator_role,
     )
 
 

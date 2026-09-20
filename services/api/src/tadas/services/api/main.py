@@ -16,7 +16,7 @@ import uvicorn
 from tadas.infra.impl.local import InfraLocalImpl
 from tadas.om.base import new_id
 from tadas.om.exceptions import Conflict
-from tadas.om.opcontext import AppContext, AppType, RequestContext, Role
+from tadas.om.opcontext import AppContext, AppType, OperatorRole, RequestContext, Role
 from tadas.om.storage import migrate
 from tadas.om.storage.impl.memory import StorageMemoryImpl
 from tadas.services.api.app import create_app
@@ -102,7 +102,7 @@ def bootstrap(args: argparse.Namespace) -> int:
                 args.email,
                 args.password,
                 args.name,
-                operator=args.operator,
+                operator_role=OperatorRole(args.operator_role) if args.operator else None,
             )
         except Conflict:
             # The only conflict bootstrap raises is a taken slug.
@@ -180,7 +180,15 @@ def main(argv: list[str] | None = None) -> int:
     p_boot.add_argument("--email", required=True)
     p_boot.add_argument("--password", required=True)
     p_boot.add_argument("--name", required=True)
-    p_boot.add_argument("--operator", action="store_true")
+    p_boot.add_argument(
+        "--operator", action="store_true", help="put the owner on the operator allowlist"
+    )
+    p_boot.add_argument(
+        "--operator-role",
+        default=OperatorRole.WRITE.value,
+        choices=[r.value for r in OperatorRole],
+        help="what the allowlist entry grants, with --operator; write includes read",
+    )
     p_boot.add_argument(
         "--if-absent", action="store_true", help="succeed without changes when the slug exists"
     )

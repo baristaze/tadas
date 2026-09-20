@@ -19,7 +19,7 @@ from tadas.client.client import (
     retry_delay_seconds,
 )
 from tadas.client.realtime import Channel
-from tadas.client.types import TaskStatus
+from tadas.client.types import Role, TaskStatus
 
 TASK = {
     "id": "0199a4c0-0000-7000-8000-000000000001",
@@ -33,6 +33,30 @@ TASK = {
     "created_by": "0199a4c0-0000-7000-8000-0000000000aa",
     "deleted_at": None,
     "version": 1,
+}
+
+
+ORG = {
+    "id": "0199a4c0-0000-7000-8000-0000000000bb",
+    "name": "Acme",
+    "slug": "acme",
+    "created_at": "2026-09-18T12:00:00Z",
+    "deleted_at": None,
+}
+
+USER = {
+    "id": "0199a4c0-0000-7000-8000-0000000000cc",
+    "email": "bob@example.test",
+    "display_name": "Bob",
+    "created_at": "2026-09-18T12:00:00Z",
+}
+
+EVENT = {
+    "seq": 1,
+    "kind": "tasks.task.created",
+    "target_id": TASK["id"],
+    "produced_at": "2026-09-18T12:00:00Z",
+    "actor_id": TASK["created_by"],
 }
 
 
@@ -362,3 +386,129 @@ async def test_the_count_and_the_delay_arrive_through_the_constructor() -> None:
         with pytest.raises(ApiError):
             await client.task(UUID(TASK["id"]))
     assert len(seen) == 1
+
+
+# The operator plane: each method sends the route it stands for, under the
+# bearer the client holds (an operator's own sign-in), and types the answer.
+
+
+async def test_admin_size_reads_the_platforms_size() -> None:
+    size = {
+        "tenants": 2,
+        "users": 3,
+        "tasks_last_24h": 4,
+        "events_last_24h": 5,
+        "since": "2026-09-17T12:00:00Z",
+    }
+    recorder = Recorder({"/v1/admin/size": httpx.Response(200, json=size)})
+    async with client_over(recorder, token="lgn_1") as client:
+        read = await client.admin_size()
+    assert (read.tenants, read.users, read.tasks_last_24h, read.events_last_24h) == (2, 3, 4, 5)
+    sent = recorder.requests[0]
+    assert sent.method == "GET" and sent.url.path == "/v1/admin/size"
+    assert sent.headers["authorization"] == "Bearer lgn_1"
+
+
+async def test_admin_create_org_is_a_creating_call_under_a_key() -> None:
+    recorder = Recorder({"/v1/admin/orgs": httpx.Response(201, json=ORG)})
+    async with client_over(recorder, token="lgn_1") as client:
+        created = await client.admin_create_org(
+            "Acme", "acme", owner_email="ann@example.test", owner_password="pw", owner_name="Ann"
+        )
+        again = await client.admin_create_org(
+            "Acme",
+            "acme",
+            owner_email="ann@example.test",
+            owner_password="pw",
+            owner_name="Ann",
+            idempotency_key="given",
+        )
+    assert created.slug == "acme" and again.id == created.id
+    minted, given = recorder.requests
+    assert minted.method == "POST" and minted.url.path == "/v1/admin/orgs"
+    UUID(minted.headers["idempotency-key"])
+    assert given.headers["idempotency-key"] == "given"
+    assert minted.read() == (
+        b'{"name":"Acme","slug":"acme","owner_email":"ann@example.test",'
+        b'"owner_password":"pw","owner_name":"Ann"}'
+    )
+
+
+async def test_admin_add_member_is_a_creating_call_under_a_key() -> None:
+    org_id = UUID(ORG["id"])
+    path = f"/v1/admin/orgs/{org_id}/members"
+    recorder = Recorder({path: httpx.Response(201, json=USER)})
+    async with client_over(recorder, token="lgn_1") as client:
+        added = await client.admin_add_member(
+            org_id, "bob@example.test", password="pw", display_name="Bob"
+        )
+        as_admin = await client.admin_add_member(
+            org_id,
+            "bob@example.test",
+            password="pw",
+            display_name="Bob",
+            role=Role.admin,
+            idempotency_key="given",
+        )
+    assert added.email == "bob@example.test" and as_admin.id == added.id
+    minted, given = recorder.requests
+    assert minted.method == "POST" and minted.url.path == path
+    UUID(minted.headers["idempotency-key"])
+    assert given.headers["idempotency-key"] == "given"
+    assert minted.read() == (
+        b'{"email":"bob@example.test","password":"pw","display_name":"Bob","role":"member"}'
+    )
+    assert given.read().endswith(b'"role":"admin"}')
+
+
+async def test_admin_org_reads_one_tenant() -> None:
+    org_id = UUID(ORG["id"])
+    recorder = Recorder({f"/v1/admin/orgs/{org_id}": httpx.Response(200, json=ORG)})
+    async with client_over(recorder, token="lgn_1") as client:
+        org = await client.admin_org(org_id)
+    assert org.id == org_id and org.deleted_at is None
+    sent = recorder.requests[0]
+    assert sent.method == "GET" and sent.url.path == f"/v1/admin/orgs/{org_id}"
+
+
+async def test_admin_members_pages_with_the_cursor_it_is_given() -> None:
+    org_id = UUID(ORG["id"])
+    path = f"/v1/admin/orgs/{org_id}/members"
+    page = {"items": [USER], "next_cursor": "c-2"}
+    recorder = Recorder({path: httpx.Response(200, json=page)})
+    async with client_over(recorder, token="lgn_1") as client:
+        first = await client.admin_members(org_id)
+        second = await client.admin_members(org_id, cursor=first.next_cursor, limit=5)
+    assert [u.email for u in first.items] == ["bob@example.test"] and second.next_cursor == "c-2"
+    assert recorder.requests[0].url.params["limit"] == "200"
+    assert "cursor" not in recorder.requests[0].url.params
+    assert dict(recorder.requests[1].url.params) == {"limit": "5", "cursor": "c-2"}
+
+
+async def test_admin_tasks_names_the_list_and_pages_it() -> None:
+    org_id = UUID(ORG["id"])
+    path = f"/v1/admin/orgs/{org_id}/tasks"
+    page = {"items": [TASK], "next_cursor": None}
+    recorder = Recorder({path: httpx.Response(200, json=page)})
+    async with client_over(recorder, token="lgn_1") as client:
+        opened = await client.admin_tasks(org_id)
+        done = await client.admin_tasks(org_id, TaskStatus.done, cursor="c-1", limit=10)
+    assert [t.title for t in opened.items] == ["one"] and done.next_cursor is None
+    assert dict(recorder.requests[0].url.params) == {"status": "open", "limit": "50"}
+    assert dict(recorder.requests[1].url.params) == {
+        "status": "done",
+        "limit": "10",
+        "cursor": "c-1",
+    }
+
+
+async def test_admin_events_replays_one_tenants_stream() -> None:
+    org_id = UUID(ORG["id"])
+    path = f"/v1/admin/orgs/{org_id}/events"
+    recorder = Recorder({path: httpx.Response(200, json=[EVENT])})
+    async with client_over(recorder, token="lgn_1") as client:
+        events = await client.admin_events(org_id, after_seq=3, limit=10)
+    assert [e.seq for e in events] == [1] and events[0].kind == "tasks.task.created"
+    sent = recorder.requests[0]
+    assert sent.method == "GET" and sent.url.path == path
+    assert dict(sent.url.params) == {"after_seq": "3", "limit": "10"}

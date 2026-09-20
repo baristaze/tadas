@@ -43,6 +43,13 @@ class TasksStorageInterface(ABC):
     async def read_task(self, org_id: UUID, task_id: UUID) -> Task | None: ...
 
     @abstractmethod
+    async def count_created_since(self, since: datetime) -> int:
+        """Global: how many tasks were created at or after `since`, across every
+        tenant and whatever became of them since; the traffic the operator
+        plane's size reads."""
+        ...
+
+    @abstractmethod
     async def purge_deleted(self, org_id: UUID, before: datetime) -> int:
         """The one hard delete: removes the tenant's tasks soft-deleted before
         `before`; returns how many."""

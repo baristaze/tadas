@@ -9,7 +9,15 @@ from tadas.infra.impl.local import InfraLocalImpl
 from tadas.infra.topics import EntityChangedPayload, TopicPayload, Topics, WorkAvailablePayload
 from tadas.om.base import EMPTY_UUID, new_id, utcnow
 from tadas.om.exceptions import LeaseLost, NotFound, ValidationFailed
-from tadas.om.opcontext import AppContext, AppType, CredentialKind, OpContext, RequestContext, Role
+from tadas.om.opcontext import (
+    AppContext,
+    AppType,
+    CredentialKind,
+    OpContext,
+    OperatorRole,
+    RequestContext,
+    Role,
+)
 from tadas.om.root import Managers, build_managers
 from tadas.om.storage.impl.memory import StorageMemoryImpl
 from tadas.om.work.impl.manager import DEAD_LETTER_KIND, WorkOptions
@@ -453,7 +461,13 @@ async def test_a_claim_in_a_deleted_org_fails_the_item_and_moves_on(
     bobs = make_item().model_copy(update={"created_by": bob.user_id})
     await managers.work.enqueue(bob, bobs)
     await tenancy.bootstrap(
-        request(APP), "Ops", "ops", "root@example.test", "pw-1234", "Root", operator=True
+        request(APP),
+        "Ops",
+        "ops",
+        "root@example.test",
+        "pw-1234",
+        "Root",
+        operator_role=OperatorRole.WRITE,
     )
     admin = await tenancy.admit_operator(
         await tenancy.authenticate_login(

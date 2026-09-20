@@ -5,7 +5,7 @@ from uuid import UUID
 import pytest
 from contracts.idempotency_storage import attempt_minted_at, attempt_of, make_record
 
-from tadas.om.base import new_id, utcnow
+from tadas.om.base import EMPTY_UUID, new_id, utcnow
 from tadas.om.exceptions import (
     IdempotencyAttemptLost,
     IdempotencyInProgress,
@@ -21,11 +21,13 @@ from tadas.om.opcontext import (
     AppType,
     CredentialKind,
     OpContext,
+    OperatorContext,
+    OperatorRole,
     RequestContext,
     Role,
     build_context,
 )
-from tadas.om.tenancy.types.role import permissions_of
+from tadas.om.tenancy.types.role import operator_permissions_of, permissions_of
 
 APP = AppContext(type=AppType.API, version="api@test")
 
@@ -38,6 +40,20 @@ def context(role: Role = Role.MEMBER, org_id: UUID | None = None) -> OpContext:
         role=role,
         permissions=permissions_of(role),
         credential_kind=CredentialKind.SESSION_TOKEN,
+    )
+
+
+def operator(role: OperatorRole = OperatorRole.WRITE) -> OperatorContext:
+    """A test double of the operator stage; the transition is the tenancy
+    manager's, and this suite is about the marker."""
+    return OperatorContext(
+        request_id=new_id(),
+        app=APP,
+        identity_id=new_id(),
+        email="root@example.test",
+        credential_kind=CredentialKind.LOGIN,
+        credential_id=new_id(),
+        permissions=operator_permissions_of(role),
     )
 
 
@@ -311,3 +327,43 @@ async def test_purge_takes_finished_records_past_the_retention_and_abandoned_mar
     assert (await manager.begin(ctx, "stale", "d", new_id())).pending
     with pytest.raises(NotAuthorized):
         await manager.purge(context(Role.VIEWER, ctx.org_id))
+
+
+async def test_the_operator_marker_runs_the_same_moves_in_the_system_scope(
+    manager: IdempotencyManagerImpl, storage: IdempotencyStorageMemoryImpl
+) -> None:
+    """The operator plane's creating requests carry a key like every other:
+    the record is the operator's, under the system scope, and it replays,
+    refuses a reused key, releases, and finishes as a tenant's does. A read
+    operator has no marker to begin, since only a write carries a key."""
+    admin = operator()
+    target = new_id()
+    begun = await manager.begin_for_operator(admin, "k1", "digest-a", target)
+    assert begun.pending and begun.target_id == target and begun.user_id == admin.identity_id
+    assert await storage.read_record(EMPTY_UUID, admin.identity_id, "k1") == begun
+    with pytest.raises(IdempotencyInProgress):
+        await manager.begin_for_operator(admin, "k1", "digest-a", new_id())
+    with pytest.raises(IdempotencyKeyReused):
+        await manager.begin_for_operator(admin, "k1", "digest-b", new_id())
+    assert begun.attempt_id is not None
+    await manager.release_for_operator(admin, "k1", begun.attempt_id)
+    rearmed = await manager.begin_for_operator(admin, "k1", "digest-a", new_id())
+    assert rearmed.pending and rearmed.target_id == target
+    assert rearmed.attempt_id is not None
+    with pytest.raises(IdempotencyAttemptLost):
+        await manager.finish_for_operator(admin, "k1", begun.attempt_id, 201, "{}")
+    finished = await manager.finish_for_operator(admin, "k1", rearmed.attempt_id, 201, "{}")
+    assert (finished.status, finished.body) == (201, "{}")
+    assert await manager.begin_for_operator(admin, "k1", "digest-a", new_id()) == finished
+    # Personal to the operator, as a tenant's key is to the user.
+    assert (await manager.begin_for_operator(operator(), "k1", "digest-a", new_id())).pending
+    with pytest.raises(NotFound):
+        await manager.finish_for_operator(admin, "k2", new_id(), 201, "{}")
+    reader = operator(OperatorRole.READ)
+    for move in (
+        manager.begin_for_operator(reader, "k3", "digest-a", new_id()),
+        manager.finish_for_operator(reader, "k1", rearmed.attempt_id, 201, "{}"),
+        manager.release_for_operator(reader, "k1", rearmed.attempt_id),
+    ):
+        with pytest.raises(NotAuthorized):
+            await move

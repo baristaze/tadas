@@ -3,7 +3,7 @@ from uuid import UUID
 
 from pydantic import Field
 
-from tadas.om.opcontext import CredentialKind, Permission, Role
+from tadas.om.opcontext import CredentialKind, OperatorRole, Permission, Role
 from tadas.om.tenancy.rules import MAX_API_KEY_TTL
 from tadas.services.api.types.common import RequestBody, View
 
@@ -24,11 +24,13 @@ class UserView(View):
 
 
 class IdentityView(View):
-    """The person behind the caller's user; never carries the password hash."""
+    """The person behind the caller's user; never carries the password hash.
+    `operator_role` is the allowlist entry: null for a person who is not an
+    operator."""
 
     id: UUID
     email: str
-    is_operator: bool
+    operator_role: OperatorRole | None
     created_at: datetime
 
 
