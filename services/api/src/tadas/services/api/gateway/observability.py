@@ -1,6 +1,9 @@
 """Request id middleware: accept or mint, stamp on the scope, echo in the
-response, open the server span with it attached, and count the request."""
+response, open the server span with it attached, count the request, and
+answer an unhandled exception with the envelope while the id is still in
+hand."""
 
+import logging
 import time
 from collections.abc import Awaitable, Callable, MutableMapping
 from typing import Any
@@ -12,6 +15,9 @@ from starlette.datastructures import Headers, MutableHeaders
 
 from tadas.infra.observability import HTTP_LATENCY, HTTP_REQUESTS, request_id_var
 from tadas.om.base import new_id
+from tadas.services.api.gateway.envelope import INTERNAL_ERROR, error_response
+
+log = logging.getLogger(__name__)
 
 Scope = MutableMapping[str, Any]
 Receive = Callable[[], Awaitable[MutableMapping[str, Any]]]
@@ -78,6 +84,17 @@ class RequestIdMiddleware:
         ) as span:
             try:
                 await self.app(scope, receive, send_with_request_id)
+            except Exception:
+                # Starlette's own catch-all runs outside this middleware, once
+                # the id has left the log context and the span has closed; a
+                # response that has not started is answered here instead,
+                # with the header, the log line, and the status all carrying
+                # the id. One that has started, or a socket, is re-raised.
+                if scope["type"] != "http" or status["code"] != 0:
+                    raise
+                log.exception("unhandled error on %s %s", method, scope["path"])
+                response = error_response(request_id, 500, *INTERNAL_ERROR)
+                await response(scope, receive, send_with_request_id)
             finally:
                 request_id_var.reset(token)
                 template = route_template_of(scope) or "unmatched"

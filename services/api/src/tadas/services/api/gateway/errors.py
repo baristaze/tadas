@@ -1,7 +1,8 @@
 """One handler translates PlatformException, and its infra sibling, into the
-error envelope with the status the exception names; one catch-all turns
-anything else into a 500 with the same shape. Routers never set error
-status codes."""
+error envelope with the status the exception names. Anything else is a 500
+with the same shape, rendered by the observability middleware while the
+request id is still in hand; the catch-all here is the last resort for what
+escapes outside it. Routers never set error status codes."""
 
 import logging
 
@@ -11,9 +12,9 @@ from fastapi.responses import JSONResponse
 
 from tadas.infra.exceptions import InfraException
 from tadas.om.exceptions import PlatformException
+from tadas.services.api.gateway.envelope import INTERNAL_ERROR, error_response
 from tadas.services.api.gateway.observability import request_id_of
 from tadas.services.api.gateway.ratelimit import RateLimited
-from tadas.services.api.types.common import ErrorBody, ErrorResponse
 
 log = logging.getLogger(__name__)
 
@@ -21,10 +22,7 @@ log = logging.getLogger(__name__)
 def envelope(
     request: Request, status: int, code: str, message: str, headers: dict[str, str] | None = None
 ) -> JSONResponse:
-    body = ErrorResponse(
-        error=ErrorBody(code=code, message=message, request_id=request_id_of(request.scope))
-    )
-    return JSONResponse(status_code=status, content=body.model_dump(mode="json"), headers=headers)
+    return error_response(request_id_of(request.scope), status, code, message, headers)
 
 
 def register_error_handlers(app: FastAPI) -> None:
@@ -51,5 +49,8 @@ def register_error_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(Exception)
     async def catch_all(request: Request, exc: Exception) -> JSONResponse:
+        # Starlette runs this outside every middleware, after the request id
+        # is gone from the log context; the middleware answers first and only
+        # what is raised beyond it reaches here.
         log.exception("unhandled error on %s %s", request.method, request.url.path)
-        return envelope(request, 500, "internal_error", "internal error")
+        return envelope(request, 500, *INTERNAL_ERROR)
