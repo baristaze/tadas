@@ -293,6 +293,12 @@ everything in-process for tests.
   close with code 4401 on the open socket, which both clients read as
   "sign in again" (a close before the accept would reach the wire as an
   HTTP 403 handshake failure, indistinguishable from any other refusal).
+  An admitted socket holds the context its ticket produced for the life
+  of the connection, and that life is bounded by the credential behind
+  the ticket: the redemption yields the context beside the session's or
+  the api key's expiry (`SocketPrincipal`), and the handler closes the
+  socket with 4401 at that instant whatever the client does, so the
+  clients sign in again the way they do for a refused ticket.
   The login route takes the request stage alone.
   Per socket the process keeps one bounded send buffer
   (`realtime/send_buffer.py`, `TADAS_REALTIME_SEND_BUFFER_SIZE`) and a

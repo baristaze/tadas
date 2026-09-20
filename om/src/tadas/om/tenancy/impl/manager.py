@@ -54,7 +54,7 @@ from tadas.om.tenancy.types.membership import Membership
 from tadas.om.tenancy.types.org import Org
 from tadas.om.tenancy.types.role import permissions_of
 from tadas.om.tenancy.types.session import Session
-from tadas.om.tenancy.types.socket_ticket import SocketTicket
+from tadas.om.tenancy.types.socket_ticket import SocketPrincipal, SocketTicket
 from tadas.om.tenancy.types.user import User
 
 TICKET_USED_KEY = "ticket-used:"
@@ -366,7 +366,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
         org_id: UUID,
         credential_kind: CredentialKind,
         credential_id: UUID,
-    ) -> OpContext:
+    ) -> SocketPrincipal:
         if credential_kind is CredentialKind.SESSION_TOKEN:
             session = await self._storage.read_session(org_id, credential_id)
             if session is None:
@@ -374,6 +374,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
             self._check_session(session, CredentialKind.SESSION_TOKEN)
             org, user, membership = await self._principal(org_id, session.user_id)
             role = membership.role
+            expires_at = session.expires_at
         elif credential_kind is CredentialKind.API_KEY:
             api_key = await self._storage.read_api_key(org_id, credential_id)
             if api_key is None:
@@ -381,9 +382,10 @@ class TenancyManagerImpl(TenancyManagerInterface):
             self._check_api_key(api_key)
             org, user, membership = await self._principal(org_id, api_key.user_id)
             role = capped_role(api_key.role, membership.role)
+            expires_at = api_key.expires_at
         else:
             raise InvalidCredential("a ticket stands for a session token or an api key")
-        return build_context(
+        ctx = build_context(
             rctx,
             user_id=user.id,
             org_id=org.id,
@@ -393,8 +395,9 @@ class TenancyManagerImpl(TenancyManagerInterface):
             teams=membership.teams,
             credential_id=credential_id,
         )
+        return SocketPrincipal(ctx=ctx, expires_at=expires_at)
 
-    async def redeem_ticket(self, rctx: RequestContext, ticket: str) -> OpContext:
+    async def redeem_ticket(self, rctx: RequestContext, ticket: str) -> SocketPrincipal:
         if credential_kind_of(ticket) is not CredentialKind.SOCKET_TICKET:
             raise InvalidCredential("expected a socket ticket")
         digest = hash_token(ticket)

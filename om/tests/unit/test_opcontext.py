@@ -192,7 +192,7 @@ async def test_service_and_socket_contexts_refine_the_request_they_are_given(
     ctx = await manager.authenticate(request(), session.token)
     ticket = await manager.issue_ticket(ctx)
     socket_request = request()
-    socket_ctx = await manager.redeem_ticket(socket_request, ticket.ticket)
+    socket_ctx = (await manager.redeem_ticket(socket_request, ticket.ticket)).ctx
     assert socket_ctx.credential_kind is CredentialKind.SOCKET_TICKET
     assert socket_ctx.credential_id == ctx.credential_id
     assert socket_ctx.request_id == socket_request.request_id

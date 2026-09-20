@@ -39,6 +39,7 @@ from tadas.om.tenancy.rules import DUMMY_PASSWORD_HASH, hash_password, hash_toke
 from tadas.om.tenancy.storage.impl.memory import TenancyStorageMemoryImpl
 from tadas.om.tenancy.types.identity import Identity
 from tadas.om.tenancy.types.membership import Membership
+from tadas.om.tenancy.types.socket_ticket import SocketPrincipal
 from tadas.om.tenancy.types.user import User
 
 APP = AppContext(type=AppType.PORTAL, version="portal@test")
@@ -740,7 +741,9 @@ async def test_a_tenant_whose_members_have_all_left_is_still_swept(
     assert await storage.read_user(org.id, ann.id) is None
 
 
-async def test_a_socket_ticket_is_redeemed_exactly_once(manager: TenancyManagerImpl) -> None:
+async def test_a_socket_ticket_is_redeemed_exactly_once(
+    manager: TenancyManagerImpl, storage: TenancyStorageMemoryImpl
+) -> None:
     _, org = await manager.bootstrap(
         request(), "Acme", "acme", "ann@example.test", "pw-1234", "Ann"
     )
@@ -749,10 +752,14 @@ async def test_a_socket_ticket_is_redeemed_exactly_once(manager: TenancyManagerI
     issued = await manager.issue_ticket(ctx)
     assert issued.ticket.startswith("tkt_")
     assert issued.expires_at > utcnow()
-    socket_ctx = await manager.redeem_ticket(request(), issued.ticket)
+    principal = await manager.redeem_ticket(request(), issued.ticket)
+    socket_ctx = principal.ctx
     assert socket_ctx.user_id == ctx.user_id
     assert socket_ctx.security.credential_kind is CredentialKind.SOCKET_TICKET
     assert socket_ctx.security.credential_id == ctx.security.credential_id
+    # The socket's authority ends with the session behind the ticket.
+    session = await storage.read_session(org.id, ctx.security.credential_id)
+    assert session is not None and principal.expires_at == session.expires_at
     with pytest.raises(InvalidCredential):
         await manager.redeem_ticket(request(), issued.ticket)
     with pytest.raises(NotAuthorized):
@@ -774,7 +781,7 @@ async def test_concurrent_redemptions_admit_one_socket(manager: TenancyManagerIm
         *(manager.redeem_ticket(request(), issued.ticket) for _ in range(5)),
         return_exceptions=True,
     )
-    admitted = [o for o in outcomes if isinstance(o, OpContext)]
+    admitted = [o for o in outcomes if isinstance(o, SocketPrincipal)]
     refused = [o for o in outcomes if isinstance(o, InvalidCredential)]
     assert len(admitted) == 1 and len(refused) == 4
 
@@ -792,7 +799,7 @@ async def test_the_ticket_row_decides_while_the_cache_is_down(
         *(manager.redeem_ticket(request(), issued.ticket) for _ in range(5)),
         return_exceptions=True,
     )
-    assert len([o for o in outcomes if isinstance(o, OpContext)]) == 1
+    assert len([o for o in outcomes if isinstance(o, SocketPrincipal)]) == 1
     assert len([o for o in outcomes if isinstance(o, InvalidCredential)]) == 4
     with pytest.raises(InvalidCredential):
         await manager.redeem_ticket(request(), issued.ticket)
@@ -817,7 +824,8 @@ async def test_redeeming_a_ticket_rechecks_the_credential_behind_it(
     )
     key_ctx = await manager.authenticate(request(), key.key)
     from_key = await manager.redeem_ticket(request(), (await manager.issue_ticket(key_ctx)).ticket)
-    assert from_key.security.role is Role.MEMBER
+    assert from_key.ctx.security.role is Role.MEMBER
+    assert from_key.expires_at == key.api_key.expires_at
 
 
 async def test_expired_tickets_are_refused(
