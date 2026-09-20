@@ -5,15 +5,14 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from types import MappingProxyType
 from typing import Annotated, Any
-from uuid import UUID
+from uuid import UUID, uuid7
 
-import uuid_utils
 from pydantic import AfterValidator, BaseModel, ConfigDict, PlainSerializer
 
 
 def new_id() -> UUID:
     """A time-ordered UUID v7 as a standard-library UUID."""
-    return UUID(bytes=uuid_utils.uuid7().bytes)
+    return uuid7()
 
 
 def utcnow() -> datetime:
