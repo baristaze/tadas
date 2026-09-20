@@ -9,7 +9,7 @@ from uuid import UUID
 
 from pydantic import Field
 
-from tadas.om.base import EMPTY_UUID, FrozenMapping, Identifiable, Platform, Trackable
+from tadas.om.base import FrozenMapping, Identifiable, Platform, Trackable
 
 
 class WorkKind(str, Enum):
@@ -53,7 +53,7 @@ class WorkItem(Identifiable, Trackable):
     # principal and names a producer that knew no request; an empty
     # traceparent is a producer that ran with no tracer configured, and the
     # run then starts a trace of its own.
-    request_id: UUID = EMPTY_UUID
+    request_id: UUID
     traceparent: str | None = None
     payload: FrozenMapping = Field(
         default_factory=dict, validate_default=True

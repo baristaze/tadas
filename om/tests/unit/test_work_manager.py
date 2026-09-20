@@ -117,7 +117,7 @@ async def test_an_item_that_names_no_causing_request_leaves_the_field_empty(
 ) -> None:
     """A required reference nobody owns is EMPTY_UUID on the row; the stage
     carries no cause at all, the way a request that arrived at the edge does."""
-    item = make_item().model_copy(update={"created_by": ctx.user_id})
+    item = make_item().model_copy(update={"created_by": ctx.user_id, "request_id": EMPTY_UUID})
     assert item.request_id == EMPTY_UUID and item.traceparent is None
     await managers.work.enqueue(ctx, item)
     claimed = await managers.work.claim(request(), "default", [WorkKind.NOOP], "w1", LEASE)

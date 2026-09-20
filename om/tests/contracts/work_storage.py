@@ -42,6 +42,7 @@ def make_item(*, lane: str = "default", available_in: timedelta = timedelta(0)) 
         kind=WorkKind.NOOP,
         target_id=new_id(),
         idempotency_key=new_id(),
+        request_id=new_id(),
         payload={},
         lane=lane,
         available_at=now + available_in,
