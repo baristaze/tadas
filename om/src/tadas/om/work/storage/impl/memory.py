@@ -2,7 +2,7 @@ from collections.abc import Sequence
 from datetime import datetime, timedelta
 from uuid import UUID
 
-from tadas.om.base import new_id, utcnow
+from tadas.om.base import EMPTY_UUID, new_id, utcnow
 from tadas.om.exceptions import DuplicateWorkItem, TenantMismatch
 from tadas.om.storage.impl.memory_base import MemoryStorageBase, MemoryTable
 from tadas.om.work.rules import attempts_after_claim, is_exhausted, stagger_delay
@@ -61,6 +61,7 @@ class WorkStorageMemoryImpl(MemoryStorageBase, WorkStorageInterface):
                             "lease_expires_at": now + lease,
                             "attempts": attempts_after_claim(item.attempts),
                             "updated_at": now,
+                            "updated_by": EMPTY_UUID,  # the claim is the platform's write
                         }
                     )
                     self._items[item.id] = (org_id, claimed)
@@ -68,7 +69,7 @@ class WorkStorageMemoryImpl(MemoryStorageBase, WorkStorageInterface):
         return None
 
     async def requeue_stale(
-        self, org_id: UUID, now: datetime, stagger: timedelta, updated_by: UUID
+        self, org_id: UUID, now: datetime, stagger: timedelta
     ) -> list[WorkItem]:
         changed: list[WorkItem] = []
         async with self._lock:
@@ -95,7 +96,7 @@ class WorkStorageMemoryImpl(MemoryStorageBase, WorkStorageInterface):
                         "lease_expires_at": None,
                         "last_error": "lease expired",
                         "updated_at": now,
-                        "updated_by": updated_by,
+                        "updated_by": EMPTY_UUID,
                     }
                 )
                 self._items[item.id] = (org_id, requeued)

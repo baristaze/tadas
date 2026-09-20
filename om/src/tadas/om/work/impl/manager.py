@@ -165,7 +165,7 @@ class WorkManagerImpl(WorkManagerInterface):
     async def requeue_stale(self, ctx: OpContext) -> int:
         ctx.require(Permission.WRITE)
         requeued = await self._storage.requeue_stale(
-            ctx.org_id, utcnow(), self._options.stale_stagger, ctx.user_id
+            ctx.org_id, utcnow(), self._options.stale_stagger
         )
         if requeued:
             log.info("requeued %d stale work items in org %s", len(requeued), ctx.org_id)
@@ -204,7 +204,15 @@ class WorkManagerImpl(WorkManagerInterface):
         worker's name, is the fence: one worker can hold one item twice across a
         requeue, and the first claim's copy must not settle the second. A worker
         whose lease has passed is refused with LeaseLost, a Conflict, and hands
-        the item back without spending an attempt."""
+        the item back without spending an attempt.
+
+        The copy starts from the stored row, so what a worker sends back cannot
+        rewrite who asked for the work, when it was asked for, or what it is;
+        the note a hand-back carries is the one field the caller supplies. And
+        every write here is the platform's, so it signs `updated_by` with
+        EMPTY_UUID and never with `ctx.user_id`: the context the work runs
+        under is the attribution of the work, never of the bookkeeping on its
+        row."""
         ctx.require(Permission.WRITE)
         stored = await self._storage.read_item(ctx.org_id, item.id)
         if stored is None:
@@ -215,11 +223,15 @@ class WorkManagerImpl(WorkManagerInterface):
             or stored.claim_token != item.claim_token
         ):
             raise LeaseLost(f"work item {item.id} is no longer held by {item.claimed_by}")
-        written = await self._storage.write_item_if_held(
-            ctx.org_id,
-            item.claim_token,
-            item.model_copy(update=update | {"updated_by": ctx.user_id}),
+        moved = WorkItem.model_validate(
+            {
+                **stored.model_dump(),
+                "last_error": item.last_error,
+                **update,
+                "updated_by": EMPTY_UUID,
+            }
         )
+        written = await self._storage.write_item_if_held(ctx.org_id, item.claim_token, moved)
         if written is None:
             raise LeaseLost(f"work item {item.id} was taken from {item.claimed_by} mid-write")
         return written

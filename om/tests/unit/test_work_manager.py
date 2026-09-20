@@ -323,7 +323,7 @@ async def test_a_failed_item_is_a_dead_letter_with_an_audit_event(
     assert claimed is not None
     work_ctx, claimed_item = claimed
     failed = await managers.work.fail(work_ctx, claimed_item, "boom")
-    assert failed.status is WorkStatus.FAILED and failed.updated_by == work_ctx.user_id
+    assert failed.status is WorkStatus.FAILED and failed.updated_by == EMPTY_UUID
     events = await managers.events.get_events(ctx, after_seq=0, limit=10)
     assert [(e.kind, e.target_id, e.payload["last_error"]) for e in events] == [
         (DEAD_LETTER_KIND, item.id, "boom")
@@ -426,3 +426,71 @@ async def test_a_claim_in_a_deleted_org_fails_the_item_and_moves_on(
     monkeypatch.setattr(managers.work, "_options", WorkOptions(retention=timedelta(0)))
     await asyncio.sleep(0.001)
     assert await managers.work.purge_settled(sweep) == 1
+
+
+async def test_every_write_after_the_enqueue_is_the_platforms(
+    managers: Managers, storage: StorageMemoryImpl, ctx: OpContext
+) -> None:
+    """`created_by` is the person who asked for the work and `updated_by` is the
+    machinery that ran it: the claim, the renewal, the hand-back, the requeue,
+    the failure, and the completion all sign EMPTY_UUID. One lane per item, so
+    each claim takes the item its part of the test is about."""
+    items = {
+        lane: make_item(lane=lane).model_copy(update={"created_by": ctx.user_id})
+        for lane in ("held", "stale", "failing")
+    }
+    for item in items.values():
+        await managers.work.enqueue(ctx, item)
+
+    claimed = await managers.work.claim(request(), "held", [WorkKind.NOOP], "w1", LEASE)
+    assert claimed is not None
+    work_ctx, held = claimed
+    assert work_ctx.user_id == ctx.user_id, "the work runs under the enqueuer"
+    assert held.created_by == ctx.user_id and held.updated_by == EMPTY_UUID
+    renewed = await managers.work.extend_lease(work_ctx, held, LEASE)
+    assert renewed.updated_by == EMPTY_UUID
+    handed_back = await managers.work.release(work_ctx, renewed)
+    assert handed_back.updated_by == EMPTY_UUID
+    retaken = await managers.work.claim(request(), "held", [WorkKind.NOOP], "w1", LEASE)
+    assert retaken is not None
+    done = await managers.work.complete(retaken[0], retaken[1])
+    assert done.status is WorkStatus.DONE and done.updated_by == EMPTY_UUID
+
+    expired = timedelta(seconds=-1)
+    assert await managers.work.claim(request(), "stale", [WorkKind.NOOP], "w1", expired) is not None
+    assert await managers.work.requeue_stale(ctx) == 1, "the sweep runs under a person here"
+    requeued = await storage.get_work_storage().read_item(ctx.org_id, items["stale"].id)
+    assert requeued is not None and requeued.updated_by == EMPTY_UUID
+
+    failing = await managers.work.claim(request(), "failing", [WorkKind.NOOP], "w1", LEASE)
+    assert failing is not None
+    failed = await managers.work.fail(failing[0], failing[1], "boom")
+    assert failed.updated_by == EMPTY_UUID and failed.created_by == ctx.user_id
+
+
+async def test_a_transition_writes_the_stored_row_and_not_the_workers_copy(
+    managers: Managers, storage: StorageMemoryImpl, ctx: OpContext
+) -> None:
+    """The copy starts from the stored row: what a worker sends back cannot
+    rewrite who asked for the work, when it was asked for, or what it is. The
+    note a hand-back carries is the one field the caller supplies."""
+    item = make_item().model_copy(update={"created_by": ctx.user_id})
+    await managers.work.enqueue(ctx, item)
+    claimed = await managers.work.claim(request(), "default", [WorkKind.NOOP], "w1", LEASE)
+    assert claimed is not None
+    work_ctx, held = claimed
+    forged = held.model_copy(
+        update={
+            "created_by": new_id(),
+            "created_at": utcnow() - timedelta(days=9),
+            "target_id": new_id(),
+            "max_attempts": 99,
+            "last_error": "returned: worker stopping",
+        }
+    )
+    released = await managers.work.release(work_ctx, forged)
+    assert released.created_by == ctx.user_id and released.created_at == held.created_at
+    assert released.target_id == item.target_id and released.max_attempts == item.max_attempts
+    assert released.last_error == "returned: worker stopping"
+    stored = await storage.get_work_storage().read_item(ctx.org_id, item.id)
+    assert stored == released

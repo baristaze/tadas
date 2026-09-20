@@ -568,9 +568,7 @@ async def test_a_lost_lease_is_never_written_over(tmp_path: Path) -> None:
     assert held is not None and held.status is WorkStatus.CLAIMED
     # The sweep deems the lease expired (its clock runs an hour ahead) and
     # hands the item back before this worker's handler finishes.
-    requeued = await storage.requeue_stale(
-        ctx.org_id, utcnow() + timedelta(hours=1), timedelta(0), new_id()
-    )
+    requeued = await storage.requeue_stale(ctx.org_id, utcnow() + timedelta(hours=1), timedelta(0))
     assert [r.id for r in requeued] == [item.id]
     await until(lambda: len(handler.finished) == 1)
     await until(lambda: loop.running == 0)

@@ -4,12 +4,11 @@ from uuid import UUID
 import pytest
 
 from contracts.racing import race
-from tadas.om.base import new_id, utcnow
+from tadas.om.base import EMPTY_UUID, new_id, utcnow
 from tadas.om.exceptions import DuplicateWorkItem, TenantMismatch
 from tadas.om.work.storage import WorkStorageInterface
 from tadas.om.work.types.work_item import WorkItem, WorkKind, WorkStatus
 
-SWEEPER = new_id()
 LEASE = timedelta(seconds=30)
 
 
@@ -53,6 +52,8 @@ class WorkStorageContract:
         assert claimed.claimed_by == "w1"
         assert claimed.claim_token is not None
         assert claimed.attempts == 1
+        assert claimed.created_by == item.created_by, "the person who asked for the work"
+        assert claimed.updated_by == EMPTY_UUID, "the claim is the platform's write"
         assert claimed.lease_expires_at is not None and claimed.lease_expires_at > utcnow()
         assert claimed.payload == {}
         assert await storage.claim_next(lane, [WorkKind.NOOP], "w2", LEASE) is None
@@ -119,13 +120,13 @@ class WorkStorageContract:
 
         now = utcnow()
         stagger = timedelta(seconds=5)
-        changed = await storage.requeue_stale(org_a, now, stagger, SWEEPER)
+        changed = await storage.requeue_stale(org_a, now, stagger)
         assert [item.id for item in changed] == sorted(item.id for item in stale)
         for position, item in enumerate(changed):
             assert item.claimed_by is None and item.lease_expires_at is None
             assert item.claim_token is None
             assert item.last_error == "lease expired" and item.updated_at == now
-            assert item.updated_by == SWEEPER
+            assert item.updated_by == EMPTY_UUID, "the requeue is the platform's write"
             if item.max_attempts == 1:
                 assert item.status is WorkStatus.FAILED
             else:
@@ -136,7 +137,7 @@ class WorkStorageContract:
         assert held is not None and held.status is WorkStatus.CLAIMED
         other = await storage.read_item(org_b, elsewhere.id)
         assert other is not None and other.status is WorkStatus.CLAIMED
-        assert await storage.requeue_stale(org_a, utcnow(), stagger, SWEEPER) == []
+        assert await storage.requeue_stale(org_a, utcnow(), stagger) == []
 
     async def test_write_if_held_is_conditional_on_the_claim_token(
         self, storage: WorkStorageInterface, lane: str
@@ -174,7 +175,7 @@ class WorkStorageContract:
         assert first is not None
         stale = first[1]
         assert stale.claim_token is not None
-        assert len(await storage.requeue_stale(org, utcnow(), timedelta(0), SWEEPER)) == 1
+        assert len(await storage.requeue_stale(org, utcnow(), timedelta(0))) == 1
         second = await storage.claim_next(lane, [WorkKind.NOOP], "w1", LEASE)
         assert second is not None
         fresh = second[1]

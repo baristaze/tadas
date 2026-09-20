@@ -149,7 +149,12 @@ context on keeps the stage the callee needs.
   statement itself, not on the worker's name, because one worker can hold
   one item twice across a requeue: a worker whose lease has passed is
   refused with `LeaseLost`, a `Conflict`, and hands the item back without
-  spending an attempt; the requeue clears the token. A failed item is a
+  spending an attempt; the requeue clears the token. Every write to the
+  row after the enqueue is the platform's, so the claim, the renewal,
+  the hand-back, the requeue, the failure, and the completion all sign
+  `updated_by` with `EMPTY_UUID`, and the copy starts from the stored
+  row: `created_by` is the person who asked for the work, `updated_by`
+  is the machinery that ran it, and a worker's copy rewrites neither. A failed item is a
   dead letter, named by a `work.item.failed` event in the tenant's
   stream and counted on the outcome counter. Done or failed items are
   purged by the sweep after the work retention (30 days).

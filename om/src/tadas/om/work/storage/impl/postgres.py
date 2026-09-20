@@ -4,7 +4,7 @@ from uuid import UUID
 
 from sqlalchemy import DateTime, Interval, case, delete, func, literal, select, update
 
-from tadas.om.base import new_id, utcnow
+from tadas.om.base import EMPTY_UUID, new_id, utcnow
 from tadas.om.exceptions import DuplicateWorkItem, TenantMismatch, UniqueKeyTaken
 from tadas.om.storage.impl.pg_base import PgStorageBase
 from tadas.om.storage.utils.translation import to_model, to_values
@@ -81,6 +81,7 @@ class WorkStoragePostgresImpl(PgStorageBase, WorkStorageInterface):
                 lease_expires_at=now + lease,
                 attempts=WorkItems.attempts + 1,  # rules.attempts_after_claim, in SQL
                 updated_at=now,
+                updated_by=EMPTY_UUID,  # the claim is the platform's write
             )
             .returning(WorkItems)
         )
@@ -93,7 +94,7 @@ class WorkStoragePostgresImpl(PgStorageBase, WorkStorageInterface):
             return claimed
 
     async def requeue_stale(
-        self, org_id: UUID, now: datetime, stagger: timedelta, updated_by: UUID
+        self, org_id: UUID, now: datetime, stagger: timedelta
     ) -> list[WorkItem]:
         stale_filter = (
             WorkItems.org_id == org_id,
@@ -123,7 +124,7 @@ class WorkStoragePostgresImpl(PgStorageBase, WorkStorageInterface):
                 lease_expires_at=None,
                 last_error="lease expired",
                 updated_at=now,
-                updated_by=updated_by,
+                updated_by=EMPTY_UUID,
             )
             .returning(WorkItems)
         )

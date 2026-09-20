@@ -35,18 +35,20 @@ class WorkStorageInterface(ABC):
     ) -> tuple[UUID, WorkItem] | None:
         """Cross-tenant claim, one statement: the oldest available row on the lane,
         skipping locked ones, stamped with the claim, a freshly minted claim
-        token, and the lease."""
+        token, and the lease. The claim is the platform's write, so it signs
+        `updated_by` with EMPTY_UUID."""
         ...
 
     @abstractmethod
     async def requeue_stale(
-        self, org_id: UUID, now: datetime, stagger: timedelta, updated_by: UUID
+        self, org_id: UUID, now: datetime, stagger: timedelta
     ) -> list[WorkItem]:
         """One conditional statement: every claimed item of the tenant whose lease
         expired before `now` goes back to the queue, staggered by its position, or
         fails when its attempts are spent, its claim token cleared either way so
-        the holder it had is refused; returns the items it changed, by id.
-        `updated_by` is the sweep's principal."""
+        the holder it had is refused; returns the items it changed, by id. The
+        requeue is the platform's write, like the claim, so it signs
+        `updated_by` with EMPTY_UUID and takes no principal."""
         ...
 
     @abstractmethod
