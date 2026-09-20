@@ -32,7 +32,9 @@ from tadas.om.opcontext import (
     Role,
 )
 from tadas.om.outbox.impl.relay import OutboxRelayImpl
+from tadas.om.outbox.relay import OutboxRelayInterface
 from tadas.om.outbox.storage.impl.memory import OutboxStorageMemoryImpl
+from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.tenancy.impl.manager import TenancyManagerImpl, TenancyOptions
 from tadas.om.tenancy.impl.operator import TenancyOperatorManagerImpl, TenancyOperatorOptions
 from tadas.om.tenancy.rules import DUMMY_PASSWORD_HASH, hash_password, hash_token, verify_password
@@ -549,6 +551,64 @@ async def test_sessions_are_listed_revoked_and_logged_out(
     assert out.id == ctx.security.credential_id and out.revoked_at is not None
     with pytest.raises(CredentialExpired):
         await manager.authenticate(request(), first.token)
+
+
+class SpyRelay(OutboxRelayInterface):
+    """The real relay, with every row it was handed kept for the assertions."""
+
+    def __init__(self, relay: OutboxRelayImpl) -> None:
+        self._relay = relay
+        self.rows: list[tuple[UUID, OutboxRow]] = []
+
+    async def relay(self, org_id: UUID, row: OutboxRow) -> bool:
+        self.rows.append((org_id, row))
+        return await self._relay.relay(org_id, row)
+
+    async def relay_pending(self, limit: int) -> int:
+        return await self._relay.relay_pending(limit)
+
+    async def purge_done(self, retention: timedelta) -> int:
+        return await self._relay.purge_done(retention)
+
+
+async def test_revoking_a_session_announces_it_on_the_bus_without_its_token(
+    storage: TenancyStorageMemoryImpl, infra: InfraLocalImpl, outbox: OutboxStorageMemoryImpl
+) -> None:
+    """The socket that session opened lives in some process; the revocation
+    reaches it as any change does, an outbox row the relay publishes. The
+    event is a record, not a credential: its snapshot has no token hash."""
+    relay = SpyRelay(OutboxRelayImpl(outbox, EventStorageMemoryImpl(), infra.get_topics()))
+    manager = TenancyManagerImpl(
+        storage, relay, infra.get_cache(CacheScope.REALTIME_TICKET), TenancyOptions()
+    )
+    published: list[TopicPayload] = []
+
+    async def hear(payload: TopicPayload) -> None:
+        published.append(payload)
+
+    infra.get_topics().subscribe(Topics.ENTITY_CHANGED, "test", hear)
+    _, org = await manager.bootstrap(
+        request(), "Acme", "acme", "ann@example.test", "pw-1234", "Ann"
+    )
+    ctx = await sign_in(manager, "ann@example.test", org.id)
+    other = await sign_in(manager, "ann@example.test", org.id)
+
+    revoked = await manager.revoke_session(ctx, other.security.credential_id)
+    row = next(r for _, r in relay.rows if r.kind == "tenancy.session.revoked")
+    assert row.target_id == revoked.id and row.actor_id == ctx.user_id
+    assert "token_hash" not in row.payload
+    assert row.payload["revoked_at"] is not None and row.payload["user_id"] == str(ctx.user_id)
+    frames = [p for p in published if isinstance(p, EntityChangedPayload)]
+    assert [(f.kind, f.target_id, f.org_id) for f in frames if f.kind.startswith("tenancy.se")] == [
+        ("tenancy.session.revoked", revoked.id, org.id)
+    ]
+
+    # Logging out is the same revocation, announced the same way.
+    out = await manager.logout(ctx)
+    assert [r.target_id for _, r in relay.rows if r.kind == "tenancy.session.revoked"] == [
+        revoked.id,
+        out.id,
+    ]
 
 
 async def test_a_page_of_dead_sessions_never_hides_a_live_one(

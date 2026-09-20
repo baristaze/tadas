@@ -294,11 +294,21 @@ everything in-process for tests.
   "sign in again" (a close before the accept would reach the wire as an
   HTTP 403 handshake failure, indistinguishable from any other refusal).
   An admitted socket holds the context its ticket produced for the life
-  of the connection, and that life is bounded by the credential behind
-  the ticket: the redemption yields the context beside the session's or
-  the api key's expiry (`SocketPrincipal`), and the handler closes the
-  socket with 4401 at that instant whatever the client does, so the
-  clients sign in again the way they do for a refused ticket.
+  of the connection, and that life is bounded twice. A revocation
+  reaches it: revoking a session (`revoke_session`, `logout`) lands an
+  outbox row `tenancy.session.revoked` beside the session, as removing
+  a member lands `tenancy.user.deleted` and revoking a key
+  `tenancy.api_key.deleted`, the relay publishes each on the bus like
+  any change, and the realtime service in every process hears it and
+  closes the sockets it names with 4401 (the one the session or the key
+  opened, every one of the removed user), in whichever process they
+  live. The expiry is the bound that covers a frame the bus dropped:
+  the redemption yields the context beside the session's or the api
+  key's expiry (`SocketPrincipal`), and the handler closes the socket
+  with 4401 at that instant whatever the client does. Either way the
+  clients sign in again, as they do for a refused ticket. A role change
+  is not a revocation: the socket carries hints, and the next request
+  sees the new role.
   The login route takes the request stage alone.
   Per socket the process keeps one bounded send buffer
   (`realtime/send_buffer.py`, `TADAS_REALTIME_SEND_BUFFER_SIZE`) and a

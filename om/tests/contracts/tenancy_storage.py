@@ -20,6 +20,7 @@ from tadas.om.opcontext import Role
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.tenancy.storage import TenancyStorageInterface
 from tadas.om.tenancy.types.api_key import ApiKey
+from tadas.om.tenancy.types.session import Session
 from tadas.om.tenancy.types.user import User
 
 
@@ -48,6 +49,20 @@ def make_user_row(user: User) -> OutboxRow:
         actor_id=user.created_by,
         request_id=new_id(),
         app="cli",
+    )
+
+
+def make_session_row(session: Session) -> OutboxRow:
+    """The row a revocation lands with; the snapshot never carries the token hash."""
+    return OutboxRow(
+        id=new_id(),
+        created_at=utcnow(),
+        kind="tenancy.session.revoked",
+        target_id=session.id,
+        payload={"user_id": str(session.user_id)},
+        actor_id=session.user_id,
+        request_id=new_id(),
+        app="portal",
     )
 
 
@@ -303,6 +318,20 @@ class TenancyStorageContract:
         assert await storage.purge_deleted(org.id, cut) == 1  # the ended membership
         assert await storage.read_memberships(org.id, limit=10) == [live]
         assert await storage.purge_deleted(org.id, cut) == 0
+
+    async def test_a_session_write_lands_its_outbox_row_beside_it(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        """A revocation is a session write with a handoff: the row and its
+        outbox row land together, as a user's or a key's do."""
+        org = make_org()
+        identity = make_identity()
+        user = make_user(identity.id)
+        session = make_session(identity.id, user.id, "hash-revoked")
+        await storage.write_session(org.id, session)
+        revoked = session.model_copy(update={"revoked_at": utcnow()})
+        await storage.write_session(org.id, revoked, make_session_row(revoked))
+        assert await storage.read_session(org.id, session.id) == revoked
 
     async def test_session_lookup_by_hash_returns_the_tenant(
         self, storage: TenancyStorageInterface

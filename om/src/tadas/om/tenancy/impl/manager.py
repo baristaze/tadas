@@ -583,7 +583,9 @@ class TenancyManagerImpl(TenancyManagerInterface):
         revoked = session.model_copy(
             update={"revoked_at": now, "updated_at": now, "updated_by": ctx.user_id}
         )
-        await self._storage.write_session(ctx.org_id, revoked)
+        # Announced like any change: the socket this session opened, in
+        # whichever process holds it, closes on the row the relay publishes.
+        await self._write_session(ctx, revoked, "revoked")
         return revoked
 
     async def logout(self, ctx: OpContext) -> Session:
@@ -692,6 +694,17 @@ class TenancyManagerImpl(TenancyManagerInterface):
     async def _write_user(self, ctx: OpContext, user: User, action: str) -> None:
         row = outbox_row(ctx, f"tenancy.user.{action}", user.id, snapshot(user))
         await self._storage.write_user(ctx.org_id, user, row)
+        await self._relay.relay(ctx.org_id, row)
+
+    async def _write_session(self, ctx: OpContext, session: Session, action: str) -> None:
+        # The snapshot never carries the hash; the event is a record, not a credential.
+        row = outbox_row(
+            ctx,
+            f"tenancy.session.{action}",
+            session.id,
+            snapshot(session, exclude=frozenset({"token_hash"})),
+        )
+        await self._storage.write_session(ctx.org_id, session, row)
         await self._relay.relay(ctx.org_id, row)
 
     @staticmethod

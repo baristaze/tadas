@@ -122,7 +122,12 @@ class TenancyStorageInterface(ABC):
         ...
 
     @abstractmethod
-    async def write_session(self, org_id: UUID, session: Session) -> None: ...
+    async def write_session(
+        self, org_id: UUID, session: Session, outbox_row: OutboxRow | None = None
+    ) -> None:
+        """A revocation is a session write with a handoff: the row announcing
+        it lands beside the session, so the socket it opened hears of it."""
+        ...
 
     @abstractmethod
     async def read_api_keys(

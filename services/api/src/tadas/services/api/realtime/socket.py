@@ -1,8 +1,10 @@
 """The one socket route and the ticket route that opens it. The gateway
 redeems the ticket; the handler subscribes to topics on the client's behalf
 through the realtime service, moves frames through the bounded send buffer,
-and closes the socket when its authority ends: at the expiry of the
-credential behind the ticket, whatever the client does."""
+and closes the socket when its authority ends: when the credential behind
+the ticket is revoked or the membership ends, which the realtime service
+hears on the bus, and at the credential's expiry whatever the client does,
+which covers a revocation the bus never delivered."""
 
 import asyncio
 import contextlib
@@ -122,6 +124,7 @@ async def channel(
 
     remaining = (principal.expires_at - utcnow()).total_seconds()
     expiry = loop.call_later(max(remaining, 0.0), end, CREDENTIAL_EXPIRED)
+    detach = realtime.attach(ctx, end)
     commands = asyncio.create_task(
         serve_commands(websocket, ctx, realtime, buffer, subscriptions),
         name=f"commands-{ctx.user_id}",
@@ -137,6 +140,7 @@ async def channel(
             commands.result()
     finally:
         expiry.cancel()
+        detach()
         await settle(commands)
         for unsubscribe in subscriptions.values():
             unsubscribe()

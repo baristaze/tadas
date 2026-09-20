@@ -1,13 +1,21 @@
+import itertools
 from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Literal
+from uuid import UUID
 
-from tadas.infra.topics import TopicPayload, Topics, TopicsInterface
+from tadas.infra.topics import EntityChangedPayload, TopicPayload, Topics, TopicsInterface
 from tadas.om.base import utcnow
 from tadas.om.events import EventsManagerInterface
 from tadas.om.exceptions import ValidationFailed
 from tadas.om.opcontext import ActorScope, OpContext
 from tadas.om.tenancy import TenancyManagerInterface
 from tadas.services.api.realtime.envelopes import EventEnvelope, IssuedTicketView
-from tadas.services.api.services.realtime import RealtimeServiceInterface
+from tadas.services.api.services.realtime import (
+    CREDENTIAL_REVOKED,
+    MEMBERSHIP_ENDED,
+    RealtimeServiceInterface,
+)
 from tadas.services.api.types.events import EntityChangedView
 
 PROJECTIONS: dict[Topics, Callable[[TopicPayload], EntityChangedView]] = {
@@ -15,6 +23,22 @@ PROJECTIONS: dict[Topics, Callable[[TopicPayload], EntityChangedView]] = {
 }
 """The topics the channel carries, each with the view its payload is projected
 onto before a frame is offered. A topic outside this map never reaches a client."""
+
+REVOCATIONS: dict[str, tuple[Literal["credential", "user"], str]] = {
+    "tenancy.session.revoked": ("credential", CREDENTIAL_REVOKED),
+    "tenancy.api_key.deleted": ("credential", CREDENTIAL_REVOKED),
+    "tenancy.user.deleted": ("user", MEMBERSHIP_ENDED),
+}
+"""The change kinds that end a socket: which id of the socket the target
+names (the credential behind its ticket, or its user) and the close reason."""
+
+
+@dataclass(frozen=True)
+class AttachedSocket:
+    org_id: UUID
+    user_id: UUID
+    credential_id: UUID
+    end: Callable[[str], None]
 
 
 class RealtimeServiceImpl(RealtimeServiceInterface):
@@ -27,6 +51,11 @@ class RealtimeServiceImpl(RealtimeServiceInterface):
         self._tenancy = tenancy
         self._events = events
         self._topics = topics
+        self._ids = itertools.count()
+        self._sockets: dict[int, AttachedSocket] = {}
+        # One subscription per process: every replica hears every revocation
+        # and ends the sockets it holds for it, as it does for every push.
+        self._topics.subscribe(Topics.ENTITY_CHANGED, "socket-revocations", self._on_change)
 
     async def head(self, ctx: OpContext) -> int:
         return await self._events.get_head(ctx)
@@ -48,3 +77,28 @@ class RealtimeServiceImpl(RealtimeServiceInterface):
                 deliver(EventEnvelope(topic=topic.value, payload=project(payload)))
 
         return self._topics.subscribe(topic, f"socket:{ctx.user_id}", forward)
+
+    def attach(self, ctx: OpContext, end: Callable[[str], None]) -> Callable[[], None]:
+        socket_id = next(self._ids)
+        self._sockets[socket_id] = AttachedSocket(
+            org_id=ctx.org_id, user_id=ctx.user_id, credential_id=ctx.credential_id, end=end
+        )
+
+        def detach() -> None:
+            self._sockets.pop(socket_id, None)
+
+        return detach
+
+    async def _on_change(self, payload: TopicPayload) -> None:
+        if not isinstance(payload, EntityChangedPayload):
+            return
+        revocation = REVOCATIONS.get(payload.kind)
+        if revocation is None:
+            return
+        subject, reason = revocation
+        for attached in list(self._sockets.values()):
+            if attached.org_id != payload.org_id:
+                continue
+            named = attached.credential_id if subject == "credential" else attached.user_id
+            if named == payload.target_id:
+                attached.end(reason)
