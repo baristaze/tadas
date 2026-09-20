@@ -51,7 +51,12 @@ def request_context(
 ) -> RequestContext:
     """The weakest stage, minted once at the edge: the request id the
     middleware stamped on the scope, the calling app from its headers, and the
-    trace id of the current span. A websocket scope reaches it the same way."""
+    trace id of the current span. A websocket scope reaches it the same way.
+
+    It names no causing request. A request that arrived at the edge was caused
+    by nothing this system knows of, and the field is a handoff's, filled by
+    the claim on the far side of the queue; the lines this request writes
+    carry its own id alone."""
     return RequestContext(
         request_id=request_id_of(connection.scope),
         app=app_context_of(x_app, x_app_version),
