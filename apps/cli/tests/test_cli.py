@@ -319,3 +319,66 @@ def test_a_bad_timeout_does_not_forget_the_session_logout_could_not_revoke(
     assert result.exit_code == 2, result.output
     assert result.output.startswith("TADAS_HTTP_TIMEOUT_SECONDS")
     assert config.load_session() == session
+
+
+def test_a_token_the_environment_got_wrong_is_a_usage_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A credential travels in a header, which carries ascii and nothing else.
+    A copy that brought a typographic quote with it is the caller's input: one
+    line and exit 2, and the line names the variable, never the secret in it."""
+    monkeypatch.setenv("TADAS_HOME", str(tmp_path / "home"))
+    smuggled = "ses_" + chr(0x2019) + "secret"  # the quote a document turned typographic
+    result = CliRunner().invoke(
+        main.app,
+        ["ls"],
+        env={"TADAS_API_URL": "http://127.0.0.1:1", "TADAS_TOKEN": smuggled},
+        catch_exceptions=False,
+    )
+    assert result.exit_code == 2, result.output
+    assert result.output == "TADAS_TOKEN has characters a request header cannot carry\n"
+    assert "secret" not in result.output
+
+
+def test_a_session_that_cannot_be_kept_is_a_usage_error(stack: Stack, tmp_path: Path) -> None:
+    """The API signed the caller in, but TADAS_HOME names a place the CLI
+    cannot write: one line naming the place, exit 2, no traceback."""
+    blocked = tmp_path / "not-a-directory"
+    blocked.write_text("")
+    result = stack.tadas(
+        "login",
+        "--email",
+        OWNER["email"],
+        "--password",
+        OWNER["password"],
+        token=None,
+        env={"TADAS_HOME": str(blocked / "tadas")},
+    )
+    assert result.exit_code == 2, result.output
+    assert result.output.startswith("the session cannot be kept in "), result.output
+
+
+def test_a_session_that_cannot_be_forgotten_is_a_usage_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`logout` forgets the file whatever the API answers, so a file it cannot
+    remove is the one thing left to tell: one line and exit 2."""
+    monkeypatch.setenv("TADAS_HOME", str(tmp_path / "home"))
+    config.save_session(
+        config.Session(
+            api_url="http://127.0.0.1:1",
+            token="ses_1",
+            email="ann@example.test",
+            display_name="Ann",
+            org_slug="acme",
+            org_name="Acme",
+        )
+    )
+
+    def refuse(self: Path, **kwargs: object) -> None:
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(Path, "unlink", refuse)
+    result = CliRunner().invoke(main.app, ["logout"], catch_exceptions=False)
+    assert result.exit_code == 2, result.output
+    assert result.output.startswith("the session cannot be forgotten: "), result.output

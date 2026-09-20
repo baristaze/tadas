@@ -243,6 +243,10 @@ def logout(api: Api = None) -> None:
         _fail(f"session forgotten, not revoked; the API refused: {error}", EXIT_REFUSED)
     except httpx.TransportError as error:
         _fail(f"session forgotten, not revoked; cannot reach the API: {error}", EXIT_UNREACHABLE)
+    except config.BadSetting as error:
+        # The file is the one thing `logout` owns, so a file it cannot remove
+        # is what the caller is told, whatever the API answered.
+        _fail(str(error), EXIT_USAGE)
     typer.echo(outcome)
 
 

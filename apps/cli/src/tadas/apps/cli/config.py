@@ -46,13 +46,18 @@ def load_session() -> Session | None:
 
 def save_session(session: Session) -> Path:
     """The token is a secret: the file is created owner-only, not created
-    readable and locked down after, and so is the directory that holds it."""
+    readable and locked down after, and so is the directory that holds it.
+    A place that will not take the file is TADAS_HOME's doing, so it is told
+    as a setting and not as a traceback."""
     path = home() / SESSION_FILE
-    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(descriptor, "w") as file:
-        file.write(json.dumps(asdict(session), indent=2) + "\n")
-    path.chmod(0o600)  # a file an earlier version left readable
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(descriptor, "w") as file:
+            file.write(json.dumps(asdict(session), indent=2) + "\n")
+        path.chmod(0o600)  # a file an earlier version left readable
+    except OSError as error:
+        raise BadSetting(f"the session cannot be kept in {path.parent}: {error}") from None
     return path
 
 
@@ -60,7 +65,10 @@ def clear_session() -> bool:
     path = home() / SESSION_FILE
     if not path.exists():
         return False
-    path.unlink()
+    try:
+        path.unlink()
+    except OSError as error:
+        raise BadSetting(f"the session cannot be forgotten: {error}") from None
     return True
 
 
@@ -89,7 +97,13 @@ def timeout_seconds() -> float:
 
 
 def token() -> str | None:
+    """The bearer every request carries. It travels in a header, which carries
+    ascii and nothing else, so a value that does not is refused here rather
+    than encoded at the wire; the value is a secret, so the line names the
+    variable and never what is in it."""
     if from_env := os.environ.get("TADAS_TOKEN"):
+        if not from_env.isascii():
+            raise BadSetting("TADAS_TOKEN has characters a request header cannot carry")
         return from_env
     session = load_session()
     return session.token if session else None
