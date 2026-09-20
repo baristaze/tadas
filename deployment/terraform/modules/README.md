@@ -14,9 +14,13 @@ Three kinds of root live under this folder:
   registry by the commit `release` points at.
 - `shared/`: account-level resources every environment uses: the image
   registry (production promotes the digests staging already ran), the state
-  bucket, and one deploy role per environment behind GitHub's OIDC
-  provider, each trusting a single subject and scoped to what its own
-  environment owns (the deploy runbook has the table).
+  bucket, one deploy role per environment behind GitHub's OIDC provider,
+  each trusting a single subject and scoped to what its own environment
+  owns (the deploy runbook has the table), one investigate role per
+  environment that reads everything there and writes nothing, the
+  `tadas-operators` user whose only permission is to assume them, the
+  monthly budget and the cost anomaly monitor, and the hosted zone.
+  `scripts/cloud_create.sh` applies it.
 - `modules/`: one module per resource family, each with `versions.tf`,
   `variables.tf`, `main.tf`, and `outputs.tf`.
 
@@ -24,6 +28,7 @@ Three kinds of root live under this folder:
 |-----------------|-----------------------------------------------------------------|
 | `environment`   | One environment whole: every module below, wired                |
 | `deploy_role`   | One environment's deploy role: its OIDC trust and its fences     |
+| `investigate_role` | One environment's read-only role: ReadOnlyAccess plus the signal reads, fenced off secrets, data, the database, the other environment, and IAM |
 | `network`       | VPC, public and private subnets, NAT, the security groups        |
 | `cluster`       | The container cluster services and workers run on               |
 | `database`      | Postgres, its subnet group, the generated master password       |
@@ -35,7 +40,9 @@ Three kinds of root live under this folder:
 | `portal`        | The portal's private bucket and the CloudFront distribution at the app's domain name |
 | `certificate`   | A DNS-validated ACM certificate for one name                    |
 | `domain_records`| The API's and the portal's alias records                        |
-| `service`       | One process: log groups, roles, task definition with an ADOT collector sidecar, service |
+| `service`       | One process: log groups, roles, task definition with an ADOT collector sidecar, service, and its autoscaling target and policy behind the switch |
+| `alarms`        | The default alarm set to one SNS topic: the edge, the database, each service's task count |
+| `dashboard`     | The CloudWatch dashboard, from a JSON template carrying the local Grafana dashboard's panels by title |
 
 The `environment` module is the graph itself, and the only module a root
 calls. It takes the `aws.us_east_1` provider alias as well as the default
@@ -44,6 +51,16 @@ inputs are the whole difference between two environments: the address
 space, the name prefixes, the instance classes, the replica counts, and
 the database's multi-az and deletion protection. Reading the two module
 calls side by side is how the environments are compared.
+
+Three inputs of the `environment` module are operations rather than
+scale. `alarm_email` is where the environment's six alarms deliver.
+`autoscaling_enabled` is the one flip: each service's lever under it
+(`api_autoscaling`, `maintenance_autoscaling`: a ceiling, a CPU target,
+and `enabled = true` by default) takes effect only when it is true, and
+both roots declare it false (docs/runbooks/scale.md). `destroyable` is
+the nuke's flag, false everywhere but on `scripts/cloud_nuke.sh`'s way
+down: it lets the buckets empty on destroy and lifts the database's
+protection and final snapshot.
 
 The `service` module is instantiated once per process. A worker passes
 `deployment_maximum_percent = 100` so a rollout never runs more workers
@@ -146,5 +163,9 @@ Terraform never overwrites the value; `off` turns reporting off again.
 
 ## Checks
 
-CI runs `terraform fmt -check -recursive` over this folder and
-`terraform init -backend=false && terraform validate` in every root.
+CI runs `terraform fmt -check -recursive` over this folder,
+`terraform init -backend=false && terraform validate` in every root, and
+`terraform test` in `modules/portal` (the security headers) and in
+`modules/service` (the autoscaling switch), both offline under a mock
+provider. `infra/tests/test_dashboard_parity.py` holds the dashboard
+template's panel titles equal to the local Grafana dashboard's.

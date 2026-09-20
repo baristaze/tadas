@@ -58,23 +58,102 @@ writes the plan file the reviewer approves. It does read production's
 secrets, because a plan reads the state and the state holds the
 database password in clear. The approval holds the write, not the read.
 
-Set once, by hand:
+The roles a person or an agent reads an environment under, and the
+profiles that hold them, are in [operate.md](operate.md).
 
-- Settings, Environments: `staging` (no rule, deployment branch
-  `main`), `production-plan` (no rule, deployment branch `release`),
-  `production` (required reviewer, deployment branch `release`). A
-  reviewer on `production-plan` would hold the plan the reviewer is
-  meant to read, so leave it without one.
-- Settings, Variables: `AWS_STAGING_ROLE_ARN`,
-  `AWS_PRODUCTION_PLAN_ROLE_ARN`, `AWS_PRODUCTION_ROLE_ARN`,
-  `TF_STATE_BUCKET`, `DNS_ZONE_NAME`. The three role ARNs are outputs
-  of the `shared` root. Setting the wrong ARN in one of them does not
-  cross the boundary: the role refuses a subject it does not trust.
-- In AWS, apply `deployment/terraform/shared` once, by a person, with
-  an administrator profile. It creates the OIDC provider, the two task
-  boundaries, and the three roles. `shared` is never applied by a
-  deploy run; every deploy role denies the calls that would change the
-  registry, the state bucket, or the trust.
+## Create the environment
+
+`scripts/cloud_create.sh <staging|production>` is the administrator's
+one run, and the `ops-cloud-deployment-create` skill narrates it. It
+refuses to run under any profile but `tadas-admin`, prints every command
+before it runs it, and with `--dry-run` prints them all and runs none.
+Its inputs are `DNS_ZONE_NAME`, `OWNER_EMAIL`, `ALARM_EMAIL`, and
+`TF_STATE_BUCKET`, as flags or environment variables. In order:
+
+1. `aws sts get-caller-identity` and `gh auth status`.
+2. `deployment/terraform/shared`, applied with local state because the
+   root makes the state bucket, then `init -migrate-state` into it. The
+   root declares the OIDC provider, the two task boundaries, the three
+   deploy roles above, the two investigate roles, the `tadas-operators`
+   user, the budget, the anomaly monitor, and the hosted zone. Its
+   `dns_name_servers` output goes to the registrar, once.
+3. An access key for `tadas-operators`, and the profiles below appended
+   to `~/.aws/credentials` and `~/.aws/config`. A profile that exists is
+   left alone, and the secret is never printed.
+4. The repository variables, from the shared outputs:
+   `AWS_STAGING_ROLE_ARN`, `AWS_PRODUCTION_PLAN_ROLE_ARN`,
+   `AWS_PRODUCTION_ROLE_ARN`, `TF_STATE_BUCKET`, `DNS_ZONE_NAME`, and
+   `ALARM_EMAIL`, which the deploy workflows pass to the root's
+   `alarm_email`. Setting the wrong ARN in one of them does not cross
+   the boundary: the role refuses a subject it does not trust.
+5. The GitHub environments: `staging` and `production-plan` with no
+   rule (a reviewer on `production-plan` would hold the plan the
+   reviewer is meant to read), `production` with the owner as required
+   reviewer.
+6. `~/.config/tadas/ops/<environment>.env`, mode 600, with
+   `TADAS_API_URL` set and the operator identity and error tracker
+   lines empty; the skills read it.
+7. The first deploy, through the pipeline like every other:
+   `deploy-staging.yml` for staging, `release.yml` for production.
+8. When the deploy is green, the smoke test:
+   `uv run tadas-ops signals check --env <environment>`.
+
+`shared` is never applied by a deploy run; every deploy role denies the
+calls that would change the registry, the state bucket, or the trust.
+
+### The profiles
+
+| Profile | Holds | Used by |
+|---------|-------|---------|
+| `tadas-admin` | the person's administrator credential, made outside this repository | create and nuke, nothing else |
+| `tadas-operators` | the `tadas-operators` user's key; its only permission is `sts:AssumeRole` on `tadas-investigate-*` | the `source_profile` of the two below, never directly |
+| `tadas-staging-investigate` | `role_arn` = `tadas-investigate-staging`, `source_profile` = `tadas-operators` | every read of staging |
+| `tadas-production-investigate` | `role_arn` = `tadas-investigate-production`, `source_profile` = `tadas-operators` | every read of production |
+
+An investigate role reads everything in its environment and writes
+nothing: every log group, metric, trace, alarm, and resource
+description, and the state so `terraform plan -lock=false` runs. It is
+denied a secret's value, an object in a data bucket, a database
+connection, anything tagged as the other environment, and every IAM
+write. Sessions last one hour.
+
+### The budget and the anomaly monitor
+
+`shared` declares a monthly cost budget (`monthly_budget_usd`, default
+300) that mails `owner_email` at 50, 80, and 100 percent of the amount
+and when the forecast crosses it, and an anomaly monitor on each
+service's spend that reports a jump of 20 USD or more daily. Every
+resource carries `tadas:environment`, so a cost report splits by it.
+
+### The alarm topic
+
+Each environment root declares an SNS topic `tadas-<environment>-alarms`
+with `alarm_email` subscribed (the address confirms by mail once) and six
+alarms to it: the load balancer's 5xx ratio and p95 latency, unhealthy
+targets, the database's CPU and free storage, and each service running
+fewer tasks than it wants. Another address subscribes by hand under the
+administrator profile; Terraform leaves it alone.
+
+### The autoscaling flip
+
+Both roots declare `autoscaling_enabled = false`. Every lever under it
+is on, so a pull request that flips it to `true` scales the whole
+environment; nothing else changes. [scale.md](scale.md) says what turns
+on and how to read that it happened.
+
+### Nuke
+
+`scripts/cloud_nuke.sh <environment>` is the administrator's other run,
+narrated by `ops-cloud-deployment-nuke`. Staging goes on the word.
+Production refuses unless `--confirm production` is typed and
+`environments/prod/main.tf` on `origin/main` already reads
+`database_deletion_protection = false`, so destroying production is a
+pull request a person read. The run applies the root once with
+`destroyable=true` (buckets empty on destroy, the database skips its
+final snapshot and drops its protection), destroys it, and prints what
+remains: the zone, the state prefix, the portal builds, the images, the
+shared roles, the profiles and the env file. `--dry-run` prints every
+command and runs none.
 
 ## Cut a release
 
