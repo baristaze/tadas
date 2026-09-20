@@ -245,3 +245,40 @@ class TaskStorageContract:
         assert await storage.read_task(org, live.id) == live
         assert await storage.read_task(elsewhere, other.id) is not None, "per tenant"
         assert await storage.purge_deleted(org, cut) == 0, "idempotent"
+
+    async def test_many_updates_land_together_or_not_at_all(
+        self, storage: TasksStorageInterface
+    ) -> None:
+        # The renumbering of an open list: every row against its own version, in
+        # one commit. One stale version refuses the whole write, so a list is
+        # never renumbered halfway; from current versions every row lands.
+        org = new_id()
+        first, second = make_task("first", position=0.5), make_task("second", position=0.75)
+        await seed(storage, org, first)
+        await seed(storage, org, second)
+        moved_second = await bump(storage, org, second, title="moved")  # now at version 2
+
+        def placed(task: Task, position: float) -> Task:
+            return task.model_copy(update={"position": position, "version": task.version + 1})
+
+        with pytest.raises(VersionMismatch):
+            await storage.update_tasks(
+                org,
+                [
+                    (placed(first, 0.0), first.version, make_row(org, first, "updated")),
+                    (placed(second, 1.0), second.version, make_row(org, second, "updated")),
+                ],
+            )
+        assert await storage.read_task(org, first.id) == first
+        assert await storage.read_task(org, second.id) == moved_second
+        renumbered = [placed(first, 0.0), placed(moved_second, 1.0)]
+        await storage.update_tasks(
+            org,
+            [
+                (renumbered[0], first.version, make_row(org, first, "updated")),
+                (renumbered[1], moved_second.version, make_row(org, second, "updated")),
+            ],
+        )
+        assert await storage.read_task(org, first.id) == renumbered[0]
+        assert await storage.read_task(org, second.id) == renumbered[1]
+        assert await storage.read_open_positions(org, exclude=None) == [0.0, 1.0]

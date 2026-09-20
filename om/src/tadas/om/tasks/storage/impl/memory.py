@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from datetime import datetime
 from uuid import UUID
 
@@ -66,16 +67,23 @@ class TasksStorageMemoryImpl(MemoryStorageBase, TasksStorageInterface):
     async def update_task(
         self, org_id: UUID, task: Task, expected_version: int, outbox_row: OutboxRow
     ) -> None:
-        # The check and the write are one step under the lock, as the one
-        # conditional statement is in Postgres.
+        await self.update_tasks(org_id, [(task, expected_version, outbox_row)])
+
+    async def update_tasks(
+        self, org_id: UUID, updates: Sequence[tuple[Task, int, OutboxRow]]
+    ) -> None:
+        # Every check, then every write, one step under the lock, as the
+        # conditional statements share one transaction in Postgres.
         async with self._lock:
-            found = self._tasks.get(task.id)
-            if found is None:
-                raise VersionMismatch(f"task {task.id} is gone")
-            if found[0] != org_id:
-                raise TenantMismatch(f"{task.id} is not in {org_id}")
-            if found[1].version != expected_version:
-                raise VersionMismatch(
-                    f"task {task.id} is at version {found[1].version}, not {expected_version}"
-                )
-            self._put(self._tasks, org_id, task, outbox_row)
+            for task, expected_version, _ in updates:
+                found = self._tasks.get(task.id)
+                if found is None:
+                    raise VersionMismatch(f"task {task.id} is gone")
+                if found[0] != org_id:
+                    raise TenantMismatch(f"{task.id} is not in {org_id}")
+                if found[1].version != expected_version:
+                    raise VersionMismatch(
+                        f"task {task.id} is at version {found[1].version}, not {expected_version}"
+                    )
+            for task, _, outbox_row in updates:
+                self._put(self._tasks, org_id, task, outbox_row)

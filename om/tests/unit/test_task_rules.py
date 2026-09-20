@@ -3,7 +3,15 @@ from uuid import UUID
 from contracts.task_storage import make_task
 
 from tadas.om.base import new_id
-from tadas.om.tasks.rules import is_after, is_before, is_visible, position_after, top_position
+from tadas.om.tasks.rules import (
+    is_after,
+    is_before,
+    is_between,
+    is_visible,
+    position_after,
+    renumbered,
+    top_position,
+)
 from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor, TaskFilter
 from tadas.om.tasks.types.task import TaskScope
 
@@ -35,6 +43,21 @@ def test_placement_arithmetic() -> None:
     assert position_after(1.0, [1.0, 2.0]) == 1.5
     assert position_after(2.0, [1.0, 2.0]) == 3.0
     assert position_after(0.5, []) == 1.5
+
+
+def test_a_gap_is_open_until_halving_meets_a_neighbour() -> None:
+    assert is_between(1.0, 1.5, [1.0, 2.0])
+    assert is_between(2.0, 3.0, [1.0, 2.0]), "past the last there is always room"
+    assert not is_between(1.0, 1.0, [1.0, 2.0]), "the midpoint rounded to the anchor"
+    assert not is_between(1.0, 2.0, [1.0, 2.0]), "the midpoint rounded to the next"
+    # Halving from a gap of one meets the anchor after fifty-odd steps.
+    anchor, following = -1.0, 0.0
+    steps = 0
+    while is_between(anchor, position_after(anchor, [anchor, following]), [anchor, following]):
+        following = position_after(anchor, [anchor, following])
+        steps += 1
+    assert 50 <= steps <= 54
+    assert renumbered(3) == [0.0, 1.0, 2.0] and renumbered(0) == []
 
 
 def test_is_after_cuts_the_open_list_by_position_then_id() -> None:

@@ -43,3 +43,19 @@ def position_after(anchor: float, positions: Sequence[float]) -> float:
     ascending: halfway to the next one, or one past the anchor when it is last."""
     following = [p for p in positions if p > anchor]
     return (anchor + following[0]) / 2 if following else anchor + 1.0
+
+
+def is_between(anchor: float, position: float, positions: Sequence[float]) -> bool:
+    """Whether `position` falls strictly after `anchor` and strictly before the
+    open position that follows it, so the order it was chosen for is the order
+    the list reads back. Halving a gap ends at float precision: once the
+    midpoint equals a neighbour the `(position, id)` tie-break decides the
+    order instead, and the list is renumbered."""
+    following = [p for p in positions if p > anchor]
+    return anchor < position and (not following or position < following[0])
+
+
+def renumbered(count: int) -> list[float]:
+    """The positions of a renumbered open list, top first: whole numbers, so
+    every gap is wide again."""
+    return [float(index) for index in range(count)]
