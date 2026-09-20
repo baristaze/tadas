@@ -19,7 +19,9 @@ class EventStorageMemoryImpl(MemoryStorageBase, EventStorageInterface):
                 return stored
             seq = self._cursors.get(org_id, 0) + 1
             self._cursors[org_id] = seq
-            appended = event.model_copy(update={"seq": seq})
+            # The tenant and the number are storage's, as the columns are in
+            # Postgres: an event that names another tenant is corrected.
+            appended = event.model_copy(update={"org_id": org_id, "seq": seq})
             self._put(self._events, org_id, appended)
             return appended
 

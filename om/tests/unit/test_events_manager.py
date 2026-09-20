@@ -39,9 +39,9 @@ async def test_append_sequences_per_tenant_and_reads_back_by_seq(
     manager: EventsManagerImpl,
 ) -> None:
     ann, bob = context(), context()
-    first = await manager.append_event(ann, make_event())
-    second = await manager.append_event(ann, make_event("tasks.task.updated"))
-    elsewhere = await manager.append_event(bob, make_event())
+    first = await manager.append_event(ann, make_event(ann.org_id))
+    second = await manager.append_event(ann, make_event(ann.org_id, "tasks.task.updated"))
+    elsewhere = await manager.append_event(bob, make_event(bob.org_id))
     assert (first.seq, second.seq, elsewhere.seq) == (1, 2, 1)
     assert first.kind == "tasks.task.created" and first.payload == {"title": "t"}
     assert await manager.get_events(ann, after_seq=1, limit=10) == [second]
@@ -53,7 +53,7 @@ async def test_get_events_clamps_the_limit_and_tolerates_a_negative_cursor(
 ) -> None:
     ctx = context()
     for _ in range(3):
-        await manager.append_event(ctx, make_event())
+        await manager.append_event(ctx, make_event(ctx.org_id))
     assert [e.seq for e in await manager.get_events(ctx, after_seq=-5, limit=1000)] == [1, 2]
 
 
@@ -67,7 +67,7 @@ async def test_the_stream_is_read_with_read_and_is_append_only(manager: EventsMa
             )
         }
     )
-    await manager.append_event(member, make_event())
+    await manager.append_event(member, make_event(member.org_id))
     assert [e.seq for e in await manager.get_events(viewer, after_seq=0, limit=10)] == [1]
     assert not hasattr(manager, "update_event") and not hasattr(manager, "delete_event")
     no_read = viewer.model_copy(
@@ -83,13 +83,15 @@ async def test_an_append_is_a_write_and_carries_the_contexts_provenance(
     # A viewer reads the stream and appends nothing to it.
     viewer = context(Role.VIEWER)
     with pytest.raises(NotAuthorized):
-        await manager.append_event(viewer, make_event())
+        await manager.append_event(viewer, make_event(viewer.org_id))
     assert await manager.get_head(viewer) == 0
-    # A caller-built event names whoever it likes; the row records the context.
+    # A caller-built event names whatever tenant and whoever it likes; the row
+    # records the context.
     member = context(Role.MEMBER)
-    foreign = make_event("work.item.failed")
+    foreign = make_event(new_id(), "work.item.failed")
     appended = await manager.append_event(member, foreign)
-    assert (appended.actor_id, appended.request_id, appended.app) == (
+    assert (appended.org_id, appended.actor_id, appended.request_id, appended.app) == (
+        member.org_id,
         member.user_id,
         member.request_id,
         "portal",
@@ -100,15 +102,16 @@ async def test_an_append_is_a_write_and_carries_the_contexts_provenance(
         foreign.target_id,
         foreign.payload,
     )
-    assert appended.actor_id != foreign.actor_id and appended.request_id != foreign.request_id
+    assert appended.org_id != foreign.org_id and appended.actor_id != foreign.actor_id
+    assert appended.request_id != foreign.request_id
     assert await manager.get_events(member, after_seq=0, limit=10) == [appended]
 
 
 async def test_the_head_is_the_last_seq_of_the_callers_tenant(manager: EventsManagerImpl) -> None:
     ctx, other = context(), context()
     assert await manager.get_head(ctx) == 0
-    await manager.append_event(ctx, make_event())
-    await manager.append_event(ctx, make_event())
-    await manager.append_event(other, make_event())
+    await manager.append_event(ctx, make_event(ctx.org_id))
+    await manager.append_event(ctx, make_event(ctx.org_id))
+    await manager.append_event(other, make_event(other.org_id))
     assert await manager.get_head(ctx) == 2
     assert await manager.get_head(other) == 1

@@ -44,12 +44,13 @@ def make_marker(api_key: ApiKey, attempt_id: UUID) -> IdempotencyRecord:
     )
 
 
-def make_key_row(api_key: ApiKey) -> OutboxRow:
+def make_key_row(org_id: UUID, api_key: ApiKey) -> OutboxRow:
     """The outbox row a key's create lands with; the memory outbox the root
     wires receives it, the Postgres one inserts it in the same commit."""
     return OutboxRow(
         id=new_id(),
         created_at=utcnow(),
+        org_id=org_id,
         kind="tenancy.api_key.created",
         target_id=api_key.id,
         payload={"name": api_key.name},
@@ -59,10 +60,11 @@ def make_key_row(api_key: ApiKey) -> OutboxRow:
     )
 
 
-def make_user_row(user: User) -> OutboxRow:
+def make_user_row(org_id: UUID, user: User) -> OutboxRow:
     return OutboxRow(
         id=new_id(),
         created_at=utcnow(),
+        org_id=org_id,
         kind="tenancy.user.created",
         target_id=user.id,
         payload={"display_name": user.display_name},
@@ -72,11 +74,12 @@ def make_user_row(user: User) -> OutboxRow:
     )
 
 
-def make_session_row(session: Session) -> OutboxRow:
+def make_session_row(org_id: UUID, session: Session) -> OutboxRow:
     """The row a revocation lands with; the snapshot never carries the token hash."""
     return OutboxRow(
         id=new_id(),
         created_at=utcnow(),
+        org_id=org_id,
         kind="tenancy.session.revoked",
         target_id=session.id,
         payload={"user_id": str(session.user_id)},
@@ -121,6 +124,7 @@ class TenancyStorageContract:
         row = OutboxRow(
             id=new_id(),
             created_at=utcnow(),
+            org_id=org.id,
             kind="tenancy.org.deleted",
             target_id=org.id,
             payload={"slug": org.slug},
@@ -142,10 +146,10 @@ class TenancyStorageContract:
         org = make_org()
         await storage.write_org(org.id, org)
         user = make_user(make_identity().id)
-        change = make_user_row(user)
+        change = make_user_row(org.id, user)
         asked = change.model_copy(update={"id": new_id(), "kind": "work.noop"})
         await storage.create_member(org.id, user, make_membership(user.id), (change, asked))
-        landed = [row.id for _, row in await claim_all(outbox) if row.target_id == user.id]
+        landed = [row.id for row in await claim_all(outbox) if row.target_id == user.id]
         assert sorted(landed) == sorted([change.id, asked.id])
 
     async def test_purge_tenant_takes_every_row_of_the_tenant_and_keeps_the_org(
@@ -157,7 +161,7 @@ class TenancyStorageContract:
         for tenant in (org, other):
             user = make_user(make_identity().id)
             await storage.create_member(
-                tenant.id, user, make_membership(user.id), (make_user_row(user),)
+                tenant.id, user, make_membership(user.id), (make_user_row(tenant.id, user),)
             )
             await storage.write_api_key(tenant.id, make_api_key(user.id, uuid4().hex))
             await storage.write_session(tenant.id, make_session(new_id(), user.id, uuid4().hex))
@@ -381,7 +385,7 @@ class TenancyStorageContract:
         # The create refuses it too, and lands nothing under the new id.
         minted = make_api_key(new_id(), key_hash)
         with pytest.raises(UniqueKeyTaken):
-            await storage.issue_api_key(org.id, minted, (make_key_row(minted),), None)
+            await storage.issue_api_key(org.id, minted, (make_key_row(org.id, minted),), None)
         assert await storage.read_api_key(org.id, minted.id) is None
         assert await storage.read_api_key_by_hash(key_hash) == (org.id, api_key)
         renamed = api_key.model_copy(update={"name": "renamed"})
@@ -464,7 +468,9 @@ class TenancyStorageContract:
         org = make_org()
         identity = make_identity()
         bob = make_user(identity.id)
-        await storage.create_member(org.id, bob, make_membership(bob.id), (make_user_row(bob),))
+        await storage.create_member(
+            org.id, bob, make_membership(bob.id), (make_user_row(org.id, bob),)
+        )
         assert await storage.read_user(org.id, bob.id) == bob
         assert (await storage.read_membership_for_user(org.id, bob.id)) is not None
         # The same identity added again meanwhile: the user key refuses it and
@@ -472,14 +478,16 @@ class TenancyStorageContract:
         again = make_user(identity.id)
         with pytest.raises(UniqueKeyTaken):
             await storage.create_member(
-                org.id, again, make_membership(again.id), (make_user_row(again),)
+                org.id, again, make_membership(again.id), (make_user_row(org.id, again),)
             )
         assert await storage.read_user(org.id, again.id) is None
         assert await storage.read_membership_for_user(org.id, again.id) is None
         # A membership the user already holds: the user does not land either.
         cid = make_user(make_identity().id)
         with pytest.raises(UniqueKeyTaken):
-            await storage.create_member(org.id, cid, make_membership(bob.id), (make_user_row(cid),))
+            await storage.create_member(
+                org.id, cid, make_membership(bob.id), (make_user_row(org.id, cid),)
+            )
         assert await storage.read_user(org.id, cid.id) is None
         assert len(await storage.read_memberships(org.id, limit=10)) == 1
         # A new identity lands with the member, or not at all.
@@ -487,11 +495,11 @@ class TenancyStorageContract:
         dan = make_user(newcomer.id)
         with pytest.raises(UniqueKeyTaken):
             await storage.create_member(
-                org.id, dan, make_membership(bob.id), (make_user_row(dan),), newcomer
+                org.id, dan, make_membership(bob.id), (make_user_row(org.id, dan),), newcomer
             )
         assert await storage.read_identity(newcomer.id) is None
         await storage.create_member(
-            org.id, dan, make_membership(dan.id), (make_user_row(dan),), newcomer
+            org.id, dan, make_membership(dan.id), (make_user_row(org.id, dan),), newcomer
         )
         assert await storage.read_identity(newcomer.id) == newcomer
         assert await storage.read_user(org.id, dan.id) == dan
@@ -502,20 +510,20 @@ class TenancyStorageContract:
         org, other = make_org(), make_org("Other")
         bob = make_user(make_identity().id)
         membership = make_membership(bob.id)
-        await storage.create_member(org.id, bob, membership, (make_user_row(bob),))
+        await storage.create_member(org.id, bob, membership, (make_user_row(org.id, bob),))
         gone = utcnow()
         removed = bob.model_copy(update={"deleted_at": gone, "deleted_by": bob.id})
         ended = membership.model_copy(update={"deleted_at": gone, "deleted_by": bob.id})
         # A membership that is not there, or a user of another tenant: nothing lands.
         with pytest.raises(NotFound):
             await storage.remove_member(
-                org.id, removed, make_membership(bob.id), (make_user_row(bob),)
+                org.id, removed, make_membership(bob.id), (make_user_row(org.id, bob),)
             )
         with pytest.raises((NotFound, TenantMismatch)):
-            await storage.remove_member(other.id, removed, ended, (make_user_row(bob),))
+            await storage.remove_member(other.id, removed, ended, (make_user_row(other.id, bob),))
         assert await storage.read_user(org.id, bob.id) == bob
         assert await storage.read_membership_for_user(org.id, bob.id) == membership
-        await storage.remove_member(org.id, removed, ended, (make_user_row(bob),))
+        await storage.remove_member(org.id, removed, ended, (make_user_row(org.id, bob),))
         assert await storage.read_user(org.id, bob.id) == removed
         assert await storage.read_membership_for_user(org.id, bob.id) is None
         assert await storage.read_users(org.id, None, limit=10) == []
@@ -571,7 +579,7 @@ class TenancyStorageContract:
         )  # unique across runs of a shared database
         await storage.write_session(org.id, session)
         revoked = session.model_copy(update={"revoked_at": utcnow()})
-        await storage.write_session(org.id, revoked, (make_session_row(revoked),))
+        await storage.write_session(org.id, revoked, (make_session_row(org.id, revoked),))
         assert await storage.read_session(org.id, session.id) == revoked
 
     async def test_session_lookup_by_hash_returns_the_tenant(
@@ -668,7 +676,7 @@ class TenancyStorageContract:
         attempt_id = new_id()
         await markers.write_record(org.id, make_marker(api_key, attempt_id))
         assert await storage.issue_api_key(
-            org.id, api_key, (make_key_row(api_key),), attempt_id
+            org.id, api_key, (make_key_row(org.id, api_key),), attempt_id
         ) == (
             api_key,
             True,
@@ -681,7 +689,7 @@ class TenancyStorageContract:
             update={"key_hash": second_hash, "name": "renamed", "updated_at": later}
         )
         stored, created = await storage.issue_api_key(
-            org.id, rerun, (make_key_row(rerun),), attempt_id
+            org.id, rerun, (make_key_row(org.id, rerun),), attempt_id
         )
         assert created is False
         assert (stored.id, stored.name, stored.created_at) == (
@@ -696,12 +704,12 @@ class TenancyStorageContract:
         # Another issuer presenting the id is refused and changes nothing.
         other = rerun.model_copy(update={"user_id": new_id(), "key_hash": uuid4().hex})
         with pytest.raises(Conflict):
-            await storage.issue_api_key(org.id, other, (make_key_row(other),), attempt_id)
+            await storage.issue_api_key(org.id, other, (make_key_row(org.id, other),), attempt_id)
         assert await storage.read_api_key(org.id, api_key.id) == stored
         # A request that carried no key holds no marker, so it never re-mints.
         keyless = rerun.model_copy(update={"key_hash": uuid4().hex})
         with pytest.raises(Conflict):
-            await storage.issue_api_key(org.id, keyless, (make_key_row(keyless),), None)
+            await storage.issue_api_key(org.id, keyless, (make_key_row(org.id, keyless),), None)
         assert await storage.read_api_key(org.id, api_key.id) == stored
 
     async def test_a_rerun_never_re_mints_a_revoked_key(
@@ -715,12 +723,12 @@ class TenancyStorageContract:
         api_key = make_api_key(user_id, uuid4().hex)
         attempt_id = new_id()
         await markers.write_record(org.id, make_marker(api_key, attempt_id))
-        await storage.issue_api_key(org.id, api_key, (make_key_row(api_key),), attempt_id)
+        await storage.issue_api_key(org.id, api_key, (make_key_row(org.id, api_key),), attempt_id)
         revoked = api_key.model_copy(update={"deleted_at": utcnow(), "deleted_by": user_id})
         await storage.write_api_key(org.id, revoked)
         rerun = api_key.model_copy(update={"key_hash": uuid4().hex, "updated_at": utcnow()})
         with pytest.raises(Conflict):
-            await storage.issue_api_key(org.id, rerun, (make_key_row(rerun),), attempt_id)
+            await storage.issue_api_key(org.id, rerun, (make_key_row(org.id, rerun),), attempt_id)
         assert await storage.read_api_key(org.id, api_key.id) == revoked
         assert await storage.read_api_key_by_hash(rerun.key_hash) is None
 
@@ -741,18 +749,24 @@ class TenancyStorageContract:
         marker = make_marker(stalled, stalled_attempt)
         await markers.write_record(org.id, marker)
         # The first attempt lands the row, then stalls before its outcome.
-        await storage.issue_api_key(org.id, stalled, (make_key_row(stalled),), stalled_attempt)
+        await storage.issue_api_key(
+            org.id, stalled, (make_key_row(org.id, stalled),), stalled_attempt
+        )
         # The retry takes the marker over past the lease and reruns on the same
         # id: its re-mint is admitted, and its secret is the one the caller has.
         taken = await markers.take_over_pending(
             org.id, user_id, marker.key, lease_bound(utcnow()), winning_attempt
         )
         assert taken is not None
-        await storage.issue_api_key(org.id, winner, (make_key_row(winner),), winning_attempt)
+        await storage.issue_api_key(
+            org.id, winner, (make_key_row(org.id, winner),), winning_attempt
+        )
         # The zombie wakes. Nothing about the two rows can be ordered; the
         # marker it no longer holds is what refuses it.
         with pytest.raises(Conflict):
-            await storage.issue_api_key(org.id, stalled, (make_key_row(stalled),), stalled_attempt)
+            await storage.issue_api_key(
+                org.id, stalled, (make_key_row(org.id, stalled),), stalled_attempt
+            )
         live = await storage.read_api_key_by_hash(winner.key_hash)
         assert live is not None and live[1].id == winner.id
         assert await storage.read_api_key_by_hash(stalled.key_hash) is None
@@ -781,9 +795,13 @@ class TenancyStorageContract:
             org.id, user_id, marker.key, lease_bound(utcnow()), winning_attempt
         )
         assert taken is not None
-        await storage.issue_api_key(org.id, winner, (make_key_row(winner),), winning_attempt)
+        await storage.issue_api_key(
+            org.id, winner, (make_key_row(org.id, winner),), winning_attempt
+        )
         with pytest.raises(Conflict):
-            await storage.issue_api_key(org.id, stalled, (make_key_row(stalled),), stalled_attempt)
+            await storage.issue_api_key(
+                org.id, stalled, (make_key_row(org.id, stalled),), stalled_attempt
+            )
         assert await storage.read_api_key_by_hash(winner.key_hash) == (org.id, winner)
         assert await storage.read_api_key_by_hash(stalled.key_hash) is None
 
@@ -799,11 +817,11 @@ class TenancyStorageContract:
         attempt_id = new_id()
         marker = make_marker(api_key, attempt_id)
         await markers.write_record(org.id, marker)
-        await storage.issue_api_key(org.id, api_key, (make_key_row(api_key),), attempt_id)
+        await storage.issue_api_key(org.id, api_key, (make_key_row(org.id, api_key),), attempt_id)
         await markers.finish_pending(org.id, user_id, marker.key, attempt_id, 201, "{}")
         rerun = api_key.model_copy(update={"key_hash": uuid4().hex, "updated_at": utcnow()})
         with pytest.raises(Conflict):
-            await storage.issue_api_key(org.id, rerun, (make_key_row(rerun),), attempt_id)
+            await storage.issue_api_key(org.id, rerun, (make_key_row(org.id, rerun),), attempt_id)
         assert await storage.read_api_key_by_hash(api_key.key_hash) == (org.id, api_key)
         assert await storage.read_api_key_by_hash(rerun.key_hash) is None
 

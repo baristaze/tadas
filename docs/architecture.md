@@ -271,7 +271,7 @@ context on keeps the stage the callee needs.
   that late begins afresh) and held pending ones past ten times the
   pending lease, a marker no retry came back for.
 - `outbox`: the transactional outbox. A manager that writes a core row
-  hands the storage the `OutboxRow`s that announce it (`kind`,
+  hands the storage the `OutboxRow`s that announce it (`org_id`, `kind`,
   `target_id`, the record's snapshot as `payload`, the actor and the
   request) as one tuple, and the storage base inserts them all in one
   commit (`_insert(..., outbox_rows)` for a create, which
@@ -280,8 +280,14 @@ context on keeps the stage the callee needs.
   row; a write that also starts work passes a second row of kind
   `work.<kind>` in the same tuple, because the queue is a role of its
   own and no statement reaches both.
+  The row carries its own `org_id`, stamped from the context the way the
+  actor, the request, and the app are: the relay and the sweep run with
+  no context and read the tenant off the row. The claim hands back rows
+  and not pairs, because the row already names its tenant.
   The manager then calls `OutboxRelayInterface.relay(org_id, row)` for
-  each. The row's kind is its destination: an entity change appends the
+  each; the tenant stays first in the signature, the shape an operation
+  without a principal takes, and the row now also knows it. The row's
+  kind is its destination: an entity change appends the
   `Event` under the row's id and publishes `entity_changed` with
   `(kind, target_id, seq)`; a `work.<kind>` row is enqueued by the
   relay (`WorkManagerInterface.enqueue_relayed(org_id, row)`, no
@@ -314,11 +320,12 @@ context on keeps the stage the callee needs.
   the attempt limit are `OutboxOptions`. Done and failed rows are purged
   after the outbox retention.
 - `events`: the append-only stream behind every realtime push, in the
-  `activity` role: `Event(Identifiable)` with `seq` (per tenant, gapless,
-  assigned by the append, the one number storage assigns), `kind`
-  (`<namespace>.<entity>.<action>`, or an audit kind), `target_id`, a
-  `payload`, and the actor and request that produced it. The append
-  takes the number from the tenant's cursor row in `event_cursors`,
+  `activity` role: `Event(Identifiable)` with `org_id` (on the event, as
+  on the outbox row, because the relay appends with no context), `seq`
+  (per tenant, gapless, assigned by the append, the one number storage
+  assigns), `kind` (`<namespace>.<entity>.<action>`, or an audit kind),
+  `target_id`, a `payload`, and the actor and request that produced it.
+  The append takes the number from the tenant's cursor row in `event_cursors`,
   `head + 1` under the row's lock inside the append's own transaction,
   so two appends to one tenant queue on the row and a rollback returns
   the number with it; it never computes `MAX(seq) + 1` and retries on
@@ -329,8 +336,8 @@ context on keeps the stage the callee needs.
   once and consumes no number. No update, no delete. The entity events reach the stream through
   the event storage, from the outbox relay; the manager's `append_event` is for
   an audit entry (the work manager's dead letter), requires `WRITE`, and
-  stamps the actor, the request, and the app from the context, never
-  from the caller's event.
+  stamps the tenant, the actor, the request, and the app from the
+  context, never from the caller's event.
 
 Every table belongs to one database role (`core`, `activity`, `queue`,
 `admin`); the map in `tadas.om.storage.roles` decides the schema, the

@@ -1,3 +1,5 @@
+from uuid import UUID
+
 import pytest
 
 from contracts.racing import race
@@ -6,9 +8,10 @@ from tadas.om.events.storage import EventStorageInterface
 from tadas.om.events.types.event import Event
 
 
-def make_event(kind: str = "tasks.task.created") -> Event:
+def make_event(org_id: UUID, kind: str = "tasks.task.created") -> Event:
     return Event(
         id=new_id(),
+        org_id=org_id,
         kind=kind,
         target_id=new_id(),
         payload={"title": "t"},
@@ -29,14 +32,14 @@ class EventStorageContract:
     ) -> None:
         org_a, org_b = new_id(), new_id()
         assert await storage.read_head(org_a) == 0
-        appended = [await storage.append_event(org_a, make_event()) for _ in range(3)]
+        appended = [await storage.append_event(org_a, make_event(org_a)) for _ in range(3)]
         assert [e.seq for e in appended] == [1, 2, 3]
         assert await storage.read_head(org_a) == 3
-        elsewhere = await storage.append_event(org_b, make_event())
+        elsewhere = await storage.append_event(org_b, make_event(org_b))
         assert elsewhere.seq == 1
         assert await storage.read_head(org_b) == 1
         first = appended[0]
-        assert first == make_event().model_copy(
+        assert first == make_event(org_a).model_copy(
             update={
                 "id": first.id,
                 "seq": 1,
@@ -54,10 +57,21 @@ class EventStorageContract:
         assert await storage.read_after(org_b, 0, 10) == [elsewhere]
         assert await storage.read_after(new_id(), 0, 10) == []
 
+    async def test_an_appended_event_names_its_own_tenant(
+        self, storage: EventStorageInterface
+    ) -> None:
+        """The relay appends with no context and a client replays records, so
+        the tenant is on the event and not beside it. An event that names
+        another tenant is appended under the one the caller names."""
+        org = new_id()
+        appended = await storage.append_event(org, make_event(new_id()))
+        assert appended.org_id == org
+        assert [e.org_id for e in await storage.read_after(org, 0, 10)] == [org]
+
     async def test_append_is_idempotent_on_the_id(self, storage: EventStorageInterface) -> None:
         # The outbox relay appends under the row's id; relaying twice appends once.
         org = new_id()
-        event = make_event()
+        event = make_event(org)
         first = await storage.append_event(org, event)
         again = await storage.append_event(org, event.model_copy(update={"kind": "ignored"}))
         assert again == first and first.seq == 1
@@ -70,20 +84,22 @@ class EventStorageContract:
         # duplicate, and the head is the last of them. See contracts/racing.py
         # for what each impl's run of this proves.
         org, n = new_id(), 32
-        run = await race(*(storage.append_event(org, make_event()) for _ in range(n)))
+        run = await race(*(storage.append_event(org, make_event(org)) for _ in range(n)))
         appended = run.outcomes
         assert sorted(e.seq for e in appended) == list(range(1, n + 1))
         assert [e.seq for e in await storage.read_after(org, 0, n * 2)] == list(range(1, n + 1))
         assert await storage.read_head(org) == n
         # The cursor the appends left is the one the next append takes from.
-        assert (await storage.append_event(org, make_event())).seq == n + 1
+        assert (await storage.append_event(org, make_event(org))).seq == n + 1
 
     async def test_many_appends_keep_one_cursor_per_tenant(
         self, storage: EventStorageInterface
     ) -> None:
         # Two tenants appending at once never see each other's numbers.
         org_a, org_b, n = new_id(), new_id(), 16
-        run = await race(*(storage.append_event(org, make_event()) for org in (org_a, org_b) * n))
+        run = await race(
+            *(storage.append_event(org, make_event(org)) for org in (org_a, org_b) * n)
+        )
         appended = run.outcomes
         assert sorted(e.seq for e in appended[0::2]) == list(range(1, n + 1))
         assert sorted(e.seq for e in appended[1::2]) == list(range(1, n + 1))
@@ -94,8 +110,8 @@ class EventStorageContract:
         # The retry of an appended id rolls back, and the number it took goes
         # back with it: the next event is 2, not 3.
         org = new_id()
-        event = make_event()
+        event = make_event(org)
         await storage.append_event(org, event)
         await storage.append_event(org, event)
-        assert (await storage.append_event(org, make_event())).seq == 2
+        assert (await storage.append_event(org, make_event(org))).seq == 2
         assert await storage.read_head(org) == 2

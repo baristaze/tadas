@@ -48,6 +48,7 @@ class TenancyOperatorManagerImpl(TenancyOperatorManagerInterface):
         row = OutboxRow(
             id=new_id(),
             created_at=now,
+            org_id=org_id,
             kind="tenancy.org.deleted",
             target_id=org_id,
             payload=snapshot(deleted),

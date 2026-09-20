@@ -28,7 +28,7 @@ class OutboxStorageInterface(ABC):
         grace: timedelta,
         backoff_base: timedelta,
         backoff_cap: timedelta,
-    ) -> list[tuple[UUID, OutboxRow]]:
+    ) -> list[OutboxRow]:
         """Cross-tenant, for the sweep, one statement: up to `limit` rows that are
         neither done nor failed, whose next attempt is due at `now`, and that
         landed before `now - grace` (a younger row is the request path's to
@@ -36,7 +36,8 @@ class OutboxStorageInterface(ABC):
         returned has spent one more attempt and carries its next attempt, `now`
         plus a delay that doubles per attempt (`rules.relay_delay`), so a row
         that will not relay stops nothing behind it and two concurrent sweeps
-        relay disjoint sets. Returns the rows as written, with their tenant."""
+        relay disjoint sets. Returns the rows as written; each one names its own
+        tenant, so nothing travels beside it."""
         ...
 
     @abstractmethod

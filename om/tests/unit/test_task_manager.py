@@ -511,7 +511,7 @@ async def test_a_failed_relay_leaves_the_row_for_the_sweep(
     created = await manager.create_task(ctx, make_task(ctx))
     assert await manager.get_task(ctx, created.id) == created
     pending = await claim_all(outbox)
-    assert [(org, row.kind) for org, row in pending] == [(ctx.org_id, "tasks.task.created")]
+    assert [(row.org_id, row.kind) for row in pending] == [(ctx.org_id, "tasks.task.created")]
     # The event was appended before the publish failed; relaying again is
     # idempotent on the row's id and marks the row done once the bus is back.
     # The row is seconds old, so the sweep's grace is set aside here.

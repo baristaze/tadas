@@ -57,7 +57,7 @@ async def test_a_poison_row_does_not_block_the_rows_behind_it_and_dies_after_max
     tasks = TasksStorageMemoryImpl(outbox)
     org = new_id()
     poison, fine = make_task(), make_task()
-    poison_row, fine_row = make_row(poison.id), make_row(fine.id)
+    poison_row, fine_row = make_row(org, poison.id), make_row(org, fine.id)
     await tasks.create_task(org, poison, (poison_row,))
     await tasks.create_task(org, fine, (fine_row,))
     events = PoisonedEvents(poison_row.id)
@@ -94,7 +94,7 @@ async def test_the_sweep_leaves_a_row_younger_than_the_grace(infra: InfraLocalIm
     tasks = TasksStorageMemoryImpl(outbox)
     org = new_id()
     task = make_task()
-    row = make_row(task.id, age=timedelta(0))
+    row = make_row(org, task.id, age=timedelta(0))
     await tasks.create_task(org, task, (row,))
     relay = OutboxRelayImpl(outbox, EventStorageMemoryImpl(), infra.get_topics())
     assert await relay.relay_pending(10) == 0, "the request path relays a fresh row"
@@ -107,7 +107,7 @@ async def test_purge_takes_done_and_failed_rows_past_the_retention(infra: InfraL
     tasks = TasksStorageMemoryImpl(outbox)
     org = new_id()
     done, failed = make_task(), make_task()
-    done_row, failed_row = make_row(done.id), make_row(failed.id)
+    done_row, failed_row = make_row(org, done.id), make_row(org, failed.id)
     await tasks.create_task(org, done, (done_row,))
     await tasks.create_task(org, failed, (failed_row,))
     await outbox.mark_done(org, done_row.id)
@@ -160,7 +160,7 @@ async def test_a_write_that_also_starts_work_rides_a_second_row_the_relay_enqueu
     assert await storage.get_tasks_storage().create_task(ctx.org_id, task, (change, asked))
     # One statement, two rows: the entity's change and the work it starts.
     landed = await claim_all(storage.get_outbox_storage())
-    assert sorted(row.id for _, row in landed) == sorted([change.id, asked.id])
+    assert sorted(row.id for row in landed) == sorted([change.id, asked.id])
 
     assert await managers.outbox.relay(ctx.org_id, change)
     assert await managers.outbox.relay(ctx.org_id, asked)

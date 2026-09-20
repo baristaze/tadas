@@ -20,7 +20,7 @@ class OutboxStoragePostgresImpl(PgStorageBase, OutboxStorageInterface):
         grace: timedelta,
         backoff_base: timedelta,
         backoff_cap: timedelta,
-    ) -> list[tuple[UUID, OutboxRow]]:
+    ) -> list[OutboxRow]:
         candidates = (
             select(OutboxRows.id)
             .where(
@@ -51,10 +51,7 @@ class OutboxStoragePostgresImpl(PgStorageBase, OutboxStorageInterface):
         )
         async with self._session_for(stmt) as session:
             rows = (await session.execute(stmt)).scalars().all()
-            claimed = sorted(
-                ((row.org_id, to_model(row, OutboxRow)) for row in rows),
-                key=lambda pair: pair[1].id,
-            )
+            claimed = sorted((to_model(row, OutboxRow) for row in rows), key=lambda r: r.id)
             await session.commit()
             return claimed
 
