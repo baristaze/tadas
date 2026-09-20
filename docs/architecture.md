@@ -116,7 +116,7 @@ context on keeps the stage the callee needs.
   placement rules are pure functions in `tasks.rules`, which the memory
   impl calls and the Postgres impl mirrors in SQL. A task carries a
   `version` because it is edited from two windows and two terminals at
-  once ([ADR 0008](adr/0008-tasks-carry-a-version.md)): the manager's
+  once ([ADR 0009](adr/0009-tasks-carry-a-version.md)): the manager's
   copy increments it on update, move, and soft delete, and the storage
   write is a compare-and-set, `WHERE version = :expected` in one
   statement in Postgres and the same check and write under the lock in
@@ -224,7 +224,7 @@ pool, and the migration chain. Migrations are hand-written SQL under
 and `queue` have chains today, and `admin` has no table yet. Optimistic
 concurrency stays opt-in: `tasks` is the one table that carries a
 `version`, because a task is edited from two windows and two terminals
-at once ([ADR 0008](adr/0008-tasks-carry-a-version.md)); every other
+at once ([ADR 0009](adr/0009-tasks-carry-a-version.md)); every other
 table has no concurrent edits that matter, so there the last writer
 wins.
 
