@@ -19,7 +19,9 @@ class OutboxStorageMemoryImpl(OutboxStorageInterface, OutboxLandingInterface):
 
     def land(self, org_id: UUID, row: OutboxRow) -> None:
         # The memory twin of "inserted in the same commit as the core row".
-        self._rows[row.id] = (org_id, row)
+        # The tenant landed is the one the write names, as the column is in
+        # Postgres, so a row that names another is corrected, never trusted.
+        self._rows[row.id] = (org_id, row.model_copy(update={"org_id": org_id}))
 
     async def claim_pending(
         self,
