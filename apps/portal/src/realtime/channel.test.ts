@@ -1,0 +1,197 @@
+// The socket loop over a fake socket and fake timers: what it sends, when it
+// reconnects, and how it moves the stream cursor.
+import type { EventView } from "../api";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { useConnectionStore } from "../store/connection";
+import { openChannel, SOCKET_OPEN, type Channel, type SocketLike } from "./channel";
+import type { Envelope } from "./envelopes";
+import { STABLE_OPEN_MS } from "./timeouts";
+
+class FakeSocket implements SocketLike {
+  readyState = 0;
+  sent: string[] = [];
+  onopen: SocketLike["onopen"] = null;
+  onmessage: SocketLike["onmessage"] = null;
+  onclose: SocketLike["onclose"] = null;
+  onerror: SocketLike["onerror"] = null;
+
+  /** The server accepted. */
+  accept() {
+    this.readyState = SOCKET_OPEN;
+    this.onopen?.({} as Event);
+  }
+  /** The server sent a frame. */
+  receive(frame: object) {
+    this.onmessage?.({ data: JSON.stringify(frame) } as MessageEvent);
+  }
+  /** The server closed. */
+  drop() {
+    this.readyState = 3;
+    this.onclose?.({} as CloseEvent);
+  }
+  send(data: string) {
+    this.sent.push(data);
+  }
+  close() {
+    if (this.readyState === 3) return;
+    this.drop();
+  }
+}
+
+function event(seq: number): EventView {
+  return { seq, kind: "tasks.task.updated", target_id: `t${seq}`, produced_at: "2026-09-16T12:00:00Z", actor_id: "u1" };
+}
+
+function push(seq: number): Envelope {
+  return { type: "event", topic: "entity_changed", sent_at: null, payload: { kind: "tasks.task.updated", target_id: `t${seq}`, seq, actor_id: "u1" } };
+}
+
+const hello = (seq: number) => ({ type: "hello", sent_at: null, org_id: "o1", user_id: "u1", seq, ping_interval_seconds: 25 });
+
+/** The stream in storage, as pages after a seq. */
+type Pages = (after: number) => EventView[];
+
+function harness(pages: Pages = () => [], pageSize = 200) {
+  const sockets: FakeSocket[] = [];
+  const routed: Envelope[] = [];
+  const fetches: number[] = [];
+  const requestTicket = vi.fn(() => Promise.resolve("tkt"));
+  const channel = openChannel({
+    requestTicket,
+    openSocket: () => {
+      const socket = new FakeSocket();
+      sockets.push(socket);
+      return socket;
+    },
+    fetchEventsAfter: (after) => {
+      fetches.push(after);
+      return Promise.resolve(pages(after));
+    },
+    route: (envelope) => {
+      routed.push(envelope);
+    },
+    refreshAll: () => Promise.resolve(),
+    connection: useConnectionStore,
+    pageSize,
+  });
+  return { channel, sockets, routed, fetches, requestTicket };
+}
+
+// Lets the ticket request and the inbox settle without moving the clock.
+const flush = () => vi.advanceTimersByTimeAsync(0);
+
+let channel: Channel | null = null;
+
+beforeEach(() => {
+  vi.useFakeTimers();
+  useConnectionStore.setState({ status: "closed", failedCycles: 0 });
+});
+
+afterEach(() => {
+  channel?.stop();
+  channel = null;
+  vi.useRealTimers();
+});
+
+describe("reconnect backoff", () => {
+  it("keeps backing off while the server accepts and closes at once", async () => {
+    const h = harness();
+    channel = h.channel;
+    await flush();
+    h.sockets[0]!.accept();
+    h.sockets[0]!.drop();
+    expect(h.requestTicket).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(h.requestTicket).toHaveBeenCalledTimes(2);
+    h.sockets[1]!.accept();
+    h.sockets[1]!.drop();
+
+    // The second try waits twice as long: an accept without a hello is not a connection.
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(h.requestTicket).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(h.requestTicket).toHaveBeenCalledTimes(3);
+    expect(useConnectionStore.getState().status).not.toBe("open");
+  });
+
+  it("starts the backoff over once the hello frame has arrived", async () => {
+    const h = harness();
+    channel = h.channel;
+    await flush();
+    h.sockets[0]!.accept();
+    h.sockets[0]!.drop();
+    await vi.advanceTimersByTimeAsync(1_000);
+    h.sockets[1]!.accept();
+    expect(useConnectionStore.getState().status).toBe("connecting");
+    h.sockets[1]!.receive(hello(5));
+    expect(useConnectionStore.getState().status).toBe("open");
+    h.sockets[1]!.drop();
+
+    // Back to the first delay.
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(h.requestTicket).toHaveBeenCalledTimes(3);
+  });
+
+  it("counts a socket that stays open long enough as connected even without a hello", async () => {
+    const h = harness();
+    channel = h.channel;
+    await flush();
+    h.sockets[0]!.accept();
+    h.sockets[0]!.drop();
+    await vi.advanceTimersByTimeAsync(1_000);
+    h.sockets[1]!.accept();
+    await vi.advanceTimersByTimeAsync(STABLE_OPEN_MS);
+    expect(useConnectionStore.getState().status).toBe("open");
+    h.sockets[1]!.drop();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(h.requestTicket).toHaveBeenCalledTimes(3);
+  });
+
+  it("subscribes on open and stops for good when told to", async () => {
+    const h = harness();
+    channel = h.channel;
+    await flush();
+    h.sockets[0]!.accept();
+    expect(h.sockets[0]!.sent).toEqual([JSON.stringify({ op: "subscribe", topic: "entity_changed" })]);
+    channel.stop();
+    channel = null;
+    expect(h.sockets[0]!.readyState).toBe(3);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(h.requestTicket).toHaveBeenCalledTimes(1);
+    expect(useConnectionStore.getState().status).toBe("closed");
+  });
+});
+
+describe("stream cursor", () => {
+  it("takes the cursor from the hello and advances on contiguous pushes", async () => {
+    const h = harness();
+    channel = h.channel;
+    await flush();
+    h.sockets[0]!.accept();
+    await flush();
+    h.sockets[0]!.receive(hello(5));
+    h.sockets[0]!.receive(push(6));
+    h.sockets[0]!.receive(push(7));
+    await flush();
+    expect(channel.cursor()).toBe(7);
+    expect(h.routed.filter((e) => e.type === "event")).toHaveLength(2);
+    expect(h.fetches).toEqual([]);
+  });
+
+  it("closes a gap by replaying the pages between the cursor and the push", async () => {
+    const stream = [event(6), event(7), event(8)];
+    const h = harness((after) => stream.filter((e) => e.seq > after).slice(0, 2), 2);
+    channel = h.channel;
+    await flush();
+    h.sockets[0]!.accept();
+    await flush();
+    h.sockets[0]!.receive(hello(5));
+    await flush();
+    h.sockets[0]!.receive(push(8));
+    await flush();
+    expect(h.fetches).toEqual([5, 7]);
+    expect(channel.cursor()).toBe(8);
+    expect(h.routed.filter((e) => e.type === "event").map((e) => (e as { payload: { seq: number } }).payload.seq)).toEqual([6, 7, 8]);
+  });
+});

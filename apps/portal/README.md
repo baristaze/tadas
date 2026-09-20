@@ -20,9 +20,13 @@ Zustand, one realtime channel.
 - One screen is `src/features/<screen>/`: `<Screen>Page.tsx` renders,
   `use<Screen>Vm.ts` decides, `<screen>Model.ts` computes and is unit
   tested without React.
-- `src/realtime/RealtimeProvider.tsx` owns the one socket. Envelopes
-  (`envelopes.ts`) route into the query cache (`router.ts`), never into
-  components. The ping interval comes from
+- `src/realtime/RealtimeProvider.tsx` owns the one socket; the loop
+  itself (ticket, reconnect with backoff, the stream cursor and its
+  replay) is `channel.ts`, without React, run in its test over a fake
+  socket and fake timers. A socket counts as connected once the hello
+  frame arrives, so a server that accepts and closes at once still
+  backs off. Envelopes (`envelopes.ts`) route into the query cache
+  (`router.ts`), never into components. The ping interval comes from
   `deployment/realtime-timeouts.json`.
 - Design tokens and the kit live in `src/design/`; the operator console
   imports them from here.
