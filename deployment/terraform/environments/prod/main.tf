@@ -173,6 +173,8 @@ module "api" {
     TADAS_HOST         = "0.0.0.0"
     TADAS_PORT         = "8000"
     TADAS_CORS_ORIGINS = jsonencode(concat(["https://${var.app_domain_name}"], var.cors_origins))
+    # The load balancer lives in the VPC, so its X-Forwarded-For names the client.
+    TADAS_TRUSTED_PROXIES = jsonencode([var.vpc_cidr])
   })
 
   health_check_command = [

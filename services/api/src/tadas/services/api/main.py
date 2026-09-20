@@ -8,6 +8,7 @@ import json
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any
 
 import uvicorn
 
@@ -22,6 +23,18 @@ from tadas.services.api.container import AppContainer, boot
 from tadas.services.api.settings import ApiSettings
 
 
+def server_options(settings: ApiSettings) -> dict[str, Any]:
+    """What uvicorn is told beyond the address. Forwarded headers are honored
+    only from the proxies settings name; with none named the peer is the
+    client, so nothing outside the load balancer can choose its own address
+    for the rate limit."""
+    return {
+        "proxy_headers": bool(settings.trusted_proxies),
+        "forwarded_allow_ips": list(settings.trusted_proxies),
+        "log_config": None,
+    }
+
+
 def serve(args: argparse.Namespace) -> int:
     settings = ApiSettings()
     boot(settings)
@@ -30,7 +43,7 @@ def serve(args: argparse.Namespace) -> int:
         factory=True,
         host=args.host or settings.host,
         port=args.port or settings.port,
-        log_config=None,
+        **server_options(settings),
     )
     return 0
 
