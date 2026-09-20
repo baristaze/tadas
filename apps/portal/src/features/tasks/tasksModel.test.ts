@@ -4,14 +4,14 @@ import { describe, expect, it } from "vitest";
 import {
   canAdd,
   canWrite,
-  doneWithout,
-  doneWithTaskOnTop,
-  flattenDone,
+  flattenPages,
+  pagesWithOrder,
+  pagesWithout,
+  pagesWithTaskOnTop,
+  pagesWithTaskReplaced,
   placement,
   taskRow,
   withLeaving,
-  withoutTask,
-  withTaskOnTop,
 } from "./tasksModel";
 
 const task = (id: string, overrides: Partial<TaskView> = {}): TaskView => ({
@@ -38,6 +38,10 @@ const user = (id: string, name: string): UserView => ({
 
 const ids = (tasks: TaskView[] | undefined) => (tasks ?? []).map((t) => t.id);
 const page = (...items: TaskView[]): TaskPageView => ({ items, next_cursor: null });
+const pages = (...pages: TaskPageView[]): InfiniteData<TaskPageView> => ({
+  pages,
+  pageParams: pages.map((_, index) => (index === 0 ? null : `cursor-${index}`)),
+});
 
 describe("tasks model", () => {
   it("labels who created and who is assigned, naming the caller 'you'", () => {
@@ -74,19 +78,20 @@ describe("tasks model", () => {
     expect(placement(open, "x", "a", "before")).toBeNull();
   });
 
-  it("edits the open page and the done pages", () => {
-    expect(ids(withTaskOnTop(page(task("a"), task("b")), task("b"))?.items)).toEqual(["b", "a"]);
-    expect(ids(withoutTask(page(task("a"), task("b")), "a")?.items)).toEqual(["b"]);
-    expect(withoutTask(undefined, "a")).toBeUndefined();
-
-    const done: InfiniteData<TaskPageView> = {
-      pages: [page(task("x"), task("y")), page(task("z"))],
-      pageParams: [null, "cursor"],
-    };
-    expect(ids(flattenDone(doneWithTaskOnTop(done, task("n", { status: "done" }))))).toEqual(["n", "x", "y", "z"]);
-    expect(ids(flattenDone(doneWithTaskOnTop(done, task("z"))))).toEqual(["z", "x", "y"]);
-    expect(ids(flattenDone(doneWithout(done, "y")))).toEqual(["x", "z"]);
-    expect(flattenDone(undefined)).toEqual([]);
+  it("edits a paged list: on top, without, replaced, and reordered", () => {
+    const data = pages(page(task("x"), task("y")), page(task("z")));
+    expect(ids(flattenPages(pagesWithTaskOnTop(data, task("n", { status: "done" }))))).toEqual(["n", "x", "y", "z"]);
+    expect(ids(flattenPages(pagesWithTaskOnTop(data, task("z"))))).toEqual(["z", "x", "y"]);
+    expect(ids(flattenPages(pagesWithout(data, "y")))).toEqual(["x", "z"]);
+    expect(flattenPages(pagesWithTaskReplaced(data, task("z", { title: "renamed" })))[2]?.title).toBe("renamed");
+    // A reorder spans every loaded page: the order lands on the first page
+    // and the rest empty, so no task shows twice until the refetch.
+    const reordered = pagesWithOrder(data, [task("z"), task("x"), task("y")]);
+    expect(ids(flattenPages(reordered))).toEqual(["z", "x", "y"]);
+    expect(reordered?.pages.length).toBe(2);
+    expect(pagesWithout(undefined, "a")).toBeUndefined();
+    expect(pagesWithOrder(undefined, [])).toBeUndefined();
+    expect(flattenPages(undefined)).toEqual([]);
   });
 
   it("keeps a leaving task in its place until the motion ends", () => {

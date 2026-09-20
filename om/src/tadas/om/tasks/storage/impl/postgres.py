@@ -4,6 +4,7 @@ from uuid import UUID
 from sqlalchemy import (
     ColumnElement,
     DateTime,
+    Double,
     Uuid,
     and_,
     delete,
@@ -23,7 +24,7 @@ from tadas.om.storage.impl.pg_base import PgStorageBase
 from tadas.om.storage.utils.translation import to_model, to_row, to_values
 from tadas.om.tasks.storage import TasksStorageInterface
 from tadas.om.tasks.storage.tables.tasks import Tasks
-from tadas.om.tasks.types.filter import TaskCursor, TaskFilter
+from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor, TaskFilter
 from tadas.om.tasks.types.task import Task, TaskScope, TaskStatus
 
 
@@ -48,14 +49,21 @@ def _before(cursor: TaskCursor) -> ColumnElement[bool]:
     )
 
 
+def _after(cursor: OpenTaskCursor) -> ColumnElement[bool]:
+    """Mirrors tasks.rules.is_after in SQL."""
+    return tuple_(Tasks.position, Tasks.id) > tuple_(
+        literal(cursor.position, Double()), literal(cursor.id, Uuid())
+    )
+
+
 class TasksStoragePostgresImpl(PgStorageBase, TasksStorageInterface):
-    async def read_open_tasks(self, org_id: UUID, criterion: TaskFilter, limit: int) -> list[Task]:
-        stmt = (
-            select(Tasks)
-            .where(_live(org_id, TaskStatus.OPEN), _visible(criterion))
-            .order_by(Tasks.position, Tasks.id)
-            .limit(limit)
-        )
+    async def read_open_tasks(
+        self, org_id: UUID, criterion: TaskFilter, after: OpenTaskCursor | None, limit: int
+    ) -> list[Task]:
+        stmt = select(Tasks).where(_live(org_id, TaskStatus.OPEN), _visible(criterion))
+        if after is not None:
+            stmt = stmt.where(_after(after))
+        stmt = stmt.order_by(Tasks.position, Tasks.id).limit(limit)
         async with self._session_for(stmt) as session:
             result = await session.execute(stmt)
             return [to_model(row, Task) for row in result.scalars()]

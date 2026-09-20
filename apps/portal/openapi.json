@@ -569,7 +569,7 @@
         "type": "object"
       },
       "TaskPageView": {
-        "description": "One page of a task list. `next_cursor` fetches the next page of the done\nlist; it is null on the last page and always for the open list.",
+        "description": "One page of a task list. `next_cursor` fetches the next page of the same\nlist, open or done, and is null on the last page. The page size is\nclamped, and a list the clamp cut still says a page follows.",
         "properties": {
           "items": {
             "items": {

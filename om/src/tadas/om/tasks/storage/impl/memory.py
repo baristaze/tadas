@@ -5,9 +5,9 @@ from tadas.om.exceptions import TenantMismatch, VersionMismatch
 from tadas.om.outbox.storage import OutboxLandingInterface
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.storage.impl.memory_base import MemoryStorageBase, MemoryTable
-from tadas.om.tasks.rules import is_before, is_visible
+from tadas.om.tasks.rules import is_after, is_before, is_visible
 from tadas.om.tasks.storage import TasksStorageInterface
-from tadas.om.tasks.types.filter import TaskCursor, TaskFilter
+from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor, TaskFilter
 from tadas.om.tasks.types.task import Task, TaskStatus
 
 
@@ -23,8 +23,14 @@ class TasksStorageMemoryImpl(MemoryStorageBase, TasksStorageInterface):
             if t.deleted_at is None and t.status == status
         ]
 
-    async def read_open_tasks(self, org_id: UUID, criterion: TaskFilter, limit: int) -> list[Task]:
-        tasks = [t for t in self._live(org_id, TaskStatus.OPEN) if is_visible(t, criterion)]
+    async def read_open_tasks(
+        self, org_id: UUID, criterion: TaskFilter, after: OpenTaskCursor | None, limit: int
+    ) -> list[Task]:
+        tasks = [
+            t
+            for t in self._live(org_id, TaskStatus.OPEN)
+            if is_visible(t, criterion) and (after is None or is_after(t, after))
+        ]
         return sorted(tasks, key=lambda t: (t.position, t.id))[:limit]
 
     async def read_done_tasks(

@@ -7,7 +7,7 @@ from tadas.om.base import new_id, utcnow
 from tadas.om.exceptions import TenantMismatch, VersionMismatch
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.tasks.storage import TasksStorageInterface
-from tadas.om.tasks.types.filter import TaskCursor, TaskFilter
+from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor, TaskFilter
 from tadas.om.tasks.types.task import Task, TaskScope, TaskStatus
 
 
@@ -21,6 +21,10 @@ def mine(user_id: UUID) -> TaskFilter:
 
 def after(task: Task) -> TaskCursor:
     return TaskCursor(updated_at=task.updated_at, id=task.id)
+
+
+def past(task: Task) -> OpenTaskCursor:
+    return OpenTaskCursor(position=task.position, id=task.id)
 
 
 def make_row(org_id: UUID, task: Task, action: str = "created") -> OutboxRow:
@@ -87,7 +91,7 @@ class TaskStorageContract:
         assert await storage.read_task(org, task.id) == task
         done = await bump(storage, org, task, status=TaskStatus.DONE, updated_at=utcnow())
         assert await storage.read_task(org, task.id) == done
-        assert await storage.read_open_tasks(org, team(), limit=10) == []
+        assert await storage.read_open_tasks(org, team(), None, limit=10) == []
         assert await storage.read_done_tasks(org, team(), None, limit=10) == [done]
 
     async def test_create_reports_an_existing_id_and_changes_nothing(
@@ -108,7 +112,7 @@ class TaskStorageContract:
         task = make_task()
         await seed(storage, org_a, task)
         assert await storage.read_task(org_b, task.id) is None
-        assert await storage.read_open_tasks(org_b, team(), limit=10) == []
+        assert await storage.read_open_tasks(org_b, team(), None, limit=10) == []
         assert await storage.read_open_positions(org_b, exclude=None) == []
 
     async def test_write_refuses_another_tenant(self, storage: TasksStorageInterface) -> None:
@@ -153,17 +157,32 @@ class TaskStorageContract:
         tasks = [make_task(f"t{i}", position=float(p)) for i, p in enumerate([3, -1, 2])]
         for task in tasks:
             await seed(storage, org, task)
-        listed = await storage.read_open_tasks(org, team(), limit=10)
+        listed = await storage.read_open_tasks(org, team(), None, limit=10)
         assert [t.title for t in listed] == ["t1", "t2", "t0"]
-        assert len(await storage.read_open_tasks(org, team(), limit=2)) == 2
+        assert len(await storage.read_open_tasks(org, team(), None, limit=2)) == 2
         assert await storage.read_open_positions(org, exclude=None) == [-1.0, 2.0, 3.0]
         assert await storage.read_open_positions(org, exclude=tasks[1].id) == [2.0, 3.0]
         gone = await bump(storage, org, tasks[1], deleted_at=utcnow(), deleted_by=new_id())
-        assert [t.title for t in await storage.read_open_tasks(org, team(), limit=10)] == [
+        assert [t.title for t in await storage.read_open_tasks(org, team(), None, limit=10)] == [
             "t2",
             "t0",
         ]
         assert await storage.read_task(org, gone.id) == gone
+
+    async def test_open_list_pages_by_position_cursor(self, storage: TasksStorageInterface) -> None:
+        # Two tasks share a position (a seed, or a float that met its limit):
+        # the id breaks the tie, in the list and in the cursor alike.
+        org = new_id()
+        tasks = [make_task(f"o{i}", position=float(p)) for i, p in enumerate([1, 2, 2, 3, 4])]
+        for task in tasks:
+            await seed(storage, org, task)
+        first = await storage.read_open_tasks(org, team(), None, limit=2)
+        second = await storage.read_open_tasks(org, team(), past(first[-1]), limit=2)
+        third = await storage.read_open_tasks(org, team(), past(second[-1]), limit=2)
+        assert [t.id for t in [*first, *second, *third]] == [
+            t.id for t in sorted(tasks, key=lambda t: (t.position, t.id))
+        ]
+        assert await storage.read_open_tasks(org, team(), past(third[-1]), limit=2) == []
 
     async def test_done_list_is_newest_first_and_pages_by_cursor(
         self, storage: TasksStorageInterface
@@ -193,11 +212,11 @@ class TaskStorageContract:
         mine_done = make_task("mine, done", created_by=me, status=TaskStatus.DONE)
         for task in (mine_created, mine_assigned, given_away, theirs, mine_done):
             await seed(storage, org, task)
-        assert [t.title for t in await storage.read_open_tasks(org, mine(me), limit=10)] == [
+        assert [t.title for t in await storage.read_open_tasks(org, mine(me), None, limit=10)] == [
             "created by me",
             "assigned to me",
         ]
-        assert len(await storage.read_open_tasks(org, team(), limit=10)) == 4
+        assert len(await storage.read_open_tasks(org, team(), None, limit=10)) == 4
         assert [t.title for t in await storage.read_done_tasks(org, mine(me), None, limit=10)] == [
             "mine, done"
         ]

@@ -23,3 +23,11 @@ class TaskCursor(Platform):
 
     updated_at: datetime
     id: UUID
+
+
+class OpenTaskCursor(Platform):
+    """Where the previous page of the open list ended: its last task's
+    (position, id). The next page is strictly after it."""
+
+    position: float
+    id: UUID

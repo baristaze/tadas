@@ -83,24 +83,62 @@ async def test_task_round_trip(client: httpx.AsyncClient, owner: dict[str, str])
     assert await titles(client, owner, status="done") == []
 
 
-async def test_done_list_pages_by_cursor(client: httpx.AsyncClient, owner: dict[str, str]) -> None:
-    for i in range(5):
-        task = await add(client, owner, f"t{i}")
-        await patch(client, owner, task, status="done")
+async def paged(
+    client: httpx.AsyncClient, headers: dict[str, str], status: str, limit: int
+) -> tuple[list[str], int]:
+    """Every title of a list the way a client pages it: until the cursor is null."""
     seen: list[str] = []
     cursor: str | None = None
     pages = 0
     while True:
-        params: dict[str, str | int] = {"status": "done", "limit": 2}
+        params: dict[str, str | int] = {"status": status, "limit": limit}
         if cursor:
             params["cursor"] = cursor
-        page = (await client.get("/v1/tasks", headers=owner, params=params)).json()
+        listed = await client.get("/v1/tasks", headers=headers, params=params)
+        assert listed.status_code == 200, listed.text
+        page = listed.json()
         seen += [t["title"] for t in page["items"]]
         pages += 1
         cursor = page["next_cursor"]
         if cursor is None:
-            break
-    assert seen == ["t4", "t3", "t2", "t1", "t0"] and pages == 3
+            return seen, pages
+
+
+async def test_both_lists_page_by_cursor(client: httpx.AsyncClient, owner: dict[str, str]) -> None:
+    for i in range(5):
+        task = await add(client, owner, f"d{i}")
+        await patch(client, owner, task, status="done")
+    for i in range(5):
+        await add(client, owner, f"o{i}")
+    assert await paged(client, owner, "done", 2) == (["d4", "d3", "d2", "d1", "d0"], 3)
+    assert await paged(client, owner, "open", 2) == (["o4", "o3", "o2", "o1", "o0"], 3)
+
+    # A cursor is opaque and belongs to one list: the open list's on the done
+    # list, or the reverse, is refused like a made-up one.
+    first_open = (
+        await client.get("/v1/tasks", headers=owner, params={"status": "open", "limit": 2})
+    ).json()
+    crossed = await client.get(
+        "/v1/tasks", headers=owner, params={"status": "done", "cursor": first_open["next_cursor"]}
+    )
+    assert crossed.status_code == 422 and crossed.json()["error"]["code"] == "validation_failed"
+
+
+async def test_a_client_paging_at_the_clamp_retrieves_every_task(
+    client: httpx.AsyncClient, owner: dict[str, str]
+) -> None:
+    # 201 open and 201 done tasks, one past the clamp of 200: the page the
+    # clamp cut says a page follows, and the 201st task is on it.
+    for i in range(201):
+        await add(client, owner, f"open {i}")
+        task = await add(client, owner, f"done {i}")
+        await patch(client, owner, task, status="done")
+    for status in ("open", "done"):
+        seen, pages = await paged(client, owner, status, 200)
+        assert len(seen) == 201 and len(set(seen)) == 201 and pages == 2, status
+    # Asking past the clamp is the same as asking for the clamp.
+    over = await client.get("/v1/tasks", headers=owner, params={"status": "open", "limit": 1000})
+    assert len(over.json()["items"]) == 200 and over.json()["next_cursor"] is not None
 
 
 async def test_move_and_scopes(

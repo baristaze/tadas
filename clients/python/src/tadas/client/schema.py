@@ -266,8 +266,9 @@ class MembershipView(BaseModel):
 
 class TaskPageView(BaseModel):
     """
-    One page of a task list. `next_cursor` fetches the next page of the done
-    list; it is null on the last page and always for the open list.
+    One page of a task list. `next_cursor` fetches the next page of the same
+    list, open or done, and is null on the last page. The page size is
+    clamped, and a list the clamp cut still says a page follows.
     """
     items: Annotated[list[TaskView], Field(title='Items')]
     next_cursor: Annotated[str | None, Field(title='Next Cursor')]

@@ -3,8 +3,8 @@ from uuid import UUID
 from contracts.task_storage import make_task
 
 from tadas.om.base import new_id
-from tadas.om.tasks.rules import is_before, is_visible, position_after, top_position
-from tadas.om.tasks.types.filter import TaskCursor, TaskFilter
+from tadas.om.tasks.rules import is_after, is_before, is_visible, position_after, top_position
+from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor, TaskFilter
 from tadas.om.tasks.types.task import TaskScope
 
 
@@ -35,3 +35,13 @@ def test_placement_arithmetic() -> None:
     assert position_after(1.0, [1.0, 2.0]) == 1.5
     assert position_after(2.0, [1.0, 2.0]) == 3.0
     assert position_after(0.5, []) == 1.5
+
+
+def test_is_after_cuts_the_open_list_by_position_then_id() -> None:
+    task = make_task(position=2.0)
+    at = OpenTaskCursor(position=task.position, id=task.id)
+    assert not is_after(task, at), "the cursor's own task is on the previous page"
+    assert is_after(task, OpenTaskCursor(position=1.0, id=task.id))
+    assert not is_after(task, OpenTaskCursor(position=3.0, id=task.id))
+    assert is_after(task, OpenTaskCursor(position=2.0, id=UUID(int=task.id.int - 1)))
+    assert not is_after(task, OpenTaskCursor(position=2.0, id=UUID(int=task.id.int + 1)))

@@ -9,7 +9,8 @@ from tadas.om.outbox.types.row import outbox_row, snapshot
 from tadas.om.tasks.manager import TasksManagerInterface
 from tadas.om.tasks.rules import position_after, top_position
 from tadas.om.tasks.storage import TasksStorageInterface
-from tadas.om.tasks.types.filter import TaskCursor, TaskFilter
+from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor, TaskFilter
+from tadas.om.tasks.types.page import TaskPage
 from tadas.om.tasks.types.task import Task, TaskStatus
 from tadas.om.tenancy import TenancyManagerInterface
 
@@ -32,19 +33,23 @@ class TasksManagerImpl(TasksManagerInterface):
         self._relay = relay
         self._options = options
 
-    async def get_open_tasks(self, ctx: OpContext, criterion: TaskFilter, limit: int) -> list[Task]:
+    async def get_open_tasks(
+        self, ctx: OpContext, criterion: TaskFilter, after: OpenTaskCursor | None, limit: int
+    ) -> TaskPage:
         ctx.require(Permission.READ)
         self._own(ctx, criterion)
-        return await self._storage.read_open_tasks(ctx.org_id, criterion, self._clamp(limit))
+        limit = self._clamp(limit)
+        rows = await self._storage.read_open_tasks(ctx.org_id, criterion, after, limit + 1)
+        return self._page(rows, limit)
 
     async def get_done_tasks(
         self, ctx: OpContext, criterion: TaskFilter, before: TaskCursor | None, limit: int
-    ) -> list[Task]:
+    ) -> TaskPage:
         ctx.require(Permission.READ)
         self._own(ctx, criterion)
-        return await self._storage.read_done_tasks(
-            ctx.org_id, criterion, before, self._clamp(limit)
-        )
+        limit = self._clamp(limit)
+        rows = await self._storage.read_done_tasks(ctx.org_id, criterion, before, limit + 1)
+        return self._page(rows, limit)
 
     async def get_task(self, ctx: OpContext, task_id: UUID) -> Task:
         ctx.require(Permission.READ)
@@ -145,7 +150,15 @@ class TasksManagerImpl(TasksManagerInterface):
         return await self._storage.purge_deleted(ctx.org_id, utcnow() - self._options.retention)
 
     def _clamp(self, limit: int) -> int:
+        """The page size a caller gets, at most `max_limit`."""
         return max(1, min(limit, self._options.max_limit))
+
+    @staticmethod
+    def _page(rows: list[Task], limit: int) -> TaskPage:
+        """The clamp is on the page; the lookahead is one row past it, which
+        storage was asked for and the page never carries. So a list truncated
+        by the clamp still says a page follows, and the last page says none."""
+        return TaskPage(items=rows[:limit], has_more=len(rows) > limit)
 
     @staticmethod
     def _own(ctx: OpContext, criterion: TaskFilter) -> None:

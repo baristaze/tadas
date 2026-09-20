@@ -107,11 +107,24 @@ def _show(task: TaskView, verb: str, as_json: bool) -> None:
         typer.echo(f"{verb} {short_id(task.id)}  {task.title}")
 
 
+async def _all(client: ApiClient, status: TaskStatus, scope: TaskScope) -> list[TaskView]:
+    """A whole list, page after page until the API says there is no next one."""
+    tasks: list[TaskView] = []
+    cursor: str | None = None
+    while True:
+        page = await client.tasks(status, scope, cursor=cursor, limit=200)
+        tasks += page.items
+        cursor = page.next_cursor
+        if cursor is None:
+            return tasks
+
+
 async def _visible(client: ApiClient) -> list[TaskView]:
     """Open and done team tasks, the pool a short id is resolved over."""
-    open_page = await client.tasks(TaskStatus.open, TaskScope.team, limit=200)
-    done_page = await client.tasks(TaskStatus.done, TaskScope.team, limit=200)
-    return [*open_page.items, *done_page.items]
+    return [
+        *await _all(client, TaskStatus.open, TaskScope.team),
+        *await _all(client, TaskStatus.done, TaskScope.team),
+    ]
 
 
 async def _task(client: ApiClient, reference: str) -> TaskView:
@@ -211,12 +224,12 @@ def ls(
     async def go(client: ApiClient) -> None:
         status = TaskStatus.done if done else TaskStatus.open
         scope = TaskScope.mine if mine else TaskScope.team
-        page = await client.tasks(status, scope, limit=200)
+        tasks = await _all(client, status, scope)
         if as_json:
-            typer.echo(json.dumps([t.model_dump(mode="json") for t in page.items], indent=2))
+            typer.echo(json.dumps([t.model_dump(mode="json") for t in tasks], indent=2))
             return
         names = {u.id: u.display_name for u in await client.users()}
-        typer.echo(task_table(page.items, lambda uid: names.get(uid, "someone") if uid else "-"))
+        typer.echo(task_table(tasks, lambda uid: names.get(uid, "someone") if uid else "-"))
 
     run(go, api)
 

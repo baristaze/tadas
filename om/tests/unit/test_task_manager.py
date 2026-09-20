@@ -29,7 +29,7 @@ from tadas.om.outbox.storage.impl.memory import OutboxStorageMemoryImpl
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.tasks.impl.manager import TasksManagerImpl, TasksOptions
 from tadas.om.tasks.storage.impl.memory import TasksStorageMemoryImpl
-from tadas.om.tasks.types.filter import TaskFilter
+from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor, TaskFilter
 from tadas.om.tasks.types.task import Task, TaskScope, TaskStatus
 from tadas.om.tenancy import TenancyManagerInterface
 from tadas.om.tenancy.types.org import Org
@@ -125,7 +125,12 @@ def own(ctx: OpContext, scope: TaskScope) -> TaskFilter:
 
 
 async def open_titles(manager: TasksManagerImpl, ctx: OpContext, scope: TaskScope) -> list[str]:
-    return [t.title for t in await manager.get_open_tasks(ctx, own(ctx, scope), limit=50)]
+    page = await manager.get_open_tasks(ctx, own(ctx, scope), None, limit=50)
+    return [t.title for t in page.items]
+
+
+async def open_page(manager: TasksManagerImpl, ctx: OpContext, limit: int = 10) -> list[Task]:
+    return (await manager.get_open_tasks(ctx, own(ctx, TaskScope.TEAM), None, limit)).items
 
 
 async def move(
@@ -166,7 +171,7 @@ async def test_create_update_delete_record_and_push(
     deleted = await manager.delete_task(ctx, created.id, updated.version)
     assert deleted.deleted_at is not None and deleted.deleted_by == ctx.user_id
     assert deleted.version == 3
-    assert await manager.get_open_tasks(ctx, own(ctx, TaskScope.TEAM), limit=10) == []
+    assert await open_page(manager, ctx) == []
     with pytest.raises(NotFound):
         await manager.get_task(ctx, created.id)
     pushes = [p for p in seen if isinstance(p, EntityChangedPayload)]
@@ -212,7 +217,7 @@ async def test_update_keeps_the_provenance_as_stored(manager: TasksManagerImpl) 
     revived = deleted.model_copy(update={"deleted_at": None, "deleted_by": None})
     with pytest.raises(NotFound):
         await manager.update_task(ann, revived)
-    assert await manager.get_open_tasks(ann, own(ann, TaskScope.TEAM), limit=10) == []
+    assert await open_page(manager, ann) == []
 
 
 async def test_new_tasks_go_to_the_top_of_the_open_list(manager: TasksManagerImpl) -> None:
@@ -230,7 +235,8 @@ async def test_done_leaves_the_open_list_and_reopening_returns_to_the_top(
     await manager.create_task(ctx, make_task(ctx, "b"))
     done = await manager.update_task(ctx, a.model_copy(update={"status": TaskStatus.DONE}))
     assert await open_titles(manager, ctx, TaskScope.TEAM) == ["b"]
-    assert await manager.get_done_tasks(ctx, own(ctx, TaskScope.TEAM), None, limit=10) == [done]
+    done_page = await manager.get_done_tasks(ctx, own(ctx, TaskScope.TEAM), None, limit=10)
+    assert done_page.items == [done] and not done_page.has_more
 
     await manager.create_task(ctx, make_task(ctx, "c"))
     await manager.update_task(ctx, done.model_copy(update={"status": TaskStatus.OPEN}))
@@ -246,9 +252,9 @@ async def test_scopes_mine_and_team(manager: TasksManagerImpl, members: Members)
     await manager.create_task(bob, make_task(bob, "bob gave ann", assignee_id=ann.user_id))
     assert await open_titles(manager, ann, TaskScope.MINE) == ["bob gave ann", "ann's own"]
     assert await open_titles(manager, bob, TaskScope.MINE) == ["bob's own"]
-    assert len(await manager.get_open_tasks(ann, own(ann, TaskScope.TEAM), limit=10)) == 3
+    assert len(await open_page(manager, ann)) == 3
     with pytest.raises(ValidationFailed):  # `mine` is about the caller and nobody else
-        await manager.get_open_tasks(ann, own(bob, TaskScope.MINE), limit=10)
+        await manager.get_open_tasks(ann, own(bob, TaskScope.MINE), None, limit=10)
 
 
 async def test_the_assignee_must_be_a_member(manager: TasksManagerImpl, members: Members) -> None:
@@ -295,7 +301,7 @@ async def test_authorize_then_verify(manager: TasksManagerImpl) -> None:
     viewer = context(Role.VIEWER)
     with pytest.raises(NotAuthorized):
         await manager.create_task(viewer, make_task(viewer))
-    assert await manager.get_open_tasks(viewer, own(viewer, TaskScope.TEAM), limit=10) == []
+    assert await open_page(manager, viewer) == []
 
     member = context(Role.MEMBER)
     with pytest.raises(ValidationFailed):
@@ -318,7 +324,7 @@ async def test_tenancy_holds_across_contexts(manager: TasksManagerImpl) -> None:
         await manager.get_task(bob, task.id)
     with pytest.raises(NotFound):
         await manager.move_task(bob, task.id, None, task.version)
-    assert await manager.get_open_tasks(bob, own(bob, TaskScope.TEAM), limit=10) == []
+    assert await open_page(manager, bob) == []
 
 
 async def test_two_updates_from_one_snapshot_one_wins(manager: TasksManagerImpl) -> None:
@@ -407,7 +413,45 @@ async def test_lists_are_clamped(infra: InfraLocalImpl, members: Members) -> Non
     ctx = context(Role.MEMBER)
     for i in range(3):
         await manager.create_task(ctx, make_task(ctx, title=f"t{i}"))
-    assert len(await manager.get_open_tasks(ctx, own(ctx, TaskScope.TEAM), limit=1000)) == 2
+    # The clamp is on the page; the lookahead still sees past it, so the
+    # page says another follows instead of hiding the third task.
+    page = await manager.get_open_tasks(ctx, own(ctx, TaskScope.TEAM), None, limit=1000)
+    assert len(page.items) == 2 and page.has_more
+    last = OpenTaskCursor(position=page.items[-1].position, id=page.items[-1].id)
+    rest = await manager.get_open_tasks(ctx, own(ctx, TaskScope.TEAM), last, limit=1000)
+    assert [t.title for t in rest.items] == ["t0"] and not rest.has_more
+
+
+async def test_a_client_paging_at_the_clamp_sees_every_task(manager: TasksManagerImpl) -> None:
+    # 201 open and 201 done tasks against the default clamp of 200: the 201st
+    # row of each list is the one the lookahead exists for.
+    ctx = context(Role.MEMBER)
+    for i in range(201):
+        open_task = await manager.create_task(ctx, make_task(ctx, title=f"open {i}"))
+        done_task = await manager.create_task(ctx, make_task(ctx, title=f"done {i}"))
+        await manager.update_task(ctx, done_task.model_copy(update={"status": TaskStatus.DONE}))
+        assert open_task.status == TaskStatus.OPEN
+
+    seen_open: list[str] = []
+    after: OpenTaskCursor | None = None
+    while True:
+        page = await manager.get_open_tasks(ctx, own(ctx, TaskScope.TEAM), after, limit=200)
+        seen_open += [t.title for t in page.items]
+        if not page.has_more:
+            break
+        after = OpenTaskCursor(position=page.items[-1].position, id=page.items[-1].id)
+    assert len(seen_open) == 201 and len(set(seen_open)) == 201
+    assert seen_open[0] == "open 200" and seen_open[-1] == "open 0"
+
+    seen_done: list[str] = []
+    before: TaskCursor | None = None
+    while True:
+        page = await manager.get_done_tasks(ctx, own(ctx, TaskScope.TEAM), before, limit=200)
+        seen_done += [t.title for t in page.items]
+        if not page.has_more:
+            break
+        before = TaskCursor(updated_at=page.items[-1].updated_at, id=page.items[-1].id)
+    assert len(seen_done) == 201 and len(set(seen_done)) == 201
 
 
 async def test_a_failed_relay_leaves_the_row_for_the_sweep(

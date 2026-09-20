@@ -6,7 +6,8 @@ from tadas.om.base import utcnow
 from tadas.om.exceptions import ValidationFailed
 from tadas.om.opcontext import OpContext
 from tadas.om.tasks import TasksManagerInterface
-from tadas.om.tasks.types.filter import TaskCursor, TaskFilter
+from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor, TaskFilter
+from tadas.om.tasks.types.page import TaskPage
 from tadas.om.tasks.types.task import Task, TaskScope, TaskStatus
 from tadas.services.api.services.tasks import TasksServiceInterface
 from tadas.services.api.types.common import clamp_limit
@@ -19,17 +20,26 @@ from tadas.services.api.types.tasks import (
 )
 
 
-def encode_cursor(task: Task) -> str:
-    raw = f"{task.updated_at.isoformat()}|{task.id}".encode()
+def encode_cursor(status: TaskStatus, task: Task) -> str:
+    """Opaque on the wire: the list it belongs to and where its page ended,
+    the last task's (position, id) for the open list and (updated_at, id)
+    for the done one."""
+    mark = repr(task.position) if status == TaskStatus.OPEN else task.updated_at.isoformat()
+    raw = f"{status.value}|{mark}|{task.id}".encode()
     return base64.urlsafe_b64encode(raw).decode().rstrip("=")
 
 
-def decode_cursor(cursor: str) -> TaskCursor:
-    """The (updated_at, id) of the last task of the previous page."""
+def decode_cursor(status: TaskStatus, cursor: str) -> OpenTaskCursor | TaskCursor:
+    """The cursor of the list asked for; one from the other list, or from
+    nowhere, is refused."""
     try:
         raw = base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4)).decode()
-        updated_at, task_id = raw.split("|")
-        return TaskCursor(updated_at=datetime.fromisoformat(updated_at), id=UUID(task_id))
+        issued_for, mark, task_id = raw.split("|")
+        if issued_for != status.value:
+            raise ValueError(issued_for)
+        if status == TaskStatus.OPEN:
+            return OpenTaskCursor(position=float(mark), id=UUID(task_id))
+        return TaskCursor(updated_at=datetime.fromisoformat(mark), id=UUID(task_id))
     except ValueError:
         raise ValidationFailed("the cursor is not one this list issued") from None
 
@@ -46,18 +56,22 @@ class TasksServiceImpl(TasksServiceInterface):
         cursor: str | None,
         limit: int,
     ) -> TaskPageView:
+        # The public page size is clamped here and again by the manager; the
+        # manager's lookahead past it is what makes `has_more` true.
         limit = clamp_limit(limit)
         criterion = TaskFilter(scope=scope, user_id=ctx.user_id)
+        page: TaskPage
         if status == TaskStatus.OPEN:
-            tasks = await self._tasks.get_open_tasks(ctx, criterion, limit)
-            return TaskPageView(items=[TaskView.model_validate(t) for t in tasks], next_cursor=None)
-        before = decode_cursor(cursor) if cursor else None
-        # One more than asked tells whether a next page exists.
-        tasks = await self._tasks.get_done_tasks(ctx, criterion, before, limit + 1)
-        page, more = tasks[:limit], len(tasks) > limit
+            after = decode_cursor(status, cursor) if cursor else None
+            assert after is None or isinstance(after, OpenTaskCursor)
+            page = await self._tasks.get_open_tasks(ctx, criterion, after, limit)
+        else:
+            before = decode_cursor(status, cursor) if cursor else None
+            assert before is None or isinstance(before, TaskCursor)
+            page = await self._tasks.get_done_tasks(ctx, criterion, before, limit)
         return TaskPageView(
-            items=[TaskView.model_validate(t) for t in page],
-            next_cursor=encode_cursor(page[-1]) if more and page else None,
+            items=[TaskView.model_validate(t) for t in page.items],
+            next_cursor=encode_cursor(status, page.items[-1]) if page.has_more else None,
         )
 
     async def get_task(self, ctx: OpContext, task_id: UUID) -> TaskView:
