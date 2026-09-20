@@ -3,10 +3,13 @@
 Two branches, two workflows, one approval.
 
 - `main` is staging. `.github/workflows/deploy-staging.yml` follows every
-  green `ci` run on `main` (or a `workflow_dispatch`): it builds the
-  images once, tagged by the commit, keeps the portal build by the
-  commit, and plans and applies staging with no approval. A merge is the
-  deployment.
+  green `ci` run on a push to `main` in this repository (or a
+  `workflow_dispatch`): it builds the images once, tagged by the commit,
+  keeps the portal build by the commit, and plans and applies staging
+  with no approval. A merge is the deployment. A pull request never
+  deploys, a fork's branch least of all: `ci` runs on every pull
+  request, and a `workflow_run` carries this repository's deploy role
+  whatever the code it followed.
 - `release` is production. It moves only by a fast-forward from `main`,
   which `.github/workflows/release.yml` makes when a person dispatches
   it; nobody commits to `release` and nothing merges into it. A push to
@@ -159,7 +162,10 @@ its name.
 - `resolve` says staging never built the commit: the commit's
   `deploy-staging` run did not reach the cloud (skipped, failed, or was
   older than the registry's 30 kept images). Rerun `deploy-staging` on
-  that commit from Actions, or release a newer one.
+  that commit from Actions, or release a newer one. A rerun is safe on a
+  commit whose images are already pushed: the tags are immutable, so the
+  `images` job resolves the digests that are there instead of pushing
+  the same tag twice.
 - `apply` says the saved plan is stale: someone applied production in
   between. Rerun the workflow; a fresh plan comes back for review.
 - `release.yml`'s push is refused by a ruleset: set `RELEASE_DEPLOY_KEY`

@@ -662,6 +662,12 @@ class TenancyManagerImpl(TenancyManagerInterface):
         api_key_id: UUID | None = None,
     ) -> IssuedApiKey:
         ctx.require(Permission.MANAGE_KEYS)
+        # A key never mints its successor. Revoking a leaked key has to end the
+        # access it gave; a key that can issue another one outlives its own
+        # revocation, and nothing ties the successor back to it. `logout`
+        # gates on the credential kind for the same reason.
+        if ctx.security.credential_kind is CredentialKind.API_KEY:
+            raise NotAuthorized("an api key cannot create another; sign in to create one")
         if role is Role.SERVICE:
             raise ValidationFailed("service is not an api key role")
         if not role_at_most(role, ctx.security.role):

@@ -17,13 +17,13 @@ import { keys } from "./keys";
 const LIMIT = 100;
 
 export function useMe() {
-  return useQuery({ queryKey: keys.me, queryFn: () => api.get<MeView>("/v1/me") });
+  return useQuery({ queryKey: keys.me, queryFn: ({ signal }) => api.get<MeView>("/v1/me", { signal }) });
 }
 
 export function useUsers() {
   return useQuery({
     queryKey: keys.users.list(LIMIT),
-    queryFn: () => api.get<UserView[]>(`/v1/users?limit=${LIMIT}`),
+    queryFn: ({ signal }) => api.get<UserView[]>(`/v1/users?limit=${LIMIT}`, { signal }),
   });
 }
 
@@ -34,7 +34,7 @@ export function useUsers() {
 export function useApiKeys(enabled = true) {
   return useQuery({
     queryKey: keys.apiKeys.list(LIMIT),
-    queryFn: () => api.get<ApiKeyView[]>(`/v1/api-keys?limit=${LIMIT}`),
+    queryFn: ({ signal }) => api.get<ApiKeyView[]>(`/v1/api-keys?limit=${LIMIT}`, { signal }),
     enabled,
   });
 }

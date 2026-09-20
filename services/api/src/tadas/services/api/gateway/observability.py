@@ -57,6 +57,18 @@ class QueryStringRedactor(logging.Filter):
         return True
 
 
+HTTP_METHODS = frozenset(
+    {"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "TRACE", "CONNECT"}
+)
+"""The methods a metric label may name. A client picks the verb, so anything
+else becomes "OTHER": an unmatched route already labels itself "unmatched",
+and a series per invented verb on it is a cardinality leak anyone can open."""
+
+
+def method_label(method: str) -> str:
+    return method if method in HTTP_METHODS else "OTHER"
+
+
 def route_template_of(scope: Scope) -> str | None:
     """The matched route's full template, prefix included. FastAPI keeps the
     prefixed path on the effective route context it stores in the scope and
@@ -115,8 +127,9 @@ class RequestIdMiddleware:
                 if scope["type"] == "http":
                     elapsed = time.perf_counter() - started
                     span.set_attribute("http.response.status_code", status["code"])
-                    HTTP_REQUESTS.labels(route=template, method=method, status=status["code"]).inc()
-                    HTTP_LATENCY.labels(route=template, method=method).observe(elapsed)
+                    label = method_label(method)
+                    HTTP_REQUESTS.labels(route=template, method=label, status=status["code"]).inc()
+                    HTTP_LATENCY.labels(route=template, method=label).observe(elapsed)
                     # The access line, in place of uvicorn's: the template, so
                     # a query string (the socket ticket rides in one) is never
                     # written out.

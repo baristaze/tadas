@@ -41,6 +41,16 @@ router = APIRouter(prefix="/realtime", tags=["realtime"])
 CREDENTIAL_EXPIRED = "credential_expired"
 """The close reason when the credential behind the ticket reached its expiry."""
 
+CLOSE_INTERNAL_ERROR = 1011
+"""The close code for a failure of this handler. The gateway accepted the
+socket before the route ran, so there is no HTTP response left to answer
+with: an error that reaches Starlette's handler on an accepted socket is
+answered with one anyway, which the server refuses as a protocol error and
+drops without a close frame. Every failure below ends as this close."""
+
+INTERNAL_ERROR = "internal_error"
+"""The close reason that goes with it; the detail stays in the log."""
+
 
 def new_send_buffer(websocket: WebSocket) -> SendBuffer:
     return SendBuffer(container_of(websocket).settings.realtime_send_buffer_size)
@@ -52,11 +62,18 @@ SocketSendBuffer = Annotated[SendBuffer, Depends(new_send_buffer)]
 async def settle(task: asyncio.Task[None]) -> None:
     """Ends a socket's task. One that died because the peer left (a
     disconnect, a closed transport) is the normal end of a socket and not an
-    error, and so is one this handler cancelled; anything else it raised
-    propagates."""
+    error, and so is one this handler cancelled. Anything else it raised is
+    logged and goes no further: `settle` runs in the teardown, and a second
+    exception raised from there would skip the unsubscribes and the close
+    frame that follow it, leaving the socket's handler in the dispatcher for
+    the life of the process."""
     task.cancel()
-    with contextlib.suppress(asyncio.CancelledError, WebSocketDisconnect, OSError):
+    try:
         await task
+    except asyncio.CancelledError, WebSocketDisconnect, OSError:
+        return
+    except Exception as error:
+        log.error("%s ended with %r", task.get_name(), error)
 
 
 async def close_quietly(websocket: WebSocket, code: int = 1000, reason: str | None = None) -> None:
@@ -132,7 +149,12 @@ async def channel(
     # The head is read before the drainer exists: a task created first and a
     # read that raises after it leave the drainer waiting on the buffer for
     # the life of the process, one more on every reconnect through an outage.
-    head = await realtime.head(ctx)
+    try:
+        head = await realtime.head(ctx)
+    except Exception:
+        log.exception("the stream head could not be read for user %s", ctx.user_id)
+        await close_quietly(websocket, code=CLOSE_INTERNAL_ERROR, reason=INTERNAL_ERROR)
+        return
     drainer = asyncio.create_task(buffer.drain(websocket), name=f"send-buffer-{ctx.user_id}")
     subscriptions: dict[Topics, Callable[[], None]] = {}
     buffer.offer(HelloEnvelope(org_id=ctx.org_id, user_id=ctx.user_id, seq=head))
@@ -152,14 +174,18 @@ async def channel(
         serve_commands(websocket, ctx, realtime, buffer, subscriptions),
         name=f"commands-{ctx.user_id}",
     )
+    # How the socket ends, decided before the teardown and sent after it: the
+    # teardown is the only place the subscriptions are dropped, so nothing
+    # between here and it may raise past it.
+    code: int = 1000
+    reason: str | None = None
     try:
         await asyncio.wait({commands, ended}, return_when=asyncio.FIRST_COMPLETED)
         if ended.done():
-            await settle(commands)
-            await settle(drainer)
-            await close_quietly(websocket, code=CLOSE_UNAUTHENTICATED, reason=ended.result())
-        else:
-            commands.result()
+            code, reason = CLOSE_UNAUTHENTICATED, ended.result()
+        elif not commands.cancelled() and (failure := commands.exception()) is not None:
+            log.error("%s failed", commands.get_name(), exc_info=failure)
+            code, reason = CLOSE_INTERNAL_ERROR, INTERNAL_ERROR
     finally:
         expiry.cancel()
         detach()
@@ -167,4 +193,4 @@ async def channel(
         for unsubscribe in subscriptions.values():
             unsubscribe()
         await settle(drainer)
-        await close_quietly(websocket)
+        await close_quietly(websocket, code=code, reason=reason)

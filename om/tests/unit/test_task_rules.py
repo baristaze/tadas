@@ -37,24 +37,45 @@ def test_the_cursor_cuts_strictly_before_by_updated_at_then_id() -> None:
     assert not is_before(task, TaskCursor(updated_at=task.updated_at, id=UUID(int=task.id.int - 1)))
 
 
+# Three ids in ascending order, so a place is written as (position, id) and
+# two places that tie on position are told apart the way the list tells them.
+A, B, C = (UUID(int=n) for n in (10, 20, 30))
+
+
 def test_placement_arithmetic() -> None:
     assert top_position([]) == 0.0
-    assert top_position([-1.0, 2.0]) == -2.0
-    assert position_after(1.0, [1.0, 2.0]) == 1.5
-    assert position_after(2.0, [1.0, 2.0]) == 3.0
-    assert position_after(0.5, []) == 1.5
+    assert top_position([(-1.0, A), (2.0, B)]) == -2.0
+    assert position_after((1.0, A), [(1.0, A), (2.0, B)]) == 1.5
+    assert position_after((2.0, B), [(1.0, A), (2.0, B)]) == 3.0
+    assert position_after((0.5, A), []) == 1.5
+
+
+def test_a_tie_with_the_anchor_is_the_next_place_and_leaves_no_room() -> None:
+    """Two open tasks can share a position: two creates that read the same list,
+    or two moves after the same last anchor. The list orders them by id, so the
+    task that ties with the anchor and follows it on id is what a task dropped
+    after the anchor must land before. Reading positions alone, the next place
+    after A was C at 6.0, the midpoint 5.5 landed past B, and "after A" read
+    back as A, B, moved. There is no position strictly between A and B, so the
+    placement asks for a renumber instead of tying too."""
+    tied = [(5.0, A), (5.0, B), (6.0, C)]
+    assert position_after((5.0, A), tied) == 5.0
+    assert not is_between((5.0, A), 5.0, tied)
+    # After the last of a tie there is room, as after any last place.
+    assert position_after((5.0, B), [(5.0, A), (5.0, B)]) == 6.0
+    assert is_between((5.0, B), 6.0, [(5.0, A), (5.0, B)])
 
 
 def test_a_gap_is_open_until_halving_meets_a_neighbour() -> None:
-    assert is_between(1.0, 1.5, [1.0, 2.0])
-    assert is_between(2.0, 3.0, [1.0, 2.0]), "past the last there is always room"
-    assert not is_between(1.0, 1.0, [1.0, 2.0]), "the midpoint rounded to the anchor"
-    assert not is_between(1.0, 2.0, [1.0, 2.0]), "the midpoint rounded to the next"
+    assert is_between((1.0, A), 1.5, [(1.0, A), (2.0, B)])
+    assert is_between((2.0, B), 3.0, [(1.0, A), (2.0, B)]), "past the last there is room"
+    assert not is_between((1.0, A), 1.0, [(1.0, A), (2.0, B)]), "the midpoint rounded to the anchor"
+    assert not is_between((1.0, A), 2.0, [(1.0, A), (2.0, B)]), "the midpoint rounded to the next"
     # Halving from a gap of one meets the anchor after fifty-odd steps.
-    anchor, following = -1.0, 0.0
+    anchor, following = (-1.0, A), (0.0, B)
     steps = 0
     while is_between(anchor, position_after(anchor, [anchor, following]), [anchor, following]):
-        following = position_after(anchor, [anchor, following])
+        following = (position_after(anchor, [anchor, following]), B)
         steps += 1
     assert 50 <= steps <= 54
     assert renumbered(3) == [0.0, 1.0, 2.0] and renumbered(0) == []

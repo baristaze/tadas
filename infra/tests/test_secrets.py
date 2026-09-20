@@ -26,6 +26,26 @@ def test_settings_collect_the_overrides_once_at_boot(monkeypatch: pytest.MonkeyP
     assert "secret_overrides" not in settings.model_dump()
 
 
+def test_the_overrides_come_from_dot_env_too_and_the_environment_wins(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`.env.example` documents TADAS_SECRET_<NAME> as a `.env` knob, so it has
+    to work like one. Pydantic's dotenv source cannot supply these — one key
+    per secret is not a declared field — so the file is read here; the process
+    environment still wins, the way it does for every other setting."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text(
+        "TADAS_SECRET_DB_PASSWORD=from-the-file  # with a comment\n"
+        "TADAS_SECRET_API_TOKEN=only-in-the-file\n"
+    )
+    monkeypatch.setenv("TADAS_SECRET_DB_PASSWORD", "from-the-environment")
+    settings = InfraSettings.model_validate({"environment": "test"})
+    assert settings.secret_overrides == {
+        "DB_PASSWORD": "from-the-environment",
+        "API_TOKEN": "only-in-the-file",
+    }
+
+
 async def test_missing_secret_names_the_store_not_a_value(tmp_path: Path) -> None:
     secrets = SecretsLocalImpl(tmp_path / "secrets.env")
     assert not await secrets.has("nothing")

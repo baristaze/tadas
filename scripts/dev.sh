@@ -2,6 +2,7 @@
 # Start every Tadas application process on the host against the local
 # compose stack. Ctrl-C stops them all.
 set -euo pipefail
+shopt -s extglob  # the dotenv reader below trims with +(...)
 cd "$(dirname "$0")/.."
 
 # .env is a dotenv file, not a shell script: `make up` copies .env.example
@@ -21,6 +22,12 @@ if [ -f .env ]; then
     case "$value" in
       \"*\") value="${value:1:${#value}-2}" ;;
       \'*\') value="${value:1:${#value}-2}" ;;
+      # An unquoted value ends where an inline comment starts, and carries no
+      # trailing blanks, as dotenv reads it. .env.example carries such
+      # comments (`...:54318  # Jaeger in the devx profile`) and these values
+      # are exported, so without this the comment travels into the setting and
+      # beats the .env the process reads for itself.
+      *) value="${value%%+([[:space:]])#*}"; value="${value%%+([[:space:]])}" ;;
     esac
     export "$key=$value"
   done < .env

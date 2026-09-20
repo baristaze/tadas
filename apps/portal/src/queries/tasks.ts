@@ -22,9 +22,15 @@ function useTaskPages(status: TaskStatus, scope: TaskScope, pageSize: number) {
     queryKey: status === "open" ? keys.tasks.open(scope) : keys.tasks.done(scope),
     initialPageParam: null as string | null,
     getNextPageParam: (last: TaskPageView) => last.next_cursor,
-    queryFn: ({ pageParam }) => {
+    // The signal is passed on: an invalidation cancels the refetch it
+    // supersedes, and without it the cancelled request still runs to
+    // completion. A replay hands the router a page of records at a time.
+    queryFn: ({ pageParam, signal }) => {
       const cursor = pageParam ? `&cursor=${encodeURIComponent(pageParam)}` : "";
-      return api.get<TaskPageView>(`/v1/tasks?status=${status}&scope=${scope}&limit=${pageSize}${cursor}`);
+      return api.get<TaskPageView>(
+        `/v1/tasks?status=${status}&scope=${scope}&limit=${pageSize}${cursor}`,
+        { signal },
+      );
     },
   });
 }

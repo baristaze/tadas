@@ -197,6 +197,27 @@ describe("reconnect backoff", () => {
     expect(useConnectionStore.getState().status).toBe("degraded");
   });
 
+  it("leaves no failed cycles behind, so the next session starts undegraded", async () => {
+    // Signing out mid-reconnect ends this channel; the count belonged to it.
+    // Left standing, the next session's first drop was already the second
+    // failed cycle: the degraded banner for a channel that has dropped once.
+    const first = harness();
+    first.sockets[0]?.accept();
+    await flush();
+    first.sockets[0]!.drop();
+    await flush();
+    expect(useConnectionStore.getState().failedCycles).toBe(1);
+    first.channel.stop();
+    expect(useConnectionStore.getState().failedCycles).toBe(0);
+
+    const second = harness();
+    channel = second.channel;
+    await flush();
+    second.sockets[0]!.accept();
+    second.sockets[0]!.drop();
+    expect(useConnectionStore.getState().status).toBe("connecting");
+  });
+
   it("counts a socket that stays open long enough as connected even without a hello", async () => {
     const h = harness();
     channel = h.channel;
@@ -256,7 +277,34 @@ describe("stream cursor", () => {
     await flush();
     expect(h.fetches).toEqual([5, 7]);
     expect(channel.cursor()).toBe(8);
-    expect(h.routed.filter((e) => e.type === "event").map(seqOf)).toEqual([6, 7, 8]);
+    // One route per entity per page, the last record of it: routing a record
+    // invalidates every query the entity is read from, so routing all three
+    // would refetch the same lists three times over.
+    expect(h.routed.filter((e) => e.type === "event").map(seqOf)).toEqual([7, 8]);
+  });
+
+  it("routes a replay page once per entity, however many records it carries", async () => {
+    // A tab that wakes far behind replays a full page at a time. Each record
+    // routed cancels and restarts the refetch of every task list, so a page of
+    // task records used to cost one list request per record.
+    const stream: EventView[] = [];
+    for (let seq = 6; seq <= 25; seq += 1) {
+      stream.push({ ...event(seq), kind: seq % 2 === 0 ? "tasks.task.updated" : "tenancy.user.deleted" });
+    }
+    const h = harness((after) => stream.filter((e) => e.seq > after).slice(0, 20), 20);
+    channel = h.channel;
+    await flush();
+    h.sockets[0]!.accept();
+    await flush();
+    h.sockets[0]!.receive(hello(5));
+    await flush();
+    h.sockets[0]!.receive(push(25));
+    await flush();
+    expect(channel.cursor()).toBe(25);
+    const kinds = h.routed
+      .filter((e) => e.type === "event")
+      .map((e) => (e as { payload: { kind: string } }).payload.kind);
+    expect(kinds).toEqual(["tasks.task.updated", "tenancy.user.deleted"]);
   });
 
   it("stops paging when a page moves the cursor nowhere", async () => {

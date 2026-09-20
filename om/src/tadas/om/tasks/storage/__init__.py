@@ -8,6 +8,7 @@ from datetime import datetime
 from uuid import UUID
 
 from tadas.om.outbox.types.row import OutboxRow
+from tadas.om.tasks.rules import Place
 from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor, TaskFilter
 from tadas.om.tasks.types.task import Task
 
@@ -31,9 +32,11 @@ class TasksStorageInterface(ABC):
         ...
 
     @abstractmethod
-    async def read_open_positions(self, org_id: UUID, exclude: UUID | None) -> list[float]:
-        """Every open task's position in the org, ascending; the neighbours a
-        placement needs, whatever list the caller was looking at."""
+    async def read_open_places(self, org_id: UUID, exclude: UUID | None) -> list[Place]:
+        """Every open task's place in the org — its (position, id) — ascending in
+        the order the open list reads; the neighbours a placement needs,
+        whatever list the caller was looking at. The id rides along because a
+        position is not unique (tasks.rules.Place)."""
         ...
 
     @abstractmethod

@@ -77,7 +77,10 @@ context on keeps the stage the callee needs.
   a role at most another holds a subset of its permissions. The service
   role is no rung: `role_at_most` answers False on either side of it, and
   every operation that issues a credential or grants a membership refuses
-  it by name before the ladder is asked. The operator plane (every org, delete an org) is a second
+  it by name before the ladder is asked. An api key never mints another:
+  revoking a leaked key has to end the access it gave, and a successor
+  would outlive it, so `create_api_key` refuses an api key credential the
+  way `logout` refuses anything but a session. The operator plane (every org, delete an org) is a second
   manager, `TenancyOperatorManagerInterface`, which takes `OperatorContext`
   and nothing else. Deleting an org soft-deletes the row and lands
   `tenancy.org.deleted` beside it, so every socket of the tenant closes;
@@ -342,8 +345,9 @@ backoff that grows with consecutive failures.
   `test` allow the local backends; `dev`, `staging`, and `production`
   refuse them; any other name is refused at boot. The local secrets
   impl receives its `TADAS_SECRET_<NAME>` overrides from the settings
-  object, collected once at boot; nothing below settings reads the
-  environment. `.env.example` documents every knob.
+  object, collected once at boot from `.env` and from the environment
+  over it, the two sources every other setting has; nothing below
+  settings reads either. `.env.example` documents every knob.
 
 - Every outbound client carries a timeout from settings, one per client,
   so a downstream that hangs cannot hold a replica's whole pool:

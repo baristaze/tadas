@@ -17,8 +17,12 @@ ROLES := core activity queue admin
 
 .PHONY: help setup up down reset urls infra-up devx-up stack-up infra-down migrate seed demo-gif demo-cli-gif migrate-check check lint format-check typecheck test-unit test-integration openapi
 
+# This Makefile alone, never $(MAKEFILE_LIST): the includes above put
+# .env.example and .env in that list, and grep prefixes every match with the
+# file it came from once it is given more than one, so every target would be
+# printed under the name "Makefile".
 help: ## Show this help
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-18s %s\n", $$1, $$2}'
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(firstword $(MAKEFILE_LIST)) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-18s %s\n", $$1, $$2}'
 
 setup: ## Install every Python and TypeScript dependency
 	uv sync --all-packages

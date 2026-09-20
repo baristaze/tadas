@@ -12,6 +12,8 @@ export interface ReorderEffects {
   move: (id: string, afterId: string | null, version: number) => Promise<TaskView>;
   /** Shows the order the drop asked for while the server answers. */
   showOrder: (order: TaskView[]) => void;
+  /** Puts the row the server wrote in place of the optimistic one. */
+  showMoved: (moved: TaskView) => void;
   /** Reloads the list from the server, whatever the answer was. */
   refetch: () => void;
   /** Says what went wrong in one line. */
@@ -38,7 +40,12 @@ export async function reorder(
   if (!result || !moved) return "unchanged";
   effects.showOrder(result.order);
   try {
-    await effects.move(movedId, result.afterId, moved.version);
+    // The row the server wrote replaces the optimistic one: it carries the
+    // version the move bumped, and without it a second drag before the
+    // refetch lands sends the version as read and is told, wrongly, that
+    // someone else changed the list (`complete`, `reopen` and `add` do the
+    // same with what their writes answer).
+    effects.showMoved(await effects.move(movedId, result.afterId, moved.version));
     return "moved";
   } catch (cause) {
     effects.report(isStale(cause) ? STALE_MESSAGE : describe(cause));

@@ -113,7 +113,7 @@ class TaskStorageContract:
         await seed(storage, org_a, task)
         assert await storage.read_task(org_b, task.id) is None
         assert await storage.read_open_tasks(org_b, team(), None, limit=10) == []
-        assert await storage.read_open_positions(org_b, exclude=None) == []
+        assert await storage.read_open_places(org_b, exclude=None) == []
 
     async def test_write_refuses_another_tenant(self, storage: TasksStorageInterface) -> None:
         org_a, org_b = new_id(), new_id()
@@ -160,8 +160,15 @@ class TaskStorageContract:
         listed = await storage.read_open_tasks(org, team(), None, limit=10)
         assert [t.title for t in listed] == ["t1", "t2", "t0"]
         assert len(await storage.read_open_tasks(org, team(), None, limit=2)) == 2
-        assert await storage.read_open_positions(org, exclude=None) == [-1.0, 2.0, 3.0]
-        assert await storage.read_open_positions(org, exclude=tasks[1].id) == [2.0, 3.0]
+        assert await storage.read_open_places(org, exclude=None) == [
+            (-1.0, tasks[1].id),
+            (2.0, tasks[2].id),
+            (3.0, tasks[0].id),
+        ]
+        assert await storage.read_open_places(org, exclude=tasks[1].id) == [
+            (2.0, tasks[2].id),
+            (3.0, tasks[0].id),
+        ]
         gone = await bump(storage, org, tasks[1], deleted_at=utcnow(), deleted_by=new_id())
         assert [t.title for t in await storage.read_open_tasks(org, team(), None, limit=10)] == [
             "t2",
@@ -281,4 +288,7 @@ class TaskStorageContract:
         )
         assert await storage.read_task(org, first.id) == renumbered[0]
         assert await storage.read_task(org, second.id) == renumbered[1]
-        assert await storage.read_open_positions(org, exclude=None) == [0.0, 1.0]
+        assert await storage.read_open_places(org, exclude=None) == [
+            (0.0, first.id),
+            (1.0, second.id),
+        ]

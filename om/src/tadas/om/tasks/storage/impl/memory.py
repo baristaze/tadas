@@ -6,7 +6,7 @@ from tadas.om.exceptions import TenantMismatch, VersionMismatch
 from tadas.om.outbox.storage import OutboxLandingInterface
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.storage.impl.memory_base import MemoryStorageBase, MemoryTable
-from tadas.om.tasks.rules import is_after, is_before, is_visible
+from tadas.om.tasks.rules import Place, is_after, is_before, is_visible
 from tadas.om.tasks.storage import TasksStorageInterface
 from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor, TaskFilter
 from tadas.om.tasks.types.task import Task, TaskStatus
@@ -44,8 +44,10 @@ class TasksStorageMemoryImpl(MemoryStorageBase, TasksStorageInterface):
         ]
         return sorted(tasks, key=lambda t: (t.updated_at, t.id), reverse=True)[:limit]
 
-    async def read_open_positions(self, org_id: UUID, exclude: UUID | None) -> list[float]:
-        return sorted(t.position for t in self._live(org_id, TaskStatus.OPEN) if t.id != exclude)
+    async def read_open_places(self, org_id: UUID, exclude: UUID | None) -> list[Place]:
+        return sorted(
+            (t.position, t.id) for t in self._live(org_id, TaskStatus.OPEN) if t.id != exclude
+        )
 
     async def read_task(self, org_id: UUID, task_id: UUID) -> Task | None:
         return self._get(self._tasks, org_id, task_id)

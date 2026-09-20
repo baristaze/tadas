@@ -23,6 +23,7 @@ from tadas.om.outbox.storage.tables.outbox_rows import OutboxRows
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.storage.impl.pg_base import PgStorageBase
 from tadas.om.storage.utils.translation import to_model, to_row, to_values
+from tadas.om.tasks.rules import Place
 from tadas.om.tasks.storage import TasksStorageInterface
 from tadas.om.tasks.storage.tables.tasks import Tasks
 from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor, TaskFilter
@@ -80,13 +81,15 @@ class TasksStoragePostgresImpl(PgStorageBase, TasksStorageInterface):
             result = await session.execute(stmt)
             return [to_model(row, Task) for row in result.scalars()]
 
-    async def read_open_positions(self, org_id: UUID, exclude: UUID | None) -> list[float]:
-        stmt = select(Tasks.position).where(_live(org_id, TaskStatus.OPEN))
+    async def read_open_places(self, org_id: UUID, exclude: UUID | None) -> list[Place]:
+        # Ordered by (position, id), the order the open list reads: positions
+        # tie, and the id decides between two that do (tasks.rules.Place).
+        stmt = select(Tasks.position, Tasks.id).where(_live(org_id, TaskStatus.OPEN))
         if exclude is not None:
             stmt = stmt.where(Tasks.id != exclude)
-        stmt = stmt.order_by(Tasks.position)
+        stmt = stmt.order_by(Tasks.position, Tasks.id)
         async with self._session_for(stmt) as session:
-            return list((await session.execute(stmt)).scalars())
+            return [(position, task_id) for position, task_id in (await session.execute(stmt))]
 
     async def read_task(self, org_id: UUID, task_id: UUID) -> Task | None:
         stmt = select(Tasks).where(Tasks.org_id == org_id, Tasks.id == task_id)

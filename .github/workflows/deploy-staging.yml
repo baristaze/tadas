@@ -46,7 +46,17 @@ env:
 jobs:
   cloud:
     name: is the cloud configured?
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    # `ci` runs on every pull request, and `branches:` above filters on the
+    # triggering run's head branch alone: a pull request opened from a fork's
+    # `main` matches it. A `workflow_run` always runs in the base repository,
+    # with its variables and its OIDC identity, so without the two checks
+    # below a fork's commit would be built and applied under a role that
+    # holds AdministratorAccess. Only a push to this repository deploys.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-latest
     outputs:
       configured: ${{ steps.check.outputs.configured }}
@@ -100,10 +110,30 @@ jobs:
       - uses: aws-actions/amazon-ecr-login@v2
         id: ecr
       - uses: docker/setup-buildx-action@v4
-      # The tag is the commit: production resolves the digest by it, and the
-      # registry refuses a second push of the same tag.
+      # The tag is the commit, and the repositories are immutable: a second
+      # push of a tag that exists is refused (the provenance attestation alone
+      # makes the manifest differ, so even an identical build is a new push).
+      # A rerun after the apply failed, or a dispatch on a commit staging
+      # already built, therefore resolves the digest that is there instead of
+      # building again, the way deploy-production always does.
+      - name: the digests already tagged with this commit, if any
+        id: existing
+        env:
+          SHA: ${{ needs.cloud.outputs.sha }}
+        run: |
+          for name in api maintenance; do
+            digest="$(aws ecr describe-images --repository-name "tadas-$name" \
+              --image-ids "imageTag=$SHA" \
+              --query 'imageDetails[0].imageDigest' --output text 2>/dev/null || true)"
+            if [ "$digest" = "None" ]; then digest=""; fi
+            echo "$name=$digest" >> "$GITHUB_OUTPUT"
+            if [ -n "$digest" ]; then
+              echo "\`tadas-$name\` is already tagged \`$SHA\`; it is not built again." >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done
       - name: build and push the api image
         id: api
+        if: steps.existing.outputs.api == ''
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -114,6 +144,7 @@ jobs:
           cache-to: type=gha,scope=api,mode=max
       - name: build and push the maintenance image
         id: maintenance
+        if: steps.existing.outputs.maintenance == ''
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -126,8 +157,8 @@ jobs:
         id: images
         env:
           REGISTRY: ${{ steps.ecr.outputs.registry }}
-          API_DIGEST: ${{ steps.api.outputs.digest }}
-          MAINTENANCE_DIGEST: ${{ steps.maintenance.outputs.digest }}
+          API_DIGEST: ${{ steps.api.outputs.digest || steps.existing.outputs.api }}
+          MAINTENANCE_DIGEST: ${{ steps.maintenance.outputs.digest || steps.existing.outputs.maintenance }}
         run: |
           echo "api_image=$REGISTRY/tadas-api@$API_DIGEST" >> "$GITHUB_OUTPUT"
           echo "maintenance_image=$REGISTRY/tadas-maintenance@$MAINTENANCE_DIGEST" >> "$GITHUB_OUTPUT"

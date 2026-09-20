@@ -19,6 +19,7 @@ from starlette.websockets import WebSocketDisconnect
 from uvicorn.protocols.utils import ClientDisconnected
 
 from tadas.infra.exceptions import BackendFailed
+from tadas.infra.topics import Topics
 from tadas.om.base import utcnow
 from tadas.om.opcontext import Role
 from tadas.om.tenancy.rules import hash_token
@@ -299,7 +300,59 @@ def test_a_hello_that_cannot_read_the_head_leaves_no_task_behind(
     monkeypatch.setattr(SendBuffer, "drain", counted_drain)
     with TestClient(create_app(container)) as tc:
         headers = sign_in(tc, OWNER["email"], OWNER["password"], org.id)
-        with pytest.raises(WebSocketDisconnect):
+        with pytest.raises(WebSocketDisconnect) as closed:
             with open_socket(tc, headers) as ws:
                 ws.receive_json()  # the hello that the failed read never built
     assert drains == [], "the drainer was created before the read that failed"
+    # The socket was accepted before the route ran, so the failure is a close
+    # frame and not an HTTP response the server would refuse as a protocol error.
+    assert closed.value.code == 1011
+    assert closed.value.reason == "internal_error"
+
+
+def socket_handlers(container: AppContainer) -> int:
+    """The topic handlers this process holds for sockets. One per open socket
+    that subscribed; a socket that ended and left one behind is a leak."""
+    topics = container.infra.get_topics()
+    subscribers = topics._subscribers._handlers.get(Topics.ENTITY_CHANGED, {})  # type: ignore[attr-defined]
+    return sum(1 for consumer, _ in subscribers.values() if consumer.startswith("socket:"))
+
+
+def test_a_command_that_fails_closes_the_socket_and_leaves_no_subscription(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every client pings, and a ping reads the stream head: a database blip
+    during one ends the command loop with a backend error. The socket is
+    accepted, so there is no HTTP response left to answer with; it closes with
+    1011 and its subscription and drainer go with it. Before, the error
+    escaped the teardown and the handler stayed in the dispatcher forever."""
+    container = build_container(tmp_path)
+    _, org = run(
+        container.managers.tenancy.bootstrap(
+            seed_request(), "Acme", "acme", OWNER["email"], OWNER["password"], OWNER["name"]
+        )
+    )
+    service = type(container.services.get_realtime_service())
+    working = service.head
+    failing = {"now": False}
+
+    async def head(self: object, ctx: object) -> int:
+        if failing["now"]:
+            raise BackendFailed("postgres", "read_head", "connection refused")
+        return await working(self, ctx)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(service, "head", head)
+    with TestClient(create_app(container)) as tc:
+        headers = sign_in(tc, OWNER["email"], OWNER["password"], org.id)
+        with open_socket(tc, headers) as ws:
+            assert ws.receive_json()["type"] == "hello"
+            ws.send_json({"op": "subscribe", "topic": "entity_changed"})
+            assert ws.receive_json()["type"] == "subscribed"
+            assert socket_handlers(container) == 1
+            failing["now"] = True
+            ws.send_json({"op": "ping"})
+            with pytest.raises(WebSocketDisconnect) as closed:
+                ws.receive_json()
+    assert closed.value.code == 1011
+    assert closed.value.reason == "internal_error"
+    assert socket_handlers(container) == 0, "the socket's subscription outlived it"
