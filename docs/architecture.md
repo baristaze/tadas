@@ -682,8 +682,19 @@ everything in-process for tests.
   failed migration or a rolled-back rollout fails the apply with the old
   tasks still serving; a migration is compatible with the release before
   it (expand and contract), so the old tasks serve the new schema
-  meanwhile. The first job of each workflow checks the repository
-  variables (`AWS_DEPLOY_ROLE_ARN`, `TF_STATE_BUCKET`, `DNS_ZONE_NAME`);
+  meanwhile. Each environment has a credential of its
+  own, and production has two: `tadas-deploy-staging` for staging,
+  `tadas-plan-production`, which reads, for the plan, and
+  `tadas-deploy-production`, which writes, for the apply. The trust of
+  each names one GitHub environment and one branch, so the required
+  reviewer on `production` holds the credential and not only the step:
+  a job that has not waited there cannot mint the subject the writing
+  role trusts. The plan runs before that approval by construction, so
+  it runs under the reading role, in an environment of its own,
+  `production-plan`, which carries no reviewer. The first job of each
+  workflow checks the repository variables (`AWS_STAGING_ROLE_ARN` for
+  staging, `AWS_PRODUCTION_PLAN_ROLE_ARN` and `AWS_PRODUCTION_ROLE_ARN`
+  for production, and `TF_STATE_BUCKET` and `DNS_ZONE_NAME` for both);
   while they are empty staging skips every cloud job, says so in the
   summary, and stays green, and production fails. [The deploy
   runbook](runbooks/deploy.md) says how to cut a release, what to check
