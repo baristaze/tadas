@@ -140,8 +140,10 @@ context on keeps the stage the callee needs.
   the manager's copy stamps the actor from the context, the timestamps,
   status `QUEUED`, zero attempts, and clears every claim field whatever
   the caller sent; the insert reports an existing id and changes nothing,
-  so a retried enqueue returns the row as stored, claim intact, and a
-  reused idempotency key is `DuplicateWorkItem`, a `Conflict`. A fresh
+  so a retried enqueue returns the row as stored, claim intact; a reused
+  idempotency key is reported the same way and never raised as a driver
+  error, and the manager reads that row back by the key, which is what
+  lets an enqueue that runs twice under one key leave one item. A fresh
   row publishes `work_available`. The claim is one `SELECT ... FOR UPDATE
   SKIP LOCKED` statement on the lane that mints a `claim_token` on the row
   and returns the enqueuer's principal. Every transition (complete, fail,

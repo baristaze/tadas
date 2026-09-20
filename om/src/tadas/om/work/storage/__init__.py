@@ -17,8 +17,18 @@ class WorkStorageInterface(ABC):
     async def create_item(self, org_id: UUID, item: WorkItem) -> bool:
         """The create primitive: inserts the row and commits; False when the id is
         already written, in which case nothing changes, the claim on the row
-        included. Raises DuplicateWorkItem when another item carries the same
-        idempotency key, TenantMismatch when the id is another tenant's row."""
+        included. A taken idempotency key is reported the same way and never
+        raised as a driver error, which is what makes the relayed enqueue safe
+        to run twice: the relay presents the outbox row's id as the key on
+        every run and meets the row already there. Raises TenantMismatch when
+        the id is another tenant's row."""
+        ...
+
+    @abstractmethod
+    async def read_item_by_key(self, org_id: UUID, idempotency_key: UUID) -> WorkItem | None:
+        """The row the tenant already holds under this key, for the create that
+        reported one; None when the key is unknown here. The key is unique
+        across tenants, so a key another tenant holds reads back as None."""
         ...
 
     @abstractmethod

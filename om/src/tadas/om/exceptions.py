@@ -96,10 +96,6 @@ class NotAnOperator(TenancyException, NotAuthorized):
 class WorkException(PlatformException): ...
 
 
-class DuplicateWorkItem(WorkException, Conflict):
-    """Another work item already carries this idempotency key."""
-
-
 class LeaseLost(WorkException, Conflict):
     """The item is no longer claimed by this worker; another one may hold it."""
 

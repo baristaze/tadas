@@ -3,9 +3,10 @@ from datetime import datetime, timedelta
 from uuid import UUID
 
 from sqlalchemy import DateTime, Interval, case, delete, func, literal, select, update
+from sqlalchemy.sql import Select
 
 from tadas.om.base import EMPTY_UUID, new_id, utcnow
-from tadas.om.exceptions import DuplicateWorkItem, TenantMismatch, UniqueKeyTaken
+from tadas.om.exceptions import TenantMismatch, UniqueKeyTaken
 from tadas.om.storage.impl.pg_base import PgStorageBase
 from tadas.om.storage.utils.translation import to_model, to_values
 from tadas.om.work.storage import WorkStorageInterface
@@ -16,17 +17,17 @@ from tadas.om.work.types.work_item import WorkItem, WorkKind, WorkStatus
 class WorkStoragePostgresImpl(PgStorageBase, WorkStorageInterface):
     async def create_item(self, org_id: UUID, item: WorkItem) -> bool:
         # The base reports a taken id as False (a retry) and names any other
-        # unique key it hit; the one here is the idempotency key, a conflict.
+        # unique key it hit; the only other one here is the idempotency key,
+        # which a retrying caller and a relay that runs twice both meet, so it
+        # is reported the same way and the manager reads the row back.
         try:
             if await self._insert(WorkItems, org_id, item):
                 return True
-        except UniqueKeyTaken as error:
-            raise DuplicateWorkItem(f"idempotency key {item.idempotency_key} is taken") from error
+        except UniqueKeyTaken:
+            return False
         async with self._session_for(WorkItems) as session:
             row = await session.get(WorkItems, item.id)
-        if row is None:
-            raise DuplicateWorkItem(f"idempotency key {item.idempotency_key} is taken")
-        if row.org_id != org_id:
+        if row is not None and row.org_id != org_id:
             raise TenantMismatch(f"work item {item.id} is not in {org_id}")
         return False
 
@@ -151,6 +152,15 @@ class WorkStoragePostgresImpl(PgStorageBase, WorkStorageInterface):
 
     async def read_item(self, org_id: UUID, item_id: UUID) -> WorkItem | None:
         stmt = select(WorkItems).where(WorkItems.org_id == org_id, WorkItems.id == item_id)
+        return await self._one(stmt)
+
+    async def read_item_by_key(self, org_id: UUID, idempotency_key: UUID) -> WorkItem | None:
+        stmt = select(WorkItems).where(
+            WorkItems.org_id == org_id, WorkItems.idempotency_key == idempotency_key
+        )
+        return await self._one(stmt)
+
+    async def _one(self, stmt: Select[tuple[WorkItems]]) -> WorkItem | None:
         async with self._session_for(stmt) as session:
             row = (await session.execute(stmt)).scalar_one_or_none()
             return None if row is None else to_model(row, WorkItem)

@@ -5,7 +5,7 @@ import pytest
 
 from contracts.racing import race
 from tadas.om.base import EMPTY_UUID, new_id, utcnow
-from tadas.om.exceptions import DuplicateWorkItem, TenantMismatch
+from tadas.om.exceptions import TenantMismatch
 from tadas.om.work.storage import WorkStorageInterface
 from tadas.om.work.types.work_item import WorkItem, WorkKind, WorkStatus
 
@@ -200,15 +200,22 @@ class WorkStorageContract:
         assert not await storage.create_item(org, item.model_copy(update={"last_error": "again"}))
         assert await storage.read_item(org, item.id) == claimed[1]
 
-    async def test_idempotency_key_is_unique(self, storage: WorkStorageInterface) -> None:
+    async def test_a_taken_idempotency_key_is_reported_and_changes_nothing(
+        self, storage: WorkStorageInterface
+    ) -> None:
+        # The key is the producer's, so a second insert under it is a retry, not
+        # an error: the create reports it, nothing changes, and the row it names
+        # reads back by the key. That is what lets the relay run twice.
         org = new_id()
         item = make_item()
         assert await storage.create_item(org, item)
         duplicate = make_item().model_copy(update={"idempotency_key": item.idempotency_key})
-        with pytest.raises(DuplicateWorkItem):
-            await storage.create_item(org, duplicate)
+        assert await storage.create_item(org, duplicate) is False
         assert await storage.read_item(org, duplicate.id) is None
         assert await storage.read_item(org, item.id) == item
+        assert await storage.read_item_by_key(org, item.idempotency_key) == item
+        assert await storage.read_item_by_key(new_id(), item.idempotency_key) is None
+        assert await storage.read_item_by_key(org, new_id()) is None
 
     async def test_reads_and_writes_are_tenant_scoped(self, storage: WorkStorageInterface) -> None:
         org_a, org_b = new_id(), new_id()

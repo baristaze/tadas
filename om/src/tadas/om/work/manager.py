@@ -15,9 +15,9 @@ class WorkManagerInterface(ABC):
         """A create: the copy stamps the actor, the timestamps, status QUEUED, and
         zero attempts, and clears every claim field, whatever the caller sent. An
         id already written returns the row as stored, so a retried enqueue never
-        resets a claim. Raises ValidationFailed when the payload is not the shape
-        WORK_PAYLOADS fixes for the kind, DuplicateWorkItem on a reused
-        idempotency key."""
+        resets a claim, and so does a reused idempotency key: the insert reports
+        it and the manager reads the row back. Raises ValidationFailed when the
+        payload is not the shape WORK_PAYLOADS fixes for the kind."""
         ...
 
     @abstractmethod

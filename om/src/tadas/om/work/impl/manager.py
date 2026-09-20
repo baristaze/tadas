@@ -11,7 +11,13 @@ from tadas.infra.topics import EntityChangedPayload, Topics, TopicsInterface, Wo
 from tadas.om.base import EMPTY_UUID, Platform, new_id, utcnow
 from tadas.om.events import EventsManagerInterface
 from tadas.om.events.manager import audit_event
-from tadas.om.exceptions import InvalidCredential, LeaseLost, NotFound, ValidationFailed
+from tadas.om.exceptions import (
+    InvalidCredential,
+    LeaseLost,
+    NotFound,
+    UniqueKeyTaken,
+    ValidationFailed,
+)
 from tadas.om.opcontext import OpContext, Permission, RequestContext
 from tadas.om.tenancy import TenancyManagerInterface
 from tadas.om.work.manager import WorkManagerInterface
@@ -71,11 +77,10 @@ class WorkManagerImpl(WorkManagerInterface):
         if not await self._storage.create_item(ctx.org_id, queued):
             # Ids are minted above storage, so the only way to present one twice
             # is a retry, and a retry must not create twice: the insert reported
-            # the id and nothing changed, a claim on the row included, so the
-            # row as stored is the answer and it was announced when it landed.
-            existing = await self._storage.read_item(ctx.org_id, queued.id)
-            assert existing is not None
-            return existing
+            # the id, or the idempotency key, and nothing changed, a claim on
+            # the row included, so the row as stored is the answer and it was
+            # announced when it landed.
+            return await self._stored(ctx.org_id, queued)
         await self._topics.publish(
             Topics.WORK_AVAILABLE,
             WorkAvailablePayload(
@@ -180,6 +185,17 @@ class WorkManagerImpl(WorkManagerInterface):
 
     async def maintenance_contexts(self, rctx: RequestContext) -> list[OpContext]:
         return await self._tenancy.service_contexts(rctx)
+
+    async def _stored(self, org_id: UUID, queued: WorkItem) -> WorkItem:
+        """The row a reported create met: the one under this id, or the one the
+        key belongs to. A key that reads back nowhere is another tenant's, the
+        one case the unique index refuses that is not a retry."""
+        existing = await self._storage.read_item(org_id, queued.id) or (
+            await self._storage.read_item_by_key(org_id, queued.idempotency_key)
+        )
+        if existing is None:
+            raise UniqueKeyTaken(f"idempotency key {queued.idempotency_key} is another tenant's")
+        return existing
 
     async def _hand_back(self, ctx: OpContext, item: WorkItem, delay: timedelta) -> WorkItem:
         now = utcnow()
