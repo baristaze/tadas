@@ -8,7 +8,7 @@ export function SettingsPage() {
     <Page title="Settings" nav={<AppNav />}>
       <div style={{ display: "flex", gap: 16, alignItems: "center" }}>
         {vm.signedInAs ? <Muted>{vm.signedInAs}</Muted> : null}
-        <Button tone="plain" onClick={vm.signOut}>
+        <Button tone="plain" onClick={vm.signOut} disabled={vm.signingOut}>
           Sign out
         </Button>
       </div>

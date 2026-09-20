@@ -2,6 +2,7 @@
 import { createClient } from "../api";
 import { useSessionStore } from "../store/session";
 import { runtimeConfig } from "./config";
+import { forgetSession } from "./forgetSession";
 
 export const api = createClient({
   baseUrl: runtimeConfig().apiUrl,
@@ -9,5 +10,5 @@ export const api = createClient({
   appVersion: __APP_VERSION__,
   timeoutMs: runtimeConfig().requestTimeoutMs,
   getToken: () => useSessionStore.getState().token,
-  onUnauthorized: () => useSessionStore.getState().clear(),
+  onUnauthorized: forgetSession,
 });

@@ -12,6 +12,7 @@ export type LoginRequest = Schemas["LoginRequest"];
 export type IssuedLoginView = Schemas["IssuedLoginView"];
 export type ExchangeSessionRequest = Schemas["ExchangeSessionRequest"];
 export type IssuedSessionView = Schemas["IssuedSessionView"];
+export type SessionView = Schemas["SessionView"];
 export type ApiKeyView = Schemas["ApiKeyView"];
 export type AddApiKeyRequest = Schemas["AddApiKeyRequest"];
 export type IssuedApiKeyView = Schemas["IssuedApiKeyView"];
