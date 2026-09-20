@@ -9,6 +9,7 @@ from uuid import UUID
 import pytest
 from contracts.outbox_storage import claim_all, make_row
 from contracts.task_storage import make_task
+from opentelemetry.sdk.trace import TracerProvider
 
 from tadas.infra.impl.local import InfraLocalImpl
 from tadas.infra.observability import OUTCOMES
@@ -44,6 +45,24 @@ class PoisonedEvents(EventStorageMemoryImpl):
 @pytest.fixture
 def infra(tmp_path: Path) -> InfraLocalImpl:
     return InfraLocalImpl(tmp_path)
+
+
+async def test_the_row_carries_the_trace_context_of_the_write_or_none(
+    infra: InfraLocalImpl,
+) -> None:
+    """The row names the request that made the write and the trace context of
+    that request, as the header the far side links to. With no tracer
+    configured the header is empty, and the far side starts its own trace."""
+    managers = build_managers(StorageMemoryImpl(), infra)
+    ctx = await sign_in(managers)
+    task = make_task(created_by=ctx.user_id)
+    assert outbox_row(ctx, "tasks.task.created", task.id, snapshot(task)).traceparent is None
+    tracer = TracerProvider().get_tracer("tadas.om.tests")
+    with tracer.start_as_current_span("POST /tasks") as span:
+        row = outbox_row(ctx, "tasks.task.created", task.id, snapshot(task))
+    assert row.request_id == ctx.request_id
+    assert row.traceparent is not None
+    assert f"{span.get_span_context().trace_id:032x}" in row.traceparent
 
 
 def dead_letters() -> float:
