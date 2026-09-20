@@ -127,12 +127,12 @@ async def test_a_crash_between_the_key_create_and_finish_reissues_the_secret(
     original_finish = manager.finish
     crashed = False
 
-    async def crash_once(ctx, key, status, body):
+    async def crash_once(ctx, key, attempt_id, status, body):
         nonlocal crashed
         if not crashed:
             crashed = True
             raise RuntimeError("the process died before finish")
-        return await original_finish(ctx, key, status, body)
+        return await original_finish(ctx, key, attempt_id, status, body)
 
     monkeypatch.setattr(manager, "finish", crash_once)
     headers = {**owner, "Idempotency-Key": "key-crash-1"}
