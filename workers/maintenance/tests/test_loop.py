@@ -203,6 +203,24 @@ async def test_claims_within_capacity_and_completes(tmp_path: Path) -> None:
     assert all(rid and rid != str(ctx.request_id) for rid in handler.request_ids.values())
 
 
+async def test_a_finished_item_wakes_the_claimer(tmp_path: Path) -> None:
+    # Every item is queued before the loop starts, so no announcement wakes it:
+    # with one slot, the second and third claims happen only because a finished
+    # item wakes the claimer, never because the poll interval (an hour) passed.
+    container = build_container(tmp_path)
+    ctx = await sign_in(container)
+    items = [make_item(ctx) for _ in range(3)]
+    for item in items:
+        await container.managers.work.enqueue(ctx, item)
+    handler = SlowHandler(hold=0.05)
+    loop, task = start_loop(
+        container, handler, fast_options(capacity=1, poll_interval=timedelta(hours=1))
+    )
+    await until(lambda: len(handler.finished) == 3)
+    loop.stop()
+    await task
+
+
 async def test_lease_is_renewed_while_an_item_runs(tmp_path: Path) -> None:
     container = build_container(tmp_path)
     ctx = await sign_in(container)

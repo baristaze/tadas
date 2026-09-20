@@ -150,8 +150,16 @@ class WorkerLoop:
         ctx, item = claimed
         task = asyncio.create_task(self._run_item(ctx, item), name=f"work-{item.id}")
         self._running[task] = (ctx, item)
-        task.add_done_callback(lambda done: self._running.pop(done, None))
+        task.add_done_callback(self._on_item_done)
         return True
+
+    def _on_item_done(self, task: asyncio.Task[None]) -> None:
+        """A finished item frees a slot, so the claimer is woken: the poll interval
+        bounds how long a queue waits for a worker, not how fast one drains it."""
+        self._running.pop(task, None)
+        if not task.cancelled() and (error := task.exception()) is not None:
+            log.error("work task %s ended with %r", task.get_name(), error)
+        self._wake.set()
 
     # Running one item.
 
