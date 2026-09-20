@@ -1,12 +1,13 @@
-"""A single-use socket ticket, as a row. It stands for the session or api
-key it was minted under; redeeming it is one conditional write on this row,
-so a replay is refused by the database, not by a cache."""
+"""A single-use socket ticket, as a row, and what redeeming it yields. The
+ticket stands for the session or api key it was minted under; redeeming it
+is one conditional write on this row, so a replay is refused by the
+database, not by a cache."""
 
 from datetime import datetime
 from uuid import UUID
 
-from tadas.om.base import Created, Identifiable
-from tadas.om.opcontext import CredentialKind
+from tadas.om.base import Created, Identifiable, Platform
+from tadas.om.opcontext import CredentialKind, OpContext
 
 
 class SocketTicket(Identifiable, Created):
@@ -16,3 +17,15 @@ class SocketTicket(Identifiable, Created):
     credential_id: UUID
     expires_at: datetime
     redeemed_at: datetime | None = None
+
+
+class SocketPrincipal(Platform):
+    """What a redeemed ticket yields: the context the socket runs as and the
+    instant its authority ends, which is the expiry of the session or api
+    key behind the ticket. A socket is a request that stays open; it holds
+    this context for the life of the connection and closes at `expires_at`
+    whatever the client does, so a revocation the bus never delivered is
+    still bounded."""
+
+    ctx: OpContext
+    expires_at: datetime

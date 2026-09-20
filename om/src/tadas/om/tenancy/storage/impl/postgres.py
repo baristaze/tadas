@@ -190,8 +190,10 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
             row = (await session.execute(stmt)).scalar_one_or_none()
             return None if row is None else (row.org_id, to_model(row, Session))
 
-    async def write_session(self, org_id: UUID, session: Session) -> None:
-        await self._upsert(Sessions, org_id, session)
+    async def write_session(
+        self, org_id: UUID, session: Session, outbox_row: OutboxRow | None = None
+    ) -> None:
+        await self._upsert(Sessions, org_id, session, outbox_row)
 
     async def read_api_keys(
         self, org_id: UUID, limit: int, user_id: UUID | None = None

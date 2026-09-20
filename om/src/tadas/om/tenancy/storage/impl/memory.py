@@ -179,14 +179,16 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
             None,
         )
 
-    async def write_session(self, org_id: UUID, session: Session) -> None:
+    async def write_session(
+        self, org_id: UUID, session: Session, outbox_row: OutboxRow | None = None
+    ) -> None:
         self._require_free(
             self._every(self._sessions),
             session,
             lambda other: other.token_hash == session.token_hash,
             "uq_sessions_token_hash",
         )
-        self._put(self._sessions, org_id, session)
+        self._put(self._sessions, org_id, session, outbox_row)
 
     async def read_api_keys(
         self, org_id: UUID, limit: int, user_id: UUID | None = None

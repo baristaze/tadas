@@ -22,6 +22,10 @@ from tadas.om.storage.impl.memory import StorageMemoryImpl
 from tadas.services.api.app import create_app
 from tadas.services.api.container import AppContainer, boot
 from tadas.services.api.gateway.observability import QueryStringRedactor
+from tadas.services.api.realtime.timeouts import (
+    SERVER_PING_INTERVAL_SECONDS,
+    SERVER_PING_TIMEOUT_SECONDS,
+)
 from tadas.services.api.settings import ApiSettings
 
 
@@ -31,12 +35,17 @@ def server_options(settings: ApiSettings) -> dict[str, Any]:
     client, so nothing outside the load balancer can choose its own address
     for the rate limit. uvicorn's access log is off: the observability
     middleware writes the line, by route template, so the query string a
-    socket ticket rides in is never logged."""
+    socket ticket rides in is never logged. The protocol ping on every
+    socket is named here rather than left at uvicorn's default, because
+    the interval and the timeout are pinned against the load balancer's
+    idle timeout (`realtime/timeouts.py`)."""
     return {
         "proxy_headers": bool(settings.trusted_proxies),
         "forwarded_allow_ips": list(settings.trusted_proxies),
         "log_config": None,
         "access_log": False,
+        "ws_ping_interval": SERVER_PING_INTERVAL_SECONDS,
+        "ws_ping_timeout": SERVER_PING_TIMEOUT_SECONDS,
     }
 
 

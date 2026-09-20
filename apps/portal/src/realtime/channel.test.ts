@@ -109,6 +109,22 @@ describe("reconnect backoff", () => {
     expect(h.requestTicket).toHaveBeenCalledTimes(1);
   });
 
+  it("signs out on a 4401 close of an open channel too, as at the session's expiry", async () => {
+    // The server closes a socket that said hello when the session behind it
+    // expires or is revoked; the portal signs out rather than reconnecting.
+    const h = harness();
+    channel = h.channel;
+    await flush();
+    h.sockets[0]!.accept();
+    h.sockets[0]!.receive(hello(3));
+    await flush();
+    h.sockets[0]!.drop(CLOSE_UNAUTHENTICATED);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(h.onUnauthenticated).toHaveBeenCalledTimes(1);
+    expect(h.requestTicket).toHaveBeenCalledTimes(1);
+    expect(h.sockets).toHaveLength(1);
+  });
+
   it("keeps backing off while the server accepts and closes at once", async () => {
     const h = harness();
     channel = h.channel;
