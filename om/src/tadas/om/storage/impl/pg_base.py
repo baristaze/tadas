@@ -65,7 +65,9 @@ class PgStorageBase:
 
     @asynccontextmanager
     async def _session_for(self, target: Any) -> AsyncIterator[AsyncSession]:
-        """A short session on the pool of the one role `target` touches."""
+        """A short session on the pool of the one role `target` touches. Every
+        connection of that pool carries the role's statement deadline from the
+        moment it opens, so no statement here asks for one."""
         factory = self._sessions[role_of(target)]
         async with factory() as session:
             yield session

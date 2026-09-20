@@ -28,7 +28,7 @@ class WorkerContainer:
 
     @classmethod
     def build(cls, settings: MaintenanceSettings) -> WorkerContainer:
-        storage = StoragePostgresImpl(settings.role_urls())
+        storage = StoragePostgresImpl(settings.role_urls(), settings.role_pools())
         infra = InfraConfiguredImpl(settings)
         return cls(settings, storage, infra, build_managers(storage, infra))
 

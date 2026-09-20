@@ -216,6 +216,26 @@ def test_build_context_copies_the_request_stage_and_reads_security() -> None:
     assert ctx.role is ctx.security.role
 
 
+def test_a_request_at_the_edge_names_no_cause_and_a_handoff_carries_one() -> None:
+    """The two ids are separate fields: the stage a handoff mints has a request
+    id of its own and names the request that caused the work beside it, and
+    `build_context` carries the cause the way it carries the request."""
+    edge = request()
+    assert edge.caused_by_request_id is None
+    causing = new_id()
+    handoff = RequestContext(request_id=new_id(), app=APP, caused_by_request_id=causing)
+    assert handoff.request_id != causing and handoff.caused_by_request_id == causing
+    ctx = build_context(
+        handoff,
+        user_id=new_id(),
+        org_id=new_id(),
+        role=Role.SERVICE,
+        permissions=permissions_of(Role.SERVICE),
+        credential_kind=CredentialKind.INTERNAL,
+    )
+    assert (ctx.request_id, ctx.caused_by_request_id) == (handoff.request_id, causing)
+
+
 # The scopes: typed assignments pyright proves, and the runtime reads them.
 
 

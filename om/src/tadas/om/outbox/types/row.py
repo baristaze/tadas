@@ -9,6 +9,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from tadas.infra.observability import current_traceparent
 from tadas.om.base import Created, FrozenMapping, Identifiable, new_id, utcnow
 from tadas.om.opcontext import ProvenanceScope
 
@@ -22,6 +23,11 @@ class OutboxRow(Identifiable, Created):
     )  # the record's snapshot
     actor_id: UUID  # the user whose request produced it
     request_id: UUID  # the request that produced it
+    # The trace context of that request, as the W3C header spells it and not
+    # as a trace id: an id names a trace, and only the header carries what the
+    # span on the far side of the handoff links to. Empty when the write ran
+    # with no tracer configured, and the far side then starts its own trace.
+    traceparent: str | None = None
     app: str  # the AppType value the request came from
     done_at: datetime | None = None  # set by the relay; the sweep purges done rows
     # The sweep's claim: each claim spends an attempt and sets the next one
@@ -38,7 +44,9 @@ def outbox_row(
 ) -> OutboxRow:
     """The row a manager writes beside its core row, under the caller's provenance:
     the tenant, the actor, the request, and the app are all the row reads from
-    the context."""
+    the context. The request's trace context comes from the tracer rather than
+    from the context, which carries the trace id and not the header the far
+    side links to; with no tracer configured it is empty."""
     return OutboxRow(
         id=new_id(),
         created_at=utcnow(),
@@ -48,6 +56,7 @@ def outbox_row(
         payload=payload,
         actor_id=ctx.user_id,
         request_id=ctx.request_id,
+        traceparent=current_traceparent(),
         app=ctx.app.type.value,
     )
 

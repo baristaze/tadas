@@ -10,6 +10,16 @@ Zustand, one realtime channel.
   committed `openapi.json` behind the facade `types.ts`, and the one
   transport client; `src/app/api.ts` holds the one instance). ESLint
   enforces both. `make openapi` regenerates `schema.d.ts`.
+- The app's one retry is the transport client's, and no other layer has
+  one: TanStack Query's is off in `src/app/queryClient.ts`, so a failing
+  API sees these attempts and no multiple of them. Only a failure that
+  can differ on a second attempt goes again (the deadline, a connection
+  that failed before an answer, and a 502, 503, or 504); a refusal is a
+  decision and is told to the caller. Only a read and a creating POST
+  under its idempotency key may be sent twice, so a write the gateway
+  does not record the outcome of is sent once. The rules and the curve
+  are `src/api/retry.ts`: the delay doubles, half of each wait is jitter,
+  and the count and the first delay come from the runtime config.
 - Server state lives in TanStack Query (`src/queries/`), with keys from
   `src/queries/keys.ts`. The first key element is the entity name the
   server pushes, so a push invalidates by convention; an entity the
@@ -31,10 +41,13 @@ Zustand, one realtime channel.
 - `src/realtime/RealtimeProvider.tsx` owns the one socket; the loop
   itself (ticket, reconnect with backoff, the stream cursor and its
   replay) is `channel.ts`, without React, run in its test over a fake
-  socket and fake timers. A socket counts as connected once the hello
-  frame arrives, so a server that accepts and closes at once still
-  backs off. Envelopes (`envelopes.ts`) route into the query cache
-  (`router.ts`), never into components. The ping interval comes from
+  socket and fake timers. The reconnect delay doubles to a cap and half
+  of each wait is jitter, because a socket drops for a shared reason: a
+  bare curve would bring every tab back at the same instant. A socket
+  counts as connected once the hello frame arrives, so a server that
+  accepts and closes at once still backs off. Envelopes (`envelopes.ts`)
+  route into the query cache (`router.ts`), never into components. The
+  ping interval comes from
   `deployment/realtime-timeouts.json`.
 - Design tokens and the kit live in `src/design/`; the operator console
   imports them from here.
@@ -64,5 +77,9 @@ environment's API, e.g. `https://api.tadas.fyi`), so one build serves every
 environment. Locally there is none, and `VITE_API_URL`,
 `VITE_SENTRY_DSN`, and `VITE_SENTRY_ENVIRONMENT` apply instead. The file may
 also name `requestTimeoutMs`, the deadline the transport client puts on every
-call; without it, and locally, the deadline is 30 seconds. How the build
-reaches the cloud is in `deployment/terraform/modules/README.md`.
+call; without it, and locally, the deadline is 30 seconds. It may name
+`retryAttempts` and `retryBaseDelayMs` the same way, the extra attempts a
+retryable failure gets and the wait before the first of them; without them the
+client makes 2 extra attempts, the first after 125 to 250 ms and the second
+after 250 to 500 ms. `retryAttempts: 0` sends every call exactly once. How the
+build reaches the cloud is in `deployment/terraform/modules/README.md`.

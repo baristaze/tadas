@@ -6,7 +6,7 @@ from sqlalchemy import delete, or_, select, update
 from sqlalchemy.exc import IntegrityError
 
 from tadas.om.base import Identifiable
-from tadas.om.exceptions import Conflict, NotFound, TenantMismatch, UniqueKeyTaken
+from tadas.om.exceptions import Conflict, NotFound, UniqueKeyTaken
 from tadas.om.idempotency.storage.tables.idempotency_records import IdempotencyRecords
 from tadas.om.outbox.storage.tables.outbox_rows import OutboxRows
 from tadas.om.outbox.types.row import OutboxRow
@@ -132,14 +132,15 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
         self, org_id: UUID, user: User, membership: Membership, outbox_rows: tuple[OutboxRow, ...]
     ) -> None:
         # Two updates and the outbox rows in one commit; a row that is missing
-        # or another tenant's lands nothing.
+        # or another tenant's lands nothing. Both answer the same way: a
+        # caller holding an id of another tenant is told what a caller
+        # holding an id that never existed is told, so the answer carries no
+        # word about whether the row is out there under someone else.
         async with self._session_for(Users) as session:
             for table, entity in ((Users, user), (Memberships, membership)):
                 row = await session.get(table, entity.id)
-                if row is None:
-                    raise NotFound(f"{table.__tablename__} {entity.id} not found")
-                if row.org_id != org_id:
-                    raise TenantMismatch(f"{table.__tablename__} {entity.id} is not in {org_id}")
+                if row is None or row.org_id != org_id:
+                    raise NotFound(f"{table.__tablename__} {entity.id} is not in {org_id}")
                 apply_row(row, entity)
             for outbox_row in outbox_rows:
                 session.add(to_row(outbox_row, OutboxRows, org_id=org_id))

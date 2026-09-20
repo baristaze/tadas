@@ -5,10 +5,12 @@ from datetime import timedelta
 
 import aioboto3
 
+from tadas.infra.breaker import Breaker
 from tadas.infra.buckets import BucketsInterface
 from tadas.infra.buckets.local import BucketsLocalImpl
 from tadas.infra.buckets.s3 import BucketsS3Impl
 from tadas.infra.cache import CacheInterface, CacheScope
+from tadas.infra.cache.breaker import CacheBreakerImpl
 from tadas.infra.cache.memory import CacheMemoryImpl
 from tadas.infra.cache.valkey import CacheValkeyImpl
 from tadas.infra.exceptions import InfraException
@@ -22,6 +24,7 @@ from tadas.infra.secrets import SecretsInterface
 from tadas.infra.secrets.aws import SecretsAwsImpl
 from tadas.infra.secrets.local import SecretsLocalImpl
 from tadas.infra.topics import TopicsInterface
+from tadas.infra.topics.breaker import TopicsBreakerImpl
 from tadas.infra.topics.memory import TopicsMemoryImpl
 from tadas.infra.topics.valkey import TopicsValkeyImpl
 
@@ -62,10 +65,22 @@ class InfraConfiguredImpl(InfraInterface):
     def __init__(self, settings: InfraSettings) -> None:
         refuse_unsafe(settings)
         self._settings = settings
+        # One connection, and one breaker in front of it. A breaker stands for
+        # a dependency, not for an interface, so every cache scope and the
+        # topic publisher share this one: the first of them to pay the timeouts
+        # opens it for all of them, instead of each paying its own bound over
+        # again before it protects itself.
         self._valkey: ValkeyConnection | None = None
+        self._valkey_breaker: Breaker | None = None
         if settings.cache_backend == "valkey" or settings.topics_backend == "valkey":
             self._valkey = ValkeyConnection(
                 settings.valkey_url, timedelta(seconds=settings.valkey_timeout_seconds)
+            )
+            self._valkey_breaker = Breaker(
+                "valkey_breaker",
+                failures=settings.valkey_breaker_failures,
+                cooldown=timedelta(seconds=settings.valkey_breaker_cooldown_seconds),
+                slow=timedelta(seconds=settings.valkey_timeout_seconds),
             )
         aws_timeout = timedelta(seconds=settings.aws_timeout_seconds)
         self._aws = aioboto3.Session(
@@ -92,8 +107,13 @@ class InfraConfiguredImpl(InfraInterface):
 
         if settings.topics_backend == "valkey":
             assert self._valkey is not None
-            self._topics: TopicsInterface = TopicsValkeyImpl(self._valkey)
+            assert self._valkey_breaker is not None
+            # The same breaker the caches hold: one Valkey, one dependency.
+            self._topics: TopicsInterface = TopicsBreakerImpl(
+                TopicsValkeyImpl(self._valkey), self._valkey_breaker
+            )
         else:
+            # In process, like the memory cache: it cannot time out.
             self._topics = TopicsMemoryImpl()
 
         if settings.queues_backend == "sqs":
@@ -118,9 +138,14 @@ class InfraConfiguredImpl(InfraInterface):
             self._secrets = SecretsLocalImpl(settings.secrets_file, settings.secret_overrides)
 
     def _build_cache(self, scope: CacheScope) -> CacheInterface:
+        """Only the out-of-process impl is wrapped. The memory impl is a dict
+        on this event loop: it cannot time out and cannot be down, so a breaker
+        in front of it would count nothing, refuse nothing, and cost every call
+        a layer and every boot line a word that says nothing."""
         if self._settings.cache_backend == "valkey":
             assert self._valkey is not None
-            return CacheValkeyImpl(self._valkey, scope)
+            assert self._valkey_breaker is not None
+            return CacheBreakerImpl(CacheValkeyImpl(self._valkey, scope), self._valkey_breaker)
         return CacheMemoryImpl(scope)
 
     def get_cache(self, scope: CacheScope) -> CacheInterface:

@@ -1,3 +1,8 @@
+"""The event storage contract. The cases named in `CROSS_TENANT_CASES` are the
+tenant fence's evidence: each one presents another tenant's identifier and
+asserts that nothing is found and nothing changes. The negative control that
+says what they catch is in `docs/runbooks/tenant-isolation.md`."""
+
 from uuid import UUID
 
 import pytest
@@ -6,6 +11,12 @@ from contracts.racing import race
 from tadas.om.base import new_id, utcnow
 from tadas.om.events.storage import EventStorageInterface
 from tadas.om.events.types.event import Event
+from tadas.om.exceptions import TenantMismatch
+
+CROSS_TENANT_CASES: frozenset[str] = frozenset({"append_event", "read_after", "read_head"})
+"""Every method of `EventStorageInterface` that takes a tenant has a case in
+this module that presents another tenant's. `test_storage_exceptions.py` holds
+the two sets to each other, so a new method arrives with its case."""
 
 
 def make_event(org_id: UUID, kind: str = "tasks.task.created") -> Event:
@@ -76,6 +87,24 @@ class EventStorageContract:
         again = await storage.append_event(org, event.model_copy(update={"kind": "ignored"}))
         assert again == first and first.seq == 1
         assert [e.seq for e in await storage.read_after(org, 0, 10)] == [1]
+
+    async def test_an_id_another_tenant_appended_is_never_written_over(
+        self, storage: EventStorageInterface
+    ) -> None:
+        """The append is idempotent on the id, so a repeat returns what is
+        stored. The id is unique across tenants, and a repeat from another
+        tenant is not the same event: it is refused, and the stream it named
+        stays as it was."""
+        org_a, org_b = new_id(), new_id()
+        event = make_event(org_a)
+        appended = await storage.append_event(org_a, event)
+        with pytest.raises(TenantMismatch):
+            await storage.append_event(org_b, event.model_copy(update={"kind": "stolen"}))
+        assert await storage.read_after(org_a, 0, 10) == [appended]
+        assert await storage.read_after(org_b, 0, 10) == []
+        # The refusal spends nothing: an id another tenant owns never moves
+        # this tenant's cursor, so the next append here is still the first.
+        assert await storage.read_head(org_b) == 0
 
     async def test_many_appends_never_share_or_skip_a_seq(
         self, storage: EventStorageInterface

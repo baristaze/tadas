@@ -50,7 +50,12 @@ async def sign_in(container: WorkerContainer) -> OpContext:
     return await tenancy.authenticate(request(), issued.token)
 
 
-def make_item(ctx: OpContext, *, target_id: UUID | None = None) -> WorkItem:
+def make_item(
+    ctx: OpContext, *, target_id: UUID | None = None, traceparent: str | None = None
+) -> WorkItem:
+    """The item a caller enqueues under its own context: the request that caused
+    the work and its trace context are the caller's, and the enqueue leaves
+    them as constructed."""
     now = utcnow()
     return WorkItem(
         id=new_id(),
@@ -61,6 +66,8 @@ def make_item(ctx: OpContext, *, target_id: UUID | None = None) -> WorkItem:
         kind=WorkKind.NOOP,
         target_id=target_id or new_id(),
         idempotency_key=new_id(),
+        request_id=ctx.request_id,
+        traceparent=traceparent,
         available_at=now,
     )
 

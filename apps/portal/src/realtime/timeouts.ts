@@ -11,6 +11,17 @@ export const BACKOFF_MAX_MS = 30_000;
 // connected; only then does the reconnect backoff start over.
 export const STABLE_OPEN_MS = 5_000;
 
-export function backoffDelay(attempt: number): number {
-  return Math.min(BACKOFF_BASE_MS * 2 ** Math.max(0, attempt - 1), BACKOFF_MAX_MS);
+/**
+ * The wait before reconnect `attempt` (1 is the first): the base doubled per
+ * attempt and capped, then halved and topped up from `random`. A socket drops
+ * for a shared reason, so every tab is dropped at once and a bare curve brings
+ * them all back at the same instant; half the window is jitter, so they do
+ * not. Half of it is fixed, which keeps the shortest wait of one attempt at
+ * the longest wait of the one before it wherever the curve doubles, so the
+ * growth is still assertable under randomness. The curve and the cap are what
+ * they were: the pinned numbers are the top of each window.
+ */
+export function backoffDelay(attempt: number, random: () => number = Math.random): number {
+  const full = Math.min(BACKOFF_BASE_MS * 2 ** Math.max(0, attempt - 1), BACKOFF_MAX_MS);
+  return full / 2 + (full / 2) * random();
 }

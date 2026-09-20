@@ -1,3 +1,8 @@
+"""The tasks storage contract. The cases named in `CROSS_TENANT_CASES` are the
+tenant fence's evidence: each one presents another tenant's identifier and
+asserts that nothing is found and nothing changes. The negative control that
+says what they catch is in `docs/runbooks/tenant-isolation.md`."""
+
 from datetime import timedelta
 from uuid import UUID
 
@@ -9,6 +14,23 @@ from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.tasks.storage import TasksStorageInterface
 from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor, TaskFilter
 from tadas.om.tasks.types.task import Task, TaskScope, TaskStatus
+
+CROSS_TENANT_CASES: frozenset[str] = frozenset(
+    {
+        "create_task",
+        "purge_deleted",
+        "purge_tenant",
+        "read_done_tasks",
+        "read_open_places",
+        "read_open_tasks",
+        "read_task",
+        "update_task",
+        "update_tasks",
+    }
+)
+"""Every method of `TasksStorageInterface` that takes a tenant has a case in
+this module that presents another tenant's. `test_storage_exceptions.py` holds
+the two sets to each other, so a new method arrives with its case."""
 
 
 def team() -> TaskFilter:
@@ -125,6 +147,95 @@ class TaskStorageContract:
         with pytest.raises(TenantMismatch):
             await bump(storage, org_b, task, title="Stolen")
         assert await storage.read_task(org_a, task.id) == task
+
+    async def test_the_done_list_is_tenant_scoped_on_its_own(
+        self, storage: TasksStorageInterface
+    ) -> None:
+        """`read_done_tasks` writes its own `where`, so the open list's case
+        says nothing about it: a predicate dropped here is invisible there.
+        The filter travels with the tenant, so neither scope reaches across."""
+        org_a, org_b = new_id(), new_id()
+        author = new_id()
+        theirs = [
+            make_task(
+                f"theirs{i}",
+                created_by=author,
+                status=TaskStatus.DONE,
+                updated_ago=timedelta(minutes=i),
+            )
+            for i in range(3)
+        ]
+        for task in theirs:
+            await seed(storage, org_a, task)
+        assert await storage.read_done_tasks(org_b, team(), None, limit=10) == []
+        assert await storage.read_done_tasks(org_b, mine(author), None, limit=10) == []
+        assert len(await storage.read_done_tasks(org_a, team(), None, limit=10)) == 3
+
+    async def test_a_cursor_of_another_tenant_pages_nothing(
+        self, storage: TasksStorageInterface
+    ) -> None:
+        """A cursor is a position in one tenant's order. Presented to another
+        tenant it pages that tenant's own rows and never reaches across, on
+        the open list and on the done list alike."""
+        org_a, org_b = new_id(), new_id()
+        theirs_open = make_task("theirs open", position=1.0)
+        theirs_done = make_task("theirs done", status=TaskStatus.DONE)
+        await seed(storage, org_a, theirs_open)
+        await seed(storage, org_a, theirs_done)
+        mine_open = make_task("mine open", position=2.0)
+        mine_done = make_task("mine done", status=TaskStatus.DONE, updated_ago=timedelta(hours=1))
+        await seed(storage, org_b, mine_open)
+        await seed(storage, org_b, mine_done)
+        paged_open = await storage.read_open_tasks(org_b, team(), past(theirs_open), limit=10)
+        assert [t.title for t in paged_open] == ["mine open"]
+        paged_done = await storage.read_done_tasks(org_b, team(), after(theirs_done), limit=10)
+        assert [t.title for t in paged_done] == ["mine done"]
+        # And the empty tenant stays empty however the cursor is placed.
+        assert await storage.read_open_tasks(new_id(), team(), past(theirs_open), limit=10) == []
+        assert await storage.read_done_tasks(new_id(), team(), after(theirs_done), limit=10) == []
+
+    async def test_create_reports_another_tenants_id_and_lands_nothing(
+        self, storage: TasksStorageInterface
+    ) -> None:
+        """The create primitive answers an id it cannot have the way it
+        answers one of its own: it reports the id and writes nothing, so a
+        caller presenting another tenant's id neither takes the row nor
+        learns what stands on the other side."""
+        org_a, org_b = new_id(), new_id()
+        task = make_task("theirs")
+        await seed(storage, org_a, task)
+        stolen = task.model_copy(update={"title": "stolen"})
+        assert await storage.create_task(org_b, stolen, (make_row(org_b, stolen),)) is False
+        assert await storage.read_task(org_b, task.id) is None
+        assert await storage.read_task(org_a, task.id) == task
+        assert await storage.read_open_tasks(org_b, team(), None, limit=10) == []
+
+    async def test_a_bulk_update_refuses_a_row_of_another_tenant_and_lands_none(
+        self, storage: TasksStorageInterface
+    ) -> None:
+        """The one bulk write. Its all-or-nothing case tests versions; this one
+        tests the tenant, and puts the foreign row second so the row before it
+        would have landed had the statement not been fenced."""
+        org_a, org_b = new_id(), new_id()
+        mine = make_task("mine", position=0.5)
+        theirs = make_task("theirs", position=0.75)
+        await seed(storage, org_b, mine)
+        await seed(storage, org_a, theirs)
+
+        def placed(task: Task, position: float) -> Task:
+            return task.model_copy(update={"position": position, "version": task.version + 1})
+
+        with pytest.raises(TenantMismatch):
+            await storage.update_tasks(
+                org_b,
+                [
+                    (placed(mine, 0.0), mine.version, (make_row(org_b, mine, "updated"),)),
+                    (placed(theirs, 1.0), theirs.version, (make_row(org_b, theirs, "updated"),)),
+                ],
+            )
+        assert await storage.read_task(org_b, mine.id) == mine
+        assert await storage.read_task(org_a, theirs.id) == theirs
+        assert await storage.read_open_places(org_b, exclude=None) == [(0.5, mine.id)]
 
     async def test_update_is_a_compare_and_set_on_the_version(
         self, storage: TasksStorageInterface

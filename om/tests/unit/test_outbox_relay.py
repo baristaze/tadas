@@ -9,6 +9,7 @@ from uuid import UUID
 import pytest
 from contracts.outbox_storage import claim_all, make_row
 from contracts.task_storage import make_task
+from opentelemetry.sdk.trace import TracerProvider
 
 from tadas.infra.impl.local import InfraLocalImpl
 from tadas.infra.observability import OUTCOMES
@@ -44,6 +45,24 @@ class PoisonedEvents(EventStorageMemoryImpl):
 @pytest.fixture
 def infra(tmp_path: Path) -> InfraLocalImpl:
     return InfraLocalImpl(tmp_path)
+
+
+async def test_the_row_carries_the_trace_context_of_the_write_or_none(
+    infra: InfraLocalImpl,
+) -> None:
+    """The row names the request that made the write and the trace context of
+    that request, as the header the far side links to. With no tracer
+    configured the header is empty, and the far side starts its own trace."""
+    managers = build_managers(StorageMemoryImpl(), infra)
+    ctx = await sign_in(managers)
+    task = make_task(created_by=ctx.user_id)
+    assert outbox_row(ctx, "tasks.task.created", task.id, snapshot(task)).traceparent is None
+    tracer = TracerProvider().get_tracer("tadas.om.tests")
+    with tracer.start_as_current_span("POST /tasks") as span:
+        row = outbox_row(ctx, "tasks.task.created", task.id, snapshot(task))
+    assert row.request_id == ctx.request_id
+    assert row.traceparent is not None
+    assert f"{span.get_span_context().trace_id:032x}" in row.traceparent
 
 
 def dead_letters() -> float:
@@ -155,8 +174,10 @@ async def test_a_write_that_also_starts_work_rides_a_second_row_the_relay_enqueu
     infra.get_topics().subscribe(Topics.WORK_AVAILABLE, "test", record)
 
     task = make_task(created_by=ctx.user_id)
-    change = outbox_row(ctx, "tasks.task.created", task.id, snapshot(task))
-    asked = outbox_row(ctx, work_row_kind(WorkKind.NOOP), task.id, {})
+    tracer = TracerProvider().get_tracer("tadas.om.tests")
+    with tracer.start_as_current_span("POST /tasks"):
+        change = outbox_row(ctx, "tasks.task.created", task.id, snapshot(task))
+        asked = outbox_row(ctx, work_row_kind(WorkKind.NOOP), task.id, {})
     assert await storage.get_tasks_storage().create_task(ctx.org_id, task, (change, asked))
     # One statement, two rows: the entity's change and the work it starts.
     landed = await claim_all(storage.get_outbox_storage())
@@ -169,6 +190,10 @@ async def test_a_write_that_also_starts_work_rides_a_second_row_the_relay_enqueu
     assert enqueued.kind is WorkKind.NOOP and enqueued.target_id == task.id
     assert enqueued.created_by == ctx.user_id, "the actor of the write that asked"
     assert enqueued.updated_by == EMPTY_UUID
+    # The handoff carries the request that made the write and its trace
+    # context; the relay mints neither, it reads both off the row.
+    assert enqueued.request_id == asked.request_id == ctx.request_id
+    assert enqueued.traceparent == asked.traceparent is not None
     assert len(woken) == 1
 
     # The sweep relays what it finds, and it finds this row again after a
@@ -186,6 +211,8 @@ async def test_a_write_that_also_starts_work_rides_a_second_row_the_relay_enqueu
     )
     assert claimed is not None and claimed[1].id == enqueued.id
     assert claimed[0].user_id == ctx.user_id, "the work runs under the person who asked"
+    assert claimed[0].request_id != ctx.request_id, "the run is a request of its own"
+    assert claimed[0].caused_by_request_id == ctx.request_id, "and it names its cause"
     assert (
         await managers.work.claim(
             RequestContext(

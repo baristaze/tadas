@@ -1,3 +1,8 @@
+"""The work storage contract. The cases named in `CROSS_TENANT_CASES` are the
+tenant fence's evidence: each one presents another tenant's identifier and
+asserts that nothing is found and nothing changes. The negative control that
+says what they catch is in `docs/runbooks/tenant-isolation.md`."""
+
 from datetime import timedelta
 from uuid import UUID
 
@@ -11,6 +16,20 @@ from tadas.om.work.types.work_item import WorkItem, WorkKind, WorkStatus
 
 LEASE = timedelta(seconds=30)
 
+CROSS_TENANT_CASES: frozenset[str] = frozenset(
+    {
+        "create_item",
+        "purge_settled",
+        "read_item",
+        "read_item_by_key",
+        "requeue_stale",
+        "write_item_if_held",
+    }
+)
+"""Every method of `WorkStorageInterface` that takes a tenant has a case in
+this module that presents another tenant's. `test_storage_exceptions.py` holds
+the two sets to each other, so a new method arrives with its case."""
+
 
 def make_item(*, lane: str = "default", available_in: timedelta = timedelta(0)) -> WorkItem:
     now = utcnow()
@@ -23,6 +42,7 @@ def make_item(*, lane: str = "default", available_in: timedelta = timedelta(0)) 
         kind=WorkKind.NOOP,
         target_id=new_id(),
         idempotency_key=new_id(),
+        request_id=new_id(),
         payload={},
         lane=lane,
         available_at=now + available_in,

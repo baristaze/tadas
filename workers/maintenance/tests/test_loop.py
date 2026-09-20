@@ -6,6 +6,8 @@ from pathlib import Path
 from uuid import UUID
 
 import pytest
+from opentelemetry import trace
+from opentelemetry.sdk.trace import Span, TracerProvider
 from worker_support import (
     RecordingHandler,
     build_container,
@@ -16,7 +18,7 @@ from worker_support import (
 )
 
 from tadas.infra.cache import CacheInterface, CacheScope
-from tadas.infra.observability import request_id_var
+from tadas.infra.observability import caused_by_request_id_var, current_traceparent, request_id_var
 from tadas.om.base import EMPTY_UUID, new_id, utcnow
 from tadas.om.exceptions import LeaseLost
 from tadas.om.idempotency.impl.manager import IdempotencyOptions
@@ -49,6 +51,28 @@ class SlowHandler(WorkHandlerInterface):
             self.cancelled.append(item.id)
             raise
         self.finished.append(item.id)
+
+
+class CorrelationHandler(WorkHandlerInterface):
+    """Records what a run knows about the request that caused it: the two ids on
+    its context, the two its log lines carry, and the span it raised."""
+
+    def __init__(self) -> None:
+        self.contexts: list[OpContext] = []
+        self.ambient: list[tuple[str | None, str | None]] = []
+        self.spans: list[trace.Span] = []
+
+    async def handle(self, ctx: OpContext, item: WorkItem) -> None:
+        self.contexts.append(ctx)
+        self.ambient.append((request_id_var.get(), caused_by_request_id_var.get()))
+        self.spans.append(trace.get_current_span())
+
+
+def ensure_tracer_provider() -> None:
+    """The global provider can be set once per process; the tests share one
+    that exports nowhere."""
+    if not isinstance(trace.get_tracer_provider(), TracerProvider):
+        trace.set_tracer_provider(TracerProvider())
 
 
 class LeaseLosingWork(WorkManagerInterface):
@@ -314,6 +338,57 @@ async def test_claims_within_capacity_and_completes(tmp_path: Path) -> None:
     # context variable the log filter reads.
     assert len(set(handler.request_ids.values())) == 3
     assert all(rid and rid != str(ctx.request_id) for rid in handler.request_ids.values())
+
+
+async def test_a_run_names_the_request_that_caused_it_and_links_to_its_trace(
+    tmp_path: Path,
+) -> None:
+    """The run is a request of its own that names the one that caused it, on its
+    context and on every line it writes. The span it raises links to the
+    causing trace instead of becoming its child: a durable queue holds an item
+    well past the end of the request that filled it."""
+    ensure_tracer_provider()
+    container = build_container(tmp_path)
+    ctx = await sign_in(container)
+    with trace.get_tracer("tadas.workers.tests").start_as_current_span("POST /tasks") as causing:
+        traceparent = current_traceparent()
+        causing_trace_id = causing.get_span_context().trace_id
+    item = make_item(ctx, traceparent=traceparent)
+    await container.managers.work.enqueue(ctx, item)
+
+    handler = CorrelationHandler()
+    loop, task = start_loop(container, handler, fast_options())
+    await until(lambda: len(handler.contexts) == 1)
+    loop.stop()
+    await task
+
+    run = handler.contexts[0]
+    assert run.request_id != ctx.request_id, "the run has a request of its own"
+    assert run.caused_by_request_id == ctx.request_id, "and it names the one that caused it"
+    assert handler.ambient[0] == (str(run.request_id), str(ctx.request_id)), "both reach the lines"
+    span = handler.spans[0]
+    assert isinstance(span, Span)
+    assert span.parent is None, "one trace is not stretched over the queue"
+    assert [link.context.trace_id for link in span.links or ()] == [causing_trace_id]
+    assert span.get_span_context().trace_id != causing_trace_id, "a trace of its own, linked"
+
+
+async def test_a_run_of_work_nothing_asked_for_starts_its_own_trace(tmp_path: Path) -> None:
+    """An item with no trace context on it, an enqueue that ran with no tracer
+    configured: the run links to nothing and starts a trace of its own."""
+    ensure_tracer_provider()
+    container = build_container(tmp_path)
+    ctx = await sign_in(container)
+    await container.managers.work.enqueue(ctx, make_item(ctx))
+    handler = CorrelationHandler()
+    loop, task = start_loop(container, handler, fast_options())
+    await until(lambda: len(handler.contexts) == 1)
+    loop.stop()
+    await task
+    span = handler.spans[0]
+    assert isinstance(span, Span)
+    assert not span.links and span.parent is None
+    assert span.get_span_context().is_valid
 
 
 async def test_a_finished_item_wakes_the_claimer(tmp_path: Path) -> None:

@@ -1,3 +1,8 @@
+"""The tenancy storage contract. The cases named in `CROSS_TENANT_CASES` are
+the tenant fence's evidence: each one presents another tenant's identifier and
+asserts that nothing is found and nothing changes. The negative control that
+says what they catch is in `docs/runbooks/tenant-isolation.md`."""
+
 from datetime import timedelta
 from unittest.mock import ANY
 from uuid import UUID, uuid4
@@ -27,6 +32,35 @@ from tadas.om.tenancy.storage import TenancyStorageInterface
 from tadas.om.tenancy.types.api_key import ApiKey
 from tadas.om.tenancy.types.session import Session
 from tadas.om.tenancy.types.user import User
+
+CROSS_TENANT_CASES: frozenset[str] = frozenset(
+    {
+        "create_member",
+        "create_org_with_owner",
+        "issue_api_key",
+        "purge_deleted",
+        "purge_tenant",
+        "read_api_key",
+        "read_api_keys",
+        "read_membership_for_user",
+        "read_memberships",
+        "read_org",
+        "read_session",
+        "read_sessions",
+        "read_user",
+        "read_users",
+        "remove_member",
+        "write_api_key",
+        "write_membership",
+        "write_org",
+        "write_session",
+        "write_socket_ticket",
+        "write_user",
+    }
+)
+"""Every method of `TenancyStorageInterface` that takes a tenant has a case in
+this module that presents another tenant's. `test_storage_exceptions.py` holds
+the two sets to each other, so a new method arrives with its case."""
 
 
 def make_marker(api_key: ApiKey, attempt_id: UUID) -> IdempotencyRecord:
@@ -193,6 +227,153 @@ class TenancyStorageContract:
         with pytest.raises(TenantMismatch):
             await storage.write_user(org_b.id, user.model_copy(update={"display_name": "Moved"}))
         assert (await storage.read_user(org_a.id, user.id)) == user
+
+    async def test_the_org_read_and_write_are_tenant_scoped(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        """An org is its own tenant, so `read_org` names the id twice and a
+        tenant that holds no org reads nothing. The write is the fence: an org
+        row is never moved under another tenant."""
+        org, other = make_org("A"), make_org("B")
+        await storage.write_org(org.id, org)
+        assert await storage.read_org(other.id) is None
+        with pytest.raises(TenantMismatch):
+            await storage.write_org(other.id, org.model_copy(update={"name": "Stolen"}))
+        assert await storage.read_org(org.id) == org
+
+    async def test_the_membership_reads_and_writes_are_tenant_scoped(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        org_a, org_b = make_org("A"), make_org("B")
+        membership = make_membership(new_id())
+        await storage.write_membership(org_a.id, membership)
+        assert await storage.read_memberships(org_b.id, limit=10) == []
+        assert await storage.read_membership_for_user(org_b.id, membership.user_id) is None
+        with pytest.raises(TenantMismatch):
+            await storage.write_membership(
+                org_b.id, membership.model_copy(update={"role": Role.OWNER})
+            )
+        assert await storage.read_memberships(org_a.id, limit=10) == [membership]
+
+    async def test_the_session_reads_and_writes_are_tenant_scoped(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        """A session list is personal to a user inside a tenant, so both keys
+        are in the query: the same user id under another tenant lists nothing,
+        and a revocation written from there lands nothing."""
+        org_a, org_b = make_org("A"), make_org("B")
+        user_id = new_id()
+        session = make_session(new_id(), user_id, uuid4().hex)
+        await storage.write_session(org_a.id, session)
+        assert await storage.read_sessions(org_b.id, user_id, utcnow(), limit=10) == []
+        assert await storage.read_session(org_b.id, session.id) is None
+        with pytest.raises(TenantMismatch):
+            await storage.write_session(
+                org_b.id, session.model_copy(update={"revoked_at": utcnow()})
+            )
+        assert await storage.read_session(org_a.id, session.id) == session
+        assert await storage.read_sessions(org_a.id, user_id, utcnow(), limit=10) == [session]
+
+    async def test_the_api_key_reads_the_page_and_the_writes_are_tenant_scoped(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        """The key list pages newest first. The cursor of another tenant's page
+        carries nothing across, with the owner filter on or off."""
+        org_a, org_b = make_org("A"), make_org("B")
+        user_id = new_id()
+        keys = [make_api_key(user_id, uuid4().hex) for _ in range(3)]
+        for key in keys:
+            await storage.write_api_key(org_a.id, key)
+        newest_first = sorted(keys, key=lambda k: k.id, reverse=True)
+        assert await storage.read_api_keys(org_b.id, None, limit=10) == []
+        assert await storage.read_api_keys(org_b.id, None, limit=10, user_id=user_id) == []
+        assert await storage.read_api_keys(org_b.id, newest_first[0].id, limit=10) == []
+        assert await storage.read_api_key(org_b.id, keys[0].id) is None
+        with pytest.raises(TenantMismatch):
+            await storage.write_api_key(org_b.id, keys[0].model_copy(update={"name": "stolen"}))
+        assert await storage.read_api_keys(org_a.id, None, limit=10) == newest_first
+
+    async def test_a_rerun_from_another_tenant_never_re_mints_the_secret(
+        self, storage: TenancyStorageInterface, markers: IdempotencyStorageInterface
+    ) -> None:
+        """The re-mint is one conditional write, and the tenant is one of the
+        conditions in its own `WHERE`. A rerun that presents the key id of
+        another tenant, holding a marker of its own, is refused and the
+        stored digest stays as it was."""
+        org, other = make_org("A"), make_org("B")
+        api_key = make_api_key(new_id(), uuid4().hex)
+        attempt_id = new_id()
+        await markers.write_record(org.id, make_marker(api_key, attempt_id))
+        await markers.write_record(other.id, make_marker(api_key, attempt_id))
+        assert await storage.issue_api_key(
+            org.id, api_key, (make_key_row(org.id, api_key),), attempt_id
+        ) == (api_key, True)
+        rerun = api_key.model_copy(update={"key_hash": uuid4().hex, "updated_at": utcnow()})
+        with pytest.raises(Conflict):
+            await storage.issue_api_key(
+                other.id, rerun, (make_key_row(other.id, rerun),), attempt_id
+            )
+        assert await storage.read_api_key(org.id, api_key.id) == api_key
+        assert await storage.read_api_key(other.id, api_key.id) is None
+        assert await storage.read_api_key_by_hash(rerun.key_hash) is None
+
+    async def test_a_socket_ticket_is_never_written_under_another_tenant(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        org, other = make_org("A"), make_org("B")
+        ticket = make_socket_ticket(new_id(), uuid4().hex)
+        await storage.write_socket_ticket(org.id, ticket)
+        with pytest.raises(TenantMismatch):
+            await storage.write_socket_ticket(other.id, ticket)
+        # The redemption still names the tenant that wrote it.
+        assert await storage.consume_socket_ticket(ticket.ticket_hash, utcnow()) == (org.id, ANY)
+
+    async def test_a_member_is_never_created_on_another_tenants_row(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        """Both creates land whole or not at all, and an id another tenant
+        holds is a taken key: the rows beside it land nothing either."""
+        org, other = make_org("A"), make_org("B")
+        user = make_user(make_identity().id)
+        membership = make_membership(user.id)
+        await storage.create_member(org.id, user, membership, (make_user_row(org.id, user),))
+        with pytest.raises(UniqueKeyTaken):
+            await storage.create_member(
+                other.id, user, make_membership(user.id), (make_user_row(other.id, user),)
+            )
+        assert await storage.read_user(other.id, user.id) is None
+        assert await storage.read_memberships(other.id, limit=10) == []
+        with pytest.raises(UniqueKeyTaken):
+            await storage.create_org_with_owner(other.id, other, user, make_membership(user.id))
+        assert await storage.read_org(other.id) is None
+        assert await storage.read_user(org.id, user.id) == user
+        assert await storage.read_membership_for_user(org.id, user.id) == membership
+
+    async def test_the_retention_sweep_takes_only_its_own_tenants_rows(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        """The sweep runs per tenant, one service context at a time, so a cut
+        that clears one tenant's dead rows leaves the next tenant's alone."""
+        org, other = make_org("A"), make_org("B")
+        cut = utcnow()
+        long_ago = cut - timedelta(days=1)
+        dead: dict[UUID, tuple[UUID, UUID]] = {}
+        for tenant in (org, other):
+            user = make_user(make_identity().id)
+            await storage.write_user(
+                tenant.id,
+                user.model_copy(update={"deleted_at": long_ago, "deleted_by": user.id}),
+            )
+            key = make_api_key(user.id, uuid4().hex).model_copy(
+                update={"deleted_at": long_ago, "deleted_by": user.id}
+            )
+            await storage.write_api_key(tenant.id, key)
+            dead[tenant.id] = (user.id, key.id)
+        assert await storage.purge_deleted(org.id, cut) == 2
+        assert await storage.read_user(org.id, dead[org.id][0]) is None
+        assert await storage.read_api_key(org.id, dead[org.id][1]) is None
+        assert await storage.read_user(other.id, dead[other.id][0]) is not None
+        assert await storage.read_api_key(other.id, dead[other.id][1]) is not None
 
     async def test_update_by_copy_and_write(self, storage: TenancyStorageInterface) -> None:
         org = make_org()
@@ -519,10 +700,17 @@ class TenancyStorageContract:
             await storage.remove_member(
                 org.id, removed, make_membership(bob.id), (make_user_row(org.id, bob),)
             )
-        with pytest.raises((NotFound, TenantMismatch)):
+        # The two impls name the refusal differently (see
+        # docs/runbooks/tenant-isolation.md); both refuse and both land nothing.
+        # A row of another tenant is refused the way a row that is not there
+        # is, by both impls: the answer says nothing about whether it exists
+        # under someone else.
+        with pytest.raises(NotFound):
             await storage.remove_member(other.id, removed, ended, (make_user_row(other.id, bob),))
         assert await storage.read_user(org.id, bob.id) == bob
         assert await storage.read_membership_for_user(org.id, bob.id) == membership
+        assert await storage.read_users(other.id, None, limit=10) == []
+        assert await storage.read_memberships(other.id, limit=10) == []
         await storage.remove_member(org.id, removed, ended, (make_user_row(org.id, bob),))
         assert await storage.read_user(org.id, bob.id) == removed
         assert await storage.read_membership_for_user(org.id, bob.id) is None

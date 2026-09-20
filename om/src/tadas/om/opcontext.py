@@ -105,6 +105,11 @@ class RequestContext(Platform):
     request_id: UUID
     app: AppContext
     trace_id: str | None = None
+    # Ambient state one hop back: empty on a request that arrived at the edge,
+    # and on a stage minted for a handoff the request that caused the work,
+    # read off the work item. Two fields, never one written over the other: a
+    # reader asks what happened in this run and what asked for it.
+    caused_by_request_id: UUID | None = None
 
 
 class IdentityContext(RequestContext):
@@ -218,6 +223,7 @@ def build_context(
         request_id=rctx.request_id,
         app=rctx.app,
         trace_id=rctx.trace_id,
+        caused_by_request_id=rctx.caused_by_request_id,
         security=SecurityContext(
             user_id=user_id,
             org_id=org_id,

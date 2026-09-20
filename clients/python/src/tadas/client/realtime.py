@@ -7,6 +7,7 @@ every change once."""
 
 import asyncio
 import logging
+import random
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, suppress
 from typing import Literal, Protocol
@@ -34,6 +35,21 @@ SOCKET_PATH = "/v1/realtime"
 BACKOFF_SECONDS = (1.0, 2.0, 4.0, 8.0, 16.0, 30.0)
 MIN_PING_SECONDS = 1.0  # a hello that names less would spin
 CLOSE_UNAUTHENTICATED = 4401
+
+
+def reconnect_delay_seconds(attempt: int, jitter: Callable[[], float] = random.random) -> float:
+    """The wait before reconnect `attempt` (0 is the first): the curve above,
+    halved and topped up from `jitter`. A socket drops for a shared reason, so
+    every listener is dropped at once and a bare curve brings them all back at
+    the same instant; half the window is jitter, so they do not. Half of it is
+    fixed, which keeps the shortest wait of one attempt at the longest wait of
+    the one before it wherever the curve doubles, so the growth is still
+    assertable under randomness. The curve itself is unchanged: its values are
+    the top of each window, the last step included, where the cap is less than
+    a doubling and the two windows overlap by a second."""
+    full = BACKOFF_SECONDS[min(attempt, len(BACKOFF_SECONDS) - 1)]
+    return full / 2 + (full / 2) * jitter()
+
 
 State = Literal["connecting", "open", "reconnecting", "closed"]
 
@@ -116,7 +132,7 @@ class Channel:
                 TimeoutError,
             ) as error:
                 log.info("channel dropped: %s", error)
-            delay = BACKOFF_SECONDS[min(self._attempt, len(BACKOFF_SECONDS) - 1)]
+            delay = reconnect_delay_seconds(self._attempt)
             self._attempt += 1
             self._set("reconnecting")
             await asyncio.sleep(delay)

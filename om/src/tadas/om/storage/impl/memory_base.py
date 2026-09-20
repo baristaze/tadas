@@ -30,6 +30,16 @@ class MemoryStorageBase:
         self._lock = asyncio.Lock()
         self._outbox = outbox
 
+    def _fence(self, table: MemoryTable[E], org_id: UUID, entity: E) -> None:
+        """The tenant fence of a write, on its own so a caller that must refuse
+        before it spends anything can ask first. `_put` asks it too, so the
+        fence has one spelling."""
+        existing = table.get(entity.id)
+        if existing is not None and existing[0] != org_id:
+            raise TenantMismatch(f"{entity.id} is not in {org_id}")
+        if existing is not None and undeletes(existing[1], entity):
+            raise RowDeleted(f"{entity.id} was deleted")
+
     def _put(
         self,
         table: MemoryTable[E],
@@ -37,11 +47,7 @@ class MemoryStorageBase:
         entity: E,
         outbox_rows: tuple[OutboxRow, ...] = (),
     ) -> None:
-        existing = table.get(entity.id)
-        if existing is not None and existing[0] != org_id:
-            raise TenantMismatch(f"{entity.id} is not in {org_id}")
-        if existing is not None and undeletes(existing[1], entity):
-            raise RowDeleted(f"{entity.id} was deleted")
+        self._fence(table, org_id, entity)
         self._land(org_id, outbox_rows)
         table[entity.id] = (org_id, entity)
 

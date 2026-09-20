@@ -45,6 +45,8 @@ def build_client(api_url: str, token: str | None) -> ApiClient:
         app_version=app_version(),
         token=token,
         timeout=config.timeout_seconds(),
+        retries=config.retries(),
+        backoff_seconds=config.backoff_seconds(),
     )
 
 

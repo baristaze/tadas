@@ -18,7 +18,12 @@ from botocore.exceptions import (
 from tadas.infra.base import new_id
 from tadas.infra.buckets import BlobNotFound, Buckets
 from tadas.infra.buckets.s3 import BucketsS3Impl
-from tadas.infra.exceptions import BackendFailed, BackendUnreachable, InfraException
+from tadas.infra.exceptions import (
+    BackendFailed,
+    BackendUnreachable,
+    InfraException,
+    InfraUnavailable,
+)
 from tadas.infra.queues import Queues
 from tadas.infra.queues.sqs import QueueSqsImpl
 from tadas.infra.secrets import SecretNotFound
@@ -138,8 +143,12 @@ async def test_every_other_code_becomes_a_platform_exception() -> None:
 async def test_a_backend_that_cannot_be_reached_is_unreachable(failure: BotoCoreError) -> None:
     with pytest.raises(BackendUnreachable) as raised:
         await (await queues(failure)).send(Queues.WEBHOOKS, b"m")
+    assert isinstance(raised.value, InfraUnavailable)
     assert isinstance(raised.value, InfraException)
+    # One code for "not right now": the wire carries the shape's, and the leaf
+    # names what happened in the message and the traceback.
     assert raised.value.http_status == 503
+    assert raised.value.code == "unavailable"
     assert raised.value.message == f"sqs send could not reach the backend: {type(failure).__name__}"
     with pytest.raises(BackendUnreachable):
         await (await buckets(failure)).get(new_id(), Buckets.EXPORTS, "k")

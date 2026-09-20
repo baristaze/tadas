@@ -45,6 +45,16 @@ class WorkItem(Identifiable, Trackable):
     kind: WorkKind  # what to do
     target_id: UUID  # the record it advances
     idempotency_key: UUID  # unique
+    # The request that caused the work and the trace context of that request,
+    # the two the run names as its cause and links its spans to. Both are the
+    # item's, not the enqueue's: the relay takes them off the outbox row of
+    # the write, a direct create off its caller's context, and either enqueue
+    # leaves them as constructed. EMPTY_UUID is the platform's marker for no
+    # principal and names a producer that knew no request; an empty
+    # traceparent is a producer that ran with no tracer configured, and the
+    # run then starts a trace of its own.
+    request_id: UUID
+    traceparent: str | None = None
     payload: FrozenMapping = Field(
         default_factory=dict, validate_default=True
     )  # the dump of WORK_PAYLOADS[kind]
