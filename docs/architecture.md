@@ -50,7 +50,13 @@ context on keeps the stage the callee needs.
 - `tenancy`: orgs, identities, users, memberships, sessions, api keys,
   socket tickets; sign-in, tenant-scoped session tokens, role-capped api
   keys, the operator allowlist, and the service contexts workers run
-  under. The operator plane (every org, delete an org) is a second
+  under. Permissions are a function of role, one table in
+  `tenancy.types.role`; the ladder beside it ranks the person roles
+  (viewer, member, admin, owner) and a unit test holds it to the table, so
+  a role at most another holds a subset of its permissions. The service
+  role is no rung: `role_at_most` answers False on either side of it, and
+  every operation that issues a credential or grants a membership refuses
+  it by name before the ladder is asked. The operator plane (every org, delete an org) is a second
   manager, `TenancyOperatorManagerInterface`, which takes `OperatorContext`
   and nothing else. A socket ticket is a row; redeeming it is one conditional
   update on its hash, and the cache only remembers a redeemed one so a
@@ -78,8 +84,16 @@ context on keeps the stage the callee needs.
   record left pending past its lease (a crash between marker and
   outcome) is taken over by the next retry, which runs the request
   again on that id; a create that finds its own id already written
-  returns the row as stored, so the rerun cannot create twice. A failure (a `5xx`) is not an outcome: the marker is released and the
-  retry runs again; a refusal (a `4xx`) is stored and replayed.
+  returns the row as stored, so the rerun cannot create twice. The one
+  create that issues a secret, the api key, is the exception: the secret
+  is stored as a digest and shown once, and the first one reached no one
+  when the marker stored no outcome, so its rerun re-mints the secret on
+  the row the id names, in the same storage method that inserts it
+  (`issue_api_key`, one conditional write on the issuer's row, no second
+  outbox row), and returns a fresh `IssuedApiKey` with the same id; the
+  old secret stops authenticating. A failure (a `5xx`) is not an outcome:
+  the marker is released and the retry runs again; a refusal (a `4xx`) is
+  stored and replayed.
 - `outbox`: the transactional outbox. A manager that writes a core row
   hands the storage an `OutboxRow` (`kind`, `target_id`, the record's
   snapshot as `payload`, the actor and the request) and the storage base
@@ -168,7 +182,12 @@ everything in-process for tests.
   drainer; a full buffer drops the oldest frame and the client replays.
   No service calls another today, so no internal credential is minted;
   `CredentialKind.INTERNAL` is what the seeding and the worker's service
-  contexts carry.
+  contexts carry. The sweep's service contexts are minted for the tenant,
+  not for a member: each carries the tenant, the service role, and the
+  system user (`EMPTY_UUID`) as its actor, at one read per page of
+  tenants, so a tenant whose members have all left is still swept; the
+  claim of a work item still rebuilds the enqueuer's principal under the
+  service role, so attribution survives the asynchronous hop.
   `tadas-api serve | migrate | bootstrap | add-member | openapi`
   (`bootstrap` and `add-member` are what `make seed` runs; both produce
   the context the seeding then runs under).
@@ -298,6 +317,13 @@ storage method that does not take `org_id` first, asserts every manager
 operation takes a context stage first (the outbox relay is the stated
 exception), and names the transitions that take `RequestContext` or
 `IdentityContext`, so a new principal-less operation must be listed.
+`test_stage_construction.py` scans every source tree (`om`, `infra`,
+`services`, `workers`, `apps`, `clients`) for a site that constructs
+`IdentityContext`, `OpContext`, or `OperatorContext` or calls
+`build_context`, and fails when one appears that is not the tenancy
+manager's transitions or the helper they use, so only a transition
+produces a stage above the request stage. `test_role_rules.py` holds the
+role ladder to the permission table and keeps the service role off it.
 `test_interfaces.py` fails on a `*Interface` under `tadas.om` or
 `tadas.infra` that is not an `ABC` with every public method abstract.
 Each process's `tests/test_settings.py` (and `infra/tests/`) reads
