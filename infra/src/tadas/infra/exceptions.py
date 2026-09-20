@@ -19,6 +19,26 @@ class InfraException(Exception):
         return str(self.args[0]) if self.args else self.code
 
 
+class InfraNotFound(InfraException):
+    http_status = 404
+    code = "not_found"
+
+
+class InfraValidationFailed(InfraException):
+    http_status = 422
+    code = "validation_failed"
+
+
+class InfraUnavailable(InfraException):
+    """Not right now, on the infra side: the mirror of the platform's
+    `Unavailable`. A leaf under it names what happened for the log and keeps
+    this code, so an open breaker, a refused admission, and a backend that is
+    down reach a caller as one code."""
+
+    http_status = 503
+    code = "unavailable"
+
+
 class BackendFailed(InfraException):
     """The hosted backend answered with an error the impl cannot map to a
     shape. The message names the backend, the operation, and the backend's
@@ -30,26 +50,13 @@ class BackendFailed(InfraException):
         super().__init__(f"{backend} {operation} failed with {error_code}")
 
 
-class BackendUnreachable(InfraException):
+class BackendUnreachable(InfraUnavailable):
     """The hosted backend could not be reached or did not answer in time:
     the endpoint, the connection, or the read timed out or dropped. The
     message names the backend, the operation, and the driver's error class."""
 
-    http_status = 503
-    code = "backend_unreachable"
-
     def __init__(self, backend: str, operation: str, reason: str) -> None:
         super().__init__(f"{backend} {operation} could not reach the backend: {reason}")
-
-
-class InfraNotFound(InfraException):
-    http_status = 404
-    code = "not_found"
-
-
-class InfraValidationFailed(InfraException):
-    http_status = 422
-    code = "validation_failed"
 
 
 class BlobNotFound(InfraNotFound):
