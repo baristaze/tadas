@@ -16,6 +16,7 @@ members = [
     "workers/maintenance",
     "clients/python",
     "apps/cli",
+    "ops",
 ]
 
 [tool.uv.sources]
@@ -25,6 +26,7 @@ tadas-api = { workspace = true }
 tadas-maintenance = { workspace = true }
 tadas-client = { workspace = true }
 tadas-cli = { workspace = true }
+tadas-ops = { workspace = true }
 
 [dependency-groups]
 dev = [
@@ -47,6 +49,7 @@ pythonpath = [
     "workers/maintenance/tests",
     "clients/python/tests",
     "apps/cli/tests",
+    "ops/tests",
 ]
 asyncio_default_fixture_loop_scope = "function"
 testpaths = [
@@ -56,8 +59,10 @@ testpaths = [
     "workers/maintenance/tests",
     "clients/python/tests",
     "apps/cli/tests",
+    "ops/tests",
 ]
 markers = [
     "integration: needs the local compose stack",
     "slow: takes more than a few seconds",
+    "telemetry: needs the devx profile",
 ]

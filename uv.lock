@@ -10,6 +10,7 @@ members = [
     "tadas-infra",
     "tadas-maintenance",
     "tadas-om",
+    "tadas-ops",
     "tadas-workspace",
 ]
 
@@ -1625,6 +1626,25 @@ requires-dist = [
     { name = "pydantic-settings", specifier = ">=2.15" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.54" },
     { name = "tadas-infra", editable = "infra" },
+]
+
+[[package]]
+name = "tadas-ops"
+version = "0.1.0"
+source = { editable = "ops" }
+dependencies = [
+    { name = "aioboto3" },
+    { name = "httpx" },
+    { name = "pyyaml" },
+    { name = "tadas-client" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aioboto3", specifier = ">=15.5" },
+    { name = "httpx", specifier = ">=0.28.1" },
+    { name = "pyyaml", specifier = ">=6.0" },
+    { name = "tadas-client", editable = "clients/python" },
 ]
 
 [[package]]

@@ -1,7 +1,7 @@
 {
-  "include": ["om/src", "om/tests", "om/migrations", "infra/src", "infra/tests", "services/api/src", "services/api/tests", "workers/maintenance/src", "workers/maintenance/tests", "clients/python/src", "clients/python/tests", "apps/cli/src", "apps/cli/tests"],
+  "include": ["om/src", "om/tests", "om/migrations", "infra/src", "infra/tests", "services/api/src", "services/api/tests", "workers/maintenance/src", "workers/maintenance/tests", "clients/python/src", "clients/python/tests", "apps/cli/src", "apps/cli/tests", "ops/src", "ops/tests"],
   "exclude": ["**/node_modules", "**/.venv", "**/__pycache__"],
-  "extraPaths": ["services/api/tests", "apps/cli/tests"],
+  "extraPaths": ["services/api/tests", "apps/cli/tests", "ops/tests"],
   "typeCheckingMode": "standard",
   "pythonVersion": "3.14",
   "venvPath": ".",
