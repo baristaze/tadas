@@ -32,8 +32,10 @@ else in Python calls `/v1/*`.
   the portal's `stream.ts` pins.
 - `realtime.py` is the channel: a ticket, one subscription, pings at the
   interval the hello names from a timer of their own, gaps replayed from `/v1/events`, reconnects
-  with backoff. `async for change in Channel(client)` yields every change
-  once, in stream order.
+  with backoff. The reconnect delay follows the curve to a cap and half of
+  each wait is jitter, because a socket drops for a shared reason: a bare
+  curve would bring every listener back at the same instant. `async for
+  change in Channel(client)` yields every change once, in stream order.
 
 ```python
 from tadas.client.client import ApiClient

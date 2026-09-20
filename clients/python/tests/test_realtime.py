@@ -1,6 +1,6 @@
 """The channel over a fake socket: order, gaps replayed from the stream,
-reconnects that replay after the cursor, pings on their own timer, and a
-refused ticket that stops."""
+reconnects that replay after the cursor and wait a jittered backoff, pings on
+their own timer, and a refused ticket that stops."""
 
 import asyncio
 import json
@@ -17,7 +17,14 @@ from websockets.frames import Close
 
 from tadas.client import realtime
 from tadas.client.client import ApiClient
-from tadas.client.realtime import Channel, ChannelRefused, Connect, SocketLike
+from tadas.client.realtime import (
+    BACKOFF_SECONDS,
+    Channel,
+    ChannelRefused,
+    Connect,
+    SocketLike,
+    reconnect_delay_seconds,
+)
 
 ORG, USER = uuid4(), uuid4()
 
@@ -319,3 +326,28 @@ async def test_a_hello_starts_the_backoff_over(monkeypatch: pytest.MonkeyPatch) 
     channel = Channel(client_over([]), on_state=states.append, connect=connect_to(sockets, []))
     assert await asyncio.wait_for(collect(channel, 1), 5) == [2]
     assert states == ["connecting", "open", "reconnecting", "open", "reconnecting", "open"]
+
+
+def test_the_reconnect_delay_grows_and_carries_jitter() -> None:
+    """The curve is unchanged: its values are the top of each window. Half of
+    each wait is fixed, so the delay grows whatever the randomness answers."""
+    for attempt, full in enumerate(BACKOFF_SECONDS):
+        assert reconnect_delay_seconds(attempt, lambda: 1.0) == full
+        assert reconnect_delay_seconds(attempt, lambda: 0.0) == full / 2
+    shortest = [reconnect_delay_seconds(a, lambda: 0.0) for a in range(len(BACKOFF_SECONDS))]
+    longest = [reconnect_delay_seconds(a, lambda: 1.0) for a in range(len(BACKOFF_SECONDS))]
+    assert shortest == sorted(shortest) and longest == sorted(longest)
+    # Where the curve doubles, an attempt's shortest wait is the longest wait
+    # of the one before it, so two attempts never draw the same delay. The
+    # last step is the cap, less than a doubling, so those two windows do
+    # overlap, by the second between 15 and 16.
+    for a in range(1, len(BACKOFF_SECONDS)):
+        if BACKOFF_SECONDS[a] >= 2 * BACKOFF_SECONDS[a - 1]:
+            assert shortest[a] == longest[a - 1]
+        else:
+            assert (BACKOFF_SECONDS[a - 1], shortest[a], longest[a - 1]) == (16.0, 15.0, 16.0)
+    spread = {reconnect_delay_seconds(2, lambda r=r: r) for r in (0.0, 0.25, 0.5, 0.75)}
+    assert len(spread) == 4 and all(2.0 <= delay <= 4.0 for delay in spread)
+    # The last value holds past the end of the curve, jitter and all.
+    assert reconnect_delay_seconds(99, lambda: 1.0) == BACKOFF_SECONDS[-1]
+    assert all(0.5 <= reconnect_delay_seconds(0) <= 1.0 for _ in range(50))

@@ -86,8 +86,8 @@ def retry_delay_seconds(
     doubled per attempt and capped, then halved and topped up from `jitter`.
     Half the window is fixed and half is jitter, so callers that failed
     together do not return together, and the shortest wait of one attempt is
-    still the longest wait of the one before it, which is what makes the
-    growth assertable. `jitter` is a function of no arguments answering
+    still the longest wait of the one before it wherever the curve doubles,
+    which is what makes the growth assertable. `jitter` is a function of no arguments answering
     between 0 and 1; a test hands one in and asserts both ends of the
     window."""
     full = min(base * 2 ** max(0, attempt - 1), MAX_BACKOFF_SECONDS)
