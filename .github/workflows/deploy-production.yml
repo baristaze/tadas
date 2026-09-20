@@ -105,9 +105,10 @@ jobs:
           AWS_PRODUCTION_ROLE_ARN: ${{ vars.AWS_PRODUCTION_ROLE_ARN }}
           TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
           DNS_ZONE_NAME: ${{ vars.DNS_ZONE_NAME }}
+          ALARM_EMAIL: ${{ vars.ALARM_EMAIL }}
         run: |
           missing=""
-          for name in AWS_PRODUCTION_PLAN_ROLE_ARN AWS_PRODUCTION_ROLE_ARN TF_STATE_BUCKET DNS_ZONE_NAME; do
+          for name in AWS_PRODUCTION_PLAN_ROLE_ARN AWS_PRODUCTION_ROLE_ARN TF_STATE_BUCKET DNS_ZONE_NAME ALARM_EMAIL; do
             [ -n "${!name}" ] || missing="${missing:+$missing, }$name"
           done
           if [ -n "$missing" ]; then
@@ -190,6 +191,7 @@ jobs:
         env:
           TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
           DNS_ZONE_NAME: ${{ vars.DNS_ZONE_NAME }}
+          ALARM_EMAIL: ${{ vars.ALARM_EMAIL }}
           API_IMAGE: ${{ needs.resolve.outputs.api_image }}
           MAINTENANCE_IMAGE: ${{ needs.resolve.outputs.maintenance_image }}
           SHA: ${{ github.sha }}
@@ -204,6 +206,7 @@ jobs:
             -var "api_image=$API_IMAGE" \
             -var "maintenance_image=$MAINTENANCE_IMAGE" \
             -var "dns_zone_name=$DNS_ZONE_NAME" \
+            -var "alarm_email=$ALARM_EMAIL" \
             -var "api_domain_name=api.$DNS_ZONE_NAME" \
             -var "app_domain_name=app.$DNS_ZONE_NAME"
           terraform -chdir=deployment/terraform/environments/prod show -no-color tfplan > plan.txt
