@@ -350,7 +350,25 @@ Every table belongs to one database role (`core`, `activity`, `queue`,
 `admin`); the map in `tadas.om.storage.roles` decides the schema, the
 pool, and the migration chain. Migrations are hand-written SQL under
 `om/migrations/sql/<role>/` with Alembic wrappers; `core`, `activity`,
-and `queue` have chains today, and `admin` has no table yet. Optimistic
+and `queue` have chains today, and `admin` has no table yet. Each role's
+pool carries bounds of its own: a size, how long a checkout waits before
+it fails, and the deadline every statement on it runs under. Each is a
+setting with a per-role override that defaults to the shared value, the
+way a role URL does. The deadline travels in `server_settings`, so
+Postgres cancels a statement that passes it on every connection the pool
+opens and no call site carries one, and the driver's connect timeout is
+the checkout bound, so a database that accepts no connection fails a
+call inside the same bound. There is no overflow: the declared size is
+the number of connections the process can hold, and a checkout past it
+waits and then fails rather than queueing without end. One engine serves
+each distinct URL and bounds, so roles that share both share a pool and
+a role given bounds of its own is the bulkhead between two load profiles
+on one database. `StoragePostgresImpl` takes the URLs and the bounds
+from the settings object its composition root read at boot and reads no
+environment of its own. Its `healthcheck` connects and runs `SELECT 1`
+on every engine under the sum of that pool's two bounds, the worst a
+healthy answer can cost, so a saturated or unreachable pool answers
+false instead of holding the caller. Optimistic
 concurrency stays opt-in: `tasks` is the one table that carries a
 `version`, because a task is edited from two windows and two terminals
 at once ([ADR 0009](adr/0009-tasks-carry-a-version.md)); every other
