@@ -16,7 +16,6 @@ from tadas.om.exceptions import PlatformException
 from tadas.services.api.gateway.auth import Ctx, SocketCtx
 from tadas.services.api.gateway.resolve import RealtimeService, container_of
 from tadas.services.api.realtime.envelopes import (
-    IDLE_TIMEOUT_SECONDS,
     ClientCommand,
     ErrorEnvelope,
     HelloEnvelope,
@@ -26,6 +25,7 @@ from tadas.services.api.realtime.envelopes import (
     UnsubscribedEnvelope,
 )
 from tadas.services.api.realtime.send_buffer import SendBuffer
+from tadas.services.api.realtime.timeouts import IDLE_TIMEOUT_SECONDS
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/realtime", tags=["realtime"])

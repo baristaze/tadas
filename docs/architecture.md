@@ -299,6 +299,23 @@ everything in-process for tests.
   drainer; a full buffer drops the oldest frame and the client replays.
   A peer that drops mid-stream ends the drainer with a disconnect; the
   teardown treats that as the normal end of a socket, not an error.
+  Two pings keep a socket alive, one per direction, both pinned with the
+  load balancer's idle timeout in `deployment/realtime-timeouts.json`
+  (`realtime/timeouts.py`, held to the file by
+  `test_realtime_timeouts.py`): the client's application ping every 25
+  seconds, whose pong carries the head seq, and the server's protocol
+  ping every 20 seconds, which uvicorn sends (`ws_ping_interval`,
+  `ws_ping_timeout` in `server_options`) and which closes the socket
+  when no pong arrives within 20 more; the two together stay below the
+  60 second idle timeout, so the server, not the load balancer, ends a
+  dead socket. The protocol ping is answered by the client's socket
+  implementation, not by the app: a browser answers it from the tab
+  whose timers it has throttled in the background, so that tab keeps
+  its socket and only its head-seq check slows down. There is no
+  heartbeat thread beside the event loop, on purpose: the process is
+  one loop that must never block, a blocked loop fails every request
+  and the health check with it, and a thread that kept pinging through
+  that would only hide it.
   No service calls another today, so no internal credential is minted;
   `CredentialKind.INTERNAL` is what the seeding and the worker's service
   contexts carry. The sweep's service contexts are minted for the tenant,
@@ -431,8 +448,9 @@ everything in-process for tests.
   instantiate the same graph and differ only in variables, including
   the image digests; `shared/` holds the registry, the state bucket, and
   the deploy role. The load balancer's idle timeout is read from
-  `deployment/realtime-timeouts.json`, the file the api and the portal
-  pin their ping interval against. The worker's service instance
+  `deployment/realtime-timeouts.json`, the file the api pins its
+  protocol ping against and the api and the portal pin the client's
+  ping interval against. The worker's service instance
   caps a rollout at 100% of desired because a worker holds leases. Every
   task runs an ADOT collector sidecar that scrapes the process's
   `/metrics` into CloudWatch (namespace `Tadas`) and forwards its traces to
