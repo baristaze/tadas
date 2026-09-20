@@ -321,11 +321,15 @@ shape the platform root has, so the gateway presents both alike), and
 the system scope as a value (`SYSTEM_SCOPE`, equal to the model's
 `EMPTY_UUID`; a unit test holds the two together). Topics today:
 `work_available` (`lane`, `kind`) and `entity_changed` (`kind`,
-`target_id`, `seq`); `TopicPayload` is a frozen base declared in infra
+`target_id`, `seq`, `actor_id`); `TopicPayload` is a frozen base
+declared in infra
 with `extra="ignore"`, so a consumer ignores a field it does not know;
 a payload gains only optional, defaulted fields, so an old producer's
 message and a queued row written before a deploy still parse, and the
-two sides roll out in either order. A topic is best effort. Every capability interface declares `start()` and `close()`; the
+two sides roll out in either order. `actor_id` is the field that came
+later, so it defaults to `NO_ACTOR`, the reserved UUID no person's id
+equals: a frame from a replica one release behind is a change by nobody
+the client knows, not a frame dropped as malformed. A topic is best effort. Every capability interface declares `start()` and `close()`; the
 roots call them unconditionally: the Valkey topic listener opens its
 subscriber in `start()`, and each hosted impl (S3, SQS, Secrets Manager)
 opens its one client there, holds it through an exit stack for every
