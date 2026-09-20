@@ -56,6 +56,15 @@ class NotAuthenticated(PlatformException):
     code = "not_authenticated"
 
 
+class Unavailable(PlatformException):
+    """Not right now: a backend that is down, a breaker that is open, a
+    request refused past this process's admission bound. The caller reads the
+    code and comes back rather than reading a failure of its own request."""
+
+    http_status = 503
+    code = "unavailable"
+
+
 class StorageException(PlatformException): ...
 
 
