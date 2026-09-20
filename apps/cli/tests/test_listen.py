@@ -1,7 +1,7 @@
 """The listener over the in-process API and a scripted channel: each change
 is fetched and told as one line, deletes are told from memory, `--mine`
-filters, connection states reach stderr, and a read that fails skips the
-change without ending the stream."""
+filters, connection states reach stderr, and a read that fails every attempt
+skips the change without ending the stream."""
 
 import asyncio
 import io
@@ -14,7 +14,7 @@ from api_support import OWNER, add_member
 from cli_support import BOB, Hop, Stack
 
 from tadas.apps.cli.listen import listen
-from tadas.client.client import ApiClient, ApiError
+from tadas.client.client import DEFAULT_RETRIES, ApiClient, ApiError
 from tadas.client.envelopes import EntityChanged
 from tadas.client.realtime import State
 from tadas.client.types import TaskStatus, TaskView
@@ -155,20 +155,25 @@ def test_a_deleted_task_seen_before_the_listener_started_still_has_a_title(stack
     ]
 
 
-def test_a_read_that_fails_skips_the_change_and_keeps_listening(stack: Stack) -> None:
+def test_a_read_that_fails_every_attempt_skips_the_change_and_keeps_listening(
+    stack: Stack,
+) -> None:
     """The channel reconnects on its own; a task read that fails at the wire
-    or with a 5xx is this change's failure, told on stderr, and the next
-    change to the task shows its state. An actor who cannot be looked up is
-    told as someone."""
+    or with a 5xx on every attempt the client makes is this change's failure,
+    told on stderr, and the next change to the task shows its state. An actor
+    who cannot be looked up is told as someone."""
     owner = stack.session_token(OWNER["email"], OWNER["password"])
     bob = stack.session_token(BOB["email"], BOB["password"])
     out, err = io.StringIO(), io.StringIO()
+    # The client sends a read again on a wire failure and on an unavailable
+    # answer, so a change is skipped only once every attempt has failed.
+    attempts = DEFAULT_RETRIES + 1
     flaky = Flaky(
         stack,
         [
-            (is_task_read, httpx.ConnectError("refused")),
-            (is_task_read, 503),
-            (is_users_read, httpx.ReadTimeout("slow")),
+            *[(is_task_read, httpx.ConnectError("refused"))] * attempts,
+            *[(is_task_read, 503)] * attempts,
+            *[(is_users_read, httpx.ReadTimeout("slow"))] * attempts,
         ],
     )
 
@@ -204,6 +209,7 @@ def test_a_read_that_fails_skips_the_change_and_keeps_listening(stack: Stack) ->
             app_version="cli@test",
             token=owner,
             transport=flaky,
+            backoff_seconds=0.0,  # the attempts are the point here, not the wait
         ) as client:
             await listen(
                 client, mine=False, out=out, err=err, channel=scripted, clock=lambda: CLOCK

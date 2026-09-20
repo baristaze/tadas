@@ -3,7 +3,9 @@
 writes under `TADAS_HOME` (default `~/.config/tadas`), then the local
 default. `TADAS_TOKEN` may hold an api key as well as a session token; the
 API accepts either as a bearer. `TADAS_HTTP_TIMEOUT_SECONDS` bounds every
-call the client makes."""
+call the client makes, `TADAS_HTTP_RETRIES` how many extra attempts a
+retryable failure gets, and `TADAS_HTTP_RETRY_BACKOFF_SECONDS` the wait
+before the first of them."""
 
 import json
 import os
@@ -12,6 +14,8 @@ from pathlib import Path
 
 DEFAULT_API_URL = "http://127.0.0.1:8000"
 DEFAULT_TIMEOUT_SECONDS = 30.0
+DEFAULT_RETRIES = 2
+DEFAULT_BACKOFF_SECONDS = 0.25
 SESSION_FILE = "session.json"
 
 
@@ -93,6 +97,36 @@ def timeout_seconds() -> float:
         raise BadSetting(f"TADAS_HTTP_TIMEOUT_SECONDS is not a number: {raw!r}") from None
     if seconds <= 0:
         raise BadSetting(f"TADAS_HTTP_TIMEOUT_SECONDS must be positive: {raw!r}")
+    return seconds
+
+
+def retries() -> int:
+    """How many extra attempts a retryable failure gets: the environment, else
+    the default. Zero sends every call exactly once."""
+    raw = os.environ.get("TADAS_HTTP_RETRIES")
+    if not raw:
+        return DEFAULT_RETRIES
+    try:
+        count = int(raw)
+    except ValueError:
+        raise BadSetting(f"TADAS_HTTP_RETRIES is not a whole number: {raw!r}") from None
+    if count < 0:
+        raise BadSetting(f"TADAS_HTTP_RETRIES cannot be negative: {raw!r}")
+    return count
+
+
+def backoff_seconds() -> float:
+    """The wait before the first extra attempt; it doubles from there and
+    carries jitter. The environment, else the default."""
+    raw = os.environ.get("TADAS_HTTP_RETRY_BACKOFF_SECONDS")
+    if not raw:
+        return DEFAULT_BACKOFF_SECONDS
+    try:
+        seconds = float(raw)
+    except ValueError:
+        raise BadSetting(f"TADAS_HTTP_RETRY_BACKOFF_SECONDS is not a number: {raw!r}") from None
+    if seconds <= 0:
+        raise BadSetting(f"TADAS_HTTP_RETRY_BACKOFF_SECONDS must be positive: {raw!r}")
     return seconds
 
 

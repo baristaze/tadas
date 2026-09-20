@@ -104,6 +104,7 @@ def test_logout_forgets_the_session_when_the_api_cannot_be_reached(
             app_version="cli@test",
             token=token,
             transport=httpx.MockTransport(raise_failure),
+            backoff_seconds=0.0,  # the retry still runs; this case is about the exit code
         ),
     )
     result = CliRunner().invoke(main.app, ["logout"])
@@ -242,6 +243,31 @@ def test_the_client_is_built_with_the_timeout_from_the_environment(
             config.timeout_seconds()
 
 
+def test_the_client_is_built_with_the_retry_from_the_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The count and the delay travel from the settings into the client the
+    way the timeout does, so the CLI never wraps it in a retry of its own."""
+    for name in ("TADAS_HTTP_RETRIES", "TADAS_HTTP_RETRY_BACKOFF_SECONDS"):
+        monkeypatch.delenv(name, raising=False)
+    built = main.build_client("http://127.0.0.1:1", None)
+    assert built.retries == config.DEFAULT_RETRIES
+    assert built.backoff_seconds == config.DEFAULT_BACKOFF_SECONDS
+    monkeypatch.setenv("TADAS_HTTP_RETRIES", "0")
+    monkeypatch.setenv("TADAS_HTTP_RETRY_BACKOFF_SECONDS", "1.5")
+    built = main.build_client("http://127.0.0.1:1", None)
+    assert built.retries == 0 and built.backoff_seconds == 1.5
+    for bad in ("two", "-1", "1.5"):
+        monkeypatch.setenv("TADAS_HTTP_RETRIES", bad)
+        with pytest.raises(config.BadSetting):
+            config.retries()
+    monkeypatch.delenv("TADAS_HTTP_RETRIES")
+    for bad in ("soon", "0", "-1"):
+        monkeypatch.setenv("TADAS_HTTP_RETRY_BACKOFF_SECONDS", bad)
+        with pytest.raises(config.BadSetting):
+            config.backoff_seconds()
+
+
 @pytest.mark.parametrize(
     "failure",
     [httpx.ConnectError("refused"), httpx.ReadTimeout("slow"), httpx.RemoteProtocolError("reset")],
@@ -264,6 +290,7 @@ def test_an_api_that_cannot_be_reached_is_exit_4(
             app_version="cli@test",
             token=token,
             transport=httpx.MockTransport(raise_failure),
+            backoff_seconds=0.0,  # the retry still runs; this case is about the exit code
         ),
     )
     result = CliRunner().invoke(
