@@ -202,6 +202,8 @@ services:
       GLITCHTIP_ADMIN_PASSWORD: tadas-local
       GLITCHTIP_PROJECT_KEY: 0123456789abcdef0123456789abcdef
       GLITCHTIP_EXPECTED_DSN: http://0123456789abcdef0123456789abcdef@localhost:${TADAS_GLITCHTIP_PORT:-58000}/1
+      # The read-only API token the signal reader uses; TADAS_ERROR_TRACKER_TOKEN in .env.example.
+      GLITCHTIP_API_TOKEN: ${TADAS_ERROR_TRACKER_TOKEN:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
     volumes:
       - ./glitchtip/seed.py:/seed/seed.py:ro
     depends_on:
