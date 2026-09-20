@@ -37,7 +37,10 @@ log = logging.getLogger(__name__)
 REPLAYED_HEADER = "Idempotent-Replayed"
 JSON = "application/json"
 KEY_MAX_LENGTH = 255
-"""The key lands in a unique index; a longer one is refused at the edge (422)."""
+"""The key lands in a unique index; a longer one is refused at the edge (422),
+and so is an empty one: a header present with nothing in it is a malformed
+request, not an absence, and honoured as a key it would replay every
+same-body request of the caller for the retention as the first one."""
 
 
 def request_digest(method: str, path: str, body: bytes) -> str:
@@ -175,7 +178,7 @@ def _json(view: BaseModel, status: int) -> Response:
 async def idempotency(
     request: Request,
     ctx: Ctx,
-    idempotency_key: Annotated[str | None, Header(max_length=KEY_MAX_LENGTH)] = None,
+    idempotency_key: Annotated[str | None, Header(min_length=1, max_length=KEY_MAX_LENGTH)] = None,
 ) -> Idempotency:
     digest = request_digest(request.method, request.url.path, await request.body())
     return Idempotency(container_of(request).managers.idempotency, ctx, idempotency_key, digest)

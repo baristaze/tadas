@@ -77,6 +77,19 @@ async def test_a_key_longer_than_the_cap_is_refused(
     assert [t["id"] for t in listed.json()["items"]] == [longest.json()["id"]]
 
 
+async def test_an_empty_key_is_refused(client: httpx.AsyncClient, owner: dict[str, str]) -> None:
+    """A header present with nothing in it is a malformed request, not a key
+    and not an absence: honoured, it would replay every same-body request of
+    the caller for the retention as the first one."""
+    headers = {**owner, "Idempotency-Key": ""}
+    empty = await client.post("/v1/tasks", headers=headers, json=BODY)
+    assert empty.status_code == 422, empty.text
+    assert empty.json()["error"]["code"] == "validation_failed"
+    assert "idempotency-key" in empty.json()["error"]["message"]
+    listed = await client.get("/v1/tasks", headers=owner)
+    assert listed.json()["items"] == []
+
+
 async def test_keys_are_personal_inside_a_tenant(
     client: httpx.AsyncClient, container: AppContainer, owner: dict[str, str]
 ) -> None:
