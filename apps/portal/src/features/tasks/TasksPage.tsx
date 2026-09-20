@@ -97,7 +97,7 @@ function TaskGroups({ vm }: { vm: TasksVm }) {
             <TaskItem
               key={entry.task.id}
               {...itemProps(entry)}
-              onToggle={() => vm.complete(entry.task)}
+              onToggle={() => void vm.complete(entry.task)}
               drag={
                 vm.canWrite && !entry.leaving
                   ? {
@@ -138,7 +138,7 @@ function TaskGroups({ vm }: { vm: TasksVm }) {
         {vm.done.length === 0 ? <Muted>Nothing done yet.</Muted> : null}
         <ul style={{ margin: 0, padding: 0 }}>
           {vm.done.map((entry) => (
-            <TaskItem key={entry.task.id} {...itemProps(entry)} onToggle={() => vm.reopen(entry.task)} />
+            <TaskItem key={entry.task.id} {...itemProps(entry)} onToggle={() => void vm.reopen(entry.task)} />
           ))}
         </ul>
         {vm.hasMoreDone ? (

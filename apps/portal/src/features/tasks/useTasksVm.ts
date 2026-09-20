@@ -74,7 +74,11 @@ export function useTasksVm() {
   // The server is the truth: after any write, every task list refetches, in every scope.
   const refresh = () => void queryClient.invalidateQueries({ queryKey: keys.tasks.all });
   // Every write names the version of the task as held here; a write the
-  // server refused because the task changed since is said as such.
+  // server refused because the task changed since is said as such. Every
+  // write is awaited, and none hands its callbacks to `mutate`: one hook
+  // holds one observer, the writes over a task share it, and a second call
+  // on an observer drops the first call's callbacks, so a refusal would go
+  // unsaid and the row the server wrote unread.
   const fail = (cause: unknown) => {
     setError(isStale(cause) ? STALE_MESSAGE : errorMessage(cause, "Something went wrong; the list was reloaded."));
     refresh();
@@ -104,37 +108,43 @@ export function useTasksVm() {
   };
 
   // Struck through at once; fades out of Open in place while it fades in at the top of Done.
-  const complete = (task: TaskView) => {
+  const complete = async (task: TaskView) => {
     const doneTask: TaskView = { ...task, status: "done", updated_at: new Date().toISOString() };
     const index = openView.findIndex((t) => t.id === task.id);
     setLeaving((current) => [...current.filter((l) => l.task.id !== task.id), { task: doneTask, index }]);
     editOpen((data) => pagesWithout(data, task.id));
     editDone((data) => pagesWithTaskOnTop(data, doneTask));
     later(() => setLeaving((current) => current.filter((l) => l.task.id !== task.id)));
-    update.mutate(
-      { id: task.id, body: { status: "done", version: task.version } },
-      {
-        // The row the server wrote replaces the optimistic one: it carries
-        // the version the write bumped, and without it un-ticking or editing
-        // the task before the refetch lands is refused as someone else's
-        // change (`reopen` and `add` do the same).
-        onSuccess: (completed) => editDone((data) => pagesWithTaskOnTop(data, completed)),
-        onError: fail,
-        onSettled: refresh,
-      },
-    );
+    try {
+      // The row the server wrote replaces the optimistic one: it carries
+      // the version the write bumped, and without it un-ticking or editing
+      // the task before the refetch lands is refused as someone else's
+      // change (`reopen` and `add` do the same).
+      const completed = await update.mutateAsync({
+        id: task.id,
+        body: { status: "done", version: task.version },
+      });
+      editDone((data) => pagesWithTaskOnTop(data, completed));
+    } catch (cause) {
+      fail(cause);
+    } finally {
+      refresh();
+    }
   };
 
-  const reopen = (task: TaskView) => {
+  const reopen = async (task: TaskView) => {
     editDone((data) => pagesWithout(data, task.id));
-    update.mutate(
-      { id: task.id, body: { status: "open", version: task.version } },
-      {
-        onSuccess: (reopened) => editOpen((data) => pagesWithTaskOnTop(data, reopened)),
-        onError: fail,
-        onSettled: refresh,
-      },
-    );
+    try {
+      const reopened = await update.mutateAsync({
+        id: task.id,
+        body: { status: "open", version: task.version },
+      });
+      editOpen((data) => pagesWithTaskOnTop(data, reopened));
+    } catch (cause) {
+      fail(cause);
+    } finally {
+      refresh();
+    }
   };
 
   const save = async (task: TaskView, edit: TaskEdit) => {
