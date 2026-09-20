@@ -22,6 +22,8 @@ class WorkItems(IdentifiableMixin, TrackableMixin, Base):
     kind: Mapped[str]
     target_id: Mapped[UUID]
     idempotency_key: Mapped[UUID]
+    request_id: Mapped[UUID]
+    traceparent: Mapped[str | None]
     payload: Mapped[dict[str, Any]]
     lane: Mapped[str]
     status: Mapped[str]

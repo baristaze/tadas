@@ -45,6 +45,17 @@ class WorkOptions(Platform):
     retention: timedelta = timedelta(days=30)  # a done or failed item is purged after this
 
 
+def caused_by(rctx: RequestContext, item: WorkItem) -> RequestContext:
+    """The request stage a claim runs under: the one the worker minted for this
+    claim, now naming the request that caused the work, read off the item. The
+    run keeps its own `request_id`, because it has its own lifetime and its own
+    failures, and names the cause in a field of its own; neither is written
+    over the other. An item that names no causing request leaves the field
+    empty, the way a request that arrived at the edge does."""
+    cause = item.request_id if item.request_id != EMPTY_UUID else None
+    return rctx.model_copy(update={"caused_by_request_id": cause})
+
+
 class WorkManagerImpl(WorkManagerInterface):
     def __init__(
         self,
@@ -87,7 +98,10 @@ class WorkManagerImpl(WorkManagerInterface):
         second outbox row of that write, which landed in the same statement as
         the entity's. No context, since the relay runs without a principal: the
         actor comes from the row, and so does the idempotency key, which is the
-        row's id and the same on every run of the relay. The lane is the
+        row's id and the same on every run of the relay. The request that
+        caused the work and its trace context come from the row too, which
+        names the request that made the write: the row is the whole handoff,
+        so nothing here is minted afresh. The lane is the
         default one; a row carries no routing of its own."""
         kind = row.kind.removeprefix(WORK_ROW_PREFIX)
         if kind not in {k.value for k in WorkKind}:
@@ -104,6 +118,8 @@ class WorkManagerImpl(WorkManagerInterface):
                 kind=WorkKind(kind),
                 target_id=row.target_id,
                 idempotency_key=row.id,
+                request_id=row.request_id,  # the request that made the write
+                traceparent=row.traceparent,  # its trace context, for the run's link
                 payload=row.payload,
                 status=WorkStatus.QUEUED,
                 available_at=now,
@@ -149,7 +165,9 @@ class WorkManagerImpl(WorkManagerInterface):
                 return None
             org_id, item = found
             try:
-                ctx = await self._tenancy.service_context(rctx, org_id, item.created_by)
+                ctx = await self._tenancy.service_context(
+                    caused_by(rctx, item), org_id, item.created_by
+                )
             except InvalidCredential as error:
                 # The claim is written and the tenant is gone: no retry can
                 # bring it back, and a row left claimed would stay so, since

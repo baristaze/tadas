@@ -38,7 +38,8 @@ field and forbids extra ones.
 
 The context model is two orthogonal ideas. The stages are four frozen
 types ordered by evidence: `RequestContext` (a request exists: its id,
-the calling app, the trace id), `IdentityContext` (a person is verified
+the calling app, the trace id, and the request that caused it where a
+handoff named one, empty at the edge), `IdentityContext` (a person is verified
 by their own sign-in; no tenant, on purpose), `OpContext` (a membership
 is established: the user, the org, the role and its permissions, the
 credential), and `OperatorContext` (an identity on the operator allowlist;
@@ -144,9 +145,14 @@ context on keeps the stage the callee needs.
   idempotency key is reported the same way and never raised as a driver
   error, and the manager reads that row back by the key, which is what
   lets an enqueue that runs twice under one key leave one item. A fresh
-  row publishes `work_available`. The claim is one `SELECT ... FOR UPDATE
+  row publishes `work_available`. An item carries the request that caused
+  the work and that request's `traceparent`, both as constructed: the
+  relayed enqueue reads them off the outbox row of the write and a direct
+  create off its caller's context, and neither enqueue mints one. The
+  claim is one `SELECT ... FOR UPDATE
   SKIP LOCKED` statement on the lane that mints a `claim_token` on the row
-  and returns the enqueuer's principal. Every transition (complete, fail,
+  and returns the enqueuer's principal, under a request stage of its own
+  that names the item's request as its `caused_by_request_id`. Every transition (complete, fail,
   defer, release, extend_lease) is conditional on the token in the
   statement itself, not on the worker's name, because one worker can hold
   one item twice across a requeue: a worker whose lease has passed is
@@ -272,8 +278,9 @@ context on keeps the stage the callee needs.
   pending lease, a marker no retry came back for.
 - `outbox`: the transactional outbox. A manager that writes a core row
   hands the storage the `OutboxRow`s that announce it (`org_id`, `kind`,
-  `target_id`, the record's snapshot as `payload`, the actor and the
-  request) as one tuple, and the storage base inserts them all in one
+  `target_id`, the record's snapshot as `payload`, the actor, the
+  request, and that request's `traceparent`, read off the tracer, since
+  the context carries the trace id and a span links to the header) as one tuple, and the storage base inserts them all in one
   commit (`_insert(..., outbox_rows)` for a create, which
   reports an existing id and changes nothing then; `_upsert(...,
   outbox_rows)` for an update; `core` role). An entity change is one
@@ -569,7 +576,17 @@ everything in-process for tests.
   `TADAS_SENTRY_DSN` is set: unhandled exceptions and ERROR log lines,
   tagged with `service` and `request_id`), tracing (OpenTelemetry, on only
   when `TADAS_OTEL_ENDPOINT` is set), and Prometheus metrics, all from
-  `tadas.infra.observability`.
+  `tadas.infra.observability`. Booting the reporting also names the
+  process, the one boot step every process makes with the service and the
+  environment in hand, so every log line carries both, the request id, and
+  the request that caused it where a handoff named one; one filter
+  attaches all four and no call site passes any.
+- Two processes raise spans: the API's middleware opens the server span
+  per request, and the worker opens one per run of a work item. The run's
+  span links to the trace context the item carried instead of becoming its
+  child, because a durable queue holds an item well past the end of the
+  request that filled it; an item that carries none starts a trace of its
+  own, which is what a process with no tracer configured does anyway.
 - `apps/portal` (`@tadas/portal`): React, Vite, TanStack Query,
   Zustand; sign-in, the tasks screen at `/` (My and Team's tasks, open in
   manual order and done newest first, both paged by the server's cursor

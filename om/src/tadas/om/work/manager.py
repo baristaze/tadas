@@ -15,7 +15,10 @@ class WorkManagerInterface(ABC):
     @abstractmethod
     async def enqueue(self, ctx: OpContext, item: WorkItem) -> WorkItem:
         """A create: the copy stamps the actor, the timestamps, status QUEUED, and
-        zero attempts, and clears every claim field, whatever the caller sent. An
+        zero attempts, and clears every claim field, whatever the caller sent.
+        The request that caused the work and its trace context are the item's,
+        constructed by the caller from its own context, and the copy leaves
+        them alone. An
         id already written returns the row as stored, so a retried enqueue never
         resets a claim, and so does a reused idempotency key: the insert reports
         it and the manager reads the row back. Raises ValidationFailed when the
@@ -27,7 +30,9 @@ class WorkManagerInterface(ABC):
         """Platform-internal: the enqueue of a work item that follows a core write,
         which the relay makes from the row of kind `work.<kind>` that rode that
         write. It takes no context, because the relay runs without a principal,
-        and stamps the actor from the row. The row's id is the item's
+        and stamps the actor from the row, along with the request that made the
+        write and that request's trace context, which the run names as its
+        cause and links its spans to. The row's id is the item's
         `idempotency_key`, the same on every run of the relay, so a relay that
         runs twice and a caller that retries meet one row under one key. Raises
         ValidationFailed when the row names a kind this build does not know or
@@ -45,7 +50,10 @@ class WorkManagerInterface(ABC):
     ) -> tuple[OpContext, WorkItem] | None:
         """Platform-internal: claims the oldest available item on the lane and rebuilds the
         enqueuer's principal under the service role, refining the request stage the
-        worker minted for this claim; returns the context with the item. An item
+        worker minted for this claim; returns the context with the item. The
+        stage it returns names the item's `request_id` as its
+        `caused_by_request_id`, so the run names both the request it is and the
+        request that caused it. An item
         whose tenant is gone cannot be run and cannot be retried into existence:
         it is failed in the same call, with the reason, and the claim moves on
         to the next item, so no row stays claimed with nobody to settle it."""

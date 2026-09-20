@@ -1,7 +1,8 @@
 """The worker loop: wake on WORK_AVAILABLE with a short poll fallback, claim
-on the lane while a slot is free, run each item as a task that renews its
-lease and cancels itself when the lease is lost or renewal keeps failing,
-heartbeat liveness,
+on the lane while a slot is free, run each item as a task that names the
+request that caused the work, raises a span linked to that request's trace,
+renews its lease and cancels itself when the lease is lost or renewal keeps
+failing, heartbeat liveness,
 sweep on a timer (stale leases, the outbox, done outbox rows), and drain
 first on stop."""
 
@@ -11,8 +12,16 @@ import logging
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import timedelta
 
+from opentelemetry import trace
+from opentelemetry.trace import SpanKind
+
 from tadas.infra.cache import CacheInterface
-from tadas.infra.observability import OUTCOMES, request_id_var
+from tadas.infra.observability import (
+    OUTCOMES,
+    caused_by_request_id_var,
+    links_to,
+    request_id_var,
+)
 from tadas.infra.topics import TopicPayload, Topics, TopicsInterface, WorkAvailablePayload
 from tadas.om.base import EMPTY_UUID, Platform, new_id
 from tadas.om.exceptions import LeaseLost, NotFound
@@ -23,6 +32,13 @@ from tadas.om.work.types.handler import WorkHandlerInterface
 from tadas.om.work.types.work_item import WorkItem, WorkKind
 
 log = logging.getLogger(__name__)
+
+tracer = trace.get_tracer("tadas.workers.maintenance")
+"""Resolved against whatever provider boot configured; the no-op one otherwise."""
+
+REQUEST_ID_ATTRIBUTE = "tadas.request_id"
+CAUSED_BY_ATTRIBUTE = "tadas.caused_by_request_id"
+WORK_ITEM_ATTRIBUTE = "tadas.work_item_id"
 
 PurgeStep = Callable[[OpContext], Awaitable[int]]
 """A manager's `purge_deleted(ctx)`: the one hard delete, per tenant, after retention."""
@@ -177,12 +193,41 @@ class WorkerLoop:
 
     async def _run_item(self, ctx: OpContext, item: WorkItem) -> None:
         # The claim refined the request stage minted for it; every log line of
-        # the run carries its request id, the way the API's middleware does.
+        # the run carries its request id, the way the API's middleware does,
+        # and the request that caused the work beside it.
         token = request_id_var.set(str(ctx.request_id))
+        cause = caused_by_request_id_var.set(
+            str(ctx.caused_by_request_id) if ctx.caused_by_request_id is not None else None
+        )
         try:
-            await self._handle(ctx, item)
+            # The run's span, linked to the trace of the request that filled
+            # the queue and not a child of it: the item waited in a durable
+            # queue, which holds it well past the end of that request, so the
+            # causal edge joins two traces instead of stretching one over
+            # both. An item with no trace context on it starts a trace here.
+            with tracer.start_as_current_span(
+                f"work {item.kind.value}",
+                kind=SpanKind.CONSUMER,
+                links=links_to(item.traceparent),
+                attributes=self._span_attributes(ctx, item),
+            ):
+                await self._handle(ctx, item)
         finally:
+            caused_by_request_id_var.reset(cause)
             request_id_var.reset(token)
+
+    @staticmethod
+    def _span_attributes(ctx: OpContext, item: WorkItem) -> dict[str, str]:
+        """The run's two requests and the item it advances. The cause is there
+        only where the handoff named one; an attribute with nothing in it says
+        less than no attribute."""
+        attributes = {
+            REQUEST_ID_ATTRIBUTE: str(ctx.request_id),
+            WORK_ITEM_ATTRIBUTE: str(item.id),
+        }
+        if ctx.caused_by_request_id is not None:
+            attributes[CAUSED_BY_ATTRIBUTE] = str(ctx.caused_by_request_id)
+        return attributes
 
     async def _handle(self, ctx: OpContext, item: WorkItem) -> None:
         handler = self._handlers.get(item.kind)

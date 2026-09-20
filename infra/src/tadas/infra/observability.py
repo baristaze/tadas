@@ -6,6 +6,7 @@ import json
 import logging
 import sys
 from contextvars import ContextVar
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -15,6 +16,8 @@ from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExport
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.trace import Link
+from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
 
 request_id_var: ContextVar[str | None] = ContextVar("tadas_request_id", default=None)
@@ -27,6 +30,18 @@ handed; nothing decides anything from this variable. So the boundary is a rule:
 it is read only here, and an entry point that sets it resets its token in a
 `finally`, so it never outlives the unit of work that set it. Both halves are
 checked by `infra/tests/test_observability_boundary.py` rather than trusted."""
+
+caused_by_request_id_var: ContextVar[str | None] = ContextVar(
+    "tadas_caused_by_request_id", default=None
+)
+"""The request that caused the work an entry point runs, where a handoff named
+one; empty at the edge, where nothing caused the request.
+
+It is the request id's sibling and it lives under the same boundary: read only
+here, set only by an entry point that resets its token in a `finally`, and
+authoritative nowhere. The stage the work runs under is what an operation
+reads, `caused_by_request_id` on it; this variable exists so the log lines of
+a run name its cause for free."""
 
 HTTP_REQUESTS = Counter(
     "tadas_http_requests_total",
@@ -43,9 +58,37 @@ OUTCOMES = Counter(
 )
 
 
+@dataclass(frozen=True)
+class ProcessIdentity:
+    """Who wrote a log line: the service and the environment it ran in. One
+    query reads across processes on these two, so every line carries them."""
+
+    service: str = "unknown"
+    environment: str = "unknown"
+
+
+_process = ProcessIdentity()
+
+
+def name_process(service: str, environment: str) -> None:
+    """Names the process for every line it writes from here on. Called once at
+    boot, with the values settings already hand the sinks; the filter reads
+    the answer instead of the environment, so no call site chooses and no
+    formatter reads `os.environ`."""
+    global _process
+    _process = ProcessIdentity(service=service, environment=environment)
+
+
 class RequestIdFilter(logging.Filter):
+    """The fields no call site passes by hand: the process on every line, the
+    request on the lines a request wrote, and the request that caused it where
+    a handoff named one."""
+
     def filter(self, record: logging.LogRecord) -> bool:
+        record.service = _process.service
+        record.environment = _process.environment
         record.request_id = request_id_var.get() or "-"
+        record.caused_by_request_id = caused_by_request_id_var.get() or "-"
         return True
 
 
@@ -56,8 +99,15 @@ class JsonFormatter(logging.Formatter):
             "level": record.levelname,
             "logger": record.name,
             "message": record.getMessage(),
+            "service": getattr(record, "service", _process.service),
+            "environment": getattr(record, "environment", _process.environment),
             "request_id": getattr(record, "request_id", "-"),
         }
+        # Only where a handoff named one: a line with no cause says so by
+        # carrying no field, rather than by carrying an empty one.
+        caused_by = getattr(record, "caused_by_request_id", "-")
+        if caused_by != "-":
+            line["caused_by_request_id"] = caused_by
         if record.exc_info:
             line["exception"] = self.formatException(record.exc_info)
         return json.dumps(line)
@@ -84,7 +134,12 @@ def configure_error_reporting(
 ) -> None:
     """Sentry-compatible reporting (GlitchTip locally), only when a DSN is set.
     Unhandled exceptions and ERROR log records become events, tagged with the
-    service and the request id; traces stay with OpenTelemetry."""
+    service and the request id; traces stay with OpenTelemetry.
+
+    It names the process first, whatever the DSN says: this is the one boot
+    step every process makes with both the service and the environment in
+    hand, and the log lines need them even where no reporting is configured."""
+    name_process(service_name, environment)
     if not dsn:
         return
 
@@ -129,6 +184,36 @@ def current_trace_id() -> str | None:
     if not span_context.is_valid:
         return None
     return format(span_context.trace_id, "032x")
+
+
+TRACEPARENT = "traceparent"
+_propagator = TraceContextTextMapPropagator()
+
+
+def current_traceparent() -> str | None:
+    """The W3C `traceparent` of the span in progress, which is the form a
+    handoff carries: an id names a trace, and only the header carries what a
+    later span links to. Empty when no tracer is configured or no span is
+    open, and the far side then starts a trace of its own."""
+    carrier: dict[str, str] = {}
+    _propagator.inject(carrier)
+    return carrier.get(TRACEPARENT)
+
+
+def links_to(traceparent: str | None) -> tuple[Link, ...]:
+    """The link a span raises against the trace context a handoff carried. A
+    link and not a parent: a durable queue holds an item well past the end of
+    the request that filled it, so the causal edge joins two traces instead of
+    stretching one over both. Empty when the handoff carried no trace context
+    or carried one this version cannot read, and the span then starts a trace
+    of its own."""
+    if not traceparent:
+        return ()
+    extracted = _propagator.extract({TRACEPARENT: traceparent})
+    span_context = trace.get_current_span(extracted).get_span_context()
+    if not span_context.is_valid:
+        return ()
+    return (Link(span_context),)
 
 
 def metrics_exposition() -> tuple[bytes, str]:

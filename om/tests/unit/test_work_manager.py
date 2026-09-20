@@ -84,6 +84,47 @@ async def test_enqueue_publishes_and_claim_returns_the_enqueuers_context(
     assert await managers.work.claim(request(), "default", [WorkKind.NOOP], "w1", LEASE) is None
 
 
+async def test_the_run_names_the_request_that_caused_it_and_keeps_its_own(
+    managers: Managers, ctx: OpContext
+) -> None:
+    """The stage a claim runs under is a new request that names the causing one.
+    The enqueue leaves the item's cause and trace context as constructed: they
+    are the item's, not the enqueue's."""
+    causing = new_id()
+    traceparent = f"00-{'a' * 32}-{'b' * 16}-01"
+    item = make_item().model_copy(
+        update={
+            "created_by": ctx.user_id,
+            "request_id": causing,
+            "traceparent": traceparent,
+        }
+    )
+    enqueued = await managers.work.enqueue(ctx, item)
+    assert (enqueued.request_id, enqueued.traceparent) == (causing, traceparent)
+
+    claim_request = request()
+    claimed = await managers.work.claim(claim_request, "default", [WorkKind.NOOP], "w1", LEASE)
+    assert claimed is not None
+    work_ctx, claimed_item = claimed
+    assert work_ctx.request_id == claim_request.request_id, "the run has a request of its own"
+    assert work_ctx.caused_by_request_id == causing, "and it names the one that caused it"
+    assert claimed_item.traceparent == traceparent, "what the run links its span to"
+    await managers.work.complete(work_ctx, claimed_item)
+
+
+async def test_an_item_that_names_no_causing_request_leaves_the_field_empty(
+    managers: Managers, ctx: OpContext
+) -> None:
+    """A required reference nobody owns is EMPTY_UUID on the row; the stage
+    carries no cause at all, the way a request that arrived at the edge does."""
+    item = make_item().model_copy(update={"created_by": ctx.user_id})
+    assert item.request_id == EMPTY_UUID and item.traceparent is None
+    await managers.work.enqueue(ctx, item)
+    claimed = await managers.work.claim(request(), "default", [WorkKind.NOOP], "w1", LEASE)
+    assert claimed is not None
+    assert claimed[0].caused_by_request_id is None
+
+
 async def test_defer_and_release_hand_back_without_spending_an_attempt(
     managers: Managers, ctx: OpContext
 ) -> None:
