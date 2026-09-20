@@ -27,7 +27,13 @@ class QueueDepth(InfraModel):
 
 class QueuesInterface(ABC):
     @abstractmethod
-    async def send(self, queue: Queues, body: bytes) -> str: ...
+    async def send(self, queue: Queues, body: bytes) -> None:
+        """Returns nothing, for the reason `publish` does: the observable id is
+        the producer-set idempotency key the body carries, and a broker-assigned
+        id carries no durable meaning across retries and replays. The `receipt`
+        on a `QueueMessage` is not that id; it is the handle of one delivery,
+        which `delete` and `change_visibility` take."""
+        ...
 
     @abstractmethod
     async def receive(
