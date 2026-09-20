@@ -56,7 +56,10 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
         return self._get(self._orgs, org_id, org_id)
 
     async def read_org_by_slug(self, slug: str) -> Org | None:
-        return next((org for _, org in self._orgs.values() if org.slug == slug), None)
+        return next(
+            (org for _, org in self._orgs.values() if org.slug == slug and org.deleted_at is None),
+            None,
+        )
 
     async def read_orgs(self, limit: int, after_id: UUID | None = None) -> list[Org]:
         orgs = [org for _, org in self._rows_across_tenants(self._orgs)]
@@ -65,18 +68,24 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
         return orgs[:limit]
 
     async def write_org(self, org_id: UUID, org: Org) -> None:
-        self._require_free(
-            self._every(self._orgs), org, lambda other: other.slug == org.slug, "uq_orgs_slug"
-        )
+        self._require_slug_free(org)
         self._put(self._orgs, org_id, org)
+
+    def _require_slug_free(self, org: Org) -> None:
+        # uq_orgs_slug: unique among the living, so a deleted org frees its slug.
+        if org.deleted_at is None:
+            self._require_free(
+                self._every(self._orgs),
+                org,
+                lambda other: other.slug == org.slug and other.deleted_at is None,
+                "uq_orgs_slug",
+            )
 
     async def create_org_with_owner(
         self, org_id: UUID, org: Org, user: User, membership: Membership
     ) -> None:
         async with self._lock:
-            self._require_free(
-                self._every(self._orgs), org, lambda other: other.slug == org.slug, "uq_orgs_slug"
-            )
+            self._require_slug_free(org)
             self._require_live_identity_free(org_id, user)
             self._require_membership_free(org_id, membership)
             for table, entity in ((self._orgs, org), (self._users, user)):
@@ -149,12 +158,15 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
         self._put(self._memberships, org_id, membership, outbox_row)
 
     def _require_membership_free(self, org_id: UUID, membership: Membership) -> None:
-        self._require_free(
-            self._rows(self._memberships, org_id),
-            membership,
-            lambda other: other.user_id == membership.user_id,
-            "uq_memberships_org_id_user_id",
-        )
+        # uq_memberships_org_id_user_id: one live membership per user in a tenant;
+        # an ended one frees the key.
+        if membership.deleted_at is None:
+            self._require_free(
+                self._rows(self._memberships, org_id),
+                membership,
+                lambda other: other.user_id == membership.user_id and other.deleted_at is None,
+                "uq_memberships_org_id_user_id",
+            )
 
     async def read_sessions(
         self, org_id: UUID, user_id: UUID, live_at: datetime, limit: int

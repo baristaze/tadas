@@ -51,7 +51,7 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
             return None if row is None else to_model(row, Org)
 
     async def read_org_by_slug(self, slug: str) -> Org | None:
-        stmt = select(Orgs).where(Orgs.slug == slug)
+        stmt = select(Orgs).where(Orgs.slug == slug, Orgs.deleted_at.is_(None))
         async with self._session_for(stmt) as session:
             row = (await session.execute(stmt)).scalar_one_or_none()
             return None if row is None else to_model(row, Org)

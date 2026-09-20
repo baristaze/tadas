@@ -190,6 +190,41 @@ class TenancyStorageContract:
         await storage.write_membership(org.id, promoted)
         assert await storage.read_membership_for_user(org.id, membership.user_id) == promoted
 
+    # A unique key on a soft-deletable table is unique among the living: a
+    # deleted row frees its key, the same value is created again, and a second
+    # live row is still refused.
+
+    async def test_a_deleted_org_frees_its_slug(self, storage: TenancyStorageInterface) -> None:
+        org = make_org()
+        await storage.write_org(org.id, org)
+        gone = org.model_copy(update={"deleted_at": utcnow(), "deleted_by": new_id()})
+        await storage.write_org(org.id, gone)
+        assert await storage.read_org_by_slug(org.slug) is None
+        again = make_org().model_copy(update={"slug": org.slug})
+        await storage.write_org(again.id, again)
+        assert await storage.read_org_by_slug(org.slug) == again
+        assert await storage.read_org(org.id) == gone
+        other = make_org("Other").model_copy(update={"slug": org.slug})
+        with pytest.raises(UniqueKeyTaken):
+            await storage.write_org(other.id, other)
+        assert await storage.read_org(other.id) is None
+
+    async def test_an_ended_membership_frees_its_user(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        org = make_org()
+        membership = make_membership(new_id())
+        await storage.write_membership(org.id, membership)
+        ended = membership.model_copy(update={"deleted_at": utcnow(), "deleted_by": new_id()})
+        await storage.write_membership(org.id, ended)
+        assert await storage.read_membership_for_user(org.id, membership.user_id) is None
+        again = make_membership(membership.user_id)
+        await storage.write_membership(org.id, again)
+        assert await storage.read_membership_for_user(org.id, membership.user_id) == again
+        with pytest.raises(UniqueKeyTaken):
+            await storage.write_membership(org.id, make_membership(membership.user_id))
+        assert await storage.read_memberships(org.id, limit=10) == [again]
+
     async def test_session_token_hash_is_unique(self, storage: TenancyStorageInterface) -> None:
         org, other_org = make_org(), make_org("Other")
         token_hash = uuid4().hex

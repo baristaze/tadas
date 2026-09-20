@@ -1,4 +1,4 @@
-# ADR 0008: Tasks carry a version, and every write names the one it read
+# ADR 0009: Tasks carry a version, and every write names the one it read
 
 **Status**: accepted (2026-09-19)
 

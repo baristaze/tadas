@@ -216,6 +216,29 @@ async def test_bootstrap_refuses_a_taken_slug(manager: TenancyManagerImpl) -> No
         await manager.bootstrap(request(), "Acme 2", "acme", "bob@example.test", "pw-1234", "Bob")
 
 
+async def test_a_deleted_org_frees_its_slug(
+    manager: TenancyManagerImpl, operator: TenancyOperatorManagerImpl
+) -> None:
+    _, org = await manager.bootstrap(
+        request(), "Acme", "acme", "ann@example.test", "pw-1234", "Ann"
+    )
+    await manager.bootstrap(
+        request(), "Ops", "ops", "root@example.test", "pw-1234", "Root", operator=True
+    )
+    admin = await manager.admit_operator(
+        await manager.authenticate_login(
+            request(), (await manager.login(request(), "root@example.test", "pw-1234")).token
+        )
+    )
+    await operator.delete_org(admin, org.id)
+    _, again = await manager.bootstrap(
+        request(), "Acme", "acme", "bob@example.test", "pw-1234", "Bob"
+    )
+    assert again.id != org.id and again.slug == "acme"
+    with pytest.raises(Conflict):
+        await manager.bootstrap(request(), "Acme 3", "acme", "cat@example.test", "pw-1234", "Cat")
+
+
 async def test_login_rejects_a_wrong_password(manager: TenancyManagerImpl) -> None:
     await manager.bootstrap(request(), "Acme", "acme", "ann@example.test", "pw-1234", "Ann")
     with pytest.raises(InvalidCredential):

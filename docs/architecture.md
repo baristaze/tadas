@@ -11,13 +11,26 @@ The `tadas-om` distribution holds the base classes (`Platform`, the
 mixins, `new_id`, `utcnow`), the context model in `opcontext.py` with
 `Role`, `Permission`, `CredentialKind`, and `AppType` declared beside it,
 the exception root, the storage root with its Postgres and memory impls,
-and one namespace per swimlane. `Trackable` records who created a row
-and who last changed it (`updated_by`); every update sets it from the
-context. The copy on update starts from the stored row: the caller's
-entity supplies the fields a caller may change, and `PROVENANCE_FIELDS`
-(a constant beside the mixins naming `created_at`, `created_by`,
-`deleted_at`, and `deleted_by`) stay as stored, so no caller rewrites
-who made a row or brings a deleted one back by sending an entity. The
+and one namespace per swimlane. `Created` (`created_at` alone) is the
+base of `Trackable` and is composed alone by the rows the platform
+writes for itself, the outbox row, the idempotency record, and the
+socket ticket, as the guideline's "Naming Entities" declares
+(`OutboxRow(Identifiable, Created)`, `IdempotencyMarker(Identifiable,
+Created)`; Tadas names the marker `IdempotencyRecord`, the same row
+under its own name). No person stands behind such a row, so it carries
+no `created_by`, and what the platform stamps on it later is a field
+named for what happened (`done_at`, `redeemed_at`). `Trackable` records
+who created a row and who last changed it (`updated_by`); every update
+sets it from the context. The copy on update starts from the stored
+row: the caller's entity supplies the fields a caller may change, and
+`PROVENANCE_FIELDS` (a constant beside the mixins naming `created_at`,
+`created_by`, `deleted_at`, and `deleted_by`) stay as stored, so no
+caller rewrites who made a row or brings a deleted one back by sending
+an entity. A copy that carries the caller's dump is
+`Task.model_validate` over the stored dump and the caller's, never
+`model_copy`, which does not validate; `model_copy` is for values
+constructed of the field's own type (`om/tests/unit/test_update_copy.py`
+holds the rule). The
 API's partial update is translation: it merges only the request's set
 fields onto the stored entity, and the request type names no provenance
 field and forbids extra ones.
@@ -74,7 +87,14 @@ context on keeps the stage the callee needs.
   `UniqueKeyTaken`, a `Conflict` (409), so a race the read did not see is
   never a driver error and never mistaken for a retry: the Postgres
   create primitive reports an existing id only when the primary key is the
-  violated constraint. The seeding transitions are named atomic creates:
+  violated constraint. A unique key on a soft-deletable table is unique
+  among the living: the org slug, the user's identity in a tenant, and
+  the membership are partial unique indexes `WHERE deleted_at IS NULL`,
+  so a deleted org frees its slug, a removed member frees the identity
+  and the membership, and the same value can be created again; the slug
+  lookup reads the living. The api key hash stays a full index because it
+  digests a fresh random secret that is never created again. The seeding
+  transitions are named atomic creates:
   `bootstrap` lands the org, its first user, and the owner's membership in
   one commit (`create_org_with_owner`), `add_member` the user, the
   membership, and the outbox row (`create_member`), so a concurrent
@@ -116,7 +136,7 @@ context on keeps the stage the callee needs.
   placement rules are pure functions in `tasks.rules`, which the memory
   impl calls and the Postgres impl mirrors in SQL. A task carries a
   `version` because it is edited from two windows and two terminals at
-  once ([ADR 0008](adr/0008-tasks-carry-a-version.md)): the manager's
+  once ([ADR 0009](adr/0009-tasks-carry-a-version.md)): the manager's
   copy increments it on update, move, and soft delete, and the storage
   write is a compare-and-set, `WHERE version = :expected` in one
   statement in Postgres and the same check and write under the lock in
@@ -191,7 +211,12 @@ context on keeps the stage the callee needs.
   the manager then calls `OutboxRelayInterface.relay(org_id, row)`,
   which appends the `Event` under the row's id, publishes
   `entity_changed` with `(kind, target_id, seq)`, and marks the row done.
-  A relay that fails is logged and counted, never raised; the
+  Tadas relays in the request path, the step the guideline names as the
+  one a system takes when push latency earns it, and pays the round
+  trips it names for a push that arrives in milliseconds; the sweep
+  alone, on an interval of a second or two, is the cheaper first step
+  the guideline names, and Tadas keeps the sweep as the fallback
+  instead. A relay that fails is logged and counted, never raised; the
   maintenance sweep claims whatever is pending. The claim is one
   statement (`FOR UPDATE SKIP LOCKED`, oldest first) over rows neither
   done nor failed, whose next attempt is due, and older than the grace
@@ -209,9 +234,16 @@ context on keeps the stage the callee needs.
   `activity` role: `Event(Identifiable)` with `seq` (per tenant, gapless,
   assigned by the append, the one number storage assigns), `kind`
   (`<namespace>.<entity>.<action>`, or an audit kind), `target_id`, a
-  `payload`, and the actor and request that produced it. The append is
+  `payload`, and the actor and request that produced it. The append
+  takes the number from the tenant's cursor row in `event_cursors`,
+  `head + 1` under the row's lock inside the append's own transaction,
+  so two appends to one tenant queue on the row and a rollback returns
+  the number with it; it never computes `MAX(seq) + 1` and retries on
+  the unique `(org_id, seq)` index, which stays as a guard. The cursor
+  row is also the tenant's head seq: `read_head`, the number the first
+  frame and every pong carry, reads that one row. The append is
   idempotent on the event id, so relaying an outbox row twice appends
-  once. No update, no delete. The entity events reach the stream through
+  once and consumes no number. No update, no delete. The entity events reach the stream through
   the event storage, from the outbox relay; the manager's `append` is for
   an audit entry (the work manager's dead letter), requires `WRITE`, and
   stamps the actor, the request, and the app from the context, never
@@ -224,7 +256,7 @@ pool, and the migration chain. Migrations are hand-written SQL under
 and `queue` have chains today, and `admin` has no table yet. Optimistic
 concurrency stays opt-in: `tasks` is the one table that carries a
 `version`, because a task is edited from two windows and two terminals
-at once ([ADR 0008](adr/0008-tasks-carry-a-version.md)); every other
+at once ([ADR 0009](adr/0009-tasks-carry-a-version.md)); every other
 table has no concurrent edits that matter, so there the last writer
 wins.
 
@@ -597,8 +629,9 @@ take-overs run at once through `asyncio.gather` and exactly one wins,
 over memory in the fast gate and over Postgres in the integration job.
 The same contracts hold every unique key the schema declares to both
 impls (a duplicate raises `UniqueKeyTaken` and the row that holds the
-key is unchanged; an update by copy of that row passes), and show that
-a named atomic create lands whole or not at all.
+key is unchanged; an update by copy of that row passes; a key on a
+soft-deletable table is created, deleted, and created again), and show
+that a named atomic create lands whole or not at all.
 `services/api/tests/test_public_types.py` reads the emitted OpenAPI
 document and fails on a view that carries a token, a key, or a ticket
 without the `Issued` prefix.
@@ -617,8 +650,8 @@ See [docs/adr/](adr/).
 
 ### Considered
 
-Shapes a sibling system (xtadas, the one-shot scaffold benchmark) has and
-this one does not, judged and not taken, or not yet:
+Shapes a sibling system, scaffolded in one shot from the guideline, has
+and this one does not, judged and not taken, or not yet:
 
 - **A TypeScript client as its own workspace package** (`clients/api-client`
   beside `clients/python`). "Clients Live in One Place" read literally; the

@@ -3,9 +3,8 @@ frozen model base, the system scope, and the two helpers a twin needs. Infra
 imports nothing from the object model; the object model imports infra."""
 
 from datetime import UTC, datetime
-from uuid import UUID
+from uuid import UUID, uuid7
 
-import uuid_utils
 from pydantic import BaseModel, ConfigDict
 
 SYSTEM_SCOPE = UUID(int=0)
@@ -15,7 +14,7 @@ the same UUID, and infra checks against it without importing the model."""
 
 def new_id() -> UUID:
     """A time-ordered UUID v7 as a standard-library UUID."""
-    return UUID(bytes=uuid_utils.uuid7().bytes)
+    return uuid7()
 
 
 def utcnow() -> datetime:
