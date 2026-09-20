@@ -702,7 +702,10 @@ class TenancyStorageContract:
             )
         # The two impls name the refusal differently (see
         # docs/runbooks/tenant-isolation.md); both refuse and both land nothing.
-        with pytest.raises((NotFound, TenantMismatch)):
+        # A row of another tenant is refused the way a row that is not there
+        # is, by both impls: the answer says nothing about whether it exists
+        # under someone else.
+        with pytest.raises(NotFound):
             await storage.remove_member(other.id, removed, ended, (make_user_row(other.id, bob),))
         assert await storage.read_user(org.id, bob.id) == bob
         assert await storage.read_membership_for_user(org.id, bob.id) == membership
