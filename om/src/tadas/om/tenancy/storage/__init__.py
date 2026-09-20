@@ -101,7 +101,11 @@ class TenancyStorageInterface(ABC):
         ...
 
     @abstractmethod
-    async def read_users(self, org_id: UUID, limit: int) -> list[User]: ...
+    async def read_users(self, org_id: UUID, after: UUID | None, limit: int) -> list[User]:
+        """The tenant's live users, by id ascending; a removed one is hidden.
+        `after` is the id the previous page ended on, and the page starts
+        strictly after it (`is_after_in_id_order`)."""
+        ...
 
     @abstractmethod
     async def read_user(self, org_id: UUID, user_id: UUID) -> User | None: ...
@@ -160,10 +164,11 @@ class TenancyStorageInterface(ABC):
 
     @abstractmethod
     async def read_api_keys(
-        self, org_id: UUID, limit: int, user_id: UUID | None = None
+        self, org_id: UUID, after: UUID | None, limit: int, user_id: UUID | None = None
     ) -> list[ApiKey]:
         """The tenant's unrevoked keys, newest first; only `user_id`'s when given,
-        filtered before the clamp."""
+        filtered before the clamp. `after` is the id the previous page ended
+        on, and the page starts strictly after it (`is_after_newest_first`)."""
         ...
 
     @abstractmethod

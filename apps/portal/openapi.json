@@ -64,6 +64,35 @@
         "title": "AddTaskRequest",
         "type": "object"
       },
+      "ApiKeyPageView": {
+        "description": "One page of the api key list, newest first; `next_cursor` as on\n`UserPageView`.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ApiKeyView"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "ApiKeyPageView",
+        "type": "object"
+      },
       "ApiKeyView": {
         "properties": {
           "created_at": {
@@ -786,6 +815,35 @@
         "title": "UpdateTaskRequest",
         "type": "object"
       },
+      "UserPageView": {
+        "description": "One page of the tenant's members. `next_cursor` fetches the next page\nand is null on the last one, so a client reads every member instead of\nwhatever a fixed limit happened to cover.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/UserView"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "UserPageView",
+        "type": "object"
+      },
       "UserView": {
         "properties": {
           "created_at": {
@@ -1056,6 +1114,22 @@
         "parameters": [
           {
             "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
             "name": "limit",
             "required": false,
             "schema": {
@@ -1118,11 +1192,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/ApiKeyView"
-                  },
-                  "title": "Response List Api Keys V1 Api Keys Get",
-                  "type": "array"
+                  "$ref": "#/components/schemas/ApiKeyPageView"
                 }
               }
             },
@@ -3210,6 +3280,22 @@
         "parameters": [
           {
             "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
             "name": "limit",
             "required": false,
             "schema": {
@@ -3272,11 +3358,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/UserView"
-                  },
-                  "title": "Response List Users V1 Users Get",
-                  "type": "array"
+                  "$ref": "#/components/schemas/UserPageView"
                 }
               }
             },

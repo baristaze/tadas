@@ -3,6 +3,7 @@ outside this package imports `schema` directly, so a regeneration that
 renames a generated class is absorbed here."""
 
 from tadas.client.schema import (
+    ApiKeyPageView,
     ApiKeyView,
     EventView,
     IssuedApiKeyView,
@@ -20,10 +21,12 @@ from tadas.client.schema import (
     TaskScope,
     TaskStatus,
     TaskView,
+    UserPageView,
     UserView,
 )
 
 __all__ = [
+    "ApiKeyPageView",
     "ApiKeyView",
     "EventView",
     "IssuedApiKeyView",
@@ -41,5 +44,6 @@ __all__ = [
     "TaskScope",
     "TaskStatus",
     "TaskView",
+    "UserPageView",
     "UserView",
 ]

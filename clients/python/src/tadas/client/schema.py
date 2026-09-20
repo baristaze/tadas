@@ -274,6 +274,25 @@ class TaskPageView(BaseModel):
     next_cursor: Annotated[str | None, Field(title='Next Cursor')]
 
 
+class UserPageView(BaseModel):
+    """
+    One page of the tenant's members. `next_cursor` fetches the next page
+    and is null on the last one, so a client reads every member instead of
+    whatever a fixed limit happened to cover.
+    """
+    items: Annotated[list[UserView], Field(title='Items')]
+    next_cursor: Annotated[str | None, Field(title='Next Cursor')]
+
+
+class ApiKeyPageView(BaseModel):
+    """
+    One page of the api key list, newest first; `next_cursor` as on
+    `UserPageView`.
+    """
+    items: Annotated[list[ApiKeyView], Field(title='Items')]
+    next_cursor: Annotated[str | None, Field(title='Next Cursor')]
+
+
 class IssuedLoginView(BaseModel):
     """
     Carries the freshly minted login credential in the clear, once.

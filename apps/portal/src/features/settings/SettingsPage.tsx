@@ -1,5 +1,6 @@
-import { Banner, Button, Card, Muted, Page, Table, TextField } from "../../design/kit";
+import { Banner, Button, Card, LinkButton, Muted, Page, Table, TextField } from "../../design/kit";
 import { AppNav } from "../../app/AppNav";
+import { tokens } from "../../design/tokens";
 import { useSettingsVm } from "./useSettingsVm";
 
 export function SettingsPage() {
@@ -52,6 +53,15 @@ export function SettingsPage() {
               ),
             ])}
           />
+          {vm.hasMoreKeys ? (
+            <div style={{ paddingTop: tokens.space.md }}>
+              {vm.loadingMoreKeys ? (
+                <Muted>Loading</Muted>
+              ) : (
+                <LinkButton onClick={vm.showMoreKeys}>Show more</LinkButton>
+              )}
+            </div>
+          ) : null}
         </Card>
       ) : null}
     </Page>

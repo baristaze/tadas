@@ -117,7 +117,13 @@ context on keeps the stage the callee needs.
   response time does not say which emails exist, and runs scrypt off the
   event loop. Sessions and api keys are listed newest first and filtered
   at the storage (live at the instant asked; a member's own keys), so a
-  page of dead rows never hides a live one; the purge also removes
+  page of dead rows never hides a live one. Members and api keys answer
+  a page (`UserPage`, `ApiKeyPage`: items, `has_more`) after a cursor,
+  which is the id the previous page ended on, since both lists are
+  ordered by id - members ascending, keys descending, an id being minted
+  in time order; the manager asks storage for one row past the page and
+  keeps it out, so a limit is a page size and never a ceiling past which
+  a live key stops being listed. The purge also removes
   sessions revoked or expired and socket tickets redeemed or expired past
   the retention. Login credentials are stored under the system scope,
   and the sweep mints a service context for that scope first, so the
@@ -173,7 +179,13 @@ context on keeps the stage the callee needs.
   version, and every write names the one the caller read: the update
   and the move in their bodies, the delete as a required `version` query
   parameter, since a DELETE has no body and `If-Match` would mean entity
-  tags, 412, and an `ETag` on every response.
+  tags, 412, and an `ETag` on every response. An assignee is held to
+  membership when the assignment changes, never over one already stored:
+  removing a member leaves their tasks assigned to them, and marking such
+  a task done or editing its title is an update about something else,
+  which a stale assignment must not refuse. Clearing the assignee is
+  always allowed, and the portal names a member it no longer lists
+  "someone".
 
 - `idempotency`: the durable outcome of a request the caller may retry,
   one record per (tenant, user, key); the gateway begins it before a
@@ -503,8 +515,9 @@ everything in-process for tests.
   Zustand; sign-in, the tasks screen at `/` (My and Team's tasks, open in
   manual order and done newest first, both paged by the server's cursor
   with Show more, inline edit, drag to reorder), settings at `/settings`
-  (members, api keys, sign-out, which revokes the server session and
-  empties the query cache with the token), and one realtime channel that
+  (members, api keys with Show more, sign-out, which revokes the server
+  session and empties the query cache with the token), and one realtime
+  channel that
   invalidates queries by the entity name inside a push's `kind`, or by
   the query that carries the entity (a membership, through `me`); the
   status says connecting from the moment a socket drops, degraded from

@@ -6,6 +6,7 @@ from tadas.om.exceptions import Conflict, NotFound, UniqueKeyTaken
 from tadas.om.outbox.storage import OutboxLandingInterface
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.storage.impl.memory_base import HasId, MemoryStorageBase, MemoryTable
+from tadas.om.tenancy.rules import is_after_in_id_order, is_after_newest_first
 from tadas.om.tenancy.storage import TenancyStorageInterface
 from tadas.om.tenancy.types.api_key import ApiKey
 from tadas.om.tenancy.types.identity import Identity
@@ -141,8 +142,11 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
             self._put(self._users, org_id, user, outbox_row)
             self._put(self._memberships, org_id, membership)
 
-    async def read_users(self, org_id: UUID, limit: int) -> list[User]:
-        return [u for u in self._rows(self._users, org_id) if u.deleted_at is None][:limit]
+    async def read_users(self, org_id: UUID, after: UUID | None, limit: int) -> list[User]:
+        live = [u for u in self._rows(self._users, org_id) if u.deleted_at is None]
+        if after is not None:
+            live = [u for u in live if is_after_in_id_order(u.id, after)]
+        return live[:limit]
 
     async def read_user(self, org_id: UUID, user_id: UUID) -> User | None:
         return self._get(self._users, org_id, user_id)
@@ -236,14 +240,17 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
         self._put(self._sessions, org_id, session, outbox_row)
 
     async def read_api_keys(
-        self, org_id: UUID, limit: int, user_id: UUID | None = None
+        self, org_id: UUID, after: UUID | None, limit: int, user_id: UUID | None = None
     ) -> list[ApiKey]:
         live = [
             k
             for k in self._rows(self._api_keys, org_id)
             if k.deleted_at is None and (user_id is None or k.user_id == user_id)
         ]
-        return live[::-1][:limit]
+        newest_first = live[::-1]
+        if after is not None:
+            newest_first = [k for k in newest_first if is_after_newest_first(k.id, after)]
+        return newest_first[:limit]
 
     async def read_api_key(self, org_id: UUID, api_key_id: UUID) -> ApiKey | None:
         return self._get(self._api_keys, org_id, api_key_id)

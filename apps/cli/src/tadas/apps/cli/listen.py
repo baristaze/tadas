@@ -47,7 +47,7 @@ class Names:
         self._names: dict[UUID, str] = {}
 
     async def load(self) -> None:
-        self._names = {u.id: u.display_name for u in await self._client.users()}
+        self._names = {u.id: u.display_name for u in await self._client.every_user()}
 
     def of(self, user_id: UUID | None) -> str:
         if user_id is None:

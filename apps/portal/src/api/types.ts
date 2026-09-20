@@ -5,6 +5,7 @@ type Schemas = components["schemas"];
 
 export type OrgView = Schemas["OrgView"];
 export type UserView = Schemas["UserView"];
+export type UserPageView = Schemas["UserPageView"];
 export type MeView = Schemas["MeView"];
 export type MembershipView = Schemas["MembershipView"];
 export type MembershipChoiceView = Schemas["MembershipChoiceView"];
@@ -14,6 +15,7 @@ export type ExchangeSessionRequest = Schemas["ExchangeSessionRequest"];
 export type IssuedSessionView = Schemas["IssuedSessionView"];
 export type SessionView = Schemas["SessionView"];
 export type ApiKeyView = Schemas["ApiKeyView"];
+export type ApiKeyPageView = Schemas["ApiKeyPageView"];
 export type AddApiKeyRequest = Schemas["AddApiKeyRequest"];
 export type IssuedApiKeyView = Schemas["IssuedApiKeyView"];
 export type IssuedTicketView = Schemas["IssuedTicketView"];

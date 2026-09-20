@@ -25,7 +25,8 @@ async def test_sign_in_round_trip(client: httpx.AsyncClient, owner: dict[str, st
     assert "manage_members" in body["permissions"]
 
     users = await client.get("/v1/users", headers=owner, params={"limit": 1000})
-    assert [u["email"] for u in users.json()] == [OWNER["email"]]
+    assert [u["email"] for u in users.json()["items"]] == [OWNER["email"]]
+    assert users.json()["next_cursor"] is None
     org = await client.get("/v1/orgs/current", headers=owner)
     assert org.json()["slug"] == "acme"
 
@@ -85,7 +86,7 @@ async def test_api_key_creation_replays_on_the_same_idempotency_key(
     assert first.json()["key"] and second.json() == {**first.json(), "key": None}
 
     keys = await client.get("/v1/api-keys", headers=owner)
-    assert [k["id"] for k in keys.json()] == [first.json()["api_key"]["id"]]
+    assert [k["id"] for k in keys.json()["items"]] == [first.json()["api_key"]["id"]]
 
     as_machine = await client.get(
         "/v1/me", headers={"Authorization": f"Bearer {first.json()['key']}"}
@@ -112,7 +113,7 @@ async def test_a_member_cannot_mint_a_service_key(
         )
         assert refused.status_code == 422, refused.text
         assert refused.json()["error"]["code"] == "validation_failed"
-    assert (await client.get("/v1/api-keys", headers=owner)).json() == []
+    assert (await client.get("/v1/api-keys", headers=owner)).json()["items"] == []
 
 
 async def test_a_crash_between_the_key_create_and_finish_reissues_the_secret(
@@ -141,14 +142,16 @@ async def test_a_crash_between_the_key_create_and_finish_reissues_the_secret(
     body = {"name": "ci", "role": "member"}
     first = await client.post("/v1/api-keys", headers=headers, json=body)
     assert first.status_code == 500 and crashed
-    keys = (await client.get("/v1/api-keys", headers=owner)).json()
+    keys = (await client.get("/v1/api-keys", headers=owner)).json()["items"]
     assert len(keys) == 1, "the create landed before the crash"
 
     retry = await client.post("/v1/api-keys", headers=headers, json=body)
     assert retry.status_code == 201, retry.text
     assert "Idempotent-Replayed" not in retry.headers
     assert retry.json()["api_key"]["id"] == keys[0]["id"]
-    assert (await client.get("/v1/api-keys", headers=owner)).json() == [retry.json()["api_key"]]
+    assert (await client.get("/v1/api-keys", headers=owner)).json()["items"] == [
+        retry.json()["api_key"]
+    ]
     as_machine = await client.get(
         "/v1/me", headers={"Authorization": f"Bearer {retry.json()['key']}"}
     )
@@ -253,7 +256,7 @@ async def test_members_are_promoted_and_removed_by_a_member_manager(
     assert removed.json()["id"] == str(bob.id)
     assert (await client.get("/v1/me", headers=as_bob)).status_code == 401
     users = await client.get("/v1/users", headers=owner)
-    assert [u["email"] for u in users.json()] == [OWNER["email"]]
+    assert [u["email"] for u in users.json()["items"]] == [OWNER["email"]]
     # The membership ended with the member: not listed, not changeable.
     memberships = await client.get("/v1/memberships", headers=owner)
     assert str(bob.id) not in [m["user_id"] for m in memberships.json()]
@@ -384,3 +387,52 @@ def test_realtime_channel_delivers_tenant_events(tmp_path: Path) -> None:
             with pytest.raises(WebSocketDisconnect) as refused:
                 ws.receive_json()
         assert refused.value.code == 4401
+
+
+async def test_the_key_list_pages_so_the_oldest_key_is_still_reachable(
+    client: httpx.AsyncClient, owner: dict[str, str]
+) -> None:
+    """A tenant with more live keys than one page holds: every one of them is
+    listed by following `next_cursor`, so the oldest can still be found and
+    revoked. A fixed limit would hide it, whatever the limit was set to."""
+    created = []
+    for index in range(12):
+        response = await client.post(
+            "/v1/api-keys", headers=owner, json={"name": f"key-{index}", "role": "member"}
+        )
+        assert response.status_code == 201, response.text
+        created.append(response.json()["api_key"]["id"])
+
+    listed: list[str] = []
+    cursor: str | None = None
+    while True:
+        params = {"limit": 5} | ({"cursor": cursor} if cursor else {})
+        page = await client.get("/v1/api-keys", headers=owner, params=params)
+        assert page.status_code == 200, page.text
+        listed += [k["id"] for k in page.json()["items"]]
+        cursor = page.json()["next_cursor"]
+        if cursor is None:
+            break
+    assert listed == created[::-1]
+
+    oldest = created[0]
+    revoked = await client.delete(f"/v1/api-keys/{oldest}", headers=owner)
+    assert revoked.status_code == 200 and revoked.json()["deleted_at"] is not None
+
+
+async def test_a_cursor_from_another_list_is_refused(
+    client: httpx.AsyncClient, container: AppContainer, owner: dict[str, str]
+) -> None:
+    """The cursor is opaque and names the list that issued it: the member
+    list's cursor is not the key list's, and neither is a made-up string."""
+    org_id = UUID((await client.get("/v1/orgs/current", headers=owner)).json()["id"])
+    await add_member(container, org_id, "bob@example.test", "pw-1234", Role.MEMBER)
+    users = await client.get("/v1/users", headers=owner, params={"limit": 1})
+    cursor = users.json()["next_cursor"]
+    assert cursor is not None
+
+    crossed = await client.get("/v1/api-keys", headers=owner, params={"cursor": cursor})
+    assert crossed.status_code == 422, crossed.text
+    assert crossed.json()["error"]["code"] == "validation_failed"
+    made_up = await client.get("/v1/users", headers=owner, params={"cursor": "not-a-cursor"})
+    assert made_up.status_code == 422, made_up.text

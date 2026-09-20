@@ -374,6 +374,17 @@ export interface components {
             /** Title */
             title: string;
         };
+        /**
+         * ApiKeyPageView
+         * @description One page of the api key list, newest first; `next_cursor` as on
+         *     `UserPageView`.
+         */
+        ApiKeyPageView: {
+            /** Items */
+            items: components["schemas"]["ApiKeyView"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+        };
         /** ApiKeyView */
         ApiKeyView: {
             /**
@@ -709,6 +720,18 @@ export interface components {
             /** Version */
             version: number;
         };
+        /**
+         * UserPageView
+         * @description One page of the tenant's members. `next_cursor` fetches the next page
+         *     and is null on the last one, so a client reads every member instead of
+         *     whatever a fixed limit happened to cover.
+         */
+        UserPageView: {
+            /** Items */
+            items: components["schemas"]["UserView"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+        };
         /** UserView */
         UserView: {
             /**
@@ -821,6 +844,7 @@ export interface operations {
     list_api_keys_v1_api_keys_get: {
         parameters: {
             query?: {
+                cursor?: string | null;
                 limit?: number;
             };
             header?: {
@@ -839,7 +863,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ApiKeyView"][];
+                    "application/json": components["schemas"]["ApiKeyPageView"];
                 };
             };
             /** @description Validation Error */
@@ -1646,6 +1670,7 @@ export interface operations {
     list_users_v1_users_get: {
         parameters: {
             query?: {
+                cursor?: string | null;
                 limit?: number;
             };
             header?: {
@@ -1664,7 +1689,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["UserView"][];
+                    "application/json": components["schemas"]["UserPageView"];
                 };
             };
             /** @description Validation Error */

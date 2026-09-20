@@ -141,13 +141,15 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
             session.add(to_row(outbox_row, OutboxRows, org_id=org_id))
             await session.commit()
 
-    async def read_users(self, org_id: UUID, limit: int) -> list[User]:
+    async def read_users(self, org_id: UUID, after: UUID | None, limit: int) -> list[User]:
         stmt = (
             select(Users)
             .where(Users.org_id == org_id, Users.deleted_at.is_(None))
             .order_by(Users.id)
             .limit(limit)
         )
+        if after is not None:
+            stmt = stmt.where(Users.id > after)  # is_after_in_id_order
         async with self._session_for(stmt) as session:
             result = await session.execute(stmt)
             return [to_model(row, User) for row in result.scalars()]
@@ -241,7 +243,7 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
         await self._upsert(Sessions, org_id, session, outbox_row)
 
     async def read_api_keys(
-        self, org_id: UUID, limit: int, user_id: UUID | None = None
+        self, org_id: UUID, after: UUID | None, limit: int, user_id: UUID | None = None
     ) -> list[ApiKey]:
         stmt = (
             select(ApiKeys)
@@ -251,6 +253,8 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
         )
         if user_id is not None:
             stmt = stmt.where(ApiKeys.user_id == user_id)
+        if after is not None:
+            stmt = stmt.where(ApiKeys.id < after)  # is_after_newest_first
         async with self._session_for(stmt) as session:
             result = await session.execute(stmt)
             return [to_model(row, ApiKey) for row in result.scalars()]

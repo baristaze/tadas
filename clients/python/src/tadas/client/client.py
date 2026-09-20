@@ -21,6 +21,7 @@ from tadas.client.types import (
     TaskScope,
     TaskStatus,
     TaskView,
+    UserPageView,
     UserView,
 )
 
@@ -182,9 +183,25 @@ class ApiClient:
     async def me(self) -> MeView:
         return MeView.model_validate(await self.request("GET", "/v1/me"))
 
-    async def users(self, limit: int = LIMIT_MAX) -> list[UserView]:
-        body = await self.request("GET", "/v1/users", params={"limit": limit})
-        return [UserView.model_validate(u) for u in cast(list[Any], body)]
+    async def users(self, *, cursor: str | None = None, limit: int = LIMIT_MAX) -> UserPageView:
+        params: dict[str, Any] = {"limit": limit}
+        if cursor:
+            params["cursor"] = cursor
+        body = await self.request("GET", "/v1/users", params=params)
+        return UserPageView.model_validate(body)
+
+    async def every_user(self, limit: int = LIMIT_MAX) -> list[UserView]:
+        """Every member, page after page until the API says there is no next
+        one: a caller that names people needs the whole list, and a fixed
+        limit would silently leave the rest unnamed."""
+        users: list[UserView] = []
+        cursor: str | None = None
+        while True:
+            page = await self.users(cursor=cursor, limit=limit)
+            users += page.items
+            cursor = page.next_cursor
+            if cursor is None:
+                return users
 
     # Tasks
 

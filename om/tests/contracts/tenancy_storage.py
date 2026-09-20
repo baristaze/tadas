@@ -1,7 +1,7 @@
 import asyncio
 from datetime import timedelta
 from unittest.mock import ANY
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -113,15 +113,15 @@ class TenancyStorageContract:
             await storage.write_session(tenant.id, make_session(new_id(), user.id, uuid4().hex))
             await storage.write_socket_ticket(tenant.id, make_socket_ticket(user.id, uuid4().hex))
         assert await storage.purge_tenant(org.id) == 5
-        assert await storage.read_users(org.id, limit=10) == []
+        assert await storage.read_users(org.id, None, limit=10) == []
         assert await storage.read_memberships(org.id, limit=10) == []
-        assert await storage.read_api_keys(org.id, limit=10) == []
+        assert await storage.read_api_keys(org.id, None, limit=10) == []
         assert await storage.read_org(org.id) == org
         assert await storage.purge_tenant(org.id) == 0
         # The other tenant is untouched.
-        assert len(await storage.read_users(other.id, limit=10)) == 1
+        assert len(await storage.read_users(other.id, None, limit=10)) == 1
         assert len(await storage.read_memberships(other.id, limit=10)) == 1
-        assert len(await storage.read_api_keys(other.id, limit=10)) == 1
+        assert len(await storage.read_api_keys(other.id, None, limit=10)) == 1
 
     async def test_reads_are_tenant_scoped(self, storage: TenancyStorageInterface) -> None:
         org_a, org_b = make_org("A"), make_org("B")
@@ -130,7 +130,7 @@ class TenancyStorageContract:
         await storage.write_user(org_a.id, user)
         assert await storage.read_user(org_a.id, user.id) == user
         assert await storage.read_user(org_b.id, user.id) is None
-        assert await storage.read_users(org_b.id, limit=10) == []
+        assert await storage.read_users(org_b.id, None, limit=10) == []
 
     async def test_write_refuses_another_tenant(self, storage: TenancyStorageInterface) -> None:
         org_a, org_b = make_org("A"), make_org("B")
@@ -155,9 +155,27 @@ class TenancyStorageContract:
         users = [make_user(make_identity().id) for _ in range(3)]  # one live user per identity
         for user in reversed(users):
             await storage.write_user(org.id, user)
-        listed = await storage.read_users(org.id, limit=10)
+        listed = await storage.read_users(org.id, None, limit=10)
         assert listed == sorted(users, key=lambda u: u.id)
-        assert len(await storage.read_users(org.id, limit=2)) == 2
+        assert len(await storage.read_users(org.id, None, limit=2)) == 2
+
+    async def test_the_user_list_pages_after_a_cursor(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        """A cursor is the id the previous page ended on, and the next page
+        starts strictly after it, so every member is reachable however small
+        the page is."""
+        org = make_org()
+        users = sorted((make_user(make_identity().id) for _ in range(5)), key=lambda u: u.id)
+        for user in users:
+            await storage.write_user(org.id, user)
+        paged: list[User] = []
+        after: UUID | None = None
+        while page := await storage.read_users(org.id, after, limit=2):
+            paged += page
+            after = page[-1].id
+        assert paged == users
+        assert await storage.read_users(org.id, users[-1].id, limit=10) == []
 
     async def test_soft_deleted_users_are_hidden_from_lists(
         self, storage: TenancyStorageInterface
@@ -167,7 +185,7 @@ class TenancyStorageContract:
         await storage.write_user(org.id, user)
         gone = user.model_copy(update={"deleted_at": utcnow(), "deleted_by": user.id})
         await storage.write_user(org.id, gone)
-        assert await storage.read_users(org.id, limit=10) == []
+        assert await storage.read_users(org.id, None, limit=10) == []
         assert await storage.read_user(org.id, user.id) == gone
 
     async def test_a_write_never_brings_a_deleted_row_back(
@@ -189,7 +207,7 @@ class TenancyStorageContract:
         with pytest.raises(RowDeleted):
             await storage.write_user(org.id, renamed)
         assert await storage.read_user(org.id, user.id) == gone
-        assert await storage.read_users(org.id, limit=10) == []
+        assert await storage.read_users(org.id, None, limit=10) == []
 
     async def test_one_live_user_per_identity_in_a_tenant(
         self, storage: TenancyStorageInterface
@@ -450,7 +468,7 @@ class TenancyStorageContract:
         await storage.remove_member(org.id, removed, ended, make_user_row(bob))
         assert await storage.read_user(org.id, bob.id) == removed
         assert await storage.read_membership_for_user(org.id, bob.id) is None
-        assert await storage.read_users(org.id, limit=10) == []
+        assert await storage.read_users(org.id, None, limit=10) == []
 
     async def test_users_by_identity_span_tenants(self, storage: TenancyStorageInterface) -> None:
         identity = make_identity()
@@ -561,11 +579,34 @@ class TenancyStorageContract:
         bobs = make_api_key(bob, uuid4().hex)
         for key in (*anns, bobs):
             await storage.write_api_key(org.id, key)
-        assert await storage.read_api_keys(org.id, limit=10) == [bobs, anns[1], anns[0]]
-        assert await storage.read_api_keys(org.id, limit=2) == [bobs, anns[1]]
-        assert await storage.read_api_keys(org.id, limit=1, user_id=ann) == [anns[1]]
-        assert await storage.read_api_keys(org.id, limit=10, user_id=bob) == [bobs]
-        assert await storage.read_api_keys(org.id, limit=10, user_id=new_id()) == []
+        assert await storage.read_api_keys(org.id, None, limit=10) == [bobs, anns[1], anns[0]]
+        assert await storage.read_api_keys(org.id, None, limit=2) == [bobs, anns[1]]
+        assert await storage.read_api_keys(org.id, None, limit=1, user_id=ann) == [anns[1]]
+        assert await storage.read_api_keys(org.id, None, limit=10, user_id=bob) == [bobs]
+        assert await storage.read_api_keys(org.id, None, limit=10, user_id=new_id()) == []
+
+    async def test_the_api_key_list_pages_after_a_cursor(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        """The key list reads newest first, so its next page is what sorts
+        below the cursor; the owner filter travels with it."""
+        org = make_org()
+        ann = new_id()
+        anns = [make_api_key(ann, uuid4().hex) for _ in range(5)]
+        for key in anns:
+            await storage.write_api_key(org.id, key)
+        newest_first = sorted(anns, key=lambda k: k.id, reverse=True)
+        paged: list[ApiKey] = []
+        after: UUID | None = None
+        while page := await storage.read_api_keys(org.id, after, limit=2):
+            paged += page
+            after = page[-1].id
+        assert paged == newest_first
+        assert await storage.read_api_keys(org.id, newest_first[-1].id, limit=10) == []
+        assert (
+            await storage.read_api_keys(org.id, newest_first[0].id, limit=2, user_id=ann)
+            == (newest_first[1:3])
+        )
 
     async def test_issue_api_key_creates_once_and_reissues_the_secret_on_a_rerun(
         self, storage: TenancyStorageInterface
@@ -644,10 +685,10 @@ class TenancyStorageContract:
         api_key = make_api_key(new_id(), key_hash)
         await storage.write_api_key(org.id, api_key)
         assert await storage.read_api_key_by_hash(key_hash) == (org.id, api_key)
-        assert await storage.read_api_keys(org.id, limit=10) == [api_key]
+        assert await storage.read_api_keys(org.id, None, limit=10) == [api_key]
         revoked = api_key.model_copy(update={"deleted_at": utcnow(), "deleted_by": new_id()})
         await storage.write_api_key(org.id, revoked)
-        assert await storage.read_api_keys(org.id, limit=10) == []
+        assert await storage.read_api_keys(org.id, None, limit=10) == []
 
     async def test_a_socket_ticket_is_consumed_by_exactly_one_redeemer(
         self, storage: TenancyStorageInterface

@@ -52,6 +52,7 @@ from tadas.om.tenancy.types.issued import (
 )
 from tadas.om.tenancy.types.membership import Membership
 from tadas.om.tenancy.types.org import Org
+from tadas.om.tenancy.types.page import ApiKeyPage, UserPage
 from tadas.om.tenancy.types.role import permissions_of
 from tadas.om.tenancy.types.session import Session
 from tadas.om.tenancy.types.socket_ticket import SocketPrincipal, SocketTicket
@@ -503,9 +504,11 @@ class TenancyManagerImpl(TenancyManagerInterface):
         await self._write_user(ctx, updated, "updated")
         return updated
 
-    async def get_users(self, ctx: OpContext, limit: int) -> list[User]:
+    async def get_users(self, ctx: OpContext, after: UUID | None, limit: int) -> UserPage:
         ctx.require(Permission.READ)
-        return await self._storage.read_users(ctx.org_id, self._clamp(limit))
+        limit = self._clamp(limit)
+        rows = await self._storage.read_users(ctx.org_id, after, limit + 1)
+        return UserPage(items=rows[:limit], has_more=len(rows) > limit)
 
     async def get_user(self, ctx: OpContext, user_id: UUID) -> User:
         ctx.require(Permission.READ)
@@ -598,7 +601,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
                 row = self._session_row(ctx, revoked, "revoked")
                 await self._storage.write_session(ctx.org_id, revoked, row)
                 rows.append(row)
-        while keys := await self._storage.read_api_keys(ctx.org_id, page, user_id):
+        while keys := await self._storage.read_api_keys(ctx.org_id, None, page, user_id):
             now = utcnow()
             for api_key in keys:
                 revoked_key = api_key.model_copy(
@@ -646,12 +649,16 @@ class TenancyManagerImpl(TenancyManagerInterface):
             raise ValidationFailed("only a session can log out")
         return await self.revoke_session(ctx, ctx.security.credential_id)
 
-    async def get_api_keys(self, ctx: OpContext, limit: int) -> list[ApiKey]:
+    async def get_api_keys(self, ctx: OpContext, after: UUID | None, limit: int) -> ApiKeyPage:
         ctx.require(Permission.MANAGE_KEYS)
         # A member manager sees the tenant's keys; anyone else their own, filtered
         # at the storage so a page of other people's keys cannot hide theirs.
         own_only = None if ctx.has(Permission.MANAGE_MEMBERS) else ctx.user_id
-        return await self._storage.read_api_keys(ctx.org_id, self._clamp(limit), own_only)
+        limit = self._clamp(limit)
+        # One row past the page, kept out of it: `has_more` is then a fact
+        # about the rows, so no key is left unreachable behind a fixed limit.
+        rows = await self._storage.read_api_keys(ctx.org_id, after, limit + 1, own_only)
+        return ApiKeyPage(items=rows[:limit], has_more=len(rows) > limit)
 
     async def create_api_key(
         self,
