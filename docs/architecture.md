@@ -658,11 +658,12 @@ everything in-process for tests.
   `TADAS_SENTRY_DSN` is set: unhandled exceptions and ERROR log lines,
   tagged with `service` and `request_id`), tracing (OpenTelemetry, on only
   when `TADAS_OTEL_ENDPOINT` is set), and Prometheus metrics, all from
-  `tadas.infra.observability`. Booting the reporting also names the
-  process, the one boot step every process makes with the service and the
-  environment in hand, so every log line carries both, the request id, and
-  the request that caused it where a handoff named one; one filter
-  attaches all four and no call site passes any.
+  `tadas.infra.observability`. Naming the process is a boot step of its
+  own, right after logging and before all three, so every line a process
+  writes carries the service and the environment whether or not error
+  reporting is configured, beside the request id and the request that
+  caused it where a handoff named one; one filter attaches all four and
+  no call site passes any.
 - Two processes raise spans: the API's middleware opens the server span
   per request, and the worker opens one per run of a work item. The run's
   span links to the trace context the item carried instead of becoming its
@@ -686,7 +687,9 @@ everything in-process for tests.
   list refetched. The reorder is one flow with its effects handed in
   (`src/features/tasks/reorder.ts`), so the stale case runs in a test
   without React. The socket's loop (`src/realtime/channel.ts`: ticket,
-  reconnect with backoff, the degraded polling mode, the cursor and its
+  reconnect with a backoff that doubles and carries jitter, so tabs a
+  shared failure dropped together do not come back together, the
+  degraded polling mode, the cursor and its
   replay) has no React in it and runs in its test over a fake socket and
   fake timers; the provider hands it the query cache, the transport
   client, and the connection store. A socket counts as connected once
@@ -709,7 +712,16 @@ everything in-process for tests.
   `openapi.json` at the app root, generated types behind the facade
   `types.ts`, one transport client, which puts a deadline on every call
   (`requestTimeoutMs` in the runtime config, 30 seconds by default) and
-  rejects a call that runs out with `RequestTimeout`, and which reads
+  rejects a call that runs out with `RequestTimeout`, which carries the
+  app's one retry (`src/api/retry.ts`, `retryAttempts` and
+  `retryBaseDelayMs` in the same config): a read or a POST under an
+  `Idempotency-Key` may be sent twice and nothing else may, a deadline
+  and the three statuses that say the server could not serve this call
+  are what it retries, any other status being a decision that does not
+  change for being asked again, and the wait doubles per attempt and
+  carries jitter. TanStack Query's own retry is off, queries and
+  mutations alike, so a failing API sees those attempts and no multiple
+  of them. The client reads
   the status and the content type before the body: a 401 clears
   authentication whatever its body is, a proxy's HTML 502 or 504 is an
   `ApiError` carrying the status and the request id, and a success that
@@ -731,11 +743,16 @@ everything in-process for tests.
   current) behind the facade `types.py`; one transport client with
   the error envelope, idempotency keys, the OS trust store, and a timeout
   on every call, which the caller's settings name (the CLI reads
-  `TADAS_HTTP_TIMEOUT_SECONDS`) and the socket's open shares; the socket
+  `TADAS_HTTP_TIMEOUT_SECONDS`) and the socket's open shares; the retry
+  arrives through the constructor beside it (`TADAS_HTTP_RETRIES`,
+  `TADAS_HTTP_RETRY_BACKOFF_SECONDS`), under the portal's rule, so a
+  caller sets the policy and none of them wraps a second round of
+  attempts around this one; the socket
   frames mirrored by hand (`envelopes.py`); the placement rule
   (`stream.py`); and the channel (`realtime.py`): ticket, one
-  subscription, pings, gaps replayed from `/v1/events`, reconnect with
-  backoff. The demo recorders use it; the interval before it existed is
+  subscription, pings, gaps replayed from `/v1/events`, reconnect with a
+  backoff that carries jitter, so listeners one failure dropped together
+  do not come back together. The demo recorders use it; the interval before it existed is
   [ADR 0004](adr/0004-demo-recorder-calls-the-api-directly.md).
 - `apps/cli` (`tadas-cli`, `tadas`): Typer over the Python client. Command
   mode (`add`, `ls`, `edit`, `done`, `reopen`, `rm`, `mv`) does one call
