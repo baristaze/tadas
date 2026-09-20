@@ -12,7 +12,7 @@ class EventStorageMemoryImpl(MemoryStorageBase, EventStorageInterface):
         # The twin of the cursor row: the last seq assigned, per tenant.
         self._cursors: dict[UUID, int] = {}
 
-    async def append(self, org_id: UUID, event: Event) -> Event:
+    async def append_event(self, org_id: UUID, event: Event) -> Event:
         async with self._lock:
             stored = self._get(self._events, org_id, event.id)
             if stored is not None:

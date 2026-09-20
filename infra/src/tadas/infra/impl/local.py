@@ -7,7 +7,7 @@ from tadas.infra.buckets import BucketsInterface
 from tadas.infra.buckets.local import BucketsLocalImpl
 from tadas.infra.cache import CacheInterface, CacheScope
 from tadas.infra.cache.memory import CacheMemoryImpl
-from tadas.infra.queues import QueueInterface
+from tadas.infra.queues import QueuesInterface
 from tadas.infra.queues.memory import QueueMemoryImpl
 from tadas.infra.root import InfraInterface
 from tadas.infra.secrets import SecretsInterface
@@ -36,7 +36,7 @@ class InfraLocalImpl(InfraInterface):
     def get_topics(self) -> TopicsInterface:
         return self._topics
 
-    def get_queues(self) -> QueueInterface:
+    def get_queues(self) -> QueuesInterface:
         return self._queues
 
     def get_secrets(self) -> SecretsInterface:

@@ -91,7 +91,7 @@ class OutboxRelayImpl(OutboxRelayInterface):
             request_id=row.request_id,
             app=row.app,
         )
-        appended = await self._events.append(org_id, event)
+        appended = await self._events.append_event(org_id, event)
         await self._publish(org_id, appended)
         await self._storage.mark_done(org_id, row.id)
 
@@ -137,7 +137,7 @@ class OutboxRelayImpl(OutboxRelayInterface):
             app=row.app,
         )
         try:
-            await self._publish(org_id, await self._events.append(org_id, audit))
+            await self._publish(org_id, await self._events.append_event(org_id, audit))
         except Exception:
             log.exception("the dead letter audit event for %s could not be appended", row.id)
 

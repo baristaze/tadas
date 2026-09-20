@@ -14,7 +14,8 @@ the exception root, the storage root with its Postgres and memory impls,
 and one namespace per swimlane. `Created` (`created_at` alone) is the
 base of `Trackable` and is composed alone by the rows the platform
 writes for itself, the outbox row, the idempotency record, and the
-socket ticket, as the guideline's "Naming Entities" declares
+socket ticket, as the guideline's "Naming Entities" states the rule and
+"Namespace Shape" and "The Gateway" declare the two rows
 (`OutboxRow(Identifiable, Created)`, `IdempotencyMarker(Identifiable,
 Created)`; Tadas names the marker `IdempotencyRecord`, the same row
 under its own name). No person stands behind such a row, so it carries
@@ -261,7 +262,7 @@ context on keeps the stage the callee needs.
   frame and every pong carry, reads that one row. The append is
   idempotent on the event id, so relaying an outbox row twice appends
   once and consumes no number. No update, no delete. The entity events reach the stream through
-  the event storage, from the outbox relay; the manager's `append` is for
+  the event storage, from the outbox relay; the manager's `append_event` is for
   an audit entry (the work manager's dead letter), requires `WRITE`, and
   stamps the actor, the request, and the app from the context, never
   from the caller's event.
@@ -305,7 +306,8 @@ backoff that grows with consecutive failures.
 - The queue impls count `sent`, `received`, `deleted`, and, in the
   memory twin where the transition is visible, `dead_lettered` on the
   outcome counter, with a log line naming the message and the queue;
-  the twin does not deduplicate on `dedup_id`, exactly like SQS. The
+  the twin does not deduplicate, exactly like SQS, and `send` offers no
+  knob that says otherwise. The
   cache impls count `hit` and `miss` on `get`, and Valkey `unreachable`.
   On Valkey, `increment` is one server-side script (count, and set the
   window when the key has none), so a counter is never left without a

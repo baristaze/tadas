@@ -7,7 +7,7 @@ import aioboto3
 from tadas.infra.aws_clients import AwsClientHolder, client_config
 from tadas.infra.aws_errors import translated
 from tadas.infra.observability import OUTCOMES
-from tadas.infra.queues import QueueDepth, QueueInterface, QueueMessage, Queues
+from tadas.infra.queues import QueueDepth, QueueMessage, Queues, QueuesInterface
 
 LONG_POLL_MAX = timedelta(seconds=20)
 """The hosted queue's own ceiling on a receive's wait."""
@@ -18,7 +18,7 @@ answers at the wait's end plus a round trip; a wait at or past the read timeout
 turns every empty poll into a read timeout instead of an empty answer."""
 
 
-class QueueSqsImpl(QueueInterface):
+class QueueSqsImpl(QueuesInterface):
     """The hosted queue moves a message to its dead-letter queue itself, after
     the redrive policy's receive count, so that transition is not observable
     here; `depth()` reports the dead-lettered count. A receive's wait is capped
@@ -59,16 +59,12 @@ class QueueSqsImpl(QueueInterface):
     def _name(self, queue: Queues) -> str:
         return f"{self._queue_prefix}{queue.value}"
 
-    async def send(self, queue: Queues, body: bytes, *, dedup_id: str | None = None) -> str:
-        attributes: dict[str, Any] = {}
-        if dedup_id is not None:
-            attributes["dedup_id"] = {"DataType": "String", "StringValue": dedup_id}
+    async def send(self, queue: Queues, body: bytes) -> str:
         with translated("sqs", "send"):
             sqs = self._client()
             response = await sqs.send_message(
                 QueueUrl=await self._url(sqs, self._name(queue)),
                 MessageBody=body.decode(),
-                MessageAttributes=attributes,
             )
         OUTCOMES.labels(subsystem="queue", outcome="sent").inc()
         return response["MessageId"]

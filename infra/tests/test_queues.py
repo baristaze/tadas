@@ -52,10 +52,10 @@ async def test_dead_letters_are_visible_in_depth_the_log_and_the_metric(
     )
 
 
-async def test_dedup_id_does_not_deduplicate_like_the_hosted_queue() -> None:
+async def test_the_same_body_sent_twice_is_two_messages() -> None:
     queue = QueueMemoryImpl()
-    first = await queue.send(Queues.WEBHOOKS, b"x", dedup_id="delivery-1")
-    second = await queue.send(Queues.WEBHOOKS, b"x", dedup_id="delivery-1")
+    first = await queue.send(Queues.WEBHOOKS, b"x")
+    second = await queue.send(Queues.WEBHOOKS, b"x")
     assert first != second
     assert (await queue.depth(Queues.WEBHOOKS)).visible == 2
 

@@ -256,7 +256,7 @@ class WorkManagerImpl(WorkManagerInterface):
         log.error(
             "work item %s (%s) failed for good: %s", item.id, item.kind.value, item.last_error
         )
-        event = await self._events.append(
+        event = await self._events.append_event(
             ctx,
             audit_event(
                 ctx,

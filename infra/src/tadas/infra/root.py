@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 
 from tadas.infra.buckets import BucketsInterface
 from tadas.infra.cache import CacheInterface, CacheScope
-from tadas.infra.queues import QueueInterface
+from tadas.infra.queues import QueuesInterface
 from tadas.infra.secrets import SecretsInterface
 from tadas.infra.topics import TopicsInterface
 
@@ -22,7 +22,7 @@ class InfraInterface(ABC):
     def get_topics(self) -> TopicsInterface: ...
 
     @abstractmethod
-    def get_queues(self) -> QueueInterface: ...
+    def get_queues(self) -> QueuesInterface: ...
 
     @abstractmethod
     def get_secrets(self) -> SecretsInterface: ...
