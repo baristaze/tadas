@@ -69,18 +69,20 @@ class FakeSession:
         return open_client()
 
 
-def secrets(client: RecordingClient) -> SecretsAwsImpl:
-    return SecretsAwsImpl(
+async def secrets(client: RecordingClient) -> SecretsAwsImpl:
+    impl = SecretsAwsImpl(
         FakeSession(client),  # type: ignore[arg-type]
         region="us-east-1",
         name_prefix="tadas/",
         timeout=timedelta(seconds=1),
     )
+    await impl.start()
+    return impl
 
 
 async def test_has_describes_and_never_fetches_the_value() -> None:
     store = RecordingClient({"tadas/present"})
-    impl = secrets(store)
+    impl = await secrets(store)
     assert await impl.has("present") is True
     assert await impl.has("absent") is False
     assert store.calls == [
@@ -91,7 +93,7 @@ async def test_has_describes_and_never_fetches_the_value() -> None:
 
 async def test_put_creates_and_falls_back_to_a_new_version() -> None:
     store = RecordingClient({"tadas/present"})
-    impl = secrets(store)
+    impl = await secrets(store)
     await impl.put("fresh", "v1")
     await impl.put("present", "v2")
     assert store.calls == [
@@ -102,6 +104,7 @@ async def test_put_creates_and_falls_back_to_a_new_version() -> None:
 
 
 async def test_any_other_answer_to_has_is_a_backend_failure() -> None:
+    impl = await secrets(RecordingClient(set(), describe_fails_with="AccessDeniedException"))
     with pytest.raises(BackendFailed) as raised:
-        await secrets(RecordingClient(set(), describe_fails_with="AccessDeniedException")).has("x")
+        await impl.has("x")
     assert raised.value.message == "secretsmanager has failed with AccessDeniedException"

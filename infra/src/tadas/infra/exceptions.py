@@ -30,6 +30,18 @@ class BackendFailed(InfraException):
         super().__init__(f"{backend} {operation} failed with {error_code}")
 
 
+class BackendUnreachable(InfraException):
+    """The hosted backend could not be reached or did not answer in time:
+    the endpoint, the connection, or the read timed out or dropped. The
+    message names the backend, the operation, and the driver's error class."""
+
+    http_status = 503
+    code = "backend_unreachable"
+
+    def __init__(self, backend: str, operation: str, reason: str) -> None:
+        super().__init__(f"{backend} {operation} could not reach the backend: {reason}")
+
+
 class InfraNotFound(InfraException):
     http_status = 404
     code = "not_found"

@@ -206,11 +206,11 @@ module "maintenance" {
     TADAS_SERVICE_NAME = "maintenance"
   })
 
-  # The serving process is PID 1 (the entrypoint execs it), so its default
-  # worker id is maintenance-<hostname>-1 unless TADAS_WORKER_ID says otherwise.
+  # The serving process answers /healthz on its metrics port from its own
+  # liveness key; the probe boots nothing.
   health_check_command = [
     "CMD-SHELL",
-    "tadas-maintenance health --worker-id \"$${TADAS_WORKER_ID:-maintenance-$(cat /etc/hostname)-1}\"",
+    "python -c \"import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:9464/healthz').status == 200 else 1)\"",
   ]
 
   deployment_maximum_percent         = 100

@@ -58,7 +58,7 @@ async def test_local_environment_builds_local_impls(tmp_path: Path) -> None:
     infra = InfraConfiguredImpl(local_settings(tmp_path))
     assert infra.get_cache(CacheScope.RATE_LIMIT) is infra.get_cache(CacheScope.RATE_LIMIT)
     assert infra.describe() == [
-        "cache=memory",
+        *(f"cache[{scope.value}]=memory" for scope in CacheScope),
         "topics=memory",
         f"buckets=local({tmp_path / 'buckets'})",
         "queues=memory",
@@ -71,7 +71,7 @@ async def test_local_environment_builds_local_impls(tmp_path: Path) -> None:
 def test_cloud_backends_are_constructed_without_connecting(tmp_path: Path) -> None:
     infra = InfraConfiguredImpl(local_settings(tmp_path, **CLOUD_BACKENDS))
     assert infra.describe() == [
-        "cache=valkey",
+        *(f"cache[{scope.value}]=valkey" for scope in CacheScope),
         "topics=valkey",
         "buckets=s3(us-east-1)",
         "queues=sqs(us-east-1)",
@@ -80,6 +80,17 @@ def test_cloud_backends_are_constructed_without_connecting(tmp_path: Path) -> No
     assert (
         infra.get_cache(CacheScope.NETWORK_RESPONSE).describe() == "cache[network_response]=valkey"
     )
+
+
+def test_every_cache_scope_is_built_at_construction(tmp_path: Path) -> None:
+    """No lazy member: every scope's cache exists before the first request
+    and the boot line names it (ADR 0007)."""
+    infra = InfraConfiguredImpl(local_settings(tmp_path))
+    built = {scope: infra.get_cache(scope) for scope in CacheScope}
+    assert all(infra.get_cache(scope) is cache for scope, cache in built.items())
+    assert [line for line in infra.describe() if line.startswith("cache[")] == [
+        cache.describe() for cache in built.values()
+    ]
 
 
 async def test_secret_overrides_reach_the_local_secrets_impl(tmp_path: Path) -> None:
