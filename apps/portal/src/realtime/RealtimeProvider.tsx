@@ -3,7 +3,7 @@
 // It remembers the last stream position it applied; a reconnect or a gap is
 // closed by replaying /v1/events after it through the same envelope router.
 import { useQueryClient } from "@tanstack/react-query";
-import type { TicketView } from "../api";
+import type { IssuedTicketView } from "../api";
 import { useEffect, type ReactNode } from "react";
 import { api } from "../app/api";
 import { Banner } from "../design/kit";
@@ -129,9 +129,9 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
     const connect = async () => {
       if (stopped) return;
       connection.setStatus(attempt === 0 ? "connecting" : useConnectionStore.getState().status);
-      let ticket: TicketView;
+      let ticket: IssuedTicketView;
       try {
-        ticket = await api.post<TicketView>("/v1/realtime/tickets");
+        ticket = await api.post<IssuedTicketView>("/v1/realtime/tickets");
       } catch {
         scheduleReconnect();
         return;

@@ -20,9 +20,9 @@ from tadas.services.api.realtime.envelopes import (
     ClientCommand,
     ErrorEnvelope,
     HelloEnvelope,
+    IssuedTicketView,
     PongEnvelope,
     SubscribedEnvelope,
-    TicketView,
     UnsubscribedEnvelope,
 )
 from tadas.services.api.realtime.send_buffer import SendBuffer
@@ -38,8 +38,8 @@ def new_send_buffer(websocket: WebSocket) -> SendBuffer:
 SocketSendBuffer = Annotated[SendBuffer, Depends(new_send_buffer)]
 
 
-@router.post("/tickets", response_model=TicketView, status_code=201)
-async def mint_ticket(ctx: Ctx, realtime: RealtimeService) -> TicketView:
+@router.post("/tickets", response_model=IssuedTicketView, status_code=201)
+async def mint_ticket(ctx: Ctx, realtime: RealtimeService) -> IssuedTicketView:
     return await realtime.issue_ticket(ctx)
 
 

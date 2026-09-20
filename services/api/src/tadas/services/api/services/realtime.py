@@ -7,12 +7,12 @@ from collections.abc import Callable
 
 from tadas.infra.topics import Topics
 from tadas.om.opcontext import ActorScope, OpContext
-from tadas.services.api.realtime.envelopes import EventEnvelope, TicketView
+from tadas.services.api.realtime.envelopes import EventEnvelope, IssuedTicketView
 
 
 class RealtimeServiceInterface(ABC):
     @abstractmethod
-    async def issue_ticket(self, ctx: OpContext) -> TicketView: ...
+    async def issue_ticket(self, ctx: OpContext) -> IssuedTicketView: ...
 
     @abstractmethod
     async def head(self, ctx: OpContext) -> int:

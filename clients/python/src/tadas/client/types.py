@@ -8,6 +8,7 @@ from tadas.client.schema import (
     IssuedApiKeyView,
     IssuedLoginView,
     IssuedSessionView,
+    IssuedTicketView,
     MembershipChoiceView,
     MembershipView,
     MeView,
@@ -19,7 +20,6 @@ from tadas.client.schema import (
     TaskScope,
     TaskStatus,
     TaskView,
-    TicketView,
     UserView,
 )
 
@@ -29,6 +29,7 @@ __all__ = [
     "IssuedApiKeyView",
     "IssuedLoginView",
     "IssuedSessionView",
+    "IssuedTicketView",
     "MeView",
     "MembershipChoiceView",
     "MembershipView",
@@ -40,6 +41,5 @@ __all__ = [
     "TaskScope",
     "TaskStatus",
     "TaskView",
-    "TicketView",
     "UserView",
 ]
