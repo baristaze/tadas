@@ -579,9 +579,19 @@ everything in-process for tests.
   is not a revocation: the socket carries hints, and the next request
   sees the new role.
   The login route takes the request stage alone.
-  Per socket the process keeps one bounded send buffer
-  (`realtime/send_buffer.py`, `TADAS_REALTIME_SEND_BUFFER_SIZE`) and a
-  drainer; a full buffer drops the oldest frame and the client replays.
+  Per socket the process keeps one send buffer of two bounded lanes
+  (`realtime/send_buffer.py`) and a drainer. A frame that says where the
+  socket stands is a control frame (`hello`, `pong`, `subscribed`,
+  `unsubscribed`, `error`) and an event hint is a stream frame; the
+  drainer writes the control lane first, so a burst of hints never
+  delays the pong that carries the head seq and never evicts it. A full
+  stream lane (`TADAS_REALTIME_SEND_BUFFER_SIZE`) drops its oldest
+  frame, logs it, counts it, and the client that sees the gap replays.
+  The control lane has a small bound of its own
+  (`TADAS_REALTIME_CONTROL_BUFFER_SIZE`), and a lane that fills there is
+  a fault of the process rather than a burst, so its drop is logged as
+  an error. The revocation close and the transport keepalive are not
+  buffered at all.
   A peer that drops mid-stream ends the drainer with a disconnect; the
   teardown treats that as the normal end of a socket, not an error.
   Two pings keep a socket alive, one per direction, both pinned with the

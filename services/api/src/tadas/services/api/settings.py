@@ -3,7 +3,7 @@ knobs that belong to this service, all under the TADAS_ prefix."""
 
 import ipaddress
 
-from pydantic import field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import SettingsConfigDict
 
 from tadas.infra.impl.settings import InfraSettings
@@ -27,7 +27,14 @@ class ApiSettings(StorageSettings, InfraSettings):
 
     login_rate_limit: int = 10
     login_rate_window_seconds: int = 60
-    realtime_send_buffer_size: int = 256
+    # The socket's two send lanes, each bounded on its own. The stream lane
+    # holds the event hints, and a full one drops its oldest: the client that
+    # sees the gap replays from storage. The control lane holds the frames
+    # that say where the socket stands (hello, pong, subscribed,
+    # unsubscribed, error), and it is small because a socket offers few of
+    # them; a lane that fills is a fault of the process, not a burst.
+    realtime_send_buffer_size: int = Field(default=256, gt=0)
+    realtime_control_buffer_size: int = Field(default=16, gt=0)
     # The readiness probe's own deadline, shorter than the interval it is
     # polled on (the container probe asks every 10 seconds and gives up at 3,
     # the load balancer every 15 and gives up at 5), so a hung database or an
