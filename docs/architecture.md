@@ -152,18 +152,35 @@ with `extra="ignore"`, so a consumer ignores a field it does not know;
 a payload gains only optional, defaulted fields, so an old producer's
 message and a queued row written before a deploy still parse, and the
 two sides roll out in either order. A topic is best effort. Every capability interface declares `start()` and `close()`; the
-roots call them unconditionally and only the Valkey topic listener does
-anything in them.
+roots call them unconditionally: the Valkey topic listener opens its
+subscriber in `start()`, and each hosted impl (S3, SQS, Secrets Manager)
+opens its one client there, holds it through an exit stack for every
+call, and closes it in `close()`; nothing opens a client per call, and a
+call before `start()` is refused. A listener the driver fails is not
+left dead: the failure is counted (`topics` / `listener_failed`) and
+logged, the subscriber is dropped, and a new one is opened after a
+backoff that grows with consecutive failures.
 
 - The queue impls count `sent`, `received`, `deleted`, and, in the
   memory twin where the transition is visible, `dead_lettered` on the
   outcome counter, with a log line naming the message and the queue;
   the twin does not deduplicate on `dedup_id`, exactly like SQS. The
   cache impls count `hit` and `miss` on `get`, and Valkey `unreachable`.
-- The AWS impls translate every driver error into `BackendFailed`, an
-  `InfraException` leaf (`tadas.infra.exceptions`), through the one
-  module that names botocore (`tadas.infra.aws_errors`); not-found
-  codes keep their `NotFound` shape.
+  On Valkey, `increment` is one server-side script (count, and set the
+  window when the key has none), so a counter is never left without a
+  window by a failure between two commands. Each infra root builds one
+  cache per `CacheScope` in its constructor, like every other member
+  (ADR 0007), so the boot line names every scope.
+- The AWS impls translate every driver error into an `InfraException`
+  leaf (`tadas.infra.exceptions`) through the one module that names
+  botocore (`tadas.infra.aws_errors`): a service answer the impl cannot
+  map is `BackendFailed` under its error code; an endpoint, connection,
+  or timeout failure is `BackendUnreachable` (503) under the driver's
+  error class; any other driver error is `BackendFailed` under that
+  class. Not-found codes keep their `NotFound` shape. The hosted secrets
+  impl answers `has` with a describe, never a fetch of the value, and
+  `put` is a create with a new version on `ResourceExistsException`,
+  not a read followed by a write.
 - Environment names are one set, shared with Terraform: `local` and
   `test` allow the local backends; `dev`, `staging`, and `production`
   refuse them; any other name is refused at boot. The local secrets
@@ -191,6 +208,21 @@ everything in-process for tests.
   edge idempotency), routers for tenancy, tasks, and the operator plane
   under `/v1/admin/*`, health and metrics outside `/v1`, and the
   realtime channel at `/v1/realtime` opened with a single-use ticket.
+  The client address is the peer's, or the one `X-Forwarded-For` names
+  when the peer is one of `TADAS_TRUSTED_PROXIES` (empty locally; the
+  VPC block in the cloud, where the load balancer lives), so behind the
+  load balancer the login limit still counts per client and a peer
+  outside it cannot pick its own address. The envelope carries the
+  exception's code and status; for a status of 500 or more its message
+  is `internal error` and the real one goes to the log under the
+  request id. An unhandled exception is answered inside the
+  observability middleware, while the id is still in hand, so the 500
+  carries the request id header, the log line the id, and the request
+  counter the status; Starlette's own catch-all stays as the last
+  resort. uvicorn's access log is off: the middleware writes one line
+  per request by route template, and uvicorn's remaining lines lose
+  their query string, so the socket ticket, which travels as a query
+  parameter, is never logged.
   The gateway mints the request stage once per request
   (`request_context`: the request id the middleware stamped, `X-App`
   and `X-App-Version`, the current trace id) and asks the tenancy
@@ -207,6 +239,8 @@ everything in-process for tests.
   Per socket the process keeps one bounded send buffer
   (`realtime/send_buffer.py`, `TADAS_REALTIME_SEND_BUFFER_SIZE`) and a
   drainer; a full buffer drops the oldest frame and the client replays.
+  A peer that drops mid-stream ends the drainer with a disconnect; the
+  teardown treats that as the normal end of a socket, not an error.
   No service calls another today, so no internal credential is minted;
   `CredentialKind.INTERNAL` is what the seeding and the worker's service
   contexts carry. The sweep's service contexts are minted for the tenant,
@@ -233,10 +267,13 @@ everything in-process for tests.
   delete, 30 days by default), then relay the pending outbox rows and
   purge the done ones after eight days, which outlives the seven-day
   database backup retention, so a role restored to an earlier point
-  than its siblings is reconciled by relaying the outbox again). `tadas-maintenance serve | health`: the
-  image's `HEALTHCHECK` runs `health`, which reads the serving worker's
-  liveness key through the same cache and exits non-zero when it is
-  missing. It serves its own `/metrics` on `TADAS_METRICS_PORT` (9464).
+  than its siblings is reconciled by relaying the outbox again). `tadas-maintenance serve | health`.
+  The serving process answers `/metrics` and `/healthz` on
+  `TADAS_METRICS_PORT` (9464) from one thread: `/healthz` reads the
+  loop's own liveness key through the process's cache, on its event
+  loop, so the container probe costs one cache read and boots nothing;
+  the image's `HEALTHCHECK` and the task definition ask that URL, and
+  `health` asks it by hand.
 - Every Python process builds its roots whole at boot, once: storage,
   infra, then every manager, in dependency order; a request constructs
   nothing. The cost is the imports (about 450 ms, once per process);
@@ -298,8 +335,8 @@ everything in-process for tests.
   Jaeger, and a seeded GlitchTip) and a second file that adds the
   application containers, the portal among them.
 - `docker/`: one two-stage image per process, non-root, with a
-  healthcheck (`/healthz` for the API, `tadas-maintenance health` for
-  the worker, `/` for the portal's nginx).
+  healthcheck (`/healthz` for the API and, on its metrics port, the
+  worker; `/` for the portal's nginx).
 - `terraform/`: every cloud resource. `modules/` holds one module per
   resource family (`network`, `cluster`, `database`, `cache`, `queue`,
   `buckets`, `secrets`, `load_balancer`, `certificate`, `domain_records`,
