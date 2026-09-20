@@ -57,6 +57,17 @@ skill reads either.
 | Traces | Jaeger | X-Ray |
 | Errors | GlitchTip | Sentry |
 
+What the local twin shows after thirty seconds of light traffic, the
+wiring check CI runs. The five panels of the Grafana dashboard are the
+five the CloudWatch dashboard carries, by title:
+
+![Grafana's Tadas overview after a light traffic run](../docs/media/ops/grafana-overview-after-traffic.jpg)
+
+Jaeger with the traces of the same run, one server span per request,
+found by the `tadas.request_id` attribute:
+
+![Jaeger's search after a light traffic run](../docs/media/ops/jaeger-traces-after-traffic.jpg)
+
 Every line, span, and error event carries the request id, so one id
 is enough to follow a request through all four.
 
