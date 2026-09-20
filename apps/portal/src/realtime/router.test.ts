@@ -36,6 +36,8 @@ const SERVER_KINDS = [
   "tenancy.api_key.deleted",
   "tenancy.membership.updated",
   "tenancy.session.revoked",
+  "tenancy.user.created",
+  "tenancy.user.updated",
   "tenancy.user.deleted",
 ];
 
@@ -72,6 +74,15 @@ describe("routeEnvelope", () => {
     const { queryClient, seen } = recording();
     expect(routeEnvelope(queryClient, pushOf("tenancy.membership.updated"))).toEqual({ invalidated: [keys.me] });
     expect(seen).toEqual([keys.me]);
+  });
+
+  it("refreshes who the user is when a user changes, since the name rides the me query", () => {
+    // Renaming yourself from another client changes a row of the member list
+    // and the name in the header; the header reads `me`.
+    const { queryClient, seen } = recording();
+    const outcome = routeEnvelope(queryClient, pushOf("tenancy.user.updated"));
+    expect(outcome).toEqual({ invalidated: [keys.users.all, keys.me] });
+    expect(seen).toEqual([keys.users.all, keys.me]);
   });
 
   it("invalidates nothing for a revoked session, which no query reads", () => {

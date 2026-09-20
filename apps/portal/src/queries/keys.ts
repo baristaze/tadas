@@ -1,7 +1,8 @@
 // One key factory per domain. The first element is the entity name the
 // server uses in its `entity_changed` pushes, so the realtime router can
-// invalidate by convention; an entity that is read through another query
-// (a membership, through `me`) is named in the router's table instead.
+// invalidate by convention; an entity the convention does not reach on its
+// own (a membership, read through `me`; a user, read through `me` as well as
+// its own list) is named in the router's table instead.
 export const keys = {
   me: ["me"] as const,
   users: {
