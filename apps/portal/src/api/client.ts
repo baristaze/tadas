@@ -68,6 +68,23 @@ function isErrorEnvelope(value: unknown): value is ErrorEnvelope {
   return typeof error === "object" && error !== null && "code" in error && "message" in error;
 }
 
+function isJson(contentType: string | null): boolean {
+  return /\bjson\b/i.test(contentType ?? "");
+}
+
+/** The body as JSON, or undefined when it is not JSON after all. */
+function parseJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+}
+
+function statusMessage(response: Response): string {
+  return response.statusText || `HTTP ${response.status}`;
+}
+
 export function createClient(options: ClientOptions): ApiClient {
   const fetchImpl = options.fetchImpl ?? fetch;
   const baseUrl = options.baseUrl.replace(/\/$/, "");
@@ -118,11 +135,13 @@ export function createClient(options: ClientOptions): ApiClient {
       clearTimeout(timer);
       callerSignal?.removeEventListener("abort", forwardAbort);
     }
+    // The status and the content type decide before the body is read as
+    // JSON: a 401 clears authentication whatever its body says, and a proxy's
+    // HTML 502 or 504 is a typed error with the status, not a parse failure.
     const requestId = response.headers.get("x-request-id");
-    if (response.status === 204) return undefined as T;
-    const parsed: unknown = text ? JSON.parse(text) : null;
+    if (response.status === 401) options.onUnauthorized();
+    const parsed = isJson(response.headers.get("content-type")) ? parseJson(text) : undefined;
     if (!response.ok) {
-      if (response.status === 401) options.onUnauthorized();
       if (isErrorEnvelope(parsed)) {
         throw new ApiError(
           response.status,
@@ -131,7 +150,11 @@ export function createClient(options: ClientOptions): ApiClient {
           parsed.error.request_id ?? requestId,
         );
       }
-      throw new ApiError(response.status, "unknown_error", response.statusText, requestId);
+      throw new ApiError(response.status, "unknown_error", statusMessage(response), requestId);
+    }
+    if (response.status === 204 || text === "") return undefined as T;
+    if (parsed === undefined) {
+      throw new ApiError(response.status, "not_json", `${method} ${path} answered with something other than JSON`, requestId);
     }
     return parsed as T;
   }
