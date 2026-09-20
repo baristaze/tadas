@@ -1,5 +1,6 @@
 import asyncio
 import secrets
+import threading
 from datetime import timedelta
 from pathlib import Path
 from uuid import UUID
@@ -34,7 +35,7 @@ from tadas.om.outbox.impl.relay import OutboxRelayImpl
 from tadas.om.outbox.storage.impl.memory import OutboxStorageMemoryImpl
 from tadas.om.tenancy.impl.manager import TenancyManagerImpl, TenancyOptions
 from tadas.om.tenancy.impl.operator import TenancyOperatorManagerImpl, TenancyOperatorOptions
-from tadas.om.tenancy.rules import hash_password, hash_token
+from tadas.om.tenancy.rules import DUMMY_PASSWORD_HASH, hash_password, hash_token, verify_password
 from tadas.om.tenancy.storage.impl.memory import TenancyStorageMemoryImpl
 from tadas.om.tenancy.types.identity import Identity
 from tadas.om.tenancy.types.membership import Membership
@@ -218,6 +219,29 @@ async def test_login_rejects_a_wrong_password(manager: TenancyManagerImpl) -> No
         await manager.login(request(), "ann@example.test", "nope")
     with pytest.raises(InvalidCredential):
         await manager.login(request(), "nobody@example.test", "pw-1234")
+
+
+async def test_an_unknown_email_costs_a_password_check_off_the_event_loop(
+    manager: TenancyManagerImpl, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await manager.bootstrap(request(), "Acme", "acme", "ann@example.test", "pw-1234", "Ann")
+    calls: list[tuple[str, str, bool]] = []
+
+    def recording(password: str, stored: str) -> bool:
+        calls.append((password, stored, threading.current_thread() is threading.main_thread()))
+        return verify_password(password, stored)
+
+    monkeypatch.setattr("tadas.om.tenancy.impl.manager.verify_password", recording)
+    with pytest.raises(InvalidCredential):
+        await manager.login(request(), "nobody@example.test", "pw-1234")
+    # Verified once, against the dummy, and not on the loop's thread.
+    assert [(p, s) for p, s, _ in calls] == [("pw-1234", DUMMY_PASSWORD_HASH)]
+    assert calls[0][2] is False
+    assert DUMMY_PASSWORD_HASH.startswith("scrypt$")
+    assert not verify_password("pw-1234", DUMMY_PASSWORD_HASH)
+    # A known email verifies against its own hash, off the loop as well.
+    await manager.login(request(), "ann@example.test", "pw-1234")
+    assert calls[1][1] != DUMMY_PASSWORD_HASH and calls[1][2] is False
 
 
 async def test_a_login_credential_cannot_call_tenant_routes(manager: TenancyManagerImpl) -> None:

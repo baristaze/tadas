@@ -1,3 +1,4 @@
+import asyncio
 import secrets
 from collections.abc import Mapping
 from datetime import timedelta
@@ -29,6 +30,7 @@ from tadas.om.outbox import OutboxRelayInterface
 from tadas.om.outbox.types.row import outbox_row, snapshot
 from tadas.om.tenancy.manager import TenancyManagerInterface
 from tadas.om.tenancy.rules import (
+    DUMMY_PASSWORD_HASH,
     MAX_API_KEY_TTL,
     PREFIX_FOR_KIND,
     capped_role,
@@ -246,7 +248,12 @@ class TenancyManagerImpl(TenancyManagerInterface):
 
     async def login(self, rctx: RequestContext, email: str, password: str) -> IssuedLogin:
         identity = await self._storage.read_identity_by_email(email)
-        if identity is None or not verify_password(password, identity.password_hash):
+        # The hash is verified on a miss too, against a fixed dummy, so an
+        # unknown email costs what a wrong password costs; scrypt runs off the
+        # event loop, so a sign-in never stalls every other request.
+        stored = DUMMY_PASSWORD_HASH if identity is None else identity.password_hash
+        verified = await asyncio.to_thread(verify_password, password, stored)
+        if identity is None or not verified:
             raise InvalidCredential("email or password is wrong")
         now = utcnow()
         token = mint_token(CredentialKind.LOGIN)
