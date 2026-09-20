@@ -15,6 +15,8 @@ from tadas.om.storage.tables.base import (
 
 class ApiKeys(IdentifiableMixin, NamedMixin, TrackableMixin, SoftDeletableMixin, Base):
     __tablename__ = "api_keys"
+    # Full, not among the living: the hash digests a fresh random secret, so a
+    # revoked key's hash is never created again and stays refused.
     __table_args__ = (Index("uq_api_keys_key_hash", "key_hash", unique=True),)
     user_id: Mapped[UUID]
     key_hash: Mapped[str]

@@ -39,7 +39,8 @@ class TenancyStorageInterface(ABC):
 
     @abstractmethod
     async def read_org_by_slug(self, slug: str) -> Org | None:
-        """Cross-tenant lookup: the slug is resolved before a tenant is known."""
+        """Cross-tenant lookup: the slug is resolved before a tenant is known.
+        The living org with that slug; a deleted org has given it up."""
         ...
 
     @abstractmethod

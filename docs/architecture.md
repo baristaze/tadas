@@ -74,7 +74,14 @@ context on keeps the stage the callee needs.
   `UniqueKeyTaken`, a `Conflict` (409), so a race the read did not see is
   never a driver error and never mistaken for a retry: the Postgres
   create primitive reports an existing id only when the primary key is the
-  violated constraint. The seeding transitions are named atomic creates:
+  violated constraint. A unique key on a soft-deletable table is unique
+  among the living: the org slug, the user's identity in a tenant, and
+  the membership are partial unique indexes `WHERE deleted_at IS NULL`,
+  so a deleted org frees its slug, a removed member frees the identity
+  and the membership, and the same value can be created again; the slug
+  lookup reads the living. The api key hash stays a full index because it
+  digests a fresh random secret that is never created again. The seeding
+  transitions are named atomic creates:
   `bootstrap` lands the org, its first user, and the owner's membership in
   one commit (`create_org_with_owner`), `add_member` the user, the
   membership, and the outbox row (`create_member`), so a concurrent
@@ -597,8 +604,9 @@ take-overs run at once through `asyncio.gather` and exactly one wins,
 over memory in the fast gate and over Postgres in the integration job.
 The same contracts hold every unique key the schema declares to both
 impls (a duplicate raises `UniqueKeyTaken` and the row that holds the
-key is unchanged; an update by copy of that row passes), and show that
-a named atomic create lands whole or not at all.
+key is unchanged; an update by copy of that row passes; a key on a
+soft-deletable table is created, deleted, and created again), and show
+that a named atomic create lands whole or not at all.
 `services/api/tests/test_public_types.py` reads the emitted OpenAPI
 document and fails on a view that carries a token, a key, or a ticket
 without the `Issued` prefix.
