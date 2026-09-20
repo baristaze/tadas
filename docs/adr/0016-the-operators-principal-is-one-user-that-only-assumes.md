@@ -1,0 +1,48 @@
+# ADR 0016: The operators' principal is one IAM user that can only assume the read-only roles
+
+**Status**: accepted (2026-09-20)
+
+## Context
+
+"Operations" > "Operator Roles" says the principal an agent holds is
+one user whose only permission is to assume the read-only roles, and
+that moving to the cloud's identity center when the team grows changes
+the roles' trust policy and nothing below it. It names the shape, not
+the AWS mechanism.
+
+AWS recommends IAM Identity Center for people: short-lived credentials
+from a browser sign-in, permission sets instead of users. It is the
+better practice, and it costs an organization, an identity source, and
+a sign-in that an agent cannot complete on its own. Tadas is operated
+by two people and their agents, and the agents are the ones that hold
+the credential most of the day.
+
+## Decision
+
+The `shared` root declares one IAM user, `tadas-operators`, with one
+inline policy: `sts:AssumeRole` on `arn:aws:iam::<account>:role/tadas-investigate-*`.
+It holds no other permission, so the widest thing a leaked key can do
+is read. Its access key is not in Terraform: `scripts/cloud_create.sh`
+mints it once under the administrator profile, writes it into
+`~/.aws/credentials` as the `tadas-operators` profile, and writes the
+two role profiles that chain from it, `tadas-staging-investigate` and
+`tadas-production-investigate`. The investigate roles trust that user
+and the arns in `operator_principal_arns`.
+
+The supporter holds no cloud role of its own. It is the investigate
+profile plus an operator identity whose allowlist entry is read, and
+the tenant's rows are read through the operator plane (ADR 0017).
+
+## Consequences
+
+- A person joining the team is added to `operator_principal_arns`
+  through a pull request, or given the same user's key. Neither widens
+  what an operator can do.
+- Moving to Identity Center later is a change to the investigate
+  roles' trust policy (a permission set assumes them) and the removal
+  of the user. The profiles, the skills, and the runbooks keep their
+  names because they name the role profiles, not the source.
+- The key is a long-lived credential and rotation is by hand: mint a
+  new one, rewrite the profile, delete the old. That is the price of
+  an agent that signs in with no browser, and it is bounded by the
+  user holding nothing but `AssumeRole`.
