@@ -226,13 +226,21 @@
         "type": "object"
       },
       "IssuedApiKeyView": {
+        "description": "The key in the clear is present on the first response only: the stored\noutcome of the create carries no secret, so a replay under the same\nIdempotency-Key answers with `key` null and `Idempotent-Replayed: true`. A\nclient that lost the first response revokes the key and issues another.",
         "properties": {
           "api_key": {
             "$ref": "#/components/schemas/ApiKeyView"
           },
           "key": {
-            "title": "Key",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Key"
           }
         },
         "required": [

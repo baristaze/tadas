@@ -1,3 +1,4 @@
+import json
 from datetime import timedelta
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -80,7 +81,8 @@ async def test_api_key_creation_replays_on_the_same_idempotency_key(
     second = await client.post("/v1/api-keys", headers=headers, json=body)
     assert second.status_code == 201
     assert second.headers["Idempotent-Replayed"] == "true"
-    assert second.json() == first.json()
+    # The replay is the row and no secret: the key was shown once.
+    assert first.json()["key"] and second.json() == {**first.json(), "key": None}
 
     keys = await client.get("/v1/api-keys", headers=owner)
     assert [k["id"] for k in keys.json()] == [first.json()["api_key"]["id"]]
@@ -153,7 +155,37 @@ async def test_a_crash_between_the_key_create_and_finish_reissues_the_secret(
     assert as_machine.status_code == 200, as_machine.text
     replay = await client.post("/v1/api-keys", headers=headers, json=body)
     assert replay.status_code == 201 and replay.headers["Idempotent-Replayed"] == "true"
-    assert replay.json() == retry.json()
+    assert replay.json() == {**retry.json(), "key": None}
+
+
+async def test_the_stored_outcome_of_a_key_create_carries_no_secret(
+    client: httpx.AsyncClient, container: AppContainer, owner: dict[str, str]
+) -> None:
+    # The secret exists in one place, as a digest: the idempotency record
+    # holds the view with the key absent, the first response alone carries it,
+    # and a replay answers with the row, key null, and the header that says so.
+    headers = {**owner, "Idempotency-Key": "key-secret-1"}
+    first = await client.post(
+        "/v1/api-keys", headers=headers, json={"name": "ci", "role": "member"}
+    )
+    assert first.status_code == 201, first.text
+    secret = first.json()["key"]
+    assert secret and secret.startswith("key_")
+
+    me = (await client.get("/v1/me", headers=owner)).json()
+    record = await container.storage.get_idempotency_storage().read_record(
+        UUID(me["org"]["id"]), UUID(me["user"]["id"]), "key-secret-1"
+    )
+    assert record is not None and record.body is not None
+    assert secret not in record.body
+    assert json.loads(record.body) == {**first.json(), "key": None}
+
+    replay = await client.post(
+        "/v1/api-keys", headers=headers, json={"name": "ci", "role": "member"}
+    )
+    assert replay.status_code == 201 and replay.headers["Idempotent-Replayed"] == "true"
+    assert replay.json()["key"] is None
+    assert replay.json()["api_key"] == first.json()["api_key"]
 
 
 async def test_api_key_ttl_is_bounded_on_the_wire(

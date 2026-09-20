@@ -468,11 +468,17 @@ export interface components {
             /** Is Operator */
             is_operator: boolean;
         };
-        /** IssuedApiKeyView */
+        /**
+         * IssuedApiKeyView
+         * @description The key in the clear is present on the first response only: the stored
+         *     outcome of the create carries no secret, so a replay under the same
+         *     Idempotency-Key answers with `key` null and `Idempotent-Replayed: true`. A
+         *     client that lost the first response revokes the key and issues another.
+         */
         IssuedApiKeyView: {
             api_key: components["schemas"]["ApiKeyView"];
             /** Key */
-            key: string;
+            key: string | null;
         };
         /**
          * IssuedLoginView

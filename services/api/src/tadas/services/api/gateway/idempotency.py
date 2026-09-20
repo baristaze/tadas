@@ -8,7 +8,8 @@ is told to wait. The marker names its attempt: an attempt that ran past the
 pending lease and lost the marker to a retry is refused when it finishes or
 releases, and the refusal is logged and swallowed here, because the retry
 owns the marker now and whatever the slow attempt wrote is the row the retry
-found."""
+found. A view that declares secret fields is stored with them absent: the
+secret is shown once, on the first response, and a replay says so."""
 
 import hashlib
 import logging
@@ -97,7 +98,7 @@ class Idempotency:
             await self._release(attempt_id)
             raise
         body = view.model_dump_json()
-        if await self._finish(attempt_id, status, body):
+        if await self._finish(attempt_id, status, stored_body(view)):
             OUTCOMES.labels(subsystem="idempotency", outcome="recorded").inc()
         return Response(content=body, status_code=status, media_type=JSON)
 
@@ -132,6 +133,17 @@ class Idempotency:
         the same refusal the first attempt saw."""
         error = ErrorBody(code=code, message=message, request_id=self._ctx.request_id)
         return ErrorResponse(error=error).model_dump_json()
+
+
+def stored_body(view: BaseModel) -> str:
+    """The outcome as the marker stores it: the view with every field it
+    declares a secret absent (`View.secret_fields`), so the secret exists in one
+    place, as a digest, and a replay answers with the row and no secret. The
+    first response carries the view whole; this is what the retry sees."""
+    secrets: frozenset[str] = getattr(type(view), "secret_fields", frozenset())
+    if not secrets:
+        return view.model_dump_json()
+    return view.model_copy(update=dict.fromkeys(secrets)).model_dump_json()
 
 
 def _json(view: BaseModel, status: int) -> Response:

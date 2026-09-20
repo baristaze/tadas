@@ -216,8 +216,14 @@ class HTTPValidationError(BaseModel):
 
 
 class IssuedApiKeyView(BaseModel):
+    """
+    The key in the clear is present on the first response only: the stored
+    outcome of the create carries no secret, so a replay under the same
+    Idempotency-Key answers with `key` null and `Idempotent-Replayed: true`. A
+    client that lost the first response revokes the key and issues another.
+    """
     api_key: ApiKeyView
-    key: Annotated[str, Field(title='Key')]
+    key: Annotated[str | None, Field(title='Key')]
 
 
 class IssuedSessionView(BaseModel):
