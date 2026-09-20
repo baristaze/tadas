@@ -118,9 +118,14 @@ async def listen(
             line = f"a change was not shown, the task could not be read: {error}"
             print(f"{clock():%H:%M:%S}  {line}", file=err, flush=True)
             continue
-        if after is None:
+        if change.action == "deleted":
+            # Only a delete says the task is over. A read that answers 404 on
+            # any other change means the task went in that read's shadow and
+            # the delete is still to come: what the listener remembers is what
+            # gives that line its title, and under `--mine` what decides it is
+            # the caller's at all, so it is kept until the delete forgets it.
             known.pop(change.target_id, None)
-        else:
+        elif after is not None:
             known[change.target_id] = after
         if mine and not (is_mine(before, me.user.id) or is_mine(after, me.user.id)):
             continue

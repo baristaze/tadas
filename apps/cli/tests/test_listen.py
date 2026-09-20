@@ -247,3 +247,52 @@ def test_a_read_refused_with_401_ends_the_listener(stack: Stack) -> None:
     with pytest.raises(ApiError) as refused:
         asyncio.run(drive())
     assert refused.value.status == 401
+
+
+def test_a_read_that_answers_404_keeps_the_title_for_the_delete_that_follows(
+    stack: Stack,
+) -> None:
+    """A task edited and deleted inside one read's latency: the read of the
+    edit answers 404, and the delete that follows still has the title and is
+    still Ann's, so `--mine` prints it."""
+    owner = stack.session_token(OWNER["email"], OWNER["password"])
+    bob = stack.session_token(BOB["email"], BOB["password"])
+    out = io.StringIO()
+    flaky = Flaky(stack, [(is_task_read, 404)])
+
+    async def prepare() -> TaskView:
+        async with stack.client(owner) as as_owner, stack.client(bob) as as_bob:
+            ann = (await as_owner.me()).user.id
+            return await as_bob.create_task("Migrate DB", assignee_id=ann)
+
+    async def scripted(
+        client: ApiClient, on_state: Callable[[State], None]
+    ) -> AsyncIterator[EntityChanged]:
+        async with stack.client(bob) as as_bob, stack.client(owner) as as_owner:
+            seq = (await as_owner.events_after(0))[-1].seq
+
+            async def latest() -> EntityChanged:
+                nonlocal seq
+                event = (await as_owner.events_after(seq))[-1]
+                seq = event.seq
+                return EntityChanged.of_event(event)
+
+            edited = await as_bob.update_task(task.id, version=task.version, notes="later")
+            yield await latest()  # the read answers 404: the task is already gone
+            await as_bob.delete_task(task.id, edited.version)
+            yield await latest()
+
+    async def drive() -> None:
+        async with ApiClient(
+            "http://test", app="cli", app_version="cli@test", token=owner, transport=flaky
+        ) as client:
+            await listen(client, mine=True, out=out, channel=scripted, clock=lambda: CLOCK)
+
+    task = asyncio.run(prepare())
+    asyncio.run(drive())
+    assert out.getvalue().splitlines() == [
+        "listening as Ann at Acme: my tasks",
+        "09:30:00  Bob updated a task: Migrate DB",
+        "09:30:00  Bob deleted a task: Migrate DB",
+    ]
+    assert flaky.failures == []
