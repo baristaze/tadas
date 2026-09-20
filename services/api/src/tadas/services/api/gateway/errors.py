@@ -25,20 +25,37 @@ def envelope(
     return error_response(request_id_of(request.scope), status, code, message, headers)
 
 
+def presented(
+    request: Request,
+    exc: PlatformException | InfraException,
+    headers: dict[str, str] | None = None,
+) -> JSONResponse:
+    """A refusal (4xx) tells the client what was wrong. A failure (5xx) is
+    the process's problem: its message names backends, hosts, and codes the
+    client cannot act on, so it goes to the log under the request id and the
+    client reads "internal error" with the exception's own code and status."""
+    if exc.http_status >= 500:
+        log.error(
+            "%s on %s %s: %s", exc.code, request.method, request.url.path, exc.message, exc_info=exc
+        )
+        return envelope(request, exc.http_status, exc.code, INTERNAL_ERROR[1], headers)
+    return envelope(request, exc.http_status, exc.code, exc.message, headers)
+
+
 def register_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(PlatformException)
     async def platform_exception(request: Request, exc: PlatformException) -> JSONResponse:
         headers = None
         if isinstance(exc, RateLimited):
             headers = {"Retry-After": str(max(1, int(exc.retry_after.total_seconds())))}
-        return envelope(request, exc.http_status, exc.code, exc.message, headers)
+        return presented(request, exc, headers)
 
     @app.exception_handler(InfraException)
     async def infra_exception(request: Request, exc: InfraException) -> JSONResponse:
         # Infra is rooted apart from the object model (it imports nothing from
         # it) but carries the same status and code, so it is presented alike
         # (ADR 0005).
-        return envelope(request, exc.http_status, exc.code, exc.message)
+        return presented(request, exc)
 
     @app.exception_handler(RequestValidationError)
     async def request_validation(request: Request, exc: RequestValidationError) -> JSONResponse:

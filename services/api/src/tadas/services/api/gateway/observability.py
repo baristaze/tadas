@@ -1,7 +1,7 @@
 """Request id middleware: accept or mint, stamp on the scope, echo in the
-response, open the server span with it attached, count the request, and
-answer an unhandled exception with the envelope while the id is still in
-hand."""
+response, open the server span with it attached, count the request, log it
+as one line naming the route template, and answer an unhandled exception
+with the envelope while the id is still in hand."""
 
 import logging
 import time
@@ -42,6 +42,19 @@ def parse_request_id(value: str | None) -> UUID:
 
 def request_id_of(scope: Scope) -> UUID:
     return scope["state"]["request_id"]
+
+
+class QueryStringRedactor(logging.Filter):
+    """uvicorn's own lines name a path with its query string, the socket's
+    single-use ticket among them; the filter keeps the path and drops the
+    rest. Installed on the logger uvicorn writes them to."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.args, tuple):
+            record.args = tuple(
+                arg.partition("?")[0] if isinstance(arg, str) else arg for arg in record.args
+            )
+        return True
 
 
 def route_template_of(scope: Scope) -> str | None:
@@ -101,8 +114,11 @@ class RequestIdMiddleware:
                 span.update_name(f"{method} {template}")
                 span.set_attribute("http.route", template)
                 if scope["type"] == "http":
+                    elapsed = time.perf_counter() - started
                     span.set_attribute("http.response.status_code", status["code"])
                     HTTP_REQUESTS.labels(route=template, method=method, status=status["code"]).inc()
-                    HTTP_LATENCY.labels(route=template, method=method).observe(
-                        time.perf_counter() - started
-                    )
+                    HTTP_LATENCY.labels(route=template, method=method).observe(elapsed)
+                    # The access line, in place of uvicorn's: the template, so
+                    # a query string (the socket ticket rides in one) is never
+                    # written out.
+                    log.info("%s %s %d %.1fms", method, template, status["code"], elapsed * 1000)

@@ -5,6 +5,7 @@ the same way before it does anything else."""
 import argparse
 import asyncio
 import json
+import logging
 import sys
 import tempfile
 from pathlib import Path
@@ -20,6 +21,7 @@ from tadas.om.storage import migrate
 from tadas.om.storage.impl.memory import StorageMemoryImpl
 from tadas.services.api.app import create_app
 from tadas.services.api.container import AppContainer, boot
+from tadas.services.api.gateway.observability import QueryStringRedactor
 from tadas.services.api.settings import ApiSettings
 
 
@@ -27,17 +29,30 @@ def server_options(settings: ApiSettings) -> dict[str, Any]:
     """What uvicorn is told beyond the address. Forwarded headers are honored
     only from the proxies settings name; with none named the peer is the
     client, so nothing outside the load balancer can choose its own address
-    for the rate limit."""
+    for the rate limit. uvicorn's access log is off: the observability
+    middleware writes the line, by route template, so the query string a
+    socket ticket rides in is never logged."""
     return {
         "proxy_headers": bool(settings.trusted_proxies),
         "forwarded_allow_ips": list(settings.trusted_proxies),
         "log_config": None,
+        "access_log": False,
     }
+
+
+def configure_server_logging() -> None:
+    """uvicorn logs through the root handler boot configured (`log_config`
+    is None); the one thing changed is that its lines lose their query
+    strings."""
+    uvicorn_error = logging.getLogger("uvicorn.error")
+    if not any(isinstance(f, QueryStringRedactor) for f in uvicorn_error.filters):
+        uvicorn_error.addFilter(QueryStringRedactor())
 
 
 def serve(args: argparse.Namespace) -> int:
     settings = ApiSettings()
     boot(settings)
+    configure_server_logging()
     uvicorn.run(
         "tadas.services.api.app:create_app",
         factory=True,

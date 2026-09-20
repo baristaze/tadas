@@ -38,6 +38,15 @@ def new_send_buffer(websocket: WebSocket) -> SendBuffer:
 SocketSendBuffer = Annotated[SendBuffer, Depends(new_send_buffer)]
 
 
+async def settle(drainer: asyncio.Task[None]) -> None:
+    """Ends the drainer. One that died because the peer left (a disconnect,
+    a closed transport) is the normal end of a socket and not an error;
+    anything else it raised propagates."""
+    drainer.cancel()
+    with contextlib.suppress(asyncio.CancelledError, WebSocketDisconnect, OSError):
+        await drainer
+
+
 @router.post("/tickets", response_model=TicketView, status_code=201)
 async def mint_ticket(ctx: Ctx, realtime: RealtimeService) -> TicketView:
     return await realtime.issue_ticket(ctx)
@@ -84,8 +93,6 @@ async def channel(
     finally:
         for unsubscribe in subscriptions.values():
             unsubscribe()
-        drainer.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await drainer
+        await settle(drainer)
         with contextlib.suppress(RuntimeError):
             await websocket.close()
