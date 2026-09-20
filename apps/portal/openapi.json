@@ -226,13 +226,21 @@
         "type": "object"
       },
       "IssuedApiKeyView": {
+        "description": "The key in the clear is present on the first response only: the stored\noutcome of the create carries no secret, so a replay under the same\nIdempotency-Key answers with `key` null and `Idempotent-Replayed: true`. A\nclient that lost the first response revokes the key and issues another.",
         "properties": {
           "api_key": {
             "$ref": "#/components/schemas/ApiKeyView"
           },
           "key": {
-            "title": "Key",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Key"
           }
         },
         "required": [
@@ -299,6 +307,25 @@
           "role"
         ],
         "title": "IssuedSessionView",
+        "type": "object"
+      },
+      "IssuedTicketView": {
+        "description": "Carries the freshly minted socket ticket in the clear, once; redeeming\nit opens the channel and re-checks the credential behind it.",
+        "properties": {
+          "expires_in_seconds": {
+            "title": "Expires In Seconds",
+            "type": "integer"
+          },
+          "ticket": {
+            "title": "Ticket",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ticket",
+          "expires_in_seconds"
+        ],
+        "title": "IssuedTicketView",
         "type": "object"
       },
       "LoginRequest": {
@@ -654,24 +681,6 @@
           "deleted_at"
         ],
         "title": "TaskView",
-        "type": "object"
-      },
-      "TicketView": {
-        "properties": {
-          "expires_in_seconds": {
-            "title": "Expires In Seconds",
-            "type": "integer"
-          },
-          "ticket": {
-            "title": "Ticket",
-            "type": "string"
-          }
-        },
-        "required": [
-          "ticket",
-          "expires_in_seconds"
-        ],
-        "title": "TicketView",
         "type": "object"
       },
       "UpdateMeRequest": {
@@ -1172,6 +1181,7 @@
             "schema": {
               "anyOf": [
                 {
+                  "maxLength": 255,
                   "type": "string"
                 },
                 {
@@ -2339,7 +2349,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/TicketView"
+                  "$ref": "#/components/schemas/IssuedTicketView"
                 }
               }
             },
@@ -2730,6 +2740,7 @@
             "schema": {
               "anyOf": [
                 {
+                  "maxLength": 255,
                   "type": "string"
                 },
                 {

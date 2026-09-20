@@ -6,7 +6,7 @@ from tadas.om.events import EventsManagerInterface
 from tadas.om.exceptions import ValidationFailed
 from tadas.om.opcontext import ActorScope, OpContext
 from tadas.om.tenancy import TenancyManagerInterface
-from tadas.services.api.realtime.envelopes import EventEnvelope, TicketView
+from tadas.services.api.realtime.envelopes import EventEnvelope, IssuedTicketView
 from tadas.services.api.services.realtime import RealtimeServiceInterface
 from tadas.services.api.types.events import EntityChangedView
 
@@ -31,10 +31,10 @@ class RealtimeServiceImpl(RealtimeServiceInterface):
     async def head(self, ctx: OpContext) -> int:
         return await self._events.get_head(ctx)
 
-    async def issue_ticket(self, ctx: OpContext) -> TicketView:
+    async def issue_ticket(self, ctx: OpContext) -> IssuedTicketView:
         issued = await self._tenancy.issue_ticket(ctx)
         remaining = int((issued.expires_at - utcnow()).total_seconds())
-        return TicketView(ticket=issued.ticket, expires_in_seconds=max(remaining, 0))
+        return IssuedTicketView(ticket=issued.ticket, expires_in_seconds=max(remaining, 0))
 
     def subscribe(
         self, ctx: ActorScope, topic: Topics, deliver: Callable[[EventEnvelope], None]

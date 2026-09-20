@@ -8,9 +8,11 @@ from datetime import timedelta
 import pytest
 
 from tadas.infra.base import SYSTEM_SCOPE, new_id, utcnow
-from tadas.infra.cache import CacheScope
+from tadas.infra.cache import CacheScope, cache_key
+from tadas.infra.cache.valkey import CacheValkeyImpl
 from tadas.infra.impl.configured import InfraConfiguredImpl
 from tadas.infra.impl.settings import InfraSettings
+from tadas.infra.impl.valkey import ValkeyConnection
 from tadas.infra.topics import TopicPayload, Topics, WorkAvailablePayload
 
 pytestmark = pytest.mark.integration
@@ -61,6 +63,32 @@ async def test_increment_counts_within_a_window(infra: InfraConfiguredImpl) -> N
     assert count == 1 and timedelta(seconds=59) < remaining <= timedelta(seconds=60)
     count, _ = await cache.increment(org, "login", timedelta(seconds=60))
     assert count == 2
+
+
+async def test_increment_always_leaves_a_window_on_the_counter() -> None:
+    """A counter that lost its TTL (a crash between the count and the expiry
+    under the old three-command increment) is given one by the next call, so
+    no subject stays rate-limited for good."""
+    settings = InfraSettings()
+    connection = ValkeyConnection(
+        settings.valkey_url, timedelta(seconds=settings.valkey_timeout_seconds)
+    )
+    try:
+        cache = CacheValkeyImpl(connection, CacheScope.RATE_LIMIT)
+        org = new_id()
+        stored = f"tadas:cache:{CacheScope.RATE_LIMIT.value}:{cache_key(org, 'login')}"
+        client = await connection.client()
+        assert client is not None
+        await client.set(stored, "4")  # no expiry: the half-done state
+        assert await client.pttl(stored) == -1
+        count, remaining = await cache.increment(org, "login", timedelta(seconds=60))
+        assert count == 5 and timedelta(seconds=59) < remaining <= timedelta(seconds=60)
+        assert 0 < await client.pttl(stored) <= 60_000
+        count, _ = await cache.increment(org, "login", timedelta(seconds=60))
+        assert count == 6
+        await client.delete([stored])
+    finally:
+        await connection.close()
 
 
 async def test_a_publish_reaches_a_subscriber(infra: InfraConfiguredImpl) -> None:

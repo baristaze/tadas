@@ -28,6 +28,7 @@ class WorkOptions(Platform):
     base_retry_delay: timedelta = timedelta(seconds=30)
     max_retry_delay: timedelta = timedelta(minutes=15)
     stale_stagger: timedelta = timedelta(seconds=5)
+    retention: timedelta = timedelta(days=30)  # a done or failed item is purged after this
 
 
 class WorkManagerImpl(WorkManagerInterface):
@@ -51,18 +52,40 @@ class WorkManagerImpl(WorkManagerInterface):
             WORK_PAYLOADS[item.kind].model_validate(item.payload)
         except ValidationError as error:
             raise ValidationFailed(f"payload of {item.kind.value} work: {error}"[:500]) from None
-        await self._storage.write_item(ctx.org_id, item)
+        now = utcnow()
+        queued = item.model_copy(
+            update={
+                "created_at": now,
+                "updated_at": now,
+                "created_by": ctx.user_id,
+                "updated_by": ctx.user_id,
+                "status": WorkStatus.QUEUED,
+                "attempts": 0,
+                "claimed_by": None,
+                "claim_token": None,
+                "lease_expires_at": None,
+                "last_error": None,
+            }
+        )
+        if not await self._storage.create_item(ctx.org_id, queued):
+            # Ids are minted above storage, so the only way to present one twice
+            # is a retry, and a retry must not create twice: the insert reported
+            # the id and nothing changed, a claim on the row included, so the
+            # row as stored is the answer and it was announced when it landed.
+            existing = await self._storage.read_item(ctx.org_id, queued.id)
+            assert existing is not None
+            return existing
         await self._topics.publish(
             Topics.WORK_AVAILABLE,
             WorkAvailablePayload(
-                idempotency_key=item.idempotency_key,
-                produced_at=utcnow(),
+                idempotency_key=queued.idempotency_key,
+                produced_at=now,
                 org_id=ctx.org_id,
-                lane=item.lane,
-                kind=item.kind.value,
+                lane=queued.lane,
+                kind=queued.kind.value,
             ),
         )
-        return item
+        return queued
 
     async def claim(
         self,
@@ -86,6 +109,7 @@ class WorkManagerImpl(WorkManagerInterface):
             {
                 "status": WorkStatus.DONE,
                 "claimed_by": None,
+                "claim_token": None,
                 "lease_expires_at": None,
                 "updated_at": utcnow(),
             },
@@ -107,6 +131,7 @@ class WorkManagerImpl(WorkManagerInterface):
             {
                 **update,
                 "claimed_by": None,
+                "claim_token": None,
                 "lease_expires_at": None,
                 "last_error": error,
                 "updated_at": now,
@@ -140,6 +165,10 @@ class WorkManagerImpl(WorkManagerInterface):
                 await self._dead_letter(ctx, item)
         return len(requeued)
 
+    async def purge_settled(self, ctx: OpContext) -> int:
+        ctx.require(Permission.WRITE)
+        return await self._storage.purge_settled(ctx.org_id, utcnow() - self._options.retention)
+
     async def maintenance_contexts(self, rctx: RequestContext) -> list[OpContext]:
         return await self._tenancy.service_contexts(rctx)
 
@@ -152,6 +181,7 @@ class WorkManagerImpl(WorkManagerInterface):
                 "status": WorkStatus.QUEUED,
                 "available_at": now + delay,
                 "claimed_by": None,
+                "claim_token": None,
                 "lease_expires_at": None,
                 "attempts": attempts_after_hand_back(item.attempts),
                 "updated_at": now,
@@ -159,24 +189,26 @@ class WorkManagerImpl(WorkManagerInterface):
         )
 
     async def _transition(self, ctx: OpContext, item: WorkItem, update: dict[str, Any]) -> WorkItem:
-        """Confirms the item exists, is in this tenant, and is still claimed by the
-        worker named on it, then writes the transition conditionally on that claim
-        (`claimed_by` in the statement itself): a worker whose lease has passed is
-        refused with LeaseLost, a Conflict, and hands the item back without
-        spending an attempt (the fencing token)."""
+        """Confirms the item exists, is in this tenant, and is still claimed under
+        the token the claim minted, then writes the transition conditionally on
+        that token (`claim_token` in the statement itself). The token, not the
+        worker's name, is the fence: one worker can hold one item twice across a
+        requeue, and the first claim's copy must not settle the second. A worker
+        whose lease has passed is refused with LeaseLost, a Conflict, and hands
+        the item back without spending an attempt."""
         ctx.require(Permission.WRITE)
         stored = await self._storage.read_item(ctx.org_id, item.id)
         if stored is None:
             raise NotFound(f"work item {item.id} not found")
         if (
-            item.claimed_by is None
+            item.claim_token is None
             or stored.status is not WorkStatus.CLAIMED
-            or stored.claimed_by != item.claimed_by
+            or stored.claim_token != item.claim_token
         ):
             raise LeaseLost(f"work item {item.id} is no longer held by {item.claimed_by}")
         written = await self._storage.write_item_if_held(
             ctx.org_id,
-            item.claimed_by,
+            item.claim_token,
             item.model_copy(update={**update, "updated_by": ctx.user_id}),
         )
         if written is None:

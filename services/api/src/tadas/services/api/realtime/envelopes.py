@@ -71,6 +71,9 @@ class ClientCommand(RequestBody):
     topic: str | None = None
 
 
-class TicketView(View):
+class IssuedTicketView(View):
+    """Carries the freshly minted socket ticket in the clear, once; redeeming
+    it opens the channel and re-checks the credential behind it."""
+
     ticket: str
     expires_in_seconds: int

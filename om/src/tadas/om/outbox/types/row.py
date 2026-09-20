@@ -23,6 +23,13 @@ class OutboxRow(Identifiable, Created):
     request_id: UUID  # the request that produced it
     app: str  # the AppType value the request came from
     done_at: datetime | None = None  # set by the relay; the sweep purges done rows
+    # The sweep's claim: each claim spends an attempt and sets the next one
+    # with a growing delay, so a row that will not relay stops nothing behind
+    # it; past the relay's max_attempts the row is failed, a dead letter.
+    attempts: int = 0
+    next_attempt_at: datetime | None = None  # None: at once
+    last_error: str | None = None
+    failed_at: datetime | None = None
 
 
 def outbox_row(

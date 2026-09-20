@@ -2,10 +2,10 @@ from collections.abc import Sequence
 from datetime import datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import DateTime, Interval, case, func, literal, select, update
+from sqlalchemy import DateTime, Interval, case, delete, func, literal, select, update
 
-from tadas.om.base import utcnow
-from tadas.om.exceptions import DuplicateWorkItem, UniqueKeyTaken
+from tadas.om.base import new_id, utcnow
+from tadas.om.exceptions import DuplicateWorkItem, TenantMismatch, UniqueKeyTaken
 from tadas.om.storage.impl.pg_base import PgStorageBase
 from tadas.om.storage.utils.translation import to_model, to_values
 from tadas.om.work.storage import WorkStorageInterface
@@ -14,14 +14,24 @@ from tadas.om.work.types.work_item import WorkItem, WorkKind, WorkStatus
 
 
 class WorkStoragePostgresImpl(PgStorageBase, WorkStorageInterface):
-    async def write_item(self, org_id: UUID, item: WorkItem) -> None:
+    async def create_item(self, org_id: UUID, item: WorkItem) -> bool:
+        # The base reports a taken id as False (a retry) and names any other
+        # unique key it hit; the one here is the idempotency key, a conflict.
         try:
-            await self._upsert(WorkItems, org_id, item)
+            if await self._insert(WorkItems, org_id, item):
+                return True
         except UniqueKeyTaken as error:
             raise DuplicateWorkItem(f"idempotency key {item.idempotency_key} is taken") from error
+        async with self._session_for(WorkItems) as session:
+            row = await session.get(WorkItems, item.id)
+        if row is None:
+            raise DuplicateWorkItem(f"idempotency key {item.idempotency_key} is taken")
+        if row.org_id != org_id:
+            raise TenantMismatch(f"work item {item.id} is not in {org_id}")
+        return False
 
     async def write_item_if_held(
-        self, org_id: UUID, worker_id: str, item: WorkItem
+        self, org_id: UUID, claim_token: UUID, item: WorkItem
     ) -> WorkItem | None:
         values = to_values(item, WorkItems)
         values.pop("id", None)
@@ -31,7 +41,7 @@ class WorkStoragePostgresImpl(PgStorageBase, WorkStorageInterface):
                 WorkItems.id == item.id,
                 WorkItems.org_id == org_id,
                 WorkItems.status == WorkStatus.CLAIMED.value,
-                WorkItems.claimed_by == worker_id,
+                WorkItems.claim_token == claim_token,
             )
             .values(**values)
             .returning(WorkItems)
@@ -67,6 +77,7 @@ class WorkStoragePostgresImpl(PgStorageBase, WorkStorageInterface):
             .values(
                 status=WorkStatus.CLAIMED.value,
                 claimed_by=worker_id,
+                claim_token=new_id(),
                 lease_expires_at=now + lease,
                 attempts=WorkItems.attempts + 1,  # rules.attempts_after_claim, in SQL
                 updated_at=now,
@@ -108,6 +119,7 @@ class WorkStoragePostgresImpl(PgStorageBase, WorkStorageInterface):
                 status=case((exhausted, WorkStatus.FAILED.value), else_=WorkStatus.QUEUED.value),
                 available_at=case((exhausted, WorkItems.available_at), else_=staggered),
                 claimed_by=None,
+                claim_token=None,
                 lease_expires_at=None,
                 last_error="lease expired",
                 updated_at=now,
@@ -120,6 +132,21 @@ class WorkStoragePostgresImpl(PgStorageBase, WorkStorageInterface):
             changed = sorted((to_model(row, WorkItem) for row in rows), key=lambda item: item.id)
             await session.commit()
             return changed
+
+    async def purge_settled(self, org_id: UUID, before: datetime) -> int:
+        stmt = (
+            delete(WorkItems)
+            .where(
+                WorkItems.org_id == org_id,
+                WorkItems.status.in_([WorkStatus.DONE.value, WorkStatus.FAILED.value]),
+                WorkItems.updated_at < before,
+            )
+            .returning(WorkItems.id)
+        )
+        async with self._session_for(stmt) as session:
+            purged = len((await session.execute(stmt)).scalars().all())
+            await session.commit()
+            return purged
 
     async def read_item(self, org_id: UUID, item_id: UUID) -> WorkItem | None:
         stmt = select(WorkItems).where(WorkItems.org_id == org_id, WorkItems.id == item_id)

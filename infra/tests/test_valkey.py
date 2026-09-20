@@ -55,3 +55,42 @@ async def test_an_unreachable_server_is_a_miss_not_an_error() -> None:
         assert await cache.get(new_id(), "k") is None
     finally:
         await connection.close()
+
+
+class ScriptOnlyClient:
+    """A client that offers script invocation and nothing else: the increment
+    must be one call, so any other command is a defect."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[list[str], list[str]]] = []
+
+    async def invoke_script(self, script: object, keys: list[str], args: list[str]) -> list[int]:
+        self.calls.append((keys, args))
+        return [len(self.calls), int(args[0])]
+
+    def __getattr__(self, name: str) -> object:
+        raise AssertionError(f"increment sent a second command: {name}")
+
+
+class ScriptOnlyConnection:
+    def __init__(self) -> None:
+        self.script_client = ScriptOnlyClient()
+
+    async def client(self) -> ScriptOnlyClient:
+        return self.script_client
+
+
+async def test_increment_is_one_script_call() -> None:
+    connection = ScriptOnlyConnection()
+    cache = CacheValkeyImpl(connection, CacheScope.RATE_LIMIT)  # type: ignore[arg-type]
+    org = new_id()
+    assert await cache.increment(org, "login", timedelta(seconds=30)) == (
+        1,
+        timedelta(seconds=30),
+    )
+    assert await cache.increment(org, "login", timedelta(seconds=30)) == (
+        2,
+        timedelta(seconds=30),
+    )
+    (keys, args), _ = connection.script_client.calls
+    assert keys == [f"tadas:cache:rate_limit:org:{org}:login"] and args == ["30000"]

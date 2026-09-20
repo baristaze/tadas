@@ -1,7 +1,8 @@
 """One handler translates PlatformException, and its infra sibling, into the
-error envelope with the status the exception names; one catch-all turns
-anything else into a 500 with the same shape. Routers never set error
-status codes."""
+error envelope with the status the exception names. Anything else is a 500
+with the same shape, rendered by the observability middleware while the
+request id is still in hand; the catch-all here is the last resort for what
+escapes outside it. Routers never set error status codes."""
 
 import logging
 
@@ -11,9 +12,9 @@ from fastapi.responses import JSONResponse
 
 from tadas.infra.exceptions import InfraException
 from tadas.om.exceptions import PlatformException
+from tadas.services.api.gateway.envelope import INTERNAL_ERROR, error_response
 from tadas.services.api.gateway.observability import request_id_of
 from tadas.services.api.gateway.ratelimit import RateLimited
-from tadas.services.api.types.common import ErrorBody, ErrorResponse
 
 log = logging.getLogger(__name__)
 
@@ -21,10 +22,24 @@ log = logging.getLogger(__name__)
 def envelope(
     request: Request, status: int, code: str, message: str, headers: dict[str, str] | None = None
 ) -> JSONResponse:
-    body = ErrorResponse(
-        error=ErrorBody(code=code, message=message, request_id=request_id_of(request.scope))
-    )
-    return JSONResponse(status_code=status, content=body.model_dump(mode="json"), headers=headers)
+    return error_response(request_id_of(request.scope), status, code, message, headers)
+
+
+def presented(
+    request: Request,
+    exc: PlatformException | InfraException,
+    headers: dict[str, str] | None = None,
+) -> JSONResponse:
+    """A refusal (4xx) tells the client what was wrong. A failure (5xx) is
+    the process's problem: its message names backends, hosts, and codes the
+    client cannot act on, so it goes to the log under the request id and the
+    client reads "internal error" with the exception's own code and status."""
+    if exc.http_status >= 500:
+        log.error(
+            "%s on %s %s: %s", exc.code, request.method, request.url.path, exc.message, exc_info=exc
+        )
+        return envelope(request, exc.http_status, exc.code, INTERNAL_ERROR[1], headers)
+    return envelope(request, exc.http_status, exc.code, exc.message, headers)
 
 
 def register_error_handlers(app: FastAPI) -> None:
@@ -33,14 +48,14 @@ def register_error_handlers(app: FastAPI) -> None:
         headers = None
         if isinstance(exc, RateLimited):
             headers = {"Retry-After": str(max(1, int(exc.retry_after.total_seconds())))}
-        return envelope(request, exc.http_status, exc.code, exc.message, headers)
+        return presented(request, exc, headers)
 
     @app.exception_handler(InfraException)
     async def infra_exception(request: Request, exc: InfraException) -> JSONResponse:
         # Infra is rooted apart from the object model (it imports nothing from
         # it) but carries the same status and code, so it is presented alike
         # (ADR 0005).
-        return envelope(request, exc.http_status, exc.code, exc.message)
+        return presented(request, exc)
 
     @app.exception_handler(RequestValidationError)
     async def request_validation(request: Request, exc: RequestValidationError) -> JSONResponse:
@@ -51,5 +66,8 @@ def register_error_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(Exception)
     async def catch_all(request: Request, exc: Exception) -> JSONResponse:
+        # Starlette runs this outside every middleware, after the request id
+        # is gone from the log context; the middleware answers first and only
+        # what is raised beyond it reaches here.
         log.exception("unhandled error on %s %s", request.method, request.url.path)
-        return envelope(request, 500, "internal_error", "internal error")
+        return envelope(request, 500, *INTERNAL_ERROR)

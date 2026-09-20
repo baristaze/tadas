@@ -468,11 +468,17 @@ export interface components {
             /** Is Operator */
             is_operator: boolean;
         };
-        /** IssuedApiKeyView */
+        /**
+         * IssuedApiKeyView
+         * @description The key in the clear is present on the first response only: the stored
+         *     outcome of the create carries no secret, so a replay under the same
+         *     Idempotency-Key answers with `key` null and `Idempotent-Replayed: true`. A
+         *     client that lost the first response revokes the key and issues another.
+         */
         IssuedApiKeyView: {
             api_key: components["schemas"]["ApiKeyView"];
             /** Key */
-            key: string;
+            key: string | null;
         };
         /**
          * IssuedLoginView
@@ -501,6 +507,17 @@ export interface components {
             /** Token */
             token: string;
             user: components["schemas"]["UserView"];
+        };
+        /**
+         * IssuedTicketView
+         * @description Carries the freshly minted socket ticket in the clear, once; redeeming
+         *     it opens the channel and re-checks the credential behind it.
+         */
+        IssuedTicketView: {
+            /** Expires In Seconds */
+            expires_in_seconds: number;
+            /** Ticket */
+            ticket: string;
         };
         /** LoginRequest */
         LoginRequest: {
@@ -657,13 +674,6 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
-        };
-        /** TicketView */
-        TicketView: {
-            /** Expires In Seconds */
-            expires_in_seconds: number;
-            /** Ticket */
-            ticket: string;
         };
         /** UpdateMeRequest */
         UpdateMeRequest: {
@@ -1311,7 +1321,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["TicketView"];
+                    "application/json": components["schemas"]["IssuedTicketView"];
                 };
             };
             /** @description Validation Error */

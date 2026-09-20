@@ -67,17 +67,47 @@ context on keeps the stage the callee needs.
   manager, `TenancyOperatorManagerInterface`, which takes `OperatorContext`
   and nothing else. A socket ticket is a row; redeeming it is one conditional
   update on its hash, and the cache only remembers a redeemed one so a
-  replay is refused without a round trip.
+  replay is refused without a round trip. Every unique key the schema
+  declares (an identity's email, an org's slug, one live user per identity
+  and one membership per user in a tenant, the hashes of sessions, api
+  keys, and socket tickets) is refused by both storage impls as
+  `UniqueKeyTaken`, a `Conflict` (409), so a race the read did not see is
+  never a driver error and never mistaken for a retry: the Postgres
+  create primitive reports an existing id only when the primary key is the
+  violated constraint. The seeding transitions are named atomic creates:
+  `bootstrap` lands the org, its first user, and the owner's membership in
+  one commit (`create_org_with_owner`), `add_member` the user, the
+  membership, and the outbox row (`create_member`), so a concurrent
+  duplicate leaves no partial tenant behind. Removing a member ends their
+  membership with them: it is soft-deleted beside the user, hidden from
+  every read, and out of reach of a role change. A sign-in verifies the
+  password against a fixed dummy hash when the email is unknown, so the
+  response time does not say which emails exist, and runs scrypt off the
+  event loop. Sessions and api keys are listed newest first and filtered
+  at the storage (live at the instant asked; a member's own keys), so a
+  page of dead rows never hides a live one; the purge also removes
+  sessions revoked or expired and socket tickets redeemed or expired past
+  the retention. Login credentials, stored under the system scope, are
+  outside the per-tenant sweep today.
 - `work`: the table-backed work queue in the `queue` role; a row's
   routing field is its `lane`, payload shapes are fixed per `WorkKind`
-  by `WORK_PAYLOADS`, enqueue validates against it and publishes
-  `work_available`, the claim is one `SELECT ... FOR UPDATE SKIP LOCKED`
-  statement on the lane and returns the enqueuer's principal. Every
-  transition is conditional on the claim (`claimed_by` in the statement),
-  so a worker whose lease has passed is refused with `LeaseLost`, a
-  `Conflict`; a failed item is a dead letter, named by a
-  `work.item.failed` event in the tenant's stream and counted on the
-  outcome counter.
+  by `WORK_PAYLOADS`. Enqueue is a create: it validates the payload, and
+  the manager's copy stamps the actor from the context, the timestamps,
+  status `QUEUED`, zero attempts, and clears every claim field whatever
+  the caller sent; the insert reports an existing id and changes nothing,
+  so a retried enqueue returns the row as stored, claim intact, and a
+  reused idempotency key is `DuplicateWorkItem`, a `Conflict`. A fresh
+  row publishes `work_available`. The claim is one `SELECT ... FOR UPDATE
+  SKIP LOCKED` statement on the lane that mints a `claim_token` on the row
+  and returns the enqueuer's principal. Every transition (complete, fail,
+  defer, release, extend_lease) is conditional on the token in the
+  statement itself, not on the worker's name, because one worker can hold
+  one item twice across a requeue: a worker whose lease has passed is
+  refused with `LeaseLost`, a `Conflict`, and hands the item back without
+  spending an attempt; the requeue clears the token. A failed item is a
+  dead letter, named by a `work.item.failed` event in the tenant's
+  stream and counted on the outcome counter. Done or failed items are
+  purged by the sweep after the work retention (30 days).
 - `tasks`: the to-do items (`Task`: title, notes, status), listed by a
   `TaskFilter` (team or mine) and paged by a `TaskCursor`, both passed
   unchanged from the manager to storage; the visibility, cursor, and
@@ -108,7 +138,19 @@ context on keeps the stage the callee needs.
   has passed. The gateway logs and counts the refusal (`attempt_lost`)
   and answers with what the attempt produced, which is the row the retry
   found. A failure (a `5xx`) is not an outcome: the marker is released
-  and the retry runs again; a refusal (a `4xx`) is stored and replayed.
+  and the retry runs again; a refusal (a `4xx`) is stored and replayed,
+  its envelope rewritten with the replaying request's id, the one its
+  header carries. The stored outcome of a create that issued a secret is
+  the view with the secret absent: a wire view declares its secret fields
+  (`View.secret_fields`; `IssuedApiKeyView` names `key`) and the gateway
+  strips them before `finish`, for any route, so the first response alone
+  carries the key, a replay answers with the row, `key` null, and
+  `Idempotent-Replayed: true`, and the secret exists in one place, as a
+  digest. The key lands in a unique index, so the gateway refuses one
+  longer than 255 characters with a 422. The sweep purges finished records
+  after the idempotency retention (24 hours; a retry that late begins
+  afresh) and pending ones past ten times the pending lease, a marker no
+  retry came back for.
 - `outbox`: the transactional outbox. A manager that writes a core row
   hands the storage an `OutboxRow` (`kind`, `target_id`, the record's
   snapshot as `payload`, the actor and the request) and the storage base
@@ -119,14 +161,30 @@ context on keeps the stage the callee needs.
   which appends the `Event` under the row's id, publishes
   `entity_changed` with `(kind, target_id, seq)`, and marks the row done.
   A relay that fails is logged and counted, never raised; the
-  maintenance sweep relays whatever is pending and purges done rows.
+  maintenance sweep claims whatever is pending. The claim is one
+  statement (`FOR UPDATE SKIP LOCKED`, oldest first) over rows neither
+  done nor failed, whose next attempt is due, and older than the grace
+  (a younger row is the request path's to relay), so two sweeps relay
+  disjoint sets; it spends an attempt and sets `next_attempt_at` with a
+  delay that doubles per attempt, so a row that will not relay waits on
+  its own and starves nothing behind it. A failed relay keeps its
+  `last_error`; past the relay's `max_attempts` the row is failed for
+  good (`failed_at`), logged, counted as `dead_letter`, and named by an
+  `outbox.row.failed` event under the row's own provenance, best effort,
+  since the stream may be what is failing. The grace, the backoff, and
+  the attempt limit are `OutboxOptions`. Done and failed rows are purged
+  after the outbox retention.
 - `events`: the append-only stream behind every realtime push, in the
   `activity` role: `Event(Identifiable)` with `seq` (per tenant, gapless,
   assigned by the append, the one number storage assigns), `kind`
   (`<namespace>.<entity>.<action>`, or an audit kind), `target_id`, a
   `payload`, and the actor and request that produced it. The append is
   idempotent on the event id, so relaying an outbox row twice appends
-  once. No update, no delete.
+  once. No update, no delete. The entity events reach the stream through
+  the event storage, from the outbox relay; the manager's `append` is for
+  an audit entry (the work manager's dead letter), requires `WRITE`, and
+  stamps the actor, the request, and the app from the context, never
+  from the caller's event.
 
 Every table belongs to one database role (`core`, `activity`, `queue`,
 `admin`); the map in `tadas.om.storage.roles` decides the schema, the
@@ -152,18 +210,35 @@ with `extra="ignore"`, so a consumer ignores a field it does not know;
 a payload gains only optional, defaulted fields, so an old producer's
 message and a queued row written before a deploy still parse, and the
 two sides roll out in either order. A topic is best effort. Every capability interface declares `start()` and `close()`; the
-roots call them unconditionally and only the Valkey topic listener does
-anything in them.
+roots call them unconditionally: the Valkey topic listener opens its
+subscriber in `start()`, and each hosted impl (S3, SQS, Secrets Manager)
+opens its one client there, holds it through an exit stack for every
+call, and closes it in `close()`; nothing opens a client per call, and a
+call before `start()` is refused. A listener the driver fails is not
+left dead: the failure is counted (`topics` / `listener_failed`) and
+logged, the subscriber is dropped, and a new one is opened after a
+backoff that grows with consecutive failures.
 
 - The queue impls count `sent`, `received`, `deleted`, and, in the
   memory twin where the transition is visible, `dead_lettered` on the
   outcome counter, with a log line naming the message and the queue;
   the twin does not deduplicate on `dedup_id`, exactly like SQS. The
   cache impls count `hit` and `miss` on `get`, and Valkey `unreachable`.
-- The AWS impls translate every driver error into `BackendFailed`, an
-  `InfraException` leaf (`tadas.infra.exceptions`), through the one
-  module that names botocore (`tadas.infra.aws_errors`); not-found
-  codes keep their `NotFound` shape.
+  On Valkey, `increment` is one server-side script (count, and set the
+  window when the key has none), so a counter is never left without a
+  window by a failure between two commands. Each infra root builds one
+  cache per `CacheScope` in its constructor, like every other member
+  (ADR 0007), so the boot line names every scope.
+- The AWS impls translate every driver error into an `InfraException`
+  leaf (`tadas.infra.exceptions`) through the one module that names
+  botocore (`tadas.infra.aws_errors`): a service answer the impl cannot
+  map is `BackendFailed` under its error code; an endpoint, connection,
+  or timeout failure is `BackendUnreachable` (503) under the driver's
+  error class; any other driver error is `BackendFailed` under that
+  class. Not-found codes keep their `NotFound` shape. The hosted secrets
+  impl answers `has` with a describe, never a fetch of the value, and
+  `put` is a create with a new version on `ResourceExistsException`,
+  not a read followed by a write.
 - Environment names are one set, shared with Terraform: `local` and
   `test` allow the local backends; `dev`, `staging`, and `production`
   refuse them; any other name is refused at boot. The local secrets
@@ -191,6 +266,21 @@ everything in-process for tests.
   edge idempotency), routers for tenancy, tasks, and the operator plane
   under `/v1/admin/*`, health and metrics outside `/v1`, and the
   realtime channel at `/v1/realtime` opened with a single-use ticket.
+  The client address is the peer's, or the one `X-Forwarded-For` names
+  when the peer is one of `TADAS_TRUSTED_PROXIES` (empty locally; the
+  VPC block in the cloud, where the load balancer lives), so behind the
+  load balancer the login limit still counts per client and a peer
+  outside it cannot pick its own address. The envelope carries the
+  exception's code and status; for a status of 500 or more its message
+  is `internal error` and the real one goes to the log under the
+  request id. An unhandled exception is answered inside the
+  observability middleware, while the id is still in hand, so the 500
+  carries the request id header, the log line the id, and the request
+  counter the status; Starlette's own catch-all stays as the last
+  resort. uvicorn's access log is off: the middleware writes one line
+  per request by route template, and uvicorn's remaining lines lose
+  their query string, so the socket ticket, which travels as a query
+  parameter, is never logged.
   The gateway mints the request stage once per request
   (`request_context`: the request id the middleware stamped, `X-App`
   and `X-App-Version`, the current trace id) and asks the tenancy
@@ -198,11 +288,17 @@ everything in-process for tests.
   bearer (a session token or an api key), `Identity` is
   `authenticate_login` over it (the sign-in credential, on the tenant
   choice and the operator gate), `OperatorCtx` is `admit_operator` over the
-  identity, and the socket builds the request stage from its scope and
-  redeems its ticket. The login route takes the request stage alone.
+  identity, and the socket builds the request stage from its scope,
+  accepts the handshake, and then redeems its ticket: a refusal is a
+  close with code 4401 on the open socket, which both clients read as
+  "sign in again" (a close before the accept would reach the wire as an
+  HTTP 403 handshake failure, indistinguishable from any other refusal).
+  The login route takes the request stage alone.
   Per socket the process keeps one bounded send buffer
   (`realtime/send_buffer.py`, `TADAS_REALTIME_SEND_BUFFER_SIZE`) and a
   drainer; a full buffer drops the oldest frame and the client replays.
+  A peer that drops mid-stream ends the drainer with a disconnect; the
+  teardown treats that as the normal end of a socket, not an error.
   No service calls another today, so no internal credential is minted;
   `CredentialKind.INTERNAL` is what the seeding and the worker's service
   contexts carry. The sweep's service contexts are minted for the tenant,
@@ -225,14 +321,21 @@ everything in-process for tests.
   expires), a liveness heartbeat in the cache, and the
   maintenance sweep (requeue stale leases under one service context per
   live tenant, then purge the tenant's soft-deleted tasks, removed
-  members, and revoked api keys past their retention (the one hard
-  delete, 30 days by default), then relay the pending outbox rows and
-  purge the done ones after eight days, which outlives the seven-day
-  database backup retention, so a role restored to an earlier point
-  than its siblings is reconciled by relaying the outbox again). `tadas-maintenance serve | health`: the
-  image's `HEALTHCHECK` runs `health`, which reads the serving worker's
-  liveness key through the same cache and exits non-zero when it is
-  missing. It serves its own `/metrics` on `TADAS_METRICS_PORT` (9464).
+  members with their ended memberships, revoked api keys, dead sessions,
+  and spent socket tickets past their retention (the one hard delete,
+  30 days by default), its finished idempotency records and abandoned
+  markers, and its done or failed work items, then claim and relay the
+  pending outbox rows, one attempt each with a growing delay, and purge
+  the done and failed ones after eight days, which outlives the
+  seven-day database backup retention, so a role restored to an earlier
+  point than its siblings is reconciled by relaying the outbox again).
+  `tadas-maintenance serve | health`.
+  The serving process answers `/metrics` and `/healthz` on
+  `TADAS_METRICS_PORT` (9464) from one thread: `/healthz` reads the
+  loop's own liveness key through the process's cache, on its event
+  loop, so the container probe costs one cache read and boots nothing;
+  the image's `HEALTHCHECK` and the task definition ask that URL, and
+  `health` asks it by hand.
 - Every Python process builds its roots whole at boot, once: storage,
   infra, then every manager, in dependency order; a request constructs
   nothing. The cost is the imports (about 450 ms, once per process);
@@ -249,18 +352,41 @@ everything in-process for tests.
   manual order, done newest first with Show more, inline edit, drag to
   reorder), settings at `/settings` (members, api keys, sign-out), and one
   realtime channel that invalidates queries by the entity name inside a
-  push's `kind`. The client keeps the last contiguous `seq`; a push ahead
-  of it is a replay of `/v1/events` after the cursor, never a skip.
-  Errors go to the Sentry-compatible backend named by `VITE_SENTRY_DSN`,
-  through every route's `errorElement` and React's root error hooks. The
-  API is reached through `src/api/`: the committed `openapi.json` at the
-  app root, generated types behind the facade `types.ts`, one transport
-  client, which puts a deadline on every call (`requestTimeoutMs` in the
-  runtime config, 30 seconds by default) and rejects a call that runs
-  out with `RequestTimeout`. The session token lives in memory and in
-  the tab's session storage, so a reload survives and a closed tab
-  forgets; never in local storage, and a token an earlier build left
-  there is dropped on load. Every push and every event record carry `actor_id`, so a client
+  push's `kind`. The socket's loop (`src/realtime/channel.ts`: ticket,
+  reconnect with backoff, the degraded polling mode, the cursor and its
+  replay) has no React in it and runs in its test over a fake socket and
+  fake timers; the provider hands it the query cache, the transport
+  client, and the connection store. A socket counts as connected once
+  the hello frame arrives (or once it has stayed open a few seconds), so
+  a server that accepts and closes at once still meets a growing
+  backoff. The client keeps the last contiguous `seq`; a push ahead of
+  it is a replay of `/v1/events` after the cursor, never a skip: the
+  replay pages until the last page, a failed fetch, or a page that moved
+  the cursor nowhere (a seq between is not in storage yet), and the
+  cursor never moves past a seq that was not applied, so the next push
+  or pong retries from where it stands.
+  Errors go to the Sentry-compatible backend named by `sentryDsn` in
+  the runtime `config.json` (locally, by `VITE_SENTRY_DSN`), through
+  every route's `errorElement` and React's root error hooks. A write
+  that fails is said, never swallowed: a view-model turns what it caught
+  into one line (`src/app/errorMessage.ts`, the request id of an API
+  refusal quoted) and leaves it in the notices store, which `Notices`
+  renders above every page as a kit banner until dismissed or after a
+  few seconds. The API is reached through `src/api/`: the committed
+  `openapi.json` at the app root, generated types behind the facade
+  `types.ts`, one transport client, which puts a deadline on every call
+  (`requestTimeoutMs` in the runtime config, 30 seconds by default) and
+  rejects a call that runs out with `RequestTimeout`, and which reads
+  the status and the content type before the body: a 401 clears
+  authentication whatever its body is, a proxy's HTML 502 or 504 is an
+  `ApiError` carrying the status and the request id, and a success that
+  is not JSON is a typed error too. Client state is in stores, never
+  read from a storage by a feature: the session token lives in memory
+  and in the tab's session storage, so a reload survives and a closed
+  tab forgets, never in local storage, and a token an earlier build left
+  there is dropped on load; the preferences kept across visits (the task
+  scope) live in a persisted store over local storage, which is for
+  preferences only. Every push and every event record carry `actor_id`, so a client
   can say who changed what, and the hello frame and every pong carry
   the stream position (`seq`), so a client replays from there after a
   reconnect even when no push reached it before the drop, and a push
@@ -268,7 +394,8 @@ everything in-process for tests.
   keepalive rather than on the next event.
 - `clients/python` (`tadas-client`, `tadas.client`): the one Python client,
   generated from the same committed `openapi.json` (`schema.py`, by
-  `make openapi`) behind the facade `types.py`; one transport client with
+  `make openapi`, for the workspace's Python version, which CI holds
+  current) behind the facade `types.py`; one transport client with
   the error envelope, idempotency keys, the OS trust store, and a timeout
   on every call, which the caller's settings name (the CLI reads
   `TADAS_HTTP_TIMEOUT_SECONDS`) and the socket's open shares; the socket
@@ -280,7 +407,8 @@ everything in-process for tests.
 - `apps/cli` (`tadas-cli`, `tadas`): Typer over the Python client. Command
   mode (`add`, `ls`, `edit`, `done`, `reopen`, `rm`, `mv`) does one call
   and exits with 0, 1 (refused), 2 (usage), 3 (not signed in), or 4
-  (unreachable); `listen` prints every task change as one line (who did
+  (unreachable: any failure of the wire, refused, timed out, or reset;
+  the API did not decide); `listen` prints every task change as one line (who did
   what to which task) as it arrives on the channel, `--mine` for the
   caller's own. `login` keeps a session token under `TADAS_HOME`;
   `TADAS_TOKEN` (a session token or an api key) and `TADAS_API_URL` win
@@ -294,8 +422,8 @@ everything in-process for tests.
   Jaeger, and a seeded GlitchTip) and a second file that adds the
   application containers, the portal among them.
 - `docker/`: one two-stage image per process, non-root, with a
-  healthcheck (`/healthz` for the API, `tadas-maintenance health` for
-  the worker, `/` for the portal's nginx).
+  healthcheck (`/healthz` for the API and, on its metrics port, the
+  worker; `/` for the portal's nginx).
 - `terraform/`: every cloud resource. `modules/` holds one module per
   resource family (`network`, `cluster`, `database`, `cache`, `queue`,
   `buckets`, `secrets`, `load_balancer`, `certificate`, `domain_records`,
@@ -376,6 +504,13 @@ client construction that names no timeout. The storage contracts race
 the named atomic methods, not only call them: two claimers and two
 take-overs run at once through `asyncio.gather` and exactly one wins,
 over memory in the fast gate and over Postgres in the integration job.
+The same contracts hold every unique key the schema declares to both
+impls (a duplicate raises `UniqueKeyTaken` and the row that holds the
+key is unchanged; an update by copy of that row passes), and show that
+a named atomic create lands whole or not at all.
+`services/api/tests/test_public_types.py` reads the emitted OpenAPI
+document and fails on a view that carries a token, a key, or a ticket
+without the `Issued` prefix.
 Each process's `tests/test_settings.py` (and `infra/tests/`) reads
 `.env.example` and fails on a settings field it does not document, and
 reads every Terraform environment and fails on a field the cloud neither

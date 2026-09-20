@@ -27,6 +27,7 @@ class WorkItems(IdentifiableMixin, TrackableMixin, Base):
     status: Mapped[str]
     available_at: Mapped[datetime]
     claimed_by: Mapped[str | None]
+    claim_token: Mapped[UUID | None]
     lease_expires_at: Mapped[datetime | None]
     attempts: Mapped[int]
     max_attempts: Mapped[int]

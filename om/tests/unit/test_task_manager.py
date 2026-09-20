@@ -4,6 +4,7 @@ from uuid import UUID
 
 import pytest
 from contracts.factories import make_org, make_user
+from contracts.outbox_storage import claim_all
 
 from tadas.infra.impl.local import InfraLocalImpl
 from tadas.infra.topics import EntityChangedPayload, TopicPayload, Topics
@@ -21,7 +22,7 @@ from tadas.om.opcontext import (
     Role,
     build_context,
 )
-from tadas.om.outbox.impl.relay import OutboxRelayImpl
+from tadas.om.outbox.impl.relay import OutboxOptions, OutboxRelayImpl
 from tadas.om.outbox.storage.impl.memory import OutboxStorageMemoryImpl
 from tadas.om.tasks.impl.manager import TasksManagerImpl, TasksOptions
 from tadas.om.tasks.storage.impl.memory import TasksStorageMemoryImpl
@@ -164,7 +165,7 @@ async def test_create_update_delete_record_and_push(
     assert recorded[0].payload["title"] == created.title
     assert recorded[0].actor_id == ctx.user_id and recorded[0].request_id == ctx.request_id
     assert recorded[0].app == "portal"
-    assert await outbox.read_pending(10) == []
+    assert await claim_all(outbox) == []
 
 
 async def test_update_keeps_the_provenance_as_stored(manager: TasksManagerImpl) -> None:
@@ -335,11 +336,14 @@ async def test_a_failed_relay_leaves_the_row_for_the_sweep(
     ctx = context(Role.MEMBER)
     created = await manager.create_task(ctx, make_task(ctx))
     assert await manager.get_task(ctx, created.id) == created
-    pending = await outbox.read_pending(10)
+    pending = await claim_all(outbox)
     assert [(org, row.kind) for org, row in pending] == [(ctx.org_id, "tasks.task.created")]
     # The event was appended before the publish failed; relaying again is
     # idempotent on the row's id and marks the row done once the bus is back.
-    working = OutboxRelayImpl(outbox, events_storage, infra.get_topics())
+    # The row is seconds old, so the sweep's grace is set aside here.
+    working = OutboxRelayImpl(
+        outbox, events_storage, infra.get_topics(), OutboxOptions(grace=timedelta(0))
+    )
     assert await working.relay_pending(10) == 1
-    assert await outbox.read_pending(10) == []
+    assert await claim_all(outbox) == []
     assert [e.seq for e in await events.get_events(ctx, after_seq=0, limit=10)] == [1]

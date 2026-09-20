@@ -175,3 +175,34 @@ class IdempotencyStorageContract:
         assert stored is not None and stored == winners[0]
         assert stored.attempt_id in attempts
         assert stored.pending and stored.created_at == restarted_at
+
+    async def test_purge_counts_finished_past_the_cut_and_pending_past_theirs(
+        self, storage: IdempotencyStorageInterface
+    ) -> None:
+        org, other_org = new_id(), new_id()
+        now = utcnow()
+        old_finished = make_record(key="old-done", created_at=now - timedelta(days=2)).model_copy(
+            update={"status": 201, "body": "{}"}
+        )
+        fresh_finished = make_record(key="new-done").model_copy(
+            update={"status": 201, "body": "{}"}
+        )
+        abandoned = make_record(key="abandoned", created_at=now - timedelta(hours=1))
+        live_pending = make_record(key="live")
+        elsewhere = make_record(key="old-done", created_at=now - timedelta(days=2)).model_copy(
+            update={"status": 201, "body": "{}"}
+        )
+        for record in (old_finished, fresh_finished, abandoned, live_pending):
+            await storage.write_record(org, record)
+        await storage.write_record(other_org, elsewhere)
+        purged = await storage.purge_records(
+            org, now - timedelta(days=1), now - timedelta(minutes=20)
+        )
+        assert purged == 2
+        kept = [
+            await storage.read_record(org, r.user_id, r.key)
+            for r in (old_finished, fresh_finished, abandoned, live_pending)
+        ]
+        assert kept == [None, fresh_finished, None, live_pending]
+        assert await storage.read_record(other_org, elsewhere.user_id, elsewhere.key) == elsewhere
+        assert await storage.purge_records(org, now - timedelta(days=1), now) == 0

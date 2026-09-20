@@ -20,7 +20,8 @@ uv run tadas listen                           # the team's tasks; --mine for you
   A refusal is printed as the API's own code and message, with the
   request id.
 - One command, one call, one exit code: 0 done, 1 the API refused, 2
-  usage, 3 not signed in, 4 the API is unreachable.
+  usage, 3 not signed in, 4 the API is unreachable (any failure of the
+  wire: refused, timed out, reset; the API did not decide).
 - A creating call (`add`) carries an idempotency key, minted by the client.
 - `login` is email and password, then the org (choose one with `--org`
   when you belong to several); the session token is kept in

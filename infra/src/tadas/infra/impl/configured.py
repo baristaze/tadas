@@ -73,7 +73,11 @@ class InfraConfiguredImpl(InfraInterface):
             aws_secret_access_key=settings.s3_secret_key,
             region_name=settings.aws_region,
         )
-        self._caches: dict[CacheScope, CacheInterface] = {}
+        # One cache per scope, built now like every other member (ADR 0007),
+        # so the boot line lists each one and get_cache is a lookup.
+        self._caches: dict[CacheScope, CacheInterface] = {
+            scope: self._build_cache(scope) for scope in CacheScope
+        }
 
         if settings.buckets_backend == "s3":
             self._buckets: BucketsInterface = BucketsS3Impl(
@@ -113,13 +117,13 @@ class InfraConfiguredImpl(InfraInterface):
         else:
             self._secrets = SecretsLocalImpl(settings.secrets_file, settings.secret_overrides)
 
+    def _build_cache(self, scope: CacheScope) -> CacheInterface:
+        if self._settings.cache_backend == "valkey":
+            assert self._valkey is not None
+            return CacheValkeyImpl(self._valkey, scope)
+        return CacheMemoryImpl(scope)
+
     def get_cache(self, scope: CacheScope) -> CacheInterface:
-        if scope not in self._caches:
-            if self._settings.cache_backend == "valkey":
-                assert self._valkey is not None
-                self._caches[scope] = CacheValkeyImpl(self._valkey, scope)
-            else:
-                self._caches[scope] = CacheMemoryImpl(scope)
         return self._caches[scope]
 
     def get_buckets(self) -> BucketsInterface:
@@ -136,7 +140,7 @@ class InfraConfiguredImpl(InfraInterface):
 
     def describe(self) -> list[str]:
         return [
-            f"cache={self._settings.cache_backend}",
+            *(cache.describe() for cache in self._caches.values()),
             self._topics.describe(),
             self._buckets.describe(),
             self._queues.describe(),
@@ -150,9 +154,9 @@ class InfraConfiguredImpl(InfraInterface):
             await capability.start()
 
     async def close(self) -> None:
-        """Reverse order of start; the caches built since are closed first and
-        the shared client last, once nothing holds it."""
-        for cache in list(self._caches.values()):
+        """Reverse order of start; the caches first and the shared client
+        last, once nothing holds it."""
+        for cache in self._caches.values():
             await cache.close()
         for capability in (self._secrets, self._queues, self._buckets, self._topics):
             await capability.close()

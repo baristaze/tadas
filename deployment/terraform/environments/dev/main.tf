@@ -173,6 +173,8 @@ module "api" {
     TADAS_HOST         = "0.0.0.0"
     TADAS_PORT         = "8000"
     TADAS_CORS_ORIGINS = jsonencode(concat(["https://${var.app_domain_name}"], var.cors_origins))
+    # The load balancer lives in the VPC, so its X-Forwarded-For names the client.
+    TADAS_TRUSTED_PROXIES = jsonencode([var.vpc_cidr])
   })
 
   health_check_command = [
@@ -204,11 +206,11 @@ module "maintenance" {
     TADAS_SERVICE_NAME = "maintenance"
   })
 
-  # The serving process is PID 1 (the entrypoint execs it), so its default
-  # worker id is maintenance-<hostname>-1 unless TADAS_WORKER_ID says otherwise.
+  # The serving process answers /healthz on its metrics port from its own
+  # liveness key; the probe boots nothing.
   health_check_command = [
     "CMD-SHELL",
-    "tadas-maintenance health --worker-id \"$${TADAS_WORKER_ID:-maintenance-$(cat /etc/hostname)-1}\"",
+    "python -c \"import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:9464/healthz').status == 200 else 1)\"",
   ]
 
   deployment_maximum_percent         = 100

@@ -20,9 +20,9 @@ from tadas.services.api.realtime.envelopes import (
     ClientCommand,
     ErrorEnvelope,
     HelloEnvelope,
+    IssuedTicketView,
     PongEnvelope,
     SubscribedEnvelope,
-    TicketView,
     UnsubscribedEnvelope,
 )
 from tadas.services.api.realtime.send_buffer import SendBuffer
@@ -38,8 +38,17 @@ def new_send_buffer(websocket: WebSocket) -> SendBuffer:
 SocketSendBuffer = Annotated[SendBuffer, Depends(new_send_buffer)]
 
 
-@router.post("/tickets", response_model=TicketView, status_code=201)
-async def mint_ticket(ctx: Ctx, realtime: RealtimeService) -> TicketView:
+async def settle(drainer: asyncio.Task[None]) -> None:
+    """Ends the drainer. One that died because the peer left (a disconnect,
+    a closed transport) is the normal end of a socket and not an error;
+    anything else it raised propagates."""
+    drainer.cancel()
+    with contextlib.suppress(asyncio.CancelledError, WebSocketDisconnect, OSError):
+        await drainer
+
+
+@router.post("/tickets", response_model=IssuedTicketView, status_code=201)
+async def mint_ticket(ctx: Ctx, realtime: RealtimeService) -> IssuedTicketView:
     return await realtime.issue_ticket(ctx)
 
 
@@ -47,7 +56,7 @@ async def mint_ticket(ctx: Ctx, realtime: RealtimeService) -> TicketView:
 async def channel(
     websocket: WebSocket, ctx: SocketCtx, realtime: RealtimeService, buffer: SocketSendBuffer
 ) -> None:
-    await websocket.accept()
+    # The gateway accepted the socket before it redeemed the ticket.
     drainer = asyncio.create_task(buffer.drain(websocket), name=f"send-buffer-{ctx.user_id}")
     subscriptions: dict[Topics, Callable[[], None]] = {}
     buffer.offer(
@@ -84,8 +93,6 @@ async def channel(
     finally:
         for unsubscribe in subscriptions.values():
             unsubscribe()
-        drainer.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await drainer
+        await settle(drainer)
         with contextlib.suppress(RuntimeError):
             await websocket.close()

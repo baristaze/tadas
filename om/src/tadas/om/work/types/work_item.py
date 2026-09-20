@@ -36,6 +36,11 @@ class WorkItem(Identifiable, Trackable):
     status: WorkStatus = WorkStatus.QUEUED
     available_at: datetime  # not before
     claimed_by: str | None = None
+    # Minted by the claim and cleared by every hand-back: completion, release,
+    # deferral, and renewal condition on it in the statement itself, so a
+    # worker that holds one item twice across a requeue cannot settle the
+    # first claim's copy over the second's.
+    claim_token: UUID | None = None
     lease_expires_at: datetime | None = None
     attempts: int = 0
     max_attempts: int = 3

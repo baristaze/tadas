@@ -8,7 +8,8 @@ is told to wait. The marker names its attempt: an attempt that ran past the
 pending lease and lost the marker to a retry is refused when it finishes or
 releases, and the refusal is logged and swallowed here, because the retry
 owns the marker now and whatever the slow attempt wrote is the row the retry
-found."""
+found. A view that declares secret fields is stored with them absent: the
+secret is shown once, on the first response, and a replay says so."""
 
 import hashlib
 import logging
@@ -32,6 +33,8 @@ log = logging.getLogger(__name__)
 
 REPLAYED_HEADER = "Idempotent-Replayed"
 JSON = "application/json"
+KEY_MAX_LENGTH = 255
+"""The key lands in a unique index; a longer one is refused at the edge (422)."""
 
 
 def request_digest(method: str, path: str, body: bytes) -> str:
@@ -73,8 +76,13 @@ class Idempotency:
             raise
         if record.status is not None and record.body is not None:
             OUTCOMES.labels(subsystem="idempotency", outcome="replayed").inc()
+            body = record.body
+            if record.status >= 400:
+                # A replayed refusal names this request, as its header does,
+                # not the attempt that first produced it.
+                body = self._with_request_id(body)
             return Response(
-                content=record.body,
+                content=body,
                 status_code=record.status,
                 media_type=JSON,
                 headers={REPLAYED_HEADER: "true"},
@@ -97,7 +105,7 @@ class Idempotency:
             await self._release(attempt_id)
             raise
         body = view.model_dump_json()
-        if await self._finish(attempt_id, status, body):
+        if await self._finish(attempt_id, status, stored_body(view)):
             OUTCOMES.labels(subsystem="idempotency", outcome="recorded").inc()
         return Response(content=body, status_code=status, media_type=JSON)
 
@@ -133,6 +141,26 @@ class Idempotency:
         error = ErrorBody(code=code, message=message, request_id=self._ctx.request_id)
         return ErrorResponse(error=error).model_dump_json()
 
+    def _with_request_id(self, body: str) -> str:
+        """The stored refusal with this request's id in its envelope; a body that
+        is not an envelope is replayed as stored."""
+        try:
+            stored = ErrorResponse.model_validate_json(body)
+        except ValueError:
+            return body
+        return self._error_body(stored.error.code, stored.error.message)
+
+
+def stored_body(view: BaseModel) -> str:
+    """The outcome as the marker stores it: the view with every field it
+    declares a secret absent (`View.secret_fields`), so the secret exists in one
+    place, as a digest, and a replay answers with the row and no secret. The
+    first response carries the view whole; this is what the retry sees."""
+    secrets: frozenset[str] = getattr(type(view), "secret_fields", frozenset())
+    if not secrets:
+        return view.model_dump_json()
+    return view.model_copy(update=dict.fromkeys(secrets)).model_dump_json()
+
 
 def _json(view: BaseModel, status: int) -> Response:
     return Response(content=view.model_dump_json(), status_code=status, media_type=JSON)
@@ -141,7 +169,7 @@ def _json(view: BaseModel, status: int) -> Response:
 async def idempotency(
     request: Request,
     ctx: Ctx,
-    idempotency_key: Annotated[str | None, Header()] = None,
+    idempotency_key: Annotated[str | None, Header(max_length=KEY_MAX_LENGTH)] = None,
 ) -> Idempotency:
     digest = request_digest(request.method, request.url.path, await request.body())
     return Idempotency(container_of(request).managers.idempotency, ctx, idempotency_key, digest)

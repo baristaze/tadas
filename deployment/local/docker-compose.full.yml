@@ -1,7 +1,6 @@
 # The local stack plus the application containers: the API on 8000, the
 # maintenance worker, and the portal on 55173. `make stack-up` runs:
 #   docker compose -f deployment/local/docker-compose.yml -f deployment/local/docker-compose.full.yml up
-# Application services are appended by the scaffold steps that add them.
 name: tadas
 
 x-app-env: &app-env

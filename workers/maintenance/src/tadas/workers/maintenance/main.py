@@ -1,14 +1,14 @@
 """The worker binary: settings, container, stop handlers, `serve`, and the
-`health` probe the container healthcheck runs."""
+`health` probe, which asks the serving process's `/healthz`."""
 
 import argparse
 import asyncio
 import logging
 import signal
 import sys
+import urllib.error
+import urllib.request
 from datetime import timedelta
-
-from prometheus_client import start_http_server
 
 from tadas.infra.cache import CacheScope
 from tadas.infra.observability import (
@@ -21,6 +21,7 @@ from tadas.om.base import EMPTY_UUID
 from tadas.om.work.types.work_item import WorkKind
 from tadas.workers.maintenance.container import WorkerContainer
 from tadas.workers.maintenance.handler import NoopHandlerImpl
+from tadas.workers.maintenance.health import Probe, WorkerHttpServer
 from tadas.workers.maintenance.loop import LoopOptions, WorkerLoop
 from tadas.workers.maintenance.settings import MaintenanceSettings
 
@@ -47,6 +48,8 @@ def build_loop(container: WorkerContainer, lane: str | None = None) -> WorkerLoo
         purges={
             "tasks": container.managers.tasks.purge_deleted,
             "tenancy": container.managers.tenancy.purge_deleted,
+            "idempotency": container.managers.idempotency.purge,
+            "work": container.managers.work.purge_settled,
         },
         handlers={WorkKind.NOOP: NoopHandlerImpl()},
         topics=container.infra.get_topics(),
@@ -67,43 +70,54 @@ async def serve(lane: str | None) -> int:
         settings.service_name,
         timedelta(seconds=settings.otel_timeout_seconds),
     )
-    # The worker's /metrics, for Prometheus locally and the collector sidecar in the cloud.
-    metrics_server, _ = start_http_server(settings.metrics_port, settings.metrics_host)
     container = WorkerContainer.build(settings)
     await container.start()
     loop = build_loop(container, lane)
     running = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
         running.add_signal_handler(sig, loop.stop)
+    # /metrics for Prometheus locally and the collector sidecar in the cloud,
+    # /healthz for the container probe: the liveness key the loop heartbeats
+    # into, read through the running process's own cache.
+    http = WorkerHttpServer(
+        settings.metrics_host,
+        settings.metrics_port,
+        liveness_probe(container, settings.worker_id),
+        running,
+    )
+    http.start()
     try:
         await loop.run()
     finally:
+        http.stop()
         await container.close()
-        metrics_server.shutdown()
     log.info("%s stopped", settings.worker_id)
     return 0
 
 
-async def health(worker_id: str | None) -> int:
-    """The container healthcheck: reads the serving worker's liveness key through
-    the same cache the loop heartbeats into. Exit 0 while the key is present,
-    1 when it is missing or the cache is unreachable. The container is built
-    and started the way `serve` builds it, so the probe reads through the same
-    root under its lifecycle; nothing here touches storage."""
-    settings = MaintenanceSettings()
-    target = worker_id or settings.worker_id
-    container = WorkerContainer.build(settings)
-    await container.start()
+def liveness_probe(container: WorkerContainer, worker_id: str) -> Probe:
+    cache = container.infra.get_cache(CacheScope.WORKER_LIVENESS)
+
+    async def alive() -> bool:
+        return await cache.get(EMPTY_UUID, f"worker:{worker_id}") is not None
+
+    return alive
+
+
+def health(settings: MaintenanceSettings) -> int:
+    """The probe by hand: asks the serving process's `/healthz` on the metrics
+    port and exits 0 on 200, 1 otherwise. The container healthcheck makes the
+    same request without importing this package."""
+    host = "127.0.0.1" if settings.metrics_host == "0.0.0.0" else settings.metrics_host
+    url = f"http://{host}:{settings.metrics_port}/healthz"
     try:
-        alive = await container.infra.get_cache(CacheScope.WORKER_LIVENESS).get(
-            EMPTY_UUID, f"worker:{target}"
-        )
-    finally:
-        await container.close()
-    if alive is None:
-        print(f"worker {target} has no liveness key", file=sys.stderr)
-        return 1
-    return 0
+        with urllib.request.urlopen(url, timeout=5) as response:
+            return 0 if response.status == 200 else 1
+    except urllib.error.HTTPError as error:
+        print(f"{url} answered {error.code}", file=sys.stderr)
+    except OSError as error:
+        print(f"{url} is unreachable: {error}", file=sys.stderr)
+    return 1
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -111,14 +125,10 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     p_serve = sub.add_parser("serve", help="run the worker loop")
     p_serve.add_argument("--lane", help="the lane to claim from; defaults to TADAS_WORKER_LANE")
-    p_health = sub.add_parser("health", help="exit 0 while the serving worker is alive")
-    p_health.add_argument(
-        "--worker-id",
-        help="the id the serving process heartbeats under; defaults to TADAS_WORKER_ID",
-    )
+    sub.add_parser("health", help="exit 0 while the serving worker answers /healthz with 200")
     args = parser.parse_args(argv)
     if args.command == "health":
-        return asyncio.run(health(args.worker_id))
+        return health(MaintenanceSettings())
     return asyncio.run(serve(args.lane))
 
 

@@ -12,8 +12,12 @@ from tadas.om.work.types.work_item import WorkItem, WorkKind
 class WorkManagerInterface(ABC):
     @abstractmethod
     async def enqueue(self, ctx: OpContext, item: WorkItem) -> WorkItem:
-        """Raises ValidationFailed when the payload is not the shape WORK_PAYLOADS
-        fixes for the kind, DuplicateWorkItem on a reused idempotency key."""
+        """A create: the copy stamps the actor, the timestamps, status QUEUED, and
+        zero attempts, and clears every claim field, whatever the caller sent. An
+        id already written returns the row as stored, so a retried enqueue never
+        resets a claim. Raises ValidationFailed when the payload is not the shape
+        WORK_PAYLOADS fixes for the kind, DuplicateWorkItem on a reused
+        idempotency key."""
         ...
 
     @abstractmethod
@@ -63,6 +67,12 @@ class WorkManagerInterface(ABC):
     async def requeue_stale(self, ctx: OpContext) -> int:
         """The sweep, for one tenant: returns every item whose lease expired to the
         queue, or fails it when its attempts are spent; returns how many it moved."""
+        ...
+
+    @abstractmethod
+    async def purge_settled(self, ctx: OpContext) -> int:
+        """The sweep, for one tenant: deletes items done or failed past the
+        retention; returns how many. The one hard delete of the namespace."""
         ...
 
     @abstractmethod

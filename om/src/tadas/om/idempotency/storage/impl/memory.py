@@ -51,6 +51,19 @@ class IdempotencyStorageMemoryImpl(MemoryStorageBase, IdempotencyStorageInterfac
             del self._records[stored.id]
             return True
 
+    async def purge_records(
+        self, org_id: UUID, finished_before: datetime, pending_before: datetime
+    ) -> int:
+        async with self._lock:
+            gone = [
+                record.id
+                for record in self._rows(self._records, org_id)
+                if record.created_at < (pending_before if record.pending else finished_before)
+            ]
+            for record_id in gone:
+                del self._records[record_id]
+            return len(gone)
+
     async def take_over_pending(
         self,
         org_id: UUID,

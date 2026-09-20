@@ -5,16 +5,20 @@ from datetime import timedelta
 from pathlib import Path
 from uuid import UUID
 
+import pytest
 from worker_support import build_container, fast_options, make_item, request, sign_in
 
 from tadas.infra.cache import CacheInterface, CacheScope
 from tadas.infra.observability import request_id_var
 from tadas.om.base import EMPTY_UUID, new_id, utcnow
 from tadas.om.exceptions import LeaseLost
+from tadas.om.idempotency.impl.manager import IdempotencyOptions
 from tadas.om.opcontext import OpContext, RequestContext
-from tadas.om.outbox.types.row import outbox_row, snapshot
+from tadas.om.outbox.storage import OutboxStorageInterface
+from tadas.om.outbox.types.row import OutboxRow, outbox_row, snapshot
 from tadas.om.tasks.types.task import Task
 from tadas.om.work import WorkManagerInterface
+from tadas.om.work.impl.manager import WorkOptions
 from tadas.om.work.types.handler import WorkHandlerInterface
 from tadas.om.work.types.work_item import WorkItem, WorkKind, WorkStatus
 from tadas.workers.maintenance.container import WorkerContainer
@@ -80,6 +84,9 @@ class LeaseLosingWork(WorkManagerInterface):
     async def requeue_stale(self, ctx: OpContext) -> int:
         return await self._inner.requeue_stale(ctx)
 
+    async def purge_settled(self, ctx: OpContext) -> int:
+        return await self._inner.purge_settled(ctx)
+
     async def maintenance_contexts(self, rctx: RequestContext) -> list[OpContext]:
         return await self._inner.maintenance_contexts(rctx)
 
@@ -141,6 +148,8 @@ def start_loop(
         purges={
             "tasks": container.managers.tasks.purge_deleted,
             "tenancy": container.managers.tenancy.purge_deleted,
+            "idempotency": container.managers.idempotency.purge,
+            "work": container.managers.work.purge_settled,
         },
         handlers={WorkKind.NOOP: handler},
         topics=container.infra.get_topics(),
@@ -148,6 +157,12 @@ def start_loop(
         options=options,
     )
     return loop, asyncio.create_task(loop.run())
+
+
+async def claim_all(outbox: OutboxStorageInterface) -> list[tuple[UUID, OutboxRow]]:
+    """What the sweep would claim now, with no grace and no delay after it."""
+    zero = timedelta(0)
+    return await outbox.claim_pending(100, utcnow(), zero, zero, zero)
 
 
 async def until(predicate: Callable[[], bool], within: float = 3.0) -> None:
@@ -354,17 +369,19 @@ async def test_sweep_relays_the_outbox_and_purges_done_rows(tmp_path: Path) -> N
         updated_by=ctx.user_id,
         title="left behind",
     )
-    row = outbox_row(ctx, "tasks.task.created", task.id, snapshot(task))
+    row = outbox_row(ctx, "tasks.task.created", task.id, snapshot(task)).model_copy(
+        update={"created_at": now - timedelta(minutes=1)}  # older than the relay's grace
+    )
     await container.storage.get_tasks_storage().write_task(ctx.org_id, task, row)
     outbox = container.storage.get_outbox_storage()
-    assert [r.id for _, r in await outbox.read_pending(10)] == [row.id]
+    assert [r.id for _, r in await claim_all(outbox)] == [row.id]
     loop, task_ = start_loop(
         container, NoopHandlerImpl(), fast_options(outbox_retention=timedelta(0))
     )
     await until(lambda: loop.sweeps >= 2)
     loop.stop()
     await task_
-    assert await outbox.read_pending(10) == [], "the sweep relayed the row"
+    assert await claim_all(outbox) == [], "the sweep relayed the row"
     events = await container.managers.events.get_events(ctx, after_seq=0, limit=10)
     assert [(e.id, e.kind, e.target_id) for e in events] == [(row.id, row.kind, task.id)]
     # With no retention the second sweep purged the done row: nothing pending,
@@ -390,12 +407,16 @@ async def test_a_lost_lease_is_never_written_over(tmp_path: Path) -> None:
     storage = container.storage.get_work_storage()
     held = await storage.read_item(ctx.org_id, item.id)
     assert held is not None and held.status is WorkStatus.CLAIMED
-    taken = held.model_copy(update={"claimed_by": "other-worker"})
-    await storage.write_item(ctx.org_id, taken)
+    # The sweep deems the lease expired (its clock runs an hour ahead) and
+    # hands the item back before this worker's handler finishes.
+    requeued = await storage.requeue_stale(
+        ctx.org_id, utcnow() + timedelta(hours=1), timedelta(0), new_id()
+    )
+    assert [r.id for r in requeued] == [item.id]
     await until(lambda: len(handler.finished) == 1)
     await until(lambda: loop.running == 0)
     stored = await storage.read_item(ctx.org_id, item.id)
-    assert stored == taken, "complete() saw the lease was lost and wrote nothing"
+    assert stored == requeued[0], "complete() saw the lease was lost and wrote nothing"
     loop.stop()
     await task
 
@@ -449,3 +470,28 @@ def test_outbox_retention_outlives_the_database_backup_retention() -> None:
     assert match is not None
     backup_days = int(match.group(1))
     assert LoopOptions(worker_id="w").outbox_retention > timedelta(days=backup_days)
+
+
+async def test_sweep_purges_settled_work_items_and_finished_idempotency_records(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    container = build_container(tmp_path)
+    ctx = await sign_in(container)
+    monkeypatch.setattr(container.managers.work, "_options", WorkOptions(retention=timedelta(0)))
+    monkeypatch.setattr(
+        container.managers.idempotency, "_options", IdempotencyOptions(retention=timedelta(0))
+    )
+    item = make_item(ctx)
+    await container.managers.work.enqueue(ctx, item)
+    begun = await container.managers.idempotency.begin(ctx, "k", "d", new_id())
+    await container.managers.idempotency.finish(ctx, "k", begun.attempt_id, 201, "{}")
+    handler = NoopHandlerImpl()
+    loop, task = start_loop(container, handler, fast_options())
+    await until(lambda: [h.id for h in handler.handled] == [item.id])
+    sweeps = loop.sweeps
+    await until(lambda: loop.sweeps >= sweeps + 2)
+    loop.stop()
+    await task
+    assert await container.storage.get_work_storage().read_item(ctx.org_id, item.id) is None
+    idempotency = container.storage.get_idempotency_storage()
+    assert await idempotency.read_record(ctx.org_id, ctx.user_id, "k") is None

@@ -27,6 +27,19 @@ from tadas.om.storage.utils.translation import apply_row, to_row
 SessionFactory = async_sessionmaker[AsyncSession]
 
 
+def violated_constraint(error: IntegrityError) -> str | None:
+    """The name of the constraint an integrity error names, or None when the
+    driver does not say. The asyncpg adapter wraps the driver's error, which
+    carries `constraint_name`, as the cause of the one SQLAlchemy raises."""
+    cause: BaseException | None = error.orig
+    while cause is not None:
+        name = getattr(cause, "constraint_name", None)
+        if isinstance(name, str):
+            return name
+        cause = cause.__cause__
+    return None
+
+
 def role_of(target: Any) -> DatabaseRole:
     """The one role a statement or a table class touches; refuses a statement that spans two."""
     if isinstance(target, type):
@@ -87,7 +100,8 @@ class PgStorageBase:
             except IntegrityError as error:
                 # A key race the read did not see; a Conflict, never a driver error.
                 raise UniqueKeyTaken(
-                    f"{row_type.__tablename__} {entity.id}: a unique key is taken"
+                    f"{row_type.__tablename__} {entity.id}: "
+                    f"{violated_constraint(error) or 'a unique key'} is taken"
                 ) from error
 
     async def _insert(
@@ -101,7 +115,9 @@ class PgStorageBase:
         the same commit; False when the id is already written, in which case
         nothing changes, the outbox row included. Ids are minted above storage,
         so an existing id is a retry, and a retry must neither overwrite the row
-        nor announce it twice. A key collision is a report, never a driver error."""
+        nor announce it twice. Only the primary key reports False: any other
+        unique key the row violates is `UniqueKeyTaken`, a Conflict, never a
+        driver error and never mistaken for a retry."""
         if outbox_row is not None and role_of(row_type) is not role_of(OutboxRows):
             raise CrossRoleStatement(
                 f"{row_type.__tablename__} is not in the outbox's role; no outbox row"
@@ -112,13 +128,19 @@ class PgStorageBase:
                 session.add(to_row(outbox_row, OutboxRows, org_id=org_id))
             try:
                 await session.commit()
-            except IntegrityError:
+            except IntegrityError as error:
                 await session.rollback()
-                return False
+                constraint = violated_constraint(error)
+                if constraint == row_type.__table__.primary_key.name:
+                    return False
+                raise UniqueKeyTaken(
+                    f"{row_type.__tablename__} {entity.id}: {constraint or 'a unique key'} is taken"
+                ) from error
             return True
 
     async def _upsert_global(self, row_type: type[Any], entity: Identifiable) -> None:
-        """The same primitive for a global table, which has no tenant to check."""
+        """The same primitive for a global table, which has no tenant to check;
+        a unique key the read did not see is `UniqueKeyTaken` here too."""
         entity_id = entity.id
         async with self._session_for(row_type) as session:
             row = await session.get(row_type, entity_id)
@@ -126,4 +148,10 @@ class PgStorageBase:
                 session.add(to_row(entity, row_type))
             else:
                 apply_row(row, entity)
-            await session.commit()
+            try:
+                await session.commit()
+            except IntegrityError as error:
+                raise UniqueKeyTaken(
+                    f"{row_type.__tablename__} {entity_id}: "
+                    f"{violated_constraint(error) or 'a unique key'} is taken"
+                ) from error
