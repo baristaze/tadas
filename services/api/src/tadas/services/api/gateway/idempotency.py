@@ -4,9 +4,14 @@ primitive the queue handlers dedupe on, and replayed on a retry. Only an
 outcome a retry cannot change is recorded: a refusal is replayed, a failure
 releases the marker so the retry runs again on the same id. A key seen with
 a different request is refused; a key whose first request is still running
-is told to wait."""
+is told to wait. The marker names its attempt: an attempt that ran past the
+pending lease and lost the marker to a retry is refused when it finishes or
+releases, and the refusal is logged and swallowed here, because the retry
+owns the marker now and whatever the slow attempt wrote is the row the retry
+found."""
 
 import hashlib
+import logging
 from collections.abc import Awaitable, Callable
 from typing import Annotated
 from uuid import UUID
@@ -16,12 +21,14 @@ from pydantic import BaseModel
 
 from tadas.infra.observability import OUTCOMES
 from tadas.om.base import new_id
-from tadas.om.exceptions import IdempotencyInProgress, PlatformException
+from tadas.om.exceptions import IdempotencyAttemptLost, IdempotencyInProgress, PlatformException
 from tadas.om.idempotency import IdempotencyManagerInterface
 from tadas.om.opcontext import OpContext
 from tadas.services.api.gateway.auth import Ctx
 from tadas.services.api.gateway.resolve import container_of
 from tadas.services.api.types.common import ErrorBody, ErrorResponse
+
+log = logging.getLogger(__name__)
 
 REPLAYED_HEADER = "Idempotent-Replayed"
 JSON = "application/json"
@@ -72,33 +79,53 @@ class Idempotency:
                 media_type=JSON,
                 headers={REPLAYED_HEADER: "true"},
             )
+        attempt_id = record.attempt_id
         try:
             view = await handler(record.target_id)
         except PlatformException as error:
             if error.http_status >= 500:
-                await self._release()
+                await self._release(attempt_id)
             else:
                 # A refusal is an outcome a retry cannot change: stored and replayed.
-                await self._finish(error.http_status, self._error_body(error.code, error.message))
+                await self._finish(
+                    attempt_id, error.http_status, self._error_body(error.code, error.message)
+                )
             raise
         except Exception:
             # A failure is not an outcome: the marker goes, and the retry runs the
             # request again on the same id instead of replaying the failure for good.
-            await self._release()
+            await self._release(attempt_id)
             raise
         body = view.model_dump_json()
-        await self._finish(status, body)
-        OUTCOMES.labels(subsystem="idempotency", outcome="recorded").inc()
+        if await self._finish(attempt_id, status, body):
+            OUTCOMES.labels(subsystem="idempotency", outcome="recorded").inc()
         return Response(content=body, status_code=status, media_type=JSON)
 
-    async def _finish(self, status: int, body: str) -> None:
+    async def _finish(self, attempt_id: UUID, status: int, body: str) -> bool:
         assert self._key is not None
-        await self._manager.finish(self._ctx, self._key, status, body)
+        try:
+            await self._manager.finish(self._ctx, self._key, attempt_id, status, body)
+        except IdempotencyAttemptLost:
+            self._lost("finish")
+            return False
+        return True
 
-    async def _release(self) -> None:
+    async def _release(self, attempt_id: UUID) -> None:
         assert self._key is not None
+        try:
+            await self._manager.release(self._ctx, self._key, attempt_id)
+        except IdempotencyAttemptLost:
+            self._lost("release")
+            return
         OUTCOMES.labels(subsystem="idempotency", outcome="released").inc()
-        await self._manager.release(self._ctx, self._key)
+
+    def _lost(self, action: str) -> None:
+        """The attempt ran past the pending lease and a retry took the marker
+        over; its outcome is the retry's to record, so the refusal ends here."""
+        log.warning(
+            "idempotency key %r: %s refused, a retry holds the marker now", self._key, action
+        )
+        OUTCOMES.labels(subsystem="idempotency", outcome="attempt_lost").inc()
 
     def _error_body(self, code: str, message: str) -> str:
         """The error envelope as the handler would have sent it, so a retry sees

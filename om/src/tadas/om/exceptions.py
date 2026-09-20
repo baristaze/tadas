@@ -102,3 +102,10 @@ class IdempotencyInProgress(IdempotencyException, Conflict):
     """The first request under this key has not finished yet."""
 
     code = "idempotency_in_progress"
+
+
+class IdempotencyAttemptLost(IdempotencyException, Conflict):
+    """The marker is no longer this attempt's: a retry took it over after the
+    pending lease passed, and only the holder may finish or release it."""
+
+    code = "idempotency_attempt_lost"

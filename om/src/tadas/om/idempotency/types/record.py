@@ -12,6 +12,10 @@ class IdempotencyRecord(Identifiable, Created):
     key: str  # the caller's Idempotency-Key, unique per (tenant, user)
     request_digest: str  # a digest of the request, so a reused key is caught
     target_id: UUID  # the id the create uses, minted before the marker; a take-over keeps it
+    # The token of the attempt that holds the marker: minted by begin, replaced
+    # by a take-over. finish and release are conditional on it, so an attempt
+    # that lost the marker cannot finish or release what a retry now holds.
+    attempt_id: UUID
     status: int | None = None  # the outcome's status; None while the request runs
     body: str | None = None  # the outcome's body; None while the request runs
 

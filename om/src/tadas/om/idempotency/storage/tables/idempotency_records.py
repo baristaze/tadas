@@ -17,5 +17,6 @@ class IdempotencyRecords(IdentifiableMixin, CreatedMixin, Base):
     key: Mapped[str]
     request_digest: Mapped[str]
     target_id: Mapped[UUID]
+    attempt_id: Mapped[UUID]
     status: Mapped[int | None]
     body: Mapped[str | None]
