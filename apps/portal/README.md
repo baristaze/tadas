@@ -48,5 +48,7 @@ root README for every local URL.
 cloud that file exists, written per environment by Terraform (`apiUrl` is the
 environment's API, e.g. `https://api.tadas.fyi`), so one build serves every
 environment. Locally there is none, and `VITE_API_URL`,
-`VITE_SENTRY_DSN`, and `VITE_SENTRY_ENVIRONMENT` apply instead. How the build
+`VITE_SENTRY_DSN`, and `VITE_SENTRY_ENVIRONMENT` apply instead. The file may
+also name `requestTimeoutMs`, the deadline the transport client puts on every
+call; without it, and locally, the deadline is 30 seconds. How the build
 reaches the cloud is in `deployment/terraform/modules/README.md`.
