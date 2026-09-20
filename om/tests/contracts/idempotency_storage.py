@@ -1,3 +1,8 @@
+"""The idempotency storage contract. The cases named in `CROSS_TENANT_CASES`
+are the tenant fence's evidence: each one presents another tenant's identifier
+and asserts that nothing is found and nothing changes. The negative control
+that says what they catch is in `docs/runbooks/tenant-isolation.md`."""
+
 from datetime import datetime, timedelta
 from uuid import UUID
 
@@ -9,6 +14,21 @@ from tadas.om.exceptions import DuplicateIdempotencyKey, TenantMismatch
 from tadas.om.idempotency.storage import IdempotencyStorageInterface
 from tadas.om.idempotency.types.attempt import lease_bound
 from tadas.om.idempotency.types.record import IdempotencyRecord
+
+CROSS_TENANT_CASES: frozenset[str] = frozenset(
+    {
+        "finish_pending",
+        "purge_records",
+        "read_record",
+        "rearm_released",
+        "release_pending",
+        "take_over_pending",
+        "write_record",
+    }
+)
+"""Every method of `IdempotencyStorageInterface` that takes a tenant has a case
+in this module that presents another tenant's. `test_storage_exceptions.py`
+holds the two sets to each other, so a new method arrives with its case."""
 
 
 def make_record(
