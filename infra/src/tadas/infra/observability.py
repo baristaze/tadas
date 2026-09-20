@@ -19,7 +19,14 @@ from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_
 
 request_id_var: ContextVar[str | None] = ContextVar("tadas_request_id", default=None)
 """Set at the entry point that builds the context, so log lines get it for free.
-The authoritative request id is still the field on OpContext."""
+
+This is the one piece of ambient state in the platform, and it is ambient only
+to the log and error sinks in this module. The authoritative request id is
+`request_id` on the context, which every stage inherits and every operation is
+handed; nothing decides anything from this variable. So the boundary is a rule:
+it is read only here, and an entry point that sets it resets its token in a
+`finally`, so it never outlives the unit of work that set it. Both halves are
+checked by `infra/tests/test_observability_boundary.py` rather than trusted."""
 
 HTTP_REQUESTS = Counter(
     "tadas_http_requests_total",
