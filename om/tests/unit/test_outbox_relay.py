@@ -160,7 +160,7 @@ async def test_a_write_that_also_starts_work_rides_a_second_row_the_relay_enqueu
     assert await storage.get_tasks_storage().create_task(ctx.org_id, task, (change, asked))
     # One statement, two rows: the entity's change and the work it starts.
     landed = await claim_all(storage.get_outbox_storage())
-    assert sorted(row.id for _, row in landed) == sorted([change.id, asked.id])
+    assert sorted(row.id for row in landed) == sorted([change.id, asked.id])
 
     assert await managers.outbox.relay(ctx.org_id, change)
     assert await managers.outbox.relay(ctx.org_id, asked)

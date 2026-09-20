@@ -67,11 +67,11 @@ class OutboxRelayImpl(OutboxRelayInterface):
             limit, now, options.grace, options.backoff_base, options.backoff_cap
         )
         relayed = 0
-        for org_id, row in claimed:
+        for row in claimed:
             try:
-                await self._deliver(org_id, row)
+                await self._deliver(row.org_id, row)
             except Exception as error:
-                await self._failed(org_id, row, f"{type(error).__name__}: {error}"[:500], now)
+                await self._failed(row.org_id, row, f"{type(error).__name__}: {error}"[:500], now)
                 continue
             OUTCOMES.labels(subsystem="outbox", outcome="relayed").inc()
             relayed += 1

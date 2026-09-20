@@ -28,7 +28,7 @@ class OutboxStorageMemoryImpl(OutboxStorageInterface, OutboxLandingInterface):
         grace: timedelta,
         backoff_base: timedelta,
         backoff_cap: timedelta,
-    ) -> list[tuple[UUID, OutboxRow]]:
+    ) -> list[OutboxRow]:
         due = [
             (org, row)
             for org, row in self._rows.values()
@@ -37,7 +37,7 @@ class OutboxStorageMemoryImpl(OutboxStorageInterface, OutboxLandingInterface):
             and (row.next_attempt_at is None or row.next_attempt_at <= now)
             and row.created_at < now - grace
         ]
-        claimed: list[tuple[UUID, OutboxRow]] = []
+        claimed: list[OutboxRow] = []
         for org, row in sorted(due, key=lambda pair: pair[1].id)[:limit]:
             attempts = row.attempts + 1
             spent = row.model_copy(
@@ -47,7 +47,7 @@ class OutboxStorageMemoryImpl(OutboxStorageInterface, OutboxLandingInterface):
                 }
             )
             self._rows[row.id] = (org, spent)
-            claimed.append((org, spent))
+            claimed.append(spent)
         return claimed
 
     async def mark_done(self, org_id: UUID, row_id: UUID) -> None:

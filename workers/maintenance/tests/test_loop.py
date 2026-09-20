@@ -278,7 +278,7 @@ def start_loop(
     return loop, asyncio.create_task(loop.run())
 
 
-async def claim_all(outbox: OutboxStorageInterface) -> list[tuple[UUID, OutboxRow]]:
+async def claim_all(outbox: OutboxStorageInterface) -> list[OutboxRow]:
     """What the sweep would claim now, with no grace and no delay after it."""
     zero = timedelta(0)
     return await outbox.claim_pending(100, utcnow(), zero, zero, zero)
@@ -536,7 +536,7 @@ async def test_sweep_relays_the_outbox_and_purges_done_rows(tmp_path: Path) -> N
     )
     await container.storage.get_tasks_storage().create_task(ctx.org_id, task, (row,))
     outbox = container.storage.get_outbox_storage()
-    assert [r.id for _, r in await claim_all(outbox)] == [row.id]
+    assert [r.id for r in await claim_all(outbox)] == [row.id]
     loop, task_ = start_loop(
         container, RecordingHandler(), fast_options(outbox_retention=timedelta(0))
     )

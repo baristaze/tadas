@@ -149,7 +149,7 @@ class TenancyStorageContract:
         change = make_user_row(org.id, user)
         asked = change.model_copy(update={"id": new_id(), "kind": "work.noop"})
         await storage.create_member(org.id, user, make_membership(user.id), (change, asked))
-        landed = [row.id for _, row in await claim_all(outbox) if row.target_id == user.id]
+        landed = [row.id for row in await claim_all(outbox) if row.target_id == user.id]
         assert sorted(landed) == sorted([change.id, asked.id])
 
     async def test_purge_tenant_takes_every_row_of_the_tenant_and_keeps_the_org(
