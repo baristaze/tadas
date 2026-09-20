@@ -36,10 +36,11 @@ class ApiSettings(StorageSettings, InfraSettings):
     readiness_timeout_seconds: float = 2.0
     # Admission: the requests this process keeps in flight at once, and what
     # a refusal past that tells the client to wait. The bound is a multiple
-    # of what the process can actually work on (four database roles over one
-    # engine, a pool of five with ten of overflow), so a burst still queues
-    # briefly on the pool and only a flood is refused; it is not the login
-    # rate limit, which is fairness between subjects and fails open.
+    # of what the process can actually work on, which is the declared size of
+    # the pool it opens per role and no more, since the pools carry no
+    # overflow. A burst still waits briefly on a checkout, which has a bound
+    # of its own, and only a flood is refused; it is not the login rate
+    # limit, which is fairness between subjects and fails open.
     admission_in_flight_limit: int = 64
     admission_retry_after_seconds: int = 1
 
