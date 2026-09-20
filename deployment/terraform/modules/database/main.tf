@@ -28,7 +28,12 @@ resource "aws_db_instance" "this" {
   storage_type          = "gp3"
   storage_encrypted     = true
 
-  db_name  = "tadas"
+  db_name = "tadas"
+  # The application's login. On RDS the master user is not a superuser and
+  # carries no BYPASSRLS: it is `rds_superuser`, a role that owns the database
+  # and is held by every row-level security policy the migrations create, which
+  # is what the second tenant fence needs. Nothing here grants it either
+  # attribute, and RDS offers no way to.
   username = "tadas"
   password = random_password.master.result
   port     = 5432

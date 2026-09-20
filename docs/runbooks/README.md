@@ -10,8 +10,9 @@ touches and the ADR that explains why it is shaped that way.
   cloud is not configured.
 - [tenant-isolation.md](tenant-isolation.md): where the cross-tenant
   cases live, how to run the negative control that says what they
-  catch, what the last run showed, and what the two storage impls
-  answer differently.
+  catch over the memory impls and the two-run control that says the
+  row-level security policies are live, what the last runs showed, and
+  what the two storage impls answer differently.
 
 Next candidates: rotating the database credentials, moving a database
 role to its own database, and draining a worker before a rollout.
