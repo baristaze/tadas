@@ -2,6 +2,7 @@
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import timedelta
 from typing import Any
 
 import pytest
@@ -62,11 +63,17 @@ def buckets(code: str) -> BucketsS3Impl:
         endpoint_url=None,
         region="us-east-1",
         bucket_prefix="tadas",
+        timeout=timedelta(seconds=1),
     )
 
 
 def secrets(code: str) -> SecretsAwsImpl:
-    return SecretsAwsImpl(FakeSession(code), region="us-east-1", name_prefix="tadas/")  # type: ignore[arg-type]
+    return SecretsAwsImpl(
+        FakeSession(code),  # type: ignore[arg-type]
+        region="us-east-1",
+        name_prefix="tadas/",
+        timeout=timedelta(seconds=1),
+    )
 
 
 async def test_not_found_codes_keep_their_shape() -> None:

@@ -27,7 +27,8 @@ uv run tadas listen                           # the team's tasks; --mine for you
   `$TADAS_HOME/session.json` (default `~/.config/tadas`, mode 600).
   `TADAS_TOKEN` in the environment wins over the file and may hold an api
   key; `TADAS_API_URL` or `--api` names the API (default
-  `http://127.0.0.1:8000`).
+  `http://127.0.0.1:8000`); `TADAS_HTTP_TIMEOUT_SECONDS` bounds every call
+  and the socket's open (default 30).
 - `listen` opens the socket on a single-use ticket, subscribes to
   `entity_changed`, and tells each push after reading the task it names;
   the push says who and what, the record says the rest. A deleted task is

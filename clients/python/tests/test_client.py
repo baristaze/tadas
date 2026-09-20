@@ -1,12 +1,14 @@
 """The transport client over a mock transport: what it sends and how it
 turns a refusal into a typed error."""
 
+from typing import Any, cast
 from uuid import UUID, uuid4
 
 import httpx
 import pytest
 
-from tadas.client.client import UNSET, ApiClient, ApiError
+from tadas.client.client import DEFAULT_TIMEOUT_SECONDS, UNSET, ApiClient, ApiError
+from tadas.client.realtime import Channel
 from tadas.client.types import TaskStatus
 
 TASK = {
@@ -154,3 +156,13 @@ def test_websocket_url_follows_the_scheme() -> None:
     assert plain.websocket_url("/v1/realtime") == "ws://127.0.0.1:8000/v1/realtime"
     assert secure.websocket_url("/v1/realtime") == "wss://api.tadas.fyi/v1/realtime"
     assert plain.headers == {"X-App": "cli", "X-App-Version": "v"}
+
+
+def test_every_call_and_the_socket_open_carry_the_timeout() -> None:
+    given = ApiClient("http://test", app="cli", app_version="v", timeout=4.5)
+    assert given.timeout == 4.5 and given._http.timeout == httpx.Timeout(4.5)
+    opening = cast(Any, Channel(given)._connect_default("ws://127.0.0.1:1/v1/realtime", {}))
+    assert opening.open_timeout == 4.5  # built, not entered: nothing connects
+    default = ApiClient("http://test", app="cli", app_version="v")
+    assert default.timeout == DEFAULT_TIMEOUT_SECONDS
+    assert default._http.timeout == httpx.Timeout(DEFAULT_TIMEOUT_SECONDS)

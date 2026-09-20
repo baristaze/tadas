@@ -3,10 +3,11 @@ short ids, assignees by name, JSON output, and the exit codes."""
 
 import json
 
+import pytest
 from api_support import OWNER
 from cli_support import BOB, Stack
 
-from tadas.apps.cli import config
+from tadas.apps.cli import config, main
 
 
 def test_login_keeps_a_session_and_whoami_reads_it(stack: Stack) -> None:
@@ -111,3 +112,18 @@ def test_a_member_sees_the_owners_tasks_and_the_api_decides_what_is_allowed(stac
     listed = stack.tadas("ls", token=bob)
     assert "Owner's task" in listed.output
     assert stack.tadas("whoami", token=bob).output == "Bob <bob@example.test> at Acme (member)\n"
+
+
+def test_the_client_is_built_with_the_timeout_from_the_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("TADAS_HTTP_TIMEOUT_SECONDS", raising=False)
+    assert config.timeout_seconds() == config.DEFAULT_TIMEOUT_SECONDS
+    assert main.build_client("http://127.0.0.1:1", None).timeout == config.DEFAULT_TIMEOUT_SECONDS
+    monkeypatch.setenv("TADAS_HTTP_TIMEOUT_SECONDS", "2.5")
+    assert config.timeout_seconds() == 2.5
+    assert main.build_client("http://127.0.0.1:1", None).timeout == 2.5
+    for bad in ("soon", "0", "-1"):
+        monkeypatch.setenv("TADAS_HTTP_TIMEOUT_SECONDS", bad)
+        with pytest.raises(ValueError):
+            config.timeout_seconds()

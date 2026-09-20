@@ -1,3 +1,4 @@
+from datetime import timedelta
 from pathlib import Path
 from uuid import UUID
 
@@ -7,7 +8,7 @@ from contracts.factories import make_org, make_user
 from tadas.infra.impl.local import InfraLocalImpl
 from tadas.infra.topics import EntityChangedPayload, TopicPayload, Topics
 from tadas.infra.topics.memory import TopicsMemoryImpl
-from tadas.om.base import new_id, utcnow
+from tadas.om.base import PROVENANCE_FIELDS, new_id, utcnow
 from tadas.om.events.impl.manager import EventsManagerImpl, EventsOptions
 from tadas.om.events.storage.impl.memory import EventStorageMemoryImpl
 from tadas.om.exceptions import NotAuthorized, NotFound, ValidationFailed
@@ -164,6 +165,36 @@ async def test_create_update_delete_record_and_push(
     assert recorded[0].actor_id == ctx.user_id and recorded[0].request_id == ctx.request_id
     assert recorded[0].app == "portal"
     assert await outbox.read_pending(10) == []
+
+
+async def test_update_keeps_the_provenance_as_stored(manager: TasksManagerImpl) -> None:
+    # The copy on update starts from the stored row: a caller may change the
+    # title, the notes, the status, the assignee, and nothing about who made
+    # the row or whether it is deleted, whatever its entity says.
+    ann, bob = context(Role.MEMBER), context(Role.MEMBER)
+    created = await manager.create_task(ann, make_task(ann))
+    forged = created.model_copy(
+        update={
+            "title": "renamed",
+            "created_at": created.created_at - timedelta(days=1),
+            "created_by": bob.user_id,
+            "deleted_at": utcnow(),
+            "deleted_by": bob.user_id,
+        }
+    )
+    updated = await manager.update_task(ann, forged)
+    assert updated.title == "renamed"
+    assert updated.created_at == created.created_at and updated.created_by == ann.user_id
+    assert updated.deleted_at is None and updated.deleted_by is None
+    assert await manager.get_task(ann, created.id) == updated
+    assert PROVENANCE_FIELDS == {"created_at", "created_by", "deleted_at", "deleted_by"}
+
+    # A deleted row is not brought back by an entity with the deletion cleared.
+    deleted = await manager.delete_task(ann, created.id)
+    revived = deleted.model_copy(update={"deleted_at": None, "deleted_by": None})
+    with pytest.raises(NotFound):
+        await manager.update_task(ann, revived)
+    assert await manager.get_open_tasks(ann, own(ann, TaskScope.TEAM), limit=10) == []
 
 
 async def test_new_tasks_go_to_the_top_of_the_open_list(manager: TasksManagerImpl) -> None:

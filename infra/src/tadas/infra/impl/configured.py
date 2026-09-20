@@ -1,6 +1,8 @@
 """The infra root that picks impls from settings and refuses combinations
 that are only safe locally."""
 
+from datetime import timedelta
+
 import aioboto3
 
 from tadas.infra.buckets import BucketsInterface
@@ -62,7 +64,10 @@ class InfraConfiguredImpl(InfraInterface):
         self._settings = settings
         self._valkey: ValkeyConnection | None = None
         if settings.cache_backend == "valkey" or settings.topics_backend == "valkey":
-            self._valkey = ValkeyConnection(settings.valkey_url)
+            self._valkey = ValkeyConnection(
+                settings.valkey_url, timedelta(seconds=settings.valkey_timeout_seconds)
+            )
+        aws_timeout = timedelta(seconds=settings.aws_timeout_seconds)
         self._aws = aioboto3.Session(
             aws_access_key_id=settings.s3_access_key,
             aws_secret_access_key=settings.s3_secret_key,
@@ -76,6 +81,7 @@ class InfraConfiguredImpl(InfraInterface):
                 endpoint_url=settings.s3_endpoint_url,
                 region=settings.aws_region,
                 bucket_prefix=settings.s3_bucket_prefix,
+                timeout=aws_timeout,
             )
         else:
             self._buckets = BucketsLocalImpl(settings.buckets_root)
@@ -92,13 +98,17 @@ class InfraConfiguredImpl(InfraInterface):
                 endpoint_url=settings.sqs_endpoint_url,
                 region=settings.aws_region,
                 queue_prefix=settings.sqs_queue_prefix,
+                timeout=aws_timeout,
             )
         else:
             self._queues = QueueMemoryImpl()
 
         if settings.secrets_backend == "aws":
             self._secrets: SecretsInterface = SecretsAwsImpl(
-                self._aws, region=settings.aws_region, name_prefix=settings.secrets_name_prefix
+                self._aws,
+                region=settings.aws_region,
+                name_prefix=settings.secrets_name_prefix,
+                timeout=aws_timeout,
             )
         else:
             self._secrets = SecretsLocalImpl(settings.secrets_file, settings.secret_overrides)

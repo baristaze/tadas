@@ -1,7 +1,9 @@
+from datetime import timedelta
 from typing import Any
 
 import aioboto3
 
+from tadas.infra.aws_clients import client_config
 from tadas.infra.aws_errors import ClientError, error_code, translated
 from tadas.infra.secrets import SecretNotFound, SecretsInterface
 
@@ -9,13 +11,16 @@ from tadas.infra.secrets import SecretNotFound, SecretsInterface
 class SecretsAwsImpl(SecretsInterface):
     """A client is opened per call, so this impl has no lifecycle of its own."""
 
-    def __init__(self, session: aioboto3.Session, *, region: str, name_prefix: str) -> None:
+    def __init__(
+        self, session: aioboto3.Session, *, region: str, name_prefix: str, timeout: timedelta
+    ) -> None:
         self._session = session
         self._region = region
         self._name_prefix = name_prefix
+        self._config = client_config(timeout)
 
     def _client(self) -> Any:
-        return self._session.client("secretsmanager", region_name=self._region)
+        return self._session.client("secretsmanager", region_name=self._region, config=self._config)
 
     def _name(self, name: str) -> str:
         return f"{self._name_prefix}{name}"

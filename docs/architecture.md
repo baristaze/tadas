@@ -13,7 +13,14 @@ mixins, `new_id`, `utcnow`), the context model in `opcontext.py` with
 the exception root, the storage root with its Postgres and memory impls,
 and one namespace per swimlane. `Trackable` records who created a row
 and who last changed it (`updated_by`); every update sets it from the
-context.
+context. The copy on update starts from the stored row: the caller's
+entity supplies the fields a caller may change, and `PROVENANCE_FIELDS`
+(a constant beside the mixins naming `created_at`, `created_by`,
+`deleted_at`, and `deleted_by`) stay as stored, so no caller rewrites
+who made a row or brings a deleted one back by sending an entity. The
+API's partial update is translation: it merges only the request's set
+fields onto the stored entity, and the request type names no provenance
+field and forbids extra ones.
 
 The context model is two orthogonal ideas. The stages are four frozen
 types ordered by evidence: `RequestContext` (a request exists: its id,
@@ -80,20 +87,28 @@ context on keeps the stage the callee needs.
 - `idempotency`: the durable outcome of a request the caller may retry,
   one record per (tenant, user, key); the gateway begins it before a
   creating request and finishes it with the outcome. The record carries
-  the id the create uses, minted by the gateway before the marker. A
-  record left pending past its lease (a crash between marker and
-  outcome) is taken over by the next retry, which runs the request
-  again on that id; a create that finds its own id already written
-  returns the row as stored, so the rerun cannot create twice. The one
-  create that issues a secret, the api key, is the exception: the secret
-  is stored as a digest and shown once, and the first one reached no one
-  when the marker stored no outcome, so its rerun re-mints the secret on
-  the row the id names, in the same storage method that inserts it
-  (`issue_api_key`, one conditional write on the issuer's row, no second
-  outbox row), and returns a fresh `IssuedApiKey` with the same id; the
-  old secret stops authenticating. A failure (a `5xx`) is not an outcome:
-  the marker is released and the retry runs again; a refusal (a `4xx`) is
-  stored and replayed.
+  the id the create uses, minted by the gateway before the marker, and
+  the token of the attempt that holds it: `begin` mints one with the
+  marker, and the take-over stamps one of its own in the same conditional
+  write. A record left pending past its lease (a crash between marker and
+  outcome, or an attempt still running past the lease) is taken over by
+  the next retry, which runs the request again on that id; a create that
+  finds its own id already written returns the row as stored, so the
+  rerun cannot create twice. The one create that issues a secret, the api
+  key, is the exception: the secret is stored as a digest and shown once,
+  and the first one reached no one when the marker stored no outcome, so
+  its rerun re-mints the secret on the row the id names, in the same
+  storage method that inserts it (`issue_api_key`, one conditional write
+  on the issuer's row, no second outbox row), and returns a fresh
+  `IssuedApiKey` with the same id; the old secret stops authenticating.
+  `finish` and `release` are conditional on the attempt token in the
+  statement itself: the storage reports what matched (the record, or
+  `None`; a bool for the release) and the manager refuses a lost attempt
+  with `IdempotencyAttemptLost`, a `Conflict`, like a worker whose lease
+  has passed. The gateway logs and counts the refusal (`attempt_lost`)
+  and answers with what the attempt produced, which is the row the retry
+  found. A failure (a `5xx`) is not an outcome: the marker is released
+  and the retry runs again; a refusal (a `4xx`) is stored and replayed.
 - `outbox`: the transactional outbox. A manager that writes a core row
   hands the storage an `OutboxRow` (`kind`, `target_id`, the record's
   snapshot as `payload`, the actor and the request) and the storage base
@@ -156,6 +171,14 @@ anything in them.
   object, collected once at boot; nothing below settings reads the
   environment. `.env.example` documents every knob.
 
+- Every outbound client carries a timeout from settings, one per client,
+  so a downstream that hangs cannot hold a replica's whole pool:
+  `TADAS_AWS_TIMEOUT_SECONDS` bounds connect and read on every AWS client
+  (`tadas.infra.aws_clients` is the one module that names botocore's
+  client configuration), `TADAS_VALKEY_TIMEOUT_SECONDS` every Valkey
+  request, and `TADAS_OTEL_TIMEOUT_SECONDS` every trace export. The
+  Sentry SDK bounds its own transport.
+
 `InfraConfiguredImpl` picks impls from settings; `InfraLocalImpl` runs
 everything in-process for tests.
 
@@ -195,7 +218,11 @@ everything in-process for tests.
   the context the seeding then runs under).
 - `workers/maintenance` (`tadas-maintenance`): the claim loop for kind
   `NOOP` on one lane (`TADAS_WORKER_LANE`, or `serve --lane`), lease
-  renewal and self-fencing, a liveness heartbeat in the cache, and the
+  renewal and self-fencing (a renewal refused with `LeaseLost` cancels
+  the running task at once, because another worker holds the item now;
+  a renewal that fails for any other reason is retried and cancels the
+  task once half the lease has passed without one, before the lease
+  expires), a liveness heartbeat in the cache, and the
   maintenance sweep (requeue stale leases under one service context per
   live tenant, then purge the tenant's soft-deleted tasks, removed
   members, and revoked api keys past their retention (the one hard
@@ -242,7 +269,9 @@ everything in-process for tests.
 - `clients/python` (`tadas-client`, `tadas.client`): the one Python client,
   generated from the same committed `openapi.json` (`schema.py`, by
   `make openapi`) behind the facade `types.py`; one transport client with
-  the error envelope, idempotency keys, and the OS trust store; the socket
+  the error envelope, idempotency keys, the OS trust store, and a timeout
+  on every call, which the caller's settings name (the CLI reads
+  `TADAS_HTTP_TIMEOUT_SECONDS`) and the socket's open shares; the socket
   frames mirrored by hand (`envelopes.py`); the placement rule
   (`stream.py`); and the channel (`realtime.py`): ticket, one
   subscription, pings, gaps replayed from `/v1/events`, reconnect with
@@ -342,6 +371,11 @@ produces a stage above the request stage. `test_role_rules.py` holds the
 role ladder to the permission table and keeps the service role off it.
 `test_interfaces.py` fails on a `*Interface` under `tadas.om` or
 `tadas.infra` that is not an `ABC` with every public method abstract.
+`infra/tests/test_timeouts.py` scans every source root and fails on a
+client construction that names no timeout. The storage contracts race
+the named atomic methods, not only call them: two claimers and two
+take-overs run at once through `asyncio.gather` and exactly one wins,
+over memory in the fast gate and over Postgres in the integration job.
 Each process's `tests/test_settings.py` (and `infra/tests/`) reads
 `.env.example` and fails on a settings field it does not document, and
 reads every Terraform environment and fails on a field the cloud neither

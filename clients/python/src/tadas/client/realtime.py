@@ -74,7 +74,13 @@ class Channel:
         self, url: str, headers: dict[str, str]
     ) -> AbstractAsyncContextManager[SocketLike]:
         ssl_context = trust_store() if url.startswith("wss") else None
-        return websockets.connect(url, additional_headers=headers, ssl=ssl_context, max_size=None)
+        return websockets.connect(
+            url,
+            additional_headers=headers,
+            ssl=ssl_context,
+            max_size=None,
+            open_timeout=self._client.timeout,
+        )
 
     def _set(self, state: State) -> None:
         if state != self.state:

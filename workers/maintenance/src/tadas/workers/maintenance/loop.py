@@ -1,6 +1,7 @@
 """The worker loop: wake on WORK_AVAILABLE with a short poll fallback, claim
 on the lane while a slot is free, run each item as a task that renews its
-lease and cancels itself when renewal keeps failing, heartbeat liveness,
+lease and cancels itself when the lease is lost or renewal keeps failing,
+heartbeat liveness,
 sweep on a timer (stale leases, the outbox, done outbox rows), and drain
 first on stop."""
 
@@ -207,9 +208,12 @@ class WorkerLoop:
         self, ctx: OpContext, item: WorkItem, owner: asyncio.Task[None] | None
     ) -> None:
         """Renews every third of the lease, each renewal bounded by that interval so
-        a stalled one counts as failed. Once half the lease has passed since the
-        last renewal that succeeded, cancels the owner before the lease expires so
-        two workers never advance the same record."""
+        a stalled one counts as failed. A renewal refused with LeaseLost is
+        definitive: another worker holds the item now, so the owner is cancelled
+        at once. Any other failure (a timeout, an engine out of reach) is retried,
+        and once half the lease has passed since the last renewal that succeeded,
+        the owner is cancelled before the lease expires so two workers never
+        advance the same record."""
         lease = self._options.lease
         interval = lease / 3
         clock = asyncio.get_running_loop().time
@@ -221,6 +225,11 @@ class WorkerLoop:
                     self._work.extend_lease(ctx, item, lease), timeout=interval.total_seconds()
                 )
                 renewed_at = clock()
+            except LeaseLost as error:
+                log.warning("lease on %s is held elsewhere: %s", item.id, error)
+                if owner is not None:
+                    owner.cancel()
+                return
             except Exception as error:
                 log.warning("lease renewal failed on %s: %r", item.id, error)
                 if clock() - renewed_at >= (lease / 2).total_seconds():

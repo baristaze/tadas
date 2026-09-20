@@ -62,7 +62,11 @@ async def serve(lane: str | None) -> int:
     configure_error_reporting(
         settings.sentry_dsn, settings.environment, settings.service_name, settings.version
     )
-    configure_tracing(settings.otel_endpoint, settings.service_name)
+    configure_tracing(
+        settings.otel_endpoint,
+        settings.service_name,
+        timedelta(seconds=settings.otel_timeout_seconds),
+    )
     # The worker's /metrics, for Prometheus locally and the collector sidecar in the cloud.
     metrics_server, _ = start_http_server(settings.metrics_port, settings.metrics_host)
     container = WorkerContainer.build(settings)

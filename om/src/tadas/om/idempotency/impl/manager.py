@@ -4,6 +4,7 @@ from uuid import UUID
 from tadas.om.base import Platform, new_id, utcnow
 from tadas.om.exceptions import (
     DuplicateIdempotencyKey,
+    IdempotencyAttemptLost,
     IdempotencyInProgress,
     IdempotencyKeyReused,
     NotFound,
@@ -17,8 +18,9 @@ from tadas.om.opcontext import OpContext, Permission
 class IdempotencyOptions(Platform):
     pending_ttl: timedelta = timedelta(minutes=2)
     """A pending record older than this was abandoned by a crash between the
-    marker and its outcome; the next retry takes it over and runs the request
-    again, so the marker never suppresses work for good."""
+    marker and its outcome, or belongs to an attempt still running past its
+    lease; the next retry takes it over and runs the request again, so the
+    marker never suppresses work for good."""
 
 
 class IdempotencyManagerImpl(IdempotencyManagerInterface):
@@ -36,6 +38,7 @@ class IdempotencyManagerImpl(IdempotencyManagerInterface):
             key=key,
             request_digest=request_digest,
             target_id=target_id,
+            attempt_id=new_id(),
             created_at=utcnow(),
         )
         try:
@@ -52,14 +55,17 @@ class IdempotencyManagerImpl(IdempotencyManagerInterface):
                 ) from None
             if stored.pending:
                 # Abandoned when the marker was written and its effect never
-                # landed, or the effect landed and the outcome did not. The
-                # take-over is one conditional write, so of two retries racing
-                # for it exactly one runs the request again, on the target_id
-                # the first attempt minted, so a create that already landed is
-                # found and not repeated; the other sees the restarted marker.
+                # landed, or the effect landed and the outcome did not, or the
+                # first attempt is still running past its lease. The take-over
+                # is one conditional write that stamps a new attempt token, so
+                # of two retries racing for it exactly one runs the request
+                # again, on the target_id the first attempt minted, so a create
+                # that already landed is found and not repeated; the other sees
+                # the restarted marker, and the first attempt, if it is still
+                # running, is refused at its finish or release.
                 now = utcnow()
                 taken = await self._storage.take_over_pending(
-                    ctx.org_id, ctx.user_id, key, now - self._options.pending_ttl, now
+                    ctx.org_id, ctx.user_id, key, now - self._options.pending_ttl, now, new_id()
                 )
                 if taken is not None:
                     return taken
@@ -69,15 +75,25 @@ class IdempotencyManagerImpl(IdempotencyManagerInterface):
             return stored
         return pending
 
-    async def release(self, ctx: OpContext, key: str) -> None:
+    async def release(self, ctx: OpContext, key: str, attempt_id: UUID) -> None:
         ctx.require(Permission.WRITE)
-        await self._storage.release_pending(ctx.org_id, ctx.user_id, key)
+        if not await self._storage.release_pending(ctx.org_id, ctx.user_id, key, attempt_id):
+            raise IdempotencyAttemptLost(
+                f"idempotency key {key!r} is not held by attempt {attempt_id}"
+            )
 
-    async def finish(self, ctx: OpContext, key: str, status: int, body: str) -> IdempotencyRecord:
+    async def finish(
+        self, ctx: OpContext, key: str, attempt_id: UUID, status: int, body: str
+    ) -> IdempotencyRecord:
         ctx.require(Permission.WRITE)
-        stored = await self._storage.read_record(ctx.org_id, ctx.user_id, key)
-        if stored is None:
+        finished = await self._storage.finish_pending(
+            ctx.org_id, ctx.user_id, key, attempt_id, status, body
+        )
+        if finished is not None:
+            return finished
+        # Refused: the statement matched nothing. Only now is a read worth it,
+        # to say whether the key was never begun or the marker is another
+        # attempt's (taken over, or finished already).
+        if await self._storage.read_record(ctx.org_id, ctx.user_id, key) is None:
             raise NotFound(f"idempotency key {key!r} was never begun")
-        finished = stored.model_copy(update={"status": status, "body": body})
-        await self._storage.write_record(ctx.org_id, finished)
-        return finished
+        raise IdempotencyAttemptLost(f"idempotency key {key!r} is not held by attempt {attempt_id}")

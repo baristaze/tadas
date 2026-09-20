@@ -28,16 +28,47 @@ class IdempotencyStoragePostgresImpl(PgStorageBase, IdempotencyStorageInterface)
             row = (await session.execute(stmt)).scalar_one_or_none()
             return None if row is None else to_model(row, IdempotencyRecord)
 
-    async def release_pending(self, org_id: UUID, user_id: UUID, key: str) -> None:
-        stmt = delete(IdempotencyRecords).where(
-            IdempotencyRecords.org_id == org_id,
-            IdempotencyRecords.user_id == user_id,
-            IdempotencyRecords.key == key,
-            IdempotencyRecords.status.is_(None),
+    async def finish_pending(
+        self, org_id: UUID, user_id: UUID, key: str, attempt_id: UUID, status: int, body: str
+    ) -> IdempotencyRecord | None:
+        stmt = (
+            update(IdempotencyRecords)
+            .where(
+                IdempotencyRecords.org_id == org_id,
+                IdempotencyRecords.user_id == user_id,
+                IdempotencyRecords.key == key,
+                IdempotencyRecords.status.is_(None),
+                IdempotencyRecords.attempt_id == attempt_id,
+            )
+            .values(status=status, body=body)
+            .returning(IdempotencyRecords)
         )
         async with self._session_for(stmt) as session:
-            await session.execute(stmt)
+            row = (await session.execute(stmt)).scalar_one_or_none()
+            if row is None:
+                return None
+            finished = to_model(row, IdempotencyRecord)
             await session.commit()
+            return finished
+
+    async def release_pending(
+        self, org_id: UUID, user_id: UUID, key: str, attempt_id: UUID
+    ) -> bool:
+        stmt = (
+            delete(IdempotencyRecords)
+            .where(
+                IdempotencyRecords.org_id == org_id,
+                IdempotencyRecords.user_id == user_id,
+                IdempotencyRecords.key == key,
+                IdempotencyRecords.status.is_(None),
+                IdempotencyRecords.attempt_id == attempt_id,
+            )
+            .returning(IdempotencyRecords.id)
+        )
+        async with self._session_for(stmt) as session:
+            released = (await session.execute(stmt)).scalar_one_or_none() is not None
+            await session.commit()
+            return released
 
     async def take_over_pending(
         self,
@@ -46,6 +77,7 @@ class IdempotencyStoragePostgresImpl(PgStorageBase, IdempotencyStorageInterface)
         key: str,
         abandoned_before: datetime,
         restarted_at: datetime,
+        attempt_id: UUID,
     ) -> IdempotencyRecord | None:
         stmt = (
             update(IdempotencyRecords)
@@ -56,7 +88,7 @@ class IdempotencyStoragePostgresImpl(PgStorageBase, IdempotencyStorageInterface)
                 IdempotencyRecords.status.is_(None),
                 IdempotencyRecords.created_at < abandoned_before,
             )
-            .values(created_at=restarted_at)
+            .values(created_at=restarted_at, attempt_id=attempt_id)
             .returning(IdempotencyRecords)
         )
         async with self._session_for(stmt) as session:

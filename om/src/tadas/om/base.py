@@ -61,6 +61,12 @@ class SoftDeletable(Platform):
     deleted_by: UUID | None = None
 
 
+PROVENANCE_FIELDS = frozenset({"created_at", "created_by", "deleted_at", "deleted_by"})
+"""Who made a row and who deleted it. The copy on update starts from the
+stored row and takes the caller's fields with these excluded, so no caller
+rewrites who made a row or brings a deleted one back by sending an entity."""
+
+
 EMPTY_UUID = UUID(int=0)
 """The platform, not a tenant or a person: the reserved system scope, and the
 value of a required reference that no tenant and no person owns. It equals
