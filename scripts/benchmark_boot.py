@@ -35,6 +35,12 @@ def main() -> int:
     from tadas.om.storage.impl.memory import StorageMemoryImpl
     from tadas.om.storage.impl.postgres import StoragePostgresImpl
     from tadas.om.storage.roles import DatabaseRole
+    from tadas.om.storage.settings import StorageSettings
+
+    # The urls and the bounds come from settings, the way a composition root
+    # hands them to the storage root; reading them is not what is timed.
+    urls = dict.fromkeys(DatabaseRole, "postgresql+asyncpg://t:t@127.0.0.1:1/x")
+    pools = StorageSettings().role_pools()
 
     tmp = Path(tempfile.mkdtemp())
     t = time.perf_counter()
@@ -47,9 +53,7 @@ def main() -> int:
     build_managers(memory, infra)
     rows.append(("build_managers() over memory", ms(t)))
     t = time.perf_counter()
-    postgres = StoragePostgresImpl(
-        dict.fromkeys(DatabaseRole, "postgresql+asyncpg://t:t@127.0.0.1:1/x")
-    )
+    postgres = StoragePostgresImpl(urls, pools)
     rows.append(("StoragePostgresImpl() (engines built, nothing connects)", ms(t)))
     t = time.perf_counter()
     build_managers(postgres, infra)

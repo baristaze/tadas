@@ -17,7 +17,7 @@ from tadas.om.outbox.storage.impl.postgres import OutboxStoragePostgresImpl
 from tadas.om.storage.impl.pg_base import SessionFactory
 from tadas.om.storage.roles import DatabaseRole
 from tadas.om.storage.root import StorageInterface
-from tadas.om.storage.settings import RolePool, StorageSettings
+from tadas.om.storage.settings import RolePool
 from tadas.om.tasks.storage import TasksStorageInterface
 from tadas.om.tasks.storage.impl.postgres import TasksStoragePostgresImpl
 from tadas.om.tenancy.storage import TenancyStorageInterface
@@ -60,19 +60,18 @@ class StoragePostgresImpl(StorageInterface):
     def __init__(
         self,
         urls: Mapping[DatabaseRole, str],
-        pools: Mapping[DatabaseRole, RolePool] | None = None,
+        pools: Mapping[DatabaseRole, RolePool],
     ) -> None:
         """One engine per distinct URL and bounds: roles that share both share a
         pool, and a role given a size, a checkout bound, or a statement deadline
         of its own gets a pool of its own, which is what makes the role the
-        bulkhead between two load profiles on one database. `pools` defaults to
-        what settings declare, so a caller that names only URLs still runs on
-        bounds from settings and never on a library default."""
-        bounds = pools if pools is not None else StorageSettings().role_pools()
+        bulkhead between two load profiles on one database. Both arguments come
+        from the settings object the composition root read at boot: the impl
+        reads no environment variable of its own."""
         engines: dict[tuple[str, RolePool], AsyncEngine] = {}
         sessions: dict[DatabaseRole, SessionFactory] = {}
         for role in DatabaseRole:
-            key = (urls[role], bounds[role])
+            key = (urls[role], pools[role])
             if key not in engines:
                 engines[key] = engine_for(*key)
             sessions[role] = async_sessionmaker(engines[key], expire_on_commit=False)

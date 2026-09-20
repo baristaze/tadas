@@ -31,14 +31,17 @@ async def test_memory_root_serves_every_storage() -> None:
 
 async def test_postgres_root_opens_one_engine_per_distinct_url() -> None:
     shared = "postgresql+asyncpg://tadas:tadas@127.0.0.1:55432/tadas"
-    root = StoragePostgresImpl(dict.fromkeys(DatabaseRole, shared))
+    # Both arguments come from a settings object, the way a composition root
+    # hands them over; the impl reads nothing itself.
+    pools = StorageSettings(database_url=shared).role_pools()
+    root = StoragePostgresImpl(dict.fromkeys(DatabaseRole, shared), pools)
     assert isinstance(root.get_tenancy_storage(), TenancyStorageInterface)
     assert len(root._engines) == 1
     await root.close()
 
     split = dict.fromkeys(DatabaseRole, shared)
     split[DatabaseRole.QUEUE] = "postgresql+asyncpg://tadas:tadas@127.0.0.1:55432/tadas_queue"
-    root = StoragePostgresImpl(split)
+    root = StoragePostgresImpl(split, pools)
     assert len(root._engines) == 2
     await root.close()
 

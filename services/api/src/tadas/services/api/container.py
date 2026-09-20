@@ -1,6 +1,7 @@
-"""Every process boots the same way: settings, then logging, the trust store,
-error reporting, and tracing, then storage, infra, the managers, and the services, in that
-order. Routers resolve them per request from this one object."""
+"""Every process boots the same way: settings, then logging, the process name,
+the trust store, error reporting, and tracing, then storage, infra, the managers,
+and the services, in that order. Routers resolve them per request from this one
+object."""
 
 import logging
 from datetime import timedelta
@@ -10,6 +11,7 @@ from tadas.infra.observability import (
     configure_error_reporting,
     configure_logging,
     configure_tracing,
+    name_process,
 )
 from tadas.infra.root import InfraInterface
 from tadas.infra.trust import install_trust_store
@@ -27,13 +29,18 @@ _booted = False
 
 
 def boot(settings: ApiSettings) -> None:
-    """Settings first, then logging, the trust store, error reporting, and
-    tracing. Every entry
-    point calls it before it builds a container; it runs once per process."""
+    """Settings first, then logging, the process name, the trust store, error
+    reporting, and tracing. Every entry point calls it before it builds a
+    container; it runs once per process.
+
+    Naming the process is a step of its own, second: every line this boot
+    writes carries the service and the environment, and a boot that configures
+    no error reporting still names them."""
     global _booted
     if _booted:
         return
     configure_logging(settings.log_level, settings.log_json)
+    name_process(settings.service_name, settings.environment)
     install_trust_store()
     configure_error_reporting(
         settings.sentry_dsn, settings.environment, settings.service_name, settings.version
@@ -74,7 +81,7 @@ class AppContainer:
 
     @classmethod
     def build(cls, settings: ApiSettings) -> AppContainer:
-        storage = StoragePostgresImpl(settings.role_urls())
+        storage = StoragePostgresImpl(settings.role_urls(), settings.role_pools())
         infra = InfraConfiguredImpl(settings)
         return cls.over(settings, storage, infra)
 
