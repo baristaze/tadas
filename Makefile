@@ -14,8 +14,11 @@ COMPOSE_ENV := --env-file .env.example $(if $(wildcard .env),--env-file .env)
 COMPOSE ?= docker compose $(COMPOSE_ENV) -f deployment/local/docker-compose.yml
 COMPOSE_FULL := $(COMPOSE) -f deployment/local/docker-compose.full.yml
 ROLES := core activity queue admin
+# The traffic run's knobs: `make traffic PROFILE=light DURATION=30`.
+PROFILE ?= light
+DURATION ?= 30
 
-.PHONY: help setup up down reset urls infra-up devx-up stack-up infra-down infra-reset migrate seed demo-gif demo-cli-gif migrate-check check lint format-check typecheck test-unit test-integration openapi
+.PHONY: help setup up down reset urls infra-up devx-up stack-up infra-down infra-reset migrate seed demo-gif demo-cli-gif migrate-check check lint format-check typecheck test-unit test-integration test-telemetry traffic openapi
 
 # This Makefile alone, never $(MAKEFILE_LIST): the includes above put
 # .env.example and .env in that list, and grep prefixes every match with the
@@ -129,10 +132,22 @@ typecheck: ## Pyright over every distribution
 	uv run pyright
 
 test-unit: ## Unit tests over the memory impls
-	uv run pytest -q -m "not integration and not e2e"
+	uv run pytest -q -m "not integration and not e2e and not telemetry"
 
 test-integration: ## Integration tests over the compose stack
 	uv run pytest -q -m integration
+
+# The round trip: a real API process on 8000 (the host target Prometheus
+# scrapes) with the exporter and the DSN set, one session of traffic, then
+# every signal read back by request id through the devx stores. Needs
+# `make devx-up` and `make migrate seed`; skips, naming why, when it cannot.
+test-telemetry: ## The telemetry round trip over the devx profile
+	uv run pytest -q -m telemetry
+
+# The gate's sanity run: the light profile for thirty seconds over the seeded
+# org, against the API on 8000. Proves the wiring, says nothing about capacity.
+traffic: ## Drive light traffic at the local API (PROFILE=light DURATION=30)
+	uv run tadas-ops traffic --env local --profile $(PROFILE) --duration $(DURATION) --orgs 0
 
 # One committed document, apps/portal/openapi.json; both generated type sets
 # come from it: the portal's schema.d.ts and the Python client's schema.py.
