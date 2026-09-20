@@ -28,6 +28,8 @@ served to it. Exposure is by listing, never by folder.
 - [Stress tests](ops/stress/README.md): what a good one is and the scenario file
 - [Runbooks](docs/runbooks/README.md): one file per operational procedure
 - [Deploy runbook](docs/runbooks/deploy.md): cutting a release, approving a plan, rolling back
+- [Operate runbook](docs/runbooks/operate.md): the day-to-day of an environment, with the skills that do it
+- [Scale runbook](docs/runbooks/scale.md): scaling out, the one root flip, and what to watch after
 - [Support runbook](docs/runbooks/support.md): how a support investigation runs
 - [Tenant isolation runbook](docs/runbooks/tenant-isolation.md): the cross-tenant cases and what they catch
 - [The portal](apps/portal/README.md): the browser app
@@ -40,6 +42,8 @@ served to it. Exposure is by listing, never by folder.
 - [Stress tests](ops/stress/README.md): what a good one is and the scenario file
 - [Runbooks](docs/runbooks/README.md): one file per operational procedure
 - [Deploy runbook](docs/runbooks/deploy.md): cutting a release, approving a plan, rolling back
+- [Operate runbook](docs/runbooks/operate.md): the day-to-day of an environment, with the skills that do it
+- [Scale runbook](docs/runbooks/scale.md): scaling out, the one root flip, and what to watch after
 - [Support runbook](docs/runbooks/support.md): how a support investigation runs
 - [Tenant isolation runbook](docs/runbooks/tenant-isolation.md): the cross-tenant cases and what they catch
 - [Deployment](deployment/README.md): what runs where, locally and in the cloud, and the branch convention
