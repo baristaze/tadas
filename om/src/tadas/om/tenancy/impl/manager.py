@@ -772,11 +772,22 @@ class TenancyManagerImpl(TenancyManagerInterface):
         return org, user, membership
 
     async def _principal_in(self, org_id: UUID, identity_id: UUID) -> tuple[Org, User, Membership]:
+        """The principal a verified identity is in `org_id`, or NotAuthorized: the
+        sign-in is good, the tenant is not theirs, so a client keeps its login
+        and picks another tenant. A gone org, user, or membership is refused the
+        same way; InvalidCredential is for a credential that fails, and a login
+        that names a tenant it cannot enter has not failed."""
         users = await self._storage.read_users_by_identity(identity_id)
-        user_id = next((user.id for user_org, user in users if user_org == org_id), None)
-        if user_id is None:
+        user = next((user for user_org, user in users if user_org == org_id), None)
+        if user is None:
             raise NotAuthorized("this identity is not a member of that org")
-        return await self._principal(org_id, user_id)
+        org = await self._storage.read_org(org_id)
+        if org is None or org.deleted_at is not None:
+            raise NotAuthorized("that org is gone")
+        membership = await self._storage.read_membership_for_user(org_id, user.id)
+        if membership is None:
+            raise NotAuthorized("this identity is no longer a member of that org")
+        return org, user, membership
 
     async def _memberships_of(self, identity_id: UUID) -> tuple[OrgMembership, ...]:
         found: list[OrgMembership] = []

@@ -291,6 +291,48 @@ async def test_exchange_needs_a_membership_in_that_org(manager: TenancyManagerIm
         )
 
 
+async def test_exchange_refuses_a_gone_org_or_membership_as_not_authorized(
+    manager: TenancyManagerImpl,
+    storage: TenancyStorageMemoryImpl,
+    operator: TenancyOperatorManagerImpl,
+) -> None:
+    # The sign-in is good; the tenant is not one the identity can enter. A 401
+    # would make both clients discard a valid login, so it is a 403, as the
+    # interface says.
+    _, org = await manager.bootstrap(
+        request(), "Acme", "acme", "ann@example.test", "pw-1234", "Ann"
+    )
+    bob = await add_member(storage, org.id, "bob@example.test", Role.MEMBER)
+    ended = await storage.read_membership_for_user(org.id, bob.id)
+    assert ended is not None
+    await storage.write_membership(
+        org.id, ended.model_copy(update={"deleted_at": utcnow(), "deleted_by": org.created_by})
+    )
+    login = await manager.login(request(), "bob@example.test", "pw-1234")
+    with pytest.raises(NotAuthorized):
+        await manager.exchange_login(
+            await manager.authenticate_login(request(), login.token), org.id
+        )
+
+    await manager.bootstrap(
+        request(), "Ops", "ops", "root@example.test", "pw-1234", "Root", operator=True
+    )
+    admin = await manager.admit_operator(
+        await manager.authenticate_login(
+            request(), (await manager.login(request(), "root@example.test", "pw-1234")).token
+        )
+    )
+    await operator.delete_org(admin, org.id)
+    login = await manager.login(request(), "ann@example.test", "pw-1234")
+    identity = await manager.authenticate_login(request(), login.token)
+    with pytest.raises(NotAuthorized):
+        await manager.exchange_login(identity, org.id)
+    # The login itself still stands.
+    assert (
+        await manager.authenticate_login(request(), login.token)
+    ).identity_id == identity.identity_id
+
+
 async def test_expired_sessions_are_refused(
     storage: TenancyStorageMemoryImpl, infra: InfraLocalImpl
 ) -> None:
