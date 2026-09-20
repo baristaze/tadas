@@ -9,6 +9,8 @@ export const api = createClient({
   app: "portal",
   appVersion: __APP_VERSION__,
   timeoutMs: runtimeConfig().requestTimeoutMs,
+  retryAttempts: runtimeConfig().retryAttempts,
+  retryBaseDelayMs: runtimeConfig().retryBaseDelayMs,
   getToken: () => useSessionStore.getState().token,
   onUnauthorized: forgetSession,
 });

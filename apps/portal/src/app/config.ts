@@ -3,6 +3,7 @@
 // so one build runs anywhere.
 // Locally there is none (the dev server and nginx answer with index.html),
 // and the Vite build variables apply instead.
+import { DEFAULT_RETRY_ATTEMPTS, DEFAULT_RETRY_BASE_DELAY_MS } from "../api";
 
 export interface RuntimeConfig {
   /** Absolute base URL of the API; an empty value in the file means the page's origin. */
@@ -11,6 +12,10 @@ export interface RuntimeConfig {
   environment: string;
   /** The deadline of every call the transport client makes; one setting, one default. */
   requestTimeoutMs: number;
+  /** Extra attempts a retryable failure gets; 0 sends every call exactly once. */
+  retryAttempts: number;
+  /** The wait before the first extra attempt; it doubles and carries jitter. */
+  retryBaseDelayMs: number;
 }
 
 export interface BuildEnv {
@@ -30,6 +35,15 @@ function timeoutOrDefault(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : DEFAULT_REQUEST_TIMEOUT_MS;
 }
 
+/** A whole count of extra attempts. Zero is a value: it turns the retry off. */
+function attemptsOrDefault(value: unknown): number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : DEFAULT_RETRY_ATTEMPTS;
+}
+
+function delayOrDefault(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : DEFAULT_RETRY_BASE_DELAY_MS;
+}
+
 /** Pure: the fetched config if it is one, else the build variables. An empty
  * apiUrl means the API shares the page's origin. */
 export function resolveConfig(fetched: unknown, env: BuildEnv, origin: string): RuntimeConfig {
@@ -39,6 +53,8 @@ export function resolveConfig(fetched: unknown, env: BuildEnv, origin: string): 
       sentryDsn: typeof fetched.sentryDsn === "string" ? fetched.sentryDsn : "",
       environment: typeof fetched.environment === "string" ? fetched.environment : "unknown",
       requestTimeoutMs: timeoutOrDefault(fetched.requestTimeoutMs),
+      retryAttempts: attemptsOrDefault(fetched.retryAttempts),
+      retryBaseDelayMs: delayOrDefault(fetched.retryBaseDelayMs),
     };
   }
   return {
@@ -46,6 +62,8 @@ export function resolveConfig(fetched: unknown, env: BuildEnv, origin: string): 
     sentryDsn: env.VITE_SENTRY_DSN ?? "",
     environment: env.VITE_SENTRY_ENVIRONMENT ?? "local",
     requestTimeoutMs: DEFAULT_REQUEST_TIMEOUT_MS,
+    retryAttempts: DEFAULT_RETRY_ATTEMPTS,
+    retryBaseDelayMs: DEFAULT_RETRY_BASE_DELAY_MS,
   };
 }
 

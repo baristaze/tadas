@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
+import { DEFAULT_RETRY_ATTEMPTS, DEFAULT_RETRY_BASE_DELAY_MS } from "../api";
 import { DEFAULT_REQUEST_TIMEOUT_MS, resolveConfig } from "./config";
+
+const defaults = {
+  requestTimeoutMs: DEFAULT_REQUEST_TIMEOUT_MS,
+  retryAttempts: DEFAULT_RETRY_ATTEMPTS,
+  retryBaseDelayMs: DEFAULT_RETRY_BASE_DELAY_MS,
+};
 
 const origin = "https://d111.cloudfront.net";
 
@@ -9,13 +16,13 @@ describe("runtime config", () => {
       apiUrl: origin,
       sentryDsn: "https://k@s/1",
       environment: "dev",
-      requestTimeoutMs: DEFAULT_REQUEST_TIMEOUT_MS,
+      ...defaults,
     });
     expect(resolveConfig({ apiUrl: "https://api.example.test" }, {}, origin)).toEqual({
       apiUrl: "https://api.example.test",
       sentryDsn: "",
       environment: "unknown",
-      requestTimeoutMs: DEFAULT_REQUEST_TIMEOUT_MS,
+      ...defaults,
     });
   });
 
@@ -28,6 +35,21 @@ describe("runtime config", () => {
     }
   });
 
+  it("takes the retry count and the first delay from the config, zero attempts included", () => {
+    const config = resolveConfig({ apiUrl: "", retryAttempts: 0, retryBaseDelayMs: 100 }, {}, origin);
+    expect(config).toMatchObject({ retryAttempts: 0, retryBaseDelayMs: 100 });
+    for (const notACount of [-1, 1.5, "2", null, Number.NaN]) {
+      expect(resolveConfig({ apiUrl: "", retryAttempts: notACount }, {}, origin).retryAttempts).toBe(
+        DEFAULT_RETRY_ATTEMPTS,
+      );
+    }
+    for (const notADelay of [0, -1, "250", null, Number.POSITIVE_INFINITY]) {
+      expect(
+        resolveConfig({ apiUrl: "", retryBaseDelayMs: notADelay }, {}, origin).retryBaseDelayMs,
+      ).toBe(DEFAULT_RETRY_BASE_DELAY_MS);
+    }
+  });
+
   it("falls back to the build variables when there is no config file", () => {
     const env = { VITE_API_URL: "http://127.0.0.1:8000", VITE_SENTRY_DSN: "http://k@localhost:58000/1" };
     for (const notAConfig of [null, "<!doctype html>", [], { apiUrl: 42 }]) {
@@ -35,7 +57,7 @@ describe("runtime config", () => {
         apiUrl: "http://127.0.0.1:8000",
         sentryDsn: "http://k@localhost:58000/1",
         environment: "local",
-        requestTimeoutMs: DEFAULT_REQUEST_TIMEOUT_MS,
+        ...defaults,
       });
     }
     expect(resolveConfig(null, {}, origin).apiUrl).toBe("http://127.0.0.1:8000");

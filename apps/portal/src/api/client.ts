@@ -1,6 +1,15 @@
 // One transport client: bearer, app header, the error envelope parsed into
 // a typed error carrying the request id, a 401 that clears authentication,
-// and a deadline on every call. The one file in the app that may call fetch.
+// a deadline on every call, and the app's one retry. The one file in the app
+// that may call fetch.
+
+import {
+  DEFAULT_RETRY_ATTEMPTS,
+  DEFAULT_RETRY_BASE_DELAY_MS,
+  isRetryableStatus,
+  mayRetryRequest,
+  retryDelayMs,
+} from "./retry";
 
 export interface ErrorEnvelope {
   error: { code: string; message: string; request_id: string };
@@ -41,6 +50,10 @@ export interface ClientOptions {
   appVersion: string;
   /** Every call is abandoned after this many milliseconds; no call goes out without one. */
   timeoutMs: number;
+  /** Extra attempts a retryable failure gets; 0 sends every call exactly once. */
+  retryAttempts?: number;
+  /** The wait before the first extra attempt; it doubles and carries jitter. */
+  retryBaseDelayMs?: number;
   getToken: () => string | null;
   onUnauthorized: () => void;
   fetchImpl?: typeof fetch;
@@ -85,11 +98,38 @@ function statusMessage(response: Response): string {
   return response.statusText || `HTTP ${response.status}`;
 }
 
+/**
+ * Whether this failure can differ on a second attempt: the deadline, the
+ * unavailable answer, and anything fetch threw instead of answering, which is
+ * the connection failing before the request was decided. A refusal the server
+ * made is a decision and comes back unchanged, so it is not retried.
+ */
+function isRetryableFailure(error: unknown): boolean {
+  if (error instanceof RequestTimeout) return true;
+  if (error instanceof ApiError) return isRetryableStatus(error.status);
+  return error instanceof Error;
+}
+
+/** Resolves after the delay, or as soon as the caller gives up on the call. */
+function wait(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    const done = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", done);
+      resolve();
+    };
+    const timer = setTimeout(done, ms);
+    signal?.addEventListener("abort", done, { once: true });
+  });
+}
+
 export function createClient(options: ClientOptions): ApiClient {
   const fetchImpl = options.fetchImpl ?? fetch;
   const baseUrl = options.baseUrl.replace(/\/$/, "");
+  const retryAttempts = options.retryAttempts ?? DEFAULT_RETRY_ATTEMPTS;
+  const retryBaseDelayMs = options.retryBaseDelayMs ?? DEFAULT_RETRY_BASE_DELAY_MS;
 
-  async function request<T>(
+  async function attempt<T>(
     method: string,
     path: string,
     body?: unknown,
@@ -159,6 +199,31 @@ export function createClient(options: ClientOptions): ApiClient {
       throw new ApiError(response.status, "not_json", `${method} ${path} answered with something other than JSON`, requestId);
     }
     return parsed as T;
+  }
+
+  /**
+   * The app's one retry, and the only one: the query library's is off, so a
+   * failing dependency sees these attempts and no multiple of them. A request
+   * that may not be sent twice gets one attempt whatever the failure is.
+   */
+  async function request<T>(
+    method: string,
+    path: string,
+    body?: unknown,
+    requestOptions: RequestOptions = {},
+  ): Promise<T> {
+    const bound = mayRetryRequest(method, requestOptions.idempotencyKey) ? retryAttempts : 0;
+    for (let retry = 0; ; retry += 1) {
+      try {
+        return await attempt<T>(method, path, body, requestOptions);
+      } catch (error) {
+        const spent = retry >= bound;
+        if (spent || requestOptions.signal?.aborted || !isRetryableFailure(error)) throw error;
+        await wait(retryDelayMs(retry + 1, retryBaseDelayMs), requestOptions.signal);
+        // The caller gave up while this one waited; its reason is the answer.
+        if (requestOptions.signal?.aborted) throw error;
+      }
+    }
   }
 
   return {

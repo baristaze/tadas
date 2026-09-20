@@ -27,12 +27,16 @@ function textResponse(status: number, body: string, contentType = "text/html"): 
   });
 }
 
+// One attempt, so a case about what a single call does is not also told
+// about the retry; the cases below that are about the retry ask for it.
 function client(overrides: Partial<ClientOptions> = {}) {
   return createClient({
     baseUrl: "https://api.example.test/",
     app: "portal",
     appVersion: "portal@test",
     timeoutMs: 20,
+    retryAttempts: 0,
+    retryBaseDelayMs: 0,
     getToken: () => "tok_1",
     onUnauthorized: () => undefined,
     ...overrides,
@@ -202,4 +206,94 @@ it("keeps the session when a separate login credential is refused", async () => 
   await expect(api.post("/v1/auth/sessions", { org_id: "o1" }, { token: "login_expired" }))
     .rejects.toMatchObject({ status: 401 });
   expect(onUnauthorized).not.toHaveBeenCalled();
+});
+
+describe("the transport client's one retry", () => {
+  // The waits are zero here: the curve is pinned in retry.test.ts, and what
+  // these cases are about is which call goes again and how many times.
+  function retrying(fetchImpl: typeof fetch, overrides: Partial<ClientOptions> = {}) {
+    return client({ fetchImpl, retryAttempts: 2, retryBaseDelayMs: 0, ...overrides });
+  }
+
+  it("retries an unavailable answer up to the bound, then surfaces it", async () => {
+    const fetchImpl = vi.fn<typeof fetch>(() =>
+      Promise.resolve(jsonResponse(503, { error: { code: "unavailable", message: "no", request_id: "r" } })),
+    );
+    const failure = await retrying(fetchImpl).get("/v1/tasks").catch((error: unknown) => error);
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    expect(failure).toBeInstanceOf(ApiError);
+    expect(failure).toMatchObject({ status: 503, code: "unavailable" });
+  });
+
+  it("stops as soon as an attempt answers", async () => {
+    const answers = [jsonResponse(503, {}), jsonResponse(200, { id: "t1" })];
+    const fetchImpl = vi.fn<typeof fetch>(() => Promise.resolve(answers.shift()!));
+    await expect(retrying(fetchImpl).get("/v1/tasks/t1")).resolves.toEqual({ id: "t1" });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries a deadline and a connection that failed before an answer", async () => {
+    const timingOut = vi.fn<typeof fetch>(hangingFetch());
+    const timedOut = await retrying(timingOut, { timeoutMs: 5 })
+      .get("/v1/tasks")
+      .catch((error: unknown) => error);
+    expect(timedOut).toBeInstanceOf(RequestTimeout);
+    expect(timingOut).toHaveBeenCalledTimes(3);
+
+    const refused = vi.fn<typeof fetch>(() => Promise.reject(new TypeError("Failed to fetch")));
+    await expect(retrying(refused).get("/v1/tasks")).rejects.toThrow("Failed to fetch");
+    expect(refused).toHaveBeenCalledTimes(3);
+  });
+
+  it("sends a refusal once: a decision does not change because it is asked again", async () => {
+    for (const status of [400, 403, 404, 409, 422, 429, 500]) {
+      const fetchImpl = vi.fn<typeof fetch>(() =>
+        Promise.resolve(jsonResponse(status, { error: { code: "no", message: "no", request_id: "r" } })),
+      );
+      await expect(retrying(fetchImpl).get("/v1/tasks")).rejects.toBeInstanceOf(ApiError);
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it("sends a creating POST again under the key the first attempt carried", async () => {
+    const answers = [jsonResponse(503, {}), jsonResponse(201, { id: "t1" })];
+    const fetchImpl = vi.fn<typeof fetch>(() => Promise.resolve(answers.shift()!));
+    await expect(
+      retrying(fetchImpl).post("/v1/tasks", { title: "one" }, { idempotencyKey: "key_1" }),
+    ).resolves.toEqual({ id: "t1" });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    for (const [, init] of fetchImpl.mock.calls) {
+      expect(new Headers(init?.headers).get("Idempotency-Key")).toBe("key_1");
+    }
+  });
+
+  it("sends a write with no key exactly once, whatever the failure", async () => {
+    // Nothing records the outcome of these, so a second attempt could write
+    // twice: the failure is told to the caller instead.
+    const fetchImpl = vi.fn<typeof fetch>(() => Promise.resolve(jsonResponse(503, {})));
+    const api = retrying(fetchImpl);
+    await expect(api.post("/v1/auth/logout")).rejects.toBeInstanceOf(ApiError);
+    await expect(api.patch("/v1/tasks/t1", { version: 1 })).rejects.toBeInstanceOf(ApiError);
+    await expect(api.del("/v1/tasks/t1")).rejects.toBeInstanceOf(ApiError);
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+  });
+
+  it("does not attempt again once the caller has given up", async () => {
+    const controller = new AbortController();
+    const fetchImpl = vi.fn<typeof fetch>((_input, init) => {
+      controller.abort(new Error("navigated away"));
+      return Promise.reject(init?.signal?.reason ?? new TypeError("Failed to fetch"));
+    });
+    const failure = await retrying(fetchImpl)
+      .get("/v1/tasks", { signal: controller.signal })
+      .catch((error: unknown) => error);
+    expect((failure as Error).message).toBe("navigated away");
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends every call exactly once when the settings turn the retry off", async () => {
+    const fetchImpl = vi.fn<typeof fetch>(() => Promise.resolve(jsonResponse(503, {})));
+    await expect(client({ fetchImpl }).get("/v1/tasks")).rejects.toBeInstanceOf(ApiError);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
 });

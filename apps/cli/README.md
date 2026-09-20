@@ -25,24 +25,34 @@ uv run tadas listen                           # the team's tasks; --mine for you
   environment got wrong is usage too: one line naming the variable and
   exit 2, never a traceback.
 - A creating call (`add`) carries an idempotency key, minted by the client.
+- The retry is the client's, and the CLI adds none of its own: it passes the
+  count and the first delay from its settings the way it passes the timeout.
+  Only a failure that can differ on a second attempt goes again, and only on
+  a call the API may see twice: a read, and a creating call under its key.
+  A `done`, an `edit`, an `rm`, and an `mv` are sent once, because nothing
+  records their outcome and a second attempt could write twice.
 - `login` is email and password, then the org (choose one with `--org`
   when you belong to several); the session token is kept in
   `$TADAS_HOME/session.json` (default `~/.config/tadas`, mode 600).
   `TADAS_TOKEN` in the environment wins over the file and may hold an api
   key; `TADAS_API_URL` or `--api` names the API (default
   `http://127.0.0.1:8000`); `TADAS_HTTP_TIMEOUT_SECONDS` bounds every call
-  and the socket's open (default 30). `logout` revokes the session the
-  file keeps, at the API that issued it, and forgets the file whatever
-  the API answers; a session already gone is not an error, and
+  and the socket's open (default 30), `TADAS_HTTP_RETRIES` how many extra
+  attempts a retryable failure gets (default 2, and 0 sends every call
+  exactly once) and `TADAS_HTTP_RETRY_BACKOFF_SECONDS` the wait before the
+  first of them (default 0.25, doubling from there). `logout` revokes the
+  session the file keeps, at the API that issued it, and forgets the file
+  whatever the API answers; a session already gone is not an error, and
   `TADAS_TOKEN` is left alone.
 - `listen` opens the socket on a single-use ticket, subscribes to
   `entity_changed`, and tells each push after reading the task it names;
   the push says who and what, the record says the rest. A deleted task is
   told from what the listener remembers. A gap in the stream is replayed
-  from `/v1/events`, a dropped socket reconnects with backoff and replays
-  the same way, so nothing is skipped. A task read that fails at the wire
-  or with a 5xx is told on stderr and that change is skipped; the task's
-  next change shows its state. Only a dead credential ends the listener.
+  from `/v1/events`, a dropped socket reconnects with a jittered backoff
+  and replays the same way, so nothing is skipped. A task read that fails
+  at the wire or with a 5xx on every attempt is told on stderr and that
+  change is skipped; the task's next change shows its state. Only a dead
+  credential ends the listener.
 - `src/tadas/apps/cli/model.py` is pure and unit tested: how a change is
   told, which tasks are mine, how a short id resolves.
 - The short id is the tail of the task's id, because ids are time-ordered
