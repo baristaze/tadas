@@ -12,7 +12,7 @@ from abc import ABC, abstractmethod
 from uuid import UUID
 
 from tadas.om.idempotency.types.record import IdempotencyRecord
-from tadas.om.opcontext import OpContext
+from tadas.om.opcontext import OpContext, OperatorContext
 
 
 class IdempotencyManagerInterface(ABC):
@@ -43,6 +43,34 @@ class IdempotencyManagerInterface(ABC):
         finished already or a retry took it over: the caller's work, if it
         landed, is the row the retry found, and the retry's outcome is the one
         replayed."""
+        ...
+
+    # The operator plane's marker: the same three moves under the operator's
+    # identity in the system scope (`EMPTY_UUID`), where no tenant is named, so
+    # the sweep of that scope purges them with the login credentials.
+
+    @abstractmethod
+    async def begin_for_operator(
+        self, admin: OperatorContext, key: str, request_digest: str, target_id: UUID
+    ) -> IdempotencyRecord:
+        """`begin` for a creating request of the operator plane: the record is
+        per (system scope, operator identity, key), and everything else is as
+        on `begin`. Requires `OperatorPermission.WRITE`, since only a write
+        carries a key."""
+        ...
+
+    @abstractmethod
+    async def finish_for_operator(
+        self, admin: OperatorContext, key: str, attempt_id: UUID, status: int, body: str
+    ) -> IdempotencyRecord:
+        """`finish` for the operator plane, on the record `begin_for_operator` wrote."""
+        ...
+
+    @abstractmethod
+    async def release_for_operator(
+        self, admin: OperatorContext, key: str, attempt_id: UUID
+    ) -> None:
+        """`release` for the operator plane, on the record `begin_for_operator` wrote."""
         ...
 
     @abstractmethod

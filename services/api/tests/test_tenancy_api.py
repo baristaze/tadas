@@ -11,7 +11,7 @@ from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from tadas.om.idempotency.impl.manager import IdempotencyOptions
-from tadas.om.opcontext import Role
+from tadas.om.opcontext import OperatorRole, Role
 from tadas.services.api.app import create_app
 from tadas.services.api.container import AppContainer
 
@@ -330,7 +330,7 @@ async def test_me_is_renamed_and_the_identity_is_read(
     identity = await client.get("/v1/me/identity", headers=owner)
     assert identity.status_code == 200, identity.text
     assert identity.json()["email"] == OWNER["email"]
-    assert identity.json()["is_operator"] is False
+    assert identity.json()["operator_role"] is None
     assert "password_hash" not in identity.json()
 
 
@@ -363,7 +363,13 @@ async def test_operator_routes_need_an_operator_sign_in(
     refused = await client.get("/v1/admin/orgs", headers=owner)
     assert refused.status_code == 401
     await container.managers.tenancy.bootstrap(
-        seed_request(), "Ops", "ops", "root@example.test", "pw-1234", "Root", operator=True
+        seed_request(),
+        "Ops",
+        "ops",
+        "root@example.test",
+        "pw-1234",
+        "Root",
+        operator_role=OperatorRole.WRITE,
     )
     login = await client.post(
         "/v1/auth/login", json={"email": "root@example.test", "password": "pw-1234"}
@@ -380,7 +386,13 @@ async def test_operators_delete_an_org(
 ) -> None:
     org_id = (await client.get("/v1/orgs/current", headers=owner)).json()["id"]
     await container.managers.tenancy.bootstrap(
-        seed_request(), "Ops", "ops", "root@example.test", "pw-1234", "Root", operator=True
+        seed_request(),
+        "Ops",
+        "ops",
+        "root@example.test",
+        "pw-1234",
+        "Root",
+        operator_role=OperatorRole.WRITE,
     )
     login = await client.post(
         "/v1/auth/login", json={"email": "root@example.test", "password": "pw-1234"}

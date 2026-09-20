@@ -1,0 +1,66 @@
+# The maintenance worker
+
+The one background process of Tadas. It runs the work queue's claim
+loop and, on a timer, the sweep that keeps the platform tidy. Every
+replica is the same process on one lane; a second lane is a second
+replica told its lane.
+
+## What it does
+
+- **Claim, handle, complete.** The loop wakes on `work_available`,
+  with a short poll as the fallback for a missed wake-up, and claims
+  the oldest available item on its lane while it has a free slot. Each
+  item runs as a task of its own, under the context the claim produced,
+  naming the request that caused the work and linking its trace to
+  that request. When the handler returns, the item is completed; when
+  it raises, the item is failed, which requeues it with a growing delay
+  or, once its attempts are spent, makes it a dead letter. Today the
+  one kind does nothing; it keeps the loop honest for the kinds that
+  come next.
+- **Renew the lease and fence itself.** While an item runs, the worker
+  renews its lease. A renewal refused because the lease was lost
+  cancels the running task at once, since another worker holds the
+  item now. A renewal that fails for any other reason is retried, and
+  the task is cancelled at half the lease if none succeeds, so no
+  worker keeps working an item it may no longer settle.
+- **The sweep**, every thirty seconds by default, under one service
+  context per org, the system scope first and deleted orgs included:
+  - **Requeue** items whose lease has expired, or fail them when their
+    attempts are spent.
+  - **Purge** each namespace's rows past its retention: deleted tasks,
+    removed members with their ended memberships, revoked keys, dead
+    sessions, spent tickets, finished idempotency records, and settled
+    work items. Under an org deleted longer ago than the retention,
+    every row goes and the org row stays as the record. Each namespace
+    purges its own rows and asks tenancy the one question, whether the
+    org has expired.
+  - **Relay** the outbox rows the request path left behind, one
+    attempt each with a growing delay, and fail the ones whose
+    attempts are spent.
+  - **Purge** the outbox rows done or failed past eight days, which
+    outlives the database backup retention.
+- **Liveness.** The worker writes a heartbeat into the cache every ten
+  seconds by default, each beat bounded by its interval. Its
+  `/healthz`, served on the metrics port, reads that key through the
+  running process and answers 200 while it is there; the container
+  probe and the `health` subcommand ask that URL. `/metrics` on the
+  same port is what the collector scrapes.
+- **Drain first.** On stop, the loop claims nothing new, waits for the
+  items it holds, hands back what did not finish, and marks itself
+  offline. A cloud rollout replaces one worker at a time, because a
+  worker holds leases.
+
+## The subcommands
+
+| Subcommand | Does |
+|------------|------|
+| `serve` | Runs the loop; `--lane` overrides the lane from settings. |
+| `health` | Asks the serving process's `/healthz` by hand; exits 0 on 200. |
+
+## What it never does
+
+It never runs a job under a person's credential: a claimed item runs
+under the service role for the org, with the person who asked kept as
+the attribution. It never hard-deletes anything before its retention.
+And it never settles an item it no longer holds: every write after the
+claim is conditional on the claim token.

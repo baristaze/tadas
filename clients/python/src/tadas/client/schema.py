@@ -21,6 +21,22 @@ class AddTaskRequest(BaseModel):
     title: Annotated[str, Field(max_length=500, title='Title')]
 
 
+class CreateOrgRequest(BaseModel):
+    """
+    An org with its owner, as `bootstrap` seeds one. The owner's identity
+    is created with the password, or kept with its own when the email is
+    known already.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    name: Annotated[str, Field(max_length=200, min_length=1, title='Name')]
+    owner_email: Annotated[str, Field(min_length=1, title='Owner Email')]
+    owner_name: Annotated[str, Field(max_length=200, min_length=1, title='Owner Name')]
+    owner_password: Annotated[str, Field(min_length=1, title='Owner Password')]
+    slug: Annotated[str, Field(max_length=100, min_length=1, title='Slug')]
+
+
 class CredentialKind(StrEnum):
     api_key = 'api_key'
     session_token = 'session_token'
@@ -48,16 +64,6 @@ class ExchangeSessionRequest(BaseModel):
         extra='forbid',
     )
     org_id: Annotated[UUID, Field(title='Org Id')]
-
-
-class IdentityView(BaseModel):
-    """
-    The person behind the caller's user; never carries the password hash.
-    """
-    created_at: Annotated[AwareDatetime, Field(title='Created At')]
-    email: Annotated[str, Field(title='Email')]
-    id: Annotated[UUID, Field(title='Id')]
-    is_operator: Annotated[bool, Field(title='Is Operator')]
 
 
 class IssuedTicketView(BaseModel):
@@ -89,6 +95,42 @@ class MoveTaskRequest(BaseModel):
     version: Annotated[int, Field(ge=1, title='Version')]
 
 
+class OperatorEventView(BaseModel):
+    """
+    The same record as an operator reads it, with the two provenance fields
+    a tenant's own feed leaves out: the request that produced it and the app
+    it came from, which is what a support investigation correlates on.
+    """
+    actor_id: Annotated[UUID, Field(title='Actor Id')]
+    app: Annotated[str, Field(title='App')]
+    kind: Annotated[str, Field(title='Kind')]
+    produced_at: Annotated[AwareDatetime, Field(title='Produced At')]
+    request_id: Annotated[UUID, Field(title='Request Id')]
+    seq: Annotated[int, Field(title='Seq')]
+    target_id: Annotated[UUID, Field(title='Target Id')]
+
+
+class OperatorRole(StrEnum):
+    """
+    What an allowlist entry lets an operator do across every tenant. Write
+    includes read; the tenancy namespace's table says which permissions each
+    role holds, as it does for `Role`.
+    """
+    read = 'read'
+    write = 'write'
+
+
+class OperatorView(BaseModel):
+    """
+    Who the operator plane admitted: the identity and what its allowlist
+    entry grants, so a skill checks it holds the entry it expects before it
+    reads anything.
+    """
+    email: Annotated[str, Field(title='Email')]
+    identity_id: Annotated[UUID, Field(title='Identity Id')]
+    operator_role: OperatorRole
+
+
 class OrgView(BaseModel):
     created_at: Annotated[AwareDatetime, Field(title='Created At')]
     deleted_at: Annotated[AwareDatetime | None, Field(title='Deleted At')] = None
@@ -102,6 +144,20 @@ class Permission(StrEnum):
     write = 'write'
     manage_members = 'manage_members'
     manage_keys = 'manage_keys'
+
+
+class PlatformSizeView(BaseModel):
+    """
+    How big the platform is, what the first responder to an alarm reads
+    before it escalates: live tenants and users, and the tasks created and
+    events produced in the last twenty-four hours, a window that starts at
+    `since` and ends at the read.
+    """
+    events_last_24h: Annotated[int, Field(title='Events Last 24H')]
+    since: Annotated[AwareDatetime, Field(title='Since')]
+    tasks_last_24h: Annotated[int, Field(title='Tasks Last 24H')]
+    tenants: Annotated[int, Field(title='Tenants')]
+    users: Annotated[int, Field(title='Users')]
 
 
 class Role(StrEnum):
@@ -210,6 +266,21 @@ class AddApiKeyRequest(BaseModel):
     ttl_days: Annotated[TtlDays | None, Field(title='Ttl Days')] = None
 
 
+class AddMemberRequest(BaseModel):
+    """
+    A person in the org, as `add-member` seeds one; the owner and the
+    service role are refused, since the one owner is the one the create
+    minted.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    display_name: Annotated[str, Field(max_length=200, min_length=1, title='Display Name')]
+    email: Annotated[str, Field(min_length=1, title='Email')]
+    password: Annotated[str, Field(min_length=1, title='Password')]
+    role: Role
+
+
 class ApiKeyView(BaseModel):
     created_at: Annotated[AwareDatetime, Field(title='Created At')]
     deleted_at: Annotated[AwareDatetime | None, Field(title='Deleted At')]
@@ -222,6 +293,18 @@ class ApiKeyView(BaseModel):
 
 class HTTPValidationError(BaseModel):
     detail: Annotated[list[ValidationError] | None, Field(title='Detail')] = None
+
+
+class IdentityView(BaseModel):
+    """
+    The person behind the caller's user; never carries the password hash.
+    `operator_role` is the allowlist entry: null for a person who is not an
+    operator.
+    """
+    created_at: Annotated[AwareDatetime, Field(title='Created At')]
+    email: Annotated[str, Field(title='Email')]
+    id: Annotated[UUID, Field(title='Id')]
+    operator_role: OperatorRole | None
 
 
 class IssuedApiKeyView(BaseModel):

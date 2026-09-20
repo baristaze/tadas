@@ -1,10 +1,12 @@
+from datetime import datetime
 from typing import Any, cast
 from uuid import UUID
 
-from sqlalchemy import Table, insert, select
+from sqlalchemy import Table, func, insert, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 
+from tadas.om.base import EMPTY_UUID
 from tadas.om.events.storage import EventStorageInterface
 from tadas.om.events.storage.tables.event_cursors import EventCursors
 from tadas.om.events.storage.tables.events import Events
@@ -70,6 +72,11 @@ class EventStoragePostgresImpl(PgStorageBase, EventStorageInterface):
         async with self._session_for(stmt, org_id) as session:
             result = await session.execute(stmt)
             return [to_model(row, Event) for row in result.scalars()]
+
+    async def count_since(self, since: datetime) -> int:
+        stmt = select(func.count()).select_from(Events).where(Events.produced_at >= since)
+        async with self._session_for(stmt, EMPTY_UUID) as session:
+            return (await session.execute(stmt)).scalar_one()
 
     async def read_head(self, org_id: UUID) -> int:
         # The cursor row is the head: one row, never a scan of the stream.

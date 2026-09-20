@@ -47,10 +47,12 @@ resource "aws_db_instance" "this" {
   auto_minor_version_upgrade = true
   # Raising engine_version to a new major upgrades the instance in place.
   allow_major_version_upgrade = true
-  deletion_protection         = var.deletion_protection
-  skip_final_snapshot         = !var.deletion_protection
-  final_snapshot_identifier   = "tadas-${var.environment}-final"
-  copy_tags_to_snapshot       = true
+  # `destroyable` is the nuke's flag: it lifts the protection and skips the
+  # snapshot on the apply before the destroy, and is false everywhere else.
+  deletion_protection       = var.deletion_protection && !var.destroyable
+  skip_final_snapshot       = var.destroyable
+  final_snapshot_identifier = "tadas-${var.environment}-final"
+  copy_tags_to_snapshot     = true
 
   tags = local.tags
 }

@@ -20,6 +20,11 @@ from tadas.client.types import (
     IssuedSessionView,
     IssuedTicketView,
     MeView,
+    OperatorEventView,
+    OperatorView,
+    OrgView,
+    PlatformSizeView,
+    Role,
     SessionView,
     TaskPageView,
     TaskScope,
@@ -392,3 +397,100 @@ class ApiClient:
 
     async def ticket(self) -> IssuedTicketView:
         return IssuedTicketView.model_validate(await self.request("POST", "/v1/realtime/tickets"))
+
+    # The operator plane. The bearer is the operator's own sign-in (the login
+    # token), never a tenant session; a caller sets `token` to it.
+
+    async def admin_me(self) -> OperatorView:
+        """Who the operator plane admitted and what the entry grants; the check a
+        skill makes before its first read."""
+        return OperatorView.model_validate(await self.request("GET", "/v1/admin/me"))
+
+    async def admin_size(self) -> PlatformSizeView:
+        return PlatformSizeView.model_validate(await self.request("GET", "/v1/admin/size"))
+
+    async def admin_create_org(
+        self,
+        name: str,
+        slug: str,
+        *,
+        owner_email: str,
+        owner_password: str,
+        owner_name: str,
+        idempotency_key: str | None = None,
+    ) -> OrgView:
+        """An org with its owner, as `bootstrap` seeds one; a creating call, so
+        it always carries an idempotency key."""
+        body = {
+            "name": name,
+            "slug": slug,
+            "owner_email": owner_email,
+            "owner_password": owner_password,
+            "owner_name": owner_name,
+        }
+        created = await self.request(
+            "POST", "/v1/admin/orgs", json=body, idempotency_key=idempotency_key or str(uuid4())
+        )
+        return OrgView.model_validate(created)
+
+    async def admin_add_member(
+        self,
+        org_id: UUID,
+        email: str,
+        *,
+        password: str,
+        display_name: str,
+        role: Role = Role.member,
+        idempotency_key: str | None = None,
+    ) -> UserView:
+        """A person in the org, as `add-member` seeds one; a creating call, so
+        it always carries an idempotency key."""
+        body = {
+            "email": email,
+            "password": password,
+            "display_name": display_name,
+            "role": role.value,
+        }
+        added = await self.request(
+            "POST",
+            f"/v1/admin/orgs/{org_id}/members",
+            json=body,
+            idempotency_key=idempotency_key or str(uuid4()),
+        )
+        return UserView.model_validate(added)
+
+    async def admin_org(self, org_id: UUID) -> OrgView:
+        return OrgView.model_validate(await self.request("GET", f"/v1/admin/orgs/{org_id}"))
+
+    async def admin_members(
+        self, org_id: UUID, *, cursor: str | None = None, limit: int = LIMIT_MAX
+    ) -> UserPageView:
+        params: dict[str, Any] = {"limit": limit}
+        if cursor:
+            params["cursor"] = cursor
+        body = await self.request("GET", f"/v1/admin/orgs/{org_id}/members", params=params)
+        return UserPageView.model_validate(body)
+
+    async def admin_tasks(
+        self,
+        org_id: UUID,
+        status: TaskStatus = TaskStatus.open,
+        *,
+        cursor: str | None = None,
+        limit: int = 50,
+    ) -> TaskPageView:
+        params: dict[str, Any] = {"status": status.value, "limit": limit}
+        if cursor:
+            params["cursor"] = cursor
+        body = await self.request("GET", f"/v1/admin/orgs/{org_id}/tasks", params=params)
+        return TaskPageView.model_validate(body)
+
+    async def admin_events(
+        self, org_id: UUID, after_seq: int = 0, limit: int = LIMIT_MAX
+    ) -> list[OperatorEventView]:
+        body = await self.request(
+            "GET",
+            f"/v1/admin/orgs/{org_id}/events",
+            params={"after_seq": after_seq, "limit": limit},
+        )
+        return [OperatorEventView.model_validate(e) for e in cast(list[Any], body)]

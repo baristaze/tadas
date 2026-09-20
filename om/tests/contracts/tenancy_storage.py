@@ -25,7 +25,7 @@ from tadas.om.exceptions import Conflict, NotFound, RowDeleted, TenantMismatch, 
 from tadas.om.idempotency.storage import IdempotencyStorageInterface
 from tadas.om.idempotency.types.attempt import lease_bound
 from tadas.om.idempotency.types.record import IdempotencyRecord
-from tadas.om.opcontext import Role
+from tadas.om.opcontext import OperatorRole, Role
 from tadas.om.outbox.storage import OutboxStorageInterface
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.tenancy.storage import TenancyStorageInterface
@@ -148,6 +148,36 @@ class TenancyStorageContract:
         assert await storage.read_org(org.id) == org
         assert await storage.read_org_by_slug(org.slug) == org
         assert org in await storage.read_orgs(limit=1000)
+
+    async def test_the_counts_read_the_living_across_every_tenant(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        """The platform's size: live orgs and live users, whichever tenant they
+        are in. A deleted org and a removed member are out of the count and an
+        org's rows stay counted while it is only soft-deleted."""
+        assert (await storage.count_orgs(), await storage.count_users()) == (0, 0)
+        first, second = make_org("First"), make_org("Second")
+        for org in (first, second):
+            identity = make_identity()
+            owner = make_user(identity.id, identity.email)
+            await storage.create_org_with_owner(
+                org.id, org, owner, make_membership(owner.id, Role.OWNER), identity
+            )
+        joiner = make_identity()
+        member = make_user(joiner.id, joiner.email)
+        await storage.write_identity(joiner)
+        await storage.create_member(
+            first.id, member, make_membership(member.id), (make_user_row(first.id, member),)
+        )
+        assert (await storage.count_orgs(), await storage.count_users()) == (2, 3)
+
+        await storage.write_user(
+            first.id, member.model_copy(update={"deleted_at": utcnow(), "deleted_by": member.id})
+        )
+        await storage.write_org(
+            second.id, second.model_copy(update={"deleted_at": utcnow(), "deleted_by": new_id()})
+        )
+        assert (await storage.count_orgs(), await storage.count_users()) == (1, 2)
 
     async def test_an_org_write_lands_its_outbox_row_beside_it(
         self, storage: TenancyStorageInterface
@@ -478,7 +508,7 @@ class TenancyStorageContract:
         with pytest.raises(UniqueKeyTaken):
             await storage.write_identity(make_identity(email))
         assert await storage.read_identity_by_email(email) == identity
-        promoted = identity.model_copy(update={"is_operator": True})
+        promoted = identity.model_copy(update={"operator_role": OperatorRole.READ})
         await storage.write_identity(promoted)
         assert await storage.read_identity(identity.id) == promoted
 
@@ -629,7 +659,7 @@ class TenancyStorageContract:
                 other.id, other, loser, make_membership(loser.id, Role.OWNER), newcomer
             )
         assert await storage.read_identity(newcomer.id) is None
-        promoted = identity.model_copy(update={"is_operator": True})
+        promoted = identity.model_copy(update={"operator_role": OperatorRole.WRITE})
         again = make_user(identity.id)
         with pytest.raises(UniqueKeyTaken):
             await storage.create_org_with_owner(

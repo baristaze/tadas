@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import delete, or_, select, update
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 
 from tadas.om.base import EMPTY_UUID, Identifiable
@@ -56,6 +56,16 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
         async with self._session_for(stmt, EMPTY_UUID) as session:
             row = (await session.execute(stmt)).scalar_one_or_none()
             return None if row is None else to_model(row, Org)
+
+    async def count_orgs(self) -> int:
+        stmt = select(func.count()).select_from(Orgs).where(Orgs.deleted_at.is_(None))
+        async with self._session_for(stmt, EMPTY_UUID) as session:
+            return (await session.execute(stmt)).scalar_one()
+
+    async def count_users(self) -> int:
+        stmt = select(func.count()).select_from(Users).where(Users.deleted_at.is_(None))
+        async with self._session_for(stmt, EMPTY_UUID) as session:
+            return (await session.execute(stmt)).scalar_one()
 
     async def read_orgs(self, limit: int, after_id: UUID | None = None) -> list[Org]:
         stmt = select(Orgs).order_by(Orgs.id).limit(limit)

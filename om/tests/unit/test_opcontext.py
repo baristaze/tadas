@@ -21,6 +21,8 @@ from tadas.om.opcontext import (
     IdentityContext,
     OpContext,
     OperatorContext,
+    OperatorPermission,
+    OperatorRole,
     ProvenanceScope,
     RequestContext,
     RequestScope,
@@ -32,7 +34,7 @@ from tadas.om.outbox.impl.relay import OutboxRelayImpl
 from tadas.om.outbox.storage.impl.memory import OutboxStorageMemoryImpl
 from tadas.om.tenancy.impl.manager import TenancyManagerImpl, TenancyOptions
 from tadas.om.tenancy.storage.impl.memory import TenancyStorageMemoryImpl
-from tadas.om.tenancy.types.role import permissions_of
+from tadas.om.tenancy.types.role import operator_permissions_of, permissions_of
 
 APP = AppContext(type=AppType.PORTAL, version="portal@test")
 
@@ -151,7 +153,13 @@ async def test_admit_operator_produces_the_operator_stage_for_operators_only(
 ) -> None:
     await manager.bootstrap(request(), "Acme", "acme", "ann@example.test", "pw-1234", "Ann")
     await manager.bootstrap(
-        request(), "Ops", "ops", "root@example.test", "pw-1234", "Root", operator=True
+        request(),
+        "Ops",
+        "ops",
+        "root@example.test",
+        "pw-1234",
+        "Root",
+        operator_role=OperatorRole.WRITE,
     )
     login = await manager.login(request(), "ann@example.test", "pw-1234")
     with pytest.raises(NotAnOperator):
@@ -173,6 +181,56 @@ async def test_admit_operator_produces_the_operator_stage_for_operators_only(
         ictx.trace_id,
     )
     assert not hasattr(admin, "org_id")
+    # The entry's role travels on the stage as permissions, as a membership's does.
+    assert admin.permissions == operator_permissions_of(OperatorRole.WRITE)
+    assert admin.has(OperatorPermission.READ) and admin.has(OperatorPermission.WRITE)
+
+
+async def test_a_read_operator_is_admitted_with_read_and_refused_a_write(
+    manager: TenancyManagerImpl,
+) -> None:
+    """The allowlist entry says what the operator may do: `read` admits the
+    person and `require(WRITE)` refuses them, in the shape a viewer's `require`
+    refuses a tenant write. Seeding the same person again with a wider role
+    widens the entry; seeding with a narrower one leaves it."""
+    await manager.bootstrap(
+        request(),
+        "Ops",
+        "ops",
+        "sup@example.test",
+        "pw-1234",
+        "Sup",
+        operator_role=OperatorRole.READ,
+    )
+    login = await manager.login(request(), "sup@example.test", "pw-1234")
+    admin = await manager.admit_operator(await manager.authenticate_login(request(), login.token))
+    assert admin.permissions == frozenset({OperatorPermission.READ})
+    admin.require(OperatorPermission.READ)
+    with pytest.raises(NotAuthorized, match="operator lacks write"):
+        admin.require(OperatorPermission.WRITE)
+
+    await manager.bootstrap(
+        request(),
+        "More",
+        "more",
+        "sup@example.test",
+        "pw-1234",
+        "Sup",
+        operator_role=OperatorRole.WRITE,
+    )
+    widened = await manager.admit_operator(await manager.authenticate_login(request(), login.token))
+    assert widened.permissions == operator_permissions_of(OperatorRole.WRITE)
+    await manager.bootstrap(
+        request(),
+        "Less",
+        "less",
+        "sup@example.test",
+        "pw-1234",
+        "Sup",
+        operator_role=OperatorRole.READ,
+    )
+    kept = await manager.admit_operator(await manager.authenticate_login(request(), login.token))
+    assert kept.permissions == operator_permissions_of(OperatorRole.WRITE)
 
 
 async def test_service_and_socket_contexts_refine_the_request_they_are_given(
@@ -256,6 +314,7 @@ def test_every_stage_satisfies_the_scopes_it_carries() -> None:
         email=ictx.email,
         credential_kind=ictx.credential_kind,
         credential_id=ictx.credential_id,
+        permissions=operator_permissions_of(OperatorRole.READ),
     )
     ctx = build_context(
         rctx,

@@ -4,6 +4,27 @@
  */
 
 export interface paths {
+    "/v1/admin/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Operator Me
+         * @description Who the plane admitted and what the entry grants; the check a skill
+         *     makes before its first read.
+         */
+        get: operations["operator_me_v1_admin_me_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/orgs": {
         parameters: {
             query?: never;
@@ -14,7 +35,8 @@ export interface paths {
         /** List Orgs */
         get: operations["list_orgs_v1_admin_orgs_get"];
         put?: never;
-        post?: never;
+        /** Create Org */
+        post: operations["create_org_v1_admin_orgs_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -28,11 +50,81 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** Get Org */
+        get: operations["get_org_v1_admin_orgs__org_id__get"];
         put?: never;
         post?: never;
         /** Delete Org */
         delete: operations["delete_org_v1_admin_orgs__org_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/orgs/{org_id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Events */
+        get: operations["list_events_v1_admin_orgs__org_id__events_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/orgs/{org_id}/members": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Members */
+        get: operations["list_members_v1_admin_orgs__org_id__members_get"];
+        put?: never;
+        /** Add Member */
+        post: operations["add_member_v1_admin_orgs__org_id__members_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/orgs/{org_id}/tasks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Tasks */
+        get: operations["list_tasks_v1_admin_orgs__org_id__tasks_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/size": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Platform Size */
+        get: operations["platform_size_v1_admin_size_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -362,6 +454,21 @@ export interface components {
             /** Ttl Days */
             ttl_days?: number | null;
         };
+        /**
+         * AddMemberRequest
+         * @description A person in the org, as `add-member` seeds one; the owner and the
+         *     service role are refused, since the one owner is the one the create
+         *     minted.
+         */
+        AddMemberRequest: {
+            /** Display Name */
+            display_name: string;
+            /** Email */
+            email: string;
+            /** Password */
+            password: string;
+            role: components["schemas"]["Role"];
+        };
         /** AddTaskRequest */
         AddTaskRequest: {
             /** Assignee Id */
@@ -414,6 +521,24 @@ export interface components {
             user_id: string;
         };
         /**
+         * CreateOrgRequest
+         * @description An org with its owner, as `bootstrap` seeds one. The owner's identity
+         *     is created with the password, or kept with its own when the email is
+         *     known already.
+         */
+        CreateOrgRequest: {
+            /** Name */
+            name: string;
+            /** Owner Email */
+            owner_email: string;
+            /** Owner Name */
+            owner_name: string;
+            /** Owner Password */
+            owner_password: string;
+            /** Slug */
+            slug: string;
+        };
+        /**
          * CredentialKind
          * @enum {string}
          */
@@ -462,6 +587,8 @@ export interface components {
         /**
          * IdentityView
          * @description The person behind the caller's user; never carries the password hash.
+         *     `operator_role` is the allowlist entry: null for a person who is not an
+         *     operator.
          */
         IdentityView: {
             /**
@@ -476,8 +603,7 @@ export interface components {
              * Format: uuid
              */
             id: string;
-            /** Is Operator */
-            is_operator: boolean;
+            operator_role: components["schemas"]["OperatorRole"] | null;
         };
         /**
          * IssuedApiKeyView
@@ -580,6 +706,64 @@ export interface components {
             /** Version */
             version: number;
         };
+        /**
+         * OperatorEventView
+         * @description The same record as an operator reads it, with the two provenance fields
+         *     a tenant's own feed leaves out: the request that produced it and the app
+         *     it came from, which is what a support investigation correlates on.
+         */
+        OperatorEventView: {
+            /**
+             * Actor Id
+             * Format: uuid
+             */
+            actor_id: string;
+            /** App */
+            app: string;
+            /** Kind */
+            kind: string;
+            /**
+             * Produced At
+             * Format: date-time
+             */
+            produced_at: string;
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+            /** Seq */
+            seq: number;
+            /**
+             * Target Id
+             * Format: uuid
+             */
+            target_id: string;
+        };
+        /**
+         * OperatorRole
+         * @description What an allowlist entry lets an operator do across every tenant. Write
+         *     includes read; the tenancy namespace's table says which permissions each
+         *     role holds, as it does for `Role`.
+         * @enum {string}
+         */
+        OperatorRole: "read" | "write";
+        /**
+         * OperatorView
+         * @description Who the operator plane admitted: the identity and what its allowlist
+         *     entry grants, so a skill checks it holds the entry it expects before it
+         *     reads anything.
+         */
+        OperatorView: {
+            /** Email */
+            email: string;
+            /**
+             * Identity Id
+             * Format: uuid
+             */
+            identity_id: string;
+            operator_role: components["schemas"]["OperatorRole"];
+        };
         /** OrgView */
         OrgView: {
             /**
@@ -604,6 +788,28 @@ export interface components {
          * @enum {string}
          */
         Permission: "read" | "write" | "manage_members" | "manage_keys";
+        /**
+         * PlatformSizeView
+         * @description How big the platform is, what the first responder to an alarm reads
+         *     before it escalates: live tenants and users, and the tasks created and
+         *     events produced in the last twenty-four hours, a window that starts at
+         *     `since` and ends at the read.
+         */
+        PlatformSizeView: {
+            /** Events Last 24H */
+            events_last_24h: number;
+            /**
+             * Since
+             * Format: date-time
+             */
+            since: string;
+            /** Tasks Last 24H */
+            tasks_last_24h: number;
+            /** Tenants */
+            tenants: number;
+            /** Users */
+            users: number;
+        };
         /**
          * Role
          * @enum {string}
@@ -771,6 +977,39 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    operator_me_v1_admin_me_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperatorView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_orgs_v1_admin_orgs_get: {
         parameters: {
             query?: {
@@ -806,6 +1045,79 @@ export interface operations {
             };
         };
     };
+    create_org_v1_admin_orgs_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
+                "idempotency-key"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateOrgRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrgView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_org_v1_admin_orgs__org_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
+            };
+            path: {
+                org_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrgView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     delete_org_v1_admin_orgs__org_id__delete: {
         parameters: {
             query?: never;
@@ -828,6 +1140,194 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OrgView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_events_v1_admin_orgs__org_id__events_get: {
+        parameters: {
+            query?: {
+                after_seq?: number;
+                limit?: number;
+            };
+            header?: {
+                authorization?: string | null;
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
+            };
+            path: {
+                org_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperatorEventView"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_members_v1_admin_orgs__org_id__members_get: {
+        parameters: {
+            query?: {
+                cursor?: string | null;
+                limit?: number;
+            };
+            header?: {
+                authorization?: string | null;
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
+            };
+            path: {
+                org_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserPageView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    add_member_v1_admin_orgs__org_id__members_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
+                "idempotency-key"?: string | null;
+            };
+            path: {
+                org_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AddMemberRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_tasks_v1_admin_orgs__org_id__tasks_get: {
+        parameters: {
+            query?: {
+                status?: components["schemas"]["TaskStatus"];
+                cursor?: string | null;
+                limit?: number;
+            };
+            header?: {
+                authorization?: string | null;
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
+            };
+            path: {
+                org_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskPageView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    platform_size_v1_admin_size_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlatformSizeView"];
                 };
             };
             /** @description Validation Error */

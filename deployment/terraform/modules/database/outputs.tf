@@ -11,3 +11,8 @@ output "address" {
 output "arn" {
   value = aws_db_instance.this.arn
 }
+
+output "identifier" {
+  description = "The instance identifier, the dimension its CloudWatch metrics carry."
+  value       = aws_db_instance.this.identifier
+}

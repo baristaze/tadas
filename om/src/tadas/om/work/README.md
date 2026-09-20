@@ -1,0 +1,57 @@
+# Work items
+
+Durable background jobs and the queue they wait in. This is one of the
+six kinds of thing [Tadas is made of](../../../../README.md).
+
+## The nouns
+
+- **Work item**: what to do (the kind), for which record, under which
+  producer key, on which lane, and the request that caused it. It
+  carries its status (queued, claimed, done, failed), when it becomes
+  available, who claimed it and until when, how many attempts it has
+  spent of how many it has, and its last error.
+- **Kind**: the job's shape. The payload of each kind is fixed. Today
+  there is one kind, which does nothing but keep the loop honest; the
+  first real kind rides the same rails.
+- **Lane**: a routing name. A worker serves one lane.
+- **Handler**: the code that does one kind of work. A handler is
+  idempotent, because the same item may run twice.
+
+## What can happen
+
+- **Enqueue.** Directly by a person's request, or by the outbox relay
+  when a change asked for work. The item starts queued with zero
+  attempts and no claim, whatever the caller sent.
+- **Claim.** A worker takes the oldest available item on its lane, in
+  one statement, and gets a claim token and the context the job runs
+  under: the org, the service role, and the person who asked as the
+  attribution. An item whose org is gone is failed in the same call.
+- **Complete**, **fail** (requeued with a growing delay, or a dead
+  letter once the attempts are spent), **defer** (hand it back for
+  later), **release** (hand it back now), **extend the lease**.
+- **Sweep.** Items whose lease has expired go back to the queue, or
+  fail when their attempts are spent. Done and failed items are erased
+  after the retention, thirty days by default.
+
+## The rules
+
+- **The lease.** A claim holds an item for a lease, one minute by
+  default, and the worker renews it while the job runs. Every
+  transition is conditional on the claim token, in the statement
+  itself, never on the worker's name, because one worker can hold the
+  same item twice across a requeue. A worker whose lease has passed is
+  refused, hands the item back, and spends no attempt; the requeue
+  clears the token.
+- **Attempts.** A claim spends one; a hand-back refunds it. An item
+  has three by default. The delay before a retry doubles per attempt,
+  up to a cap. Requeued items are staggered so a recovered dependency
+  is not met by all of them at once.
+- **A dead letter is named.** An item that fails for good is counted
+  and recorded as an event in the org's diary.
+- **Enqueueing twice leaves one item.** An enqueue that runs again
+  under the same id or the same producer key returns the item as
+  stored, its claim intact.
+- **At least once.** A job may run twice, so every handler is written
+  to change nothing the second time.
+- **The person authorized the work once.** The job runs as long as the
+  org is live, even if the person who asked has since left.

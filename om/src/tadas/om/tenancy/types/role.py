@@ -12,9 +12,16 @@ owner is the tenant's founder and not a permission set. The role reserved
 for services is not a rung: no credential a person mints carries it, and
 every operation that issues one refuses it by name."""
 
-from tadas.om.opcontext import Permission, Role
+from tadas.om.opcontext import OperatorPermission, OperatorRole, Permission, Role
 
-__all__ = ["PERSON_ROLES", "ROLE_PERMISSIONS", "ROLE_RANK", "permissions_of"]
+__all__ = [
+    "OPERATOR_ROLE_PERMISSIONS",
+    "PERSON_ROLES",
+    "ROLE_PERMISSIONS",
+    "ROLE_RANK",
+    "operator_permissions_of",
+    "permissions_of",
+]
 
 ROLE_PERMISSIONS: dict[Role, tuple[Permission, ...]] = {
     Role.OWNER: (
@@ -49,3 +56,16 @@ PERSON_ROLES: tuple[Role, ...] = tuple(ROLE_RANK)
 
 def permissions_of(role: Role) -> tuple[Permission, ...]:
     return ROLE_PERMISSIONS[role]
+
+
+OPERATOR_ROLE_PERMISSIONS: dict[OperatorRole, frozenset[OperatorPermission]] = {
+    OperatorRole.READ: frozenset({OperatorPermission.READ}),
+    OperatorRole.WRITE: frozenset({OperatorPermission.READ, OperatorPermission.WRITE}),
+}
+"""The operator plane's table: what an allowlist entry grants. Write includes
+read, so the roles are a ladder of two rungs and a write operator may do
+everything a read operator may."""
+
+
+def operator_permissions_of(role: OperatorRole) -> frozenset[OperatorPermission]:
+    return OPERATOR_ROLE_PERMISSIONS[role]

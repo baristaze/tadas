@@ -9,6 +9,7 @@ from sqlalchemy import (
     Uuid,
     and_,
     delete,
+    func,
     literal,
     or_,
     select,
@@ -96,6 +97,11 @@ class TasksStoragePostgresImpl(PgStorageBase, TasksStorageInterface):
         async with self._session_for(stmt, org_id) as session:
             row = (await session.execute(stmt)).scalar_one_or_none()
             return None if row is None else to_model(row, Task)
+
+    async def count_created_since(self, since: datetime) -> int:
+        stmt = select(func.count()).select_from(Tasks).where(Tasks.created_at >= since)
+        async with self._session_for(stmt, EMPTY_UUID) as session:
+            return (await session.execute(stmt)).scalar_one()
 
     async def purge_deleted(self, org_id: UUID, before: datetime) -> int:
         stmt = (

@@ -71,6 +71,12 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
             None,
         )
 
+    async def count_orgs(self) -> int:
+        return sum(1 for org in self._every(self._orgs) if org.deleted_at is None)
+
+    async def count_users(self) -> int:
+        return sum(1 for user in self._every(self._users) if user.deleted_at is None)
+
     async def read_orgs(self, limit: int, after_id: UUID | None = None) -> list[Org]:
         orgs = [org for _, org in self._rows_across_tenants(self._orgs)]
         if after_id is not None:

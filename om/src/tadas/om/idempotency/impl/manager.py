@@ -1,7 +1,7 @@
 from datetime import timedelta
 from uuid import UUID
 
-from tadas.om.base import Platform, new_id, utcnow
+from tadas.om.base import EMPTY_UUID, Platform, new_id, utcnow
 from tadas.om.exceptions import (
     DuplicateIdempotencyKey,
     IdempotencyAttemptLost,
@@ -13,7 +13,7 @@ from tadas.om.idempotency.manager import IdempotencyManagerInterface
 from tadas.om.idempotency.storage import IdempotencyStorageInterface
 from tadas.om.idempotency.types.attempt import lease_bound
 from tadas.om.idempotency.types.record import IdempotencyRecord
-from tadas.om.opcontext import OpContext, Permission
+from tadas.om.opcontext import OpContext, OperatorContext, OperatorPermission, Permission
 
 
 class IdempotencyOptions(Platform):
@@ -41,9 +41,32 @@ class IdempotencyManagerImpl(IdempotencyManagerInterface):
         self, ctx: OpContext, key: str, request_digest: str, target_id: UUID
     ) -> IdempotencyRecord:
         ctx.require(Permission.WRITE)
+        return await self._begin(ctx.org_id, ctx.user_id, key, request_digest, target_id)
+
+    async def begin_for_operator(
+        self, admin: OperatorContext, key: str, request_digest: str, target_id: UUID
+    ) -> IdempotencyRecord:
+        admin.require(OperatorPermission.WRITE)
+        return await self._begin(EMPTY_UUID, admin.identity_id, key, request_digest, target_id)
+
+    async def finish_for_operator(
+        self, admin: OperatorContext, key: str, attempt_id: UUID, status: int, body: str
+    ) -> IdempotencyRecord:
+        admin.require(OperatorPermission.WRITE)
+        return await self._finish(EMPTY_UUID, admin.identity_id, key, attempt_id, status, body)
+
+    async def release_for_operator(
+        self, admin: OperatorContext, key: str, attempt_id: UUID
+    ) -> None:
+        admin.require(OperatorPermission.WRITE)
+        await self._release(EMPTY_UUID, admin.identity_id, key, attempt_id)
+
+    async def _begin(
+        self, org_id: UUID, user_id: UUID, key: str, request_digest: str, target_id: UUID
+    ) -> IdempotencyRecord:
         pending = IdempotencyRecord(
             id=new_id(),
-            user_id=ctx.user_id,
+            user_id=user_id,
             key=key,
             request_digest=request_digest,
             target_id=target_id,
@@ -53,9 +76,9 @@ class IdempotencyManagerImpl(IdempotencyManagerInterface):
         try:
             # The unique index is the dedupe: the first writer wins, every other
             # writer reads what it wrote.
-            await self._storage.write_record(ctx.org_id, pending)
+            await self._storage.write_record(org_id, pending)
         except DuplicateIdempotencyKey:
-            stored = await self._storage.read_record(ctx.org_id, ctx.user_id, key)
+            stored = await self._storage.read_record(org_id, user_id, key)
             if stored is None:
                 raise
             if stored.request_digest != request_digest:
@@ -76,15 +99,13 @@ class IdempotencyManagerImpl(IdempotencyManagerInterface):
                 # marker the new token holds, and the first attempt, if it is
                 # still running, is refused at its finish or release.
                 if stored.released:
-                    armed = await self._storage.rearm_released(
-                        ctx.org_id, ctx.user_id, key, new_id()
-                    )
+                    armed = await self._storage.rearm_released(org_id, user_id, key, new_id())
                     if armed is not None:
                         return armed
                 else:
                     taken = await self._storage.take_over_pending(
-                        ctx.org_id,
-                        ctx.user_id,
+                        org_id,
+                        user_id,
                         key,
                         lease_bound(utcnow() - self._options.pending_ttl),
                         new_id(),
@@ -108,7 +129,10 @@ class IdempotencyManagerImpl(IdempotencyManagerInterface):
 
     async def release(self, ctx: OpContext, key: str, attempt_id: UUID) -> None:
         ctx.require(Permission.WRITE)
-        if not await self._storage.release_pending(ctx.org_id, ctx.user_id, key, attempt_id):
+        await self._release(ctx.org_id, ctx.user_id, key, attempt_id)
+
+    async def _release(self, org_id: UUID, user_id: UUID, key: str, attempt_id: UUID) -> None:
+        if not await self._storage.release_pending(org_id, user_id, key, attempt_id):
             raise IdempotencyAttemptLost(
                 f"idempotency key {key!r} is not held by attempt {attempt_id}"
             )
@@ -117,14 +141,19 @@ class IdempotencyManagerImpl(IdempotencyManagerInterface):
         self, ctx: OpContext, key: str, attempt_id: UUID, status: int, body: str
     ) -> IdempotencyRecord:
         ctx.require(Permission.WRITE)
+        return await self._finish(ctx.org_id, ctx.user_id, key, attempt_id, status, body)
+
+    async def _finish(
+        self, org_id: UUID, user_id: UUID, key: str, attempt_id: UUID, status: int, body: str
+    ) -> IdempotencyRecord:
         finished = await self._storage.finish_pending(
-            ctx.org_id, ctx.user_id, key, attempt_id, status, body
+            org_id, user_id, key, attempt_id, status, body
         )
         if finished is not None:
             return finished
         # Refused: the statement matched nothing. Only now is a read worth it,
         # to say whether the key was never begun or the marker is another
         # attempt's (taken over, or finished already).
-        if await self._storage.read_record(ctx.org_id, ctx.user_id, key) is None:
+        if await self._storage.read_record(org_id, user_id, key) is None:
             raise NotFound(f"idempotency key {key!r} was never begun")
         raise IdempotencyAttemptLost(f"idempotency key {key!r} is not held by attempt {attempt_id}")

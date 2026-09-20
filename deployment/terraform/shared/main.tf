@@ -1,7 +1,8 @@
 # Account-level resources every environment shares: the image registry
 # (production promotes the digests staging already ran, so both pull from the
-# same repositories), the state bucket, and the roles the deploy workflows
-# assume through GitHub's OIDC provider, one per environment.
+# same repositories), the state bucket, the roles the deploy workflows assume
+# through GitHub's OIDC provider, the roles a person or an agent reads an
+# environment under, the operators' user, the budget, and the zone.
 
 data "aws_caller_identity" "current" {}
 data "aws_partition" "current" {}
@@ -373,6 +374,8 @@ data "aws_iam_policy_document" "plan_production_fences" {
     resources = [
       "arn:${local.partition}:iam::${local.account}:role/tadas-deploy-*",
       "arn:${local.partition}:iam::${local.account}:role/tadas-plan-*",
+      "arn:${local.partition}:iam::${local.account}:role/tadas-investigate-*",
+      "arn:${local.partition}:iam::${local.account}:user/tadas-operators",
       "arn:${local.partition}:iam::${local.account}:policy/tadas-task-boundary-*",
     ]
   }
@@ -382,4 +385,137 @@ resource "aws_iam_role_policy" "plan_production_fences" {
   name   = "fences"
   role   = aws_iam_role.plan_production.id
   policy = data.aws_iam_policy_document.plan_production_fences.json
+}
+
+# The operators.
+#
+# One IAM user the agents run as, `tadas-operators`, whose only permission is
+# to assume the investigate roles, and one investigate role per environment
+# that reads everything there and writes nothing. A person's profiles chain
+# from the user: `tadas-staging-investigate` is the user's key plus the
+# staging role's ARN. No access key is declared here: the create script
+# mints one and writes the profiles, so the secret lives in the person's home
+# and never in a state file. When the team grows, IAM Identity Center's
+# permission-set roles go into `operator_principal_arns` and nothing below
+# the trust policy changes.
+
+resource "aws_iam_user" "operators" {
+  name = "tadas-operators"
+}
+
+data "aws_iam_policy_document" "operators" {
+  statement {
+    sid       = "AssumeTheInvestigateRolesAndNothingElse"
+    actions   = ["sts:AssumeRole"]
+    resources = ["arn:${local.partition}:iam::${local.account}:role/tadas-investigate-*"]
+  }
+}
+
+resource "aws_iam_user_policy" "operators" {
+  name   = "assume-investigate"
+  user   = aws_iam_user.operators.name
+  policy = data.aws_iam_policy_document.operators.json
+}
+
+module "staging_investigate_role" {
+  source = "../modules/investigate_role"
+
+  environment       = "staging"
+  other_environment = "production"
+
+  state_bucket           = aws_s3_bucket.state.bucket
+  state_key_prefix       = "environments/staging"
+  other_state_key_prefix = "environments/prod"
+
+  operators_user_arn      = aws_iam_user.operators.arn
+  operator_principal_arns = var.operator_principal_arns
+}
+
+module "production_investigate_role" {
+  source = "../modules/investigate_role"
+
+  environment       = "production"
+  other_environment = "staging"
+
+  state_bucket           = aws_s3_bucket.state.bucket
+  state_key_prefix       = "environments/prod"
+  other_state_key_prefix = "environments/staging"
+
+  operators_user_arn      = aws_iam_user.operators.arn
+  operator_principal_arns = var.operator_principal_arns
+}
+
+# Cost.
+#
+# The budget is the catch-all every other bound sits under: the owner hears
+# at half of it, at most of it, at all of it, and when the forecast crosses
+# it. The anomaly monitor watches each service's spend beside it and reports
+# a jump the budget would only show at month's end. Both are account-wide;
+# the environment tag on every resource is what splits a cost report.
+
+resource "aws_budgets_budget" "monthly" {
+  name         = "tadas-monthly"
+  budget_type  = "COST"
+  limit_amount = tostring(var.monthly_budget_usd)
+  limit_unit   = "USD"
+  time_unit    = "MONTHLY"
+
+  dynamic "notification" {
+    for_each = [
+      { type = "ACTUAL", threshold = 50 },
+      { type = "ACTUAL", threshold = 80 },
+      { type = "ACTUAL", threshold = 100 },
+      { type = "FORECASTED", threshold = 100 },
+    ]
+
+    content {
+      comparison_operator        = "GREATER_THAN"
+      threshold                  = notification.value.threshold
+      threshold_type             = "PERCENTAGE"
+      notification_type          = notification.value.type
+      subscriber_email_addresses = [var.owner_email]
+    }
+  }
+}
+
+resource "aws_ce_anomaly_monitor" "services" {
+  name              = "tadas-services"
+  monitor_type      = "DIMENSIONAL"
+  monitor_dimension = "SERVICE"
+}
+
+resource "aws_ce_anomaly_subscription" "owner" {
+  name             = "tadas-anomalies"
+  frequency        = "DAILY"
+  monitor_arn_list = [aws_ce_anomaly_monitor.services.arn]
+
+  subscriber {
+    type    = "EMAIL"
+    address = var.owner_email
+  }
+
+  # Below this an anomaly is noise on a budget this size.
+  threshold_expression {
+    dimension {
+      key           = "ANOMALY_TOTAL_IMPACT_ABSOLUTE"
+      match_options = ["GREATER_THAN_OR_EQUAL"]
+      values        = [tostring(var.anomaly_impact_usd)]
+    }
+  }
+}
+
+# The zone.
+#
+# Both environments' public names live in one hosted zone, and the
+# environment roots read it by name. It is created here when the account is
+# the zone's home; a zone that already exists elsewhere (delegated in from a
+# registrar's account) sets `create_dns_zone` to false and the roots find it
+# the same way. The name servers are an output because the registrar is the
+# one place they go, by hand, once.
+
+resource "aws_route53_zone" "this" {
+  count = var.create_dns_zone ? 1 : 0
+
+  name    = var.dns_zone_name
+  comment = "Tadas: both environments' public names"
 }

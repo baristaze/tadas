@@ -22,7 +22,8 @@
 # presents its branch instead and is refused by the role's trust.
 #
 # The role's ARN and the state bucket are repository variables, and so is the
-# zone (DNS_ZONE_NAME, e.g. tadas.fyi). The public names follow the zone:
+# zone (DNS_ZONE_NAME, e.g. tadas.fyi) and the address the alarm topic
+# subscribes (ALARM_EMAIL). The public names follow the zone:
 # api.staging.<zone> and app.staging.<zone> here, api.<zone> and app.<zone>
 # in production.
 #
@@ -84,9 +85,10 @@ jobs:
           AWS_STAGING_ROLE_ARN: ${{ vars.AWS_STAGING_ROLE_ARN }}
           TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
           DNS_ZONE_NAME: ${{ vars.DNS_ZONE_NAME }}
+          ALARM_EMAIL: ${{ vars.ALARM_EMAIL }}
         run: |
           missing=""
-          for name in AWS_STAGING_ROLE_ARN TF_STATE_BUCKET DNS_ZONE_NAME; do
+          for name in AWS_STAGING_ROLE_ARN TF_STATE_BUCKET DNS_ZONE_NAME ALARM_EMAIL; do
             [ -n "${!name}" ] || missing="${missing:+$missing, }$name"
           done
           if [ -z "$missing" ]; then
@@ -230,6 +232,7 @@ jobs:
         env:
           TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
           DNS_ZONE_NAME: ${{ vars.DNS_ZONE_NAME }}
+          ALARM_EMAIL: ${{ vars.ALARM_EMAIL }}
           API_IMAGE: ${{ needs.images.outputs.api_image }}
           MAINTENANCE_IMAGE: ${{ needs.images.outputs.maintenance_image }}
         run: |
@@ -242,6 +245,7 @@ jobs:
             -var "api_image=$API_IMAGE" \
             -var "maintenance_image=$MAINTENANCE_IMAGE" \
             -var "dns_zone_name=$DNS_ZONE_NAME" \
+            -var "alarm_email=$ALARM_EMAIL" \
             -var "api_domain_name=api.staging.$DNS_ZONE_NAME" \
             -var "app_domain_name=app.staging.$DNS_ZONE_NAME"
           terraform -chdir=deployment/terraform/environments/staging show -no-color tfplan > plan.txt
