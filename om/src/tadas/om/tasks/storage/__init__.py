@@ -7,14 +7,18 @@ from datetime import datetime
 from uuid import UUID
 
 from tadas.om.outbox.types.row import OutboxRow
-from tadas.om.tasks.types.filter import TaskCursor, TaskFilter
+from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor, TaskFilter
 from tadas.om.tasks.types.task import Task
 
 
 class TasksStorageInterface(ABC):
     @abstractmethod
-    async def read_open_tasks(self, org_id: UUID, criterion: TaskFilter, limit: int) -> list[Task]:
-        """Open tasks the filter shows (tasks.rules.is_visible), by position, then id."""
+    async def read_open_tasks(
+        self, org_id: UUID, criterion: TaskFilter, after: OpenTaskCursor | None, limit: int
+    ) -> list[Task]:
+        """Open tasks the filter shows (tasks.rules.is_visible), by position, then
+        id, strictly after the cursor (tasks.rules.is_after). `limit` is the
+        caller's: the manager asks for one row more than its page."""
         ...
 
     @abstractmethod
@@ -47,9 +51,11 @@ class TasksStorageInterface(ABC):
         ...
 
     @abstractmethod
-    async def write_task(
-        self, org_id: UUID, task: Task, outbox_row: OutboxRow | None = None
+    async def update_task(
+        self, org_id: UUID, task: Task, expected_version: int, outbox_row: OutboxRow
     ) -> None:
-        """The update: lands the task and its outbox row together (the named atomic
-        write)."""
+        """The update, a compare-and-set: lands the task and its outbox row together
+        (the named atomic write) when the stored row is at `expected_version`, and
+        raises `VersionMismatch` when it is at another version or is gone, landing
+        nothing. It never inserts: a missing row is a row that moved."""
         ...

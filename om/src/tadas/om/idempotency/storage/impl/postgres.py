@@ -55,7 +55,7 @@ class IdempotencyStoragePostgresImpl(PgStorageBase, IdempotencyStorageInterface)
         self, org_id: UUID, user_id: UUID, key: str, attempt_id: UUID
     ) -> bool:
         stmt = (
-            delete(IdempotencyRecords)
+            update(IdempotencyRecords)
             .where(
                 IdempotencyRecords.org_id == org_id,
                 IdempotencyRecords.user_id == user_id,
@@ -63,6 +63,7 @@ class IdempotencyStoragePostgresImpl(PgStorageBase, IdempotencyStorageInterface)
                 IdempotencyRecords.status.is_(None),
                 IdempotencyRecords.attempt_id == attempt_id,
             )
+            .values(attempt_id=None)
             .returning(IdempotencyRecords.id)
         )
         async with self._session_for(stmt) as session:
@@ -79,11 +80,15 @@ class IdempotencyStoragePostgresImpl(PgStorageBase, IdempotencyStorageInterface)
                 IdempotencyRecords.org_id == org_id,
                 or_(
                     and_(
-                        IdempotencyRecords.status.is_not(None),
+                        or_(
+                            IdempotencyRecords.status.is_not(None),
+                            IdempotencyRecords.attempt_id.is_(None),
+                        ),
                         IdempotencyRecords.created_at < finished_before,
                     ),
                     and_(
                         IdempotencyRecords.status.is_(None),
+                        IdempotencyRecords.attempt_id.is_not(None),
                         IdempotencyRecords.created_at < pending_before,
                     ),
                 ),
@@ -111,6 +116,7 @@ class IdempotencyStoragePostgresImpl(PgStorageBase, IdempotencyStorageInterface)
                 IdempotencyRecords.user_id == user_id,
                 IdempotencyRecords.key == key,
                 IdempotencyRecords.status.is_(None),
+                IdempotencyRecords.attempt_id.is_not(None),
                 IdempotencyRecords.created_at < abandoned_before,
             )
             .values(created_at=restarted_at, attempt_id=attempt_id)
@@ -123,3 +129,26 @@ class IdempotencyStoragePostgresImpl(PgStorageBase, IdempotencyStorageInterface)
             taken = to_model(row, IdempotencyRecord)
             await session.commit()
             return taken
+
+    async def rearm_released(
+        self, org_id: UUID, user_id: UUID, key: str, restarted_at: datetime, attempt_id: UUID
+    ) -> IdempotencyRecord | None:
+        stmt = (
+            update(IdempotencyRecords)
+            .where(
+                IdempotencyRecords.org_id == org_id,
+                IdempotencyRecords.user_id == user_id,
+                IdempotencyRecords.key == key,
+                IdempotencyRecords.status.is_(None),
+                IdempotencyRecords.attempt_id.is_(None),
+            )
+            .values(created_at=restarted_at, attempt_id=attempt_id)
+            .returning(IdempotencyRecords)
+        )
+        async with self._session_for(stmt) as session:
+            row = (await session.execute(stmt)).scalar_one_or_none()
+            if row is None:
+                return None
+            armed = to_model(row, IdempotencyRecord)
+            await session.commit()
+            return armed

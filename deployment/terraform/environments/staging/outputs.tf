@@ -8,7 +8,7 @@ output "portal_url" {
   value       = module.portal.url
 }
 
-# What deploy.yml needs to publish the portal build.
+# What the deploy workflows need to publish the portal build.
 
 output "portal_bucket" {
   value = module.portal.bucket_name
@@ -18,7 +18,7 @@ output "portal_distribution_id" {
   value = module.portal.distribution_id
 }
 
-# What deploy.yml needs to run the migration as a one-off task on the API
+# What a by-hand migration needs to run as a one-off task on the API
 # image it just rolled out.
 
 output "cluster_name" {

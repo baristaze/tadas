@@ -231,6 +231,35 @@ resource "aws_ecs_task_definition" "this" {
   }
 }
 
+# What runs before the service rolls, on the new task definition: for the
+# API, the migration. It is one task per new task definition, run from the
+# machine that applies with the same credentials, and the service depends on
+# it, so a migration that fails ends the apply with the old tasks still
+# serving. A service that waits for another's pre-rollout run passes its
+# `rollout_gate` output as `rollout_after`.
+resource "terraform_data" "pre_rollout" {
+  count = var.pre_rollout_command == null ? 0 : 1
+
+  triggers_replace = [aws_ecs_task_definition.this.arn]
+
+  provisioner "local-exec" {
+    command = "${path.module}/pre_rollout.sh"
+    environment = {
+      AWS_REGION      = data.aws_region.current.region
+      CLUSTER         = var.cluster_arn
+      TASK_DEFINITION = aws_ecs_task_definition.this.arn
+      SUBNETS         = join(",", var.subnet_ids)
+      SECURITY_GROUPS = join(",", var.security_group_ids)
+      CONTAINER       = var.name
+      COMMAND         = jsonencode(var.pre_rollout_command)
+    }
+  }
+}
+
+resource "terraform_data" "rollout_after" {
+  input = var.rollout_after
+}
+
 resource "aws_ecs_service" "this" {
   name            = var.name
   cluster         = var.cluster_arn
@@ -240,9 +269,15 @@ resource "aws_ecs_service" "this" {
   propagate_tags  = "SERVICE"
   tags            = local.tags
 
+  # The apply ends when the new tasks serve; a rollout the circuit breaker
+  # rolls back fails the apply instead of leaving a green job over old tasks.
+  wait_for_steady_state = true
+
   deployment_maximum_percent         = var.deployment_maximum_percent
   deployment_minimum_healthy_percent = var.deployment_minimum_healthy_percent
   health_check_grace_period_seconds  = var.target_group_arn == null ? null : 60
+
+  depends_on = [terraform_data.pre_rollout, terraform_data.rollout_after]
 
   deployment_circuit_breaker {
     enable   = true

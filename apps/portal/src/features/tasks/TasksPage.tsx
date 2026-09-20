@@ -128,6 +128,11 @@ function TaskGroups({ vm }: { vm: TasksVm }) {
             />
           ))}
         </ul>
+        {vm.hasMoreOpen ? (
+          <div style={{ paddingTop: tokens.space.md }}>
+            {vm.loadingMoreOpen ? <Muted>Loading</Muted> : <LinkButton onClick={vm.showMoreOpen}>Show more</LinkButton>}
+          </div>
+        ) : null}
       </Card>
       <Card title="Done">
         {vm.done.length === 0 ? <Muted>Nothing done yet.</Muted> : null}

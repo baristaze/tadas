@@ -33,6 +33,14 @@ class UniqueKeyTaken(Conflict):
     code = "unique_key_taken"
 
 
+class VersionMismatch(Conflict):
+    """A compare-and-set found the row at another version, or gone: another
+    writer landed between the caller's read and this write, so the caller's
+    snapshot is stale and must be read again."""
+
+    code = "version_mismatch"
+
+
 class ValidationFailed(PlatformException):
     http_status = 422
     code = "validation_failed"

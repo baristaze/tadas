@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Publish a built portal to the bucket and distribution an environment root
-# just applied. Used by .github/workflows/deploy.yml after `terraform apply`,
-# with the one build every environment receives; runs from the repo root with
-# the AWS session that applied the environment.
+# just applied. Used by deploy-staging.yml and deploy-production.yml after
+# `terraform apply`, with the one build every environment receives; runs from
+# the repo root with the AWS session that applied the environment.
 #
-#   scripts/deploy_portal.sh deployment/terraform/environments/dev apps/portal/dist
+#   scripts/deploy_portal.sh deployment/terraform/environments/staging apps/portal/dist
 set -euo pipefail
 
 root="${1:?usage: deploy_portal.sh <terraform environment dir> <built portal dir>}"

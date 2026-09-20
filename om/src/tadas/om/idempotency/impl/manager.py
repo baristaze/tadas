@@ -22,10 +22,11 @@ class IdempotencyOptions(Platform):
     lease; the next retry takes it over and runs the request again, so the
     marker never suppresses work for good."""
     retention: timedelta = timedelta(hours=24)
-    """A finished record is purged after this: a retry that late begins afresh."""
+    """A finished or released record is purged after this: a retry that late
+    begins afresh."""
     abandoned_after: int = 10
-    """A pending record older than this many pending leases had no retry come
-    back for it and is purged."""
+    """A held pending record older than this many pending leases had no retry
+    come back for it and is purged."""
 
 
 class IdempotencyManagerImpl(IdempotencyManagerInterface):
@@ -59,21 +60,35 @@ class IdempotencyManagerImpl(IdempotencyManagerInterface):
                     f"idempotency key {key!r} was used for a different request"
                 ) from None
             if stored.pending:
-                # Abandoned when the marker was written and its effect never
-                # landed, or the effect landed and the outcome did not, or the
-                # first attempt is still running past its lease. The take-over
-                # is one conditional write that stamps a new attempt token, so
-                # of two retries racing for it exactly one runs the request
-                # again, on the target_id the first attempt minted, so a create
-                # that already landed is found and not repeated; the other sees
-                # the restarted marker, and the first attempt, if it is still
-                # running, is refused at its finish or release.
+                # Either a failure released the marker (no attempt), or it is
+                # held: abandoned when the marker was written and its effect
+                # never landed, or the effect landed and the outcome did not, or
+                # the first attempt is still running past its lease. The re-arm
+                # and the take-over are each one conditional write that stamps
+                # a new attempt token, so of two retries racing for the marker
+                # exactly one runs the request again, on the target_id the
+                # first attempt minted, so a create that already landed is
+                # found and not repeated; the other sees the restarted marker,
+                # and the first attempt, if it is still running, is refused at
+                # its finish or release.
                 now = utcnow()
-                taken = await self._storage.take_over_pending(
-                    ctx.org_id, ctx.user_id, key, now - self._options.pending_ttl, now, new_id()
-                )
-                if taken is not None:
-                    return taken
+                if stored.released:
+                    armed = await self._storage.rearm_released(
+                        ctx.org_id, ctx.user_id, key, now, new_id()
+                    )
+                    if armed is not None:
+                        return armed
+                else:
+                    taken = await self._storage.take_over_pending(
+                        ctx.org_id,
+                        ctx.user_id,
+                        key,
+                        now - self._options.pending_ttl,
+                        now,
+                        new_id(),
+                    )
+                    if taken is not None:
+                        return taken
                 raise IdempotencyInProgress(
                     f"idempotency key {key!r} is still being processed"
                 ) from None

@@ -5,13 +5,9 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
+from tadas.services.api.realtime.timeouts import PING_INTERVAL_SECONDS
 from tadas.services.api.types.common import RequestBody, View
 from tadas.services.api.types.events import EntityChangedView
-
-PING_INTERVAL_SECONDS = 25
-"""Pinned with the load balancer idle timeout in deployment/realtime-timeouts.json."""
-
-IDLE_TIMEOUT_SECONDS = PING_INTERVAL_SECONDS * 3
 
 
 class Envelope(View):

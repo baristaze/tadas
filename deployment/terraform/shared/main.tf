@@ -1,5 +1,5 @@
 # Account-level resources every environment shares: the image registry
-# (production promotes the digests dev already ran, so both pull from the
+# (production promotes the digests staging already ran, so both pull from the
 # same repositories), the state bucket, and the role the deploy workflow
 # assumes through GitHub's OIDC provider.
 
@@ -60,12 +60,14 @@ resource "aws_s3_bucket_public_access_block" "state" {
   restrict_public_buckets = true
 }
 
-# The deploy role. Trust is the boundary: only jobs of this repository that
-# run in its `dev` environment or its approval-gated `production` environment
-# may assume it (a job with an environment presents that environment as its
-# subject, never the branch). Applying an environment creates networks,
-# databases, and IAM roles, which is why the permission set is the
-# administrator policy.
+# The deploy role. Trust is the boundary: only jobs of this repository may
+# assume it, and only three of them: a job in the `staging` environment (a
+# job with an environment presents that environment as its subject, never
+# the branch), a job in the approval-gated `production` environment, and a
+# job on the `release` branch with no environment, which is how production
+# resolves its digests and plans before anyone approves. Applying an
+# environment creates networks, databases, and IAM roles, which is why the
+# permission set is the administrator policy.
 
 resource "aws_iam_openid_connect_provider" "github" {
   url            = "https://token.actions.githubusercontent.com"
@@ -95,8 +97,9 @@ data "aws_iam_policy_document" "deploy_assume" {
       test     = "StringLike"
       variable = "token.actions.githubusercontent.com:sub"
       values = [
-        "repo:${var.github_repository}:environment:dev",
+        "repo:${var.github_repository}:environment:staging",
         "repo:${var.github_repository}:environment:production",
+        "repo:${var.github_repository}:ref:refs/heads/release",
       ]
     }
   }

@@ -1,7 +1,7 @@
 from uuid import UUID
 
 from sqlalchemy import Index
-from sqlalchemy.orm import Mapped
+from sqlalchemy.orm import Mapped, mapped_column
 
 from tadas.om.storage.tables.base import (
     Base,
@@ -25,3 +25,6 @@ class Tasks(IdentifiableMixin, TrackableMixin, SoftDeletableMixin, Base):
     status: Mapped[str]
     assignee_id: Mapped[UUID | None]
     position: Mapped[float]
+    # The compare-and-set column. The server default is for a row an older
+    # build inserts during a rollout; the object model always sends a value.
+    version: Mapped[int] = mapped_column(server_default="1")

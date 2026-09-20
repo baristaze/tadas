@@ -1,8 +1,10 @@
 """The commands. Command mode does one thing and returns (`add`, `ls`, `edit`,
 `done`, `reopen`, `rm`, `mv`); `listen` stays and prints the team's changes
 as they happen. Every command is a thin call into the client; the API
-decides, the CLI shows. Exit codes: 0 done, 1 the API refused, 2 usage,
-3 not signed in, 4 the API is unreachable."""
+decides, the CLI shows. A verb that changes a task reads it first and sends
+the version it read, so a change that raced another is refused (exit 1) and
+never overwrites it. Exit codes: 0 done, 1 the API refused, 2 usage, 3 not
+signed in, 4 the API is unreachable."""
 
 import asyncio
 import json
@@ -105,11 +107,24 @@ def _show(task: TaskView, verb: str, as_json: bool) -> None:
         typer.echo(f"{verb} {short_id(task.id)}  {task.title}")
 
 
+async def _all(client: ApiClient, status: TaskStatus, scope: TaskScope) -> list[TaskView]:
+    """A whole list, page after page until the API says there is no next one."""
+    tasks: list[TaskView] = []
+    cursor: str | None = None
+    while True:
+        page = await client.tasks(status, scope, cursor=cursor, limit=200)
+        tasks += page.items
+        cursor = page.next_cursor
+        if cursor is None:
+            return tasks
+
+
 async def _visible(client: ApiClient) -> list[TaskView]:
     """Open and done team tasks, the pool a short id is resolved over."""
-    open_page = await client.tasks(TaskStatus.open, TaskScope.team, limit=200)
-    done_page = await client.tasks(TaskStatus.done, TaskScope.team, limit=200)
-    return [*open_page.items, *done_page.items]
+    return [
+        *await _all(client, TaskStatus.open, TaskScope.team),
+        *await _all(client, TaskStatus.done, TaskScope.team),
+    ]
 
 
 async def _task(client: ApiClient, reference: str) -> TaskView:
@@ -209,12 +224,12 @@ def ls(
     async def go(client: ApiClient) -> None:
         status = TaskStatus.done if done else TaskStatus.open
         scope = TaskScope.mine if mine else TaskScope.team
-        page = await client.tasks(status, scope, limit=200)
+        tasks = await _all(client, status, scope)
         if as_json:
-            typer.echo(json.dumps([t.model_dump(mode="json") for t in page.items], indent=2))
+            typer.echo(json.dumps([t.model_dump(mode="json") for t in tasks], indent=2))
             return
         names = {u.id: u.display_name for u in await client.users()}
-        typer.echo(task_table(page.items, lambda uid: names.get(uid, "someone") if uid else "-"))
+        typer.echo(task_table(tasks, lambda uid: names.get(uid, "someone") if uid else "-"))
 
     run(go, api)
 
@@ -262,7 +277,7 @@ def edit(
         elif assignee:
             assignee_id = (await _user(client, assignee)).id
         updated = await client.update_task(
-            task.id, title=title, notes=notes, assignee_id=assignee_id
+            task.id, version=task.version, title=title, notes=notes, assignee_id=assignee_id
         )
         _show(updated, "edited", as_json)
 
@@ -275,7 +290,8 @@ def done(ref: Ref, as_json: Json = False, api: Api = None) -> None:
 
     async def go(client: ApiClient) -> None:
         task = await _task(client, ref)
-        _show(await client.update_task(task.id, status=TaskStatus.done), "done", as_json)
+        done = await client.update_task(task.id, version=task.version, status=TaskStatus.done)
+        _show(done, "done", as_json)
 
     run(go, api)
 
@@ -286,7 +302,8 @@ def reopen(ref: Ref, as_json: Json = False, api: Api = None) -> None:
 
     async def go(client: ApiClient) -> None:
         task = await _task(client, ref)
-        _show(await client.update_task(task.id, status=TaskStatus.open), "reopened", as_json)
+        reopened = await client.update_task(task.id, version=task.version, status=TaskStatus.open)
+        _show(reopened, "reopened", as_json)
 
     run(go, api)
 
@@ -297,7 +314,7 @@ def rm(ref: Ref, as_json: Json = False, api: Api = None) -> None:
 
     async def go(client: ApiClient) -> None:
         task = await _task(client, ref)
-        _show(await client.delete_task(task.id), "deleted", as_json)
+        _show(await client.delete_task(task.id, task.version), "deleted", as_json)
 
     run(go, api)
 
@@ -317,7 +334,7 @@ def mv(
     async def go(client: ApiClient) -> None:
         task = await _task(client, ref)
         anchor = None if top else (await _task(client, after or "")).id
-        _show(await client.move_task(task.id, anchor), "moved", as_json)
+        _show(await client.move_task(task.id, anchor, task.version), "moved", as_json)
 
     run(go, api)
 

@@ -12,6 +12,7 @@ from starlette.requests import HTTPConnection
 from tadas.infra.observability import current_trace_id
 from tadas.om.exceptions import NotAuthenticated, PlatformException, ValidationFailed
 from tadas.om.opcontext import AppContext, AppType, IdentityContext, OpContext, RequestContext
+from tadas.om.tenancy.types.socket_ticket import SocketPrincipal
 from tadas.services.api.gateway.observability import request_id_of
 from tadas.services.api.gateway.resolve import container_of
 
@@ -88,15 +89,15 @@ async def current_identity(
 Identity = Annotated[IdentityContext, Depends(current_identity)]
 
 
-async def socket_context(
+async def socket_principal(
     websocket: WebSocket, rctx: Rctx, ticket: Annotated[str, Query()]
-) -> OpContext:
-    """The socket's principal: the tenancy manager consumes the ticket once and
-    re-checks the credential behind it. The handshake is accepted first, so a
-    refusal reaches the client as a close with 4401 on an open socket; a
-    close before the accept is an HTTP 403 handshake failure on the wire,
-    which no client can tell from any other refusal. The handler receives
-    the socket already accepted."""
+) -> SocketPrincipal:
+    """The socket's principal and the instant its authority ends: the tenancy
+    manager consumes the ticket once and re-checks the credential behind it.
+    The handshake is accepted first, so a refusal reaches the client as a
+    close with 4401 on an open socket; a close before the accept is an HTTP
+    403 handshake failure on the wire, which no client can tell from any
+    other refusal. The handler receives the socket already accepted."""
     await websocket.accept()
     tenancy = container_of(websocket).managers.tenancy
     try:
@@ -106,4 +107,4 @@ async def socket_context(
         raise WebSocketException(code=CLOSE_UNAUTHENTICATED, reason=error.code) from None
 
 
-SocketCtx = Annotated[OpContext, Depends(socket_context)]
+Principal = Annotated[SocketPrincipal, Depends(socket_principal)]

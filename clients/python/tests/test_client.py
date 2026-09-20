@@ -22,6 +22,7 @@ TASK = {
     "updated_at": "2026-09-18T12:00:00Z",
     "created_by": "0199a4c0-0000-7000-8000-0000000000aa",
     "deleted_at": None,
+    "version": 1,
 }
 
 
@@ -71,15 +72,29 @@ async def test_update_sends_only_what_was_passed_and_null_unassigns() -> None:
     recorder = Recorder()
     async with client_over(recorder) as client:
         task_id = UUID(TASK["id"])
-        await client.update_task(task_id, status=TaskStatus.done)
-        await client.update_task(task_id, assignee_id=None)
+        await client.update_task(task_id, version=1, status=TaskStatus.done)
+        await client.update_task(task_id, version=2, assignee_id=None)
         assignee = uuid4()
-        await client.update_task(task_id, title="t", assignee_id=assignee)
+        await client.update_task(task_id, version=3, title="t", assignee_id=assignee)
     bodies = [r.read() for r in recorder.requests]
-    assert bodies[0] == b'{"status":"done"}'
-    assert bodies[1] == b'{"assignee_id":null}'
-    assert bodies[2] == f'{{"title":"t","assignee_id":"{assignee}"}}'.encode()
+    assert bodies[0] == b'{"version":1,"status":"done"}'
+    assert bodies[1] == b'{"version":2,"assignee_id":null}'
+    assert bodies[2] == f'{{"version":3,"title":"t","assignee_id":"{assignee}"}}'.encode()
     assert repr(UNSET) == "UNSET"
+
+
+async def test_every_write_carries_the_version_it_was_given() -> None:
+    # The move says it in its body; the delete, which has none, in the query.
+    recorder = Recorder()
+    async with client_over(recorder) as client:
+        task_id, anchor = UUID(TASK["id"]), uuid4()
+        await client.move_task(task_id, anchor, version=4)
+        await client.move_task(task_id, None, version=5)
+        await client.delete_task(task_id, version=6)
+    moved, topped, deleted = recorder.requests
+    assert moved.read() == f'{{"after_id":"{anchor}","version":4}}'.encode()
+    assert topped.read() == b'{"after_id":null,"version":5}'
+    assert deleted.method == "DELETE" and deleted.url.params["version"] == "6"
 
 
 async def test_the_sign_in_flow_uses_the_credential_it_is_given() -> None:

@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 # A new push to a pull request supersedes its running checks; main keeps
-# every run, since deploy.yml follows each successful one.
+# every run, since deploy-staging.yml follows each successful one.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -83,7 +83,7 @@ jobs:
     timeout-minutes: 10
     strategy:
       matrix:
-        root: [shared, environments/dev, environments/prod]
+        root: [shared, environments/staging, environments/prod]
     steps:
       - uses: actions/checkout@v7
       - uses: hashicorp/setup-terraform@v4

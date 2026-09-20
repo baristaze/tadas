@@ -4,10 +4,10 @@ from uuid import UUID
 import pytest
 
 from tadas.om.base import new_id, utcnow
-from tadas.om.exceptions import TenantMismatch
+from tadas.om.exceptions import TenantMismatch, VersionMismatch
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.tasks.storage import TasksStorageInterface
-from tadas.om.tasks.types.filter import TaskCursor, TaskFilter
+from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor, TaskFilter
 from tadas.om.tasks.types.task import Task, TaskScope, TaskStatus
 
 
@@ -23,19 +23,37 @@ def after(task: Task) -> TaskCursor:
     return TaskCursor(updated_at=task.updated_at, id=task.id)
 
 
-def make_row(org_id: UUID, task: Task) -> OutboxRow:
-    """The outbox row a create lands with; the memory outbox the root wires
+def past(task: Task) -> OpenTaskCursor:
+    return OpenTaskCursor(position=task.position, id=task.id)
+
+
+def make_row(org_id: UUID, task: Task, action: str = "created") -> OutboxRow:
+    """The outbox row a write lands with; the memory outbox the root wires
     receives it, the Postgres one inserts it in the same commit."""
     return OutboxRow(
         id=new_id(),
         created_at=utcnow(),
-        kind="tasks.task.created",
+        kind=f"tasks.task.{action}",
         target_id=task.id,
         payload={"title": task.title},
         actor_id=task.created_by,
         request_id=new_id(),
         app="api",
     )
+
+
+async def seed(storage: TasksStorageInterface, org_id: UUID, task: Task) -> None:
+    """Lands a task the way the manager does: through the create primitive.
+    An update never inserts, so there is no other way in."""
+    assert await storage.create_task(org_id, task, make_row(org_id, task)) is True
+
+
+async def bump(storage: TasksStorageInterface, org_id: UUID, task: Task, **changes: object) -> Task:
+    """The manager's copy on update, at the storage: the next version, written
+    against the one the task carries."""
+    changed = task.model_copy(update={**changes, "version": task.version + 1})
+    await storage.update_task(org_id, changed, task.version, make_row(org_id, changed, "updated"))
+    return changed
 
 
 def make_task(
@@ -69,12 +87,11 @@ class TaskStorageContract:
     async def test_round_trip_and_update_by_copy(self, storage: TasksStorageInterface) -> None:
         org = new_id()
         task = make_task(assignee_id=new_id(), position=-2.5)
-        await storage.write_task(org, task)
+        await seed(storage, org, task)
         assert await storage.read_task(org, task.id) == task
-        done = task.model_copy(update={"status": TaskStatus.DONE, "updated_at": utcnow()})
-        await storage.write_task(org, done)
+        done = await bump(storage, org, task, status=TaskStatus.DONE, updated_at=utcnow())
         assert await storage.read_task(org, task.id) == done
-        assert await storage.read_open_tasks(org, team(), limit=10) == []
+        assert await storage.read_open_tasks(org, team(), None, limit=10) == []
         assert await storage.read_done_tasks(org, team(), None, limit=10) == [done]
 
     async def test_create_reports_an_existing_id_and_changes_nothing(
@@ -93,18 +110,45 @@ class TaskStorageContract:
     async def test_reads_are_tenant_scoped(self, storage: TasksStorageInterface) -> None:
         org_a, org_b = new_id(), new_id()
         task = make_task()
-        await storage.write_task(org_a, task)
+        await seed(storage, org_a, task)
         assert await storage.read_task(org_b, task.id) is None
-        assert await storage.read_open_tasks(org_b, team(), limit=10) == []
+        assert await storage.read_open_tasks(org_b, team(), None, limit=10) == []
         assert await storage.read_open_positions(org_b, exclude=None) == []
 
     async def test_write_refuses_another_tenant(self, storage: TasksStorageInterface) -> None:
         org_a, org_b = new_id(), new_id()
         task = make_task()
-        await storage.write_task(org_a, task)
+        await seed(storage, org_a, task)
         with pytest.raises(TenantMismatch):
-            await storage.write_task(org_b, task.model_copy(update={"title": "Stolen"}))
+            await bump(storage, org_b, task, title="Stolen")
         assert await storage.read_task(org_a, task.id) == task
+
+    async def test_update_is_a_compare_and_set_on_the_version(
+        self, storage: TasksStorageInterface
+    ) -> None:
+        # Two writers read the task at version 1. The first lands at version 2;
+        # the second still names version 1, so the row has moved under it and
+        # the write is refused with nothing changed, not merged over the first.
+        org = new_id()
+        task = make_task("as read")
+        await seed(storage, org, task)
+        first = await bump(storage, org, task, title="first writer")
+        with pytest.raises(VersionMismatch):
+            await bump(storage, org, task, title="second writer")
+        assert await storage.read_task(org, task.id) == first
+        assert first.version == 2
+        # The winner's snapshot is current, so the next write from it lands.
+        second = await bump(storage, org, first, title="first writer again")
+        assert (await storage.read_task(org, task.id)) == second and second.version == 3
+
+    async def test_update_never_inserts_a_missing_row(self, storage: TasksStorageInterface) -> None:
+        # A row that is gone (purged between the read and the write) has moved
+        # too: the update reports it and leaves nothing behind.
+        org = new_id()
+        task = make_task("never stored")
+        with pytest.raises(VersionMismatch):
+            await bump(storage, org, task, title="conjured")
+        assert await storage.read_task(org, task.id) is None
 
     async def test_open_list_sorts_by_position_hides_deleted_and_clamps(
         self, storage: TasksStorageInterface
@@ -112,19 +156,33 @@ class TaskStorageContract:
         org = new_id()
         tasks = [make_task(f"t{i}", position=float(p)) for i, p in enumerate([3, -1, 2])]
         for task in tasks:
-            await storage.write_task(org, task)
-        listed = await storage.read_open_tasks(org, team(), limit=10)
+            await seed(storage, org, task)
+        listed = await storage.read_open_tasks(org, team(), None, limit=10)
         assert [t.title for t in listed] == ["t1", "t2", "t0"]
-        assert len(await storage.read_open_tasks(org, team(), limit=2)) == 2
+        assert len(await storage.read_open_tasks(org, team(), None, limit=2)) == 2
         assert await storage.read_open_positions(org, exclude=None) == [-1.0, 2.0, 3.0]
         assert await storage.read_open_positions(org, exclude=tasks[1].id) == [2.0, 3.0]
-        gone = tasks[1].model_copy(update={"deleted_at": utcnow(), "deleted_by": new_id()})
-        await storage.write_task(org, gone)
-        assert [t.title for t in await storage.read_open_tasks(org, team(), limit=10)] == [
+        gone = await bump(storage, org, tasks[1], deleted_at=utcnow(), deleted_by=new_id())
+        assert [t.title for t in await storage.read_open_tasks(org, team(), None, limit=10)] == [
             "t2",
             "t0",
         ]
         assert await storage.read_task(org, gone.id) == gone
+
+    async def test_open_list_pages_by_position_cursor(self, storage: TasksStorageInterface) -> None:
+        # Two tasks share a position (a seed, or a float that met its limit):
+        # the id breaks the tie, in the list and in the cursor alike.
+        org = new_id()
+        tasks = [make_task(f"o{i}", position=float(p)) for i, p in enumerate([1, 2, 2, 3, 4])]
+        for task in tasks:
+            await seed(storage, org, task)
+        first = await storage.read_open_tasks(org, team(), None, limit=2)
+        second = await storage.read_open_tasks(org, team(), past(first[-1]), limit=2)
+        third = await storage.read_open_tasks(org, team(), past(second[-1]), limit=2)
+        assert [t.id for t in [*first, *second, *third]] == [
+            t.id for t in sorted(tasks, key=lambda t: (t.position, t.id))
+        ]
+        assert await storage.read_open_tasks(org, team(), past(third[-1]), limit=2) == []
 
     async def test_done_list_is_newest_first_and_pages_by_cursor(
         self, storage: TasksStorageInterface
@@ -135,7 +193,7 @@ class TaskStorageContract:
             for i in range(5)
         ]
         for task in reversed(tasks):
-            await storage.write_task(org, task)
+            await seed(storage, org, task)
         first = await storage.read_done_tasks(org, team(), None, limit=2)
         assert [t.title for t in first] == ["d0", "d1"]
         second = await storage.read_done_tasks(org, team(), after(first[-1]), limit=2)
@@ -153,12 +211,12 @@ class TaskStorageContract:
         theirs = make_task("theirs", created_by=other, position=3)
         mine_done = make_task("mine, done", created_by=me, status=TaskStatus.DONE)
         for task in (mine_created, mine_assigned, given_away, theirs, mine_done):
-            await storage.write_task(org, task)
-        assert [t.title for t in await storage.read_open_tasks(org, mine(me), limit=10)] == [
+            await seed(storage, org, task)
+        assert [t.title for t in await storage.read_open_tasks(org, mine(me), None, limit=10)] == [
             "created by me",
             "assigned to me",
         ]
-        assert len(await storage.read_open_tasks(org, team(), limit=10)) == 4
+        assert len(await storage.read_open_tasks(org, team(), None, limit=10)) == 4
         assert [t.title for t in await storage.read_done_tasks(org, mine(me), None, limit=10)] == [
             "mine, done"
         ]
@@ -170,16 +228,16 @@ class TaskStorageContract:
         org, elsewhere = new_id(), new_id()
         old, recent, live = make_task("old"), make_task("recent"), make_task("live")
         cut = utcnow()
-        await storage.write_task(
-            org, old.model_copy(update={"deleted_at": cut - timedelta(days=1), "deleted_by": org})
+        await seed(
+            storage,
+            org,
+            old.model_copy(update={"deleted_at": cut - timedelta(days=1), "deleted_by": org}),
         )
-        await storage.write_task(
-            org, recent.model_copy(update={"deleted_at": cut, "deleted_by": org})
-        )
-        await storage.write_task(org, live)
+        await seed(storage, org, recent.model_copy(update={"deleted_at": cut, "deleted_by": org}))
+        await seed(storage, org, live)
         other = make_task("other")
-        await storage.write_task(
-            elsewhere, other.model_copy(update={"deleted_at": cut - timedelta(days=1)})
+        await seed(
+            storage, elsewhere, other.model_copy(update={"deleted_at": cut - timedelta(days=1)})
         )
         assert await storage.purge_deleted(org, cut) == 1
         assert await storage.read_task(org, old.id) is None

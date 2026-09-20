@@ -32,13 +32,16 @@ from tadas.om.opcontext import (
     Role,
 )
 from tadas.om.outbox.impl.relay import OutboxRelayImpl
+from tadas.om.outbox.relay import OutboxRelayInterface
 from tadas.om.outbox.storage.impl.memory import OutboxStorageMemoryImpl
+from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.tenancy.impl.manager import TenancyManagerImpl, TenancyOptions
 from tadas.om.tenancy.impl.operator import TenancyOperatorManagerImpl, TenancyOperatorOptions
 from tadas.om.tenancy.rules import DUMMY_PASSWORD_HASH, hash_password, hash_token, verify_password
 from tadas.om.tenancy.storage.impl.memory import TenancyStorageMemoryImpl
 from tadas.om.tenancy.types.identity import Identity
 from tadas.om.tenancy.types.membership import Membership
+from tadas.om.tenancy.types.socket_ticket import SocketPrincipal
 from tadas.om.tenancy.types.user import User
 
 APP = AppContext(type=AppType.PORTAL, version="portal@test")
@@ -550,6 +553,64 @@ async def test_sessions_are_listed_revoked_and_logged_out(
         await manager.authenticate(request(), first.token)
 
 
+class SpyRelay(OutboxRelayInterface):
+    """The real relay, with every row it was handed kept for the assertions."""
+
+    def __init__(self, relay: OutboxRelayImpl) -> None:
+        self._relay = relay
+        self.rows: list[tuple[UUID, OutboxRow]] = []
+
+    async def relay(self, org_id: UUID, row: OutboxRow) -> bool:
+        self.rows.append((org_id, row))
+        return await self._relay.relay(org_id, row)
+
+    async def relay_pending(self, limit: int) -> int:
+        return await self._relay.relay_pending(limit)
+
+    async def purge_done(self, retention: timedelta) -> int:
+        return await self._relay.purge_done(retention)
+
+
+async def test_revoking_a_session_announces_it_on_the_bus_without_its_token(
+    storage: TenancyStorageMemoryImpl, infra: InfraLocalImpl, outbox: OutboxStorageMemoryImpl
+) -> None:
+    """The socket that session opened lives in some process; the revocation
+    reaches it as any change does, an outbox row the relay publishes. The
+    event is a record, not a credential: its snapshot has no token hash."""
+    relay = SpyRelay(OutboxRelayImpl(outbox, EventStorageMemoryImpl(), infra.get_topics()))
+    manager = TenancyManagerImpl(
+        storage, relay, infra.get_cache(CacheScope.REALTIME_TICKET), TenancyOptions()
+    )
+    published: list[TopicPayload] = []
+
+    async def hear(payload: TopicPayload) -> None:
+        published.append(payload)
+
+    infra.get_topics().subscribe(Topics.ENTITY_CHANGED, "test", hear)
+    _, org = await manager.bootstrap(
+        request(), "Acme", "acme", "ann@example.test", "pw-1234", "Ann"
+    )
+    ctx = await sign_in(manager, "ann@example.test", org.id)
+    other = await sign_in(manager, "ann@example.test", org.id)
+
+    revoked = await manager.revoke_session(ctx, other.security.credential_id)
+    row = next(r for _, r in relay.rows if r.kind == "tenancy.session.revoked")
+    assert row.target_id == revoked.id and row.actor_id == ctx.user_id
+    assert "token_hash" not in row.payload
+    assert row.payload["revoked_at"] is not None and row.payload["user_id"] == str(ctx.user_id)
+    frames = [p for p in published if isinstance(p, EntityChangedPayload)]
+    assert [(f.kind, f.target_id, f.org_id) for f in frames if f.kind.startswith("tenancy.se")] == [
+        ("tenancy.session.revoked", revoked.id, org.id)
+    ]
+
+    # Logging out is the same revocation, announced the same way.
+    out = await manager.logout(ctx)
+    assert [r.target_id for _, r in relay.rows if r.kind == "tenancy.session.revoked"] == [
+        revoked.id,
+        out.id,
+    ]
+
+
 async def test_a_page_of_dead_sessions_never_hides_a_live_one(
     storage: TenancyStorageMemoryImpl, infra: InfraLocalImpl, outbox: OutboxStorageMemoryImpl
 ) -> None:
@@ -740,7 +801,9 @@ async def test_a_tenant_whose_members_have_all_left_is_still_swept(
     assert await storage.read_user(org.id, ann.id) is None
 
 
-async def test_a_socket_ticket_is_redeemed_exactly_once(manager: TenancyManagerImpl) -> None:
+async def test_a_socket_ticket_is_redeemed_exactly_once(
+    manager: TenancyManagerImpl, storage: TenancyStorageMemoryImpl
+) -> None:
     _, org = await manager.bootstrap(
         request(), "Acme", "acme", "ann@example.test", "pw-1234", "Ann"
     )
@@ -749,10 +812,14 @@ async def test_a_socket_ticket_is_redeemed_exactly_once(manager: TenancyManagerI
     issued = await manager.issue_ticket(ctx)
     assert issued.ticket.startswith("tkt_")
     assert issued.expires_at > utcnow()
-    socket_ctx = await manager.redeem_ticket(request(), issued.ticket)
+    principal = await manager.redeem_ticket(request(), issued.ticket)
+    socket_ctx = principal.ctx
     assert socket_ctx.user_id == ctx.user_id
     assert socket_ctx.security.credential_kind is CredentialKind.SOCKET_TICKET
     assert socket_ctx.security.credential_id == ctx.security.credential_id
+    # The socket's authority ends with the session behind the ticket.
+    session = await storage.read_session(org.id, ctx.security.credential_id)
+    assert session is not None and principal.expires_at == session.expires_at
     with pytest.raises(InvalidCredential):
         await manager.redeem_ticket(request(), issued.ticket)
     with pytest.raises(NotAuthorized):
@@ -774,7 +841,7 @@ async def test_concurrent_redemptions_admit_one_socket(manager: TenancyManagerIm
         *(manager.redeem_ticket(request(), issued.ticket) for _ in range(5)),
         return_exceptions=True,
     )
-    admitted = [o for o in outcomes if isinstance(o, OpContext)]
+    admitted = [o for o in outcomes if isinstance(o, SocketPrincipal)]
     refused = [o for o in outcomes if isinstance(o, InvalidCredential)]
     assert len(admitted) == 1 and len(refused) == 4
 
@@ -792,7 +859,7 @@ async def test_the_ticket_row_decides_while_the_cache_is_down(
         *(manager.redeem_ticket(request(), issued.ticket) for _ in range(5)),
         return_exceptions=True,
     )
-    assert len([o for o in outcomes if isinstance(o, OpContext)]) == 1
+    assert len([o for o in outcomes if isinstance(o, SocketPrincipal)]) == 1
     assert len([o for o in outcomes if isinstance(o, InvalidCredential)]) == 4
     with pytest.raises(InvalidCredential):
         await manager.redeem_ticket(request(), issued.ticket)
@@ -817,7 +884,8 @@ async def test_redeeming_a_ticket_rechecks_the_credential_behind_it(
     )
     key_ctx = await manager.authenticate(request(), key.key)
     from_key = await manager.redeem_ticket(request(), (await manager.issue_ticket(key_ctx)).ticket)
-    assert from_key.security.role is Role.MEMBER
+    assert from_key.ctx.security.role is Role.MEMBER
+    assert from_key.expires_at == key.api_key.expires_at
 
 
 async def test_expired_tickets_are_refused(

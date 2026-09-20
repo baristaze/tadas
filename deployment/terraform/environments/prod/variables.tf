@@ -16,12 +16,12 @@ variable "environment" {
 }
 
 variable "api_image" {
-  description = "The API image by digest (<registry>/tadas-api@sha256:...); deploy.yml passes it."
+  description = "The API image by digest (<registry>/tadas-api@sha256:...); the deploy workflows pass it."
   type        = string
 }
 
 variable "maintenance_image" {
-  description = "The maintenance worker image by digest; deploy.yml passes it."
+  description = "The maintenance worker image by digest; the deploy workflows pass it."
   type        = string
 }
 
@@ -31,7 +31,7 @@ variable "dns_zone_name" {
 }
 
 variable "api_domain_name" {
-  description = "The API's public name, e.g. api.tadas.fyi, or dev-api.tadas.fyi for dev."
+  description = "The API's public name, e.g. api.tadas.fyi, or api.staging.tadas.fyi for staging."
   type        = string
 
   validation {
@@ -41,7 +41,7 @@ variable "api_domain_name" {
 }
 
 variable "app_domain_name" {
-  description = "The portal's public name, e.g. app.tadas.fyi, or dev-app.tadas.fyi for dev."
+  description = "The portal's public name, e.g. app.tadas.fyi, or app.staging.tadas.fyi for staging."
   type        = string
 
   validation {
@@ -62,7 +62,7 @@ variable "portal_sentry_dsn" {
   default     = ""
 }
 
-# Scale. Everything below is what differs from dev: the module graph does not.
+# Scale. Everything below is what differs from staging: the module graph does not.
 
 variable "vpc_cidr" {
   type    = string

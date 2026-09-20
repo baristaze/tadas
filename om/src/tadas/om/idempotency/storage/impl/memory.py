@@ -48,7 +48,7 @@ class IdempotencyStorageMemoryImpl(MemoryStorageBase, IdempotencyStorageInterfac
             stored = self._find(org_id, user_id, key)
             if stored is None or not stored.pending or stored.attempt_id != attempt_id:
                 return False
-            del self._records[stored.id]
+            self._put(self._records, org_id, stored.model_copy(update={"attempt_id": None}))
             return True
 
     async def purge_records(
@@ -58,7 +58,8 @@ class IdempotencyStorageMemoryImpl(MemoryStorageBase, IdempotencyStorageInterfac
             gone = [
                 record.id
                 for record in self._rows(self._records, org_id)
-                if record.created_at < (pending_before if record.pending else finished_before)
+                if record.created_at
+                < (pending_before if record.pending and not record.released else finished_before)
             ]
             for record_id in gone:
                 del self._records[record_id]
@@ -75,11 +76,27 @@ class IdempotencyStorageMemoryImpl(MemoryStorageBase, IdempotencyStorageInterfac
     ) -> IdempotencyRecord | None:
         async with self._lock:
             stored = self._find(org_id, user_id, key)
-            if stored is None or not stored.pending or stored.created_at >= abandoned_before:
+            if (
+                stored is None
+                or not stored.pending
+                or stored.released
+                or stored.created_at >= abandoned_before
+            ):
                 return None
             taken = stored.model_copy(update={"created_at": restarted_at, "attempt_id": attempt_id})
             self._put(self._records, org_id, taken)
             return taken
+
+    async def rearm_released(
+        self, org_id: UUID, user_id: UUID, key: str, restarted_at: datetime, attempt_id: UUID
+    ) -> IdempotencyRecord | None:
+        async with self._lock:
+            stored = self._find(org_id, user_id, key)
+            if stored is None or not stored.released:
+                return None
+            armed = stored.model_copy(update={"created_at": restarted_at, "attempt_id": attempt_id})
+            self._put(self._records, org_id, armed)
+            return armed
 
     def _find(self, org_id: UUID, user_id: UUID, key: str) -> IdempotencyRecord | None:
         for record in self._rows(self._records, org_id):

@@ -1,7 +1,7 @@
 # The module graph is identical in every environment; only variables
 # differ. Each application process is one instance of the service module.
-# Production promotes the images dev already ran, by digest, behind an
-# approval gate: the image variables are the digests deploy.yml passes.
+# Production promotes the images staging already ran, by digest, behind an
+# approval gate: the image variables are the digests the deploy workflows pass.
 
 locals {
   # The environment every process reads, mirrored from .env.example. Every
@@ -150,6 +150,9 @@ module "domain_records" {
 }
 
 # A stateless service rolls with one extra replica (the module's defaults).
+# Before it rolls, the migration runs on the new image as a one-off task; a
+# migration is compatible with the release before it (expand and contract),
+# so the old tasks serve the new schema until the roll ends.
 module "api" {
   source = "../../modules/service"
 
@@ -181,11 +184,14 @@ module "api" {
     "CMD-SHELL",
     "python -c \"import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz').status == 200 else 1)\"",
   ]
+
+  pre_rollout_command = ["tadas-api", "migrate", "--all"]
 }
 
 # A worker holds leases, so a rollout never runs more workers than desired:
 # at most 100% during a deployment, and the old replica stops before its
-# replacement starts. The stop timeout covers the drain.
+# replacement starts. The stop timeout covers the drain. It rolls after the
+# API's migration ran.
 module "maintenance" {
   source = "../../modules/service"
 
@@ -216,4 +222,5 @@ module "maintenance" {
   deployment_maximum_percent         = 100
   deployment_minimum_healthy_percent = floor(100 * (var.maintenance_desired_count - 1) / var.maintenance_desired_count)
   stop_timeout_seconds               = 120
+  rollout_after                      = module.api.rollout_gate
 }

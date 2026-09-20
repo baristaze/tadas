@@ -15,3 +15,8 @@ output "service_name" {
 output "task_role_arn" {
   value = aws_iam_role.task.arn
 }
+
+output "rollout_gate" {
+  description = "Known once this instance's pre-rollout task ran; another instance passes it as rollout_after."
+  value       = var.pre_rollout_command == null ? "" : terraform_data.pre_rollout[0].id
+}

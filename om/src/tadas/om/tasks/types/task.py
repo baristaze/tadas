@@ -24,3 +24,7 @@ class Task(Identifiable, Trackable, SoftDeletable):
     # Manual order of the open list, ascending; the top is the smallest. Done
     # tasks keep theirs but sort by updated_at instead.
     position: float = 0.0
+    # Optimistic concurrency: the manager's copy increments it on every write,
+    # and the write lands only when the stored row still has the version the
+    # caller read. A snapshot that says another version is stale.
+    version: int = 1

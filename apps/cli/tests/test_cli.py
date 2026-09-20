@@ -5,12 +5,14 @@ import json
 
 import httpx
 import pytest
-from api_support import OWNER
+from api_support import OWNER, run, seed_request
 from cli_support import BOB, Stack
 from typer.testing import CliRunner
 
 from tadas.apps.cli import config, main
 from tadas.client.client import ApiClient
+from tadas.om.base import new_id, utcnow
+from tadas.om.tasks.types.task import Task
 
 
 def test_login_keeps_a_session_and_whoami_reads_it(stack: Stack) -> None:
@@ -92,6 +94,36 @@ def test_the_task_verbs_in_sequence(stack: Stack) -> None:
     removed = stack.tadas("rm", short)
     assert removed.output == f"deleted {short}  Migrate the DB\n"
     assert stack.tadas("ls").output.count("\n") == 2
+
+
+def test_ls_lists_past_the_page_the_api_clamps_at(stack: Stack) -> None:
+    # 201 open tasks against the API's clamp of 200: `ls` follows the cursor
+    # and shows every one, and a short id resolves on the second page too.
+    token = stack.session_token(OWNER["email"], OWNER["password"])
+    ctx = run(stack.container.managers.tenancy.authenticate(seed_request(), token))
+    manager = stack.container.managers.tasks
+    now = utcnow()
+    for i in range(201):
+        run(
+            manager.create_task(
+                ctx,
+                Task(
+                    id=new_id(),
+                    created_at=now,
+                    updated_at=now,
+                    created_by=ctx.user_id,
+                    updated_by=ctx.user_id,
+                    title=f"t{i}",
+                ),
+            )
+        )
+    listed = stack.tadas("ls")
+    assert listed.exit_code == 0, listed.output
+    lines = listed.output.splitlines()[1:]
+    assert len(lines) == 201 and lines[0].endswith("t200") and lines[-1].endswith("t0")
+    last_short = lines[-1].split("  ")[0]
+    done = stack.tadas("done", last_short)
+    assert done.exit_code == 0 and done.output == f"done {last_short}  t0\n"
 
 
 def test_short_ids_and_members_that_do_not_resolve(stack: Stack) -> None:

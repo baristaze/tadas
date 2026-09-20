@@ -20,6 +20,7 @@ from tadas.om.tenancy.types.issued import IssuedApiKey, IssuedLogin, IssuedSessi
 from tadas.om.tenancy.types.membership import Membership
 from tadas.om.tenancy.types.org import Org
 from tadas.om.tenancy.types.session import Session
+from tadas.om.tenancy.types.socket_ticket import SocketPrincipal
 from tadas.om.tenancy.types.user import User
 
 
@@ -116,14 +117,17 @@ class TenancyManagerInterface(ABC):
         org_id: UUID,
         credential_kind: CredentialKind,
         credential_id: UUID,
-    ) -> OpContext:
-        """Platform-internal: re-checks the credential behind a redeemed socket ticket."""
+    ) -> SocketPrincipal:
+        """Platform-internal: re-checks the credential behind a redeemed socket
+        ticket and yields the socket's context with the credential's expiry,
+        the bound on the socket's authority."""
         ...
 
     @abstractmethod
-    async def redeem_ticket(self, rctx: RequestContext, ticket: str) -> OpContext:
+    async def redeem_ticket(self, rctx: RequestContext, ticket: str) -> SocketPrincipal:
         """Platform-internal: consumes a socket ticket exactly once and re-checks the
-        credential behind it. The gateway holds a ticket, not a principal."""
+        credential behind it. The gateway holds a ticket, not a principal; what
+        it gets back is the principal and the instant its authority ends."""
         ...
 
     @abstractmethod

@@ -108,11 +108,33 @@ context on keeps the stage the callee needs.
   dead letter, named by a `work.item.failed` event in the tenant's
   stream and counted on the outcome counter. Done or failed items are
   purged by the sweep after the work retention (30 days).
-- `tasks`: the to-do items (`Task`: title, notes, status), listed by a
-  `TaskFilter` (team or mine) and paged by a `TaskCursor`, both passed
+- `tasks`: the to-do items (`Task`: title, notes, status, position,
+  version), listed by a `TaskFilter` (team or mine) and paged by a
+  cursor, `OpenTaskCursor` over (position, id) for the open list and
+  `TaskCursor` over (updated_at, id) for the done one, all passed
   unchanged from the manager to storage; the visibility, cursor, and
   placement rules are pure functions in `tasks.rules`, which the memory
-  impl calls and the Postgres impl mirrors in SQL.
+  impl calls and the Postgres impl mirrors in SQL. A task carries a
+  `version` because it is edited from two windows and two terminals at
+  once ([ADR 0008](adr/0008-tasks-carry-a-version.md)): the manager's
+  copy increments it on update, move, and soft delete, and the storage
+  write is a compare-and-set, `WHERE version = :expected` in one
+  statement in Postgres and the same check and write under the lock in
+  the memory impl, which raises `VersionMismatch`, a `Conflict` (409
+  `version_mismatch`), when the row is at another version or is gone.
+  The update never inserts; the create primitive is the only way in. So
+  a snapshot that missed a write is refused, never merged over it, and
+  an edit that raced a delete finds the task gone and cannot bring it
+  back. A list answers a `TaskPage` (items, `has_more`): the manager
+  clamps the page size at 200, asks storage for one row more, and keeps
+  it out, so `has_more` is a fact about the rows and a list the clamp
+  cut still says a page follows. The API encodes the cursor opaquely
+  with the list it belongs to, refuses one from the other list, and
+  answers a real `next_cursor` for both lists. `TaskView` shows the
+  version, and every write names the one the caller read: the update
+  and the move in their bodies, the delete as a required `version` query
+  parameter, since a DELETE has no body and `If-Match` would mean entity
+  tags, 412, and an `ETag` on every response.
 
 - `idempotency`: the durable outcome of a request the caller may retry,
   one record per (tenant, user, key); the gateway begins it before a
@@ -138,7 +160,16 @@ context on keeps the stage the callee needs.
   has passed. The gateway logs and counts the refusal (`attempt_lost`)
   and answers with what the attempt produced, which is the row the retry
   found. A failure (a `5xx`) is not an outcome: the marker is released
-  and the retry runs again; a refusal (a `4xx`) is stored and replayed,
+  and the retry runs again. The release keeps the record with its digest
+  and its target id and clears only the attempt, so a released marker
+  has no attempt and no outcome; the next retry re-arms it in one
+  conditional write on that state (a new attempt token, the lease
+  restarted) and reruns with the marker's id, so the retry that follows
+  a failure after the row landed finds the row instead of creating a
+  second one, and of two retries racing for a released marker exactly
+  one re-arms it while the other is told to wait. A held marker is
+  taken over only past the pending lease; a released one is re-armed at
+  once, never taken over. A refusal (a `4xx`) is stored and replayed,
   its envelope rewritten with the replaying request's id, the one its
   header carries. The stored outcome of a create that issued a secret is
   the view with the secret absent: a wire view declares its secret fields
@@ -147,10 +178,10 @@ context on keeps the stage the callee needs.
   carries the key, a replay answers with the row, `key` null, and
   `Idempotent-Replayed: true`, and the secret exists in one place, as a
   digest. The key lands in a unique index, so the gateway refuses one
-  longer than 255 characters with a 422. The sweep purges finished records
-  after the idempotency retention (24 hours; a retry that late begins
-  afresh) and pending ones past ten times the pending lease, a marker no
-  retry came back for.
+  longer than 255 characters with a 422. The sweep purges finished and
+  released records after the idempotency retention (24 hours; a retry
+  that late begins afresh) and held pending ones past ten times the
+  pending lease, a marker no retry came back for.
 - `outbox`: the transactional outbox. A manager that writes a core row
   hands the storage an `OutboxRow` (`kind`, `target_id`, the record's
   snapshot as `payload`, the actor and the request) and the storage base
@@ -191,8 +222,11 @@ Every table belongs to one database role (`core`, `activity`, `queue`,
 pool, and the migration chain. Migrations are hand-written SQL under
 `om/migrations/sql/<role>/` with Alembic wrappers; `core`, `activity`,
 and `queue` have chains today, and `admin` has no table yet. Optimistic
-concurrency stays opt-in and no table carries a `version` today: nothing
-in Tadas has concurrent edits that matter, so last writer wins.
+concurrency stays opt-in: `tasks` is the one table that carries a
+`version`, because a task is edited from two windows and two terminals
+at once ([ADR 0008](adr/0008-tasks-carry-a-version.md)); every other
+table has no concurrent edits that matter, so there the last writer
+wins.
 
 ## Infrastructure (`infra/`)
 
@@ -293,12 +327,45 @@ everything in-process for tests.
   close with code 4401 on the open socket, which both clients read as
   "sign in again" (a close before the accept would reach the wire as an
   HTTP 403 handshake failure, indistinguishable from any other refusal).
+  An admitted socket holds the context its ticket produced for the life
+  of the connection, and that life is bounded twice. A revocation
+  reaches it: revoking a session (`revoke_session`, `logout`) lands an
+  outbox row `tenancy.session.revoked` beside the session, as removing
+  a member lands `tenancy.user.deleted` and revoking a key
+  `tenancy.api_key.deleted`, the relay publishes each on the bus like
+  any change, and the realtime service in every process hears it and
+  closes the sockets it names with 4401 (the one the session or the key
+  opened, every one of the removed user), in whichever process they
+  live. The expiry is the bound that covers a frame the bus dropped:
+  the redemption yields the context beside the session's or the api
+  key's expiry (`SocketPrincipal`), and the handler closes the socket
+  with 4401 at that instant whatever the client does. Either way the
+  clients sign in again, as they do for a refused ticket. A role change
+  is not a revocation: the socket carries hints, and the next request
+  sees the new role.
   The login route takes the request stage alone.
   Per socket the process keeps one bounded send buffer
   (`realtime/send_buffer.py`, `TADAS_REALTIME_SEND_BUFFER_SIZE`) and a
   drainer; a full buffer drops the oldest frame and the client replays.
   A peer that drops mid-stream ends the drainer with a disconnect; the
   teardown treats that as the normal end of a socket, not an error.
+  Two pings keep a socket alive, one per direction, both pinned with the
+  load balancer's idle timeout in `deployment/realtime-timeouts.json`
+  (`realtime/timeouts.py`, held to the file by
+  `test_realtime_timeouts.py`): the client's application ping every 25
+  seconds, whose pong carries the head seq, and the server's protocol
+  ping every 20 seconds, which uvicorn sends (`ws_ping_interval`,
+  `ws_ping_timeout` in `server_options`) and which closes the socket
+  when no pong arrives within 20 more; the two together stay below the
+  60 second idle timeout, so the server, not the load balancer, ends a
+  dead socket. The protocol ping is answered by the client's socket
+  implementation, not by the app: a browser answers it from the tab
+  whose timers it has throttled in the background, so that tab keeps
+  its socket and only its head-seq check slows down. There is no
+  heartbeat thread beside the event loop, on purpose: the process is
+  one loop that must never block, a blocked loop fails every request
+  and the health check with it, and a thread that kept pinging through
+  that would only hide it.
   No service calls another today, so no internal credential is minted;
   `CredentialKind.INTERNAL` is what the seeding and the worker's service
   contexts carry. The sweep's service contexts are minted for the tenant,
@@ -349,10 +416,16 @@ everything in-process for tests.
   `tadas.infra.observability`.
 - `apps/portal` (`@tadas/portal`): React, Vite, TanStack Query,
   Zustand; sign-in, the tasks screen at `/` (My and Team's tasks, open in
-  manual order, done newest first with Show more, inline edit, drag to
-  reorder), settings at `/settings` (members, api keys, sign-out), and one
-  realtime channel that invalidates queries by the entity name inside a
-  push's `kind`. The socket's loop (`src/realtime/channel.ts`: ticket,
+  manual order and done newest first, both paged by the server's cursor
+  with Show more, inline edit, drag to reorder), settings at `/settings`
+  (members, api keys, sign-out), and one realtime channel that
+  invalidates queries by the entity name inside a push's `kind`. Every
+  write sends the version of the task the query cache holds; a write
+  the server refused because the task changed since (the drag reorder
+  is the natural case, from two windows) is said in one line and the
+  list refetched. The reorder is one flow with its effects handed in
+  (`src/features/tasks/reorder.ts`), so the stale case runs in a test
+  without React. The socket's loop (`src/realtime/channel.ts`: ticket,
   reconnect with backoff, the degraded polling mode, the cursor and its
   replay) has no React in it and runs in its test over a fake socket and
   fake timers; the provider hands it the query cache, the transport
@@ -408,7 +481,10 @@ everything in-process for tests.
   mode (`add`, `ls`, `edit`, `done`, `reopen`, `rm`, `mv`) does one call
   and exits with 0, 1 (refused), 2 (usage), 3 (not signed in), or 4
   (unreachable: any failure of the wire, refused, timed out, or reset;
-  the API did not decide); `listen` prints every task change as one line (who did
+  the API did not decide); a verb that changes a task reads it first and
+  sends the version it read, so a change that raced another is refused
+  (exit 1) and never overwrites it, and `ls` follows the cursor to the
+  end of the list; `listen` prints every task change as one line (who did
   what to which task) as it arrives on the channel, `--mine` for the
   caller's own. `login` keeps a session token under `TADAS_HOME`;
   `TADAS_TOKEN` (a session token or an api key) and `TADAS_API_URL` win
@@ -427,12 +503,13 @@ everything in-process for tests.
 - `terraform/`: every cloud resource. `modules/` holds one module per
   resource family (`network`, `cluster`, `database`, `cache`, `queue`,
   `buckets`, `secrets`, `load_balancer`, `certificate`, `domain_records`,
-  `portal`, `service`); `environments/dev` and `environments/prod`
+  `portal`, `service`); `environments/staging` and `environments/prod`
   instantiate the same graph and differ only in variables, including
   the image digests; `shared/` holds the registry, the state bucket, and
   the deploy role. The load balancer's idle timeout is read from
-  `deployment/realtime-timeouts.json`, the file the api and the portal
-  pin their ping interval against. The worker's service instance
+  `deployment/realtime-timeouts.json`, the file the api pins its
+  protocol ping against and the api and the portal pin the client's
+  ping interval against. The worker's service instance
   caps a rollout at 100% of desired because a worker holds leases. Every
   task runs an ADOT collector sidecar that scrapes the process's
   `/metrics` into CloudWatch (namespace `Tadas`) and forwards its traces to
@@ -442,29 +519,43 @@ everything in-process for tests.
 - `.github/workflows/ci.yml`: the fast gate, the integration job (which
   runs `make migrate-check` right after `make migrate`), an image build
   per Dockerfile, and `terraform fmt -check` plus `validate` per root.
-  `deploy.yml` builds and pushes both images by digest and the portal
-  once, plans dev (the plan goes to the job summary, its text to the
-  `dev-plan` artifact, the saved plan to the state bucket), pauses for
-  `human_approval`, applies the approved plan, runs the migration as a
-  one-off task (`scripts/cloud_migrate.sh`), publishes the portal
-  (`scripts/deploy_portal.sh`), and then, behind the `production`
-  environment's approval, applies production with the same digests and
-  publishes the same portal files. Its first job checks the repository
+- Two branches, two deploy workflows, one approval
+  ([ADR 0008](adr/0008-main-is-staging-release-is-production.md)).
+  `main` is staging: `deploy-staging.yml` follows every green `ci` run
+  on `main`, builds and pushes both images tagged by the commit `ci`
+  ran, keeps the portal build by the commit in the state bucket, and
+  plans and applies staging with no approval (the plan text goes to the
+  job summary and the `staging-plan` artifact). `release` is production,
+  moved only by a fast-forward from `main` that `release.yml` makes when
+  a person dispatches it (a pull request into `release` fails its one
+  check). A push to `release` runs `deploy-production.yml`: a guard that
+  refuses unless `release` is an ancestor of `main` and the `production`
+  environment carries a required-reviewers rule, a job that resolves the
+  digests and the portal build staging made for that commit and refuses
+  a commit staging never built, a plan job (text to the
+  `production-plan` artifact, the saved plan to the state bucket), and,
+  behind the `production` environment's approval, an apply of exactly
+  that plan and the publication of the same portal files. Nothing is
+  rebuilt for production. The migration is inside the apply: the
+  `service` module runs the API's `pre_rollout_command` as a one-off
+  task on every new task definition before the service rolls, the
+  worker rolls after it, and every service waits for steady state, so a
+  failed migration or a rolled-back rollout fails the apply with the old
+  tasks still serving; a migration is compatible with the release before
+  it (expand and contract), so the old tasks serve the new schema
+  meanwhile. The first job of each workflow checks the repository
   variables (`AWS_DEPLOY_ROLE_ARN`, `TF_STATE_BUCKET`, `DNS_ZONE_NAME`);
-  while they are empty every cloud job is skipped, the summary says so,
-  and the run stays green.
-- `.github/workflows/human_approval.yml`: the pause, a reusable workflow
-  with one job bound to the `human_approval` GitHub environment, whose
-  required reviewer is the owner. A job requires it with `needs:` after
-  `uses: ./.github/workflows/human_approval.yml`; Approve lets the run
-  go on, Reject cancels what needs it. `deploy.yml` requires it in one
-  place, before the first `terraform apply`. `human_approval_smoke.yml`
-  is its self-test, run by hand. [The deploy runbook](runbooks/deploy.md)
-  says what to check at the pause.
+  while they are empty staging skips every cloud job, says so in the
+  summary, and stays green, and production fails. [The deploy
+  runbook](runbooks/deploy.md) says how to cut a release, what to check
+  at the approval, and how to roll back.
 - Public names are inputs: the API at `api_domain_name` (the load balancer,
-  e.g. `api.tadas.fyi`, `dev-api.tadas.fyi` for dev) and the portal at
+  e.g. `api.tadas.fyi`, `api.staging.tadas.fyi` for staging) and the portal at
   `app_domain_name` (a private S3 bucket behind CloudFront, e.g.
-  `app.tadas.fyi`), with certificates and records in one Route 53 zone. The
+  `app.tadas.fyi`), with certificates and records in one Route 53 zone.
+  Each environment has one base domain, the zone for production and
+  `staging.` under it for staging, and the workflows derive both names
+  from the one `DNS_ZONE_NAME` variable. The
   portal reads `/config.json`, written per environment by Terraform, before
   it renders, and calls the API cross-origin; locally it falls back to the
   `VITE_` build variables. The distribution's response headers policy,

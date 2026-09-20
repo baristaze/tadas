@@ -130,6 +130,15 @@ make migrate-check     # every role's ORM metadata against the migrated schema
 make test-integration  # the same storage contracts over Postgres, plus migrations
 ```
 
+## Deploy
+
+`main` is staging and `release` is production. Every merge to `main`
+deploys staging with no approval; production moves when a person
+dispatches the `release` workflow, which fast-forwards `release` to
+`main`, and then approves the production plan. Nobody commits to
+`release`. [docs/runbooks/deploy.md](docs/runbooks/deploy.md) has the
+steps, the rollback, and the protection to set on the branch.
+
 ## Layout
 
 - `om/` the object model: entities, managers, storage, migrations
@@ -142,4 +151,4 @@ make test-integration  # the same storage contracts over Postgres, plus migratio
 - `deployment/` compose, images, Terraform; the portal's distribution
   sends the security headers, a `Content-Security-Policy` naming its own
   origin and the API among them
-- `docs/` as built, ADRs, runbooks; `scripts/` dev.sh and the cloud migration runner
+- `docs/` as built, ADRs, runbooks; `scripts/` dev.sh, the portal publisher, and the by-hand migration runner
