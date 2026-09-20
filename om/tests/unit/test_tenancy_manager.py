@@ -122,8 +122,11 @@ def manager(
 
 
 @pytest.fixture
-def operator(storage: TenancyStorageMemoryImpl) -> TenancyOperatorManagerImpl:
-    return TenancyOperatorManagerImpl(storage, TenancyOperatorOptions())
+def operator(
+    storage: TenancyStorageMemoryImpl, infra: InfraLocalImpl, outbox: OutboxStorageMemoryImpl
+) -> TenancyOperatorManagerImpl:
+    relay = OutboxRelayImpl(outbox, EventStorageMemoryImpl(), infra.get_topics())
+    return TenancyOperatorManagerImpl(storage, relay, TenancyOperatorOptions())
 
 
 async def sign_in(manager: TenancyManagerImpl, email: str, org_id: UUID) -> OpContext:
@@ -848,8 +851,14 @@ async def test_operator_gate_admits_only_operators_signing_in(
 
 
 async def test_operators_soft_delete_an_org_and_its_principals_stop_resolving(
-    manager: TenancyManagerImpl, operator: TenancyOperatorManagerImpl
+    manager: TenancyManagerImpl, operator: TenancyOperatorManagerImpl, infra: InfraLocalImpl
 ) -> None:
+    published: list[TopicPayload] = []
+
+    async def hear(payload: TopicPayload) -> None:
+        published.append(payload)
+
+    infra.get_topics().subscribe(Topics.ENTITY_CHANGED, "test", hear)
     _, org = await manager.bootstrap(
         request(), "Acme", "acme", "ann@example.test", "pw-1234", "Ann"
     )
@@ -872,11 +881,56 @@ async def test_operators_soft_delete_an_org_and_its_principals_stop_resolving(
     with pytest.raises(InvalidCredential):
         await manager.authenticate(request(), issued.token)
     assert (await manager.login(request(), "ann@example.test", "pw-1234")).memberships == ()
-    assert [c.org_id for c in await manager.service_contexts(request())] != [org.id]
+    # The deletion is announced into the tenant's stream, so every socket of
+    # the tenant closes, in whichever process holds it; the operator's identity
+    # is the actor, since an operator has no user in the tenant.
+    frames = [p for p in published if isinstance(p, EntityChangedPayload)]
+    assert [(f.kind, f.target_id, f.org_id, f.actor_id) for f in frames if "org" in f.kind] == [
+        ("tenancy.org.deleted", org.id, org.id, admin.identity_id)
+    ]
+    # The sweep still visits the deleted tenant: its rows are the sweep's to purge.
+    assert org.id in [c.org_id for c in await manager.service_contexts(request())]
     with pytest.raises(NotFound):
         await operator.delete_org(admin, org.id)
     with pytest.raises(NotFound):
         await operator.delete_org(admin, new_id())
+
+
+async def test_a_deleted_orgs_rows_are_purged_once_the_retention_has_passed(
+    manager: TenancyManagerImpl,
+    operator: TenancyOperatorManagerImpl,
+    storage: TenancyStorageMemoryImpl,
+    infra: InfraLocalImpl,
+) -> None:
+    _, org = await manager.bootstrap(
+        request(), "Acme", "acme", "ann@example.test", "pw-1234", "Ann"
+    )
+    ann = await sign_in(manager, "ann@example.test", org.id)
+    await manager.create_api_key(ann, "ci", Role.MEMBER)
+    await manager.issue_ticket(ann)
+    await manager.bootstrap(
+        request(), "Ops", "ops", "root@example.test", "pw-1234", "Root", operator=True
+    )
+    admin = await manager.admit_operator(
+        await manager.authenticate_login(
+            request(), (await manager.login(request(), "root@example.test", "pw-1234")).token
+        )
+    )
+    await operator.delete_org(admin, org.id)
+    sweep = next(c for c in await manager.service_contexts(request()) if c.org_id == org.id)
+    assert sweep.role is Role.SERVICE and sweep.user_id == EMPTY_UUID
+    # Within the retention nothing of the tenant is deleted in its own right, so
+    # nothing goes; past it, every row of the tenant goes and the org row stays.
+    assert await manager.purge_deleted(sweep) == 0
+    no_retention = make_manager(storage, infra, TenancyOptions(retention=timedelta(0)))
+    assert await no_retention.purge_deleted(sweep) == 5, "user, membership, key, session, ticket"
+    assert await storage.read_users(org.id, limit=10) == []
+    assert await storage.read_memberships(org.id, limit=10) == []
+    assert await storage.read_api_keys(org.id, limit=10) == []
+    assert await storage.read_sessions(org.id, ann.user_id, utcnow(), 10) == []
+    tombstone = await storage.read_org(org.id)
+    assert tombstone is not None and tombstone.deleted_at is not None
+    assert await no_retention.purge_deleted(sweep) == 0
 
 
 async def test_resume_and_service_contexts(manager: TenancyManagerImpl) -> None:

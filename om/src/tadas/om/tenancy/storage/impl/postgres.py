@@ -64,8 +64,8 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
             result = await session.execute(stmt)
             return [to_model(row, Org) for row in result.scalars()]
 
-    async def write_org(self, org_id: UUID, org: Org) -> None:
-        await self._upsert(Orgs, org_id, org)
+    async def write_org(self, org_id: UUID, org: Org, outbox_row: OutboxRow | None = None) -> None:
+        await self._upsert(Orgs, org_id, org, outbox_row)
 
     async def create_org_with_owner(
         self,
@@ -346,6 +346,15 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
                 .returning(SocketTickets.id)
             )
             purged += len((await session.execute(tickets)).scalars().all())
+            await session.commit()
+        return purged
+
+    async def purge_tenant(self, org_id: UUID) -> int:
+        purged = 0
+        async with self._session_for(Users) as session:
+            for table in (Users, Memberships, ApiKeys, Sessions, SocketTickets):
+                stmt = delete(table).where(table.org_id == org_id).returning(table.id)
+                purged += len((await session.execute(stmt)).scalars().all())
             await session.commit()
         return purged
 

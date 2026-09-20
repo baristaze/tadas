@@ -24,13 +24,15 @@ PROJECTIONS: dict[Topics, Callable[[TopicPayload], EntityChangedView]] = {
 """The topics the channel carries, each with the view its payload is projected
 onto before a frame is offered. A topic outside this map never reaches a client."""
 
-REVOCATIONS: dict[str, tuple[Literal["credential", "user"], str]] = {
+REVOCATIONS: dict[str, tuple[Literal["credential", "user", "org"], str]] = {
     "tenancy.session.revoked": ("credential", CREDENTIAL_REVOKED),
     "tenancy.api_key.deleted": ("credential", CREDENTIAL_REVOKED),
     "tenancy.user.deleted": ("user", MEMBERSHIP_ENDED),
+    "tenancy.org.deleted": ("org", MEMBERSHIP_ENDED),
 }
 """The change kinds that end a socket: which id of the socket the target
-names (the credential behind its ticket, or its user) and the close reason."""
+names (the credential behind its ticket, its user, or its org, whose
+deletion ends every membership in it) and the close reason."""
 
 
 @dataclass(frozen=True)
@@ -99,6 +101,10 @@ class RealtimeServiceImpl(RealtimeServiceInterface):
         for attached in list(self._sockets.values()):
             if attached.org_id != payload.org_id:
                 continue
-            named = attached.credential_id if subject == "credential" else attached.user_id
+            named = {
+                "credential": attached.credential_id,
+                "user": attached.user_id,
+                "org": attached.org_id,
+            }[subject]
             if named == payload.target_id:
                 attached.end(reason)

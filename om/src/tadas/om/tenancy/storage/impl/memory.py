@@ -70,9 +70,9 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
             orgs = [org for org in orgs if org.id > after_id]
         return orgs[:limit]
 
-    async def write_org(self, org_id: UUID, org: Org) -> None:
+    async def write_org(self, org_id: UUID, org: Org, outbox_row: OutboxRow | None = None) -> None:
         self._require_slug_free(org)
-        self._put(self._orgs, org_id, org)
+        self._put(self._orgs, org_id, org, outbox_row)
 
     def _require_slug_free(self, org: Org) -> None:
         # uq_orgs_slug: unique among the living, so a deleted org frees its slug.
@@ -330,6 +330,22 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
             + len(gone_sessions)
             + len(gone_tickets)
         )
+
+    async def purge_tenant(self, org_id: UUID) -> int:
+        return (
+            self._drop_tenant(self._users, org_id)
+            + self._drop_tenant(self._memberships, org_id)
+            + self._drop_tenant(self._api_keys, org_id)
+            + self._drop_tenant(self._sessions, org_id)
+            + self._drop_tenant(self._socket_tickets, org_id)
+        )
+
+    @classmethod
+    def _drop_tenant[E: HasId](cls, table: MemoryTable[E], org_id: UUID) -> int:
+        gone = [row.id for row in cls._rows(table, org_id)]
+        for row_id in gone:
+            del table[row_id]
+        return len(gone)
 
     async def write_socket_ticket(self, org_id: UUID, ticket: SocketTicket) -> None:
         self._require_free(

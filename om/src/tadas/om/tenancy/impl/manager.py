@@ -451,12 +451,10 @@ class TenancyManagerImpl(TenancyManagerInterface):
     async def service_contexts(self, rctx: RequestContext) -> list[OpContext]:
         # Minted for the tenant, not for a member: the system user is the actor
         # and no user or membership is read, so it costs one read per page of
-        # tenants and a tenant whose members have all left is still swept. The
-        # system scope comes first: login credentials are stored under it.
-        scopes = [
-            EMPTY_UUID,
-            *(org.id for org in await self._every_org() if org.deleted_at is None),
-        ]
+        # tenants and a tenant whose members have all left is still swept. So
+        # is a deleted tenant: its rows and its claimed work are the sweep's to
+        # settle. The system scope comes first: login credentials live under it.
+        scopes = [EMPTY_UUID, *(org.id for org in await self._every_org())]
         return [
             build_context(
                 rctx,
@@ -717,7 +715,12 @@ class TenancyManagerImpl(TenancyManagerInterface):
 
     async def purge_deleted(self, ctx: OpContext) -> int:
         ctx.require(Permission.MANAGE_MEMBERS)
-        return await self._storage.purge_deleted(ctx.org_id, utcnow() - self._options.retention)
+        before = utcnow() - self._options.retention
+        org = await self._storage.read_org(ctx.org_id)
+        if org is not None and org.deleted_at is not None and org.deleted_at < before:
+            # The tenant itself is past the retention: every row of it goes.
+            return await self._storage.purge_tenant(ctx.org_id)
+        return await self._storage.purge_deleted(ctx.org_id, before)
 
     async def issue_ticket(self, ctx: OpContext) -> IssuedTicket:
         ctx.require(Permission.READ)

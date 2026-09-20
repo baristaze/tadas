@@ -78,6 +78,51 @@ class TenancyStorageContract:
         assert await storage.read_org_by_slug(org.slug) == org
         assert org in await storage.read_orgs(limit=1000)
 
+    async def test_an_org_write_lands_its_outbox_row_beside_it(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        org = make_org()
+        await storage.write_org(org.id, org)
+        deleted = org.model_copy(update={"deleted_at": utcnow(), "deleted_by": new_id()})
+        row = OutboxRow(
+            id=new_id(),
+            created_at=utcnow(),
+            kind="tenancy.org.deleted",
+            target_id=org.id,
+            payload={"slug": org.slug},
+            actor_id=new_id(),
+            request_id=new_id(),
+            app="portal",
+        )
+        await storage.write_org(org.id, deleted, row)
+        assert await storage.read_org(org.id) == deleted
+        assert await storage.read_org_by_slug(org.slug) is None
+
+    async def test_purge_tenant_takes_every_row_of_the_tenant_and_keeps_the_org(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        org, other = make_org(), make_org("Other")
+        await storage.write_org(org.id, org)
+        await storage.write_org(other.id, other)
+        for tenant in (org, other):
+            user = make_user(make_identity().id)
+            await storage.create_member(
+                tenant.id, user, make_membership(user.id), make_user_row(user)
+            )
+            await storage.write_api_key(tenant.id, make_api_key(user.id, uuid4().hex))
+            await storage.write_session(tenant.id, make_session(new_id(), user.id, uuid4().hex))
+            await storage.write_socket_ticket(tenant.id, make_socket_ticket(user.id, uuid4().hex))
+        assert await storage.purge_tenant(org.id) == 5
+        assert await storage.read_users(org.id, limit=10) == []
+        assert await storage.read_memberships(org.id, limit=10) == []
+        assert await storage.read_api_keys(org.id, limit=10) == []
+        assert await storage.read_org(org.id) == org
+        assert await storage.purge_tenant(org.id) == 0
+        # The other tenant is untouched.
+        assert len(await storage.read_users(other.id, limit=10)) == 1
+        assert len(await storage.read_memberships(other.id, limit=10)) == 1
+        assert len(await storage.read_api_keys(other.id, limit=10)) == 1
+
     async def test_reads_are_tenant_scoped(self, storage: TenancyStorageInterface) -> None:
         org_a, org_b = make_org("A"), make_org("B")
         identity = make_identity()

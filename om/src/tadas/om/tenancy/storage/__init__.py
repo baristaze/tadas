@@ -51,7 +51,10 @@ class TenancyStorageInterface(ABC):
         ...
 
     @abstractmethod
-    async def write_org(self, org_id: UUID, org: Org) -> None: ...
+    async def write_org(self, org_id: UUID, org: Org, outbox_row: OutboxRow | None = None) -> None:
+        """Lands the row and its outbox row together: the deletion of an org is
+        announced the way any change is, so the tenant's sockets hear of it."""
+        ...
 
     @abstractmethod
     async def create_org_with_owner(
@@ -196,6 +199,15 @@ class TenancyStorageInterface(ABC):
         api keys revoked or expired before `before`, its sessions revoked or
         expired before `before`, and its socket tickets redeemed or expired
         before `before`; returns how many rows went."""
+        ...
+
+    @abstractmethod
+    async def purge_tenant(self, org_id: UUID) -> int:
+        """The hard delete of a deleted tenant's rows once the retention has
+        passed: every user, membership, api key, session, and socket ticket of
+        the tenant, whatever its state; returns how many rows went. The org row
+        stays as the record that the tenant existed, so the operator plane
+        still lists it and no new tenant takes its id."""
         ...
 
     @abstractmethod

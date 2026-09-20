@@ -31,7 +31,10 @@ class WorkManagerInterface(ABC):
     ) -> tuple[OpContext, WorkItem] | None:
         """Platform-internal: claims the oldest available item on the lane and rebuilds the
         enqueuer's principal under the service role, refining the request stage the
-        worker minted for this claim; returns the context with the item."""
+        worker minted for this claim; returns the context with the item. An item
+        whose tenant is gone cannot be run and cannot be retried into existence:
+        it is failed in the same call, with the reason, and the claim moves on
+        to the next item, so no row stays claimed with nobody to settle it."""
         ...
 
     @abstractmethod

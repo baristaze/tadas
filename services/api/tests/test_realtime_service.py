@@ -1,6 +1,6 @@
 """The realtime service hears every change on the bus and ends the sockets a
-revocation names: the one the session or the api key opened, or every one
-of a user whose membership ended, and no other."""
+revocation names: the one the session or the api key opened, every one of a
+user whose membership ended, or every one of a deleted org, and no other."""
 
 from collections.abc import Callable
 from pathlib import Path
@@ -89,3 +89,12 @@ async def test_a_revocation_ends_the_sockets_it_names_and_no_other(tmp_path: Pat
     assert ended["bob_first"] == [MEMBERSHIP_ENDED]
     assert ended["bob_second"] == []  # detached before the frame
     assert ended["ann_second"] == []  # another user
+
+    # The org was deleted: every socket of the tenant still attached ends, and
+    # another tenant's deletion ends none of them.
+    other_org = new_id()
+    await announce("tenancy.org.deleted", other_org, org_id=other_org)
+    assert ended["ann_second"] == []
+    await announce("tenancy.org.deleted", org.id)
+    assert ended["ann_second"] == [MEMBERSHIP_ENDED]
+    assert ended["bob_second"] == []  # detached before the frame

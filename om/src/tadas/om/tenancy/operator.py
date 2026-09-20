@@ -23,5 +23,9 @@ class TenancyOperatorManagerInterface(ABC):
 
     @abstractmethod
     async def delete_org(self, admin: OperatorContext, org_id: UUID) -> Org:
-        """Soft-deletes the org; its principals stop resolving at once."""
+        """Soft-deletes the org and announces it (`tenancy.org.deleted`), so its
+        principals stop resolving at once and every socket of the tenant closes.
+        Its users, credentials, and work stay for the sweep: queued work fails
+        on its next claim, and the purge takes the tenant's rows once the
+        retention has passed."""
         ...

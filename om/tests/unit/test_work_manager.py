@@ -371,3 +371,58 @@ async def test_purge_settled_takes_done_and_failed_items_past_the_retention(
     assert await storage_.read_item(ctx.org_id, failed.id) is None
     held = await storage_.read_item(ctx.org_id, second[1].id)
     assert held is not None and held.status is WorkStatus.CLAIMED
+
+
+async def test_a_claim_in_a_deleted_org_fails_the_item_and_moves_on(
+    managers: Managers, storage: StorageMemoryImpl, ctx: OpContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The claim is written before the tenant is checked. A deleted tenant used
+    # to leave the row claimed for good: no context to settle it under, and no
+    # sweep visited the tenant. The item is failed in the same call, with the
+    # reason, and the claim goes on to the next tenant's work.
+    tenancy = managers.tenancy
+    orphan = make_item().model_copy(update={"created_by": ctx.user_id})
+    await managers.work.enqueue(ctx, orphan)
+    _, beta = await tenancy.bootstrap(
+        request(APP), "Beta", "beta", "bob@example.test", "pw-1234", "Bob"
+    )
+    bob = await tenancy.authenticate(
+        request(APP),
+        (
+            await tenancy.exchange_login(
+                await tenancy.authenticate_login(
+                    request(APP),
+                    (await tenancy.login(request(APP), "bob@example.test", "pw-1234")).token,
+                ),
+                beta.id,
+            )
+        ).token,
+    )
+    bobs = make_item().model_copy(update={"created_by": bob.user_id})
+    await managers.work.enqueue(bob, bobs)
+    await tenancy.bootstrap(
+        request(APP), "Ops", "ops", "root@example.test", "pw-1234", "Root", operator=True
+    )
+    admin = await tenancy.admit_operator(
+        await tenancy.authenticate_login(
+            request(APP), (await tenancy.login(request(APP), "root@example.test", "pw-1234")).token
+        )
+    )
+    await managers.tenancy_operator.delete_org(admin, ctx.org_id)
+
+    claimed = await managers.work.claim(request(), "default", [WorkKind.NOOP], "w1", LEASE)
+    assert claimed is not None and claimed[1].id == bobs.id
+    stored = await storage.get_work_storage().read_item(ctx.org_id, orphan.id)
+    assert stored is not None
+    assert stored.status is WorkStatus.FAILED and stored.claimed_by is None
+    assert stored.claim_token is None and stored.last_error == "the org is gone"
+    assert stored.updated_by == EMPTY_UUID
+    assert await managers.work.claim(request(), "default", [WorkKind.NOOP], "w1", LEASE) is None
+    # The sweep visits the deleted tenant and purges the dead letter past the retention.
+    sweep = next(
+        c for c in await managers.work.maintenance_contexts(request()) if c.org_id == ctx.org_id
+    )
+    assert await managers.work.purge_settled(sweep) == 0
+    monkeypatch.setattr(managers.work, "_options", WorkOptions(retention=timedelta(0)))
+    await asyncio.sleep(0.001)
+    assert await managers.work.purge_settled(sweep) == 1
