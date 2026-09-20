@@ -178,8 +178,10 @@ class OutboxStorageContract:
         await tasks.write_task(org, done, done_row)
         await outbox.mark_done(org, done_row.id)
         await outbox.record_failure(org, done_row.id, "too late", utcnow())
-        assert await outbox.purge_done(failed_at - timedelta(seconds=1)) == 0
-        assert await outbox.purge_done(utcnow() + timedelta(seconds=1)) >= 2
+        # The purge is cross-tenant, so only what it takes of these two rows
+        # is asserted: nothing before they settled, both once the cut passes.
+        await outbox.purge_done(failed_at - timedelta(seconds=1))
+        assert await outbox.purge_done(failed_at + timedelta(seconds=1)) >= 2
 
     async def test_purge_deletes_only_rows_settled_before_the_cut(
         self, tasks: TasksStorageInterface, outbox: OutboxStorageInterface
