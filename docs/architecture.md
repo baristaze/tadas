@@ -251,8 +251,9 @@ everything in-process for tests.
   realtime channel that invalidates queries by the entity name inside a
   push's `kind`. The client keeps the last contiguous `seq`; a push ahead
   of it is a replay of `/v1/events` after the cursor, never a skip.
-  Errors go to the Sentry-compatible backend named by `VITE_SENTRY_DSN`,
-  through every route's `errorElement` and React's root error hooks. The
+  Errors go to the Sentry-compatible backend named by `sentryDsn` in
+  the runtime `config.json` (locally, by `VITE_SENTRY_DSN`), through
+  every route's `errorElement` and React's root error hooks. The
   API is reached through `src/api/`: the committed `openapi.json` at the
   app root, generated types behind the facade `types.ts`, one transport
   client, which puts a deadline on every call (`requestTimeoutMs` in the
