@@ -47,9 +47,11 @@ class TasksStorageInterface(ABC):
         ...
 
     @abstractmethod
-    async def write_task(
-        self, org_id: UUID, task: Task, outbox_row: OutboxRow | None = None
+    async def update_task(
+        self, org_id: UUID, task: Task, expected_version: int, outbox_row: OutboxRow
     ) -> None:
-        """The update: lands the task and its outbox row together (the named atomic
-        write)."""
+        """The update, a compare-and-set: lands the task and its outbox row together
+        (the named atomic write) when the stored row is at `expected_version`, and
+        raises `VersionMismatch` when it is at another version or is gone, landing
+        nothing. It never inserts: a missing row is a row that moved."""
         ...

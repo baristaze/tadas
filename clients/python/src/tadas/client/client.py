@@ -226,14 +226,17 @@ class ApiClient:
         self,
         task_id: UUID,
         *,
+        version: int,
         title: str | None = None,
         notes: str | None = None,
         status: TaskStatus | None = None,
         assignee_id: UUID | Unset | None = UNSET,
     ) -> TaskView:
         """A partial update: only what the caller passes is sent. `assignee_id=None`
-        unassigns; leaving it out keeps the assignee."""
-        body: dict[str, Any] = {}
+        unassigns; leaving it out keeps the assignee. `version` is the task's as
+        the caller read it; the API refuses the update with 409 `version_mismatch`
+        when the task changed since, and the caller reads again."""
+        body: dict[str, Any] = {"version": version}
         if title is not None:
             body["title"] = title
         if notes is not None:
@@ -246,14 +249,19 @@ class ApiClient:
             await self.request("PATCH", f"/v1/tasks/{task_id}", json=body)
         )
 
-    async def move_task(self, task_id: UUID, after_id: UUID | None) -> TaskView:
-        body = {"after_id": None if after_id is None else str(after_id)}
+    async def move_task(self, task_id: UUID, after_id: UUID | None, version: int) -> TaskView:
+        """`version` is the moved task's, as on `update_task`."""
+        body = {"after_id": None if after_id is None else str(after_id), "version": version}
         return TaskView.model_validate(
             await self.request("POST", f"/v1/tasks/{task_id}/move", json=body)
         )
 
-    async def delete_task(self, task_id: UUID) -> TaskView:
-        return TaskView.model_validate(await self.request("DELETE", f"/v1/tasks/{task_id}"))
+    async def delete_task(self, task_id: UUID, version: int) -> TaskView:
+        """`version` is the task's, as on `update_task`; a DELETE has no body,
+        so it rides the query string."""
+        return TaskView.model_validate(
+            await self.request("DELETE", f"/v1/tasks/{task_id}", params={"version": version})
+        )
 
     # Events and the channel
 

@@ -62,6 +62,7 @@ class TasksManagerImpl(TasksManagerInterface):
                 "updated_by": ctx.user_id,
                 "status": TaskStatus.OPEN,
                 "position": await self._top_position(ctx, exclude=task.id),
+                "version": 1,
             }
         )
         row = outbox_row(ctx, "tasks.task.created", created.id, snapshot(created))
@@ -80,19 +81,24 @@ class TasksManagerImpl(TasksManagerInterface):
         current = await self.get_task(ctx, task.id)  # existence and tenancy, or NotFound
         await self._verify(ctx, task)
         # The copy starts from the stored row: the caller's entity supplies the
-        # fields a caller may change, and the provenance stays as stored.
+        # fields a caller may change, the provenance stays as stored, and the
+        # version is the caller's plus one: the write is conditioned on the
+        # caller's, so a snapshot that missed a write is refused, not merged.
         update: dict[str, object] = {
-            **task.model_dump(exclude=set(PROVENANCE_FIELDS)),
+            **task.model_dump(exclude={*PROVENANCE_FIELDS, "version"}),
             "updated_at": utcnow(),
             "updated_by": ctx.user_id,
+            "version": task.version + 1,
         }
         if current.status == TaskStatus.DONE and task.status == TaskStatus.OPEN:
             update["position"] = await self._top_position(ctx, exclude=task.id)
         updated = current.model_copy(update=update)
-        await self._write(ctx, updated, "updated")
+        await self._write(ctx, updated, task.version, "updated")
         return updated
 
-    async def move_task(self, ctx: OpContext, task_id: UUID, after_id: UUID | None) -> Task:
+    async def move_task(
+        self, ctx: OpContext, task_id: UUID, after_id: UUID | None, version: int
+    ) -> Task:
         ctx.require(Permission.WRITE)
         task = await self.get_task(ctx, task_id)
         if task.status != TaskStatus.OPEN:
@@ -108,12 +114,17 @@ class TasksManagerImpl(TasksManagerInterface):
             positions = await self._storage.read_open_positions(ctx.org_id, exclude=task_id)
             position = position_after(anchor.position, positions)
         moved = task.model_copy(
-            update={"position": position, "updated_at": utcnow(), "updated_by": ctx.user_id}
+            update={
+                "position": position,
+                "updated_at": utcnow(),
+                "updated_by": ctx.user_id,
+                "version": version + 1,
+            }
         )
-        await self._write(ctx, moved, "updated")
+        await self._write(ctx, moved, version, "updated")
         return moved
 
-    async def delete_task(self, ctx: OpContext, task_id: UUID) -> Task:
+    async def delete_task(self, ctx: OpContext, task_id: UUID, version: int) -> Task:
         ctx.require(Permission.WRITE)
         task = await self.get_task(ctx, task_id)
         now = utcnow()
@@ -123,9 +134,10 @@ class TasksManagerImpl(TasksManagerInterface):
                 "deleted_by": ctx.user_id,
                 "updated_at": now,
                 "updated_by": ctx.user_id,
+                "version": version + 1,
             }
         )
-        await self._write(ctx, deleted, "deleted")
+        await self._write(ctx, deleted, version, "deleted")
         return deleted
 
     async def purge_deleted(self, ctx: OpContext) -> int:
@@ -152,11 +164,11 @@ class TasksManagerImpl(TasksManagerInterface):
             except NotFound:
                 raise ValidationFailed("the assignee is not a member of this org") from None
 
-    async def _write(self, ctx: OpContext, task: Task, action: str) -> None:
-        """The core row and its outbox row land in one storage call; the relay
-        then appends the event and pushes at once, and the sweep catches what a
-        crash left behind. Every push is also a record, so a client that missed
-        the push replays by seq."""
+    async def _write(self, ctx: OpContext, task: Task, expected_version: int, action: str) -> None:
+        """The core row and its outbox row land in one storage call, conditioned
+        on the version the caller read; the relay then appends the event and
+        pushes at once, and the sweep catches what a crash left behind. Every
+        push is also a record, so a client that missed the push replays by seq."""
         row = outbox_row(ctx, f"tasks.task.{action}", task.id, snapshot(task))
-        await self._storage.write_task(ctx.org_id, task, row)
+        await self._storage.update_task(ctx.org_id, task, expected_version, row)
         await self._relay.relay(ctx.org_id, row)

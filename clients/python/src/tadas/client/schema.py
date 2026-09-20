@@ -80,11 +80,13 @@ class LoginRequest(BaseModel):
 class MoveTaskRequest(BaseModel):
     """
     Places an open task right after `after_id`; null puts it at the top.
+    `version` is the moved task's, as on `UpdateTaskRequest`.
     """
     model_config = ConfigDict(
         extra='forbid',
     )
     after_id: Annotated[UUID | None, Field(title='After Id')] = None
+    version: Annotated[int, Field(ge=1, title='Version')]
 
 
 class OrgView(BaseModel):
@@ -145,6 +147,7 @@ class TaskView(BaseModel):
     status: TaskStatus
     title: Annotated[str, Field(title='Title')]
     updated_at: Annotated[AwareDatetime, Field(title='Updated At')]
+    version: Annotated[int, Field(title='Version')]
 
 
 class UpdateMeRequest(BaseModel):
@@ -168,7 +171,10 @@ class Title(RootModel[str]):
 class UpdateTaskRequest(BaseModel):
     """
     A partial update: absent fields are kept. An explicit null
-    `assignee_id` unassigns the task.
+    `assignee_id` unassigns the task. `version` is the task's version as the
+    caller read it: the update lands only when the task is still at it, and
+    is refused with 409 `version_mismatch` when another write landed since,
+    so the caller reads again and decides over the current task.
     """
     model_config = ConfigDict(
         extra='forbid',
@@ -177,6 +183,7 @@ class UpdateTaskRequest(BaseModel):
     notes: Annotated[str | None, Field(title='Notes')] = None
     status: TaskStatus | None = None
     title: Annotated[Title | None, Field(title='Title')] = None
+    version: Annotated[int, Field(ge=1, title='Version')]
 
 
 class UserView(BaseModel):

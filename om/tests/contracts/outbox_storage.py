@@ -58,9 +58,8 @@ class OutboxStorageContract:
         org_a, org_b = new_id(), new_id()
         first, second = make_task(), make_task()
         row_a, row_b = make_row(first.id), make_row(second.id)
-        await tasks.write_task(org_a, first, row_a)
-        await tasks.write_task(org_b, second, row_b)
-        await tasks.write_task(org_a, make_task())  # no handoff, no row
+        await tasks.create_task(org_a, first, row_a)
+        await tasks.create_task(org_b, second, row_b)
         claimed = await claim_all(outbox)
         mine = [(org, row) for org, row in claimed if row.id in (row_a.id, row_b.id)]
         assert [(org, row.id) for org, row in mine] == [(org_a, row_a.id), (org_b, row_b.id)]
@@ -74,7 +73,7 @@ class OutboxStorageContract:
         org = new_id()
         task = make_task()
         row = make_row(task.id)
-        await tasks.write_task(org, task, row)
+        await tasks.create_task(org, task, row)
         base, cap = timedelta(seconds=30), timedelta(seconds=100)
         now = utcnow()
         for attempt, delay in enumerate((30, 60, 100, 100), start=1):
@@ -94,8 +93,8 @@ class OutboxStorageContract:
         org = new_id()
         poison, fine = make_task(), make_task()
         poison_row, fine_row = make_row(poison.id), make_row(fine.id)
-        await tasks.write_task(org, poison, poison_row)
-        await tasks.write_task(org, fine, fine_row)
+        await tasks.create_task(org, poison, poison_row)
+        await tasks.create_task(org, fine, fine_row)
         claimed = await claim_all(outbox, backoff=timedelta(hours=1))
         assert {r.id for _, r in claimed} >= {poison_row.id, fine_row.id}
         # The poison row's relay failed; the fine one was done. A newer row
@@ -105,7 +104,7 @@ class OutboxStorageContract:
         await outbox.mark_done(org, fine_row.id)
         newer = make_task()
         newer_row = make_row(newer.id)
-        await tasks.write_task(org, newer, newer_row)
+        await tasks.create_task(org, newer, newer_row)
         claimed = await claim_all(outbox)
         ids = {r.id for _, r in claimed}
         assert newer_row.id in ids and poison_row.id not in ids and fine_row.id not in ids
@@ -122,7 +121,7 @@ class OutboxStorageContract:
         for _ in range(4):
             task = make_task()
             row = make_row(task.id)
-            await tasks.write_task(org, task, row)
+            await tasks.create_task(org, task, row)
             rows.append(row)
         now = utcnow()
         outcomes = await asyncio.gather(
@@ -141,8 +140,8 @@ class OutboxStorageContract:
         young, old = make_task(), make_task()
         young_row = make_row(young.id, age=timedelta(0))
         old_row = make_row(old.id, age=timedelta(minutes=5))
-        await tasks.write_task(org, young, young_row)
-        await tasks.write_task(org, old, old_row)
+        await tasks.create_task(org, young, young_row)
+        await tasks.create_task(org, old, old_row)
         ids = {r.id for _, r in await claim_all(outbox, grace=timedelta(minutes=1))}
         assert old_row.id in ids and young_row.id not in ids
         assert young_row.id in {r.id for _, r in await claim_all(outbox)}
@@ -153,7 +152,7 @@ class OutboxStorageContract:
         org = new_id()
         task = make_task()
         row = make_row(task.id)
-        await tasks.write_task(org, task, row)
+        await tasks.create_task(org, task, row)
         await outbox.mark_done(new_id(), row.id)  # another tenant: no effect
         assert row.id in {r.id for _, r in await claim_all(outbox)}
         await outbox.mark_done(org, row.id)
@@ -166,7 +165,7 @@ class OutboxStorageContract:
         org = new_id()
         task = make_task()
         row = make_row(task.id)
-        await tasks.write_task(org, task, row)
+        await tasks.create_task(org, task, row)
         await outbox.record_failure(new_id(), row.id, "elsewhere", utcnow())  # another tenant
         assert row.id in {r.id for _, r in await claim_all(outbox)}
         failed_at = utcnow()
@@ -175,7 +174,7 @@ class OutboxStorageContract:
         # Done rows stay done: a failure recorded afterwards changes nothing.
         done = make_task()
         done_row = make_row(done.id)
-        await tasks.write_task(org, done, done_row)
+        await tasks.create_task(org, done, done_row)
         await outbox.mark_done(org, done_row.id)
         await outbox.record_failure(org, done_row.id, "too late", utcnow())
         # The purge is cross-tenant, so only what it takes of these two rows
@@ -189,8 +188,8 @@ class OutboxStorageContract:
         org = new_id()
         done, pending = make_task(), make_task()
         done_row, pending_row = make_row(done.id), make_row(pending.id)
-        await tasks.write_task(org, done, done_row)
-        await tasks.write_task(org, pending, pending_row)
+        await tasks.create_task(org, done, done_row)
+        await tasks.create_task(org, pending, pending_row)
         await outbox.mark_done(org, done_row.id)
         assert await outbox.purge_done(utcnow() - timedelta(hours=1)) == 0
         assert await outbox.purge_done(utcnow() + timedelta(seconds=1)) >= 1

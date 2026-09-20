@@ -32,17 +32,27 @@ class TasksManagerInterface(ABC):
 
     @abstractmethod
     async def update_task(self, ctx: OpContext, task: Task) -> Task:
-        """A task reopened from done goes back to the top of the open list."""
+        """A task reopened from done goes back to the top of the open list. The
+        entity's `version` is the one the caller read: the write lands only
+        when the stored task is still at it, and is `VersionMismatch`, a
+        `Conflict`, when another writer landed since."""
         ...
 
     @abstractmethod
-    async def move_task(self, ctx: OpContext, task_id: UUID, after_id: UUID | None) -> Task:
+    async def move_task(
+        self, ctx: OpContext, task_id: UUID, after_id: UUID | None, version: int
+    ) -> Task:
         """Places an open task right after `after_id` in the open list, or at
-        the top when it is None."""
+        the top when it is None. `version` is the one the caller read, as on
+        `update_task`."""
         ...
 
     @abstractmethod
-    async def delete_task(self, ctx: OpContext, task_id: UUID) -> Task: ...
+    async def delete_task(self, ctx: OpContext, task_id: UUID, version: int) -> Task:
+        """The soft delete. `version` is the one the caller read, as on
+        `update_task`: a delete that raced an edit is refused, and an edit that
+        raced a delete finds the task gone and cannot bring it back."""
+        ...
 
     @abstractmethod
     async def purge_deleted(self, ctx: OpContext) -> int:

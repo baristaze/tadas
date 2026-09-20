@@ -27,6 +27,7 @@ def task(**changes) -> TaskView:
         "updated_at": "2026-09-18T12:00:00Z",
         "created_by": ME,
         "deleted_at": None,
+        "version": 1,
     }
     return TaskView.model_validate({**base, **changes})
 

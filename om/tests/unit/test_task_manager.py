@@ -1,5 +1,7 @@
+from collections.abc import Callable, Coroutine
 from datetime import timedelta
 from pathlib import Path
+from typing import Any
 from uuid import UUID
 
 import pytest
@@ -12,7 +14,7 @@ from tadas.infra.topics.memory import TopicsMemoryImpl
 from tadas.om.base import PROVENANCE_FIELDS, new_id, utcnow
 from tadas.om.events.impl.manager import EventsManagerImpl, EventsOptions
 from tadas.om.events.storage.impl.memory import EventStorageMemoryImpl
-from tadas.om.exceptions import NotAuthorized, NotFound, ValidationFailed
+from tadas.om.exceptions import NotAuthorized, NotFound, ValidationFailed, VersionMismatch
 from tadas.om.opcontext import (
     AppContext,
     AppType,
@@ -24,6 +26,7 @@ from tadas.om.opcontext import (
 )
 from tadas.om.outbox.impl.relay import OutboxOptions, OutboxRelayImpl
 from tadas.om.outbox.storage.impl.memory import OutboxStorageMemoryImpl
+from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.tasks.impl.manager import TasksManagerImpl, TasksOptions
 from tadas.om.tasks.storage.impl.memory import TasksStorageMemoryImpl
 from tadas.om.tasks.types.filter import TaskFilter
@@ -125,6 +128,18 @@ async def open_titles(manager: TasksManagerImpl, ctx: OpContext, scope: TaskScop
     return [t.title for t in await manager.get_open_tasks(ctx, own(ctx, scope), limit=50)]
 
 
+async def move(
+    manager: TasksManagerImpl, ctx: OpContext, task_id: UUID, after_id: UUID | None
+) -> Task:
+    """A move from a fresh read, the way a client that just listed does it."""
+    current = await manager.get_task(ctx, task_id)
+    return await manager.move_task(ctx, task_id, after_id, current.version)
+
+
+async def delete(manager: TasksManagerImpl, ctx: OpContext, task_id: UUID) -> Task:
+    return await manager.delete_task(ctx, task_id, (await manager.get_task(ctx, task_id)).version)
+
+
 async def test_create_update_delete_record_and_push(
     manager: TasksManagerImpl,
     events: EventsManagerImpl,
@@ -146,9 +161,11 @@ async def test_create_update_delete_record_and_push(
     updated = await manager.update_task(ctx, created.model_copy(update={"notes": "carefully"}))
     assert updated.notes == "carefully" and updated.updated_at > created.updated_at
     assert updated.updated_by == ctx.user_id
+    assert (created.version, updated.version) == (1, 2)
 
-    deleted = await manager.delete_task(ctx, created.id)
+    deleted = await manager.delete_task(ctx, created.id, updated.version)
     assert deleted.deleted_at is not None and deleted.deleted_by == ctx.user_id
+    assert deleted.version == 3
     assert await manager.get_open_tasks(ctx, own(ctx, TaskScope.TEAM), limit=10) == []
     with pytest.raises(NotFound):
         await manager.get_task(ctx, created.id)
@@ -191,7 +208,7 @@ async def test_update_keeps_the_provenance_as_stored(manager: TasksManagerImpl) 
     assert PROVENANCE_FIELDS == {"created_at", "created_by", "deleted_at", "deleted_by"}
 
     # A deleted row is not brought back by an entity with the deletion cleared.
-    deleted = await manager.delete_task(ann, created.id)
+    deleted = await manager.delete_task(ann, created.id, updated.version)
     revived = deleted.model_copy(update={"deleted_at": None, "deleted_by": None})
     with pytest.raises(NotFound):
         await manager.update_task(ann, revived)
@@ -253,24 +270,25 @@ async def test_move_places_after_an_anchor_or_at_the_top(manager: TasksManagerIm
     a = await manager.create_task(ctx, make_task(ctx, "a"))
     assert await open_titles(manager, ctx, TaskScope.TEAM) == ["a", "b", "c"]
 
-    await manager.move_task(ctx, a.id, after_id=b.id)  # between b and c
+    await move(manager, ctx, a.id, after_id=b.id)  # between b and c
     assert await open_titles(manager, ctx, TaskScope.TEAM) == ["b", "a", "c"]
-    await manager.move_task(ctx, b.id, after_id=c.id)  # after the last
+    await move(manager, ctx, b.id, after_id=c.id)  # after the last
     assert await open_titles(manager, ctx, TaskScope.TEAM) == ["a", "c", "b"]
-    await manager.move_task(ctx, b.id, after_id=None)  # to the top
+    await move(manager, ctx, b.id, after_id=None)  # to the top
     assert await open_titles(manager, ctx, TaskScope.TEAM) == ["b", "a", "c"]
     for _ in range(30):  # halving stays ordered through many moves into one gap
-        await manager.move_task(ctx, c.id, after_id=b.id)
-        await manager.move_task(ctx, a.id, after_id=b.id)
+        await move(manager, ctx, c.id, after_id=b.id)
+        await move(manager, ctx, a.id, after_id=b.id)
     assert await open_titles(manager, ctx, TaskScope.TEAM) == ["b", "a", "c"]
 
     with pytest.raises(ValidationFailed):
-        await manager.move_task(ctx, a.id, after_id=a.id)
-    done = await manager.update_task(ctx, c.model_copy(update={"status": TaskStatus.DONE}))
+        await move(manager, ctx, a.id, after_id=a.id)
+    current = await manager.get_task(ctx, c.id)
+    done = await manager.update_task(ctx, current.model_copy(update={"status": TaskStatus.DONE}))
     with pytest.raises(ValidationFailed):
-        await manager.move_task(ctx, done.id, after_id=None)
+        await move(manager, ctx, done.id, after_id=None)
     with pytest.raises(ValidationFailed):
-        await manager.move_task(ctx, a.id, after_id=done.id)
+        await move(manager, ctx, a.id, after_id=done.id)
 
 
 async def test_authorize_then_verify(manager: TasksManagerImpl) -> None:
@@ -288,9 +306,9 @@ async def test_authorize_then_verify(manager: TasksManagerImpl) -> None:
     with pytest.raises(NotFound):
         await manager.update_task(member, make_task(member))
     with pytest.raises(NotFound):
-        await manager.move_task(member, new_id(), after_id=None)
+        await manager.move_task(member, new_id(), None, 1)
     with pytest.raises(NotFound):
-        await manager.delete_task(member, new_id())
+        await manager.delete_task(member, new_id(), 1)
 
 
 async def test_tenancy_holds_across_contexts(manager: TasksManagerImpl) -> None:
@@ -299,8 +317,82 @@ async def test_tenancy_holds_across_contexts(manager: TasksManagerImpl) -> None:
     with pytest.raises(NotFound):
         await manager.get_task(bob, task.id)
     with pytest.raises(NotFound):
-        await manager.move_task(bob, task.id, after_id=None)
+        await manager.move_task(bob, task.id, None, task.version)
     assert await manager.get_open_tasks(bob, own(bob, TaskScope.TEAM), limit=10) == []
+
+
+async def test_two_updates_from_one_snapshot_one_wins(manager: TasksManagerImpl) -> None:
+    # Ann and Bob both read the task at version 1. Ann's edit lands and the
+    # task is at version 2; Bob's edit still names version 1, so it is refused
+    # as a Conflict and Ann's title stands. Bob reads again and his edit lands.
+    org = make_org()
+    ann, bob = context(Role.MEMBER, org), context(Role.MEMBER, org)
+    created = await manager.create_task(ann, make_task(ann, "as read"))
+    anns = await manager.update_task(ann, created.model_copy(update={"title": "ann's"}))
+    with pytest.raises(VersionMismatch) as refused:
+        await manager.update_task(bob, created.model_copy(update={"title": "bob's"}))
+    assert refused.value.http_status == 409 and refused.value.code == "version_mismatch"
+    assert await manager.get_task(bob, created.id) == anns
+    bobs = await manager.update_task(bob, anns.model_copy(update={"title": "bob's"}))
+    assert bobs.version == 3 and bobs.updated_by == bob.user_id
+
+
+async def test_a_delete_racing_an_edit_cannot_be_undone_by_the_edit(
+    manager: TasksManagerImpl,
+) -> None:
+    org = make_org()
+    ann, bob = context(Role.MEMBER, org), context(Role.MEMBER, org)
+    created = await manager.create_task(ann, make_task(ann))
+    # The delete lands first: the edit, from the snapshot before it, finds the
+    # task gone. Its snapshot says "not deleted", and that never comes back.
+    await manager.delete_task(ann, created.id, created.version)
+    with pytest.raises(NotFound):
+        await manager.update_task(bob, created.model_copy(update={"title": "still here?"}))
+    with pytest.raises(NotFound):
+        await manager.get_task(bob, created.id)
+    # The edit lands first: the delete, from the snapshot before it, is refused
+    # and the edited task stays; a delete from a fresh read goes through.
+    again = await manager.create_task(ann, make_task(ann, "edited then deleted"))
+    edited = await manager.update_task(bob, again.model_copy(update={"title": "edited"}))
+    with pytest.raises(VersionMismatch):
+        await manager.delete_task(ann, again.id, again.version)
+    assert await manager.get_task(ann, again.id) == edited
+    assert (await delete(manager, ann, again.id)).deleted_at is not None
+
+
+async def test_a_write_that_lands_between_the_read_and_the_write_is_refused(
+    infra: InfraLocalImpl, members: Members, events_storage: EventStorageMemoryImpl
+) -> None:
+    # The window the version closes: the manager read the task, and before its
+    # write reaches storage another writer's delete lands. The write names the
+    # version it read, so storage refuses it instead of overwriting the delete.
+    class Interleaved(TasksStorageMemoryImpl):
+        before_first_update: Callable[[], Coroutine[Any, Any, None]] | None = None
+
+        async def update_task(
+            self, org_id: UUID, task: Task, expected_version: int, outbox_row: OutboxRow
+        ) -> None:
+            hook, self.before_first_update = self.before_first_update, None
+            if hook is not None:
+                await hook()
+            await super().update_task(org_id, task, expected_version, outbox_row)
+
+    outbox = OutboxStorageMemoryImpl()
+    storage = Interleaved(outbox)
+    relay = OutboxRelayImpl(outbox, events_storage, infra.get_topics())
+    manager = TasksManagerImpl(storage, members, relay, TasksOptions())
+    org = make_org()
+    ann, bob = context(Role.MEMBER, org), context(Role.MEMBER, org)
+    created = await manager.create_task(ann, make_task(ann))
+
+    async def bob_deletes() -> None:
+        await manager.delete_task(bob, created.id, created.version)
+
+    storage.before_first_update = bob_deletes
+    with pytest.raises(VersionMismatch):
+        await manager.update_task(ann, created.model_copy(update={"title": "overwrite?"}))
+    stored = await storage.read_task(org.id, created.id)
+    assert stored is not None and stored.deleted_at is not None and stored.title == "Ship it"
 
 
 async def test_lists_are_clamped(infra: InfraLocalImpl, members: Members) -> None:

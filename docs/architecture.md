@@ -191,8 +191,11 @@ Every table belongs to one database role (`core`, `activity`, `queue`,
 pool, and the migration chain. Migrations are hand-written SQL under
 `om/migrations/sql/<role>/` with Alembic wrappers; `core`, `activity`,
 and `queue` have chains today, and `admin` has no table yet. Optimistic
-concurrency stays opt-in and no table carries a `version` today: nothing
-in Tadas has concurrent edits that matter, so last writer wins.
+concurrency stays opt-in: `tasks` is the one table that carries a
+`version`, because a task is edited from two windows and two terminals
+at once ([ADR 0008](adr/0008-tasks-carry-a-version.md)); every other
+table has no concurrent edits that matter, so there the last writer
+wins.
 
 ## Infrastructure (`infra/`)
 

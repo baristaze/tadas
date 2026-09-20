@@ -1,6 +1,7 @@
 import { useInfiniteQuery, useMutation, useQuery } from "@tanstack/react-query";
 import type {
   AddTaskRequest,
+  MoveTaskRequest,
   TaskPageView,
   TaskScope,
   TaskView,
@@ -33,7 +34,9 @@ export function useDoneTasks(scope: TaskScope) {
 }
 
 // Mutations only talk to the server; the list's view model owns the cache edits
-// and the motion around them.
+// and the motion around them. Every write names the version of the task the
+// view model holds: the server refuses a write over a task that changed since
+// (409 `version_mismatch`), and the view model reloads the list.
 
 export function useCreateTask() {
   return useMutation({
@@ -51,13 +54,15 @@ export function useUpdateTask() {
 
 export function useMoveTask() {
   return useMutation({
-    mutationFn: ({ id, afterId }: { id: string; afterId: string | null }) =>
-      api.post<TaskView>(`/v1/tasks/${id}/move`, { after_id: afterId }),
+    mutationFn: ({ id, afterId, version }: { id: string; afterId: string | null; version: number }) =>
+      api.post<TaskView>(`/v1/tasks/${id}/move`, { after_id: afterId, version } satisfies MoveTaskRequest),
   });
 }
 
 export function useDeleteTask() {
   return useMutation({
-    mutationFn: (id: string) => api.del<TaskView>(`/v1/tasks/${id}`),
+    // A DELETE has no body, so the version rides the query string.
+    mutationFn: ({ id, version }: { id: string; version: number }) =>
+      api.del<TaskView>(`/v1/tasks/${id}?version=${version}`),
   });
 }

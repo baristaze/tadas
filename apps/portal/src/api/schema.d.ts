@@ -561,10 +561,13 @@ export interface components {
         /**
          * MoveTaskRequest
          * @description Places an open task right after `after_id`; null puts it at the top.
+         *     `version` is the moved task's, as on `UpdateTaskRequest`.
          */
         MoveTaskRequest: {
             /** After Id */
             after_id?: string | null;
+            /** Version */
+            version: number;
         };
         /** OrgView */
         OrgView: {
@@ -674,6 +677,8 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+            /** Version */
+            version: number;
         };
         /** UpdateMeRequest */
         UpdateMeRequest: {
@@ -687,7 +692,10 @@ export interface components {
         /**
          * UpdateTaskRequest
          * @description A partial update: absent fields are kept. An explicit null
-         *     `assignee_id` unassigns the task.
+         *     `assignee_id` unassigns the task. `version` is the task's version as the
+         *     caller read it: the update lands only when the task is still at it, and
+         *     is refused with 409 `version_mismatch` when another write landed since,
+         *     so the caller reads again and decides over the current task.
          */
         UpdateTaskRequest: {
             /** Assignee Id */
@@ -697,6 +705,8 @@ export interface components {
             status?: components["schemas"]["TaskStatus"] | null;
             /** Title */
             title?: string | null;
+            /** Version */
+            version: number;
         };
         /** UserView */
         UserView: {
@@ -1518,7 +1528,10 @@ export interface operations {
     };
     delete_task_v1_tasks__task_id__delete: {
         parameters: {
-            query?: never;
+            query: {
+                /** @description The task's version as the caller read it; 409 `version_mismatch` when the task changed since. */
+                version: number;
+            };
             header?: {
                 authorization?: string | null;
                 "x-app"?: string | null;

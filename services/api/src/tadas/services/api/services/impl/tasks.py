@@ -79,7 +79,9 @@ class TasksServiceImpl(TasksServiceInterface):
 
     async def update_task(self, ctx: OpContext, task_id: UUID, body: UpdateTaskRequest) -> TaskView:
         current = await self._tasks.get_task(ctx, task_id)
-        # Only the assignee can be cleared; a null title, notes, or status is ignored.
+        # Only the assignee can be cleared; a null title, notes, or status is
+        # ignored. The version is the caller's, never the stored one: the
+        # manager conditions the write on it.
         changes = {
             name: value
             for name, value in body.model_dump(exclude_unset=True).items()
@@ -90,7 +92,8 @@ class TasksServiceImpl(TasksServiceInterface):
         return TaskView.model_validate(await self._tasks.update_task(ctx, changed))
 
     async def move_task(self, ctx: OpContext, task_id: UUID, body: MoveTaskRequest) -> TaskView:
-        return TaskView.model_validate(await self._tasks.move_task(ctx, task_id, body.after_id))
+        moved = await self._tasks.move_task(ctx, task_id, body.after_id, body.version)
+        return TaskView.model_validate(moved)
 
-    async def delete_task(self, ctx: OpContext, task_id: UUID) -> TaskView:
-        return TaskView.model_validate(await self._tasks.delete_task(ctx, task_id))
+    async def delete_task(self, ctx: OpContext, task_id: UUID, version: int) -> TaskView:
+        return TaskView.model_validate(await self._tasks.delete_task(ctx, task_id, version))

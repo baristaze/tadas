@@ -12,6 +12,8 @@ import {
 } from "../../queries/tasks";
 import { useMe, useUsers } from "../../queries/tenancy";
 import { usePreferencesStore } from "../../store/preferences";
+import { errorMessage } from "../../app/errorMessage";
+import { isStale, reorder, STALE_MESSAGE } from "./reorder";
 import {
   canAdd,
   canWrite,
@@ -20,7 +22,6 @@ import {
   doneWithTaskReplaced,
   flattenDone,
   MOTION_MS,
-  placement,
   taskRow,
   withLeaving,
   withoutTask,
@@ -76,8 +77,10 @@ export function useTasksVm() {
   ) => queryClient.setQueryData<InfiniteData<TaskPageView>>(doneKey, edit);
   // The server is the truth: after any write, every task list refetches, in every scope.
   const refresh = () => void queryClient.invalidateQueries({ queryKey: keys.tasks.all });
+  // Every write names the version of the task as held here; a write the
+  // server refused because the task changed since is said as such.
   const fail = (cause: unknown) => {
-    setError(cause instanceof Error ? cause.message : "Something went wrong; the list was reloaded.");
+    setError(isStale(cause) ? STALE_MESSAGE : errorMessage(cause, "Something went wrong; the list was reloaded."));
     refresh();
   };
   const later = (run: () => void) => {
@@ -112,13 +115,16 @@ export function useTasksVm() {
     editOpen((page) => withoutTask(page, task.id));
     editDone((data) => doneWithTaskOnTop(data, doneTask));
     later(() => setLeaving((current) => current.filter((l) => l.task.id !== task.id)));
-    update.mutate({ id: task.id, body: { status: "done" } }, { onError: fail, onSettled: refresh });
+    update.mutate(
+      { id: task.id, body: { status: "done", version: task.version } },
+      { onError: fail, onSettled: refresh },
+    );
   };
 
   const reopen = (task: TaskView) => {
     editDone((data) => doneWithout(data, task.id));
     update.mutate(
-      { id: task.id, body: { status: "open" } },
+      { id: task.id, body: { status: "open", version: task.version } },
       {
         onSuccess: (reopened) => editOpen((page) => withTaskOnTop(page, reopened)),
         onError: fail,
@@ -132,7 +138,12 @@ export function useTasksVm() {
     try {
       const saved = await update.mutateAsync({
         id: task.id,
-        body: { title: edit.title.trim(), notes: edit.notes, assignee_id: edit.assigneeId },
+        body: {
+          title: edit.title.trim(),
+          notes: edit.notes,
+          assignee_id: edit.assigneeId,
+          version: task.version,
+        },
       });
       editOpen((page) => withTaskReplaced(page, saved));
       editDone((data) => doneWithTaskReplaced(data, saved));
@@ -149,15 +160,23 @@ export function useTasksVm() {
     editOpen((page) => withoutTask(page, task.id));
     editDone((data) => doneWithout(data, task.id));
     setEditingId(null);
-    remove.mutate(task.id, { onError: fail, onSettled: refresh });
+    remove.mutate({ id: task.id, version: task.version }, { onError: fail, onSettled: refresh });
   };
 
-  const drop = (movedId: string, targetId: string, side: DropSide) => {
-    const result = placement(openTasks, movedId, targetId, side);
-    if (!result) return;
-    editOpen((page) => withOrder(page, result.order));
-    move.mutate({ id: movedId, afterId: result.afterId }, { onError: fail, onSettled: refresh });
-  };
+  const drop = (movedId: string, targetId: string, side: DropSide) =>
+    void reorder(
+      openTasks,
+      movedId,
+      targetId,
+      side,
+      {
+        move: (id, afterId, version) => move.mutateAsync({ id, afterId, version }),
+        showOrder: (order) => editOpen((page) => withOrder(page, order)),
+        refetch: refresh,
+        report: setError,
+      },
+      (cause) => errorMessage(cause, "The task was not moved; the list was reloaded."),
+    );
 
   const changeScope = (next: TaskScope) => {
     setScope(next);
