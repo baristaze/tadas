@@ -249,19 +249,41 @@ everything in-process for tests.
   manual order, done newest first with Show more, inline edit, drag to
   reorder), settings at `/settings` (members, api keys, sign-out), and one
   realtime channel that invalidates queries by the entity name inside a
-  push's `kind`. The client keeps the last contiguous `seq`; a push ahead
-  of it is a replay of `/v1/events` after the cursor, never a skip.
+  push's `kind`. The socket's loop (`src/realtime/channel.ts`: ticket,
+  reconnect with backoff, the degraded polling mode, the cursor and its
+  replay) has no React in it and runs in its test over a fake socket and
+  fake timers; the provider hands it the query cache, the transport
+  client, and the connection store. A socket counts as connected once
+  the hello frame arrives (or once it has stayed open a few seconds), so
+  a server that accepts and closes at once still meets a growing
+  backoff. The client keeps the last contiguous `seq`; a push ahead of
+  it is a replay of `/v1/events` after the cursor, never a skip: the
+  replay pages until the last page, a failed fetch, or a page that moved
+  the cursor nowhere (a seq between is not in storage yet), and the
+  cursor never moves past a seq that was not applied, so the next push
+  or pong retries from where it stands.
   Errors go to the Sentry-compatible backend named by `sentryDsn` in
   the runtime `config.json` (locally, by `VITE_SENTRY_DSN`), through
-  every route's `errorElement` and React's root error hooks. The
-  API is reached through `src/api/`: the committed `openapi.json` at the
-  app root, generated types behind the facade `types.ts`, one transport
-  client, which puts a deadline on every call (`requestTimeoutMs` in the
-  runtime config, 30 seconds by default) and rejects a call that runs
-  out with `RequestTimeout`. The session token lives in memory and in
-  the tab's session storage, so a reload survives and a closed tab
-  forgets; never in local storage, and a token an earlier build left
-  there is dropped on load. Every push and every event record carry `actor_id`, so a client
+  every route's `errorElement` and React's root error hooks. A write
+  that fails is said, never swallowed: a view-model turns what it caught
+  into one line (`src/app/errorMessage.ts`, the request id of an API
+  refusal quoted) and leaves it in the notices store, which `Notices`
+  renders above every page as a kit banner until dismissed or after a
+  few seconds. The API is reached through `src/api/`: the committed
+  `openapi.json` at the app root, generated types behind the facade
+  `types.ts`, one transport client, which puts a deadline on every call
+  (`requestTimeoutMs` in the runtime config, 30 seconds by default) and
+  rejects a call that runs out with `RequestTimeout`, and which reads
+  the status and the content type before the body: a 401 clears
+  authentication whatever its body is, a proxy's HTML 502 or 504 is an
+  `ApiError` carrying the status and the request id, and a success that
+  is not JSON is a typed error too. Client state is in stores, never
+  read from a storage by a feature: the session token lives in memory
+  and in the tab's session storage, so a reload survives and a closed
+  tab forgets, never in local storage, and a token an earlier build left
+  there is dropped on load; the preferences kept across visits (the task
+  scope) live in a persisted store over local storage, which is for
+  preferences only. Every push and every event record carry `actor_id`, so a client
   can say who changed what, and the hello frame and every pong carry
   the stream position (`seq`), so a client replays from there after a
   reconnect even when no push reached it before the drop, and a push
@@ -269,7 +291,8 @@ everything in-process for tests.
   keepalive rather than on the next event.
 - `clients/python` (`tadas-client`, `tadas.client`): the one Python client,
   generated from the same committed `openapi.json` (`schema.py`, by
-  `make openapi`) behind the facade `types.py`; one transport client with
+  `make openapi`, for the workspace's Python version, which CI holds
+  current) behind the facade `types.py`; one transport client with
   the error envelope, idempotency keys, the OS trust store, and a timeout
   on every call, which the caller's settings name (the CLI reads
   `TADAS_HTTP_TIMEOUT_SECONDS`) and the socket's open shares; the socket
@@ -281,7 +304,8 @@ everything in-process for tests.
 - `apps/cli` (`tadas-cli`, `tadas`): Typer over the Python client. Command
   mode (`add`, `ls`, `edit`, `done`, `reopen`, `rm`, `mv`) does one call
   and exits with 0, 1 (refused), 2 (usage), 3 (not signed in), or 4
-  (unreachable); `listen` prints every task change as one line (who did
+  (unreachable: any failure of the wire, refused, timed out, or reset;
+  the API did not decide); `listen` prints every task change as one line (who did
   what to which task) as it arrives on the channel, `--mine` for the
   caller's own. `login` keeps a session token under `TADAS_HOME`;
   `TADAS_TOKEN` (a session token or an api key) and `TADAS_API_URL` win
