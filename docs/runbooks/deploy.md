@@ -51,8 +51,8 @@ Read the `plan production` job's summary (the whole text is in the
   release commit by staging.
 - `terraform show`: the resources named match the change; nothing is
   replaced (`-/+`) that holds data. The `terraform_data.pre_rollout`
-  replacement under `module.api` is the migration and appears on every
-  image change.
+  replacement under `module.environment.module.api` is the migration and
+  appears on every image change.
 
 Approve: `apply` applies exactly the saved plan (Terraform refuses it if
 the state moved meanwhile). Inside the apply the migration runs as a

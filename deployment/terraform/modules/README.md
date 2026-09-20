@@ -5,12 +5,13 @@ Three kinds of root live under this folder:
 
 - `environments/<name>/`: one root per environment (`staging`, `prod`;
   the process reads the name as `TADAS_ENVIRONMENT`, `staging` or
-  `production`). Every environment instantiates the same module graph
-  from `main.tf` and differs only in `variables.tf`, so a change that
-  works in staging reaches production as a scale change. Both take the
-  image digests as variables: `deploy-staging.yml` passes what it built,
-  `deploy-production.yml` the digests it resolves from the registry by
-  the commit `release` points at.
+  `production`). A root is thin: its backend, its providers, and one call
+  to the `environment` module with its parameter set. The graph lives in
+  the module, so a resource is added in one place and the environments
+  cannot drift; a new environment is another root, never a copy. Both
+  take the image digests as variables: `deploy-staging.yml` passes what
+  it built, `deploy-production.yml` the digests it resolves from the
+  registry by the commit `release` points at.
 - `shared/`: account-level resources every environment uses: the image
   registry (production promotes the digests staging already ran), the state
   bucket, and the deploy role that GitHub's OIDC provider may assume.
@@ -19,6 +20,7 @@ Three kinds of root live under this folder:
 
 | Module          | Declares                                                        |
 |-----------------|-----------------------------------------------------------------|
+| `environment`   | One environment whole: every module below, wired                |
 | `network`       | VPC, public and private subnets, NAT, the security groups        |
 | `cluster`       | The container cluster services and workers run on               |
 | `database`      | Postgres, its subnet group, the generated master password       |
@@ -31,6 +33,14 @@ Three kinds of root live under this folder:
 | `certificate`   | A DNS-validated ACM certificate for one name                    |
 | `domain_records`| The API's and the portal's alias records                        |
 | `service`       | One process: log groups, roles, task definition with an ADOT collector sidecar, service |
+
+The `environment` module is the graph itself, and the only module a root
+calls. It takes the `aws.us_east_1` provider alias as well as the default
+one, because CloudFront reads certificates from that region alone. Its
+inputs are the whole difference between two environments: the address
+space, the name prefixes, the instance classes, the replica counts, and
+the database's multi-az and deletion protection. Reading the two module
+calls side by side is how the environments are compared.
 
 The `service` module is instantiated once per process. A worker passes
 `deployment_maximum_percent = 100` so a rollout never runs more workers
