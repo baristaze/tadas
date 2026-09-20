@@ -57,6 +57,13 @@ class InfraSettings(BaseSettings):
 
     aws_region: str = "us-east-1"
 
+    # Every outbound call carries a timeout, one per client, so a downstream
+    # that hangs cannot hold a replica's whole pool: the AWS clients (connect
+    # and read), the Valkey client (per request), the trace exporter (per batch).
+    aws_timeout_seconds: float = 10.0
+    valkey_timeout_seconds: float = 5.0
+    otel_timeout_seconds: float = 10.0
+
     log_level: str = "INFO"
     log_json: bool = False
     otel_endpoint: str | None = None

@@ -6,7 +6,7 @@ import json
 import logging
 import sys
 from contextvars import ContextVar
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import sentry_sdk
@@ -99,15 +99,21 @@ def configure_error_reporting(
     sentry_sdk.set_tag("service", service_name)
 
 
-def configure_tracing(endpoint: str | None, service_name: str) -> None:
+def span_exporter(endpoint: str, timeout: timedelta) -> OTLPSpanExporter:
+    """The one client that sends traces out; every export is bounded by the
+    timeout from settings."""
+    return OTLPSpanExporter(
+        endpoint=endpoint.rstrip("/") + "/v1/traces", timeout=timeout.total_seconds()
+    )
+
+
+def configure_tracing(endpoint: str | None, service_name: str, timeout: timedelta) -> None:
     """The provider is configured only when an endpoint is set; otherwise the
     no-op tracer runs and the code paths stay identical."""
     if not endpoint:
         return
     provider = TracerProvider(resource=Resource.create({"service.name": service_name}))
-    provider.add_span_processor(
-        BatchSpanProcessor(OTLPSpanExporter(endpoint=endpoint.rstrip("/") + "/v1/traces"))
-    )
+    provider.add_span_processor(BatchSpanProcessor(span_exporter(endpoint, timeout)))
     trace.set_tracer_provider(provider)
 
 

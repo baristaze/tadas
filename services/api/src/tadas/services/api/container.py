@@ -38,7 +38,11 @@ def boot(settings: ApiSettings) -> None:
     configure_error_reporting(
         settings.sentry_dsn, settings.environment, settings.service_name, settings.version
     )
-    configure_tracing(settings.otel_endpoint, settings.service_name)
+    configure_tracing(
+        settings.otel_endpoint,
+        settings.service_name,
+        timedelta(seconds=settings.otel_timeout_seconds),
+    )
     _booted = True
 
 
