@@ -116,7 +116,9 @@ context on keeps the stage the callee needs.
   keys, each announced, and ends their membership with them in one
   commit (`remove_member`): soft-deleted beside the user, hidden from
   every read, out of reach of a role change, and never a live user
-  without a membership. A sign-in verifies the
+  without a membership. A user or a membership another tenant owns is
+  answered there the way one that never existed is, over both impls, so
+  the refusal says nothing about what exists under someone else. A sign-in verifies the
   password against a fixed dummy hash when the email is unknown, so the
   response time does not say which emails exist, and runs scrypt off the
   event loop. Sessions and api keys are listed newest first and filtered
@@ -340,7 +342,10 @@ context on keeps the stage the callee needs.
   row is also the tenant's head seq: `read_head`, the number the first
   frame and every pong carry, reads that one row. The append is
   idempotent on the event id, so relaying an outbox row twice appends
-  once and consumes no number. No update, no delete. The entity events reach the stream through
+  once and consumes no number. An id another tenant owns is refused
+  before the number is spent, over both impls, as Postgres rolls the
+  number back with the insert it refused, so a write this tenant cannot
+  make never moves its cursor. No update, no delete. The entity events reach the stream through
   the event storage, from the outbox relay; the manager's `append_event` is for
   an audit entry (the work manager's dead letter), requires `WRITE`, and
   stamps the tenant, the actor, the request, and the app from the
