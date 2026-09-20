@@ -89,15 +89,16 @@ class TasksManagerImpl(TasksManagerInterface):
         # fields a caller may change, the provenance stays as stored, and the
         # version is the caller's plus one: the write is conditioned on the
         # caller's, so a snapshot that missed a write is refused, not merged.
-        update: dict[str, object] = {
+        # The copy carries a dump, so it is validated, never model_copy.
+        changes: dict[str, object] = {
             **task.model_dump(exclude={*PROVENANCE_FIELDS, "version"}),
             "updated_at": utcnow(),
             "updated_by": ctx.user_id,
             "version": task.version + 1,
         }
         if current.status == TaskStatus.DONE and task.status == TaskStatus.OPEN:
-            update["position"] = await self._top_position(ctx, exclude=task.id)
-        updated = current.model_copy(update=update)
+            changes["position"] = await self._top_position(ctx, exclude=task.id)
+        updated = Task.model_validate({**current.model_dump(), **changes})
         await self._write(ctx, updated, task.version, "updated")
         return updated
 
