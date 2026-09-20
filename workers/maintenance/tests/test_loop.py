@@ -6,7 +6,14 @@ from pathlib import Path
 from uuid import UUID
 
 import pytest
-from worker_support import build_container, fast_options, make_item, request, sign_in
+from worker_support import (
+    RecordingHandler,
+    build_container,
+    fast_options,
+    make_item,
+    request,
+    sign_in,
+)
 
 from tadas.infra.cache import CacheInterface, CacheScope
 from tadas.infra.observability import request_id_var
@@ -22,7 +29,6 @@ from tadas.om.work.impl.manager import WorkOptions
 from tadas.om.work.types.handler import WorkHandlerInterface
 from tadas.om.work.types.work_item import WorkItem, WorkKind, WorkStatus
 from tadas.workers.maintenance.container import WorkerContainer
-from tadas.workers.maintenance.handler import NoopHandlerImpl
 from tadas.workers.maintenance.loop import LoopOptions, WorkerLoop
 
 
@@ -293,7 +299,7 @@ async def test_sweep_requeues_stale_items_per_tenant(tmp_path: Path) -> None:
         request(), "default", [WorkKind.NOOP], "gone-worker", timedelta(seconds=-1)
     )
     assert lost is not None
-    handler = NoopHandlerImpl()
+    handler = RecordingHandler()
     loop, task = start_loop(container, handler, fast_options())
     await until(lambda: [h.id for h in handler.handled] == [item.id])
     loop.stop()
@@ -347,7 +353,7 @@ async def test_sweep_reaches_a_tenant_whose_members_have_all_left(tmp_path: Path
         ann.model_copy(update={"deleted_at": now, "deleted_by": ann.id, "updated_at": now}),
     )
 
-    loop, task = start_loop(container, NoopHandlerImpl(), fast_options())
+    loop, task = start_loop(container, RecordingHandler(), fast_options())
     await until(lambda: loop.sweeps >= 1)
     loop.stop()
     await task
@@ -376,7 +382,7 @@ async def test_sweep_relays_the_outbox_and_purges_done_rows(tmp_path: Path) -> N
     outbox = container.storage.get_outbox_storage()
     assert [r.id for _, r in await claim_all(outbox)] == [row.id]
     loop, task_ = start_loop(
-        container, NoopHandlerImpl(), fast_options(outbox_retention=timedelta(0))
+        container, RecordingHandler(), fast_options(outbox_retention=timedelta(0))
     )
     await until(lambda: loop.sweeps >= 2)
     loop.stop()
@@ -424,7 +430,7 @@ async def test_a_lost_lease_is_never_written_over(tmp_path: Path) -> None:
 async def test_heartbeat_failure_pauses_claiming(tmp_path: Path) -> None:
     container = build_container(tmp_path)
     ctx = await sign_in(container)
-    handler = NoopHandlerImpl()
+    handler = RecordingHandler()
     loop, task = start_loop(container, handler, fast_options(), liveness=MissingLiveness())
     await until(lambda: loop.paused)
     await container.managers.work.enqueue(ctx, make_item(ctx))
@@ -486,7 +492,7 @@ async def test_sweep_purges_settled_work_items_and_finished_idempotency_records(
     begun = await container.managers.idempotency.begin(ctx, "k", "d", new_id())
     assert begun.attempt_id is not None
     await container.managers.idempotency.finish(ctx, "k", begun.attempt_id, 201, "{}")
-    handler = NoopHandlerImpl()
+    handler = RecordingHandler()
     loop, task = start_loop(container, handler, fast_options())
     await until(lambda: [h.id for h in handler.handled] == [item.id])
     sweeps = loop.sweeps

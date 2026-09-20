@@ -8,9 +8,24 @@ from tadas.infra.impl.local import InfraLocalImpl
 from tadas.om.base import new_id, utcnow
 from tadas.om.opcontext import AppContext, AppType, OpContext, RequestContext
 from tadas.om.storage.impl.memory import StorageMemoryImpl
+from tadas.om.work.types.handler import WorkHandlerInterface
 from tadas.om.work.types.work_item import WorkItem, WorkKind
 from tadas.workers.maintenance.container import WorkerContainer
+from tadas.workers.maintenance.handler import NoopHandlerImpl
 from tadas.workers.maintenance.loop import LoopOptions
+
+
+class RecordingHandler(WorkHandlerInterface):
+    """The production handler with a record of what it handled, for the tests only:
+    the production handler keeps nothing per item."""
+
+    def __init__(self) -> None:
+        self._inner = NoopHandlerImpl()
+        self.handled: list[WorkItem] = []
+
+    async def handle(self, ctx: OpContext, item: WorkItem) -> None:
+        await self._inner.handle(ctx, item)
+        self.handled.append(item)
 
 
 def build_container(tmp_path: Path) -> WorkerContainer:
