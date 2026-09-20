@@ -33,6 +33,8 @@ on:
 permissions:
   id-token: write
   contents: read
+  # The guard reads the production environment's protection rules.
+  actions: read
 
 concurrency:
   group: deploy-production
@@ -68,6 +70,24 @@ jobs:
             echo "::error::$SHA is not an ancestor of main. release moves only by a fast-forward from main (release.yml); a commit made on release is not deployed. Reset release to a main commit and dispatch release.yml."
             exit 1
           fi
+      # The approval gate is a setting outside the repository; this makes its
+      # absence a failed run instead of an unreviewed apply.
+      - name: the production environment requires a reviewer
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          if ! rules="$(gh api "repos/$REPOSITORY/environments/production" --jq '[.protection_rules[]? | .type] | join(",")' 2>&1)"; then
+            echo "::error::the production environment cannot be read ($rules): create it with a required reviewer (the deploy runbook) before releasing"
+            exit 1
+          fi
+          case ",$rules," in
+            *,required_reviewers,*)
+              echo "The \`production\` environment requires a reviewer; the apply waits for one." >> "$GITHUB_STEP_SUMMARY" ;;
+            *)
+              echo "::error::the production environment has no required-reviewers rule (rules: '$rules'); without it the apply would run unreviewed. Add the reviewer (the deploy runbook) before releasing."
+              exit 1 ;;
+          esac
       - name: the cloud is configured
         env:
           AWS_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
