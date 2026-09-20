@@ -2,8 +2,8 @@ from collections.abc import Sequence
 from datetime import datetime, timedelta
 from uuid import UUID
 
-from tadas.om.base import new_id, utcnow
-from tadas.om.exceptions import DuplicateWorkItem, TenantMismatch
+from tadas.om.base import EMPTY_UUID, new_id, utcnow
+from tadas.om.exceptions import TenantMismatch
 from tadas.om.storage.impl.memory_base import MemoryStorageBase, MemoryTable
 from tadas.om.work.rules import attempts_after_claim, is_exhausted, stagger_delay
 from tadas.om.work.storage import WorkStorageInterface
@@ -24,7 +24,7 @@ class WorkStorageMemoryImpl(MemoryStorageBase, WorkStorageInterface):
                 return False
             for _, existing in self._items.values():
                 if existing.idempotency_key == item.idempotency_key:
-                    raise DuplicateWorkItem(f"idempotency key {item.idempotency_key} is taken")
+                    return False  # the key is taken: reported, like a taken id
             return self._insert(self._items, org_id, item)
 
     async def write_item_if_held(
@@ -61,6 +61,7 @@ class WorkStorageMemoryImpl(MemoryStorageBase, WorkStorageInterface):
                             "lease_expires_at": now + lease,
                             "attempts": attempts_after_claim(item.attempts),
                             "updated_at": now,
+                            "updated_by": EMPTY_UUID,  # the claim is the platform's write
                         }
                     )
                     self._items[item.id] = (org_id, claimed)
@@ -68,7 +69,7 @@ class WorkStorageMemoryImpl(MemoryStorageBase, WorkStorageInterface):
         return None
 
     async def requeue_stale(
-        self, org_id: UUID, now: datetime, stagger: timedelta, updated_by: UUID
+        self, org_id: UUID, now: datetime, stagger: timedelta
     ) -> list[WorkItem]:
         changed: list[WorkItem] = []
         async with self._lock:
@@ -95,7 +96,7 @@ class WorkStorageMemoryImpl(MemoryStorageBase, WorkStorageInterface):
                         "lease_expires_at": None,
                         "last_error": "lease expired",
                         "updated_at": now,
-                        "updated_by": updated_by,
+                        "updated_by": EMPTY_UUID,
                     }
                 )
                 self._items[item.id] = (org_id, requeued)
@@ -115,3 +116,13 @@ class WorkStorageMemoryImpl(MemoryStorageBase, WorkStorageInterface):
 
     async def read_item(self, org_id: UUID, item_id: UUID) -> WorkItem | None:
         return self._get(self._items, org_id, item_id)
+
+    async def read_item_by_key(self, org_id: UUID, idempotency_key: UUID) -> WorkItem | None:
+        return next(
+            (
+                item
+                for item in self._rows(self._items, org_id)
+                if item.idempotency_key == idempotency_key
+            ),
+            None,
+        )

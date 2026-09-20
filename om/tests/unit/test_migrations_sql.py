@@ -95,3 +95,22 @@ def test_the_purge_of_a_tenant_has_an_index_the_orm_and_the_chain_agree_on(
         path.read_text() for path in (MIGRATIONS_DIR / "sql" / "core").glob("*.up.sql")
     )
     assert f"CREATE INDEX {name} ON core.{table} (org_id, deleted_at)" in chain
+
+
+def test_the_re_mint_fence_has_an_index_the_orm_and_the_chain_agree_on() -> None:
+    """The re-mint of a secret is conditional on the marker still holding the
+    attempt making the write, so the rerun's statement reads the markers by
+    `(org_id, target_id)`. `uq_idempotency_records_org_id_user_id_key` leads
+    with the caller's key and the table carries no org_id index of its own, so
+    the fence has one named for what it reads. `make migrate-check` compares
+    the ORM metadata with the migrated schema, so both say it."""
+    name = "ix_idempotency_records_org_id_target_id"
+    orm = role_metadata(DatabaseRole.CORE).tables["core.idempotency_records"]
+    index = next((i for i in orm.indexes if i.name == name), None)
+    assert index is not None, f"the markers declare no {name}"
+    assert [c.name for c in index.columns] == ["org_id", "target_id"]
+    assert not index.unique
+    chain = "\n".join(
+        path.read_text() for path in (MIGRATIONS_DIR / "sql" / "core").glob("*.up.sql")
+    )
+    assert f"CREATE INDEX {name} ON core.idempotency_records (org_id, target_id)" in chain

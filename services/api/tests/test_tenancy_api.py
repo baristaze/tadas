@@ -1,3 +1,4 @@
+import asyncio
 import json
 from datetime import timedelta
 from pathlib import Path
@@ -156,6 +157,58 @@ async def test_a_crash_between_the_key_create_and_finish_reissues_the_secret(
         "/v1/me", headers={"Authorization": f"Bearer {retry.json()['key']}"}
     )
     assert as_machine.status_code == 200, as_machine.text
+    replay = await client.post("/v1/api-keys", headers=headers, json=body)
+    assert replay.status_code == 201 and replay.headers["Idempotent-Replayed"] == "true"
+    assert replay.json() == {**retry.json(), "key": None}
+
+
+async def test_a_slow_attempt_never_re_mints_the_key_the_retry_returned(
+    client: httpx.AsyncClient,
+    container: AppContainer,
+    owner: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The first attempt is still running when its pending lease passes. The
+    # retry takes the marker over, reruns the create on the marker's id, and
+    # hands its secret to the caller. The slow attempt then finds the id
+    # written and would re-mint over it: the marker no longer holds its
+    # attempt, so the re-mint is refused, and the key the caller is holding
+    # goes on authenticating.
+    manager = container.managers.idempotency
+    monkeypatch.setattr(manager, "_options", IdempotencyOptions(pending_ttl=timedelta(0)))
+    original_create = container.managers.tenancy.create_api_key
+    entered, release = asyncio.Event(), asyncio.Event()
+    held = False
+
+    async def slow_once(ctx, name, role, ttl=None, attempt=None):
+        nonlocal held
+        if not held:
+            held = True
+            entered.set()
+            await release.wait()
+        return await original_create(ctx, name, role, ttl, attempt)
+
+    monkeypatch.setattr(container.managers.tenancy, "create_api_key", slow_once)
+    headers = {**owner, "Idempotency-Key": "key-slow-1"}
+    body = {"name": "ci", "role": "member"}
+    slow_call = asyncio.create_task(client.post("/v1/api-keys", headers=headers, json=body))
+    await asyncio.wait_for(entered.wait(), timeout=5)
+
+    retry = await client.post("/v1/api-keys", headers=headers, json=body)
+    assert retry.status_code == 201, retry.text
+    assert "Idempotent-Replayed" not in retry.headers
+
+    release.set()
+    slow = await slow_call
+    assert slow.status_code == 409, slow.text
+    as_machine = await client.get(
+        "/v1/me", headers={"Authorization": f"Bearer {retry.json()['key']}"}
+    )
+    assert as_machine.status_code == 200, "the secret the retry returned still verifies"
+    keys = (await client.get("/v1/api-keys", headers=owner)).json()["items"]
+    assert [k["id"] for k in keys] == [retry.json()["api_key"]["id"]], "one row, the retry's"
+    # The slow attempt's refusal is nobody's outcome: the marker holds the
+    # retry's, and a replay answers with it.
     replay = await client.post("/v1/api-keys", headers=headers, json=body)
     assert replay.status_code == 201 and replay.headers["Idempotent-Replayed"] == "true"
     assert replay.json() == {**retry.json(), "key": None}

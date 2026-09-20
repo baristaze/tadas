@@ -17,12 +17,14 @@ from tadas.om.work.storage.impl.memory import WorkStorageMemoryImpl
 
 class StorageMemoryImpl(StorageInterface):
     def __init__(self) -> None:
-        # The outbox first: the core-role impls land their outbox rows in it.
+        # The outbox and the markers first: the core-role impls land their
+        # outbox rows in the one and fence a re-mint on the other, which is
+        # how each impl gets what its Postgres twin reads in its own statement.
         self._outbox = OutboxStorageMemoryImpl()
-        self._tenancy = TenancyStorageMemoryImpl(self._outbox)
+        self._idempotency = IdempotencyStorageMemoryImpl()
+        self._tenancy = TenancyStorageMemoryImpl(self._outbox, self._idempotency)
         self._work = WorkStorageMemoryImpl()
         self._tasks = TasksStorageMemoryImpl(self._outbox)
-        self._idempotency = IdempotencyStorageMemoryImpl()
         self._events = EventStorageMemoryImpl()
 
     def get_tenancy_storage(self) -> TenancyStorageInterface:

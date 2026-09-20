@@ -1,5 +1,5 @@
 """The in-memory base: a full second implementation of every tenancy rule
-the relational base has, over dicts keyed by id. An outbox row lands in the
+the relational base has, over dicts keyed by id. The outbox rows land in the
 outbox memory storage the root handed this impl, the twin of "in the same
 commit"."""
 
@@ -31,32 +31,45 @@ class MemoryStorageBase:
         self._outbox = outbox
 
     def _put(
-        self, table: MemoryTable[E], org_id: UUID, entity: E, outbox_row: OutboxRow | None = None
+        self,
+        table: MemoryTable[E],
+        org_id: UUID,
+        entity: E,
+        outbox_rows: tuple[OutboxRow, ...] = (),
     ) -> None:
         existing = table.get(entity.id)
         if existing is not None and existing[0] != org_id:
             raise TenantMismatch(f"{entity.id} is not in {org_id}")
         if existing is not None and undeletes(existing[1], entity):
             raise RowDeleted(f"{entity.id} was deleted")
-        if outbox_row is not None:
-            if self._outbox is None:
-                raise RuntimeError("this memory storage was built without an outbox to land in")
-            self._outbox.land(org_id, outbox_row)
+        self._land(org_id, outbox_rows)
         table[entity.id] = (org_id, entity)
 
     def _insert(
-        self, table: MemoryTable[E], org_id: UUID, entity: E, outbox_row: OutboxRow | None = None
+        self,
+        table: MemoryTable[E],
+        org_id: UUID,
+        entity: E,
+        outbox_rows: tuple[OutboxRow, ...] = (),
     ) -> bool:
         """The create primitive: False when the id is already written, and nothing
-        changes then, the outbox row included."""
+        changes then, the outbox rows included."""
         if entity.id in table:
             return False
-        if outbox_row is not None:
-            if self._outbox is None:
-                raise RuntimeError("this memory storage was built without an outbox to land in")
-            self._outbox.land(org_id, outbox_row)
+        self._land(org_id, outbox_rows)
         table[entity.id] = (org_id, entity)
         return True
+
+    def _land(self, org_id: UUID, outbox_rows: tuple[OutboxRow, ...]) -> None:
+        """The twin of landing the rows in the same commit: an entity change is
+        one row, and a write that also starts work carries a second one of kind
+        `work.<kind>`, which the relay turns into a work item."""
+        if not outbox_rows:
+            return
+        if self._outbox is None:
+            raise RuntimeError("this memory storage was built without an outbox to land in")
+        for row in outbox_rows:
+            self._outbox.land(org_id, row)
 
     @staticmethod
     def _get(table: MemoryTable[E], org_id: UUID, entity_id: UUID) -> E | None:

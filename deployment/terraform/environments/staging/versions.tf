@@ -17,11 +17,17 @@ terraform {
   backend "s3" {}
 }
 
+# Every resource carries the environment as a tag, and the deploy roles deny
+# anything tagged as the other one: a staging credential cannot reach a
+# production resource whatever else its policy allows.
 provider "aws" {
   region = var.region
 
   default_tags {
-    tags = { "tadas:managed-by" = "terraform" }
+    tags = {
+      "tadas:managed-by"  = "terraform"
+      "tadas:environment" = var.environment
+    }
   }
 }
 
@@ -31,6 +37,9 @@ provider "aws" {
   region = "us-east-1"
 
   default_tags {
-    tags = { "tadas:managed-by" = "terraform" }
+    tags = {
+      "tadas:managed-by"  = "terraform"
+      "tadas:environment" = var.environment
+    }
   }
 }

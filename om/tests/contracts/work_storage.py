@@ -1,15 +1,14 @@
-import asyncio
 from datetime import timedelta
 from uuid import UUID
 
 import pytest
 
-from tadas.om.base import new_id, utcnow
-from tadas.om.exceptions import DuplicateWorkItem, TenantMismatch
+from contracts.racing import race
+from tadas.om.base import EMPTY_UUID, new_id, utcnow
+from tadas.om.exceptions import TenantMismatch
 from tadas.om.work.storage import WorkStorageInterface
 from tadas.om.work.types.work_item import WorkItem, WorkKind, WorkStatus
 
-SWEEPER = new_id()
 LEASE = timedelta(seconds=30)
 
 
@@ -53,30 +52,38 @@ class WorkStorageContract:
         assert claimed.claimed_by == "w1"
         assert claimed.claim_token is not None
         assert claimed.attempts == 1
+        assert claimed.created_by == item.created_by, "the person who asked for the work"
+        assert claimed.updated_by == EMPTY_UUID, "the claim is the platform's write"
         assert claimed.lease_expires_at is not None and claimed.lease_expires_at > utcnow()
         assert claimed.payload == {}
         assert await storage.claim_next(lane, [WorkKind.NOOP], "w2", LEASE) is None
         assert await storage.read_item(org, item.id) == claimed
 
-    async def test_a_raced_claim_admits_exactly_one(
+    async def test_two_claims_admit_exactly_one(
         self, storage: WorkStorageInterface, lane: str
     ) -> None:
-        # Two workers claim the one available item at the same moment. The
-        # claim is one statement, so exactly one of them holds the item
-        # afterwards, and the row names that worker with one attempt spent.
+        # Two workers reach for the one available item. The claim is one
+        # statement, so exactly one of them holds the item afterwards, and the
+        # row names that worker with one attempt spent. See contracts/racing.py
+        # for what each impl's run of this proves.
         org = new_id()
         item = make_item(lane=lane)
         await storage.create_item(org, item)
-        outcomes = await asyncio.gather(
+        run = await race(
             storage.claim_next(lane, [WorkKind.NOOP], "w1", LEASE),
             storage.claim_next(lane, [WorkKind.NOOP], "w2", LEASE),
         )
-        winners = [claimed for claimed in outcomes if claimed is not None]
-        assert len(winners) == 1
-        claimed_org, claimed = winners[0]
+        assert len(run.admitted) == 1, run.summary()
+        winner = run.admitted[0]
+        assert winner is not None
+        claimed_org, claimed = winner
         assert claimed_org == org and claimed.id == item.id
         assert claimed.claimed_by in ("w1", "w2") and claimed.attempts == 1
         assert claimed.claim_token is not None
+        assert await storage.read_item(org, item.id) == claimed
+        # The refusal the claim gives whoever arrives after it: the item is
+        # held, so a third worker finds nothing and the row is untouched.
+        assert await storage.claim_next(lane, [WorkKind.NOOP], "w3", LEASE) is None
         assert await storage.read_item(org, item.id) == claimed
 
     async def test_claim_takes_the_oldest_available_in_its_queue(
@@ -113,13 +120,13 @@ class WorkStorageContract:
 
         now = utcnow()
         stagger = timedelta(seconds=5)
-        changed = await storage.requeue_stale(org_a, now, stagger, SWEEPER)
+        changed = await storage.requeue_stale(org_a, now, stagger)
         assert [item.id for item in changed] == sorted(item.id for item in stale)
         for position, item in enumerate(changed):
             assert item.claimed_by is None and item.lease_expires_at is None
             assert item.claim_token is None
             assert item.last_error == "lease expired" and item.updated_at == now
-            assert item.updated_by == SWEEPER
+            assert item.updated_by == EMPTY_UUID, "the requeue is the platform's write"
             if item.max_attempts == 1:
                 assert item.status is WorkStatus.FAILED
             else:
@@ -130,7 +137,7 @@ class WorkStorageContract:
         assert held is not None and held.status is WorkStatus.CLAIMED
         other = await storage.read_item(org_b, elsewhere.id)
         assert other is not None and other.status is WorkStatus.CLAIMED
-        assert await storage.requeue_stale(org_a, utcnow(), stagger, SWEEPER) == []
+        assert await storage.requeue_stale(org_a, utcnow(), stagger) == []
 
     async def test_write_if_held_is_conditional_on_the_claim_token(
         self, storage: WorkStorageInterface, lane: str
@@ -168,7 +175,7 @@ class WorkStorageContract:
         assert first is not None
         stale = first[1]
         assert stale.claim_token is not None
-        assert len(await storage.requeue_stale(org, utcnow(), timedelta(0), SWEEPER)) == 1
+        assert len(await storage.requeue_stale(org, utcnow(), timedelta(0))) == 1
         second = await storage.claim_next(lane, [WorkKind.NOOP], "w1", LEASE)
         assert second is not None
         fresh = second[1]
@@ -193,15 +200,22 @@ class WorkStorageContract:
         assert not await storage.create_item(org, item.model_copy(update={"last_error": "again"}))
         assert await storage.read_item(org, item.id) == claimed[1]
 
-    async def test_idempotency_key_is_unique(self, storage: WorkStorageInterface) -> None:
+    async def test_a_taken_idempotency_key_is_reported_and_changes_nothing(
+        self, storage: WorkStorageInterface
+    ) -> None:
+        # The key is the producer's, so a second insert under it is a retry, not
+        # an error: the create reports it, nothing changes, and the row it names
+        # reads back by the key. That is what lets the relay run twice.
         org = new_id()
         item = make_item()
         assert await storage.create_item(org, item)
         duplicate = make_item().model_copy(update={"idempotency_key": item.idempotency_key})
-        with pytest.raises(DuplicateWorkItem):
-            await storage.create_item(org, duplicate)
+        assert await storage.create_item(org, duplicate) is False
         assert await storage.read_item(org, duplicate.id) is None
         assert await storage.read_item(org, item.id) == item
+        assert await storage.read_item_by_key(org, item.idempotency_key) == item
+        assert await storage.read_item_by_key(new_id(), item.idempotency_key) is None
+        assert await storage.read_item_by_key(org, new_id()) is None
 
     async def test_reads_and_writes_are_tenant_scoped(self, storage: WorkStorageInterface) -> None:
         org_a, org_b = new_id(), new_id()

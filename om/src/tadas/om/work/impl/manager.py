@@ -11,13 +11,26 @@ from tadas.infra.topics import EntityChangedPayload, Topics, TopicsInterface, Wo
 from tadas.om.base import EMPTY_UUID, Platform, new_id, utcnow
 from tadas.om.events import EventsManagerInterface
 from tadas.om.events.manager import audit_event
-from tadas.om.exceptions import InvalidCredential, LeaseLost, NotFound, ValidationFailed
+from tadas.om.exceptions import (
+    InvalidCredential,
+    LeaseLost,
+    NotFound,
+    UniqueKeyTaken,
+    ValidationFailed,
+)
 from tadas.om.opcontext import OpContext, Permission, RequestContext
+from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.tenancy import TenancyManagerInterface
 from tadas.om.work.manager import WorkManagerInterface
 from tadas.om.work.rules import attempts_after_hand_back, is_exhausted, retry_delay
 from tadas.om.work.storage import WorkStorageInterface
-from tadas.om.work.types.work_item import WORK_PAYLOADS, WorkItem, WorkKind, WorkStatus
+from tadas.om.work.types.work_item import (
+    WORK_PAYLOADS,
+    WORK_ROW_PREFIX,
+    WorkItem,
+    WorkKind,
+    WorkStatus,
+)
 
 log = logging.getLogger(__name__)
 
@@ -48,11 +61,10 @@ class WorkManagerImpl(WorkManagerInterface):
         self._options = options
 
     async def enqueue(self, ctx: OpContext, item: WorkItem) -> WorkItem:
+        """The direct create, under a context: work a CLI, a sweep, or an app asks
+        for on its own, which no core write announced. The actor is the
+        context's and the key is the caller's."""
         ctx.require(Permission.WRITE)
-        try:
-            WORK_PAYLOADS[item.kind].model_validate(item.payload)
-        except ValidationError as error:
-            raise ValidationFailed(f"payload of {item.kind.value} work: {error}"[:500]) from None
         now = utcnow()
         queued = item.model_copy(
             update={
@@ -68,20 +80,55 @@ class WorkManagerImpl(WorkManagerInterface):
                 "last_error": None,
             }
         )
-        if not await self._storage.create_item(ctx.org_id, queued):
-            # Ids are minted above storage, so the only way to present one twice
-            # is a retry, and a retry must not create twice: the insert reported
-            # the id and nothing changed, a claim on the row included, so the
-            # row as stored is the answer and it was announced when it landed.
-            existing = await self._storage.read_item(ctx.org_id, queued.id)
-            assert existing is not None
-            return existing
+        return await self._land(ctx.org_id, queued)
+
+    async def enqueue_relayed(self, org_id: UUID, row: OutboxRow) -> WorkItem:
+        """The enqueue of work a core write started: the relay makes it from the
+        second outbox row of that write, which landed in the same statement as
+        the entity's. No context, since the relay runs without a principal: the
+        actor comes from the row, and so does the idempotency key, which is the
+        row's id and the same on every run of the relay. The lane is the
+        default one; a row carries no routing of its own."""
+        kind = row.kind.removeprefix(WORK_ROW_PREFIX)
+        if kind not in {k.value for k in WorkKind}:
+            raise ValidationFailed(f"outbox row {row.id} asks for unknown work {row.kind}")
+        now = utcnow()
+        return await self._land(
+            org_id,
+            WorkItem(
+                id=new_id(),
+                created_at=now,
+                updated_at=now,
+                created_by=row.actor_id,  # the principal of the write that asked
+                updated_by=EMPTY_UUID,  # the machinery, from here on
+                kind=WorkKind(kind),
+                target_id=row.target_id,
+                idempotency_key=row.id,
+                payload=row.payload,
+                status=WorkStatus.QUEUED,
+                available_at=now,
+            ),
+        )
+
+    async def _land(self, org_id: UUID, queued: WorkItem) -> WorkItem:
+        """The insert both enqueues share: the payload against the shape its kind
+        fixes, the create, and the wake. Ids are minted above storage, so the
+        only way to present one twice is a retry, and a retry must not create
+        twice: the insert reports an id, or an idempotency key, already
+        written and nothing changes, a claim on the row included, so the row
+        as stored is the answer and it was announced when it landed."""
+        try:
+            WORK_PAYLOADS[queued.kind].model_validate(queued.payload)
+        except ValidationError as error:
+            raise ValidationFailed(f"payload of {queued.kind.value} work: {error}"[:500]) from None
+        if not await self._storage.create_item(org_id, queued):
+            return await self._stored(org_id, queued)
         await self._topics.publish(
             Topics.WORK_AVAILABLE,
             WorkAvailablePayload(
                 idempotency_key=queued.idempotency_key,
-                produced_at=now,
-                org_id=ctx.org_id,
+                produced_at=queued.created_at,
+                org_id=org_id,
                 lane=queued.lane,
                 kind=queued.kind.value,
             ),
@@ -165,7 +212,7 @@ class WorkManagerImpl(WorkManagerInterface):
     async def requeue_stale(self, ctx: OpContext) -> int:
         ctx.require(Permission.WRITE)
         requeued = await self._storage.requeue_stale(
-            ctx.org_id, utcnow(), self._options.stale_stagger, ctx.user_id
+            ctx.org_id, utcnow(), self._options.stale_stagger
         )
         if requeued:
             log.info("requeued %d stale work items in org %s", len(requeued), ctx.org_id)
@@ -180,6 +227,17 @@ class WorkManagerImpl(WorkManagerInterface):
 
     async def maintenance_contexts(self, rctx: RequestContext) -> list[OpContext]:
         return await self._tenancy.service_contexts(rctx)
+
+    async def _stored(self, org_id: UUID, queued: WorkItem) -> WorkItem:
+        """The row a reported create met: the one under this id, or the one the
+        key belongs to. A key that reads back nowhere is another tenant's, the
+        one case the unique index refuses that is not a retry."""
+        existing = await self._storage.read_item(org_id, queued.id) or (
+            await self._storage.read_item_by_key(org_id, queued.idempotency_key)
+        )
+        if existing is None:
+            raise UniqueKeyTaken(f"idempotency key {queued.idempotency_key} is another tenant's")
+        return existing
 
     async def _hand_back(self, ctx: OpContext, item: WorkItem, delay: timedelta) -> WorkItem:
         now = utcnow()
@@ -204,7 +262,15 @@ class WorkManagerImpl(WorkManagerInterface):
         worker's name, is the fence: one worker can hold one item twice across a
         requeue, and the first claim's copy must not settle the second. A worker
         whose lease has passed is refused with LeaseLost, a Conflict, and hands
-        the item back without spending an attempt."""
+        the item back without spending an attempt.
+
+        The copy starts from the stored row, so what a worker sends back cannot
+        rewrite who asked for the work, when it was asked for, or what it is;
+        the note a hand-back carries is the one field the caller supplies. And
+        every write here is the platform's, so it signs `updated_by` with
+        EMPTY_UUID and never with `ctx.user_id`: the context the work runs
+        under is the attribution of the work, never of the bookkeeping on its
+        row."""
         ctx.require(Permission.WRITE)
         stored = await self._storage.read_item(ctx.org_id, item.id)
         if stored is None:
@@ -215,11 +281,15 @@ class WorkManagerImpl(WorkManagerInterface):
             or stored.claim_token != item.claim_token
         ):
             raise LeaseLost(f"work item {item.id} is no longer held by {item.claimed_by}")
-        written = await self._storage.write_item_if_held(
-            ctx.org_id,
-            item.claim_token,
-            item.model_copy(update=update | {"updated_by": ctx.user_id}),
+        moved = WorkItem.model_validate(
+            {
+                **stored.model_dump(),
+                "last_error": item.last_error,
+                **update,
+                "updated_by": EMPTY_UUID,
+            }
         )
+        written = await self._storage.write_item_if_held(ctx.org_id, item.claim_token, moved)
         if written is None:
             raise LeaseLost(f"work item {item.id} was taken from {item.claimed_by} mid-write")
         return written

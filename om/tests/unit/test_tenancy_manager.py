@@ -23,6 +23,9 @@ from tadas.om.exceptions import (
     UniqueKeyTaken,
     ValidationFailed,
 )
+from tadas.om.idempotency.storage.impl.memory import IdempotencyStorageMemoryImpl
+from tadas.om.idempotency.types.attempt import Attempt, lease_bound
+from tadas.om.idempotency.types.record import IdempotencyRecord
 from tadas.om.opcontext import (
     AppContext,
     AppType,
@@ -90,8 +93,37 @@ def outbox() -> OutboxStorageMemoryImpl:
 
 
 @pytest.fixture
-def storage(outbox: OutboxStorageMemoryImpl) -> TenancyStorageMemoryImpl:
-    return TenancyStorageMemoryImpl(outbox)
+def markers() -> IdempotencyStorageMemoryImpl:
+    return IdempotencyStorageMemoryImpl()
+
+
+@pytest.fixture
+def storage(
+    outbox: OutboxStorageMemoryImpl, markers: IdempotencyStorageMemoryImpl
+) -> TenancyStorageMemoryImpl:
+    return TenancyStorageMemoryImpl(outbox, markers)
+
+
+async def begin_attempt(
+    markers: IdempotencyStorageMemoryImpl, ctx: OpContext, key: str, target_id: UUID
+) -> Attempt:
+    """What the gateway does before a creating request: a pending marker on the
+    id the create uses, under a token of its own, and the attempt that carries
+    both down to the write."""
+    attempt_id = new_id()
+    await markers.write_record(
+        ctx.org_id,
+        IdempotencyRecord(
+            id=new_id(),
+            created_at=utcnow(),
+            user_id=ctx.user_id,
+            key=key,
+            request_digest="digest",
+            target_id=target_id,
+            attempt_id=attempt_id,
+        ),
+    )
+    return Attempt(target_id=target_id, attempt_id=attempt_id)
 
 
 def make_manager(
@@ -410,7 +442,7 @@ async def test_no_one_mints_a_service_key(
 
 
 async def test_a_rerun_of_the_create_reissues_the_secret_on_the_same_key(
-    manager: TenancyManagerImpl, infra: InfraLocalImpl
+    manager: TenancyManagerImpl, infra: InfraLocalImpl, markers: IdempotencyStorageMemoryImpl
 ) -> None:
     seen: list[TopicPayload] = []
 
@@ -423,13 +455,19 @@ async def test_a_rerun_of_the_create_reissues_the_secret_on_the_same_key(
     )
     owner = await sign_in(manager, "ann@example.test", org.id)
     api_key_id = new_id()
-    first = await manager.create_api_key(owner, "ci", Role.MEMBER, api_key_id=api_key_id)
+    attempt = await begin_attempt(markers, owner, "retried", api_key_id)
+    first = await manager.create_api_key(owner, "ci", Role.MEMBER, attempt=attempt)
     assert (await manager.authenticate(request(), first.key)).credential_id == api_key_id
 
     # The retry that took over an abandoned marker runs the create again on
     # the id the marker carries: same row, fresh secret, and the first secret,
     # which reached no one, stops authenticating.
-    again = await manager.create_api_key(owner, "ci", Role.MEMBER, api_key_id=api_key_id)
+    taken = await markers.take_over_pending(
+        owner.org_id, owner.user_id, "retried", lease_bound(utcnow()), new_id()
+    )
+    assert taken is not None and taken.attempt_id is not None
+    retry = Attempt(target_id=taken.target_id, attempt_id=taken.attempt_id)
+    again = await manager.create_api_key(owner, "ci", Role.MEMBER, attempt=retry)
     assert again.key != first.key
     assert again.api_key.id == api_key_id
     assert again.api_key.created_at == first.api_key.created_at
@@ -438,6 +476,12 @@ async def test_a_rerun_of_the_create_reissues_the_secret_on_the_same_key(
         await manager.authenticate(request(), first.key)
     assert [k.id for k in (await manager.get_api_keys(owner, None, limit=10)).items] == [api_key_id]
     assert len(seen) == 1, "the key was announced once"
+
+    # The attempt the retry took the marker from is a zombie: its re-mint is
+    # refused, and the secret the caller is holding goes on authenticating.
+    with pytest.raises(Conflict):
+        await manager.create_api_key(owner, "ci", Role.MEMBER, attempt=attempt)
+    assert (await manager.authenticate(request(), again.key)).credential_id == api_key_id
 
 
 async def test_api_key_ttl_is_bounded_by_the_option(
@@ -581,18 +625,18 @@ class DownOnRemoveStorage(TenancyStorageMemoryImpl):
     down = True
 
     async def write_user(
-        self, org_id: UUID, user: User, outbox_row: OutboxRow | None = None
+        self, org_id: UUID, user: User, outbox_rows: tuple[OutboxRow, ...] = ()
     ) -> None:
         if self.down and user.deleted_at is not None:
             raise RuntimeError("storage is down")
-        await super().write_user(org_id, user, outbox_row)
+        await super().write_user(org_id, user, outbox_rows)
 
     async def remove_member(
-        self, org_id: UUID, user: User, membership: Membership, outbox_row: OutboxRow
+        self, org_id: UUID, user: User, membership: Membership, outbox_rows: tuple[OutboxRow, ...]
     ) -> None:
         if self.down:
             raise RuntimeError("storage is down")
-        await super().remove_member(org_id, user, membership, outbox_row)
+        await super().remove_member(org_id, user, membership, outbox_rows)
 
 
 async def test_a_removal_that_fails_leaves_the_member_whole(
@@ -1305,7 +1349,7 @@ class DownOnCreateStorage(TenancyStorageMemoryImpl):
         org_id: UUID,
         user: User,
         membership: Membership,
-        outbox_row: OutboxRow,
+        outbox_rows: tuple[OutboxRow, ...],
         identity: Identity | None = None,
     ) -> None:
         raise UniqueKeyTaken("a key is taken")

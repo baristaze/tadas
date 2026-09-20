@@ -410,12 +410,16 @@ async def test_a_write_that_lands_between_the_read_and_the_write_is_refused(
         before_first_update: Callable[[], Coroutine[Any, Any, None]] | None = None
 
         async def update_task(
-            self, org_id: UUID, task: Task, expected_version: int, outbox_row: OutboxRow
+            self,
+            org_id: UUID,
+            task: Task,
+            expected_version: int,
+            outbox_rows: tuple[OutboxRow, ...],
         ) -> None:
             hook, self.before_first_update = self.before_first_update, None
             if hook is not None:
                 await hook()
-            await super().update_task(org_id, task, expected_version, outbox_row)
+            await super().update_task(org_id, task, expected_version, outbox_rows)
 
     outbox = OutboxStorageMemoryImpl()
     storage = Interleaved(outbox)
@@ -512,7 +516,7 @@ async def test_a_failed_relay_leaves_the_row_for_the_sweep(
     # idempotent on the row's id and marks the row done once the bus is back.
     # The row is seconds old, so the sweep's grace is set aside here.
     working = OutboxRelayImpl(
-        outbox, events_storage, infra.get_topics(), OutboxOptions(grace=timedelta(0))
+        outbox, events_storage, infra.get_topics(), options=OutboxOptions(grace=timedelta(0))
     )
     assert await working.relay_pending(10) == 1
     assert await claim_all(outbox) == []
@@ -571,7 +575,7 @@ async def test_a_move_after_a_tied_anchor_lands_between_the_two(
 
     async def place(task: Task, position: float) -> None:
         moved = task.model_copy(update={"position": position, "version": task.version + 1})
-        await storage.update_tasks(ctx.org_id, [(moved, task.version, _row(ctx, moved))])
+        await storage.update_tasks(ctx.org_id, [(moved, task.version, (_row(ctx, moved),))])
 
     for task in (x, y):
         await place(task, 5.0)

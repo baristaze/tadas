@@ -6,12 +6,23 @@
 # built is refused before anything is planned, and `release` must be an
 # ancestor of `main`, or someone committed to it.
 #
-# The approval is the `production` GitHub environment's required reviewer:
-# the `apply` job binds to it and waits there, with the plan in the `plan`
-# job's summary and in the `production-plan` artifact. The jobs before it
-# carry no environment and present the branch (`ref:refs/heads/release`) to
-# the deploy role, which trusts exactly that subject for the read-and-plan
-# work; only a job in the `production` environment applies.
+# The approval gates the credential, not only the step. Two roles stand
+# behind this workflow, each trusting exactly one subject:
+#
+#   environment:production-plan -> tadas-plan-production    reads and plans
+#   environment:production      -> tadas-deploy-production  applies
+#
+# `resolve` and `plan` run before anyone approves, so they declare
+# `production-plan` and hold a credential that can change nothing: it reads
+# production, takes the state lock while it plans, and writes the plan file.
+# `apply` declares `production`, whose required reviewer is the approval, and
+# a job that has not waited there never produces the subject the applying
+# role trusts. The plan is in the `plan` job's summary and in the
+# `production-plan` artifact.
+#
+# A plan reads the state, and the state holds the database password in clear,
+# so the pre-approval credential sees production's secrets. What it cannot do
+# is change production, and that is the line the approval holds.
 #
 # Inside the apply the migration runs as a one-off task on the new API image
 # before the services roll (the service module orders it); a migration that
@@ -56,7 +67,7 @@ jobs:
         run: |
           echo "::error::production deploys from refs/heads/release only, not $REF"
           exit 1
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - name: release is an ancestor of main
@@ -90,12 +101,13 @@ jobs:
           esac
       - name: the cloud is configured
         env:
-          AWS_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          AWS_PRODUCTION_PLAN_ROLE_ARN: ${{ vars.AWS_PRODUCTION_PLAN_ROLE_ARN }}
+          AWS_PRODUCTION_ROLE_ARN: ${{ vars.AWS_PRODUCTION_ROLE_ARN }}
           TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
           DNS_ZONE_NAME: ${{ vars.DNS_ZONE_NAME }}
         run: |
           missing=""
-          for name in AWS_DEPLOY_ROLE_ARN TF_STATE_BUCKET DNS_ZONE_NAME; do
+          for name in AWS_PRODUCTION_PLAN_ROLE_ARN AWS_PRODUCTION_ROLE_ARN TF_STATE_BUCKET DNS_ZONE_NAME; do
             [ -n "${!name}" ] || missing="${missing:+$missing, }$name"
           done
           if [ -n "$missing" ]; then
@@ -107,15 +119,18 @@ jobs:
     name: what staging built for this commit
     needs: guard
     runs-on: ubuntu-latest
+    # No rule on this environment: it is how the job presents a subject the
+    # read-only role trusts, before there is anything to approve.
+    environment: production-plan
     outputs:
       api_image: ${{ steps.images.outputs.api_image }}
       maintenance_image: ${{ steps.images.outputs.maintenance_image }}
     steps:
-      - uses: aws-actions/configure-aws-credentials@v6
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
-          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          role-to-assume: ${{ vars.AWS_PRODUCTION_PLAN_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
-      - uses: aws-actions/amazon-ecr-login@v2
+      - uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2.1.7
         id: ecr
       - name: the image digests staging tagged with this commit
         id: images
@@ -157,15 +172,16 @@ jobs:
     name: plan production
     needs: resolve
     runs-on: ubuntu-latest
+    environment: production-plan
     outputs:
       plan_key: ${{ steps.plan.outputs.plan_key }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: aws-actions/configure-aws-credentials@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
-          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          role-to-assume: ${{ vars.AWS_PRODUCTION_PLAN_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
-      - uses: hashicorp/setup-terraform@v4
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
           terraform_wrapper: false
@@ -209,7 +225,7 @@ jobs:
             echo '```'
             echo "</details>"
           } >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: production-plan
           path: plan.txt
@@ -222,12 +238,12 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     steps:
-      - uses: actions/checkout@v7
-      - uses: aws-actions/configure-aws-credentials@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
-          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          role-to-assume: ${{ vars.AWS_PRODUCTION_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
-      - uses: hashicorp/setup-terraform@v4
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
           terraform_wrapper: false

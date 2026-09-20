@@ -119,8 +119,14 @@ Traces are off by default. To send them to Jaeger, uncomment
 `TADAS_OTEL_ENDPOINT=http://127.0.0.1:54318` in `.env` and restart
 `scripts/dev.sh`.
 
-`make infra-down` stops every container, dashboards and app containers
-included, and deletes the local data.
+`make down` stops every container, dashboards and app containers included,
+and keeps the data for the next `make up`; `make reset` wipes the data too.
+Those two are the shortcuts. The steps they wrap run one at a time, which
+is what CI takes and what a developer debugging one of them runs:
+`make setup`, `make infra-up` and `make infra-down` for the dependencies
+alone, `make infra-reset` to recreate them with their volumes removed and
+nothing else, `make migrate` and `make seed` for the database, and
+`scripts/dev.sh` for the application on the host.
 
 ## Check
 

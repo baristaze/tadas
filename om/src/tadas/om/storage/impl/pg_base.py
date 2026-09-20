@@ -1,6 +1,6 @@
 """The Postgres base every namespace storage shares: per-statement role
 routing and the write primitives: an upsert that checks the tenant and lands
-the core row's outbox row in the same commit, and an insert that refuses an
+the core row's outbox rows in the same commit, and an insert that refuses an
 existing id."""
 
 from collections.abc import AsyncIterator, Mapping
@@ -75,12 +75,15 @@ class PgStorageBase:
         row_type: type[Any],
         org_id: UUID,
         entity: Identifiable,
-        outbox_row: OutboxRow | None = None,
+        outbox_rows: tuple[OutboxRow, ...] = (),
     ) -> None:
         """Insert or update by id, refusing to overwrite another tenant's row, then
-        commit. An `outbox_row` is inserted in the same commit: the core row and
-        its handoff land together or not at all (the transactional outbox), which
-        is why every table with an outbox row lives in the `core` role.
+        commit. The `outbox_rows` are inserted in the same commit: the core row
+        and its handoffs land together or not at all (the transactional outbox),
+        which is why every table with an outbox row lives in the `core` role. An
+        entity change is one row; a write that also starts work carries a second
+        row of kind `work.<kind>` in the same tuple, because the queue is a role
+        of its own and no statement reaches both.
 
         A write never brings a soft-deleted row back. Every update here is a
         read, a copy, and a write of the whole entity, so a delete that commits
@@ -89,7 +92,7 @@ class PgStorageBase:
         restore in this domain; `RowDeleted` says the row went while the
         caller was holding it, and the caller reads it again."""
         entity_id = entity.id
-        if outbox_row is not None and role_of(row_type) is not role_of(OutboxRows):
+        if outbox_rows and role_of(row_type) is not role_of(OutboxRows):
             raise CrossRoleStatement(
                 f"{row_type.__tablename__} is not in the outbox's role; no outbox row"
             )
@@ -103,7 +106,7 @@ class PgStorageBase:
                 if undeletes(row, entity):
                     raise RowDeleted(f"{row_type.__tablename__} {entity_id} was deleted")
                 apply_row(row, entity)
-            if outbox_row is not None:
+            for outbox_row in outbox_rows:
                 session.add(to_row(outbox_row, OutboxRows, org_id=org_id))
             try:
                 await session.commit()
@@ -119,22 +122,22 @@ class PgStorageBase:
         row_type: type[Any],
         org_id: UUID,
         entity: Identifiable,
-        outbox_row: OutboxRow | None = None,
+        outbox_rows: tuple[OutboxRow, ...] = (),
     ) -> bool:
-        """The create primitive: insert by id and commit, with the outbox row in
+        """The create primitive: insert by id and commit, with the outbox rows in
         the same commit; False when the id is already written, in which case
-        nothing changes, the outbox row included. Ids are minted above storage,
+        nothing changes, the outbox rows included. Ids are minted above storage,
         so an existing id is a retry, and a retry must neither overwrite the row
         nor announce it twice. Only the primary key reports False: any other
         unique key the row violates is `UniqueKeyTaken`, a Conflict, never a
         driver error and never mistaken for a retry."""
-        if outbox_row is not None and role_of(row_type) is not role_of(OutboxRows):
+        if outbox_rows and role_of(row_type) is not role_of(OutboxRows):
             raise CrossRoleStatement(
                 f"{row_type.__tablename__} is not in the outbox's role; no outbox row"
             )
         async with self._session_for(row_type) as session:
             session.add(to_row(entity, row_type, org_id=org_id))
-            if outbox_row is not None:
+            for outbox_row in outbox_rows:
                 session.add(to_row(outbox_row, OutboxRows, org_id=org_id))
             try:
                 await session.commit()

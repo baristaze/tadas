@@ -67,9 +67,19 @@ def documented_knobs(env_example: str) -> set[str]:
 
 
 def wired_knobs(terraform: str) -> set[str]:
-    """The names given a value anywhere in the environment's main file: the
+    """The names given a value anywhere in the environment's graph: the
     shared `app_environment`, the process secrets, and a service's own block."""
     return set(re.findall(r"\b(TADAS_[A-Z0-9_]+)\s*=", terraform))
+
+
+def graph(environment: Path) -> str:
+    """The root and every module it calls: an environment root is thin, and
+    the graph it applies lives in the module it names."""
+    root = (environment / "main.tf").read_text()
+    sources = re.findall(r'source\s*=\s*"([^"]+)"', root)
+    return "\n".join(
+        [root] + [(environment / source / "main.tf").read_text() for source in sources]
+    )
 
 
 def knobs() -> list[str]:
@@ -92,7 +102,7 @@ def environments() -> list[Path]:
 
 @pytest.mark.parametrize("environment", environments(), ids=lambda path: path.name)
 def test_every_setting_the_cloud_needs_is_wired(environment: Path) -> None:
-    wired = wired_knobs((environment / "main.tf").read_text())
+    wired = wired_knobs(graph(environment))
     unwired = sorted(
         f"{PREFIX}{field.upper()}"
         for field in MaintenanceSettings.model_fields

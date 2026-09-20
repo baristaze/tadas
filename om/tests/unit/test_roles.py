@@ -4,7 +4,7 @@ import importlib
 import pkgutil
 
 import pytest
-from sqlalchemy import Column, MetaData, Table, Uuid, select
+from sqlalchemy import Column, MetaData, Table, Uuid, select, update
 
 import tadas.om
 from tadas.om.exceptions import CrossRoleStatement
@@ -75,4 +75,17 @@ async def test_an_outbox_row_outside_the_core_role_is_refused() -> None:
 
     base = PgStorageBase({})  # no sessions: the role check fires before one is opened
     with pytest.raises(CrossRoleStatement):
-        await base._upsert(WorkItems, new_id(), row, row)
+        await base._upsert(WorkItems, new_id(), row, (row,))
+
+
+def test_the_re_mint_reads_the_marker_inside_one_role() -> None:
+    """The re-mint of a secret is conditional on the marker still holding the
+    attempt making the write, so its one statement names the api keys and the
+    markers. That is a swimlane crossing, as landing an outbox row is, and it
+    is only writable as one statement because both tables are in `core`."""
+    from tadas.om.idempotency.storage.tables.idempotency_records import IdempotencyRecords
+    from tadas.om.tenancy.storage.tables.api_keys import ApiKeys
+
+    assert role_for("api_keys") is role_for("idempotency_records") is DatabaseRole.CORE
+    fence = select(IdempotencyRecords.id).where(IdempotencyRecords.status.is_(None)).exists()
+    assert role_of(update(ApiKeys).where(fence).values(key_hash="x")) is DatabaseRole.CORE

@@ -1,27 +1,39 @@
-import asyncio
 from datetime import datetime, timedelta
 from uuid import UUID
 
 import pytest
 
+from contracts.racing import race
 from tadas.om.base import new_id, utcnow
 from tadas.om.exceptions import DuplicateIdempotencyKey, TenantMismatch
 from tadas.om.idempotency.storage import IdempotencyStorageInterface
+from tadas.om.idempotency.types.attempt import lease_bound
 from tadas.om.idempotency.types.record import IdempotencyRecord
 
 
 def make_record(
     user_id: UUID | None = None, key: str = "req-1", created_at: datetime | None = None
 ) -> IdempotencyRecord:
+    """A marker on its first attempt: the attempt began when the marker was
+    born, as begin mints both in the one breath. A marker handed on since is
+    written with an attempt of its own."""
+    born = created_at or utcnow()
     return IdempotencyRecord(
         id=new_id(),
         user_id=user_id or new_id(),
         key=key,
         request_digest="sha256:abc",
         target_id=new_id(),
-        attempt_id=new_id(),
-        created_at=created_at or utcnow(),
+        attempt_id=attempt_minted_at(born),
+        created_at=born,
     )
+
+
+def attempt_minted_at(moment: datetime) -> UUID:
+    """The token of an attempt that began at `moment`: a uuid_v7 carrying that
+    millisecond, as `new_id()` mints one at the moment it is called."""
+    tail = new_id().int & ((1 << 80) - 1)
+    return UUID(int=(int(moment.timestamp() * 1000) << 80) | tail, version=7)
 
 
 def attempt_of(record: IdempotencyRecord) -> UUID:
@@ -138,11 +150,10 @@ class IdempotencyStorageContract:
         org = new_id()
         record = make_record()
         await storage.write_record(org, record)
-        later = utcnow() + timedelta(minutes=5)
 
         async def rearm(org_id: UUID, attempt_id: UUID | None = None) -> IdempotencyRecord | None:
             return await storage.rearm_released(
-                org_id, record.user_id, record.key, later, attempt_id or new_id()
+                org_id, record.user_id, record.key, attempt_id or new_id()
             )
 
         # Held: a marker with an attempt is not re-armed, whatever its age.
@@ -150,14 +161,14 @@ class IdempotencyStorageContract:
         assert await storage.read_record(org, record.user_id, record.key) == record
         assert record.attempt_id is not None
         assert await storage.release_pending(org, record.user_id, record.key, record.attempt_id)
-        # Released: the re-arm stamps its own attempt and restarts the lease in
-        # the one write, and keeps the digest and the target id; another
-        # tenant's is never matched.
+        # Released: the re-arm stamps its own attempt, which starts the lease,
+        # in the one write, and keeps the digest, the target id and the birth
+        # time; another tenant's is never matched.
         assert await rearm(new_id()) is None
         second_attempt = new_id()
         armed = await rearm(org, second_attempt)
         assert armed is not None and armed.pending and not armed.released
-        assert armed.attempt_id == second_attempt and armed.created_at == later
+        assert armed.attempt_id == second_attempt and armed.created_at == record.created_at
         assert armed.target_id == record.target_id
         assert armed.request_digest == record.request_digest
         assert await storage.read_record(org, record.user_id, record.key) == armed
@@ -180,54 +191,53 @@ class IdempotencyStorageContract:
         assert await rearm(org) is None
         assert await storage.read_record(org, record.user_id, record.key) == finished
 
-    async def test_a_raced_rearm_admits_exactly_one(
-        self, storage: IdempotencyStorageInterface
-    ) -> None:
-        # Two retries find the same released marker at the same moment. The
-        # re-arm is one conditional write, so exactly one of them holds the
-        # marker afterwards, and the record names that one's attempt.
+    async def test_two_rearms_admit_exactly_one(self, storage: IdempotencyStorageInterface) -> None:
+        # Two retries reach the same released marker. The re-arm is one
+        # conditional write, so exactly one of them holds the marker
+        # afterwards, and the record names that one's attempt. See
+        # contracts/racing.py for what each impl's run of this proves.
         org = new_id()
         record = make_record().model_copy(update={"attempt_id": None})
         await storage.write_record(org, record)
-        restarted_at = utcnow()
         attempts = [new_id(), new_id()]
-        outcomes = await asyncio.gather(
+        run = await race(
             *(
-                storage.rearm_released(org, record.user_id, record.key, restarted_at, attempt_id)
+                storage.rearm_released(org, record.user_id, record.key, attempt_id)
                 for attempt_id in attempts
             )
         )
-        winners = [armed for armed in outcomes if armed is not None]
-        assert len(winners) == 1
+        assert len(run.admitted) == 1, run.summary()
         stored = await storage.read_record(org, record.user_id, record.key)
-        assert stored is not None and stored == winners[0]
+        assert stored is not None and stored == run.admitted[0]
         assert stored.attempt_id in attempts
-        assert stored.pending and stored.created_at == restarted_at
+        assert stored.pending and stored.created_at == record.created_at
         assert stored.target_id == record.target_id
+        # The refusal the conditional write gives whoever arrives after it:
+        # the marker is armed, so there is no released marker to re-arm.
+        assert await storage.rearm_released(org, record.user_id, record.key, new_id()) is None
 
     async def test_take_over_is_one_conditional_write(
         self, storage: IdempotencyStorageInterface
     ) -> None:
         org = new_id()
-        record = make_record()
+        record = make_record(created_at=utcnow() - timedelta(minutes=10))
         await storage.write_record(org, record)
-        later = utcnow() + timedelta(minutes=5)
 
         async def take_over(
             org_id: UUID, cutoff: datetime, attempt_id: UUID | None = None
         ) -> IdempotencyRecord | None:
             return await storage.take_over_pending(
-                org_id, record.user_id, record.key, cutoff, later, attempt_id or new_id()
+                org_id, record.user_id, record.key, lease_bound(cutoff), attempt_id or new_id()
             )
 
-        # Not abandoned yet: the marker began after the cut-off.
-        assert await take_over(org, record.created_at) is None
-        # Abandoned: the take-over restarts the lease and stamps its own attempt
-        # in the one write, and the same cut-off then matches nothing.
+        # Not abandoned yet: the attempt began after the cut-off.
+        assert await take_over(org, record.created_at - timedelta(seconds=1)) is None
+        # Abandoned: the take-over stamps its own attempt in the one write, and
+        # that attempt, minted now, holds the marker past the same cut-off.
         cutoff = record.created_at + timedelta(seconds=1)
         second_attempt = new_id()
         taken = await take_over(org, cutoff, second_attempt)
-        assert taken is not None and taken.created_at == later and taken.pending
+        assert taken is not None and taken.created_at == record.created_at and taken.pending
         assert taken.attempt_id == second_attempt and taken.target_id == record.target_id
         assert await take_over(org, cutoff) is None
         assert await storage.read_record(org, record.user_id, record.key) == taken
@@ -245,7 +255,8 @@ class IdempotencyStorageContract:
         # A released marker is re-armed, never taken over, however old it is.
         assert taken.attempt_id is not None
         assert await storage.release_pending(org, record.user_id, record.key, taken.attempt_id)
-        assert await take_over(org, later + timedelta(minutes=1)) is None
+        later = utcnow() + timedelta(minutes=5)
+        assert await take_over(org, later) is None
         released = await storage.read_record(org, record.user_id, record.key)
         assert released is not None and released.released
         # A finished record is never taken over, and another tenant's is never matched.
@@ -253,31 +264,59 @@ class IdempotencyStorageContract:
         assert await take_over(org, later) is None
         assert await take_over(new_id(), later) is None
 
-    async def test_a_raced_take_over_admits_exactly_one(
+    async def test_two_take_overs_admit_exactly_one(
         self, storage: IdempotencyStorageInterface
     ) -> None:
-        # Two retries find the same abandoned marker at the same moment. The
-        # take-over is one conditional write, so exactly one of them holds the
-        # marker afterwards, and the record names that one's attempt.
+        # Two retries reach the same abandoned marker. The take-over is one
+        # conditional write, so exactly one of them holds the marker
+        # afterwards, and the record names that one's attempt. See
+        # contracts/racing.py for what each impl's run of this proves.
         org = new_id()
         record = make_record(created_at=utcnow() - timedelta(minutes=10))
         await storage.write_record(org, record)
-        cutoff, restarted_at = utcnow() - timedelta(minutes=2), utcnow()
+        cutoff = lease_bound(utcnow() - timedelta(minutes=2))
         attempts = [new_id(), new_id()]
-        outcomes = await asyncio.gather(
+        run = await race(
             *(
-                storage.take_over_pending(
-                    org, record.user_id, record.key, cutoff, restarted_at, attempt_id
-                )
+                storage.take_over_pending(org, record.user_id, record.key, cutoff, attempt_id)
                 for attempt_id in attempts
             )
         )
-        winners = [taken for taken in outcomes if taken is not None]
-        assert len(winners) == 1
+        assert len(run.admitted) == 1, run.summary()
         stored = await storage.read_record(org, record.user_id, record.key)
-        assert stored is not None and stored == winners[0]
+        assert stored is not None and stored == run.admitted[0]
         assert stored.attempt_id in attempts
-        assert stored.pending and stored.created_at == restarted_at
+        assert stored.pending and stored.created_at == record.created_at
+        # The refusal the conditional write gives whoever arrives after it:
+        # the admitted attempt's token restarted the lease, so the same
+        # cut-off matches nothing.
+        assert (
+            await storage.take_over_pending(org, record.user_id, record.key, cutoff, new_id())
+            is None
+        )
+
+    async def test_a_hand_over_starts_the_lease_again_and_keeps_the_birth_time(
+        self, storage: IdempotencyStorageInterface
+    ) -> None:
+        # The lease runs from the attempt. A marker born an hour ago and taken
+        # over just now is held by a token minted just now, so the cut-off that
+        # freed it no longer matches it and a third attempt cannot take it over
+        # at once; and the marker still carries the birth time it was written
+        # with, which no write here touches.
+        org = new_id()
+        born = utcnow() - timedelta(hours=1)
+        record = make_record(created_at=born)
+        await storage.write_record(org, record)
+        cutoff = lease_bound(utcnow() - timedelta(minutes=2))
+        second_attempt = new_id()
+        taken = await storage.take_over_pending(
+            org, record.user_id, record.key, cutoff, second_attempt
+        )
+        assert taken is not None and taken.attempt_id == second_attempt
+        assert taken.created_at == born, "the birth time is written once"
+        third = await storage.take_over_pending(org, record.user_id, record.key, cutoff, new_id())
+        assert third is None, "the attempt it was handed to is within its lease"
+        assert await storage.read_record(org, record.user_id, record.key) == taken
 
     async def test_purge_counts_finished_and_released_past_the_cut_and_pending_past_theirs(
         self, storage: IdempotencyStorageInterface
@@ -292,6 +331,11 @@ class IdempotencyStorageContract:
         )
         abandoned = make_record(key="abandoned", created_at=now - timedelta(hours=1))
         live_pending = make_record(key="live")
+        # Born an hour ago and handed on a moment ago: the sweep measures the
+        # attempt, like the lease does, so this one is still somebody's.
+        handed_on = make_record(key="handed-on", created_at=now - timedelta(hours=1)).model_copy(
+            update={"attempt_id": attempt_minted_at(now)}
+        )
         # A released marker lives as long as a finished one: past the
         # retention a retry begins afresh, within it the retry re-arms it.
         old_released = make_record(key="old-released", created_at=now - timedelta(days=2))
@@ -301,15 +345,30 @@ class IdempotencyStorageContract:
         elsewhere = make_record(key="old-done", created_at=now - timedelta(days=2)).model_copy(
             update={"status": 201, "body": "{}"}
         )
-        mine = (old_finished, fresh_finished, abandoned, live_pending, old_released, fresh_released)
+        mine = (
+            old_finished,
+            fresh_finished,
+            abandoned,
+            live_pending,
+            handed_on,
+            old_released,
+            fresh_released,
+        )
         for record in mine:
             await storage.write_record(org, record)
         await storage.write_record(other_org, elsewhere)
-        purged = await storage.purge_records(
-            org, now - timedelta(days=1), now - timedelta(minutes=20)
-        )
+        attempts_before = lease_bound(now - timedelta(minutes=20))
+        purged = await storage.purge_records(org, now - timedelta(days=1), attempts_before)
         assert purged == 3
         kept = [await storage.read_record(org, r.user_id, r.key) for r in mine]
-        assert kept == [None, fresh_finished, None, live_pending, None, fresh_released]
+        assert kept == [
+            None,
+            fresh_finished,
+            None,
+            live_pending,
+            handed_on,
+            None,
+            fresh_released,
+        ]
         assert await storage.read_record(other_org, elsewhere.user_id, elsewhere.key) == elsewhere
-        assert await storage.purge_records(org, now - timedelta(days=1), now) == 0
+        assert await storage.purge_records(org, now - timedelta(days=1), attempts_before) == 0

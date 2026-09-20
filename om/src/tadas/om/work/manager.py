@@ -4,8 +4,10 @@ rides, and the claim that produces the context the work runs under."""
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from datetime import timedelta
+from uuid import UUID
 
 from tadas.om.opcontext import OpContext, RequestContext
+from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.work.types.work_item import WorkItem, WorkKind
 
 
@@ -15,9 +17,21 @@ class WorkManagerInterface(ABC):
         """A create: the copy stamps the actor, the timestamps, status QUEUED, and
         zero attempts, and clears every claim field, whatever the caller sent. An
         id already written returns the row as stored, so a retried enqueue never
-        resets a claim. Raises ValidationFailed when the payload is not the shape
-        WORK_PAYLOADS fixes for the kind, DuplicateWorkItem on a reused
-        idempotency key."""
+        resets a claim, and so does a reused idempotency key: the insert reports
+        it and the manager reads the row back. Raises ValidationFailed when the
+        payload is not the shape WORK_PAYLOADS fixes for the kind."""
+        ...
+
+    @abstractmethod
+    async def enqueue_relayed(self, org_id: UUID, row: OutboxRow) -> WorkItem:
+        """Platform-internal: the enqueue of a work item that follows a core write,
+        which the relay makes from the row of kind `work.<kind>` that rode that
+        write. It takes no context, because the relay runs without a principal,
+        and stamps the actor from the row. The row's id is the item's
+        `idempotency_key`, the same on every run of the relay, so a relay that
+        runs twice and a caller that retries meet one row under one key. Raises
+        ValidationFailed when the row names a kind this build does not know or
+        carries a payload outside the shape WORK_PAYLOADS fixes for it."""
         ...
 
     @abstractmethod

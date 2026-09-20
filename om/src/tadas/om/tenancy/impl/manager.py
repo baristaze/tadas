@@ -16,6 +16,7 @@ from tadas.om.exceptions import (
     NotFound,
     ValidationFailed,
 )
+from tadas.om.idempotency.types.attempt import Attempt
 from tadas.om.opcontext import (
     CredentialKind,
     IdentityContext,
@@ -248,7 +249,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
         # so a concurrent add of the same person leaves no membership without
         # its user and no user without a membership.
         row = outbox_row(ctx, "tenancy.user.created", user.id, snapshot(user))
-        await self._storage.create_member(ctx.org_id, user, membership, row, to_write)
+        await self._storage.create_member(ctx.org_id, user, membership, (row,), to_write)
         await self._relay.relay(ctx.org_id, row)
         return ctx, user, True
 
@@ -538,7 +539,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
             update={"role": role, "updated_at": utcnow(), "updated_by": ctx.user_id}
         )
         row = outbox_row(ctx, "tenancy.membership.updated", updated.id, snapshot(updated))
-        await self._storage.write_membership(ctx.org_id, updated, row)
+        await self._storage.write_membership(ctx.org_id, updated, (row,))
         await self._relay.relay(ctx.org_id, row)
         return updated
 
@@ -576,7 +577,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
             }
         )
         row = outbox_row(ctx, "tenancy.user.deleted", removed.id, snapshot(removed))
-        await self._storage.remove_member(ctx.org_id, removed, ended, row)
+        await self._storage.remove_member(ctx.org_id, removed, ended, (row,))
         # The removal is announced first, so a socket of theirs closes because
         # their membership ended, not because a credential was revoked; then
         # each revocation, as the record it is. Every row is durable already:
@@ -599,7 +600,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
                     update={"revoked_at": now, "updated_at": now, "updated_by": ctx.user_id}
                 )
                 row = self._session_row(ctx, revoked, "revoked")
-                await self._storage.write_session(ctx.org_id, revoked, row)
+                await self._storage.write_session(ctx.org_id, revoked, (row,))
                 rows.append(row)
         while keys := await self._storage.read_api_keys(ctx.org_id, None, page, user_id):
             now = utcnow()
@@ -615,7 +616,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
                 row = outbox_row(
                     ctx, "tenancy.api_key.deleted", revoked_key.id, self._key_snapshot(revoked_key)
                 )
-                await self._storage.write_api_key(ctx.org_id, revoked_key, row)
+                await self._storage.write_api_key(ctx.org_id, revoked_key, (row,))
                 rows.append(row)
         return rows
 
@@ -666,7 +667,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
         name: str,
         role: Role,
         ttl: timedelta | None = None,
-        api_key_id: UUID | None = None,
+        attempt: Attempt | None = None,
     ) -> IssuedApiKey:
         ctx.require(Permission.MANAGE_KEYS)
         # A key never mints its successor. Revoking a leaked key has to end the
@@ -686,7 +687,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
         now = utcnow()
         key = mint_token(CredentialKind.API_KEY)
         api_key = ApiKey(
-            id=api_key_id or new_id(),
+            id=attempt.target_id if attempt else new_id(),
             name=name,
             created_at=now,
             updated_at=now,
@@ -700,9 +701,12 @@ class TenancyManagerImpl(TenancyManagerInterface):
         # A create that issues a secret: the row as stored is not enough on a
         # rerun, because the secret is a digest there and was shown to no one
         # (the marker stored no outcome). The one storage method inserts the
-        # key, or re-mints the secret on the row the id already names.
+        # key, or re-mints the secret on the row the id already names, and the
+        # re-mint lands only while the marker still holds this attempt.
         row = outbox_row(ctx, "tenancy.api_key.created", api_key.id, self._key_snapshot(api_key))
-        stored, created = await self._storage.issue_api_key(ctx.org_id, api_key, row)
+        stored, created = await self._storage.issue_api_key(
+            ctx.org_id, api_key, (row,), attempt.attempt_id if attempt else None
+        )
         if created:
             await self._relay.relay(ctx.org_id, row)
         return IssuedApiKey(key=key, api_key=stored)
@@ -768,7 +772,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
 
     async def _write_user(self, ctx: OpContext, user: User, action: str) -> None:
         row = outbox_row(ctx, f"tenancy.user.{action}", user.id, snapshot(user))
-        await self._storage.write_user(ctx.org_id, user, row)
+        await self._storage.write_user(ctx.org_id, user, (row,))
         await self._relay.relay(ctx.org_id, row)
 
     @staticmethod
@@ -783,7 +787,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
 
     async def _write_session(self, ctx: OpContext, session: Session, action: str) -> None:
         row = self._session_row(ctx, session, action)
-        await self._storage.write_session(ctx.org_id, session, row)
+        await self._storage.write_session(ctx.org_id, session, (row,))
         await self._relay.relay(ctx.org_id, row)
 
     @staticmethod
@@ -793,7 +797,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
 
     async def _write_api_key(self, ctx: OpContext, api_key: ApiKey, action: str) -> None:
         row = outbox_row(ctx, f"tenancy.api_key.{action}", api_key.id, self._key_snapshot(api_key))
-        await self._storage.write_api_key(ctx.org_id, api_key, row)
+        await self._storage.write_api_key(ctx.org_id, api_key, (row,))
         await self._relay.relay(ctx.org_id, row)
 
     @staticmethod

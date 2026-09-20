@@ -17,8 +17,18 @@ class WorkStorageInterface(ABC):
     async def create_item(self, org_id: UUID, item: WorkItem) -> bool:
         """The create primitive: inserts the row and commits; False when the id is
         already written, in which case nothing changes, the claim on the row
-        included. Raises DuplicateWorkItem when another item carries the same
-        idempotency key, TenantMismatch when the id is another tenant's row."""
+        included. A taken idempotency key is reported the same way and never
+        raised as a driver error, which is what makes the relayed enqueue safe
+        to run twice: the relay presents the outbox row's id as the key on
+        every run and meets the row already there. Raises TenantMismatch when
+        the id is another tenant's row."""
+        ...
+
+    @abstractmethod
+    async def read_item_by_key(self, org_id: UUID, idempotency_key: UUID) -> WorkItem | None:
+        """The row the tenant already holds under this key, for the create that
+        reported one; None when the key is unknown here. The key is unique
+        across tenants, so a key another tenant holds reads back as None."""
         ...
 
     @abstractmethod
@@ -35,18 +45,20 @@ class WorkStorageInterface(ABC):
     ) -> tuple[UUID, WorkItem] | None:
         """Cross-tenant claim, one statement: the oldest available row on the lane,
         skipping locked ones, stamped with the claim, a freshly minted claim
-        token, and the lease."""
+        token, and the lease. The claim is the platform's write, so it signs
+        `updated_by` with EMPTY_UUID."""
         ...
 
     @abstractmethod
     async def requeue_stale(
-        self, org_id: UUID, now: datetime, stagger: timedelta, updated_by: UUID
+        self, org_id: UUID, now: datetime, stagger: timedelta
     ) -> list[WorkItem]:
         """One conditional statement: every claimed item of the tenant whose lease
         expired before `now` goes back to the queue, staggered by its position, or
         fails when its attempts are spent, its claim token cleared either way so
-        the holder it had is refused; returns the items it changed, by id.
-        `updated_by` is the sweep's principal."""
+        the holder it had is refused; returns the items it changed, by id. The
+        requeue is the platform's write, like the claim, so it signs
+        `updated_by` with EMPTY_UUID and takes no principal."""
         ...
 
     @abstractmethod

@@ -3,6 +3,7 @@ from datetime import timedelta
 from uuid import UUID
 
 from tadas.om.exceptions import ValidationFailed
+from tadas.om.idempotency.types.attempt import Attempt
 from tadas.om.opcontext import IdentityContext, OpContext, RequestContext
 from tadas.om.tenancy import TenancyManagerInterface
 from tadas.services.api.services.tenancy import TenancyServiceInterface
@@ -135,10 +136,10 @@ class TenancyServiceImpl(TenancyServiceInterface):
         )
 
     async def create_api_key(
-        self, ctx: OpContext, body: AddApiKeyRequest, api_key_id: UUID
+        self, ctx: OpContext, body: AddApiKeyRequest, attempt: Attempt
     ) -> IssuedApiKeyView:
         ttl = timedelta(days=body.ttl_days) if body.ttl_days is not None else None
-        issued = await self._tenancy.create_api_key(ctx, body.name, body.role, ttl, api_key_id)
+        issued = await self._tenancy.create_api_key(ctx, body.name, body.role, ttl, attempt)
         return IssuedApiKeyView(key=issued.key, api_key=ApiKeyView.model_validate(issued.api_key))
 
     async def revoke_api_key(self, ctx: OpContext, api_key_id: UUID) -> ApiKeyView:

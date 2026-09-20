@@ -72,7 +72,7 @@ class IdempotencyStoragePostgresImpl(PgStorageBase, IdempotencyStorageInterface)
             return released
 
     async def purge_records(
-        self, org_id: UUID, finished_before: datetime, pending_before: datetime
+        self, org_id: UUID, finished_before: datetime, attempts_before: UUID
     ) -> int:
         stmt = (
             delete(IdempotencyRecords)
@@ -88,8 +88,7 @@ class IdempotencyStoragePostgresImpl(PgStorageBase, IdempotencyStorageInterface)
                     ),
                     and_(
                         IdempotencyRecords.status.is_(None),
-                        IdempotencyRecords.attempt_id.is_not(None),
-                        IdempotencyRecords.created_at < pending_before,
+                        IdempotencyRecords.attempt_id < attempts_before,
                     ),
                 ),
             )
@@ -105,8 +104,7 @@ class IdempotencyStoragePostgresImpl(PgStorageBase, IdempotencyStorageInterface)
         org_id: UUID,
         user_id: UUID,
         key: str,
-        abandoned_before: datetime,
-        restarted_at: datetime,
+        abandoned_before: UUID,
         attempt_id: UUID,
     ) -> IdempotencyRecord | None:
         stmt = (
@@ -116,10 +114,12 @@ class IdempotencyStoragePostgresImpl(PgStorageBase, IdempotencyStorageInterface)
                 IdempotencyRecords.user_id == user_id,
                 IdempotencyRecords.key == key,
                 IdempotencyRecords.status.is_(None),
-                IdempotencyRecords.attempt_id.is_not(None),
-                IdempotencyRecords.created_at < abandoned_before,
+                # A token below the bound began before the lease: tokens are
+                # uuid_v7 and sort by the millisecond they carry. A released
+                # marker holds none, so the comparison passes it by.
+                IdempotencyRecords.attempt_id < abandoned_before,
             )
-            .values(created_at=restarted_at, attempt_id=attempt_id)
+            .values(attempt_id=attempt_id)
             .returning(IdempotencyRecords)
         )
         async with self._session_for(stmt) as session:
@@ -131,7 +131,7 @@ class IdempotencyStoragePostgresImpl(PgStorageBase, IdempotencyStorageInterface)
             return taken
 
     async def rearm_released(
-        self, org_id: UUID, user_id: UUID, key: str, restarted_at: datetime, attempt_id: UUID
+        self, org_id: UUID, user_id: UUID, key: str, attempt_id: UUID
     ) -> IdempotencyRecord | None:
         stmt = (
             update(IdempotencyRecords)
@@ -142,7 +142,7 @@ class IdempotencyStoragePostgresImpl(PgStorageBase, IdempotencyStorageInterface)
                 IdempotencyRecords.status.is_(None),
                 IdempotencyRecords.attempt_id.is_(None),
             )
-            .values(created_at=restarted_at, attempt_id=attempt_id)
+            .values(attempt_id=attempt_id)
             .returning(IdempotencyRecords)
         )
         async with self._session_for(stmt) as session:

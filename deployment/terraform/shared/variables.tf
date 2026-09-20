@@ -19,3 +19,8 @@ variable "state_bucket" {
   description = "The bucket every root's state lives in. Created here with local state first, then adopted with `terraform init -migrate-state`."
   type        = string
 }
+
+variable "dns_zone_name" {
+  description = "The Route 53 hosted zone both environments' public names live in, e.g. tadas.fyi. Each deploy role may change only the record names its own environment owns."
+  type        = string
+}

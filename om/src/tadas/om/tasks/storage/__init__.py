@@ -57,27 +57,33 @@ class TasksStorageInterface(ABC):
         ...
 
     @abstractmethod
-    async def create_task(self, org_id: UUID, task: Task, outbox_row: OutboxRow) -> bool:
-        """The create: lands the task and its outbox row together, or neither when
-        the id is already written, which it reports as False."""
+    async def create_task(
+        self, org_id: UUID, task: Task, outbox_rows: tuple[OutboxRow, ...]
+    ) -> bool:
+        """The create: lands the task and the rows that announce it together, or
+        neither when the id is already written, which it reports as False. An
+        entity change is one row; a create that also starts work passes a second
+        row of kind `work.<kind>` in the same tuple, because the queue is a role
+        of its own and no statement reaches both."""
         ...
 
     @abstractmethod
     async def update_task(
-        self, org_id: UUID, task: Task, expected_version: int, outbox_row: OutboxRow
+        self, org_id: UUID, task: Task, expected_version: int, outbox_rows: tuple[OutboxRow, ...]
     ) -> None:
-        """The update, a compare-and-set: lands the task and its outbox row together
-        (the named atomic write) when the stored row is at `expected_version`, and
-        raises `VersionMismatch` when it is at another version or is gone, landing
-        nothing. It never inserts: a missing row is a row that moved."""
+        """The update, a compare-and-set: lands the task and its outbox rows
+        together (the named atomic write) when the stored row is at
+        `expected_version`, and raises `VersionMismatch` when it is at another
+        version or is gone, landing nothing. It never inserts: a missing row is
+        a row that moved."""
         ...
 
     @abstractmethod
     async def update_tasks(
-        self, org_id: UUID, updates: Sequence[tuple[Task, int, OutboxRow]]
+        self, org_id: UUID, updates: Sequence[tuple[Task, int, tuple[OutboxRow, ...]]]
     ) -> None:
         """The same compare-and-set over many tasks: every task lands with its
-        outbox row, each against its own expected version, in one commit, or
+        outbox rows, each against its own expected version, in one commit, or
         none does and `VersionMismatch` is raised. The renumbering of an open
         list is this write: a list renumbered halfway is out of order."""
         ...

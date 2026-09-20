@@ -59,15 +59,14 @@ class QueueSqsImpl(QueuesInterface):
     def _name(self, queue: Queues) -> str:
         return f"{self._queue_prefix}{queue.value}"
 
-    async def send(self, queue: Queues, body: bytes) -> str:
+    async def send(self, queue: Queues, body: bytes) -> None:
         with translated("sqs", "send"):
             sqs = self._client()
-            response = await sqs.send_message(
+            await sqs.send_message(
                 QueueUrl=await self._url(sqs, self._name(queue)),
                 MessageBody=body.decode(),
             )
         OUTCOMES.labels(subsystem="queue", outcome="sent").inc()
-        return response["MessageId"]
 
     async def receive(
         self, queue: Queues, max_messages: int, wait: timedelta, visibility: timedelta

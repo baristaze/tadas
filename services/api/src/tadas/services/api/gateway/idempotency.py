@@ -27,6 +27,7 @@ from tadas.infra.observability import OUTCOMES
 from tadas.om.base import new_id
 from tadas.om.exceptions import IdempotencyAttemptLost, IdempotencyInProgress, PlatformException
 from tadas.om.idempotency import IdempotencyManagerInterface
+from tadas.om.idempotency.types.attempt import Attempt
 from tadas.om.opcontext import OpContext
 from tadas.services.api.gateway.auth import Ctx
 from tadas.services.api.gateway.resolve import container_of
@@ -53,12 +54,15 @@ def request_digest(method: str, path: str, body: bytes) -> str:
 
 class Idempotency:
     """Wraps the one creating call of a route so the outcome cannot escape
-    without being recorded: `run` begins the record, calls the handler with
-    the id the create uses, and finishes the record with whatever the handler
-    produced. The id is minted here, before the marker, and travels on it, so
-    a retry that re-arms a released marker or takes over an abandoned one
-    creates on the same id, and neither a failure after the create nor a crash
-    between the create and `finish` can end in two rows."""
+    without being recorded: `run` begins the record, calls the handler with the
+    attempt the request runs under, and finishes the record with whatever the
+    handler produced. The id on that attempt is minted here, before the marker,
+    and travels on it, so a retry that re-arms a released marker or takes over
+    an abandoned one creates on the same id, and neither a failure after the
+    create nor a crash between the create and `finish` can end in two rows. The
+    attempt token travels with it, so a write of a rerun that changes what is
+    stored, the re-mint of a secret, can be made conditional on the marker
+    still holding this attempt, the way `finish` and the release are."""
 
     def __init__(
         self,
@@ -73,9 +77,13 @@ class Idempotency:
         self._digest = digest
         self.target_id: UUID = new_id()
 
-    async def run(self, status: int, handler: Callable[[UUID], Awaitable[BaseModel]]) -> Response:
+    async def run(
+        self, status: int, handler: Callable[[Attempt], Awaitable[BaseModel]]
+    ) -> Response:
         if self._key is None:
-            return _json(await handler(self.target_id), status)
+            # No key, no marker: the id is fresh, so nothing reruns and there is
+            # no attempt for a write to be conditional on.
+            return _json(await handler(Attempt(target_id=self.target_id)), status)
         try:
             record = await self._manager.begin(self._ctx, self._key, self._digest, self.target_id)
         except IdempotencyInProgress:
@@ -97,7 +105,7 @@ class Idempotency:
         attempt_id = record.attempt_id
         assert attempt_id is not None, "begin hands back a marker it armed"
         try:
-            view = await handler(record.target_id)
+            view = await handler(Attempt(target_id=record.target_id, attempt_id=attempt_id))
         except PlatformException as error:
             if error.http_status >= 500:
                 await self._release(attempt_id)

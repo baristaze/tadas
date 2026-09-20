@@ -140,8 +140,10 @@ context on keeps the stage the callee needs.
   the manager's copy stamps the actor from the context, the timestamps,
   status `QUEUED`, zero attempts, and clears every claim field whatever
   the caller sent; the insert reports an existing id and changes nothing,
-  so a retried enqueue returns the row as stored, claim intact, and a
-  reused idempotency key is `DuplicateWorkItem`, a `Conflict`. A fresh
+  so a retried enqueue returns the row as stored, claim intact; a reused
+  idempotency key is reported the same way and never raised as a driver
+  error, and the manager reads that row back by the key, which is what
+  lets an enqueue that runs twice under one key leave one item. A fresh
   row publishes `work_available`. The claim is one `SELECT ... FOR UPDATE
   SKIP LOCKED` statement on the lane that mints a `claim_token` on the row
   and returns the enqueuer's principal. Every transition (complete, fail,
@@ -149,7 +151,12 @@ context on keeps the stage the callee needs.
   statement itself, not on the worker's name, because one worker can hold
   one item twice across a requeue: a worker whose lease has passed is
   refused with `LeaseLost`, a `Conflict`, and hands the item back without
-  spending an attempt; the requeue clears the token. A failed item is a
+  spending an attempt; the requeue clears the token. Every write to the
+  row after the enqueue is the platform's, so the claim, the renewal,
+  the hand-back, the requeue, the failure, and the completion all sign
+  `updated_by` with `EMPTY_UUID`, and the copy starts from the stored
+  row: `created_by` is the person who asked for the work, `updated_by`
+  is the machinery that ran it, and a worker's copy rewrites neither. A failed item is a
   dead letter, named by a `work.item.failed` event in the tenant's
   stream and counted on the outcome counter. Done or failed items are
   purged by the sweep after the work retention (30 days).
@@ -210,11 +217,28 @@ context on keeps the stage the callee needs.
   That write has two more guards in its own `WHERE`, because a re-mint is
   destructive where an insert is not. A revoked row is never re-minted,
   so a rerun cannot put a live secret back on a key somebody revoked in
-  between. And a row created after this attempt began is never re-minted:
-  an attempt that ran past the pending lease is a zombie whose `finish`
-  will be refused anyway, and the key the retry that took the marker over
-  already handed to the caller must not be overwritten behind it. Both
-  are a `Conflict` and change nothing.
+  between. And the digest lands only while the marker on that id still
+  holds the attempt making the write: an attempt that ran past the
+  pending lease lost the marker to the retry that took it over, that
+  retry has already handed its key to the caller, and the zombie's
+  `finish` will be refused anyway, so its re-mint is refused here too.
+  The fence is the marker's liveness and no clock is: two attempts can
+  stamp one `created_at`, and a skewed clock orders them backwards, so
+  there is nothing to compare and only a marker to ask. Both are a
+  `Conflict` and change nothing.
+  That makes the re-mint the one write outside the `idempotency`
+  namespace that reads a marker. The marker is one of the two system
+  rows every namespace touches, the outbox row being the other, so the
+  read is the crossing the outbox row already is: the Postgres impl
+  reads it in the same statement (both tables are in the `core` role,
+  so no statement spans two), and the memory impl asks the markers the
+  storage root hands it, through `AttemptFenceInterface`, the way it
+  lands outbox rows through `OutboxLandingInterface`. The fence reads
+  `(org_id, target_id)`, which the markers carry an index for; the
+  unique index beside it leads with the key the caller sent and cannot
+  serve it. The attempt travels from the gateway to the write on
+  `Attempt`, the pair of the id the create uses and the token of the
+  marker holding it, which `Idempotency.run` hands its handler.
   `finish` and `release` are conditional on the attempt token in the
   statement itself: the storage reports what matched (the record, or
   `None`; a bool for the release) and the manager refuses a lost attempt
@@ -247,14 +271,29 @@ context on keeps the stage the callee needs.
   that late begins afresh) and held pending ones past ten times the
   pending lease, a marker no retry came back for.
 - `outbox`: the transactional outbox. A manager that writes a core row
-  hands the storage an `OutboxRow` (`kind`, `target_id`, the record's
-  snapshot as `payload`, the actor and the request) and the storage base
-  inserts both in one commit (`_insert(..., outbox_row)` for a create, which
-  reports an existing id and changes nothing then; `_upsert(..., outbox_row)`
-  for an update; `core` role);
-  the manager then calls `OutboxRelayInterface.relay(org_id, row)`,
-  which appends the `Event` under the row's id, publishes
-  `entity_changed` with `(kind, target_id, seq)`, and marks the row done.
+  hands the storage the `OutboxRow`s that announce it (`kind`,
+  `target_id`, the record's snapshot as `payload`, the actor and the
+  request) as one tuple, and the storage base inserts them all in one
+  commit (`_insert(..., outbox_rows)` for a create, which
+  reports an existing id and changes nothing then; `_upsert(...,
+  outbox_rows)` for an update; `core` role). An entity change is one
+  row; a write that also starts work passes a second row of kind
+  `work.<kind>` in the same tuple, because the queue is a role of its
+  own and no statement reaches both.
+  The manager then calls `OutboxRelayInterface.relay(org_id, row)` for
+  each. The row's kind is its destination: an entity change appends the
+  `Event` under the row's id and publishes `entity_changed` with
+  `(kind, target_id, seq)`; a `work.<kind>` row is enqueued by the
+  relay (`WorkManagerInterface.enqueue_relayed(org_id, row)`, no
+  context, the actor from the row, the row's id as the item's
+  idempotency key, so a relay that runs twice leaves one item) and
+  publishes `work_available`. Either way the row is then marked done.
+  The relay reaches the work manager through a provider the business
+  root binds, because the work manager needs the tenancy manager, which
+  needs the relay; the graph the root hands back is still whole.
+  No core write in Tadas starts work today: the `work.<kind>` path is
+  exercised by the tests that hold it, and the first domain kind will
+  ride it.
   Tadas relays in the request path, the step the guideline names as the
   one a system takes when push latency earns it, and pays the round
   trips it names for a push that arrives in milliseconds; the sweep
@@ -660,8 +699,19 @@ everything in-process for tests.
   failed migration or a rolled-back rollout fails the apply with the old
   tasks still serving; a migration is compatible with the release before
   it (expand and contract), so the old tasks serve the new schema
-  meanwhile. The first job of each workflow checks the repository
-  variables (`AWS_DEPLOY_ROLE_ARN`, `TF_STATE_BUCKET`, `DNS_ZONE_NAME`);
+  meanwhile. Each environment has a credential of its
+  own, and production has two: `tadas-deploy-staging` for staging,
+  `tadas-plan-production`, which reads, for the plan, and
+  `tadas-deploy-production`, which writes, for the apply. The trust of
+  each names one GitHub environment and one branch, so the required
+  reviewer on `production` holds the credential and not only the step:
+  a job that has not waited there cannot mint the subject the writing
+  role trusts. The plan runs before that approval by construction, so
+  it runs under the reading role, in an environment of its own,
+  `production-plan`, which carries no reviewer. The first job of each
+  workflow checks the repository variables (`AWS_STAGING_ROLE_ARN` for
+  staging, `AWS_PRODUCTION_PLAN_ROLE_ARN` and `AWS_PRODUCTION_ROLE_ARN`
+  for production, and `TF_STATE_BUCKET` and `DNS_ZONE_NAME` for both);
   while they are empty staging skips every cloud job, says so in the
   summary, and stays green, and production fails. [The deploy
   runbook](runbooks/deploy.md) says how to cut a release, what to check

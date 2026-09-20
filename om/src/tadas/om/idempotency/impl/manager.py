@@ -11,22 +11,25 @@ from tadas.om.exceptions import (
 )
 from tadas.om.idempotency.manager import IdempotencyManagerInterface
 from tadas.om.idempotency.storage import IdempotencyStorageInterface
+from tadas.om.idempotency.types.attempt import lease_bound
 from tadas.om.idempotency.types.record import IdempotencyRecord
 from tadas.om.opcontext import OpContext, Permission
 
 
 class IdempotencyOptions(Platform):
     pending_ttl: timedelta = timedelta(minutes=2)
-    """A pending record older than this was abandoned by a crash between the
-    marker and its outcome, or belongs to an attempt still running past its
-    lease; the next retry takes it over and runs the request again, so the
-    marker never suppresses work for good."""
+    """The pending lease, run from the attempt and never from the marker: an
+    attempt older than this was abandoned by a crash between the marker and its
+    outcome, or is still running past its lease; the next retry takes the marker
+    over, stamps its own attempt, and runs the request again, so the marker
+    never suppresses work for good and a marker handed on twice is not stale for
+    having been minted long ago."""
     retention: timedelta = timedelta(hours=24)
-    """A finished or released record is purged after this: a retry that late
-    begins afresh."""
+    """A finished or released record is purged this long after it was written:
+    a retry that late begins afresh."""
     abandoned_after: int = 10
-    """A held pending record older than this many pending leases had no retry
-    come back for it and is purged."""
+    """A marker still held by an attempt older than this many pending leases had
+    no retry come back for it and is purged."""
 
 
 class IdempotencyManagerImpl(IdempotencyManagerInterface):
@@ -60,21 +63,21 @@ class IdempotencyManagerImpl(IdempotencyManagerInterface):
                     f"idempotency key {key!r} was used for a different request"
                 ) from None
             if stored.pending:
-                # Either a failure released the marker (no attempt), or it is
-                # held: abandoned when the marker was written and its effect
-                # never landed, or the effect landed and the outcome did not, or
-                # the first attempt is still running past its lease. The re-arm
-                # and the take-over are each one conditional write that stamps
-                # a new attempt token, so of two retries racing for the marker
-                # exactly one runs the request again, on the target_id the
-                # first attempt minted, so a create that already landed is
-                # found and not repeated; the other sees the restarted marker,
-                # and the first attempt, if it is still running, is refused at
-                # its finish or release.
-                now = utcnow()
+                # Either a failure released the marker (no attempt), which
+                # is taken at once, or it is held: abandoned when the marker
+                # was written and its effect never landed, or the effect landed
+                # and the outcome did not, or the first attempt is still
+                # running past its lease, which the bound below reads off its
+                # token. The re-arm and the take-over are each one conditional
+                # write that stamps a new attempt token, so of two retries
+                # racing for the marker exactly one runs the request again, on
+                # the target_id the first attempt minted, so a create that
+                # already landed is found and not repeated; the other sees the
+                # marker the new token holds, and the first attempt, if it is
+                # still running, is refused at its finish or release.
                 if stored.released:
                     armed = await self._storage.rearm_released(
-                        ctx.org_id, ctx.user_id, key, now, new_id()
+                        ctx.org_id, ctx.user_id, key, new_id()
                     )
                     if armed is not None:
                         return armed
@@ -83,8 +86,7 @@ class IdempotencyManagerImpl(IdempotencyManagerInterface):
                         ctx.org_id,
                         ctx.user_id,
                         key,
-                        now - self._options.pending_ttl,
-                        now,
+                        lease_bound(utcnow() - self._options.pending_ttl),
                         new_id(),
                     )
                     if taken is not None:
@@ -101,7 +103,7 @@ class IdempotencyManagerImpl(IdempotencyManagerInterface):
         return await self._storage.purge_records(
             ctx.org_id,
             now - self._options.retention,
-            now - self._options.pending_ttl * self._options.abandoned_after,
+            lease_bound(now - self._options.pending_ttl * self._options.abandoned_after),
         )
 
     async def release(self, ctx: OpContext, key: str, attempt_id: UUID) -> None:

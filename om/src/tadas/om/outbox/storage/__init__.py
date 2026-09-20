@@ -1,7 +1,7 @@
 """Storage of the outbox. A row is never written on its own: the storage
-base lands it in the same commit as the core row (`_insert(..., outbox_row)`
-and `_upsert(..., outbox_row)` in the `core` role). The claim and the purge
-are cross-tenant and serve the sweep."""
+base lands the rows that announce a write in the same commit as the core row
+(`_insert(..., outbox_rows)` and `_upsert(..., outbox_rows)` in the `core`
+role). The claim and the purge are cross-tenant and serve the sweep."""
 
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta

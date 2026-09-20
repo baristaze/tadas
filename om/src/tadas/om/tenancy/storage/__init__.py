@@ -51,9 +51,12 @@ class TenancyStorageInterface(ABC):
         ...
 
     @abstractmethod
-    async def write_org(self, org_id: UUID, org: Org, outbox_row: OutboxRow | None = None) -> None:
-        """Lands the row and its outbox row together: the deletion of an org is
-        announced the way any change is, so the tenant's sockets hear of it."""
+    async def write_org(
+        self, org_id: UUID, org: Org, outbox_rows: tuple[OutboxRow, ...] = ()
+    ) -> None:
+        """Lands the row and the outbox rows that announce it together: the
+        deletion of an org is announced the way any change is, so the tenant's
+        sockets hear of it."""
         ...
 
     @abstractmethod
@@ -80,22 +83,22 @@ class TenancyStorageInterface(ABC):
         org_id: UUID,
         user: User,
         membership: Membership,
-        outbox_row: OutboxRow,
+        outbox_rows: tuple[OutboxRow, ...],
         identity: Identity | None = None,
     ) -> None:
-        """A named atomic create: the user, their membership, and the outbox row
+        """A named atomic create: the user, their membership, and the outbox rows
         land in one commit or not at all. A key taken meanwhile (one live user
         per identity, one membership per user) is `UniqueKeyTaken`, and nothing
-        lands, the outbox row included. `identity`, when given, is the person's
+        lands, the outbox rows included. `identity`, when given, is the person's
         new identity and lands in the same commit, for the same reason."""
         ...
 
     @abstractmethod
     async def remove_member(
-        self, org_id: UUID, user: User, membership: Membership, outbox_row: OutboxRow
+        self, org_id: UUID, user: User, membership: Membership, outbox_rows: tuple[OutboxRow, ...]
     ) -> None:
         """A named atomic write: the soft-deleted user, their ended membership,
-        and the outbox row land in one commit or not at all, so a failure never
+        and the outbox rows land in one commit or not at all, so a failure never
         leaves a live user without a membership, which no list, purge, or
         retry would reach. Both rows must exist in the tenant."""
         ...
@@ -117,9 +120,10 @@ class TenancyStorageInterface(ABC):
 
     @abstractmethod
     async def write_user(
-        self, org_id: UUID, user: User, outbox_row: OutboxRow | None = None
+        self, org_id: UUID, user: User, outbox_rows: tuple[OutboxRow, ...] = ()
     ) -> None:
-        """Lands the row and its outbox row together; so do the other writes below."""
+        """Lands the row and the outbox rows that announce it together, so they
+        land in one statement with it; so do the other writes below."""
         ...
 
     @abstractmethod
@@ -134,7 +138,7 @@ class TenancyStorageInterface(ABC):
 
     @abstractmethod
     async def write_membership(
-        self, org_id: UUID, membership: Membership, outbox_row: OutboxRow | None = None
+        self, org_id: UUID, membership: Membership, outbox_rows: tuple[OutboxRow, ...] = ()
     ) -> None: ...
 
     @abstractmethod
@@ -156,7 +160,7 @@ class TenancyStorageInterface(ABC):
 
     @abstractmethod
     async def write_session(
-        self, org_id: UUID, session: Session, outbox_row: OutboxRow | None = None
+        self, org_id: UUID, session: Session, outbox_rows: tuple[OutboxRow, ...] = ()
     ) -> None:
         """A revocation is a session write with a handoff: the row announcing
         it lands beside the session, so the socket it opened hears of it."""
@@ -181,28 +185,45 @@ class TenancyStorageInterface(ABC):
 
     @abstractmethod
     async def issue_api_key(
-        self, org_id: UUID, api_key: ApiKey, outbox_row: OutboxRow
+        self,
+        org_id: UUID,
+        api_key: ApiKey,
+        outbox_rows: tuple[OutboxRow, ...],
+        attempt_id: UUID | None,
     ) -> tuple[ApiKey, bool]:
-        """The create of a key: lands the key and its outbox row together and
+        """The create of a key: lands the key and its outbox rows together and
         returns `(api_key, True)`. When the id is already written, the rerun of
         a create that issues a secret, it writes the new `key_hash` (with
         `updated_at` and `updated_by`) onto that row instead, lands no outbox
         row, and returns `(the row as stored, False)`; the row keeps its name,
         role, expiry, and issuer.
 
-        The re-mint is fenced two ways, both in the statement. A revoked row is
-        never re-minted, so a rerun cannot put a live secret back on a key
-        somebody revoked in between. And a row created after this attempt
-        began is never re-minted: an attempt that ran past the idempotency
-        marker's pending lease is a zombie whose `finish` will be refused, and
-        the key the retry that took the marker over handed to the caller must
-        not be overwritten behind it. Both raise Conflict and change nothing,
-        as does an id written under another issuer."""
+        The re-mint is the one write of a rerun that changes what is stored, so
+        it is fenced two ways, both in the statement. A revoked row is never
+        re-minted, so a rerun cannot put a live secret back on a key somebody
+        revoked in between. And the digest lands only while the idempotency
+        marker on `api_key.id` still holds `attempt_id`, the attempt making the
+        write: an attempt that ran past the marker's pending lease lost it to
+        the retry that took it over, that retry has already handed its key to
+        the caller, and the zombie's `finish` will be refused, so its re-mint
+        is refused here too. The marker's liveness is the fence and no clock
+        is, because two attempts can carry one `created_at` and a skewed clock
+        can order them backwards; there is nothing to compare, only a marker to
+        ask. `attempt_id` is None when the request carried no key, which leaves
+        no marker to hold anything and so no rerun to admit. Every refusal is
+        Conflict and changes nothing, as does an id written under another
+        issuer.
+
+        The marker is one of the two system rows every namespace touches, the
+        way the outbox row is, so reading it here is the same crossing landing
+        an outbox row already is: the Postgres impl reads it in this
+        statement's own WHERE, the memory impl asks the markers the storage
+        root hands it (`AttemptFenceInterface`)."""
         ...
 
     @abstractmethod
     async def write_api_key(
-        self, org_id: UUID, api_key: ApiKey, outbox_row: OutboxRow | None = None
+        self, org_id: UUID, api_key: ApiKey, outbox_rows: tuple[OutboxRow, ...] = ()
     ) -> None: ...
 
     @abstractmethod

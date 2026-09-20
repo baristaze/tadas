@@ -70,15 +70,16 @@ class TasksManagerImpl(TasksManagerInterface):
                 "version": 1,
             }
         )
-        row = outbox_row(ctx, "tasks.task.created", created.id, snapshot(created))
-        if not await self._storage.create_task(ctx.org_id, created, row):
+        rows = (outbox_row(ctx, "tasks.task.created", created.id, snapshot(created)),)
+        if not await self._storage.create_task(ctx.org_id, created, rows):
             # Ids are minted above storage, so the only way to present one twice
             # is a retry, and a retry must not create twice: the insert reported
             # the id and nothing changed, so the row as stored is the answer.
             existing = await self._storage.read_task(ctx.org_id, created.id)
             assert existing is not None
             return existing
-        await self._relay.relay(ctx.org_id, row)
+        for row in rows:  # a write that also starts work carries a second row here
+            await self._relay.relay(ctx.org_id, row)
         return created
 
     async def update_task(self, ctx: OpContext, task: Task) -> Task:
@@ -192,7 +193,7 @@ class TasksManagerImpl(TasksManagerInterface):
             raise VersionMismatch(f"task {anchor.id} left the open list while {task.id} moved")
         ordered.insert(at + 1, task.model_copy(update={"version": version}))
         now = utcnow()
-        updates: list[tuple[Task, int, OutboxRow]] = []
+        updates: list[tuple[Task, int, tuple[OutboxRow, ...]]] = []
         moved = task
         for current, position in zip(ordered, renumbered(len(ordered)), strict=True):
             if current.id != task.id and current.position == position:
@@ -205,13 +206,14 @@ class TasksManagerImpl(TasksManagerInterface):
                     "version": current.version + 1,
                 }
             )
-            row = outbox_row(ctx, "tasks.task.updated", placed.id, snapshot(placed))
-            updates.append((placed, current.version, row))
+            rows = (outbox_row(ctx, "tasks.task.updated", placed.id, snapshot(placed)),)
+            updates.append((placed, current.version, rows))
             if current.id == task.id:
                 moved = placed
         await self._storage.update_tasks(ctx.org_id, updates)
-        for _, _, row in updates:
-            await self._relay.relay(ctx.org_id, row)
+        for _, _, rows in updates:
+            for row in rows:
+                await self._relay.relay(ctx.org_id, row)
         return moved
 
     async def _every_open_task(self, ctx: OpContext) -> list[Task]:
@@ -245,10 +247,12 @@ class TasksManagerImpl(TasksManagerInterface):
                 raise ValidationFailed("the assignee is not a member of this org") from None
 
     async def _write(self, ctx: OpContext, task: Task, expected_version: int, action: str) -> None:
-        """The core row and its outbox row land in one storage call, conditioned
-        on the version the caller read; the relay then appends the event and
-        pushes at once, and the sweep catches what a crash left behind. Every
-        push is also a record, so a client that missed the push replays by seq."""
-        row = outbox_row(ctx, f"tasks.task.{action}", task.id, snapshot(task))
-        await self._storage.update_task(ctx.org_id, task, expected_version, row)
-        await self._relay.relay(ctx.org_id, row)
+        """The core row and the rows that announce it land in one storage call,
+        conditioned on the version the caller read; the relay then appends the
+        event and pushes at once, and the sweep catches what a crash left
+        behind. Every push is also a record, so a client that missed the push
+        replays by seq."""
+        rows = (outbox_row(ctx, f"tasks.task.{action}", task.id, snapshot(task)),)
+        await self._storage.update_task(ctx.org_id, task, expected_version, rows)
+        for row in rows:
+            await self._relay.relay(ctx.org_id, row)

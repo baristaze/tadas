@@ -1,9 +1,10 @@
+import inspect
 from datetime import timedelta
 
 import pytest
 
 from tadas.infra.observability import OUTCOMES
-from tadas.infra.queues import Queues
+from tadas.infra.queues import Queues, QueuesInterface
 from tadas.infra.queues.memory import QueueMemoryImpl
 
 NO_WAIT = timedelta(0)
@@ -38,9 +39,13 @@ async def test_dead_letters_are_visible_in_depth_the_log_and_the_metric(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     queue = QueueMemoryImpl(max_receives=2)
-    message_id = await queue.send(Queues.WEBHOOKS, b"poison")
+    await queue.send(Queues.WEBHOOKS, b"poison")
+    delivered = []
     for _ in range(2):
-        assert len(await queue.receive(Queues.WEBHOOKS, 1, NO_WAIT, timedelta(seconds=-1))) == 1
+        received = await queue.receive(Queues.WEBHOOKS, 1, NO_WAIT, timedelta(seconds=-1))
+        assert len(received) == 1
+        delivered.append(received[0].id)
+    message_id = delivered[0]
     before = outcome("dead_lettered")
     with caplog.at_level("WARNING", logger="tadas.infra.queues.memory"):
         assert await queue.receive(Queues.WEBHOOKS, 1, NO_WAIT, timedelta(seconds=-1)) == []
@@ -54,10 +59,21 @@ async def test_dead_letters_are_visible_in_depth_the_log_and_the_metric(
 
 async def test_the_same_body_sent_twice_is_two_messages() -> None:
     queue = QueueMemoryImpl()
-    first = await queue.send(Queues.WEBHOOKS, b"x")
-    second = await queue.send(Queues.WEBHOOKS, b"x")
-    assert first != second
+    await queue.send(Queues.WEBHOOKS, b"x")
+    await queue.send(Queues.WEBHOOKS, b"x")
     assert (await queue.depth(Queues.WEBHOOKS)).visible == 2
+    delivered = await queue.receive(Queues.WEBHOOKS, 2, NO_WAIT, timedelta(seconds=30))
+    assert len({message.id for message in delivered}) == 2
+
+
+async def test_send_answers_nothing() -> None:
+    """`send` returns None for the reason `publish` does: the observable id is
+    the producer-set idempotency key the body carries, and a broker-assigned id
+    carries no durable meaning across retries and replays. The receipt on a
+    delivered message is not that id either; it is the handle of one delivery."""
+    queue = QueueMemoryImpl()
+    assert await queue.send(Queues.WEBHOOKS, b"x") is None
+    assert inspect.signature(QueuesInterface.send).return_annotation is None
 
 
 async def test_every_outcome_is_counted() -> None:

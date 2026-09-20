@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 from datetime import timedelta
 from uuid import UUID
 
+from tadas.om.idempotency.types.attempt import Attempt
 from tadas.om.opcontext import (
     CredentialKind,
     IdentityContext,
@@ -222,14 +223,18 @@ class TenancyManagerInterface(ABC):
         name: str,
         role: Role,
         ttl: timedelta | None = None,
-        api_key_id: UUID | None = None,
+        attempt: Attempt | None = None,
     ) -> IssuedApiKey:
         """Role-capped at the caller's role; the service role is refused by name.
-        `api_key_id`, when given, is the id a retried request carries. A key
-        that already exists under it is the rerun of a create that issues a
-        secret: the secret is re-minted on that row in the same write and a
-        fresh `IssuedApiKey` with the same id comes back, since the first secret
-        reached no one; the old secret stops authenticating."""
+        `attempt`, when given, is the attempt a retried request runs under: the
+        id it creates on and the token of the idempotency marker holding it. A
+        key that already exists under that id is the rerun of a create that
+        issues a secret: the secret is re-minted on that row in the same write
+        and a fresh `IssuedApiKey` with the same id comes back, since the first
+        secret reached no one; the old secret stops authenticating. The re-mint
+        lands only while the marker still holds the token, so an attempt that
+        lost the marker to a retry cannot invalidate the key that retry already
+        returned. Without an attempt the id is fresh and there is no rerun."""
         ...
 
     @abstractmethod

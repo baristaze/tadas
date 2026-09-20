@@ -6,6 +6,7 @@ produces the credential the next request presents."""
 from abc import ABC, abstractmethod
 from uuid import UUID
 
+from tadas.om.idempotency.types.attempt import Attempt
 from tadas.om.opcontext import IdentityContext, OpContext, RequestContext
 from tadas.services.api.types.tenancy import (
     AddApiKeyRequest,
@@ -86,9 +87,11 @@ class TenancyServiceInterface(ABC):
 
     @abstractmethod
     async def create_api_key(
-        self, ctx: OpContext, body: AddApiKeyRequest, api_key_id: UUID
+        self, ctx: OpContext, body: AddApiKeyRequest, attempt: Attempt
     ) -> IssuedApiKeyView:
-        """`api_key_id` is minted by the gateway before the idempotency marker."""
+        """`attempt` carries the id the create uses, minted by the gateway
+        before the idempotency marker, and the token of the marker holding it,
+        which fences the re-mint a rerun makes."""
         ...
 
     @abstractmethod
