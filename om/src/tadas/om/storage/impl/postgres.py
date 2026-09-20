@@ -1,6 +1,7 @@
 """The relational storage root: one engine and pool per distinct role URL and
 its bounds, every namespace impl constructed here."""
 
+import asyncio
 from collections.abc import Mapping
 from typing import Any
 
@@ -103,10 +104,18 @@ class StoragePostgresImpl(StorageInterface):
         return self._outbox
 
     async def healthcheck(self) -> bool:
+        """A connect and a `SELECT 1` on every engine, each under the bounds its
+        own pool declares: a checkout waits at most the checkout bound and the
+        statement at most its deadline, so a saturated or unreachable pool
+        answers false instead of holding the caller. The deadline here is the
+        sum of the two, the worst a healthy answer can cost, and it is not a
+        knob: the bounds it is made of already are."""
         try:
-            for engine in self._engines.values():
-                async with engine.connect() as connection:
-                    await connection.execute(text("SELECT 1"))
+            for (_, pool), engine in self._engines.items():
+                deadline = pool.checkout_timeout_seconds + pool.statement_timeout_seconds
+                async with asyncio.timeout(deadline):
+                    async with engine.connect() as connection:
+                        await connection.execute(text("SELECT 1"))
         except Exception:
             return False
         return True
