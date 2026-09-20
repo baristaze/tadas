@@ -384,38 +384,27 @@ async def provision(
         env.api_url, app=OPERATOR_APP, app_version=app_version(), transport=transport
     ) as client:
         login = await client.login(env.operator_email, env.operator_password)
+        client.token = login.token
         for n in range(profile.orgs):
             slug = f"ops-{stamp}-{n + 1}"
             owner = f"owner@{slug}.example.test"
-            org = await client.request(
-                "POST",
-                "/v1/admin/orgs",
-                json={
-                    "name": f"Ops {stamp} {n + 1}",
-                    "slug": slug,
-                    "owner_email": owner,
-                    "owner_password": password,
-                    "owner_name": "Ops Owner",
-                },
-                token=login.token,
-                idempotency_key=str(uuid4()),
+            org = await client.admin_create_org(
+                f"Ops {stamp} {n + 1}",
+                slug,
+                owner_email=owner,
+                owner_password=password,
+                owner_name="Ops Owner",
             )
-            org_id = UUID(str(org["id"]))
+            org_id = org.id
             org_ids.append(org_id)
             people.append(Person(owner, password, slug))
             for m in range(max(profile.members_per_org - 1, 0)):
                 email = f"member{m + 1}@{slug}.example.test"
-                await client.request(
-                    "POST",
-                    f"/v1/admin/orgs/{org_id}/members",
-                    json={
-                        "email": email,
-                        "password": password,
-                        "name": f"Member {m + 1}",
-                        "role": "member",
-                    },
-                    token=login.token,
-                    idempotency_key=str(uuid4()),
+                await client.admin_add_member(
+                    org_id,
+                    email,
+                    password=password,
+                    display_name=f"Member {m + 1}",
                 )
                 people.append(Person(email, password, slug))
     return Tenants(people, org_ids, [f"provisioned {profile.orgs} org(s), {len(people)} people"])

@@ -8,7 +8,6 @@ import sys
 from collections.abc import Callable, Iterable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
 
 import httpx
 
@@ -175,8 +174,9 @@ async def size_command(
         env.api_url, app=OPERATOR_APP, app_version=app_version(), transport=transport
     ) as client:
         login = await client.login(env.operator_email, env.operator_password)
-        size: dict[str, Any] = await client.request("GET", "/v1/admin/size", token=login.token)
-    for key, value in size.items():
+        client.token = login.token
+        size = await client.admin_size()
+    for key, value in size.model_dump().items():
         print(f"{key:<24} {value}")
     return OK
 

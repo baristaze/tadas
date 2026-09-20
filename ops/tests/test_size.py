@@ -20,7 +20,16 @@ def operator_api(request: httpx.Request) -> httpx.Response:
     if request.url.path == "/v1/admin/size":
         assert request.headers["authorization"] == "Bearer lgn_op"
         assert request.headers["x-app"] == "admin"
-        return httpx.Response(200, json={"orgs": 3, "users": 12, "tasks_last_24h": 40})
+        return httpx.Response(
+            200,
+            json={
+                "tenants": 3,
+                "users": 12,
+                "tasks_last_24h": 40,
+                "events_last_24h": 90,
+                "since": "2026-09-19T12:00:00Z",
+            },
+        )
     return httpx.Response(404)
 
 
@@ -39,4 +48,4 @@ async def test_size_reads_the_operator_plane_as_the_operator(
     )
     assert code == 0
     out = capsys.readouterr().out
-    assert "orgs                     3" in out and "tasks_last_24h           40" in out
+    assert "tenants                  3" in out and "tasks_last_24h           40" in out
