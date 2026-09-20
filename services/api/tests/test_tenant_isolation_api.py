@@ -53,6 +53,7 @@ class Tenant:
     owner_id: str
     member_id: str
     task_ids: list[str]
+    done_task_id: str
     api_key_ids: list[str]
     session_id: str
 
@@ -63,6 +64,7 @@ class Tenant:
             self.owner_id,
             self.member_id,
             self.session_id,
+            self.done_task_id,
             *self.task_ids,
             *self.api_key_ids,
         }
@@ -72,7 +74,10 @@ async def seed_tenant(
     client: httpx.AsyncClient, container: AppContainer, name: str, slug: str
 ) -> Tenant:
     """A tenant with two of everything a list pages over, so a cursor of its
-    own exists to hand to the other tenant."""
+    own exists to hand to the other tenant, and one task carried to done. The
+    task list has an open half and a done half behind two queries, so a tenant
+    with nothing done leaves the sweep over the done half passing on an empty
+    page."""
     email = f"owner@{slug}.test"
     _, org = await container.managers.tenancy.bootstrap(
         seed_request(), name, slug, email, PASSWORD, name
@@ -90,6 +95,13 @@ async def seed_tenant(
         )
         assert key.status_code == 201, key.text
         keys.append(key.json()["api_key"]["id"])
+    finished = await client.post("/v1/tasks", headers=headers, json={"title": f"{slug} done"})
+    assert finished.status_code == 201, finished.text
+    done_task_id = finished.json()["id"]
+    carried = await client.patch(
+        f"/v1/tasks/{done_task_id}", headers=headers, json={"status": "done", "version": 1}
+    )
+    assert carried.status_code == 200 and carried.json()["status"] == "done", carried.text
     me = await client.get("/v1/me", headers=headers)
     assert me.status_code == 200, me.text
     sessions = await client.get("/v1/sessions", headers=headers)
@@ -100,6 +112,7 @@ async def seed_tenant(
         owner_id=me.json()["user"]["id"],
         member_id=str(member.id),
         task_ids=tasks,
+        done_task_id=done_task_id,
         api_key_ids=keys,
         session_id=sessions.json()[0]["id"],
     )
@@ -184,8 +197,15 @@ async def test_no_list_carries_another_tenants_rows(
             found = ids_in(page.json())
             assert not found & other.ids, f"{path} {params} carried {found & other.ids}"
             seen |= found
-    # The sweep is not passing on empty lists: A's own rows were listed.
-    assert {*caller.task_ids, *caller.api_key_ids, caller.owner_id, caller.member_id} <= seen
+    # The sweep is not passing on empty lists: A's own rows were listed, the
+    # done half of the task list among them.
+    assert {
+        *caller.task_ids,
+        caller.done_task_id,
+        *caller.api_key_ids,
+        caller.owner_id,
+        caller.member_id,
+    } <= seen
 
 
 def list_params(path: str) -> Iterable[dict[str, Any]]:

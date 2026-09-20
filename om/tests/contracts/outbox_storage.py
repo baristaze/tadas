@@ -1,7 +1,13 @@
 """The outbox contract, exercised through a core-role write: the row lands
 with the task it belongs to, the sweep claims it across tenants one attempt
 at a time, the relay marks it done or records the failure, and the purge
-deletes what is settled."""
+deletes what is settled.
+
+The cases named in `CROSS_TENANT_CASES` are the tenant fence's evidence: each
+one presents another tenant's identifier and asserts that nothing is found and
+nothing changes. The claim and the purge serve the sweep and take no tenant,
+so they are in the enumerated exceptions instead. The negative control that
+says what the cases catch is in `docs/runbooks/tenant-isolation.md`."""
 
 from datetime import datetime, timedelta
 from uuid import UUID
@@ -16,6 +22,11 @@ from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.tasks.storage import TasksStorageInterface
 
 NO_DELAY = timedelta(0)
+
+CROSS_TENANT_CASES: frozenset[str] = frozenset({"mark_done", "record_failure"})
+"""Every method of `OutboxStorageInterface` that takes a tenant has a case in
+this module that presents another tenant's. `test_storage_exceptions.py` holds
+the two sets to each other, so a new method arrives with its case."""
 
 
 def make_row(org_id: UUID, target_id: UUID, *, age: timedelta = timedelta(minutes=1)) -> OutboxRow:

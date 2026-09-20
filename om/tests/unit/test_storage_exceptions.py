@@ -1,11 +1,33 @@
 """Every storage method takes org_id first, except the enumerated exceptions,
 each documented in place. Every manager method takes a context stage first;
 the transitions take the weakest stage and are named here, so a new
-principal-less method must be listed to pass."""
+principal-less method must be listed to pass.
+
+These are signature tests. They read parameter names and annotations and
+nothing else, so what they prove is that the tenant is offered to the query,
+never that the query uses it: a method could take `org_id` and write a `WHERE`
+without it and pass here. The fence is the predicate in the query, and its
+evidence is the cross-tenant cases of the contract suites, each of which
+presents another tenant's identifier and asserts that nothing is found and
+nothing changes. `test_every_tenant_method_is_named_in_a_cross_tenant_case`
+below holds the two halves to each other: it is the guard against a new
+storage method arriving with no case, and it too reads names and not queries,
+so a name listed with no case behind it passes. What the cases catch when a
+predicate is taken out is recorded in `docs/runbooks/tenant-isolation.md`.
+"""
 
 import importlib
 import inspect
 import pkgutil
+
+from contracts import (
+    event_storage,
+    idempotency_storage,
+    outbox_storage,
+    task_storage,
+    tenancy_storage,
+    work_storage,
+)
 
 import tadas.om
 from tadas.om.opcontext import IdentityContext, OpContext, OperatorContext, RequestContext
@@ -26,6 +48,18 @@ STORAGE_EXCEPTIONS: frozenset[tuple[str, str]] = frozenset(
         ("OutboxStorageInterface", "purge_done"),
     }
 )
+
+CROSS_TENANT_CASES: dict[str, frozenset[str]] = {
+    "EventStorageInterface": event_storage.CROSS_TENANT_CASES,
+    "IdempotencyStorageInterface": idempotency_storage.CROSS_TENANT_CASES,
+    "OutboxStorageInterface": outbox_storage.CROSS_TENANT_CASES,
+    "TasksStorageInterface": task_storage.CROSS_TENANT_CASES,
+    "TenancyStorageInterface": tenancy_storage.CROSS_TENANT_CASES,
+    "WorkStorageInterface": work_storage.CROSS_TENANT_CASES,
+}
+"""Which contract suite carries the cross-tenant cases of each storage
+interface. A namespace whose suite is not here has no evidence behind its
+fence, so the mapping is checked against the interfaces themselves."""
 
 MANAGER_EXCEPTIONS: frozenset[tuple[str, str]] = frozenset(
     {
@@ -116,6 +150,29 @@ def test_storage_methods_take_org_id_first_except_the_documented_ones() -> None:
             doc = getattr(interface, name).__doc__ or ""
             assert doc.startswith(("Global", "Cross-tenant")), f"{key} lacks its reason"
     assert seen == STORAGE_EXCEPTIONS, f"stale entries: {STORAGE_EXCEPTIONS - seen}"
+
+
+def test_every_tenant_method_is_named_in_a_cross_tenant_case() -> None:
+    """The other half of the rule above. A method that takes `org_id` has a
+    contract case presenting another tenant's, so the fence is proven by a
+    query that runs and not by a parameter that exists. This reads the names
+    the suites declare, so it catches a method that arrives with no case; that
+    the named case does what it says is the suites' own business, and what
+    happens when a predicate goes is the negative control's."""
+    declared = {name for cases in CROSS_TENANT_CASES.values() for name in cases}
+    found = {interface.__name__ for interface in interfaces("StorageInterface")}
+    assert set(CROSS_TENANT_CASES) == found, "a storage interface with no contract suite named"
+    for interface in interfaces("StorageInterface"):
+        cases = CROSS_TENANT_CASES[interface.__name__]
+        for name, params in operations(interface):
+            takes_tenant = [p.name for p in params[:1]] == ["org_id"]
+            if takes_tenant:
+                assert name in cases, f"({interface.__name__}, {name}) has no cross-tenant case"
+            else:
+                assert name not in cases, f"({interface.__name__}, {name}) takes no tenant"
+        stale = cases - {name for name, _ in operations(interface)}
+        assert not stale, f"{interface.__name__} names cases for gone methods: {sorted(stale)}"
+    assert declared, "the suites declare no cross-tenant cases at all"
 
 
 def test_manager_methods_take_a_stage_first_except_the_documented_ones() -> None:

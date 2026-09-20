@@ -772,6 +772,13 @@ storage method that does not take `org_id` first, asserts every manager
 operation takes a context stage first (the outbox relay is the stated
 exception), and names the transitions that take `RequestContext` or
 `IdentityContext`, so a new principal-less operation must be listed.
+That file reads signatures, so it says the tenant is offered to the
+query and never that the query uses it. Each contract suite declares in
+`CROSS_TENANT_CASES` the methods it fences with a case that presents
+another tenant's identifier, and the same file holds those sets to the
+interfaces, so a storage method added with no case fails the gate. What
+the cases catch when a predicate is taken out of a query is recorded in
+[the tenant isolation runbook](runbooks/tenant-isolation.md).
 `test_stage_construction.py` scans every source tree (`om`, `infra`,
 `services`, `workers`, `apps`, `clients`) for a site that constructs
 `IdentityContext`, `OpContext`, or `OperatorContext` or calls
