@@ -8,8 +8,9 @@ Three kinds of root live under this folder:
   `production`). Every environment instantiates the same module graph
   from `main.tf` and differs only in `variables.tf`, so a change that
   works in staging reaches production as a scale change. Both take the
-  image digests as variables; `.github/workflows/deploy.yml` passes what
-  it built.
+  image digests as variables: `deploy-staging.yml` passes what it built,
+  `deploy-production.yml` the digests it resolves from the registry by
+  the commit `release` points at.
 - `shared/`: account-level resources every environment uses: the image
   registry (production promotes the digests staging already ran), the state
   bucket, and the deploy role that GitHub's OIDC provider may assume.
@@ -33,7 +34,15 @@ Three kinds of root live under this folder:
 
 The `service` module is instantiated once per process. A worker passes
 `deployment_maximum_percent = 100` so a rollout never runs more workers
-than desired, because a worker holds leases.
+than desired, because a worker holds leases. The API passes
+`pre_rollout_command`, the migration: on every new task definition the
+module runs it as a one-off task (`pre_rollout.sh`, from the machine
+that applies, with its credentials) and the service depends on it, so a
+migration that fails ends the apply with the old tasks still serving.
+The worker passes the API's `rollout_gate` as `rollout_after`, so it
+rolls after the migration ran. Every service waits for its new tasks to
+serve (`wait_for_steady_state`): a rollout ECS rolls back fails the
+apply instead of leaving it green over old tasks.
 
 ## State and credentials
 
@@ -70,9 +79,10 @@ staging's is `staging.` under it, and `api.` and `app.` sit under the base
 domain. The two names are inputs, not a computed shape, so any name inside
 the zone works; the certificate and the alias record are per name.
 
-`deploy.yml` passes them from GitHub variables (`DNS_ZONE_NAME` for the
-repository, `API_DOMAIN_NAME` and `APP_DOMAIN_NAME` per GitHub environment);
-the variables refuse a name outside the zone. The zone must already exist in
+The deploy workflows pass them from one repository variable, the zone
+(`DNS_ZONE_NAME`): `api.staging.<zone>` and `app.staging.<zone>` for staging,
+`api.<zone>` and `app.<zone>` for production. The Terraform variables refuse
+a name outside the zone. The zone must already exist in
 the account. Terraform does the rest: a DNS-validated certificate per name
 (the portal's in us-east-1, where CloudFront reads them), the alias records,
 and the API's CORS origin, which is always the app's name. The zone apex, the
@@ -89,9 +99,11 @@ calls `https://<api_domain_name>` cross-origin, and its realtime WebSocket
 connects there directly.
 
 The build carries no environment. Terraform writes `/config.json` per
-environment (`apiUrl`, `sentryDsn`, `environment`), and `deploy.yml` builds
-the portal once, publishes it to staging with `scripts/deploy_portal.sh` after
-the apply, and publishes the same files to production. `portal_sentry_dsn`
+environment (`apiUrl`, `sentryDsn`, `environment`). `deploy-staging.yml`
+builds the portal once, publishes it with `scripts/deploy_portal.sh` after
+the apply, and keeps the build by the commit in the state bucket
+(`builds/portal/<sha>/`); `deploy-production.yml` publishes those same files
+to production. `portal_sentry_dsn`
 turns browser error reporting on. The `api_url` and `portal_url` outputs are
 where an environment answers.
 

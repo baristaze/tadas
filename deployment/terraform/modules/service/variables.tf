@@ -119,3 +119,15 @@ variable "collector_image" {
   type        = string
   default     = "public.ecr.aws/aws-observability/aws-otel-collector:v0.50.0"
 }
+
+variable "pre_rollout_command" {
+  description = "A command run as a one-off task on every new task definition before the service rolls, e.g. the migration; null runs nothing."
+  type        = list(string)
+  default     = null
+}
+
+variable "rollout_after" {
+  description = "A value the rollout waits for: another instance's rollout_gate output, so a worker rolls only after the API's migration ran."
+  type        = string
+  default     = ""
+}
