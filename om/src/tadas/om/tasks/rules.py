@@ -6,7 +6,7 @@ in SQL where one statement must decide, and names the rule it mirrors."""
 
 from collections.abc import Sequence
 
-from tadas.om.tasks.types.filter import TaskCursor, TaskFilter
+from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor, TaskFilter
 from tadas.om.tasks.types.task import Task, TaskScope
 
 
@@ -24,6 +24,12 @@ def is_before(task: Task, cursor: TaskCursor) -> bool:
     """The done list is newest first; a task is on the next page when its
     (updated_at, id) sorts strictly before the cursor's."""
     return (task.updated_at, task.id) < (cursor.updated_at, cursor.id)
+
+
+def is_after(task: Task, cursor: OpenTaskCursor) -> bool:
+    """The open list is by position, top first; a task is on the next page
+    when its (position, id) sorts strictly after the cursor's."""
+    return (task.position, task.id) > (cursor.position, cursor.id)
 
 
 def top_position(positions: Sequence[float]) -> float:

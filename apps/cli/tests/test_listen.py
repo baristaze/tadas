@@ -6,7 +6,6 @@ import asyncio
 import io
 from collections.abc import AsyncIterator, Callable
 from datetime import datetime
-from uuid import UUID
 
 from api_support import OWNER
 from cli_support import BOB, Stack
@@ -15,7 +14,7 @@ from tadas.apps.cli.listen import listen
 from tadas.client.client import ApiClient
 from tadas.client.envelopes import EntityChanged
 from tadas.client.realtime import State
-from tadas.client.types import TaskStatus
+from tadas.client.types import TaskStatus, TaskView
 
 CLOCK = datetime(2026, 9, 18, 9, 30, 0)
 
@@ -44,11 +43,11 @@ def test_every_change_becomes_one_line(stack: Stack) -> None:
 
             task = await as_bob.create_task("Migrate DB")
             yield await latest()
-            await as_owner.update_task(task.id, status=TaskStatus.done)
+            done = await as_owner.update_task(task.id, version=task.version, status=TaskStatus.done)
             yield await latest()
-            await as_bob.update_task(task.id, assignee_id=ann)
+            given = await as_bob.update_task(task.id, version=done.version, assignee_id=ann)
             yield await latest()
-            await as_bob.delete_task(task.id)
+            await as_bob.delete_task(task.id, given.version)
             on_state("reconnecting")  # as if the socket dropped here
             on_state("open")
             yield await latest()
@@ -94,11 +93,11 @@ def test_a_deleted_task_seen_before_the_listener_started_still_has_a_title(stack
         client: ApiClient, on_state: Callable[[State], None]
     ) -> AsyncIterator[EntityChanged]:
         async with stack.client(owner) as as_owner:
-            await as_owner.delete_task(old)
+            await as_owner.delete_task(old.id, old.version)
             deleted = (await as_owner.events_after(0))[-1]
             # Created and deleted before the listener could read it: no title to tell.
             gone = await as_owner.create_task("Gone at once")
-            await as_owner.delete_task(gone.id)
+            await as_owner.delete_task(gone.id, gone.version)
             created, deleted_again = (await as_owner.events_after(deleted.seq))[-2:]
         for event in (deleted, created, deleted_again):
             yield EntityChanged.of_event(event)
@@ -108,9 +107,9 @@ def test_a_deleted_task_seen_before_the_listener_started_still_has_a_title(stack
             # "Old one" exists when the listener preloads, so its title is remembered.
             await listen(client, mine=False, out=out, channel=scripted, clock=lambda: CLOCK)
 
-    async def prepare() -> UUID:
+    async def prepare() -> TaskView:
         async with stack.client(owner) as as_owner:
-            return (await as_owner.create_task("Old one")).id
+            return await as_owner.create_task("Old one")
 
     old = asyncio.run(prepare())
     asyncio.run(drive())

@@ -4,6 +4,7 @@ from uuid import UUID
 from sqlalchemy import (
     ColumnElement,
     DateTime,
+    Double,
     Uuid,
     and_,
     delete,
@@ -12,14 +13,18 @@ from sqlalchemy import (
     select,
     true,
     tuple_,
+    update,
 )
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from tadas.om.exceptions import TenantMismatch, VersionMismatch
+from tadas.om.outbox.storage.tables.outbox_rows import OutboxRows
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.storage.impl.pg_base import PgStorageBase
-from tadas.om.storage.utils.translation import to_model
+from tadas.om.storage.utils.translation import to_model, to_row, to_values
 from tadas.om.tasks.storage import TasksStorageInterface
 from tadas.om.tasks.storage.tables.tasks import Tasks
-from tadas.om.tasks.types.filter import TaskCursor, TaskFilter
+from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor, TaskFilter
 from tadas.om.tasks.types.task import Task, TaskScope, TaskStatus
 
 
@@ -44,14 +49,21 @@ def _before(cursor: TaskCursor) -> ColumnElement[bool]:
     )
 
 
+def _after(cursor: OpenTaskCursor) -> ColumnElement[bool]:
+    """Mirrors tasks.rules.is_after in SQL."""
+    return tuple_(Tasks.position, Tasks.id) > tuple_(
+        literal(cursor.position, Double()), literal(cursor.id, Uuid())
+    )
+
+
 class TasksStoragePostgresImpl(PgStorageBase, TasksStorageInterface):
-    async def read_open_tasks(self, org_id: UUID, criterion: TaskFilter, limit: int) -> list[Task]:
-        stmt = (
-            select(Tasks)
-            .where(_live(org_id, TaskStatus.OPEN), _visible(criterion))
-            .order_by(Tasks.position, Tasks.id)
-            .limit(limit)
-        )
+    async def read_open_tasks(
+        self, org_id: UUID, criterion: TaskFilter, after: OpenTaskCursor | None, limit: int
+    ) -> list[Task]:
+        stmt = select(Tasks).where(_live(org_id, TaskStatus.OPEN), _visible(criterion))
+        if after is not None:
+            stmt = stmt.where(_after(after))
+        stmt = stmt.order_by(Tasks.position, Tasks.id).limit(limit)
         async with self._session_for(stmt) as session:
             result = await session.execute(stmt)
             return [to_model(row, Task) for row in result.scalars()]
@@ -95,7 +107,40 @@ class TasksStoragePostgresImpl(PgStorageBase, TasksStorageInterface):
     async def create_task(self, org_id: UUID, task: Task, outbox_row: OutboxRow) -> bool:
         return await self._insert(Tasks, org_id, task, outbox_row)
 
-    async def write_task(
-        self, org_id: UUID, task: Task, outbox_row: OutboxRow | None = None
+    async def update_task(
+        self, org_id: UUID, task: Task, expected_version: int, outbox_row: OutboxRow
     ) -> None:
-        await self._upsert(Tasks, org_id, task, outbox_row)
+        # The compare-and-set is the statement itself: the version is in the
+        # WHERE, so two writers from one snapshot cannot both land. The outbox
+        # row joins the commit only when the update hit a row.
+        values = {k: v for k, v in to_values(task, Tasks).items() if k != "id"}
+        stmt = (
+            update(Tasks)
+            .where(Tasks.id == task.id, Tasks.org_id == org_id, Tasks.version == expected_version)
+            .values(**values)
+            .returning(Tasks.id)
+        )
+        async with self._session_for(stmt) as session:
+            if (await session.execute(stmt)).scalar_one_or_none() is None:
+                await session.rollback()
+                raise await self._why_not(session, org_id, task.id, expected_version)
+            session.add(to_row(outbox_row, OutboxRows, org_id=org_id))
+            await session.commit()
+
+    @staticmethod
+    async def _why_not(
+        session: AsyncSession, org_id: UUID, task_id: UUID, expected_version: int
+    ) -> TenantMismatch | VersionMismatch:
+        """Which of the three conditions the compare-and-set missed. The row
+        was read after the failed statement, so the version it names is a
+        report, never a value to retry with."""
+        found = (
+            await session.execute(select(Tasks.org_id, Tasks.version).where(Tasks.id == task_id))
+        ).one_or_none()
+        if found is None:
+            return VersionMismatch(f"task {task_id} is gone")
+        if found.org_id != org_id:
+            return TenantMismatch(f"tasks {task_id} is not in {org_id}")
+        return VersionMismatch(
+            f"task {task_id} is at version {found.version}, not {expected_version}"
+        )

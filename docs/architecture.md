@@ -108,11 +108,33 @@ context on keeps the stage the callee needs.
   dead letter, named by a `work.item.failed` event in the tenant's
   stream and counted on the outcome counter. Done or failed items are
   purged by the sweep after the work retention (30 days).
-- `tasks`: the to-do items (`Task`: title, notes, status), listed by a
-  `TaskFilter` (team or mine) and paged by a `TaskCursor`, both passed
+- `tasks`: the to-do items (`Task`: title, notes, status, position,
+  version), listed by a `TaskFilter` (team or mine) and paged by a
+  cursor, `OpenTaskCursor` over (position, id) for the open list and
+  `TaskCursor` over (updated_at, id) for the done one, all passed
   unchanged from the manager to storage; the visibility, cursor, and
   placement rules are pure functions in `tasks.rules`, which the memory
-  impl calls and the Postgres impl mirrors in SQL.
+  impl calls and the Postgres impl mirrors in SQL. A task carries a
+  `version` because it is edited from two windows and two terminals at
+  once ([ADR 0008](adr/0008-tasks-carry-a-version.md)): the manager's
+  copy increments it on update, move, and soft delete, and the storage
+  write is a compare-and-set, `WHERE version = :expected` in one
+  statement in Postgres and the same check and write under the lock in
+  the memory impl, which raises `VersionMismatch`, a `Conflict` (409
+  `version_mismatch`), when the row is at another version or is gone.
+  The update never inserts; the create primitive is the only way in. So
+  a snapshot that missed a write is refused, never merged over it, and
+  an edit that raced a delete finds the task gone and cannot bring it
+  back. A list answers a `TaskPage` (items, `has_more`): the manager
+  clamps the page size at 200, asks storage for one row more, and keeps
+  it out, so `has_more` is a fact about the rows and a list the clamp
+  cut still says a page follows. The API encodes the cursor opaquely
+  with the list it belongs to, refuses one from the other list, and
+  answers a real `next_cursor` for both lists. `TaskView` shows the
+  version, and every write names the one the caller read: the update
+  and the move in their bodies, the delete as a required `version` query
+  parameter, since a DELETE has no body and `If-Match` would mean entity
+  tags, 412, and an `ETag` on every response.
 
 - `idempotency`: the durable outcome of a request the caller may retry,
   one record per (tenant, user, key); the gateway begins it before a
@@ -200,8 +222,11 @@ Every table belongs to one database role (`core`, `activity`, `queue`,
 pool, and the migration chain. Migrations are hand-written SQL under
 `om/migrations/sql/<role>/` with Alembic wrappers; `core`, `activity`,
 and `queue` have chains today, and `admin` has no table yet. Optimistic
-concurrency stays opt-in and no table carries a `version` today: nothing
-in Tadas has concurrent edits that matter, so last writer wins.
+concurrency stays opt-in: `tasks` is the one table that carries a
+`version`, because a task is edited from two windows and two terminals
+at once ([ADR 0008](adr/0008-tasks-carry-a-version.md)); every other
+table has no concurrent edits that matter, so there the last writer
+wins.
 
 ## Infrastructure (`infra/`)
 
@@ -391,10 +416,16 @@ everything in-process for tests.
   `tadas.infra.observability`.
 - `apps/portal` (`@tadas/portal`): React, Vite, TanStack Query,
   Zustand; sign-in, the tasks screen at `/` (My and Team's tasks, open in
-  manual order, done newest first with Show more, inline edit, drag to
-  reorder), settings at `/settings` (members, api keys, sign-out), and one
-  realtime channel that invalidates queries by the entity name inside a
-  push's `kind`. The socket's loop (`src/realtime/channel.ts`: ticket,
+  manual order and done newest first, both paged by the server's cursor
+  with Show more, inline edit, drag to reorder), settings at `/settings`
+  (members, api keys, sign-out), and one realtime channel that
+  invalidates queries by the entity name inside a push's `kind`. Every
+  write sends the version of the task the query cache holds; a write
+  the server refused because the task changed since (the drag reorder
+  is the natural case, from two windows) is said in one line and the
+  list refetched. The reorder is one flow with its effects handed in
+  (`src/features/tasks/reorder.ts`), so the stale case runs in a test
+  without React. The socket's loop (`src/realtime/channel.ts`: ticket,
   reconnect with backoff, the degraded polling mode, the cursor and its
   replay) has no React in it and runs in its test over a fake socket and
   fake timers; the provider hands it the query cache, the transport
@@ -450,7 +481,10 @@ everything in-process for tests.
   mode (`add`, `ls`, `edit`, `done`, `reopen`, `rm`, `mv`) does one call
   and exits with 0, 1 (refused), 2 (usage), 3 (not signed in), or 4
   (unreachable: any failure of the wire, refused, timed out, or reset;
-  the API did not decide); `listen` prints every task change as one line (who did
+  the API did not decide); a verb that changes a task reads it first and
+  sends the version it read, so a change that raced another is refused
+  (exit 1) and never overwrites it, and `ls` follows the cursor to the
+  end of the list; `listen` prints every task change as one line (who did
   what to which task) as it arrives on the channel, `--mine` for the
   caller's own. `login` keeps a session token under `TADAS_HOME`;
   `TADAS_TOKEN` (a session token or an api key) and `TADAS_API_URL` win

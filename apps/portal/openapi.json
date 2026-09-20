@@ -435,7 +435,7 @@
       },
       "MoveTaskRequest": {
         "additionalProperties": false,
-        "description": "Places an open task right after `after_id`; null puts it at the top.",
+        "description": "Places an open task right after `after_id`; null puts it at the top.\n`version` is the moved task's, as on `UpdateTaskRequest`.",
         "properties": {
           "after_id": {
             "anyOf": [
@@ -448,8 +448,16 @@
               }
             ],
             "title": "After Id"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
           }
         },
+        "required": [
+          "version"
+        ],
         "title": "MoveTaskRequest",
         "type": "object"
       },
@@ -561,7 +569,7 @@
         "type": "object"
       },
       "TaskPageView": {
-        "description": "One page of a task list. `next_cursor` fetches the next page of the done\nlist; it is null on the last page and always for the open list.",
+        "description": "One page of a task list. `next_cursor` fetches the next page of the same\nlist, open or done, and is null on the last page. The page size is\nclamped, and a list the clamp cut still says a page follows.",
         "properties": {
           "items": {
             "items": {
@@ -666,6 +674,10 @@
             "format": "date-time",
             "title": "Updated At",
             "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
           }
         },
         "required": [
@@ -678,7 +690,8 @@
           "created_at",
           "updated_at",
           "created_by",
-          "deleted_at"
+          "deleted_at",
+          "version"
         ],
         "title": "TaskView",
         "type": "object"
@@ -714,7 +727,7 @@
       },
       "UpdateTaskRequest": {
         "additionalProperties": false,
-        "description": "A partial update: absent fields are kept. An explicit null\n`assignee_id` unassigns the task.",
+        "description": "A partial update: absent fields are kept. An explicit null\n`assignee_id` unassigns the task. `version` is the task's version as the\ncaller read it: the update lands only when the task is still at it, and\nis refused with 409 `version_mismatch` when another write landed since,\nso the caller reads again and decides over the current task.",
         "properties": {
           "assignee_id": {
             "anyOf": [
@@ -760,8 +773,16 @@
               }
             ],
             "title": "Title"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
           }
         },
+        "required": [
+          "version"
+        ],
         "title": "UpdateTaskRequest",
         "type": "object"
       },
@@ -2801,6 +2822,18 @@
               "format": "uuid",
               "title": "Task Id",
               "type": "string"
+            }
+          },
+          {
+            "description": "The task's version as the caller read it; 409 `version_mismatch` when the task changed since.",
+            "in": "query",
+            "name": "version",
+            "required": true,
+            "schema": {
+              "description": "The task's version as the caller read it; 409 `version_mismatch` when the task changed since.",
+              "minimum": 1,
+              "title": "Version",
+              "type": "integer"
             }
           },
           {

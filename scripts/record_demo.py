@@ -86,7 +86,7 @@ class Api:
                     if not page.items:
                         break
                     for task in page.items:
-                        await client.delete_task(task.id)
+                        await client.delete_task(task.id, task.version)
                         cleared += 1
         return cleared
 

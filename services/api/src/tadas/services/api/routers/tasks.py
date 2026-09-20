@@ -2,9 +2,10 @@
 and delete. Each function is one call into the tasks service; the creating
 one runs under the idempotency record."""
 
+from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Response
+from fastapi import APIRouter, Query, Response
 
 from tadas.om.tasks.types.task import TaskScope, TaskStatus
 from tadas.services.api.gateway.auth import Ctx
@@ -58,6 +59,19 @@ async def move_task(
     return await tasks.move_task(ctx, task_id, body)
 
 
+Version = Annotated[
+    int,
+    Query(
+        ge=1,
+        description="The task's version as the caller read it; 409 `version_mismatch` "
+        "when the task changed since.",
+    ),
+]
+
+
 @router.delete("/{task_id}", response_model=TaskView)
-async def delete_task(ctx: Ctx, tasks: TasksService, task_id: UUID) -> TaskView:
-    return await tasks.delete_task(ctx, task_id)
+async def delete_task(ctx: Ctx, tasks: TasksService, task_id: UUID, version: Version) -> TaskView:
+    # A DELETE has no body, so the version rides the query string: the same
+    # precondition the other writes carry in theirs, typed as a required
+    # parameter by every generated client, and refused with the same 409.
+    return await tasks.delete_task(ctx, task_id, version)

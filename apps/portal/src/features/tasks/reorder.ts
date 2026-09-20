@@ -1,0 +1,49 @@
+// The drag reorder as one flow with its effects handed in, so the stale case
+// runs in a test without React: the list shows the new order at once, the
+// move names the version of the task as held, and a refusal (someone else
+// changed the list first) is said and the list reloaded from the server.
+import { ApiError, type TaskView } from "../../api";
+import { placement, type DropSide } from "./tasksModel";
+
+export const STALE_MESSAGE = "Someone changed this list first; it was reloaded.";
+
+export interface ReorderEffects {
+  /** The move call: the task, what it lands after, and the version it was read at. */
+  move: (id: string, afterId: string | null, version: number) => Promise<TaskView>;
+  /** Shows the order the drop asked for while the server answers. */
+  showOrder: (order: TaskView[]) => void;
+  /** Reloads the list from the server, whatever the answer was. */
+  refetch: () => void;
+  /** Says what went wrong in one line. */
+  report: (message: string) => void;
+}
+
+export type ReorderOutcome = "unchanged" | "moved" | "refused";
+
+/** A write refused because the task changed since it was read. */
+export function isStale(cause: unknown): boolean {
+  return cause instanceof ApiError && cause.status === 409 && cause.code === "version_mismatch";
+}
+
+export async function reorder(
+  open: TaskView[],
+  movedId: string,
+  targetId: string,
+  side: DropSide,
+  effects: ReorderEffects,
+  describe: (cause: unknown) => string,
+): Promise<ReorderOutcome> {
+  const result = placement(open, movedId, targetId, side);
+  const moved = open.find((task) => task.id === movedId);
+  if (!result || !moved) return "unchanged";
+  effects.showOrder(result.order);
+  try {
+    await effects.move(movedId, result.afterId, moved.version);
+    return "moved";
+  } catch (cause) {
+    effects.report(isStale(cause) ? STALE_MESSAGE : describe(cause));
+    return "refused";
+  } finally {
+    effects.refetch();
+  }
+}

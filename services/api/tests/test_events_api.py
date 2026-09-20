@@ -13,8 +13,12 @@ from tadas.services.api.app import create_app
 async def test_events_are_paged_by_seq(client: httpx.AsyncClient, owner: dict[str, str]) -> None:
     created = await client.post("/v1/tasks", headers=owner, json={"title": "one"})
     task_id = created.json()["id"]
-    await client.patch(f"/v1/tasks/{task_id}", headers=owner, json={"status": "done"})
-    await client.delete(f"/v1/tasks/{task_id}", headers=owner)
+    done = await client.patch(
+        f"/v1/tasks/{task_id}", headers=owner, json={"status": "done", "version": 1}
+    )
+    await client.delete(
+        f"/v1/tasks/{task_id}", headers=owner, params={"version": done.json()["version"]}
+    )
 
     everything = await client.get("/v1/events", headers=owner, params={"after_seq": 0})
     assert everything.status_code == 200, everything.text

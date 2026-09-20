@@ -43,7 +43,7 @@ export function taskRow(task: TaskView, users: ReadonlyMap<string, UserView>, me
   };
 }
 
-export function flattenDone(data: InfiniteData<TaskPageView> | undefined): TaskView[] {
+export function flattenPages(data: InfiniteData<TaskPageView> | undefined): TaskView[] {
   return data?.pages.flatMap((page) => page.items) ?? [];
 }
 
@@ -66,45 +66,51 @@ export function placement(
   return { order, afterId: insertAt === 0 ? null : (without[insertAt - 1]?.id ?? null) };
 }
 
-// Cache edits. Each returns new data and leaves missing data missing.
+// Cache edits over a paged list. Each returns new data and leaves missing
+// data missing; the pages keep their cursors, since the server refetches
+// after every write anyway.
 
-export function withoutTask(page: TaskPageView | undefined, taskId: string): TaskPageView | undefined {
-  return page && { ...page, items: page.items.filter((task) => task.id !== taskId) };
+function withoutTask(page: TaskPageView, taskId: string): TaskPageView {
+  return { ...page, items: page.items.filter((task) => task.id !== taskId) };
 }
 
-export function withTaskOnTop(page: TaskPageView | undefined, task: TaskView): TaskPageView | undefined {
-  return page && { ...page, items: [task, ...page.items.filter((t) => t.id !== task.id)] };
-}
-
-export function withOrder(page: TaskPageView | undefined, order: TaskView[]): TaskPageView | undefined {
-  return page && { ...page, items: order };
-}
-
-export function withTaskReplaced(page: TaskPageView | undefined, task: TaskView): TaskPageView | undefined {
-  return page && { ...page, items: page.items.map((t) => (t.id === task.id ? task : t)) };
-}
-
-export function doneWithout(
+export function pagesWithout(
   data: InfiniteData<TaskPageView> | undefined,
   taskId: string,
 ): InfiniteData<TaskPageView> | undefined {
-  return data && { ...data, pages: data.pages.map((page) => withoutTask(page, taskId) ?? page) };
+  return data && { ...data, pages: data.pages.map((page) => withoutTask(page, taskId)) };
 }
 
-export function doneWithTaskOnTop(
+export function pagesWithTaskOnTop(
   data: InfiniteData<TaskPageView> | undefined,
   task: TaskView,
 ): InfiniteData<TaskPageView> | undefined {
   if (!data || data.pages.length === 0) return data;
-  const [first, ...rest] = data.pages.map((page) => withoutTask(page, task.id) ?? page);
+  const [first, ...rest] = data.pages.map((page) => withoutTask(page, task.id));
   return { ...data, pages: [{ ...first!, items: [task, ...first!.items] }, ...rest] };
 }
 
-export function doneWithTaskReplaced(
+export function pagesWithTaskReplaced(
   data: InfiniteData<TaskPageView> | undefined,
   task: TaskView,
 ): InfiniteData<TaskPageView> | undefined {
-  return data && { ...data, pages: data.pages.map((page) => withTaskReplaced(page, task) ?? page) };
+  return (
+    data && {
+      ...data,
+      pages: data.pages.map((page) => ({ ...page, items: page.items.map((t) => (t.id === task.id ? task : t)) })),
+    }
+  );
+}
+
+/** The whole order asked for, on the first page; the pages after it are
+ * emptied, since the order spans every page that was loaded. */
+export function pagesWithOrder(
+  data: InfiniteData<TaskPageView> | undefined,
+  order: TaskView[],
+): InfiniteData<TaskPageView> | undefined {
+  if (!data || data.pages.length === 0) return data;
+  const [first, ...rest] = data.pages;
+  return { ...data, pages: [{ ...first!, items: order }, ...rest.map((page) => ({ ...page, items: [] }))] };
 }
 
 export interface Leaving {
