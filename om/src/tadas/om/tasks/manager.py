@@ -63,5 +63,7 @@ class TasksManagerInterface(ABC):
     @abstractmethod
     async def purge_deleted(self, ctx: OpContext) -> int:
         """The sweep, for one tenant: hard-deletes tasks soft-deleted longer ago than
-        the retention period; returns how many. The one hard delete."""
+        the retention period; returns how many. Under a tenant deleted longer
+        ago than the retention every task goes, open and done ones too, since
+        the tenant keeps nothing but its org row. The one hard delete."""
         ...

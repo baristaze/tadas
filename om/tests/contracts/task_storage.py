@@ -253,6 +253,27 @@ class TaskStorageContract:
         assert await storage.read_task(elsewhere, other.id) is not None, "per tenant"
         assert await storage.purge_deleted(org, cut) == 0, "idempotent"
 
+    async def test_purge_tenant_takes_every_task_of_the_tenant(
+        self, storage: TasksStorageInterface
+    ) -> None:
+        org, elsewhere = new_id(), new_id()
+        live = make_task("open")
+        done = make_task("done", status=TaskStatus.DONE)
+        gone = make_task("deleted")
+        await seed(storage, org, live)
+        await seed(storage, org, done)
+        await seed(
+            storage, org, gone.model_copy(update={"deleted_at": utcnow(), "deleted_by": org})
+        )
+        other = make_task("other")
+        await seed(storage, elsewhere, other)
+        assert await storage.purge_tenant(org) == 3, "whatever its state"
+        assert await storage.read_task(org, live.id) is None
+        assert await storage.read_task(org, done.id) is None
+        assert await storage.read_task(org, gone.id) is None
+        assert await storage.read_task(elsewhere, other.id) is not None, "per tenant"
+        assert await storage.purge_tenant(org) == 0, "idempotent"
+
     async def test_many_updates_land_together_or_not_at_all(
         self, storage: TasksStorageInterface
     ) -> None:

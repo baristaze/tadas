@@ -108,6 +108,13 @@ class TasksStoragePostgresImpl(PgStorageBase, TasksStorageInterface):
             await session.commit()
             return purged
 
+    async def purge_tenant(self, org_id: UUID) -> int:
+        stmt = delete(Tasks).where(Tasks.org_id == org_id).returning(Tasks.id)
+        async with self._session_for(stmt) as session:
+            purged = len((await session.execute(stmt)).scalars().all())
+            await session.commit()
+            return purged
+
     async def create_task(self, org_id: UUID, task: Task, outbox_row: OutboxRow) -> bool:
         return await self._insert(Tasks, org_id, task, outbox_row)
 

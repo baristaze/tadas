@@ -493,6 +493,12 @@ everything in-process for tests.
   the done and failed ones after eight days, which outlives the
   seven-day database backup retention, so a role restored to an earlier
   point than its siblings is reconciled by relaying the outbox again).
+  Under a tenant whose org row is deleted longer ago than the retention
+  it is every row that goes, its open and done tasks among them, since
+  an open task carries no `deleted_at` of its own and the sweep that
+  reads one would leave it forever; the org row stays as the record.
+  Each namespace purges its own rows and asks tenancy the one question,
+  `tenant_expired`, so the whole sweep reads one answer.
   `tadas-maintenance serve | health`.
   The serving process answers `/metrics` and `/healthz` on
   `TADAS_METRICS_PORT` (9464) from one thread: `/healthz` reads the

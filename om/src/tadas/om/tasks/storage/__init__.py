@@ -49,6 +49,14 @@ class TasksStorageInterface(ABC):
         ...
 
     @abstractmethod
+    async def purge_tenant(self, org_id: UUID) -> int:
+        """The hard delete of a deleted tenant's tasks once the retention has
+        passed: every task of the tenant, whatever its state, since an open or
+        a done task is never soft-deleted and `purge_deleted` would leave it
+        behind forever; returns how many rows went."""
+        ...
+
+    @abstractmethod
     async def create_task(self, org_id: UUID, task: Task, outbox_row: OutboxRow) -> bool:
         """The create: lands the task and its outbox row together, or neither when
         the id is already written, which it reports as False."""

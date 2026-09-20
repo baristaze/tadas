@@ -248,6 +248,14 @@ class TenancyManagerInterface(ABC):
         ...
 
     @abstractmethod
+    async def tenant_expired(self, ctx: OpContext) -> bool:
+        """Platform-internal: True when the tenant's org row is deleted longer ago
+        than the retention. Every namespace's sweep asks it before its own
+        purge, so one answer decides for the whole system: a tenant past it
+        keeps its org row as the record and no row of any other kind."""
+        ...
+
+    @abstractmethod
     async def issue_ticket(self, ctx: OpContext) -> IssuedTicket:
         """A single-use, short-lived ticket standing for the caller's credential."""
         ...
