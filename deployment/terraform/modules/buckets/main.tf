@@ -9,7 +9,10 @@ resource "aws_s3_bucket" "this" {
   for_each = toset(var.buckets)
 
   bucket = "${var.prefix}-${each.key}"
-  tags   = local.tags
+  # A destroy of a bucket with objects in it fails, which is right until the
+  # nuke; the nuke's apply turns this on first, so its destroy empties them.
+  force_destroy = var.destroyable
+  tags          = local.tags
 }
 
 resource "aws_s3_bucket_public_access_block" "this" {

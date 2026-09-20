@@ -34,4 +34,14 @@ module "environment" {
   maintenance_desired_count    = 2
   maintenance_cpu              = 512
   maintenance_memory           = 1024
+
+  # Operations. `autoscaling_enabled` is the one flip: every lever below it
+  # is on, so true scales the whole environment, and the flip is a pull
+  # request a person reads. Off by default because an unattended scale-out
+  # is a bill nobody approved. Each lever's floor is the desired count above.
+  alarm_email             = var.alarm_email
+  autoscaling_enabled     = false
+  api_autoscaling         = { max = 6 }
+  maintenance_autoscaling = { max = 2 }
+  destroyable             = var.destroyable
 }

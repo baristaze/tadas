@@ -131,3 +131,17 @@ variable "rollout_after" {
   type        = string
   default     = ""
 }
+
+variable "autoscaling" {
+  description = "Target-tracking autoscaling on CPU. On, it declares a scaling target whose floor is desired_count and whose ceiling is max, and a policy that holds the service's average CPU at target_cpu percent; off, it declares nothing. The environment module passes the root's one switch through here."
+  type = object({
+    enabled    = bool
+    max        = number
+    target_cpu = number
+  })
+
+  validation {
+    condition     = var.autoscaling.max >= var.desired_count
+    error_message = "autoscaling.max must be at least desired_count: the floor is the desired count, and a ceiling below it is not a range."
+  }
+}

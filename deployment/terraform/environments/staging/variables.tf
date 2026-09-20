@@ -50,3 +50,14 @@ variable "portal_sentry_dsn" {
   type        = string
   default     = ""
 }
+
+variable "alarm_email" {
+  description = "The address the environment's alarm topic delivers to; the deploy workflows pass the ALARM_EMAIL repository variable."
+  type        = string
+}
+
+variable "destroyable" {
+  description = "Never set by a deploy. `scripts/cloud_nuke.sh` passes true on its apply before the destroy: buckets empty, the database skips its final snapshot and drops its deletion protection."
+  type        = bool
+  default     = false
+}

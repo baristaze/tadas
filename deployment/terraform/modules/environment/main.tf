@@ -62,6 +62,7 @@ module "database" {
   instance_class      = var.database_instance_class
   multi_az            = var.database_multi_az
   deletion_protection = var.database_deletion_protection
+  destroyable         = var.destroyable
 }
 
 module "cache" {
@@ -88,6 +89,7 @@ module "buckets" {
   environment = var.environment
   prefix      = var.bucket_prefix
   buckets     = ["user-file-uploads", "exports"] # tadas.infra.buckets.Buckets
+  destroyable = var.destroyable
 }
 
 module "secrets" {
@@ -141,6 +143,7 @@ module "portal" {
   certificate_arn = module.app_certificate.arn
   api_url         = "https://${var.api_domain_name}"
   sentry_dsn      = var.portal_sentry_dsn
+  destroyable     = var.destroyable
 }
 
 module "domain_records" {
@@ -192,6 +195,12 @@ module "api" {
   ]
 
   pre_rollout_command = ["tadas-api", "migrate", "--all"]
+
+  autoscaling = {
+    enabled    = var.autoscaling_enabled && var.api_autoscaling.enabled
+    max        = var.api_autoscaling.max
+    target_cpu = var.api_autoscaling.target_cpu
+  }
 }
 
 # A worker holds leases, so a rollout never runs more workers than desired:
@@ -229,4 +238,36 @@ module "maintenance" {
   deployment_minimum_healthy_percent = floor(100 * (var.maintenance_desired_count - 1) / var.maintenance_desired_count)
   stop_timeout_seconds               = 120
   rollout_after                      = module.api.rollout_gate
+
+  autoscaling = {
+    enabled    = var.autoscaling_enabled && var.maintenance_autoscaling.enabled
+    max        = var.maintenance_autoscaling.max
+    target_cpu = var.maintenance_autoscaling.target_cpu
+  }
+}
+
+# What an operator reads. The dashboard is the cloud twin of the local
+# Grafana one, by panel title; the alarms are the default set, to one topic.
+
+module "dashboard" {
+  source = "../dashboard"
+
+  environment         = var.environment
+  cluster_name        = module.cluster.name
+  service_names       = [module.api.service_name, module.maintenance.service_name]
+  database_identifier = module.database.identifier
+  cache_node_ids      = module.cache.member_clusters
+  queue_names         = module.queue.queue_names
+}
+
+module "alarms" {
+  source = "../alarms"
+
+  environment              = var.environment
+  alarm_email              = var.alarm_email
+  load_balancer_arn_suffix = module.load_balancer.arn_suffix
+  target_group_arn_suffix  = module.load_balancer.target_group_arn_suffix
+  database_identifier      = module.database.identifier
+  cluster_name             = module.cluster.name
+  service_names            = [module.api.service_name, module.maintenance.service_name]
 }

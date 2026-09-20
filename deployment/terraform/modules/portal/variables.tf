@@ -39,3 +39,9 @@ variable "price_class" {
   type        = string
   default     = "PriceClass_100"
 }
+
+variable "destroyable" {
+  description = "True on the nuke's way down only: a destroy then empties the bucket."
+  type        = bool
+  default     = false
+}

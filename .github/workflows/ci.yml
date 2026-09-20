@@ -101,3 +101,7 @@ jobs:
         run: terraform -chdir=deployment/terraform/modules/portal init -backend=false -input=false
       - if: matrix.root == 'shared'
         run: terraform -chdir=deployment/terraform/modules/portal test
+      - if: matrix.root == 'environments/staging'
+        run: terraform -chdir=deployment/terraform/modules/service init -backend=false -input=false
+      - if: matrix.root == 'environments/staging'
+        run: terraform -chdir=deployment/terraform/modules/service test

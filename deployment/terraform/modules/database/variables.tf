@@ -34,7 +34,12 @@ variable "multi_az" {
 }
 
 variable "deletion_protection" {
-  description = "Also decides whether a destroy takes a final snapshot."
+  description = "Refuse a delete of the instance. Production's is true; the nuke lifts it through destroyable."
+  type        = bool
+}
+
+variable "destroyable" {
+  description = "True on the nuke's way down only: lifts the deletion protection and skips the final snapshot."
   type        = bool
 }
 

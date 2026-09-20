@@ -119,3 +119,39 @@ variable "maintenance_cpu" {
 variable "maintenance_memory" {
   type = number
 }
+
+# Operations. The alarm address, the one autoscaling switch with the per
+# service levers under it, and the nuke's flag.
+
+variable "alarm_email" {
+  description = "The address the environment's alarm topic delivers to. Others subscribe to the topic by hand."
+  type        = string
+}
+
+variable "autoscaling_enabled" {
+  description = "The one flip. Every service's lever below it is on, so true scales the whole environment; false declares no scaling at all."
+  type        = bool
+}
+
+variable "api_autoscaling" {
+  description = "The API's lever: its ceiling, the CPU percent it tracks, and whether it takes part when the switch is on."
+  type = object({
+    enabled    = optional(bool, true)
+    max        = number
+    target_cpu = optional(number, 60)
+  })
+}
+
+variable "maintenance_autoscaling" {
+  description = "The maintenance worker's lever: its ceiling, the CPU percent it tracks, and whether it takes part when the switch is on."
+  type = object({
+    enabled    = optional(bool, true)
+    max        = number
+    target_cpu = optional(number, 60)
+  })
+}
+
+variable "destroyable" {
+  description = "True on the nuke's way down only: buckets empty on destroy, the database skips its final snapshot and drops its deletion protection."
+  type        = bool
+}

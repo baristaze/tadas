@@ -38,3 +38,13 @@ output "private_subnet_ids" {
 output "app_security_group_id" {
   value = module.environment.app_security_group_id
 }
+
+# What an operator opens and subscribes to.
+
+output "dashboard_name" {
+  value = module.environment.dashboard_name
+}
+
+output "alarm_topic_arn" {
+  value = module.environment.alarm_topic_arn
+}
