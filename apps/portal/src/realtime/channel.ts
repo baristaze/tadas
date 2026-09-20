@@ -35,7 +35,11 @@ export interface ChannelDeps {
   connection: { getState(): ConnectionState };
   /** Records per replay page; the production size is EVENTS_PAGE. */
   pageSize: number;
+  /** The server closed with 4401: the session is gone; sign out instead of reconnecting. */
+  onUnauthenticated?(): void;
 }
+
+export const CLOSE_UNAUTHENTICATED = 4401;
 
 export interface Channel {
   stop(): void;
@@ -195,11 +199,15 @@ export function openChannel(deps: ChannelDeps): Channel {
       }
       enqueue(() => deliver(envelope));
     };
-    opened.onclose = () => {
+    opened.onclose = (event) => {
       if (pingTimer) clearInterval(pingTimer);
       pingTimer = null;
       clearStableTimer();
       if (socket === opened) socket = null;
+      if (event.code === CLOSE_UNAUTHENTICATED) {
+        deps.onUnauthenticated?.();
+        return;
+      }
       if (!stopped) scheduleReconnect();
     };
     opened.onerror = () => opened.close();

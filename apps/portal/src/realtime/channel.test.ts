@@ -3,7 +3,7 @@
 import type { EventView } from "../api";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useConnectionStore } from "../store/connection";
-import { openChannel, SOCKET_OPEN, type Channel, type SocketLike } from "./channel";
+import { CLOSE_UNAUTHENTICATED, openChannel, SOCKET_OPEN, type Channel, type SocketLike } from "./channel";
 import type { Envelope } from "./envelopes";
 import { STABLE_OPEN_MS } from "./timeouts";
 
@@ -25,9 +25,9 @@ class FakeSocket implements SocketLike {
     this.onmessage?.({ data: JSON.stringify(frame) } as MessageEvent);
   }
   /** The server closed. */
-  drop() {
+  drop(code = 1006) {
     this.readyState = 3;
-    this.onclose?.({} as CloseEvent);
+    this.onclose?.({ code } as CloseEvent);
   }
   send(data: string) {
     this.sent.push(data);
@@ -58,7 +58,9 @@ function harness(pages: Pages = () => [], pageSize = 200) {
   const routed: Envelope[] = [];
   const fetches: number[] = [];
   const requestTicket = vi.fn(() => Promise.resolve("tkt"));
+  const onUnauthenticated = vi.fn();
   const channel = openChannel({
+    onUnauthenticated,
     requestTicket,
     openSocket: () => {
       const socket = new FakeSocket();
@@ -76,7 +78,7 @@ function harness(pages: Pages = () => [], pageSize = 200) {
     connection: useConnectionStore,
     pageSize,
   });
-  return { channel, sockets, routed, fetches, requestTicket };
+  return { channel, sockets, routed, fetches, requestTicket, onUnauthenticated };
 }
 
 // Lets the ticket request and the inbox settle without moving the clock.
@@ -96,6 +98,17 @@ afterEach(() => {
 });
 
 describe("reconnect backoff", () => {
+  it("signs out on a 4401 close and never reconnects", async () => {
+    const h = harness();
+    channel = h.channel;
+    await flush();
+    h.sockets[0]!.accept();
+    h.sockets[0]!.drop(CLOSE_UNAUTHENTICATED);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(h.onUnauthenticated).toHaveBeenCalledTimes(1);
+    expect(h.requestTicket).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps backing off while the server accepts and closes at once", async () => {
     const h = harness();
     channel = h.channel;

@@ -1,6 +1,6 @@
-# Same shape as a service image, no exposed port. The healthcheck is the
-# worker's own `health` subcommand, which reads the liveness key the loop
-# heartbeats into the cache.
+# Same shape as a service image, no exposed port. The healthcheck asks the
+# serving process's /healthz on the metrics port, which reads the liveness
+# key the loop heartbeats into the cache; nothing boots per probe.
 FROM python:3.14-slim AS build
 COPY --from=ghcr.io/astral-sh/uv:0.12 /uv /usr/local/bin/uv
 ENV UV_LINK_MODE=copy UV_COMPILE_BYTECODE=1
@@ -26,9 +26,7 @@ COPY --from=build --chown=tadas:tadas /app /app
 COPY deployment/docker/entrypoint.sh /entrypoint.sh
 ENV PATH="/app/.venv/bin:$PATH" PYTHONUNBUFFERED=1
 USER tadas
-# The entrypoint execs `serve` as PID 1, so its default worker id is
-# maintenance-<hostname>-1; an explicit TADAS_WORKER_ID wins.
 HEALTHCHECK --interval=10s --timeout=5s --start-period=30s \
-  CMD tadas-maintenance health --worker-id "${TADAS_WORKER_ID:-maintenance-$(cat /etc/hostname)-1}"
+  CMD python -c "import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:9464/healthz').status == 200 else 1)"
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["tadas-maintenance", "serve"]

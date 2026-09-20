@@ -111,9 +111,12 @@ async def test_every_aws_client_is_opened_with_the_timeout() -> None:
         SecretsAwsImpl(session, region="us-east-1", name_prefix="t/", timeout=timeout),
     )
     for impl in impls:
-        async with impl._client() as client:  # opened, not called: no request leaves
-            config = client.meta.config
+        await impl.start()  # opened, not called: no request leaves
+        try:
+            config = impl._client().meta.config
             assert (config.connect_timeout, config.read_timeout) == (7.0, 7.0), impl.describe()
+        finally:
+            await impl.close()
 
 
 def test_the_trace_exporter_is_bounded_by_the_timeout() -> None:

@@ -2,7 +2,7 @@ import logging
 from datetime import timedelta
 from uuid import UUID
 
-from glide import ExpirySet, ExpiryType, GlideClient, GlideError
+from glide import ExpirySet, ExpiryType, GlideClient, GlideError, Script
 
 from tadas.infra.cache import CacheInterface, CacheScope, cache_key
 from tadas.infra.impl.valkey import ValkeyConnection
@@ -13,6 +13,22 @@ log = logging.getLogger(__name__)
 
 class _Unreachable(Exception):
     """No client: the root has closed."""
+
+
+INCREMENT_SCRIPT = Script(
+    """
+local count = redis.call('INCR', KEYS[1])
+local remaining = redis.call('PTTL', KEYS[1])
+if remaining < 0 then
+    redis.call('PEXPIRE', KEYS[1], ARGV[1])
+    remaining = tonumber(ARGV[1])
+end
+return {count, remaining}
+"""
+)
+"""One round trip, atomic on the server: a counter is never left without a
+window, so a subject rate-limited by a half-done increment stays limited only
+until the window ends, never for good."""
 
 
 class CacheValkeyImpl(CacheInterface):
@@ -59,17 +75,15 @@ class CacheValkeyImpl(CacheInterface):
             self._unreachable("invalidate")
 
     async def increment(self, org_id: UUID, key: str, ttl: timedelta) -> tuple[int, timedelta]:
-        full_key = self._key(org_id, key)
         try:
             client = await self._client()
-            count = await client.incr(full_key)
-            remaining = await client.pttl(full_key)
-            if remaining < 0:
-                await client.pexpire(full_key, _millis(ttl))
-                remaining = _millis(ttl)
+            result = await client.invoke_script(
+                INCREMENT_SCRIPT, keys=[self._key(org_id, key)], args=[str(_millis(ttl))]
+            )
         except GlideError, _Unreachable:
             self._unreachable("increment")
             return 0, ttl
+        count, remaining = _counts(result)
         return count, timedelta(milliseconds=remaining)
 
     def describe(self) -> str:
@@ -88,3 +102,10 @@ class CacheValkeyImpl(CacheInterface):
 
 def _millis(ttl: timedelta) -> int:
     return max(1, int(ttl.total_seconds() * 1000))
+
+
+def _counts(result: object) -> tuple[int, int]:
+    """The script's two integers, whatever the driver wrapped them in."""
+    if not isinstance(result, list | tuple) or len(result) != 2:
+        raise GlideError(f"increment script returned {result!r}")
+    return int(result[0]), int(result[1])  # type: ignore[call-overload]

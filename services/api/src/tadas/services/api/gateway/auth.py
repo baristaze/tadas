@@ -92,8 +92,12 @@ async def socket_context(
     websocket: WebSocket, rctx: Rctx, ticket: Annotated[str, Query()]
 ) -> OpContext:
     """The socket's principal: the tenancy manager consumes the ticket once and
-    re-checks the credential behind it. A refused ticket closes the socket
-    with 4401 before the handler runs."""
+    re-checks the credential behind it. The handshake is accepted first, so a
+    refusal reaches the client as a close with 4401 on an open socket; a
+    close before the accept is an HTTP 403 handshake failure on the wire,
+    which no client can tell from any other refusal. The handler receives
+    the socket already accepted."""
+    await websocket.accept()
     tenancy = container_of(websocket).managers.tenancy
     try:
         return await tenancy.redeem_ticket(rctx, ticket)

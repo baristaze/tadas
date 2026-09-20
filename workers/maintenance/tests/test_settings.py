@@ -38,7 +38,7 @@ LOCAL_DEFAULT_SERVES_THE_CLOUD = {
     "version": "the image carries it",
     "metrics_host": "the collector sidecar shares the task's network namespace; 127.0.0.1 serves",
     "metrics_port": "9464, the port the service module tells the sidecar to scrape",
-    "worker_id": "maintenance-<hostname>-<pid>, which the health check reads back",
+    "worker_id": "maintenance-<hostname>-<pid>, the key the loop heartbeats under",
     "worker_lane": "the default lane is the one lane",
     "worker_capacity": "the local default is the tuning",
     "worker_lease_seconds": "the local default is the tuning",

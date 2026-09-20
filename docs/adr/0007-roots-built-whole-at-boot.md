@@ -52,9 +52,10 @@ for the CLI, and that is the floor a Python process has.
 
 A new manager is one line in `Managers` and one call in
 `build_managers`, never a getter that builds on demand. The
-per-scope cache in the infra root is the one lazy member and stays
-so: a scope is a name, not a connection, and building one costs
-nothing either way.
+per-scope caches in the infra roots follow the same rule: one per
+`CacheScope`, built in the constructor, so `describe()` names every
+one at boot and `get_cache` is a lookup. A scope is a name, not a
+connection, so building them all costs nothing.
 
 `make benchmark-boot` is the re-test: run it when a root or a dependency
 changes and compare the table above. A change that moves a

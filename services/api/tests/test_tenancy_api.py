@@ -379,7 +379,8 @@ def test_realtime_channel_delivers_tenant_events(tmp_path: Path) -> None:
             assert event["payload"]["kind"] == "tenancy.api_key.created"
             assert event["payload"]["target_id"] == created.json()["api_key"]["id"]
             assert set(event["payload"]) == {"kind", "target_id", "seq", "actor_id"}
-        with pytest.raises(WebSocketDisconnect) as refused:
-            with tc.websocket_connect(url):
-                pass
+        # A ticket is single-use: the second socket is accepted, then closed.
+        with tc.websocket_connect(url) as ws:
+            with pytest.raises(WebSocketDisconnect) as refused:
+                ws.receive_json()
         assert refused.value.code == 4401
