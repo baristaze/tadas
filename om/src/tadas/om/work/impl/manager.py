@@ -209,7 +209,7 @@ class WorkManagerImpl(WorkManagerInterface):
         written = await self._storage.write_item_if_held(
             ctx.org_id,
             item.claim_token,
-            item.model_copy(update={**update, "updated_by": ctx.user_id}),
+            item.model_copy(update=update | {"updated_by": ctx.user_id}),
         )
         if written is None:
             raise LeaseLost(f"work item {item.id} was taken from {item.claimed_by} mid-write")
