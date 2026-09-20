@@ -18,6 +18,7 @@ from tadas.om.exceptions import (
     NotAnOperator,
     NotAuthorized,
     NotFound,
+    UniqueKeyTaken,
     ValidationFailed,
 )
 from tadas.om.opcontext import (
@@ -809,3 +810,30 @@ async def test_add_member_caps_the_role_at_the_creators_and_records_the_write(
         (org.id, "tenancy.user.created", bob.id, 1)
     ]
     assert ctx.security.role is Role.OWNER  # the cap: a creator seeds at most their own rank
+
+
+class RacedIdentityStorage(TenancyStorageMemoryImpl):
+    """The read by email misses: another request wrote that identity between
+    our read and our write, which is what the unique key is for."""
+
+    async def read_identity_by_email(self, email: str) -> Identity | None:
+        return None
+
+
+async def test_a_duplicate_email_the_read_missed_is_a_conflict_and_leaves_nothing_behind(
+    infra: InfraLocalImpl, outbox: OutboxStorageMemoryImpl
+) -> None:
+    storage = RacedIdentityStorage(outbox)
+    manager = make_manager(storage, infra, outbox=outbox)
+    _, org = await manager.bootstrap(
+        request(), "Acme", "acme", "ann@example.test", "pw-1234", "Ann"
+    )
+    with pytest.raises(UniqueKeyTaken) as raced:
+        await manager.bootstrap(request(), "Globex", "globex", "ann@example.test", "pw", "Ann")
+    assert (raced.value.http_status, raced.value.code) == (409, "unique_key_taken")
+    assert await storage.read_org_by_slug("globex") is None
+    with pytest.raises(UniqueKeyTaken) as raced:
+        await manager.add_member(request(), "acme", "ann@example.test", "pw", "Ann", Role.MEMBER)
+    assert raced.value.http_status == 409
+    assert len(await storage.read_users(org.id, limit=10)) == 1
+    assert len(await storage.read_memberships(org.id, limit=10)) == 1

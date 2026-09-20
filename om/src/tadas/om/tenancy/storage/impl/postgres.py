@@ -97,7 +97,9 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
             await self._upsert(Users, org_id, user, outbox_row)
         except UniqueKeyTaken as error:
             # uq_users_org_id_identity_id_live: one live user per identity in a tenant.
-            raise Conflict(f"identity {user.identity_id} already has a live user") from error
+            raise UniqueKeyTaken(
+                f"identity {user.identity_id} already has a live user in this org"
+            ) from error
 
     async def read_memberships(self, org_id: UUID, limit: int) -> list[Membership]:
         stmt = (

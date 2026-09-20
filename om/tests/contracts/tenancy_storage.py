@@ -14,7 +14,8 @@ from contracts.factories import (
     make_user,
 )
 from tadas.om.base import new_id, utcnow
-from tadas.om.exceptions import Conflict, TenantMismatch
+from tadas.om.exceptions import Conflict, TenantMismatch, UniqueKeyTaken
+from tadas.om.opcontext import Role
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.tenancy.storage import TenancyStorageInterface
 from tadas.om.tenancy.types.api_key import ApiKey
@@ -101,7 +102,7 @@ class TenancyStorageContract:
         identity = make_identity()
         user = make_user(identity.id)
         await storage.write_user(org.id, user)
-        with pytest.raises(Conflict):
+        with pytest.raises(UniqueKeyTaken):
             await storage.write_user(org.id, make_user(identity.id))
         # The same identity in another tenant, and again here once the first is gone.
         await storage.write_user(other_org.id, make_user(identity.id))
@@ -115,6 +116,92 @@ class TenancyStorageContract:
         assert await storage.read_identity(identity.id) == identity
         assert await storage.read_identity_by_email(identity.email) == identity
         assert await storage.read_identity_by_email("nobody@example.test") is None
+
+    # Every unique key the schema declares has a case here, so the memory impl
+    # refuses what the engine refuses: the write raises UniqueKeyTaken and the
+    # row that held the key is unchanged. An update by copy of the row that
+    # holds the key passes.
+
+    async def test_identity_email_is_unique(self, storage: TenancyStorageInterface) -> None:
+        identity = make_identity("ann@example.test")
+        await storage.write_identity(identity)
+        with pytest.raises(UniqueKeyTaken):
+            await storage.write_identity(make_identity("ann@example.test"))
+        assert await storage.read_identity_by_email("ann@example.test") == identity
+        promoted = identity.model_copy(update={"is_operator": True})
+        await storage.write_identity(promoted)
+        assert await storage.read_identity(identity.id) == promoted
+
+    async def test_org_slug_is_unique(self, storage: TenancyStorageInterface) -> None:
+        org = make_org()
+        await storage.write_org(org.id, org)
+        other = make_org("Other").model_copy(update={"slug": org.slug})
+        with pytest.raises(UniqueKeyTaken):
+            await storage.write_org(other.id, other)
+        assert await storage.read_org(other.id) is None
+        assert await storage.read_org_by_slug(org.slug) == org
+        renamed = org.model_copy(update={"name": "Renamed"})
+        await storage.write_org(org.id, renamed)
+        assert await storage.read_org_by_slug(org.slug) == renamed
+
+    async def test_one_membership_per_user_in_a_tenant(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        org, other_org = make_org(), make_org("Other")
+        membership = make_membership(new_id())
+        await storage.write_membership(org.id, membership)
+        with pytest.raises(UniqueKeyTaken):
+            await storage.write_membership(org.id, make_membership(membership.user_id))
+        assert await storage.read_memberships(org.id, limit=10) == [membership]
+        # The same user id in another tenant is another key.
+        await storage.write_membership(other_org.id, make_membership(membership.user_id))
+        promoted = membership.model_copy(update={"role": Role.ADMIN})
+        await storage.write_membership(org.id, promoted)
+        assert await storage.read_membership_for_user(org.id, membership.user_id) == promoted
+
+    async def test_session_token_hash_is_unique(self, storage: TenancyStorageInterface) -> None:
+        org, other_org = make_org(), make_org("Other")
+        token_hash = uuid4().hex
+        session = make_session(new_id(), new_id(), token_hash)
+        await storage.write_session(org.id, session)
+        with pytest.raises(UniqueKeyTaken):
+            await storage.write_session(other_org.id, make_session(new_id(), new_id(), token_hash))
+        assert await storage.read_session_by_token_hash(token_hash) == (org.id, session)
+        revoked = session.model_copy(update={"revoked_at": utcnow()})
+        await storage.write_session(org.id, revoked)
+        assert await storage.read_session(org.id, session.id) == revoked
+
+    async def test_api_key_hash_is_unique(self, storage: TenancyStorageInterface) -> None:
+        org, other_org = make_org(), make_org("Other")
+        key_hash = uuid4().hex
+        api_key = make_api_key(new_id(), key_hash)
+        await storage.write_api_key(org.id, api_key)
+        with pytest.raises(UniqueKeyTaken):
+            await storage.write_api_key(other_org.id, make_api_key(new_id(), key_hash))
+        # The create refuses it too, and lands nothing under the new id.
+        minted = make_api_key(new_id(), key_hash)
+        with pytest.raises(UniqueKeyTaken):
+            await storage.issue_api_key(org.id, minted, make_key_row(minted))
+        assert await storage.read_api_key(org.id, minted.id) is None
+        assert await storage.read_api_key_by_hash(key_hash) == (org.id, api_key)
+        renamed = api_key.model_copy(update={"name": "renamed"})
+        await storage.write_api_key(org.id, renamed)
+        assert await storage.read_api_key(org.id, api_key.id) == renamed
+
+    async def test_socket_ticket_hash_is_unique(self, storage: TenancyStorageInterface) -> None:
+        org, other_org = make_org(), make_org("Other")
+        ticket_hash = uuid4().hex
+        ticket = make_socket_ticket(new_id(), ticket_hash)
+        await storage.write_socket_ticket(org.id, ticket)
+        with pytest.raises(UniqueKeyTaken):
+            await storage.write_socket_ticket(
+                other_org.id, make_socket_ticket(new_id(), ticket_hash)
+            )
+        redeemed_at = utcnow()
+        assert await storage.consume_socket_ticket(ticket_hash, redeemed_at) == (
+            org.id,
+            ticket.model_copy(update={"redeemed_at": redeemed_at}),
+        )
 
     async def test_users_by_identity_span_tenants(self, storage: TenancyStorageInterface) -> None:
         identity = make_identity()
