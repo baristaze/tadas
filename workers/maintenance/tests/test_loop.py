@@ -484,6 +484,7 @@ async def test_sweep_purges_settled_work_items_and_finished_idempotency_records(
     item = make_item(ctx)
     await container.managers.work.enqueue(ctx, item)
     begun = await container.managers.idempotency.begin(ctx, "k", "d", new_id())
+    assert begun.attempt_id is not None
     await container.managers.idempotency.finish(ctx, "k", begun.attempt_id, 201, "{}")
     handler = NoopHandlerImpl()
     loop, task = start_loop(container, handler, fast_options())
