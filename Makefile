@@ -131,7 +131,7 @@ openapi: ## Emit the API document and regenerate the portal's and the Python cli
 	pnpm --filter @tadas/portal generate
 	uv run datamodel-codegen --input apps/portal/openapi.json --input-file-type openapi \
 		--output clients/python/src/tadas/client/schema.py \
-		--output-model-type pydantic_v2.BaseModel --target-python-version 3.13 \
+		--output-model-type pydantic_v2.BaseModel --target-python-version 3.14 \
 		--use-standard-collections --use-union-operator --use-annotated \
 		--enum-field-as-literal none --use-schema-description --disable-timestamp \
 		--formatters ruff-format --formatters ruff-check

@@ -85,7 +85,9 @@ def _run[T](coroutine: Coroutine[Any, Any, T], *, signed_in: bool = False) -> T:
         _fail(f"refused: {error}", EXIT_REFUSED)
     except ChannelRefused as error:
         _fail(f"the channel was refused ({error}); run `tadas login`", EXIT_NOT_SIGNED_IN)
-    except httpx.ConnectError as error:
+    except httpx.TransportError as error:
+        # Any failure of the wire: refused, timed out, reset, or a proxy
+        # that answered nothing. The API did not decide, so it is exit 4.
         _fail(f"cannot reach the API: {error}", EXIT_UNREACHABLE)
     except LookupError as error:
         _fail(str(error), EXIT_REFUSED)
