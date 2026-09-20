@@ -15,7 +15,7 @@ from tadas.om.storage.utils.translation import to_model, to_values
 
 
 class EventStoragePostgresImpl(PgStorageBase, EventStorageInterface):
-    async def append(self, org_id: UUID, event: Event) -> Event:
+    async def append_event(self, org_id: UUID, event: Event) -> Event:
         # The next number comes from the tenant's cursor row, `head + 1` under
         # the row's lock, in the same transaction as the event: two appends to
         # one tenant queue on the lock and each leaves with the next number. The

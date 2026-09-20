@@ -16,7 +16,7 @@ from tadas.om.opcontext import OpContext, ProvenanceScope
 
 class EventsManagerInterface(ABC):
     @abstractmethod
-    async def append(self, ctx: OpContext, event: Event) -> Event:
+    async def append_event(self, ctx: OpContext, event: Event) -> Event:
         """Appends an audit event under the caller's tenant. An append is a
         write, so WRITE is required, and the provenance the row records (the
         actor, the request, the app) is stamped from the context, never taken

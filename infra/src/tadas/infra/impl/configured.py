@@ -14,7 +14,7 @@ from tadas.infra.cache.valkey import CacheValkeyImpl
 from tadas.infra.exceptions import InfraException
 from tadas.infra.impl.settings import ENVIRONMENTS, InfraSettings
 from tadas.infra.impl.valkey import ValkeyConnection
-from tadas.infra.queues import QueueInterface
+from tadas.infra.queues import QueuesInterface
 from tadas.infra.queues.memory import QueueMemoryImpl
 from tadas.infra.queues.sqs import QueueSqsImpl
 from tadas.infra.root import InfraInterface
@@ -97,7 +97,7 @@ class InfraConfiguredImpl(InfraInterface):
             self._topics = TopicsMemoryImpl()
 
         if settings.queues_backend == "sqs":
-            self._queues: QueueInterface = QueueSqsImpl(
+            self._queues: QueuesInterface = QueueSqsImpl(
                 self._aws,
                 endpoint_url=settings.sqs_endpoint_url,
                 region=settings.aws_region,
@@ -132,7 +132,7 @@ class InfraConfiguredImpl(InfraInterface):
     def get_topics(self) -> TopicsInterface:
         return self._topics
 
-    def get_queues(self) -> QueueInterface:
+    def get_queues(self) -> QueuesInterface:
         return self._queues
 
     def get_secrets(self) -> SecretsInterface:

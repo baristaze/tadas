@@ -29,10 +29,10 @@ class PoisonedEvents(EventStorageMemoryImpl):
         super().__init__()
         self.poison_id = poison_id
 
-    async def append(self, org_id: UUID, event: Event) -> Event:
+    async def append_event(self, org_id: UUID, event: Event) -> Event:
         if event.id == self.poison_id:
             raise RuntimeError("cannot append this one")
-        return await super().append(org_id, event)
+        return await super().append_event(org_id, event)
 
 
 @pytest.fixture

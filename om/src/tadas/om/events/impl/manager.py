@@ -14,7 +14,7 @@ class EventsManagerImpl(EventsManagerInterface):
         self._storage = storage
         self._options = options
 
-    async def append(self, ctx: OpContext, event: Event) -> Event:
+    async def append_event(self, ctx: OpContext, event: Event) -> Event:
         ctx.require(Permission.WRITE)
         # The provenance is the context's, whatever the caller built.
         stamped = event.model_copy(
@@ -24,7 +24,7 @@ class EventsManagerImpl(EventsManagerInterface):
                 "app": ctx.app.type.value,
             }
         )
-        return await self._storage.append(ctx.org_id, stamped)
+        return await self._storage.append_event(ctx.org_id, stamped)
 
     async def get_events(self, ctx: OpContext, after_seq: int, limit: int) -> list[Event]:
         ctx.require(Permission.READ)

@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 
 from tadas.infra.base import new_id, utcnow
 from tadas.infra.observability import OUTCOMES
-from tadas.infra.queues import QueueDepth, QueueInterface, QueueMessage, Queues
+from tadas.infra.queues import QueueDepth, QueueMessage, Queues, QueuesInterface
 
 log = logging.getLogger(__name__)
 
@@ -15,25 +15,24 @@ log = logging.getLogger(__name__)
 class _Message:
     id: str
     body: bytes
-    dedup_id: str | None
     attempts: int = 0
     visible_at: datetime | None = None
     receipt: str = ""
 
 
-class QueueMemoryImpl(QueueInterface):
+class QueueMemoryImpl(QueuesInterface):
     """A faithful twin of the hosted queue: visibility timeouts, redelivery,
     and a dead-letter list after `max_receives` attempts. Like the hosted
-    queue it does not deduplicate; `dedup_id` rides along as an attribute
-    and the consumer is idempotent."""
+    queue it does not deduplicate, and the interface offers no knob that
+    says otherwise; the consumer is idempotent."""
 
     def __init__(self, max_receives: int = 5) -> None:
         self._max_receives = max_receives
         self._messages: dict[Queues, list[_Message]] = {q: [] for q in Queues}
         self._dead: dict[Queues, list[_Message]] = {q: [] for q in Queues}
 
-    async def send(self, queue: Queues, body: bytes, *, dedup_id: str | None = None) -> str:
-        message = _Message(id=str(new_id()), body=body, dedup_id=dedup_id)
+    async def send(self, queue: Queues, body: bytes) -> str:
+        message = _Message(id=str(new_id()), body=body)
         self._messages[queue].append(message)
         OUTCOMES.labels(subsystem="queue", outcome="sent").inc()
         return message.id

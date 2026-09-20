@@ -11,7 +11,7 @@ from tadas.om.events.types.event import Event
 
 class EventStorageInterface(ABC):
     @abstractmethod
-    async def append(self, org_id: UUID, event: Event) -> Event:
+    async def append_event(self, org_id: UUID, event: Event) -> Event:
         """One transaction: takes the tenant's next seq from its cursor row, writes
         the event with it, and returns it. Two concurrent appends queue on the
         cursor and never share a seq or leave a gap behind; an append that rolls

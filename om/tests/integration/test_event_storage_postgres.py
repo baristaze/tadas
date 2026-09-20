@@ -26,6 +26,6 @@ class TestEventStoragePostgres(EventStorageContract):
             session.add(EventCursors(org_id=org, head=7))
             await session.commit()
         assert await storage.read_head(org) == 7
-        assert (await storage.append(org, make_event())).seq == 8
+        assert (await storage.append_event(org, make_event())).seq == 8
         async with pg_sessions[DatabaseRole.ACTIVITY]() as session:
             assert (await session.get(EventCursors, org)).head == 8  # type: ignore[union-attr]

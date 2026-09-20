@@ -30,10 +30,10 @@ class EventStorageContract:
     ) -> None:
         org_a, org_b = new_id(), new_id()
         assert await storage.read_head(org_a) == 0
-        appended = [await storage.append(org_a, make_event()) for _ in range(3)]
+        appended = [await storage.append_event(org_a, make_event()) for _ in range(3)]
         assert [e.seq for e in appended] == [1, 2, 3]
         assert await storage.read_head(org_a) == 3
-        elsewhere = await storage.append(org_b, make_event())
+        elsewhere = await storage.append_event(org_b, make_event())
         assert elsewhere.seq == 1
         assert await storage.read_head(org_b) == 1
         first = appended[0]
@@ -59,8 +59,8 @@ class EventStorageContract:
         # The outbox relay appends under the row's id; relaying twice appends once.
         org = new_id()
         event = make_event()
-        first = await storage.append(org, event)
-        again = await storage.append(org, event.model_copy(update={"kind": "ignored"}))
+        first = await storage.append_event(org, event)
+        again = await storage.append_event(org, event.model_copy(update={"kind": "ignored"}))
         assert again == first and first.seq == 1
         assert [e.seq for e in await storage.read_after(org, 0, 10)] == [1]
 
@@ -70,7 +70,9 @@ class EventStorageContract:
         # N appends race on one tenant's cursor and leave with 1..N: no gap, no
         # duplicate, and the head is the last of them.
         org, n = new_id(), 32
-        appended = await asyncio.gather(*(storage.append(org, make_event()) for _ in range(n)))
+        appended = await asyncio.gather(
+            *(storage.append_event(org, make_event()) for _ in range(n))
+        )
         assert sorted(e.seq for e in appended) == list(range(1, n + 1))
         assert [e.seq for e in await storage.read_after(org, 0, n * 2)] == list(range(1, n + 1))
         assert await storage.read_head(org) == n
@@ -81,7 +83,7 @@ class EventStorageContract:
         # Two tenants racing at once never see each other's numbers.
         org_a, org_b, n = new_id(), new_id(), 16
         appended = await asyncio.gather(
-            *(storage.append(org, make_event()) for org in (org_a, org_b) * n)
+            *(storage.append_event(org, make_event()) for org in (org_a, org_b) * n)
         )
         assert sorted(e.seq for e in appended[0::2]) == list(range(1, n + 1))
         assert sorted(e.seq for e in appended[1::2]) == list(range(1, n + 1))
@@ -93,7 +95,7 @@ class EventStorageContract:
         # back with it: the next event is 2, not 3.
         org = new_id()
         event = make_event()
-        await storage.append(org, event)
-        await storage.append(org, event)
-        assert (await storage.append(org, make_event())).seq == 2
+        await storage.append_event(org, event)
+        await storage.append_event(org, event)
+        assert (await storage.append_event(org, make_event())).seq == 2
         assert await storage.read_head(org) == 2

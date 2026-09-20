@@ -1,6 +1,12 @@
 # ADR 0003: The metadata-vs-schema check runs in the integration job
 
-**Status**: accepted (2026-09-18)
+**Status**: superseded (2026-09-19). Guideline v0.13.0 rewrote "The
+Storage Layer" ("Migrations"): the metadata-versus-schema check is a
+target of its own, `make migrate-check`, run against the local stack
+after migrating and in CI's integration job, and it is explicitly not
+part of the fast gate, which has no database. What this record called a
+deviation is now what the guideline asks for. The record stays for the
+interval it covers.
 
 ## Context
 

@@ -25,9 +25,9 @@ class QueueDepth(InfraModel):
     dead_lettered: int
 
 
-class QueueInterface(ABC):
+class QueuesInterface(ABC):
     @abstractmethod
-    async def send(self, queue: Queues, body: bytes, *, dedup_id: str | None = None) -> str: ...
+    async def send(self, queue: Queues, body: bytes) -> str: ...
 
     @abstractmethod
     async def receive(
