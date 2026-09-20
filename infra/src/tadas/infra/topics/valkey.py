@@ -30,6 +30,7 @@ class TopicsValkeyImpl(TopicsInterface):
         self._subscribers = LocalSubscribers()
         self._subscriber: GlideClient | None = None
         self._listener: asyncio.Task[None] | None = None
+        self._failures = 0
 
     async def publish(self, topic: Topics, payload: TopicPayload) -> None:
         check_payload(topic, payload)
@@ -79,19 +80,20 @@ class TopicsValkeyImpl(TopicsInterface):
     async def _listen(self) -> None:
         """Receives until the driver fails, then reopens the subscriber after
         a backoff that grows with consecutive failures and resets on a
-        message. A failure is counted and logged; a bug ends the task loudly."""
-        failures = 0
+        message: a reopened subscriber that fails before delivering anything
+        keeps climbing, one that delivers has proven the bus healthy. A
+        failure is counted and logged; a bug ends the task loudly."""
         while True:
             try:
                 if self._subscriber is None:
                     self._subscriber = await self._open_subscriber()
-                    log.info("topics listener reconnected after %d failures", failures)
+                    log.info("topics listener reconnected after %d failures", self._failures)
                 await self._receive(self._subscriber)
             except GlideError as error:
-                failures += 1
+                self._failures += 1
                 OUTCOMES.labels(subsystem="topics", outcome="listener_failed").inc()
                 backoff = self.RECONNECT_BACKOFF_SECONDS
-                delay = backoff[min(failures, len(backoff)) - 1]
+                delay = backoff[min(self._failures, len(backoff)) - 1]
                 log.warning(
                     "topics listener failed (%s: %s); reconnecting in %.1fs",
                     type(error).__name__,
@@ -109,6 +111,7 @@ class TopicsValkeyImpl(TopicsInterface):
     async def _receive(self, subscriber: GlideClient) -> None:
         while True:
             message = await subscriber.get_pubsub_message()
+            self._failures = 0
             channel = message.channel
             channel = channel.decode() if isinstance(channel, bytes) else str(channel)
             try:
