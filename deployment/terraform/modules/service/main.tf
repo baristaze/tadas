@@ -17,6 +17,9 @@ locals {
     "tadas:environment" = var.environment
   }
 
+  # Application Auto Scaling names a service by cluster name, not ARN.
+  cluster_name = element(split("/", var.cluster_arn), 1)
+
   # The ceiling `shared` declares for every role a deploy run creates. The
   # deploy role is refused a CreateRole that does not carry it, so a
   # compromised deploy run cannot mint a task role wider than itself.
@@ -269,6 +272,12 @@ resource "terraform_data" "rollout_after" {
   input = var.rollout_after
 }
 
+# `desired_count` is not in `ignore_changes`, on purpose. With autoscaling
+# on, an apply sets the count back to the floor and the policy raises it
+# again within its cooldown while load is there; a deploy is already a roll,
+# and a few minutes at the floor is the price. What it buys is that the
+# root's number stays the truth: a change to desired_count applies, with the
+# switch on or off, and nothing in the state disagrees with the file.
 resource "aws_ecs_service" "this" {
   name            = var.name
   cluster         = var.cluster_arn
@@ -306,6 +315,45 @@ resource "aws_ecs_service" "this" {
       target_group_arn = load_balancer.value
       container_name   = var.name
       container_port   = var.port
+    }
+  }
+}
+
+# Scale-out as a lever. Declared with the service, off by default at the
+# root: the floor is the desired count, so turning it on changes nothing
+# until load does, and the ceiling is the number an environment names. The
+# metric is the service's average CPU, which Fargate publishes with no
+# collector in the way.
+
+resource "aws_appautoscaling_target" "this" {
+  count = var.autoscaling.enabled ? 1 : 0
+
+  service_namespace  = "ecs"
+  scalable_dimension = "ecs:service:DesiredCount"
+  resource_id        = "service/${local.cluster_name}/${aws_ecs_service.this.name}"
+  min_capacity       = var.desired_count
+  max_capacity       = var.autoscaling.max
+  tags               = local.tags
+}
+
+resource "aws_appautoscaling_policy" "cpu" {
+  count = var.autoscaling.enabled ? 1 : 0
+
+  name               = "tadas-${var.environment}-${var.name}-cpu"
+  policy_type        = "TargetTrackingScaling"
+  service_namespace  = aws_appautoscaling_target.this[0].service_namespace
+  scalable_dimension = aws_appautoscaling_target.this[0].scalable_dimension
+  resource_id        = aws_appautoscaling_target.this[0].resource_id
+
+  target_tracking_scaling_policy_configuration {
+    target_value = var.autoscaling.target_cpu
+    # Out fast, in slowly: a burst is answered in a minute, and a lull has
+    # to last five before a task is taken away.
+    scale_out_cooldown = 60
+    scale_in_cooldown  = 300
+
+    predefined_metric_specification {
+      predefined_metric_type = "ECSServiceAverageCPUUtilization"
     }
   }
 }

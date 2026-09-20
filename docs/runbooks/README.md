@@ -8,6 +8,11 @@ touches and the ADR that explains why it is shaped that way.
   cutting a release, approving its plan, rolling back, what a failed
   migration does, the protection on `release`, and what to do when the
   cloud is not configured.
+- [operate.md](operate.md): the profile an investigation runs under,
+  the dashboard, the alarms, the costs, and the exact commands that
+  read each of them.
+- [scale.md](scale.md): the one variable that scales an environment,
+  what turns on under it, and how to read that it happened.
 - [tenant-isolation.md](tenant-isolation.md): where the cross-tenant
   cases live, how to run the negative control that says what they
   catch, what the last run showed, and what the two storage impls

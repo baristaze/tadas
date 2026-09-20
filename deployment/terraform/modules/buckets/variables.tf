@@ -12,3 +12,8 @@ variable "buckets" {
   description = "One entry per member of tadas.infra.buckets.Buckets."
   type        = list(string)
 }
+
+variable "destroyable" {
+  description = "True on the nuke's way down only: a destroy then empties the buckets."
+  type        = bool
+}

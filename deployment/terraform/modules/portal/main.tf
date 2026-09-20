@@ -32,7 +32,9 @@ locals {
 
 resource "aws_s3_bucket" "this" {
   bucket = var.bucket_name
-  tags   = local.tags
+  # The nuke's apply turns this on first, so its destroy empties the build.
+  force_destroy = var.destroyable
+  tags          = local.tags
 }
 
 resource "aws_s3_bucket_public_access_block" "this" {

@@ -1,0 +1,199 @@
+# One environment's investigate role: the credential a person or an agent
+# assumes to look at that environment, and a credential that can change
+# nothing. An agent holding it may read every signal and every resource
+# description, and may run `terraform plan -lock=false -refresh=false` on the
+# environment root; what it cannot do is write to the cloud, read a tenant's
+# data, open the database, or reach the other environment.
+#
+# Trust is the operators user (`tadas-operators`, whose only permission is to
+# assume `tadas-investigate-*`) plus any principal the account owner names.
+# When a team grows, IAM Identity Center replaces the user here and nothing
+# else changes.
+#
+# Permission is ReadOnlyAccess, which reads the whole account, plus the calls
+# ReadOnlyAccess leaves out that an investigation needs (Logs Insights
+# queries, X-Ray traces, the cost explorer), and then the fences: a deny
+# beats every allow, so the wide read is cut back to what the role is for.
+
+data "aws_caller_identity" "current" {}
+data "aws_partition" "current" {}
+
+locals {
+  partition = data.aws_partition.current.partition
+  account   = data.aws_caller_identity.current.account_id
+
+  name_prefix      = "tadas-${var.environment}"
+  state_bucket_arn = "arn:${local.partition}:s3:::${var.state_bucket}"
+}
+
+data "aws_iam_policy_document" "assume" {
+  statement {
+    sid     = "TheOperatorsUserAndTheNamedPrincipals"
+    actions = ["sts:AssumeRole"]
+
+    principals {
+      type        = "AWS"
+      identifiers = concat([var.operators_user_arn], var.operator_principal_arns)
+    }
+  }
+}
+
+resource "aws_iam_role" "this" {
+  name                 = "tadas-investigate-${var.environment}"
+  description          = "Reads the ${var.environment} environment: every signal, every description, no data, no write."
+  assume_role_policy   = data.aws_iam_policy_document.assume.json
+  max_session_duration = 3600
+}
+
+resource "aws_iam_role_policy_attachment" "read_only" {
+  role       = aws_iam_role.this.name
+  policy_arn = "arn:${local.partition}:iam::aws:policy/ReadOnlyAccess"
+}
+
+# What ReadOnlyAccess does not grant and an investigation reads.
+
+data "aws_iam_policy_document" "read" {
+  statement {
+    sid = "Signals"
+    actions = [
+      "application-autoscaling:Describe*",
+      "budgets:ViewBudget",
+      "ce:Get*",
+      "cloudwatch:Describe*",
+      "cloudwatch:Get*",
+      "cloudwatch:List*",
+      "ecs:Describe*",
+      "ecs:List*",
+      "logs:DescribeLogGroups",
+      "logs:DescribeLogStreams",
+      "logs:FilterLogEvents",
+      "logs:GetLogEvents",
+      "logs:GetQueryResults",
+      "logs:StartQuery",
+      "logs:StopQuery",
+      "logs:StartLiveTail",
+      "xray:BatchGet*",
+      "xray:Get*",
+    ]
+    resources = ["*"]
+  }
+
+  # `terraform plan -lock=false -refresh=false` reads the state and writes
+  # nothing: no lock, no plan file. The state holds the database master
+  # password in clear, which this role therefore sees; the fences below deny
+  # the one call that could use it (rds-db:connect), and the instance has no
+  # public address.
+  statement {
+    sid       = "ListOnlyThisEnvironmentsKeys"
+    actions   = ["s3:ListBucket"]
+    resources = [local.state_bucket_arn]
+
+    condition {
+      test     = "StringLike"
+      variable = "s3:prefix"
+      values   = ["${var.state_key_prefix}/*"]
+    }
+  }
+
+  statement {
+    sid       = "ReadTheState"
+    actions   = ["s3:GetObject"]
+    resources = ["${local.state_bucket_arn}/${var.state_key_prefix}/*"]
+  }
+}
+
+resource "aws_iam_role_policy" "read" {
+  name   = "read"
+  role   = aws_iam_role.this.id
+  policy = data.aws_iam_policy_document.read.json
+}
+
+# The fences. ReadOnlyAccess reads the whole account; these are the reads an
+# investigation has no business making, and every write it could reach.
+
+data "aws_iam_policy_document" "fences" {
+  statement {
+    sid       = "NoSecretValues"
+    effect    = "Deny"
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = ["*"]
+  }
+
+  # The data plane: a tenant's files and exports, and the portal's files.
+  # Never the state bucket, which carries no environment prefix in its name.
+  statement {
+    sid       = "NoObjectsInTheDataBuckets"
+    effect    = "Deny"
+    actions   = ["s3:GetObject", "s3:GetObjectVersion"]
+    resources = ["arn:${local.partition}:s3:::${local.name_prefix}-*/*"]
+  }
+
+  statement {
+    sid       = "NoDatabaseConnections"
+    effect    = "Deny"
+    actions   = ["rds-db:connect"]
+    resources = ["*"]
+  }
+
+  statement {
+    sid       = "NothingBelongingToTheOtherEnvironment"
+    effect    = "Deny"
+    actions   = ["*"]
+    resources = ["*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/tadas:environment"
+      values   = [var.other_environment]
+    }
+  }
+
+  statement {
+    sid    = "NotTheOtherEnvironmentsState"
+    effect = "Deny"
+    actions = [
+      "s3:*",
+    ]
+    resources = [
+      "${local.state_bucket_arn}/${var.other_state_key_prefix}/*",
+      "${local.state_bucket_arn}/plans/${var.other_state_key_prefix}/*",
+    ]
+  }
+
+  # Every IAM write verb, and any hop to another role. A plan reads IAM
+  # (iam:Get*, iam:List*), so the deny names the verbs that change something
+  # rather than the whole service; IAM's verbs are a finite set and these
+  # prefixes cover every one that writes.
+  statement {
+    sid    = "NoIamWritesAndNoRoleHopping"
+    effect = "Deny"
+    actions = [
+      "iam:Add*",
+      "iam:Attach*",
+      "iam:Change*",
+      "iam:Create*",
+      "iam:Deactivate*",
+      "iam:Delete*",
+      "iam:Detach*",
+      "iam:Enable*",
+      "iam:PassRole",
+      "iam:Put*",
+      "iam:Remove*",
+      "iam:Reset*",
+      "iam:Resync*",
+      "iam:Set*",
+      "iam:Tag*",
+      "iam:Untag*",
+      "iam:Update*",
+      "iam:Upload*",
+      "sts:AssumeRole",
+    ]
+    resources = ["*"]
+  }
+}
+
+resource "aws_iam_role_policy" "fences" {
+  name   = "fences"
+  role   = aws_iam_role.this.id
+  policy = data.aws_iam_policy_document.fences.json
+}

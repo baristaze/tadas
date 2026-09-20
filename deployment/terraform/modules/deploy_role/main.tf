@@ -559,7 +559,8 @@ data "aws_iam_policy_document" "fences" {
   }
 
   # The role cannot widen itself, nor reach the roles of the other jobs, nor
-  # the trust that issues any of them, nor mint a principal outside all three.
+  # the operators' roles and user, nor the trust that issues any of them, nor
+  # mint a principal outside all of these.
   statement {
     sid     = "NoWideningOfTheDeployCredentials"
     effect  = "Deny"
@@ -567,6 +568,8 @@ data "aws_iam_policy_document" "fences" {
     resources = [
       "arn:${local.partition}:iam::${local.account}:role/tadas-deploy-*",
       "arn:${local.partition}:iam::${local.account}:role/tadas-plan-*",
+      "arn:${local.partition}:iam::${local.account}:role/tadas-investigate-*",
+      "arn:${local.partition}:iam::${local.account}:user/tadas-operators",
       "arn:${local.partition}:iam::${local.account}:policy/tadas-task-boundary-*",
     ]
   }

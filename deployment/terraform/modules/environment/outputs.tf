@@ -36,3 +36,19 @@ output "private_subnet_ids" {
 output "app_security_group_id" {
   value = module.network.app_security_group_id
 }
+
+# What an operator opens and subscribes to.
+
+output "dashboard_name" {
+  description = "The CloudWatch dashboard's name."
+  value       = module.dashboard.name
+}
+
+output "alarm_topic_arn" {
+  description = "The topic every alarm goes to; another address subscribes to it by hand."
+  value       = module.alarms.topic_arn
+}
+
+output "alarm_names" {
+  value = module.alarms.alarm_names
+}
