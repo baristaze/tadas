@@ -125,6 +125,25 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
             None,
         )
 
+    async def issue_api_key(
+        self, org_id: UUID, api_key: ApiKey, outbox_row: OutboxRow
+    ) -> tuple[ApiKey, bool]:
+        async with self._lock:
+            if self._insert(self._api_keys, org_id, api_key, outbox_row):
+                return api_key, True
+            stored = self._get(self._api_keys, org_id, api_key.id)
+            if stored is None or stored.user_id != api_key.user_id:
+                raise Conflict(f"api key {api_key.id} was issued by another member")
+            reissued = stored.model_copy(
+                update={
+                    "key_hash": api_key.key_hash,
+                    "updated_at": api_key.updated_at,
+                    "updated_by": api_key.updated_by,
+                }
+            )
+            self._put(self._api_keys, org_id, reissued)
+            return reissued, False
+
     async def write_api_key(
         self, org_id: UUID, api_key: ApiKey, outbox_row: OutboxRow | None = None
     ) -> None:

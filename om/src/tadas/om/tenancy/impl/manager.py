@@ -1,5 +1,7 @@
 import secrets
+from collections.abc import Mapping
 from datetime import timedelta
+from typing import Any
 from uuid import UUID
 
 from tadas.infra.cache import CacheInterface
@@ -580,11 +582,6 @@ class TenancyManagerImpl(TenancyManagerInterface):
         api_key_id: UUID | None = None,
     ) -> IssuedApiKey:
         ctx.require(Permission.MANAGE_KEYS)
-        api_key_id = api_key_id or new_id()
-        if await self._storage.read_api_key(ctx.org_id, api_key_id) is not None:
-            raise Conflict(
-                f"api key {api_key_id} was issued once; its secret cannot be shown again"
-            )
         if role is Role.SERVICE:
             raise ValidationFailed("service is not an api key role")
         if not role_at_most(role, ctx.security.role):
@@ -596,7 +593,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
         now = utcnow()
         key = mint_token(CredentialKind.API_KEY)
         api_key = ApiKey(
-            id=api_key_id,
+            id=api_key_id or new_id(),
             name=name,
             created_at=now,
             updated_at=now,
@@ -607,8 +604,15 @@ class TenancyManagerImpl(TenancyManagerInterface):
             role=role,
             expires_at=now + (ttl or self._options.api_key_ttl),
         )
-        await self._write_api_key(ctx, api_key, "created")
-        return IssuedApiKey(key=key, api_key=api_key)
+        # A create that issues a secret: the row as stored is not enough on a
+        # rerun, because the secret is a digest there and was shown to no one
+        # (the marker stored no outcome). The one storage method inserts the
+        # key, or re-mints the secret on the row the id already names.
+        row = outbox_row(ctx, "tenancy.api_key.created", api_key.id, self._key_snapshot(api_key))
+        stored, created = await self._storage.issue_api_key(ctx.org_id, api_key, row)
+        if created:
+            await self._relay.relay(ctx.org_id, row)
+        return IssuedApiKey(key=key, api_key=stored)
 
     async def revoke_api_key(self, ctx: OpContext, api_key_id: UUID) -> ApiKey:
         ctx.require(Permission.MANAGE_KEYS)
@@ -665,10 +669,13 @@ class TenancyManagerImpl(TenancyManagerInterface):
         await self._storage.write_user(ctx.org_id, user, row)
         await self._relay.relay(ctx.org_id, row)
 
-    async def _write_api_key(self, ctx: OpContext, api_key: ApiKey, action: str) -> None:
+    @staticmethod
+    def _key_snapshot(api_key: ApiKey) -> Mapping[str, Any]:
         # The snapshot never carries the hash; the event is a record, not a credential.
-        payload = snapshot(api_key, exclude=frozenset({"key_hash"}))
-        row = outbox_row(ctx, f"tenancy.api_key.{action}", api_key.id, payload)
+        return snapshot(api_key, exclude=frozenset({"key_hash"}))
+
+    async def _write_api_key(self, ctx: OpContext, api_key: ApiKey, action: str) -> None:
+        row = outbox_row(ctx, f"tenancy.api_key.{action}", api_key.id, self._key_snapshot(api_key))
         await self._storage.write_api_key(ctx.org_id, api_key, row)
         await self._relay.relay(ctx.org_id, row)
 

@@ -307,6 +307,37 @@ async def test_no_one_mints_a_service_key(
     assert await manager.get_api_keys(owner, limit=10) == []
 
 
+async def test_a_rerun_of_the_create_reissues_the_secret_on_the_same_key(
+    manager: TenancyManagerImpl, infra: InfraLocalImpl
+) -> None:
+    seen: list[TopicPayload] = []
+
+    async def record(payload: TopicPayload) -> None:
+        seen.append(payload)
+
+    infra.get_topics().subscribe(Topics.ENTITY_CHANGED, "test", record)
+    _, org = await manager.bootstrap(
+        request(), "Acme", "acme", "ann@example.test", "pw-1234", "Ann"
+    )
+    owner = await sign_in(manager, "ann@example.test", org.id)
+    api_key_id = new_id()
+    first = await manager.create_api_key(owner, "ci", Role.MEMBER, api_key_id=api_key_id)
+    assert (await manager.authenticate(request(), first.key)).credential_id == api_key_id
+
+    # The retry that took over an abandoned marker runs the create again on
+    # the id the marker carries: same row, fresh secret, and the first secret,
+    # which reached no one, stops authenticating.
+    again = await manager.create_api_key(owner, "ci", Role.MEMBER, api_key_id=api_key_id)
+    assert again.key != first.key
+    assert again.api_key.id == api_key_id
+    assert again.api_key.created_at == first.api_key.created_at
+    assert (await manager.authenticate(request(), again.key)).credential_id == api_key_id
+    with pytest.raises(InvalidCredential):
+        await manager.authenticate(request(), first.key)
+    assert [k.id for k in await manager.get_api_keys(owner, limit=10)] == [api_key_id]
+    assert len(seen) == 1, "the key was announced once"
+
+
 async def test_api_key_ttl_is_bounded_by_the_option(
     storage: TenancyStorageMemoryImpl, infra: InfraLocalImpl
 ) -> None:

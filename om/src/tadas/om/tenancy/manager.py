@@ -203,9 +203,11 @@ class TenancyManagerInterface(ABC):
         api_key_id: UUID | None = None,
     ) -> IssuedApiKey:
         """Role-capped at the caller's role; the service role is refused by name.
-        `api_key_id`, when given, is the id a retried request carries; a key
-        that already exists under it raises Conflict, because its secret was
-        shown once and cannot be shown again."""
+        `api_key_id`, when given, is the id a retried request carries. A key
+        that already exists under it is the rerun of a create that issues a
+        secret: the secret is re-minted on that row in the same write and a
+        fresh `IssuedApiKey` with the same id comes back, since the first secret
+        reached no one; the old secret stops authenticating."""
         ...
 
     @abstractmethod
