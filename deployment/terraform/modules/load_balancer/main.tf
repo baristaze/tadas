@@ -28,6 +28,8 @@ resource "aws_lb_target_group" "api" {
   deregistration_delay = 30
   tags                 = local.tags
 
+  # The readiness deadline (TADAS_READINESS_TIMEOUT_SECONDS, 2.0) is shorter
+  # than this timeout, so the answer always arrives inside the poll.
   health_check {
     path                = var.health_check_path
     matcher             = "200"

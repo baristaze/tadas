@@ -23,8 +23,15 @@ variable "target_port" {
 }
 
 variable "health_check_path" {
-  type    = string
-  default = "/healthz"
+  description = <<-EOT
+    What the target group polls to decide whether to send a target traffic,
+    which is readiness and not liveness: /readyz answers whether this process
+    can serve a request right now, under a deadline of its own, and a timeout
+    is a negative answer. The container healthcheck keeps /healthz, which
+    decides whether the process is alive and should be restarted.
+  EOT
+  type        = string
+  default     = "/readyz"
 }
 
 variable "certificate_arn" {

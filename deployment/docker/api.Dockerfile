@@ -1,5 +1,7 @@
 # Two stages, a locked install of one workspace package, a non-root user,
-# and a healthcheck on /healthz.
+# and a healthcheck on /healthz. This probe decides whether the process is
+# alive and should be restarted, which is liveness; whether to send it traffic
+# is readiness, and the load balancer's target group asks /readyz for that.
 FROM python:3.14-slim AS build
 COPY --from=ghcr.io/astral-sh/uv:0.12 /uv /usr/local/bin/uv
 ENV UV_LINK_MODE=copy UV_COMPILE_BYTECODE=1
