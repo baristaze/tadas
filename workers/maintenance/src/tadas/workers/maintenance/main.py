@@ -15,6 +15,7 @@ from tadas.infra.observability import (
     configure_error_reporting,
     configure_logging,
     configure_tracing,
+    name_process,
 )
 from tadas.infra.trust import install_trust_store
 from tadas.om.base import EMPTY_UUID
@@ -61,6 +62,9 @@ def build_loop(container: WorkerContainer, lane: str | None = None) -> WorkerLoo
 async def serve(lane: str | None) -> int:
     settings = MaintenanceSettings()
     configure_logging(settings.log_level, settings.log_json)
+    # Second, before anything logs: every line this process writes carries the
+    # service and the environment, whether or not reporting is configured.
+    name_process(settings.service_name, settings.environment)
     install_trust_store()
     configure_error_reporting(
         settings.sentry_dsn, settings.environment, settings.service_name, settings.version

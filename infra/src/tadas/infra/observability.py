@@ -134,12 +134,7 @@ def configure_error_reporting(
 ) -> None:
     """Sentry-compatible reporting (GlitchTip locally), only when a DSN is set.
     Unhandled exceptions and ERROR log records become events, tagged with the
-    service and the request id; traces stay with OpenTelemetry.
-
-    It names the process first, whatever the DSN says: this is the one boot
-    step every process makes with both the service and the environment in
-    hand, and the log lines need them even where no reporting is configured."""
-    name_process(service_name, environment)
+    service and the request id; traces stay with OpenTelemetry."""
     if not dsn:
         return
 

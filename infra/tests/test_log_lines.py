@@ -9,6 +9,7 @@ from tadas.infra.observability import (
     JsonFormatter,
     RequestIdFilter,
     caused_by_request_id_var,
+    configure_error_reporting,
     name_process,
     request_id_var,
 )
@@ -57,3 +58,12 @@ def test_a_process_that_named_itself_nothing_still_writes_the_fields() -> None:
     written = line(record())
     assert (written["service"], written["environment"]) == ("unknown", "unknown")
     assert written["request_id"] == "-"
+
+
+def test_configuring_error_reporting_does_not_name_the_process() -> None:
+    # Naming the process is a boot step of its own, beside configuring logging,
+    # so the fields on every line do not hang off a call about error reporting.
+    name_process("api", "staging")
+    configure_error_reporting(None, "prod", "somebody-else")
+    written = line(record())
+    assert (written["service"], written["environment"]) == ("api", "staging")
