@@ -728,12 +728,16 @@ class TenancyManagerImpl(TenancyManagerInterface):
 
     async def purge_deleted(self, ctx: OpContext) -> int:
         ctx.require(Permission.MANAGE_MEMBERS)
-        before = utcnow() - self._options.retention
-        org = await self._storage.read_org(ctx.org_id)
-        if org is not None and org.deleted_at is not None and org.deleted_at < before:
+        if await self.tenant_expired(ctx):
             # The tenant itself is past the retention: every row of it goes.
             return await self._storage.purge_tenant(ctx.org_id)
-        return await self._storage.purge_deleted(ctx.org_id, before)
+        return await self._storage.purge_deleted(ctx.org_id, utcnow() - self._options.retention)
+
+    async def tenant_expired(self, ctx: OpContext) -> bool:
+        ctx.require(Permission.READ)
+        org = await self._storage.read_org(ctx.org_id)
+        before = utcnow() - self._options.retention
+        return org is not None and org.deleted_at is not None and org.deleted_at < before
 
     async def issue_ticket(self, ctx: OpContext) -> IssuedTicket:
         ctx.require(Permission.READ)

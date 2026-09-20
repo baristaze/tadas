@@ -151,6 +151,11 @@ class TasksManagerImpl(TasksManagerInterface):
 
     async def purge_deleted(self, ctx: OpContext) -> int:
         ctx.require(Permission.WRITE)
+        if await self._tenancy.tenant_expired(ctx):
+            # The tenant itself is past the retention, so it keeps nothing but
+            # its org row. An open or a done task carries no `deleted_at`, so
+            # the purge below would leave every one of them behind forever.
+            return await self._storage.purge_tenant(ctx.org_id)
         return await self._storage.purge_deleted(ctx.org_id, utcnow() - self._options.retention)
 
     def _clamp(self, limit: int) -> int:

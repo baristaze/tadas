@@ -62,6 +62,12 @@ class TasksStorageMemoryImpl(MemoryStorageBase, TasksStorageInterface):
             del self._tasks[task_id]
         return len(gone)
 
+    async def purge_tenant(self, org_id: UUID) -> int:
+        gone = [t.id for t in self._rows(self._tasks, org_id)]
+        for task_id in gone:
+            del self._tasks[task_id]
+        return len(gone)
+
     async def create_task(self, org_id: UUID, task: Task, outbox_row: OutboxRow) -> bool:
         async with self._lock:
             return self._insert(self._tasks, org_id, task, outbox_row)

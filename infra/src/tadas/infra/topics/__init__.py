@@ -12,6 +12,12 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 
+from tadas.infra.base import SYSTEM_SCOPE
+
+NO_ACTOR = SYSTEM_SCOPE
+"""The actor of a frame that names none: the reserved UUID, which no person's
+id ever equals, so a client never mistakes such a change for its own."""
+
 
 class TopicPayload(BaseModel):
     """The frozen base every payload extends, declared here so the object
@@ -43,7 +49,11 @@ class EntityChangedPayload(TopicPayload):
     kind: str  # "<namespace>.<entity>.<created|updated|deleted>"
     target_id: UUID
     seq: int
-    actor_id: UUID  # the user whose request produced it
+    # The user whose request produced it. Defaulted, not required: a payload
+    # gains only optional, defaulted fields, so a frame from a replica one
+    # release behind parses here instead of being dropped as malformed, and
+    # the two sides roll out in either order. Every producer sets it.
+    actor_id: UUID = NO_ACTOR
 
 
 TOPIC_PAYLOADS: dict[Topics, type[TopicPayload]] = {

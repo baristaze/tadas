@@ -66,3 +66,32 @@ def test_role_metadata_holds_only_that_role() -> None:
         "events",
         "event_cursors",
     }
+
+
+SWEEP_INDEXES = {
+    "users": "ix_users_org_id_deleted_at",
+    "memberships": "ix_memberships_org_id_deleted_at",
+}
+"""The index the per-tenant purge needs on each soft-deletable table whose
+only other org_id index is partial."""
+
+
+@pytest.mark.parametrize(("table", "name"), sorted(SWEEP_INDEXES.items()))
+def test_the_purge_of_a_tenant_has_an_index_the_orm_and_the_chain_agree_on(
+    table: str, name: str
+) -> None:
+    """The sweep reads `org_id = X AND deleted_at < Y` every 30 seconds per
+    tenant, and `org_id = X` alone under a deleted one. Both target the rows a
+    partial unique index `WHERE deleted_at IS NULL` leaves out, so each table
+    carries a plain (org_id, deleted_at) index. `make migrate-check` compares
+    the ORM metadata with the migrated schema, so both say it."""
+    orm = role_metadata(DatabaseRole.CORE).tables[f"core.{table}"]
+    index = next((i for i in orm.indexes if i.name == name), None)
+    assert index is not None, f"{table} declares no {name}"
+    assert [c.name for c in index.columns] == ["org_id", "deleted_at"]
+    assert not index.unique
+    assert index.dialect_kwargs.get("postgresql_where") is None, "the dead rows are the point"
+    chain = "\n".join(
+        path.read_text() for path in (MIGRATIONS_DIR / "sql" / "core").glob("*.up.sql")
+    )
+    assert f"CREATE INDEX {name} ON core.{table} (org_id, deleted_at)" in chain

@@ -40,18 +40,24 @@ APP = AppContext(type=AppType.PORTAL, version="portal@test")
 
 
 class Members(TenancyManagerInterface):
-    """Just enough tenancy for the assignee check: the users of one org. A
-    partial double: only `get_user` is reached, and any other method fails
-    loudly as unimplemented, so the abstract set is cleared below."""
+    """Just enough tenancy for the assignee check and for the sweep's question:
+    the users of one org, and whether the tenant is past its retention. A
+    partial double: only `get_user` and `tenant_expired` are reached, and any
+    other method fails loudly as unimplemented, so the abstract set is cleared
+    below."""
 
     def __init__(self) -> None:
         self.users: dict[UUID, User] = {}
+        self.expired = False
 
     async def get_user(self, ctx: OpContext, user_id: UUID) -> User:
         user = self.users.get(user_id)
         if user is None:
             raise NotFound(f"user {user_id} not found")
         return user
+
+    async def tenant_expired(self, ctx: OpContext) -> bool:
+        return self.expired
 
 
 Members.__abstractmethods__ = frozenset()
@@ -605,3 +611,48 @@ async def test_an_anchor_that_leaves_the_list_mid_move_is_a_version_mismatch(
     current = await manager.get_task(ctx, task.id)
     with pytest.raises(VersionMismatch):
         await manager._renumber(ctx, current, anchor, current.version)  # type: ignore[attr-defined]
+
+
+async def test_the_sweep_purges_only_deleted_tasks_while_the_tenant_lives(
+    manager: TasksManagerImpl, members: Members
+) -> None:
+    org = make_org()
+    ctx = context(Role.MEMBER, org, members)
+    live = await manager.create_task(ctx, make_task(ctx, "still open"))
+    dropped = await delete(manager, ctx, (await manager.create_task(ctx, make_task(ctx, "go"))).id)
+    assert await manager.purge_deleted(ctx) == 0, "the retention has not passed"
+    past = TasksManagerImpl(
+        manager._storage,  # type: ignore[attr-defined]
+        members,
+        manager._relay,  # type: ignore[attr-defined]
+        TasksOptions(retention=timedelta(0)),
+    )
+    assert await past.purge_deleted(ctx) == 1
+    assert (await manager.get_task(ctx, live.id)).id == live.id
+    with pytest.raises(NotFound):
+        await manager.get_task(ctx, dropped.id)
+
+
+async def test_a_deleted_tenants_tasks_all_go_once_the_retention_has_passed(
+    manager: TasksManagerImpl, members: Members
+) -> None:
+    """A tenant past its retention keeps its org row and nothing else. Its open
+    and done tasks were never soft-deleted, so a purge that reads `deleted_at`
+    leaves every one of them behind; the tenant's purge takes them all, and
+    another tenant's tasks stay."""
+    org = make_org()
+    ctx = context(Role.MEMBER, org, members)
+    still_open = await manager.create_task(ctx, make_task(ctx, "still open"))
+    done = await manager.create_task(ctx, make_task(ctx, "done"))
+    await manager.update_task(ctx, done.model_copy(update={"status": TaskStatus.DONE}))
+    elsewhere = context(Role.MEMBER, make_org(), members)
+    kept = await manager.create_task(elsewhere, make_task(elsewhere, "another tenant"))
+
+    assert await manager.purge_deleted(ctx) == 0, "no task is deleted in its own right"
+    members.expired = True
+    assert await manager.purge_deleted(ctx) == 2, "the open task and the done one"
+    for task_id in (still_open.id, done.id):
+        with pytest.raises(NotFound):
+            await manager.get_task(ctx, task_id)
+    assert (await manager.get_task(elsewhere, kept.id)).id == kept.id
+    assert await manager.purge_deleted(ctx) == 0, "idempotent"

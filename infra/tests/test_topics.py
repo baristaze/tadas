@@ -3,6 +3,8 @@ import pytest
 from tadas.infra.base import new_id, utcnow
 from tadas.infra.exceptions import PayloadMismatch
 from tadas.infra.topics import (
+    NO_ACTOR,
+    TOPIC_PAYLOADS,
     EntityChangedPayload,
     TopicPayload,
     Topics,
@@ -87,3 +89,23 @@ def test_a_payload_ignores_a_field_it_does_not_know() -> None:
         }
     )
     assert payload.lane == "default" and not hasattr(payload, "added_later")
+
+
+def test_a_payload_from_a_producer_one_release_behind_still_parses() -> None:
+    # The other direction, and the reason a payload gains only optional,
+    # defaulted fields: during a rolling deploy the old replicas publish
+    # frames without the newest field, and a new replica's listener parses
+    # them or drops every one, revocations included.
+    frame = {
+        "idempotency_key": str(new_id()),
+        "produced_at": utcnow().isoformat(),
+        "org_id": str(new_id()),
+        "kind": "tenancy.session.revoked",
+        "target_id": str(new_id()),
+        "seq": 7,
+    }
+    payload = TOPIC_PAYLOADS[Topics.ENTITY_CHANGED].model_validate(frame)
+    assert isinstance(payload, EntityChangedPayload)
+    assert payload.kind == "tenancy.session.revoked" and payload.seq == 7
+    # Nobody is named, so no client mistakes the change for its own.
+    assert payload.actor_id == NO_ACTOR

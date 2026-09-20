@@ -12,9 +12,10 @@ Zustand, one realtime channel.
   enforces both. `make openapi` regenerates `schema.d.ts`.
 - Server state lives in TanStack Query (`src/queries/`), with keys from
   `src/queries/keys.ts`. The first key element is the entity name the
-  server pushes, so a push invalidates by convention; an entity read
-  through another query (a membership, through `me`) is named in the
-  router's table instead.
+  server pushes, so a push invalidates by convention; an entity the
+  convention does not reach on its own (a membership, read through
+  `me`; a user, read through `me` as well as its own list) is named in
+  the router's table instead.
 - Client state lives in Zustand (`src/store/`): the session token, the
   connection status, the transient notices a failed write leaves
   (`notices.ts`, rendered by `src/app/Notices.tsx` over the kit's

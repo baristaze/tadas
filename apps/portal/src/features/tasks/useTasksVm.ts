@@ -52,6 +52,10 @@ export function useTasksVm() {
   const [leaving, setLeaving] = useState<Leaving[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // One save at a time. The ref refuses the second write before any render
+  // can happen; the flag is what disables the button.
+  const [saving, setSaving] = useState(false);
+  const savingNow = useRef(false);
   const timers = useRef(new Set<ReturnType<typeof setTimeout>>());
 
   useEffect(() => {
@@ -74,7 +78,11 @@ export function useTasksVm() {
   // The server is the truth: after any write, every task list refetches, in every scope.
   const refresh = () => void queryClient.invalidateQueries({ queryKey: keys.tasks.all });
   // Every write names the version of the task as held here; a write the
-  // server refused because the task changed since is said as such.
+  // server refused because the task changed since is said as such. Every
+  // write is awaited, and none hands its callbacks to `mutate`: one hook
+  // holds one observer, the writes over a task share it, and a second call
+  // on an observer drops the first call's callbacks, so a refusal would go
+  // unsaid and the row the server wrote unread.
   const fail = (cause: unknown) => {
     setError(isStale(cause) ? STALE_MESSAGE : errorMessage(cause, "Something went wrong; the list was reloaded."));
     refresh();
@@ -104,41 +112,54 @@ export function useTasksVm() {
   };
 
   // Struck through at once; fades out of Open in place while it fades in at the top of Done.
-  const complete = (task: TaskView) => {
+  const complete = async (task: TaskView) => {
     const doneTask: TaskView = { ...task, status: "done", updated_at: new Date().toISOString() };
     const index = openView.findIndex((t) => t.id === task.id);
     setLeaving((current) => [...current.filter((l) => l.task.id !== task.id), { task: doneTask, index }]);
     editOpen((data) => pagesWithout(data, task.id));
     editDone((data) => pagesWithTaskOnTop(data, doneTask));
     later(() => setLeaving((current) => current.filter((l) => l.task.id !== task.id)));
-    update.mutate(
-      { id: task.id, body: { status: "done", version: task.version } },
-      {
-        // The row the server wrote replaces the optimistic one: it carries
-        // the version the write bumped, and without it un-ticking or editing
-        // the task before the refetch lands is refused as someone else's
-        // change (`reopen` and `add` do the same).
-        onSuccess: (completed) => editDone((data) => pagesWithTaskOnTop(data, completed)),
-        onError: fail,
-        onSettled: refresh,
-      },
-    );
+    try {
+      // The row the server wrote replaces the optimistic one: it carries
+      // the version the write bumped, and without it un-ticking or editing
+      // the task before the refetch lands is refused as someone else's
+      // change (`reopen` and `add` do the same).
+      const completed = await update.mutateAsync({
+        id: task.id,
+        body: { status: "done", version: task.version },
+      });
+      editDone((data) => pagesWithTaskOnTop(data, completed));
+    } catch (cause) {
+      fail(cause);
+    } finally {
+      refresh();
+    }
   };
 
-  const reopen = (task: TaskView) => {
+  const reopen = async (task: TaskView) => {
     editDone((data) => pagesWithout(data, task.id));
-    update.mutate(
-      { id: task.id, body: { status: "open", version: task.version } },
-      {
-        onSuccess: (reopened) => editOpen((data) => pagesWithTaskOnTop(data, reopened)),
-        onError: fail,
-        onSettled: refresh,
-      },
-    );
+    try {
+      const reopened = await update.mutateAsync({
+        id: task.id,
+        body: { status: "open", version: task.version },
+      });
+      editOpen((data) => pagesWithTaskOnTop(data, reopened));
+    } catch (cause) {
+      fail(cause);
+    } finally {
+      refresh();
+    }
   };
 
+  // The form stays open until the server answers, so without the guard a
+  // second submit of the same draft (Enter in the title field, then a click
+  // on Save, or a double click) sends a second write naming the version the
+  // first is already bumping, and the answer is a refusal that reads as
+  // someone else's change when nobody else touched the task.
   const save = async (task: TaskView, edit: TaskEdit) => {
-    if (!canAdd(edit.title)) return;
+    if (!canAdd(edit.title) || savingNow.current) return;
+    savingNow.current = true;
+    setSaving(true);
     try {
       const saved = await update.mutateAsync({
         id: task.id,
@@ -159,15 +180,23 @@ export function useTasksVm() {
         setError("This task changed while you were editing. Copy your draft before closing and reopening the editor to load the latest task.");
       }
     } finally {
+      savingNow.current = false;
+      setSaving(false);
       refresh();
     }
   };
 
-  const destroy = (task: TaskView) => {
+  const destroy = async (task: TaskView) => {
     editOpen((data) => pagesWithout(data, task.id));
     editDone((data) => pagesWithout(data, task.id));
     setEditingId(null);
-    remove.mutate({ id: task.id, version: task.version }, { onError: fail, onSettled: refresh });
+    try {
+      await remove.mutateAsync({ id: task.id, version: task.version });
+    } catch (cause) {
+      fail(cause);
+    } finally {
+      refresh();
+    }
   };
 
   const drop = (movedId: string, targetId: string, side: DropSide) =>
@@ -205,6 +234,7 @@ export function useTasksVm() {
     setTitle,
     add,
     adding: create.isPending,
+    saving,
     canWrite: canWrite(me.data),
     loading: open.isPending || done.isPending,
     error: error ?? open.error?.message ?? done.error?.message ?? null,

@@ -13,7 +13,7 @@ from tadas.om.storage.tables.base import (
 
 class Memberships(IdentifiableMixin, TrackableMixin, SoftDeletableMixin, Base):
     __tablename__ = "memberships"
-    # org_id leads the unique compound index, so it gets no index of its own.
+    # org_id leads the sweep's index, so it gets no single-column one.
     __org_id_index__ = False
     __table_args__ = (
         # One live membership per user in a tenant: an ended one frees the key.
@@ -24,6 +24,9 @@ class Memberships(IdentifiableMixin, TrackableMixin, SoftDeletableMixin, Base):
             unique=True,
             postgresql_where=text("deleted_at IS NULL"),
         ),
+        # The sweep's index, as on users: the unique one is among the living,
+        # and the purge reads exactly the rows it leaves out.
+        Index("ix_memberships_org_id_deleted_at", "org_id", "deleted_at"),
     )
     user_id: Mapped[UUID]
     role: Mapped[str]

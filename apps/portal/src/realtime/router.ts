@@ -11,11 +11,14 @@ export interface RouteOutcome {
   invalidated: QueryKey[];
 }
 
-// Entities no query is keyed by. A membership is read as the role and the
-// permissions inside `me`; a revoked session is nobody's query, and this
-// session's own revocation arrives as a 4401 close, not as a push.
+// Entities the convention does not reach on its own. A membership is read as
+// the role and the permissions inside `me`; a user is read twice, as a row of
+// the member list and as the name and the email in `me`, so a user push
+// refreshes both; a revoked session is nobody's query, and this session's own
+// revocation arrives as a 4401 close, not as a push.
 const CARRIED_BY: Readonly<Record<string, readonly QueryKey[]>> = {
   membership: [keys.me],
+  user: [keys.users.all, keys.me],
   session: [],
 };
 

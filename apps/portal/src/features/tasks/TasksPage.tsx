@@ -81,11 +81,12 @@ function TaskGroups({ vm }: { vm: TasksVm }) {
     listMountedAt,
     canWrite: vm.canWrite,
     editing: vm.editingId === entry.task.id,
+    saving: vm.saving,
     assigneeOptions: vm.assigneeOptions,
     onEdit: () => vm.startEditing(entry.task.id),
     onCancelEdit: vm.stopEditing,
     onSave: (edit: Parameters<TasksVm["save"]>[1]) => void vm.save(entry.task, edit),
-    onDelete: () => vm.destroy(entry.task),
+    onDelete: () => void vm.destroy(entry.task),
   });
 
   return (
@@ -97,7 +98,7 @@ function TaskGroups({ vm }: { vm: TasksVm }) {
             <TaskItem
               key={entry.task.id}
               {...itemProps(entry)}
-              onToggle={() => vm.complete(entry.task)}
+              onToggle={() => void vm.complete(entry.task)}
               drag={
                 vm.canWrite && !entry.leaving
                   ? {
@@ -138,7 +139,7 @@ function TaskGroups({ vm }: { vm: TasksVm }) {
         {vm.done.length === 0 ? <Muted>Nothing done yet.</Muted> : null}
         <ul style={{ margin: 0, padding: 0 }}>
           {vm.done.map((entry) => (
-            <TaskItem key={entry.task.id} {...itemProps(entry)} onToggle={() => vm.reopen(entry.task)} />
+            <TaskItem key={entry.task.id} {...itemProps(entry)} onToggle={() => void vm.reopen(entry.task)} />
           ))}
         </ul>
         {vm.hasMoreDone ? (

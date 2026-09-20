@@ -101,7 +101,10 @@ context on keeps the stage the callee needs.
   so a deleted org frees its slug, a removed member frees the identity
   and the membership, and the same value can be created again; the slug
   lookup reads the living. The api key hash stays a full index because it
-  digests a fresh random secret that is never created again. The seeding
+  digests a fresh random secret that is never created again. A partial
+  index serves none of the sweep's reads, which are the dead rows and a
+  deleted tenant's, so users and memberships each carry a plain
+  `(org_id, deleted_at)` index beside their unique one. The seeding
   transitions are named atomic creates:
   `bootstrap` lands the org, its first user, and the owner's membership in
   one commit (`create_org_with_owner`), `add_member` the user, the
@@ -318,11 +321,15 @@ shape the platform root has, so the gateway presents both alike), and
 the system scope as a value (`SYSTEM_SCOPE`, equal to the model's
 `EMPTY_UUID`; a unit test holds the two together). Topics today:
 `work_available` (`lane`, `kind`) and `entity_changed` (`kind`,
-`target_id`, `seq`); `TopicPayload` is a frozen base declared in infra
+`target_id`, `seq`, `actor_id`); `TopicPayload` is a frozen base
+declared in infra
 with `extra="ignore"`, so a consumer ignores a field it does not know;
 a payload gains only optional, defaulted fields, so an old producer's
 message and a queued row written before a deploy still parse, and the
-two sides roll out in either order. A topic is best effort. Every capability interface declares `start()` and `close()`; the
+two sides roll out in either order. `actor_id` is the field that came
+later, so it defaults to `NO_ACTOR`, the reserved UUID no person's id
+equals: a frame from a replica one release behind is a change by nobody
+the client knows, not a frame dropped as malformed. A topic is best effort. Every capability interface declares `start()` and `close()`; the
 roots call them unconditionally: the Valkey topic listener opens its
 subscriber in `start()`, and each hosted impl (S3, SQS, Secrets Manager)
 opens its one client there, holds it through an exit stack for every
@@ -493,6 +500,12 @@ everything in-process for tests.
   the done and failed ones after eight days, which outlives the
   seven-day database backup retention, so a role restored to an earlier
   point than its siblings is reconciled by relaying the outbox again).
+  Under a tenant whose org row is deleted longer ago than the retention
+  it is every row that goes, its open and done tasks among them, since
+  an open task carries no `deleted_at` of its own and the sweep that
+  reads one would leave it forever; the org row stays as the record.
+  Each namespace purges its own rows and asks tenancy the one question,
+  `tenant_expired`, so the whole sweep reads one answer.
   `tadas-maintenance serve | health`.
   The serving process answers `/metrics` and `/healthz` on
   `TADAS_METRICS_PORT` (9464) from one thread: `/healthz` reads the

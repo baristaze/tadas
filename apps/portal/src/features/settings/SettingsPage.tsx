@@ -45,7 +45,7 @@ export function SettingsPage() {
               k.state,
               k.expires,
               k.state === "active" ? (
-                <Button tone="danger" onClick={() => vm.revokeApiKey(k.id)}>
+                <Button tone="danger" onClick={() => void vm.revokeApiKey(k.id)}>
                   Revoke
                 </Button>
               ) : (

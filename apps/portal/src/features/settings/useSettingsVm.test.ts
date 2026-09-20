@@ -1,0 +1,108 @@
+// @vitest-environment jsdom
+// The view model over a fake transport: the revoke is held open, so a second
+// revoke can start while the first is still in flight. A refusal is said.
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { act, createElement, useEffect } from "react";
+import { createRoot } from "react-dom/client";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { ApiError, type ApiKeyPageView, type ApiKeyView, type MeView, type UserPageView } from "../../api";
+import { useNoticesStore } from "../../store/notices";
+import { useSettingsVm, type SettingsVm } from "./useSettingsVm";
+
+interface Held {
+  path: string;
+  resolve: (value: unknown) => void;
+  reject: (cause: unknown) => void;
+}
+
+const net = vi.hoisted(() => {
+  const reads = new Map<string, unknown>();
+  const writes: Held[] = [];
+  const read = (path: string) => {
+    for (const [prefix, value] of reads) if (path.startsWith(prefix)) return Promise.resolve(value);
+    return Promise.reject(new Error(`no read stubbed for ${path}`));
+  };
+  const hold = (path: string) => new Promise((resolve, reject) => writes.push({ path, resolve, reject }));
+  return { reads, writes, read, hold };
+});
+
+vi.mock("../../app/api", () => ({
+  api: { get: net.read, post: net.hold, patch: net.hold, del: net.hold },
+}));
+
+vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+let root: ReturnType<typeof createRoot>;
+
+const me: MeView = {
+  app: "portal",
+  role: "owner",
+  permissions: ["read", "write", "manage_keys"],
+  user: { id: "u1", email: "owner@example.test", display_name: "Owner", created_at: "2026-09-01T00:00:00Z" },
+  org: { id: "o1", name: "Acme", slug: "acme", created_at: "2026-09-01T00:00:00Z", deleted_at: null },
+};
+
+const keyOf = (id: string, name: string): ApiKeyView => ({
+  id,
+  name,
+  role: "member",
+  user_id: "u1",
+  created_at: "2026-09-01T00:00:00Z",
+  expires_at: "2099-09-01T00:00:00Z",
+  deleted_at: null,
+});
+
+// The view model as the screen sees it, taken after each commit rather than
+// during render, so the probe stays a pure component.
+const held: { vm?: SettingsVm } = {};
+const vm = () => held.vm!;
+
+function Probe() {
+  const current = useSettingsVm();
+  useEffect(() => {
+    held.vm = current;
+  });
+  return null;
+}
+
+const tick = () => act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+
+async function mount() {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  await act(async () => {
+    root.render(createElement(QueryClientProvider, { client: queryClient }, createElement(Probe)));
+  });
+  for (let turn = 0; turn < 50 && vm().loading; turn += 1) await tick();
+  expect(vm().loading).toBe(false);
+}
+
+beforeEach(() => {
+  const container = document.createElement("div");
+  document.body.append(container);
+  root = createRoot(container);
+  held.vm = undefined;
+  net.reads.clear();
+  net.writes.length = 0;
+  net.reads.set("/v1/me", me);
+  net.reads.set("/v1/users", { items: [me.user], next_cursor: null } satisfies UserPageView);
+  net.reads.set("/v1/api-keys", {
+    items: [keyOf("k1", "first"), keyOf("k2", "second")],
+    next_cursor: null,
+  } satisfies ApiKeyPageView);
+  useNoticesStore.setState({ notices: [] });
+});
+
+afterEach(async () => {
+  await act(async () => root.render(null));
+});
+
+it("says the first revoke was refused even after a second revoke started", async () => {
+  await mount();
+  await act(async () => void vm().revokeApiKey("k1"));
+  await act(async () => void vm().revokeApiKey("k2"));
+  expect(net.writes.map((w) => w.path)).toEqual(["/v1/api-keys/k1", "/v1/api-keys/k2"]);
+  await act(async () => {
+    net.writes[0]!.reject(new ApiError(404, "not_found", "no such key", "req-1"));
+    net.writes[1]!.resolve(keyOf("k2", "second"));
+  });
+  expect(useNoticesStore.getState().notices.map((n) => n.message)).toEqual(["no such key (req-1)"]);
+});
