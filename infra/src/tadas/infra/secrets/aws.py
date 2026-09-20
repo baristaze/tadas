@@ -37,20 +37,30 @@ class SecretsAwsImpl(SecretsInterface):
         return response["SecretString"]
 
     async def has(self, name: str) -> bool:
-        try:
-            await self.get(name)
-        except SecretNotFound:
-            return False
+        """Existence is metadata: the value never leaves the store for a
+        question that does not need it."""
+        with translated("secretsmanager", "has"):
+            async with self._client() as client:
+                try:
+                    await client.describe_secret(SecretId=self._name(name))
+                except ClientError as error:
+                    if error_code(error) == "ResourceNotFoundException":
+                        return False
+                    raise
         return True
 
     async def put(self, name: str, value: str) -> None:
-        exists = await self.has(name)
+        """Create, and on the store saying it exists, write a new version:
+        one call in the common case and no window between a read and a
+        write for another writer to slip into."""
         with translated("secretsmanager", "put"):
             async with self._client() as client:
-                if exists:
-                    await client.put_secret_value(SecretId=self._name(name), SecretString=value)
-                else:
+                try:
                     await client.create_secret(Name=self._name(name), SecretString=value)
+                except ClientError as error:
+                    if error_code(error) != "ResourceExistsException":
+                        raise
+                    await client.put_secret_value(SecretId=self._name(name), SecretString=value)
 
     async def delete(self, name: str) -> None:
         with translated("secretsmanager", "delete"):
