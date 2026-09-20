@@ -2,7 +2,7 @@ from datetime import timedelta
 from uuid import UUID
 
 from tadas.om.base import PROVENANCE_FIELDS, Platform, utcnow
-from tadas.om.exceptions import NotFound, ValidationFailed
+from tadas.om.exceptions import NotFound, ValidationFailed, VersionMismatch
 from tadas.om.opcontext import OpContext, Permission
 from tadas.om.outbox import OutboxRelayInterface
 from tadas.om.outbox.types.row import OutboxRow, outbox_row, snapshot
@@ -117,9 +117,10 @@ class TasksManagerImpl(TasksManagerInterface):
             anchor = await self.get_task(ctx, after_id)
             if anchor.status != TaskStatus.OPEN:
                 raise ValidationFailed("a task can only be placed after an open task")
-            positions = await self._storage.read_open_positions(ctx.org_id, exclude=task_id)
-            position = position_after(anchor.position, positions)
-            if not is_between(anchor.position, position, positions):
+            places = await self._storage.read_open_places(ctx.org_id, exclude=task_id)
+            at = (anchor.position, anchor.id)
+            position = position_after(at, places)
+            if not is_between(at, position, places):
                 return await self._renumber(ctx, task, anchor, version)
         moved = task.model_copy(
             update={
@@ -169,7 +170,7 @@ class TasksManagerImpl(TasksManagerInterface):
             raise ValidationFailed("a task list is scoped to the caller")
 
     async def _top_position(self, ctx: OpContext, exclude: UUID) -> float:
-        return top_position(await self._storage.read_open_positions(ctx.org_id, exclude=exclude))
+        return top_position(await self._storage.read_open_places(ctx.org_id, exclude=exclude))
 
     async def _renumber(self, ctx: OpContext, task: Task, anchor: Task, version: int) -> Task:
         """The gap after the anchor has closed at float precision, so the open
@@ -177,8 +178,14 @@ class TasksManagerImpl(TasksManagerInterface):
         on every row's version, and one outbox row per task whose position
         changed, since a client sorts by what it hears."""
         ordered = [t for t in await self._every_open_task(ctx) if t.id != task.id]
-        at = next(index for index, t in enumerate(ordered) if t.id == anchor.id) + 1
-        ordered.insert(at, task.model_copy(update={"version": version}))
+        # The anchor was read before this list was; a concurrent delete or
+        # "mark done" of it between the two reads leaves the move with nothing
+        # to follow. That is the caller's snapshot gone stale, the same answer
+        # every other refused write here gives, not a crash inside the renumber.
+        at = next((index for index, t in enumerate(ordered) if t.id == anchor.id), None)
+        if at is None:
+            raise VersionMismatch(f"task {anchor.id} left the open list while {task.id} moved")
+        ordered.insert(at + 1, task.model_copy(update={"version": version}))
         now = utcnow()
         updates: list[tuple[Task, int, OutboxRow]] = []
         moved = task

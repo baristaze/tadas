@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 from typing import Literal
 
+from dotenv import dotenv_values
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -17,19 +18,31 @@ CLOUD_ENVIRONMENTS = frozenset({"dev", "staging", "production"})
 
 SECRET_ENV_PREFIX = "TADAS_SECRET_"
 
+ENV_FILE = ".env"
+"""The dotenv file every settings object in the repository reads."""
+
 
 def secret_overrides_from_environment() -> dict[str, str]:
     """TADAS_SECRET_<NAME>=value, collected once at boot and handed to the local
-    secrets impl, keyed by NAME."""
+    secrets impl, keyed by NAME.
+
+    Both sources every other setting has, in the same order: the dotenv file
+    first, the process environment over it. Pydantic's own dotenv source
+    cannot supply these, since it matches declared fields and one key per
+    secret is not a field; without the file half, a knob `.env.example`
+    documents as a `.env` knob worked only through `scripts/dev.sh` and
+    compose (which export), and `make seed` or a process run by hand got
+    `SecretNotFound` with nothing to go on."""
+    from_file = {key: value for key, value in dotenv_values(ENV_FILE).items() if value is not None}
     return {
         key[len(SECRET_ENV_PREFIX) :]: value
-        for key, value in os.environ.items()
+        for key, value in {**from_file, **os.environ}.items()
         if key.startswith(SECRET_ENV_PREFIX) and len(key) > len(SECRET_ENV_PREFIX)
     }
 
 
 class InfraSettings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="TADAS_", env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_prefix="TADAS_", env_file=ENV_FILE, extra="ignore")
 
     environment: str = "local"
 

@@ -124,12 +124,16 @@ class WorkerLoop:
             self._wake.set()
 
     async def _claim_until_stopped(self) -> None:
+        # The wake is cleared before the claim, never after it: a producer that
+        # inserts and publishes while the claim is still finishing sets the
+        # event, and clearing it afterwards would throw that wake away and
+        # leave a runnable item waiting out the whole poll interval.
         while not self._stopping.is_set():
+            self._wake.clear()
             if not self.paused and len(self._running) < self._options.capacity:
                 claimed = await self._try_claim()
                 if claimed:
                     continue
-            self._wake.clear()
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(
                     self._wake.wait(), timeout=self._options.poll_interval.total_seconds()
@@ -218,6 +222,14 @@ class WorkerLoop:
             log.warning("%s was not settled as %s: %s", item.id, outcome, error)
             OUTCOMES.labels(subsystem="worker", outcome="lease_lost").inc()
             return
+        except asyncio.CancelledError:
+            # The fence cancelled the item while its transition was in flight.
+            # Whether the write landed is the database's answer and not ours,
+            # and the sweep requeues the item if it did not; the run is said
+            # here either way, since the cancellation stops every line after it.
+            log.warning("%s was cancelled while it was settled as %s", item.id, outcome)
+            OUTCOMES.labels(subsystem="worker", outcome="lease_lost").inc()
+            raise
         OUTCOMES.labels(subsystem="worker", outcome=outcome).inc()
 
     async def _renew_lease(
@@ -346,6 +358,12 @@ class WorkerLoop:
         """Cancels every running item and awaits them all: one whose return is
         refused by a database that is down ends with an error, which
         `_on_item_done` logs, and stops none of the others."""
+        # One turn of the loop first, so a task the claim created as `stop()`
+        # arrived has taken its first step. Cancelling one that never ran
+        # raises at its first instruction, outside the `except CancelledError`
+        # that returns the item, and the item would sit CLAIMED by a worker
+        # that is gone until its lease expired.
+        await asyncio.sleep(0)
         tasks = list(self._running)
         for task in tasks:
             task.cancel()

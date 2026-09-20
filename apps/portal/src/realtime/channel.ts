@@ -4,7 +4,7 @@
 // fake socket and fake timers. The provider owns one of these per session.
 import type { EventView } from "../api";
 import type { ConnectionState } from "../store/connection";
-import { isEntityChanged, parseEnvelope, type ClientCommand, type Envelope } from "./envelopes";
+import { entityOf, isEntityChanged, parseEnvelope, type ClientCommand, type Envelope } from "./envelopes";
 import { behind, eventEnvelope, isLastPage, place, type Cursor } from "./stream";
 import { backoffDelay, DEGRADED_POLL_INTERVAL_MS, PING_INTERVAL_MS, STABLE_OPEN_MS } from "./timeouts";
 
@@ -65,16 +65,18 @@ export function openChannel(deps: ChannelDeps): Channel {
   };
 
   // Routes one envelope unless it is behind the cursor; returns the seq to
-  // replay after when the envelope is ahead of it.
-  const apply = (envelope: Envelope): number | null => {
+  // replay after when the envelope is ahead of it. `route` is where the
+  // envelope goes: the router by default, and a replay's collector when a
+  // page is being coalesced.
+  const apply = (envelope: Envelope, route: (routed: Envelope) => void = deps.route): number | null => {
     if (!isEntityChanged(envelope)) {
-      deps.route(envelope);
+      route(envelope);
       return null;
     }
     const placement = place(cursor, envelope.payload.seq);
     if (placement.kind === "seen") return null;
     if (placement.kind === "gap") return placement.after;
-    deps.route(envelope);
+    route(envelope);
     if (placement.kind === "next") cursor = placement.cursor;
     return null;
   };
@@ -93,7 +95,16 @@ export function openChannel(deps: ChannelDeps): Channel {
       } catch {
         return;
       }
-      for (const event of page) apply(eventEnvelope(event));
+      // One route per entity, not per record: routing invalidates every query
+      // the entity is read from, so a page of two hundred task records that
+      // each triggered a route would cancel and restart the list refetch two
+      // hundred times over. The last record of an entity is the one routed,
+      // and every record still moves the cursor.
+      const last = new Map<string, Envelope>();
+      for (const event of page) {
+        apply(eventEnvelope(event), (routed) => last.set(entityOf(event.kind), routed));
+      }
+      for (const envelope of last.values()) deps.route(envelope);
       if (isLastPage(page.length, deps.pageSize) || cursor === null || cursor <= from) return;
       from = cursor;
     }
@@ -213,7 +224,7 @@ export function openChannel(deps: ChannelDeps): Channel {
       if (socket === opened) socket = null;
       if (event.code === CLOSE_UNAUTHENTICATED) {
         // No reconnect follows, so the status says so before the sign-out.
-        connection.setStatus("closed");
+        connection.close();
         deps.onUnauthenticated?.();
         return;
       }
@@ -232,7 +243,7 @@ export function openChannel(deps: ChannelDeps): Channel {
       clearStableTimer();
       stopPolling();
       socket?.close();
-      connection.setStatus("closed");
+      connection.close();
     },
     cursor: () => cursor,
   };

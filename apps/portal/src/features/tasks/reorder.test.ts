@@ -21,6 +21,7 @@ function effects(move: ReorderEffects["move"]) {
   return {
     move: vi.fn(move),
     showOrder: vi.fn<ReorderEffects["showOrder"]>(),
+    showMoved: vi.fn<ReorderEffects["showMoved"]>(),
     refetch: vi.fn<ReorderEffects["refetch"]>(),
     report: vi.fn<ReorderEffects["report"]>(),
   };
@@ -37,6 +38,10 @@ describe("reorder", () => {
     expect(fx.move).toHaveBeenCalledWith("a", "c", 3);
     expect(fx.report).not.toHaveBeenCalled();
     expect(fx.refetch).toHaveBeenCalledTimes(1);
+    // The row the server wrote goes back into the list: it carries version 4,
+    // so a second drag before the refetch lands names that and is not refused
+    // as someone else's change.
+    expect(fx.showMoved).toHaveBeenCalledWith(task("a", 4));
   });
 
   it("refuses a stale reorder, says so, and reloads the list", async () => {
@@ -51,6 +56,7 @@ describe("reorder", () => {
     expect(fx.move).toHaveBeenCalledWith("a", "c", 1);
     expect(fx.report).toHaveBeenCalledWith(STALE_MESSAGE);
     expect(fx.refetch).toHaveBeenCalledTimes(1);
+    expect(fx.showMoved).not.toHaveBeenCalled();
   });
 
   it("says any other refusal in the caller's words and still reloads", async () => {

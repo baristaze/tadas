@@ -26,7 +26,7 @@ from tadas.om.opcontext import (
 )
 from tadas.om.outbox.impl.relay import OutboxOptions, OutboxRelayImpl
 from tadas.om.outbox.storage.impl.memory import OutboxStorageMemoryImpl
-from tadas.om.outbox.types.row import OutboxRow
+from tadas.om.outbox.types.row import OutboxRow, outbox_row, snapshot
 from tadas.om.tasks.impl.manager import TasksManagerImpl, TasksOptions
 from tadas.om.tasks.storage.impl.memory import TasksStorageMemoryImpl
 from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor, TaskFilter
@@ -118,6 +118,11 @@ def manager(
 ) -> TasksManagerImpl:
     relay = OutboxRelayImpl(outbox, events_storage, infra.get_topics())
     return TasksManagerImpl(TasksStorageMemoryImpl(outbox), members, relay, TasksOptions())
+
+
+def _row(ctx: OpContext, task: Task) -> OutboxRow:
+    """One outbox row, for the writes a test makes straight to storage."""
+    return outbox_row(ctx, "tasks.task.updated", task.id, snapshot(task))
 
 
 def own(ctx: OpContext, scope: TaskScope) -> TaskFilter:
@@ -519,3 +524,62 @@ async def test_a_gap_closed_at_float_precision_renumbers_the_open_list(
         assert await open_titles(manager, ctx, TaskScope.TEAM) == ["b", "c", "a"]
         await move(manager, ctx, a.id, after_id=b.id)
         assert await open_titles(manager, ctx, TaskScope.TEAM) == ["b", "a", "c"]
+
+
+async def test_a_move_after_a_tied_anchor_lands_between_the_two(
+    manager: TasksManagerImpl,
+) -> None:
+    """Two open tasks can hold the same position: two creates that read the
+    same list land on it, and so do two moves after the same last anchor. The
+    list orders a tie by id, so "after x" where x ties with y must not put the
+    task behind y. There is no position between them, so the list renumbers."""
+    ctx = context(Role.MEMBER)
+    x = await manager.create_task(ctx, make_task(ctx, "x"))
+    y = await manager.create_task(ctx, make_task(ctx, "y"))
+    z = await manager.create_task(ctx, make_task(ctx, "z"))
+    # x and y tie on the position two concurrent creates would both have read;
+    # the list reads them by id, and z sits below both.
+    storage = manager._storage  # type: ignore[attr-defined]
+
+    async def place(task: Task, position: float) -> None:
+        moved = task.model_copy(update={"position": position, "version": task.version + 1})
+        await storage.update_tasks(ctx.org_id, [(moved, task.version, _row(ctx, moved))])
+
+    for task in (x, y):
+        await place(task, 5.0)
+    await place(z, 6.0)
+    first, second = sorted((x, y), key=lambda t: t.id)
+    assert await open_titles(manager, ctx, TaskScope.TEAM) == [first.title, second.title, "z"]
+
+    w = await manager.create_task(ctx, make_task(ctx, "w"))  # at the top
+    await move(manager, ctx, w.id, after_id=first.id)
+    assert await open_titles(manager, ctx, TaskScope.TEAM) == [
+        first.title,
+        "w",
+        second.title,
+        "z",
+    ]
+    # The tie is gone: the renumber gave every open task a position of its own.
+    positions = [t.position for t in await open_page(manager, ctx)]
+    assert positions == sorted(set(positions))
+
+
+async def test_an_anchor_that_leaves_the_list_mid_move_is_a_version_mismatch(
+    manager: TasksManagerImpl,
+) -> None:
+    """The anchor is read, then the open list is read to renumber around it. A
+    delete or a "mark done" of the anchor in between leaves the renumber with
+    nothing to follow: that is the caller's snapshot gone stale, answered as
+    such, not a StopIteration inside a coroutine that ends as a 500."""
+    ctx = context(Role.MEMBER)
+    anchor = await manager.create_task(ctx, make_task(ctx, "anchor"))
+    task = await manager.create_task(ctx, make_task(ctx, "task"))
+    every_open = manager._every_open_task  # type: ignore[attr-defined]
+
+    async def without_the_anchor(inner_ctx: OpContext) -> list[Task]:
+        return [t for t in await every_open(inner_ctx) if t.id != anchor.id]
+
+    manager._every_open_task = without_the_anchor  # type: ignore[attr-defined]
+    current = await manager.get_task(ctx, task.id)
+    with pytest.raises(VersionMismatch):
+        await manager._renumber(ctx, current, anchor, current.version)  # type: ignore[attr-defined]

@@ -175,6 +175,7 @@ export function useTasksVm() {
       {
         move: (id, afterId, version) => move.mutateAsync({ id, afterId, version }),
         showOrder: (order) => editOpen((data) => pagesWithOrder(data, order)),
+        showMoved: (task) => editOpen((data) => pagesWithTaskReplaced(data, task)),
         refetch: refresh,
         report: setError,
       },

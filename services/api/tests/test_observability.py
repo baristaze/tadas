@@ -53,3 +53,16 @@ async def test_the_request_id_is_echoed_and_the_route_is_counted(
         line for line in metrics.text.splitlines() if line.startswith("tadas_http_requests_total")
     ]
     assert any('route="/v1/tasks"' in line and 'status="401"' in line for line in counted)
+
+
+async def test_an_invented_verb_opens_no_new_metric_series(client: httpx.AsyncClient) -> None:
+    """The route of an unauthenticated 404 already labels itself "unmatched",
+    and the method is whatever the client typed: without a bounded label, a
+    series per invented verb is a cardinality leak anyone can open."""
+    assert (await client.request("PROPFIND", "/nowhere")).status_code == 404
+    metrics = await client.get("/metrics")
+    counted = [
+        line for line in metrics.text.splitlines() if line.startswith("tadas_http_requests_total")
+    ]
+    assert not any("PROPFIND" in line for line in counted)
+    assert any('route="unmatched"' in line and 'method="OTHER"' in line for line in counted)

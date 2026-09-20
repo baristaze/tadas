@@ -144,6 +144,59 @@ class FailingReleaseWork(LeaseLosingWork):
         raise RuntimeError("engine out of reach")
 
 
+class StopOnClaimWork(LeaseLosingWork):
+    """Decorates the real manager: renewals go through, and `stop()` lands on
+    the claim's way back, in the window between the row being marked CLAIMED
+    and the loop creating the task that runs it."""
+
+    def __init__(self, inner: WorkManagerInterface) -> None:
+        super().__init__(inner)
+        self.stop: Callable[[], None] = lambda: None
+
+    async def extend_lease(self, ctx: OpContext, item: WorkItem, lease: timedelta) -> WorkItem:
+        return await self._inner.extend_lease(ctx, item, lease)
+
+    async def claim(
+        self,
+        rctx: RequestContext,
+        lane: str,
+        kinds: Sequence[WorkKind],
+        worker_id: str,
+        lease: timedelta,
+    ) -> tuple[OpContext, WorkItem] | None:
+        claimed = await self._inner.claim(rctx, lane, kinds, worker_id, lease)
+        if claimed is not None:
+            self.stop()
+        return claimed
+
+
+class EnqueueDuringClaimWork(LeaseLosingWork):
+    """Decorates the real manager: the claim finds an empty lane, and a producer
+    inserts and announces an item while the claim is still on its way back.
+    That is the window a Postgres snapshot plus a Valkey publish really open."""
+
+    def __init__(self, inner: WorkManagerInterface, ctx: OpContext, item: WorkItem) -> None:
+        super().__init__(inner)
+        self._pending: list[WorkItem] = [item]
+        self._ctx = ctx
+
+    async def extend_lease(self, ctx: OpContext, item: WorkItem, lease: timedelta) -> WorkItem:
+        return await self._inner.extend_lease(ctx, item, lease)
+
+    async def claim(
+        self,
+        rctx: RequestContext,
+        lane: str,
+        kinds: Sequence[WorkKind],
+        worker_id: str,
+        lease: timedelta,
+    ) -> tuple[OpContext, WorkItem] | None:
+        claimed = await self._inner.claim(rctx, lane, kinds, worker_id, lease)
+        if claimed is None and self._pending:
+            await self._inner.enqueue(self._ctx, self._pending.pop())
+        return claimed
+
+
 class MissingLiveness(CacheInterface):
     """A liveness store whose writes never stick, as an unreachable backend behaves."""
 
@@ -660,3 +713,44 @@ async def test_sweep_purges_settled_work_items_and_finished_idempotency_records(
     assert await container.storage.get_work_storage().read_item(ctx.org_id, item.id) is None
     idempotency = container.storage.get_idempotency_storage()
     assert await idempotency.read_record(ctx.org_id, ctx.user_id, "k") is None
+
+
+async def test_stop_during_a_claim_still_returns_the_item(tmp_path: Path) -> None:
+    """`stop()` lands while the claim is on its way back: the loop exits before
+    the task it created has taken a step. Cancelling a task that never ran
+    raises at its first instruction, so the handler's `except CancelledError`
+    never returns the item, and it would sit CLAIMED by a worker that is gone
+    until the lease expired and the sweep requeued it as a stale lease."""
+    container = build_container(tmp_path)
+    ctx = await sign_in(container)
+    handler = SlowHandler(hold=5.0)
+    work = StopOnClaimWork(container.managers.work)
+    loop, task = start_loop(container, handler, fast_options(), work=work)
+    work.stop = loop.stop
+    item = make_item(ctx)
+    await container.managers.work.enqueue(ctx, item)
+    await asyncio.wait_for(task, 3.0)
+    stored = await container.storage.get_work_storage().read_item(ctx.org_id, item.id)
+    assert stored is not None
+    assert stored.status is WorkStatus.QUEUED, "the item was left claimed by a stopped worker"
+    assert stored.claimed_by is None
+    assert stored.last_error == "returned: worker stopping"
+    assert loop.running == 0
+
+
+async def test_an_announcement_during_a_claim_is_not_lost(tmp_path: Path) -> None:
+    """The claim snapshots an empty lane, a producer inserts and announces, and
+    the claim then returns nothing. The wake the announcement set belongs to
+    the item the claim never saw: clearing it after the claim threw it away
+    and the item waited out the whole poll interval, an hour here."""
+    container = build_container(tmp_path)
+    ctx = await sign_in(container)
+    handler = SlowHandler(hold=0.05)
+    item = make_item(ctx)
+    work = EnqueueDuringClaimWork(container.managers.work, ctx, item)
+    loop, task = start_loop(
+        container, handler, fast_options(poll_interval=timedelta(hours=1)), work=work
+    )
+    await until(lambda: handler.started == [item.id], within=2.0)
+    loop.stop()
+    await asyncio.wait_for(task, 3.0)

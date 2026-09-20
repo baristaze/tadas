@@ -375,9 +375,11 @@ async def test_api_keys_are_role_capped_and_revocable(
     assert key_ctx.security.credential_kind is CredentialKind.API_KEY
     assert not key_ctx.has(Permission.MANAGE_MEMBERS)
 
-    with pytest.raises(NotAuthorized):
-        await manager.create_api_key(key_ctx, "escalate", Role.OWNER)
-
+    # An api key mints nothing, at its own role or above: revoking a leaked key
+    # has to end the access it gave, and a successor would outlive it.
+    for role in (Role.MEMBER, Role.OWNER):
+        with pytest.raises(NotAuthorized):
+            await manager.create_api_key(key_ctx, "successor", role)
     assert [k.id for k in await manager.get_api_keys(owner, limit=10)] == [issued.api_key.id]
     revoked = await manager.revoke_api_key(owner, issued.api_key.id)
     assert revoked.deleted_at is not None
