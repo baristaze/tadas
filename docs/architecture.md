@@ -254,14 +254,29 @@ context on keeps the stage the callee needs.
   that late begins afresh) and held pending ones past ten times the
   pending lease, a marker no retry came back for.
 - `outbox`: the transactional outbox. A manager that writes a core row
-  hands the storage an `OutboxRow` (`kind`, `target_id`, the record's
-  snapshot as `payload`, the actor and the request) and the storage base
-  inserts both in one commit (`_insert(..., outbox_row)` for a create, which
-  reports an existing id and changes nothing then; `_upsert(..., outbox_row)`
-  for an update; `core` role);
-  the manager then calls `OutboxRelayInterface.relay(org_id, row)`,
-  which appends the `Event` under the row's id, publishes
-  `entity_changed` with `(kind, target_id, seq)`, and marks the row done.
+  hands the storage the `OutboxRow`s that announce it (`kind`,
+  `target_id`, the record's snapshot as `payload`, the actor and the
+  request) as one tuple, and the storage base inserts them all in one
+  commit (`_insert(..., outbox_rows)` for a create, which
+  reports an existing id and changes nothing then; `_upsert(...,
+  outbox_rows)` for an update; `core` role). An entity change is one
+  row; a write that also starts work passes a second row of kind
+  `work.<kind>` in the same tuple, because the queue is a role of its
+  own and no statement reaches both.
+  The manager then calls `OutboxRelayInterface.relay(org_id, row)` for
+  each. The row's kind is its destination: an entity change appends the
+  `Event` under the row's id and publishes `entity_changed` with
+  `(kind, target_id, seq)`; a `work.<kind>` row is enqueued by the
+  relay (`WorkManagerInterface.enqueue_relayed(org_id, row)`, no
+  context, the actor from the row, the row's id as the item's
+  idempotency key, so a relay that runs twice leaves one item) and
+  publishes `work_available`. Either way the row is then marked done.
+  The relay reaches the work manager through a provider the business
+  root binds, because the work manager needs the tenancy manager, which
+  needs the relay; the graph the root hands back is still whole.
+  No core write in Tadas starts work today: the `work.<kind>` path is
+  exercised by the tests that hold it, and the first domain kind will
+  ride it.
   Tadas relays in the request path, the step the guideline names as the
   one a system takes when push latency earns it, and pays the round
   trips it names for a push that arrives in milliseconds; the sweep

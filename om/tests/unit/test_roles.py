@@ -75,4 +75,4 @@ async def test_an_outbox_row_outside_the_core_role_is_refused() -> None:
 
     base = PgStorageBase({})  # no sessions: the role check fires before one is opened
     with pytest.raises(CrossRoleStatement):
-        await base._upsert(WorkItems, new_id(), row, row)
+        await base._upsert(WorkItems, new_id(), row, (row,))

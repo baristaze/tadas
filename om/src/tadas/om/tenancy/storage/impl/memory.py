@@ -4,7 +4,7 @@ from uuid import UUID
 
 from tadas.om.exceptions import Conflict, NotFound, UniqueKeyTaken
 from tadas.om.outbox.storage import OutboxLandingInterface
-from tadas.om.outbox.types.row import OutboxRow
+from tadas.om.outbox.types.row import OutboxRow, announced
 from tadas.om.storage.impl.memory_base import HasId, MemoryStorageBase, MemoryTable
 from tadas.om.tenancy.rules import is_after_in_id_order, is_after_newest_first
 from tadas.om.tenancy.storage import TenancyStorageInterface
@@ -73,7 +73,7 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
 
     async def write_org(self, org_id: UUID, org: Org, outbox_row: OutboxRow | None = None) -> None:
         self._require_slug_free(org)
-        self._put(self._orgs, org_id, org, outbox_row)
+        self._put(self._orgs, org_id, org, announced(outbox_row))
 
     def _require_slug_free(self, org: Org) -> None:
         # uq_orgs_slug: unique among the living, so a deleted org frees its slug.
@@ -128,7 +128,7 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
                 raise UniqueKeyTaken(f"{user.id} or {membership.id} is already written")
             if identity is not None:
                 self._identities[identity.id] = identity
-            self._put(self._users, org_id, user, outbox_row)
+            self._put(self._users, org_id, user, announced(outbox_row))
             self._put(self._memberships, org_id, membership)
 
     async def remove_member(
@@ -139,7 +139,7 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
                 raise NotFound(f"user {user.id} is not in {org_id}")
             if self._get(self._memberships, org_id, membership.id) is None:
                 raise NotFound(f"membership {membership.id} is not in {org_id}")
-            self._put(self._users, org_id, user, outbox_row)
+            self._put(self._users, org_id, user, announced(outbox_row))
             self._put(self._memberships, org_id, membership)
 
     async def read_users(self, org_id: UUID, after: UUID | None, limit: int) -> list[User]:
@@ -163,7 +163,7 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
     ) -> None:
         async with self._lock:
             self._require_live_identity_free(org_id, user)
-            self._put(self._users, org_id, user, outbox_row)
+            self._put(self._users, org_id, user, announced(outbox_row))
 
     def _require_live_identity_free(self, org_id: UUID, user: User) -> None:
         # uq_users_org_id_identity_id_live: one live user per identity in a tenant.
@@ -192,7 +192,7 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
         self, org_id: UUID, membership: Membership, outbox_row: OutboxRow | None = None
     ) -> None:
         self._require_membership_free(org_id, membership)
-        self._put(self._memberships, org_id, membership, outbox_row)
+        self._put(self._memberships, org_id, membership, announced(outbox_row))
 
     def _require_membership_free(self, org_id: UUID, membership: Membership) -> None:
         # uq_memberships_org_id_user_id: one live membership per user in a tenant;
@@ -237,7 +237,7 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
             lambda other: other.token_hash == session.token_hash,
             "uq_sessions_token_hash",
         )
-        self._put(self._sessions, org_id, session, outbox_row)
+        self._put(self._sessions, org_id, session, announced(outbox_row))
 
     async def read_api_keys(
         self, org_id: UUID, after: UUID | None, limit: int, user_id: UUID | None = None
@@ -266,7 +266,7 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
     ) -> tuple[ApiKey, bool]:
         async with self._lock:
             self._require_key_hash_free(api_key)
-            if self._insert(self._api_keys, org_id, api_key, outbox_row):
+            if self._insert(self._api_keys, org_id, api_key, announced(outbox_row)):
                 return api_key, True
             stored = self._get(self._api_keys, org_id, api_key.id)
             if (
@@ -290,7 +290,7 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
         self, org_id: UUID, api_key: ApiKey, outbox_row: OutboxRow | None = None
     ) -> None:
         self._require_key_hash_free(api_key)
-        self._put(self._api_keys, org_id, api_key, outbox_row)
+        self._put(self._api_keys, org_id, api_key, announced(outbox_row))
 
     def _require_key_hash_free(self, api_key: ApiKey) -> None:
         self._require_free(

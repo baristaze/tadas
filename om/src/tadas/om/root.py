@@ -34,9 +34,16 @@ class Managers:
 
 def build_managers(storage: StorageInterface, infra: InfraInterface) -> Managers:
     events = EventsManagerImpl(storage.get_event_storage(), EventsOptions())
-    # The relay every core-role manager hands its outbox rows to.
+    # The relay every core-role manager hands its outbox rows to. It reaches
+    # the work manager through the root below, because a row of kind
+    # `work.<kind>` is enqueued there: the work manager needs the tenancy
+    # manager, which needs this relay, so that one edge is bound at call time
+    # and the graph the root hands back is still whole.
     outbox = OutboxRelayImpl(
-        storage.get_outbox_storage(), storage.get_event_storage(), infra.get_topics()
+        storage.get_outbox_storage(),
+        storage.get_event_storage(),
+        infra.get_topics(),
+        lambda: managers.work,
     )
     tenancy = TenancyManagerImpl(
         storage.get_tenancy_storage(),
@@ -61,7 +68,7 @@ def build_managers(storage: StorageInterface, infra: InfraInterface) -> Managers
     tenancy_operator = TenancyOperatorManagerImpl(
         storage.get_tenancy_storage(), outbox, TenancyOperatorOptions()
     )
-    return Managers(
+    managers = Managers(
         tenancy=tenancy,
         tenancy_operator=tenancy_operator,
         work=work,
@@ -70,3 +77,4 @@ def build_managers(storage: StorageInterface, infra: InfraInterface) -> Managers
         events=events,
         outbox=outbox,
     )
+    return managers

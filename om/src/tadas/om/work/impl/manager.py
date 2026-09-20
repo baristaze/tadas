@@ -19,11 +19,18 @@ from tadas.om.exceptions import (
     ValidationFailed,
 )
 from tadas.om.opcontext import OpContext, Permission, RequestContext
+from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.tenancy import TenancyManagerInterface
 from tadas.om.work.manager import WorkManagerInterface
 from tadas.om.work.rules import attempts_after_hand_back, is_exhausted, retry_delay
 from tadas.om.work.storage import WorkStorageInterface
-from tadas.om.work.types.work_item import WORK_PAYLOADS, WorkItem, WorkKind, WorkStatus
+from tadas.om.work.types.work_item import (
+    WORK_PAYLOADS,
+    WORK_ROW_PREFIX,
+    WorkItem,
+    WorkKind,
+    WorkStatus,
+)
 
 log = logging.getLogger(__name__)
 
@@ -54,11 +61,10 @@ class WorkManagerImpl(WorkManagerInterface):
         self._options = options
 
     async def enqueue(self, ctx: OpContext, item: WorkItem) -> WorkItem:
+        """The direct create, under a context: work a CLI, a sweep, or an app asks
+        for on its own, which no core write announced. The actor is the
+        context's and the key is the caller's."""
         ctx.require(Permission.WRITE)
-        try:
-            WORK_PAYLOADS[item.kind].model_validate(item.payload)
-        except ValidationError as error:
-            raise ValidationFailed(f"payload of {item.kind.value} work: {error}"[:500]) from None
         now = utcnow()
         queued = item.model_copy(
             update={
@@ -74,19 +80,55 @@ class WorkManagerImpl(WorkManagerInterface):
                 "last_error": None,
             }
         )
-        if not await self._storage.create_item(ctx.org_id, queued):
-            # Ids are minted above storage, so the only way to present one twice
-            # is a retry, and a retry must not create twice: the insert reported
-            # the id, or the idempotency key, and nothing changed, a claim on
-            # the row included, so the row as stored is the answer and it was
-            # announced when it landed.
-            return await self._stored(ctx.org_id, queued)
+        return await self._land(ctx.org_id, queued)
+
+    async def enqueue_relayed(self, org_id: UUID, row: OutboxRow) -> WorkItem:
+        """The enqueue of work a core write started: the relay makes it from the
+        second outbox row of that write, which landed in the same statement as
+        the entity's. No context, since the relay runs without a principal: the
+        actor comes from the row, and so does the idempotency key, which is the
+        row's id and the same on every run of the relay. The lane is the
+        default one; a row carries no routing of its own."""
+        kind = row.kind.removeprefix(WORK_ROW_PREFIX)
+        if kind not in {k.value for k in WorkKind}:
+            raise ValidationFailed(f"outbox row {row.id} asks for unknown work {row.kind}")
+        now = utcnow()
+        return await self._land(
+            org_id,
+            WorkItem(
+                id=new_id(),
+                created_at=now,
+                updated_at=now,
+                created_by=row.actor_id,  # the principal of the write that asked
+                updated_by=EMPTY_UUID,  # the machinery, from here on
+                kind=WorkKind(kind),
+                target_id=row.target_id,
+                idempotency_key=row.id,
+                payload=row.payload,
+                status=WorkStatus.QUEUED,
+                available_at=now,
+            ),
+        )
+
+    async def _land(self, org_id: UUID, queued: WorkItem) -> WorkItem:
+        """The insert both enqueues share: the payload against the shape its kind
+        fixes, the create, and the wake. Ids are minted above storage, so the
+        only way to present one twice is a retry, and a retry must not create
+        twice: the insert reports an id, or an idempotency key, already
+        written and nothing changes, a claim on the row included, so the row
+        as stored is the answer and it was announced when it landed."""
+        try:
+            WORK_PAYLOADS[queued.kind].model_validate(queued.payload)
+        except ValidationError as error:
+            raise ValidationFailed(f"payload of {queued.kind.value} work: {error}"[:500]) from None
+        if not await self._storage.create_item(org_id, queued):
+            return await self._stored(org_id, queued)
         await self._topics.publish(
             Topics.WORK_AVAILABLE,
             WorkAvailablePayload(
                 idempotency_key=queued.idempotency_key,
-                produced_at=now,
-                org_id=ctx.org_id,
+                produced_at=queued.created_at,
+                org_id=org_id,
                 lane=queued.lane,
                 kind=queued.kind.value,
             ),

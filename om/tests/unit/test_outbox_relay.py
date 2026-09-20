@@ -12,12 +12,18 @@ from contracts.task_storage import make_task
 
 from tadas.infra.impl.local import InfraLocalImpl
 from tadas.infra.observability import OUTCOMES
-from tadas.om.base import new_id, utcnow
+from tadas.infra.topics import TopicPayload, Topics
+from tadas.om.base import EMPTY_UUID, new_id, utcnow
 from tadas.om.events.storage.impl.memory import EventStorageMemoryImpl
 from tadas.om.events.types.event import Event
+from tadas.om.opcontext import AppContext, AppType, OpContext, RequestContext
 from tadas.om.outbox.impl.relay import DEAD_LETTER_KIND, OutboxOptions, OutboxRelayImpl
 from tadas.om.outbox.storage.impl.memory import OutboxStorageMemoryImpl
+from tadas.om.outbox.types.row import outbox_row, snapshot
+from tadas.om.root import Managers, build_managers
+from tadas.om.storage.impl.memory import StorageMemoryImpl
 from tadas.om.tasks.storage.impl.memory import TasksStorageMemoryImpl
+from tadas.om.work.types.work_item import WorkKind, work_row_kind
 
 NO_GRACE = OutboxOptions(grace=timedelta(0), backoff_base=timedelta(0), max_attempts=2)
 
@@ -52,10 +58,10 @@ async def test_a_poison_row_does_not_block_the_rows_behind_it_and_dies_after_max
     org = new_id()
     poison, fine = make_task(), make_task()
     poison_row, fine_row = make_row(poison.id), make_row(fine.id)
-    await tasks.create_task(org, poison, poison_row)
-    await tasks.create_task(org, fine, fine_row)
+    await tasks.create_task(org, poison, (poison_row,))
+    await tasks.create_task(org, fine, (fine_row,))
     events = PoisonedEvents(poison_row.id)
-    relay = OutboxRelayImpl(outbox, events, infra.get_topics(), NO_GRACE)
+    relay = OutboxRelayImpl(outbox, events, infra.get_topics(), options=NO_GRACE)
     counted = dead_letters()
 
     # First sweep: the fine row is relayed although the poison row is older.
@@ -89,7 +95,7 @@ async def test_the_sweep_leaves_a_row_younger_than_the_grace(infra: InfraLocalIm
     org = new_id()
     task = make_task()
     row = make_row(task.id, age=timedelta(0))
-    await tasks.create_task(org, task, row)
+    await tasks.create_task(org, task, (row,))
     relay = OutboxRelayImpl(outbox, EventStorageMemoryImpl(), infra.get_topics())
     assert await relay.relay_pending(10) == 0, "the request path relays a fresh row"
     assert await relay.relay(org, row)
@@ -102,10 +108,93 @@ async def test_purge_takes_done_and_failed_rows_past_the_retention(infra: InfraL
     org = new_id()
     done, failed = make_task(), make_task()
     done_row, failed_row = make_row(done.id), make_row(failed.id)
-    await tasks.create_task(org, done, done_row)
-    await tasks.create_task(org, failed, failed_row)
+    await tasks.create_task(org, done, (done_row,))
+    await tasks.create_task(org, failed, (failed_row,))
     await outbox.mark_done(org, done_row.id)
     await outbox.record_failure(org, failed_row.id, "for good", utcnow())
     relay = OutboxRelayImpl(outbox, EventStorageMemoryImpl(), infra.get_topics())
     assert await relay.purge_done(timedelta(hours=1)) == 0
     assert await relay.purge_done(timedelta(seconds=-1)) == 2
+
+
+async def sign_in(managers: Managers) -> OpContext:
+    """A tenant with a member, so a relayed work item has a principal to run
+    under: the row names the actor and the claim rebuilds it."""
+    tenancy = managers.tenancy
+    app = AppContext(type=AppType.PORTAL, version="portal@test")
+
+    def request() -> RequestContext:
+        return RequestContext(request_id=new_id(), app=app)
+
+    _, org = await tenancy.bootstrap(
+        request(), "Acme", "acme", "ann@example.test", "pw-1234", "Ann"
+    )
+    login = await tenancy.login(request(), "ann@example.test", "pw-1234")
+    identity = await tenancy.authenticate_login(request(), login.token)
+    issued = await tenancy.exchange_login(identity, org.id)
+    return await tenancy.authenticate(request(), issued.token)
+
+
+async def test_a_write_that_also_starts_work_rides_a_second_row_the_relay_enqueues(
+    infra: InfraLocalImpl,
+) -> None:
+    """The write that also starts work, end to end. The entity change is one
+    row; the work item rides a second row of kind `work.<kind>`, landed by the
+    same statement, because the queue is a role of its own and no statement
+    reaches both. The relay is what enqueues it, with no context and the actor
+    from the row, and it presents the row's id as the item's idempotency key,
+    which is the same on every run: a relay that runs twice leaves one item."""
+    storage = StorageMemoryImpl()
+    managers = build_managers(storage, infra)
+    ctx = await sign_in(managers)
+    woken: list[TopicPayload] = []
+
+    async def record(payload: TopicPayload) -> None:
+        woken.append(payload)
+
+    infra.get_topics().subscribe(Topics.WORK_AVAILABLE, "test", record)
+
+    task = make_task(created_by=ctx.user_id)
+    change = outbox_row(ctx, "tasks.task.created", task.id, snapshot(task))
+    asked = outbox_row(ctx, work_row_kind(WorkKind.NOOP), task.id, {})
+    assert await storage.get_tasks_storage().create_task(ctx.org_id, task, (change, asked))
+    # One statement, two rows: the entity's change and the work it starts.
+    landed = await claim_all(storage.get_outbox_storage())
+    assert sorted(row.id for _, row in landed) == sorted([change.id, asked.id])
+
+    assert await managers.outbox.relay(ctx.org_id, change)
+    assert await managers.outbox.relay(ctx.org_id, asked)
+    enqueued = await storage.get_work_storage().read_item_by_key(ctx.org_id, asked.id)
+    assert enqueued is not None
+    assert enqueued.kind is WorkKind.NOOP and enqueued.target_id == task.id
+    assert enqueued.created_by == ctx.user_id, "the actor of the write that asked"
+    assert enqueued.updated_by == EMPTY_UUID
+    assert len(woken) == 1
+
+    # The sweep relays what it finds, and it finds this row again after a
+    # crash between the enqueue and the mark. The key is the row's id on
+    # every run, so the second enqueue meets the item already there.
+    assert await managers.outbox.relay(ctx.org_id, asked)
+    assert await storage.get_work_storage().read_item_by_key(ctx.org_id, asked.id) == enqueued
+    assert len(woken) == 1, "the queue is woken once"
+    claimed = await managers.work.claim(
+        RequestContext(request_id=new_id(), app=AppContext(type=AppType.WORKER, version="w@test")),
+        "default",
+        [WorkKind.NOOP],
+        "w1",
+        timedelta(seconds=30),
+    )
+    assert claimed is not None and claimed[1].id == enqueued.id
+    assert claimed[0].user_id == ctx.user_id, "the work runs under the person who asked"
+    assert (
+        await managers.work.claim(
+            RequestContext(
+                request_id=new_id(), app=AppContext(type=AppType.WORKER, version="w@test")
+            ),
+            "default",
+            [WorkKind.NOOP],
+            "w2",
+            timedelta(seconds=30),
+        )
+        is None
+    ), "one row, not two"

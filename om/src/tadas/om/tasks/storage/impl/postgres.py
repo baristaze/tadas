@@ -115,16 +115,18 @@ class TasksStoragePostgresImpl(PgStorageBase, TasksStorageInterface):
             await session.commit()
             return purged
 
-    async def create_task(self, org_id: UUID, task: Task, outbox_row: OutboxRow) -> bool:
-        return await self._insert(Tasks, org_id, task, outbox_row)
+    async def create_task(
+        self, org_id: UUID, task: Task, outbox_rows: tuple[OutboxRow, ...]
+    ) -> bool:
+        return await self._insert(Tasks, org_id, task, outbox_rows)
 
     async def update_task(
-        self, org_id: UUID, task: Task, expected_version: int, outbox_row: OutboxRow
+        self, org_id: UUID, task: Task, expected_version: int, outbox_rows: tuple[OutboxRow, ...]
     ) -> None:
-        await self.update_tasks(org_id, [(task, expected_version, outbox_row)])
+        await self.update_tasks(org_id, [(task, expected_version, outbox_rows)])
 
     async def update_tasks(
-        self, org_id: UUID, updates: Sequence[tuple[Task, int, OutboxRow]]
+        self, org_id: UUID, updates: Sequence[tuple[Task, int, tuple[OutboxRow, ...]]]
     ) -> None:
         # The compare-and-set is the statement itself: the version is in the
         # WHERE, so two writers from one snapshot cannot both land. The outbox
@@ -146,8 +148,9 @@ class TasksStoragePostgresImpl(PgStorageBase, TasksStorageInterface):
                 if (await session.execute(stmt)).scalar_one_or_none() is None:
                     await session.rollback()
                     raise await self._why_not(session, org_id, task.id, expected_version)
-            for _, _, outbox_row in updates:
-                session.add(to_row(outbox_row, OutboxRows, org_id=org_id))
+            for _, _, outbox_rows in updates:
+                for outbox_row in outbox_rows:
+                    session.add(to_row(outbox_row, OutboxRows, org_id=org_id))
             await session.commit()
 
     @staticmethod

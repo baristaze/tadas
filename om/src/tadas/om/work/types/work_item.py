@@ -16,6 +16,24 @@ class WorkKind(str, Enum):
     NOOP = "NOOP"  # the maintenance worker's kind: no work beyond the sweep
 
 
+WORK_ROW_PREFIX = "work."
+"""The kind of the outbox row that asks for a work item: `work.<kind>`. A write
+that also starts work lands such a row beside the one that announces the entity
+change, in the same statement, and the relay enqueues the item it names: the
+queue is a database role of its own, so no statement reaches both."""
+
+
+def work_row_kind(kind: WorkKind) -> str:
+    """The outbox row kind that asks for work of this kind."""
+    return WORK_ROW_PREFIX + kind.value
+
+
+def asks_for_work(row_kind: str) -> bool:
+    """Whether an outbox row asks for a work item rather than announcing a
+    change; the row's kind is its destination."""
+    return row_kind.startswith(WORK_ROW_PREFIX)
+
+
 class WorkStatus(str, Enum):
     QUEUED = "queued"
     CLAIMED = "claimed"

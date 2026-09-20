@@ -61,6 +61,9 @@ class LeaseLosingWork(WorkManagerInterface):
     async def enqueue(self, ctx: OpContext, item: WorkItem) -> WorkItem:
         return await self._inner.enqueue(ctx, item)
 
+    async def enqueue_relayed(self, org_id: UUID, row: OutboxRow) -> WorkItem:
+        return await self._inner.enqueue_relayed(org_id, row)
+
     async def claim(
         self,
         rctx: RequestContext,
@@ -531,7 +534,7 @@ async def test_sweep_relays_the_outbox_and_purges_done_rows(tmp_path: Path) -> N
     row = outbox_row(ctx, "tasks.task.created", task.id, snapshot(task)).model_copy(
         update={"created_at": now - timedelta(minutes=1)}  # older than the relay's grace
     )
-    await container.storage.get_tasks_storage().create_task(ctx.org_id, task, row)
+    await container.storage.get_tasks_storage().create_task(ctx.org_id, task, (row,))
     outbox = container.storage.get_outbox_storage()
     assert [r.id for _, r in await claim_all(outbox)] == [row.id]
     loop, task_ = start_loop(

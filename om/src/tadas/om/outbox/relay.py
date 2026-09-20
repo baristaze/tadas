@@ -1,7 +1,8 @@
 """The transactional outbox: a handoff that follows a core write (the event
-row behind every push) is never a second statement a manager remembers to
-make. The manager writes the core row and an `OutboxRow` in one named
-atomic storage method, then relays the row at once; the maintenance sweep
+row behind every push, the work item a write starts) is never a second
+statement a manager remembers to make. The manager writes the core row and
+the `OutboxRow`s that announce it in one named atomic storage method, then
+relays each at once; the maintenance sweep
 claims whatever a crash left behind, one attempt at a time with a growing
 delay, fails a row whose attempts are spent (a dead letter), and purges what
 is settled. The relay is idempotent on the row's id, so relaying twice is
@@ -17,10 +18,13 @@ from tadas.om.outbox.types.row import OutboxRow
 class OutboxRelayInterface(ABC):
     @abstractmethod
     async def relay(self, org_id: UUID, row: OutboxRow) -> bool:
-        """Appends the `Event` the row describes (idempotent on the row's id),
-        publishes ENTITY_CHANGED with (kind, target_id, seq), and marks the row
-        done. Returns False, and never raises, when a step failed: the row is
-        durable and the sweep relays it again."""
+        """The row's kind is its destination. An entity change appends the `Event`
+        the row describes (idempotent on the row's id) and publishes
+        ENTITY_CHANGED with (kind, target_id, seq); a row of kind `work.<kind>`
+        enqueues the work item it names, under the row's id as the item's
+        idempotency key, and publishes WORK_AVAILABLE. Either way the row is
+        marked done. Returns False, and never raises, when a step failed: the
+        row is durable and the sweep relays it again."""
         ...
 
     @abstractmethod

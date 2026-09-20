@@ -68,17 +68,19 @@ class TasksStorageMemoryImpl(MemoryStorageBase, TasksStorageInterface):
             del self._tasks[task_id]
         return len(gone)
 
-    async def create_task(self, org_id: UUID, task: Task, outbox_row: OutboxRow) -> bool:
+    async def create_task(
+        self, org_id: UUID, task: Task, outbox_rows: tuple[OutboxRow, ...]
+    ) -> bool:
         async with self._lock:
-            return self._insert(self._tasks, org_id, task, outbox_row)
+            return self._insert(self._tasks, org_id, task, outbox_rows)
 
     async def update_task(
-        self, org_id: UUID, task: Task, expected_version: int, outbox_row: OutboxRow
+        self, org_id: UUID, task: Task, expected_version: int, outbox_rows: tuple[OutboxRow, ...]
     ) -> None:
-        await self.update_tasks(org_id, [(task, expected_version, outbox_row)])
+        await self.update_tasks(org_id, [(task, expected_version, outbox_rows)])
 
     async def update_tasks(
-        self, org_id: UUID, updates: Sequence[tuple[Task, int, OutboxRow]]
+        self, org_id: UUID, updates: Sequence[tuple[Task, int, tuple[OutboxRow, ...]]]
     ) -> None:
         # Every check, then every write, one step under the lock, as the
         # conditional statements share one transaction in Postgres.
@@ -93,5 +95,5 @@ class TasksStorageMemoryImpl(MemoryStorageBase, TasksStorageInterface):
                     raise VersionMismatch(
                         f"task {task.id} is at version {found[1].version}, not {expected_version}"
                     )
-            for task, _, outbox_row in updates:
-                self._put(self._tasks, org_id, task, outbox_row)
+            for task, _, outbox_rows in updates:
+                self._put(self._tasks, org_id, task, outbox_rows)

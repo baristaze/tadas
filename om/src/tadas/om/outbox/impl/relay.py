@@ -1,4 +1,5 @@
 import logging
+from collections.abc import Callable
 from datetime import datetime, timedelta
 from uuid import UUID
 
@@ -10,6 +11,8 @@ from tadas.om.events.types.event import Event
 from tadas.om.outbox.relay import OutboxRelayInterface
 from tadas.om.outbox.storage import OutboxStorageInterface
 from tadas.om.outbox.types.row import OutboxRow
+from tadas.om.work import WorkManagerInterface
+from tadas.om.work.types.work_item import asks_for_work
 
 log = logging.getLogger(__name__)
 
@@ -32,11 +35,17 @@ class OutboxRelayImpl(OutboxRelayInterface):
         storage: OutboxStorageInterface,
         events: EventStorageInterface,
         topics: TopicsInterface,
+        work: Callable[[], WorkManagerInterface] | None = None,
         options: OutboxOptions | None = None,
     ) -> None:
+        """`work` is a provider and not the manager itself: the work manager needs
+        the tenancy manager, which needs this relay, so the root binds the edge
+        at call time and hands back one whole graph. A relay built without one
+        relays entity changes and refuses a row that asks for work."""
         self._storage = storage
         self._events = events
         self._topics = topics
+        self._work = work
         self._options = options or OutboxOptions()
 
     async def relay(self, org_id: UUID, row: OutboxRow) -> bool:
@@ -77,8 +86,17 @@ class OutboxRelayImpl(OutboxRelayInterface):
         return purged
 
     async def _deliver(self, org_id: UUID, row: OutboxRow) -> None:
-        """Appends the event, publishes the push, marks the row done; raises on
-        any step, and every step is safe to run again."""
+        """The row's kind is its destination: an entity change becomes an event and
+        an ENTITY_CHANGED publish, and a row of kind `work.<kind>`, the one a
+        write that also starts work landed beside its entity's row, becomes a
+        row in the queue and a WORK_AVAILABLE publish. Then the row is marked
+        done. Raises on any step, and every step is safe to run again: the
+        event is idempotent on the row's id and so is the enqueue, which
+        presents that id as the item's key."""
+        if asks_for_work(row.kind):
+            await self._enqueue(org_id, row)
+            await self._storage.mark_done(org_id, row.id)
+            return
         # The event's id is the row's id: the append is idempotent on it, so a
         # second relay of the same row gets the same event back, same seq.
         event = Event(
@@ -94,6 +112,13 @@ class OutboxRelayImpl(OutboxRelayInterface):
         appended = await self._events.append_event(org_id, event)
         await self._publish(org_id, appended)
         await self._storage.mark_done(org_id, row.id)
+
+    async def _enqueue(self, org_id: UUID, row: OutboxRow) -> None:
+        """The work item the row asks for, enqueued with no context: the relay has
+        no principal, so the manager stamps the actor from the row."""
+        if self._work is None:
+            raise RuntimeError("this relay was built without a work manager to enqueue into")
+        await self._work().enqueue_relayed(org_id, row)
 
     async def _failed(self, org_id: UUID, row: OutboxRow, error: str, now: datetime) -> None:
         """One sweep attempt failed: the claim already set the next attempt, so

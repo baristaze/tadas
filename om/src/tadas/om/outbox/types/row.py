@@ -49,6 +49,12 @@ def outbox_row(
     )
 
 
+def announced(row: OutboxRow | None) -> tuple[OutboxRow, ...]:
+    """The tuple a storage write takes, for a namespace whose methods still name
+    one optional row: the row it announces with, or nothing to announce."""
+    return () if row is None else (row,)
+
+
 def snapshot(entity: BaseModel, *, exclude: frozenset[str] = frozenset()) -> Mapping[str, Any]:
     """The JSON-mode dump of an entity, minus the fields named; the payload of
     a `<namespace>.<entity>.<action>` row is the entity's snapshot."""

@@ -45,14 +45,16 @@ def make_row(org_id: UUID, task: Task, action: str = "created") -> OutboxRow:
 async def seed(storage: TasksStorageInterface, org_id: UUID, task: Task) -> None:
     """Lands a task the way the manager does: through the create primitive.
     An update never inserts, so there is no other way in."""
-    assert await storage.create_task(org_id, task, make_row(org_id, task)) is True
+    assert await storage.create_task(org_id, task, (make_row(org_id, task),)) is True
 
 
 async def bump(storage: TasksStorageInterface, org_id: UUID, task: Task, **changes: object) -> Task:
     """The manager's copy on update, at the storage: the next version, written
     against the one the task carries."""
     changed = task.model_copy(update={**changes, "version": task.version + 1})
-    await storage.update_task(org_id, changed, task.version, make_row(org_id, changed, "updated"))
+    await storage.update_task(
+        org_id, changed, task.version, (make_row(org_id, changed, "updated"),)
+    )
     return changed
 
 
@@ -101,9 +103,9 @@ class TaskStorageContract:
         # the insert reports it, and neither the row nor the outbox is touched.
         org_id = new_id()
         task = make_task("Once")
-        assert await storage.create_task(org_id, task, make_row(org_id, task)) is True
+        assert await storage.create_task(org_id, task, (make_row(org_id, task),)) is True
         again = task.model_copy(update={"title": "Twice"})
-        assert await storage.create_task(org_id, again, make_row(org_id, again)) is False
+        assert await storage.create_task(org_id, again, (make_row(org_id, again),)) is False
         stored = await storage.read_task(org_id, task.id)
         assert stored is not None and stored.title == "Once"
 
@@ -293,8 +295,8 @@ class TaskStorageContract:
             await storage.update_tasks(
                 org,
                 [
-                    (placed(first, 0.0), first.version, make_row(org, first, "updated")),
-                    (placed(second, 1.0), second.version, make_row(org, second, "updated")),
+                    (placed(first, 0.0), first.version, (make_row(org, first, "updated"),)),
+                    (placed(second, 1.0), second.version, (make_row(org, second, "updated"),)),
                 ],
             )
         assert await storage.read_task(org, first.id) == first
@@ -303,8 +305,8 @@ class TaskStorageContract:
         await storage.update_tasks(
             org,
             [
-                (renumbered[0], first.version, make_row(org, first, "updated")),
-                (renumbered[1], moved_second.version, make_row(org, second, "updated")),
+                (renumbered[0], first.version, (make_row(org, first, "updated"),)),
+                (renumbered[1], moved_second.version, (make_row(org, second, "updated"),)),
             ],
         )
         assert await storage.read_task(org, first.id) == renumbered[0]

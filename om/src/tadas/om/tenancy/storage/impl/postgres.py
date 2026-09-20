@@ -8,7 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from tadas.om.base import Identifiable
 from tadas.om.exceptions import Conflict, NotFound, TenantMismatch, UniqueKeyTaken
 from tadas.om.outbox.storage.tables.outbox_rows import OutboxRows
-from tadas.om.outbox.types.row import OutboxRow
+from tadas.om.outbox.types.row import OutboxRow, announced
 from tadas.om.storage.impl.pg_base import PgStorageBase, violated_constraint
 from tadas.om.storage.utils.translation import apply_row, to_model, to_row
 from tadas.om.tenancy.storage import TenancyStorageInterface
@@ -65,7 +65,7 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
             return [to_model(row, Org) for row in result.scalars()]
 
     async def write_org(self, org_id: UUID, org: Org, outbox_row: OutboxRow | None = None) -> None:
-        await self._upsert(Orgs, org_id, org, outbox_row)
+        await self._upsert(Orgs, org_id, org, announced(outbox_row))
 
     async def create_org_with_owner(
         self,
@@ -174,7 +174,7 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
         self, org_id: UUID, user: User, outbox_row: OutboxRow | None = None
     ) -> None:
         try:
-            await self._upsert(Users, org_id, user, outbox_row)
+            await self._upsert(Users, org_id, user, announced(outbox_row))
         except UniqueKeyTaken as error:
             # uq_users_org_id_identity_id_live: one live user per identity in a tenant.
             raise UniqueKeyTaken(
@@ -205,7 +205,7 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
     async def write_membership(
         self, org_id: UUID, membership: Membership, outbox_row: OutboxRow | None = None
     ) -> None:
-        await self._upsert(Memberships, org_id, membership, outbox_row)
+        await self._upsert(Memberships, org_id, membership, announced(outbox_row))
 
     async def read_sessions(
         self, org_id: UUID, user_id: UUID, live_at: datetime, limit: int
@@ -240,7 +240,7 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
     async def write_session(
         self, org_id: UUID, session: Session, outbox_row: OutboxRow | None = None
     ) -> None:
-        await self._upsert(Sessions, org_id, session, outbox_row)
+        await self._upsert(Sessions, org_id, session, announced(outbox_row))
 
     async def read_api_keys(
         self, org_id: UUID, after: UUID | None, limit: int, user_id: UUID | None = None
@@ -274,7 +274,7 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
     async def issue_api_key(
         self, org_id: UUID, api_key: ApiKey, outbox_row: OutboxRow
     ) -> tuple[ApiKey, bool]:
-        if await self._insert(ApiKeys, org_id, api_key, outbox_row):
+        if await self._insert(ApiKeys, org_id, api_key, announced(outbox_row)):
             return api_key, True
         # The rerun: one conditional statement re-mints the secret on the
         # issuer's row, with both fences of the interface in its own WHERE.
@@ -305,7 +305,7 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
     async def write_api_key(
         self, org_id: UUID, api_key: ApiKey, outbox_row: OutboxRow | None = None
     ) -> None:
-        await self._upsert(ApiKeys, org_id, api_key, outbox_row)
+        await self._upsert(ApiKeys, org_id, api_key, announced(outbox_row))
 
     async def purge_deleted(self, org_id: UUID, before: datetime) -> int:
         gone_users = (
