@@ -25,7 +25,7 @@ from tadas.om.exceptions import Conflict, NotFound, RowDeleted, TenantMismatch, 
 from tadas.om.idempotency.storage import IdempotencyStorageInterface
 from tadas.om.idempotency.types.attempt import lease_bound
 from tadas.om.idempotency.types.record import IdempotencyRecord
-from tadas.om.opcontext import Role
+from tadas.om.opcontext import OperatorRole, Role
 from tadas.om.outbox.storage import OutboxStorageInterface
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.tenancy.storage import TenancyStorageInterface
@@ -478,7 +478,7 @@ class TenancyStorageContract:
         with pytest.raises(UniqueKeyTaken):
             await storage.write_identity(make_identity(email))
         assert await storage.read_identity_by_email(email) == identity
-        promoted = identity.model_copy(update={"is_operator": True})
+        promoted = identity.model_copy(update={"operator_role": OperatorRole.READ})
         await storage.write_identity(promoted)
         assert await storage.read_identity(identity.id) == promoted
 
@@ -629,7 +629,7 @@ class TenancyStorageContract:
                 other.id, other, loser, make_membership(loser.id, Role.OWNER), newcomer
             )
         assert await storage.read_identity(newcomer.id) is None
-        promoted = identity.model_copy(update={"is_operator": True})
+        promoted = identity.model_copy(update={"operator_role": OperatorRole.WRITE})
         again = make_user(identity.id)
         with pytest.raises(UniqueKeyTaken):
             await storage.create_org_with_owner(

@@ -35,6 +35,8 @@ __all__ = [
     "IdentityContext",
     "OpContext",
     "OperatorContext",
+    "OperatorPermission",
+    "OperatorRole",
     "Permission",
     "ProvenanceScope",
     "RequestContext",
@@ -59,6 +61,20 @@ class Permission(str, Enum):
     WRITE = "write"
     MANAGE_MEMBERS = "manage_members"
     MANAGE_KEYS = "manage_keys"
+
+
+class OperatorRole(str, Enum):
+    """What an allowlist entry lets an operator do across every tenant. Write
+    includes read; the tenancy namespace's table says which permissions each
+    role holds, as it does for `Role`."""
+
+    READ = "read"
+    WRITE = "write"
+
+
+class OperatorPermission(str, Enum):
+    READ = "read"
+    WRITE = "write"
 
 
 class CredentialKind(str, Enum):
@@ -163,8 +179,19 @@ class OpContext(RequestContext):
 
 class OperatorContext(IdentityContext):
     """The operator plane: an identity on the operator allowlist. No org_id,
-    on purpose. No field of its own: the type is the evidence, and only the
-    tenancy manager's `admit_operator` constructs it."""
+    on purpose. Its one field of its own is what the allowlist entry grants,
+    so a read operator is refused a write the way a viewer is; the type is the
+    evidence of admission, and only the tenancy manager's `admit_operator`
+    constructs it."""
+
+    permissions: frozenset[OperatorPermission]
+
+    def has(self, permission: OperatorPermission) -> bool:
+        return permission in self.permissions
+
+    def require(self, permission: OperatorPermission) -> None:
+        if not self.has(permission):
+            raise NotAuthorized(f"operator lacks {permission.value}")
 
 
 # Scopes: composable capability views. Every member is a read-only property,

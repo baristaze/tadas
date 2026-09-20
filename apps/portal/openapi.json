@@ -224,7 +224,7 @@
         "type": "object"
       },
       "IdentityView": {
-        "description": "The person behind the caller's user; never carries the password hash.",
+        "description": "The person behind the caller's user; never carries the password hash.\n`operator_role` is the allowlist entry: null for a person who is not an\noperator.",
         "properties": {
           "created_at": {
             "format": "date-time",
@@ -240,15 +240,21 @@
             "title": "Id",
             "type": "string"
           },
-          "is_operator": {
-            "title": "Is Operator",
-            "type": "boolean"
+          "operator_role": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OperatorRole"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
           "id",
           "email",
-          "is_operator",
+          "operator_role",
           "created_at"
         ],
         "title": "IdentityView",
@@ -489,6 +495,15 @@
         ],
         "title": "MoveTaskRequest",
         "type": "object"
+      },
+      "OperatorRole": {
+        "description": "What an allowlist entry lets an operator do across every tenant. Write\nincludes read; the tenancy namespace's table says which permissions each\nrole holds, as it does for `Role`.",
+        "enum": [
+          "read",
+          "write"
+        ],
+        "title": "OperatorRole",
+        "type": "string"
       },
       "OrgView": {
         "properties": {

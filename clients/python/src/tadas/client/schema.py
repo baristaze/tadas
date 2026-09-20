@@ -50,16 +50,6 @@ class ExchangeSessionRequest(BaseModel):
     org_id: Annotated[UUID, Field(title='Org Id')]
 
 
-class IdentityView(BaseModel):
-    """
-    The person behind the caller's user; never carries the password hash.
-    """
-    created_at: Annotated[AwareDatetime, Field(title='Created At')]
-    email: Annotated[str, Field(title='Email')]
-    id: Annotated[UUID, Field(title='Id')]
-    is_operator: Annotated[bool, Field(title='Is Operator')]
-
-
 class IssuedTicketView(BaseModel):
     """
     Carries the freshly minted socket ticket in the clear, once; redeeming
@@ -87,6 +77,16 @@ class MoveTaskRequest(BaseModel):
     )
     after_id: Annotated[UUID | None, Field(title='After Id')] = None
     version: Annotated[int, Field(ge=1, title='Version')]
+
+
+class OperatorRole(StrEnum):
+    """
+    What an allowlist entry lets an operator do across every tenant. Write
+    includes read; the tenancy namespace's table says which permissions each
+    role holds, as it does for `Role`.
+    """
+    read = 'read'
+    write = 'write'
 
 
 class OrgView(BaseModel):
@@ -222,6 +222,18 @@ class ApiKeyView(BaseModel):
 
 class HTTPValidationError(BaseModel):
     detail: Annotated[list[ValidationError] | None, Field(title='Detail')] = None
+
+
+class IdentityView(BaseModel):
+    """
+    The person behind the caller's user; never carries the password hash.
+    `operator_role` is the allowlist entry: null for a person who is not an
+    operator.
+    """
+    created_at: Annotated[AwareDatetime, Field(title='Created At')]
+    email: Annotated[str, Field(title='Email')]
+    id: Annotated[UUID, Field(title='Id')]
+    operator_role: OperatorRole | None
 
 
 class IssuedApiKeyView(BaseModel):

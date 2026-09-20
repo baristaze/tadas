@@ -462,6 +462,8 @@ export interface components {
         /**
          * IdentityView
          * @description The person behind the caller's user; never carries the password hash.
+         *     `operator_role` is the allowlist entry: null for a person who is not an
+         *     operator.
          */
         IdentityView: {
             /**
@@ -476,8 +478,7 @@ export interface components {
              * Format: uuid
              */
             id: string;
-            /** Is Operator */
-            is_operator: boolean;
+            operator_role: components["schemas"]["OperatorRole"] | null;
         };
         /**
          * IssuedApiKeyView
@@ -580,6 +581,14 @@ export interface components {
             /** Version */
             version: number;
         };
+        /**
+         * OperatorRole
+         * @description What an allowlist entry lets an operator do across every tenant. Write
+         *     includes read; the tenancy namespace's table says which permissions each
+         *     role holds, as it does for `Role`.
+         * @enum {string}
+         */
+        OperatorRole: "read" | "write";
         /** OrgView */
         OrgView: {
             /**

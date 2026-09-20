@@ -12,6 +12,7 @@ from tadas.om.opcontext import (
     IdentityContext,
     OpContext,
     OperatorContext,
+    OperatorRole,
     RequestContext,
     Role,
 )
@@ -47,13 +48,15 @@ class TenancyManagerInterface(ABC):
         password: str,
         display_name: str,
         *,
-        operator: bool = False,
+        operator_role: OperatorRole | None = None,
     ) -> tuple[OpContext, Org]:
         """Platform-internal: seeds a fresh environment with one org and its owner.
 
         Produces the owner's context once the identity, org, user, and
         membership exist; the rest of the seeding runs under it. Returns
-        that context beside the org.
+        that context beside the org. `operator_role` puts the owner's
+        identity on the operator allowlist with that role, or widens the
+        entry it has; it never narrows one.
         """
         ...
 
@@ -108,8 +111,8 @@ class TenancyManagerInterface(ABC):
     async def admit_operator(self, ictx: IdentityContext) -> OperatorContext:
         """Platform-internal: the transition to the operator stage. Admits the
         verified identity when it is on the operator allowlist, NotAnOperator
-        otherwise. The identity stage already guarantees the credential is the
-        person's own sign-in."""
+        otherwise, with the permissions the entry's role grants. The identity
+        stage already guarantees the credential is the person's own sign-in."""
         ...
 
     @abstractmethod

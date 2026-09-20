@@ -1,7 +1,8 @@
 """The operator plane of the tenancy swimlane: what a platform operator may
 do across every tenant. Every operation takes `OperatorContext` and nothing
 else; the tenant manager takes `OpContext` and nothing else, so the type
-system keeps the two planes apart."""
+system keeps the two planes apart. A read requires `OperatorPermission.READ`
+and a write `OperatorPermission.WRITE`, which the allowlist entry grants."""
 
 from __future__ import annotations
 

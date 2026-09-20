@@ -9,4 +9,4 @@ class Identities(GlobalIdentifiableMixin, TrackableMixin, Base):
     __table_args__ = (Index("uq_identities_email", "email", unique=True),)
     email: Mapped[str]
     password_hash: Mapped[str]
-    is_operator: Mapped[bool]
+    operator_role: Mapped[str | None]

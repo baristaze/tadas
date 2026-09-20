@@ -2,7 +2,7 @@ from uuid import UUID
 
 from tadas.om.base import Platform, new_id, utcnow
 from tadas.om.exceptions import NotFound
-from tadas.om.opcontext import OperatorContext
+from tadas.om.opcontext import OperatorContext, OperatorPermission
 from tadas.om.outbox import OutboxRelayInterface
 from tadas.om.outbox.types.row import OutboxRow, snapshot
 from tadas.om.tenancy.operator import TenancyOperatorManagerInterface
@@ -26,9 +26,11 @@ class TenancyOperatorManagerImpl(TenancyOperatorManagerInterface):
         self._options = options
 
     async def get_orgs(self, admin: OperatorContext, limit: int) -> list[Org]:
+        admin.require(OperatorPermission.READ)
         return await self._storage.read_orgs(max(1, min(limit, self._options.max_limit)))
 
     async def delete_org(self, admin: OperatorContext, org_id: UUID) -> Org:
+        admin.require(OperatorPermission.WRITE)
         org = await self._storage.read_org(org_id)
         if org is None or org.deleted_at is not None:
             raise NotFound(f"org {org_id} not found")

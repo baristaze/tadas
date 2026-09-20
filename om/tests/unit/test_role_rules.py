@@ -6,12 +6,14 @@ import itertools
 
 import pytest
 
-from tadas.om.opcontext import Role
+from tadas.om.opcontext import OperatorPermission, OperatorRole, Role
 from tadas.om.tenancy.rules import capped_role, role_at_most
 from tadas.om.tenancy.types.role import (
+    OPERATOR_ROLE_PERMISSIONS,
     PERSON_ROLES,
     ROLE_PERMISSIONS,
     ROLE_RANK,
+    operator_permissions_of,
     permissions_of,
 )
 
@@ -45,3 +47,10 @@ def test_the_service_role_is_no_rung(other: Role) -> None:
     with pytest.raises(ValueError):
         capped_role(other, Role.SERVICE)
     assert not role_at_most(Role.SERVICE, Role.SERVICE)
+
+
+def test_the_operator_table_holds_every_operator_role_and_write_includes_read() -> None:
+    assert set(OPERATOR_ROLE_PERMISSIONS) == set(OperatorRole)
+    assert operator_permissions_of(OperatorRole.READ) == {OperatorPermission.READ}
+    assert operator_permissions_of(OperatorRole.READ) < operator_permissions_of(OperatorRole.WRITE)
+    assert operator_permissions_of(OperatorRole.WRITE) == set(OperatorPermission)

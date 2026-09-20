@@ -31,6 +31,7 @@ from tadas.om.opcontext import (
     AppType,
     CredentialKind,
     OpContext,
+    OperatorRole,
     Permission,
     RequestContext,
     Role,
@@ -260,7 +261,13 @@ async def test_a_deleted_org_frees_its_slug(
         request(), "Acme", "acme", "ann@example.test", "pw-1234", "Ann"
     )
     await manager.bootstrap(
-        request(), "Ops", "ops", "root@example.test", "pw-1234", "Root", operator=True
+        request(),
+        "Ops",
+        "ops",
+        "root@example.test",
+        "pw-1234",
+        "Root",
+        operator_role=OperatorRole.WRITE,
     )
     admin = await manager.admit_operator(
         await manager.authenticate_login(
@@ -352,7 +359,13 @@ async def test_exchange_refuses_a_gone_org_or_membership_as_not_authorized(
         )
 
     await manager.bootstrap(
-        request(), "Ops", "ops", "root@example.test", "pw-1234", "Root", operator=True
+        request(),
+        "Ops",
+        "ops",
+        "root@example.test",
+        "pw-1234",
+        "Root",
+        operator_role=OperatorRole.WRITE,
     )
     admin = await manager.admit_operator(
         await manager.authenticate_login(
@@ -874,7 +887,7 @@ async def test_the_identity_behind_the_caller(manager: TenancyManagerImpl) -> No
     ctx = await sign_in(manager, "ann@example.test", org.id)
     identity = await manager.get_identity(ctx)
     assert identity.id == (await manager.get_user(ctx, ctx.user_id)).identity_id
-    assert identity.email == "ann@example.test" and identity.is_operator is False
+    assert identity.email == "ann@example.test" and identity.operator_role is None
 
 
 async def test_operator_gate_admits_only_operators_signing_in(
@@ -882,7 +895,13 @@ async def test_operator_gate_admits_only_operators_signing_in(
 ) -> None:
     await manager.bootstrap(request(), "Acme", "acme", "ann@example.test", "pw-1234", "Ann")
     await manager.bootstrap(
-        request(), "Ops", "ops", "root@example.test", "pw-1234", "Root", operator=True
+        request(),
+        "Ops",
+        "ops",
+        "root@example.test",
+        "pw-1234",
+        "Root",
+        operator_role=OperatorRole.WRITE,
     )
     login = await manager.login(request(), "ann@example.test", "pw-1234")
     with pytest.raises(NotAnOperator):
@@ -915,7 +934,13 @@ async def test_operators_soft_delete_an_org_and_its_principals_stop_resolving(
         request(), "Acme", "acme", "ann@example.test", "pw-1234", "Ann"
     )
     await manager.bootstrap(
-        request(), "Ops", "ops", "root@example.test", "pw-1234", "Root", operator=True
+        request(),
+        "Ops",
+        "ops",
+        "root@example.test",
+        "pw-1234",
+        "Root",
+        operator_role=OperatorRole.WRITE,
     )
     login = await manager.login(request(), "ann@example.test", "pw-1234")
     issued = await manager.exchange_login(
@@ -961,7 +986,13 @@ async def test_a_deleted_orgs_rows_are_purged_once_the_retention_has_passed(
     await manager.create_api_key(ann, "ci", Role.MEMBER)
     await manager.issue_ticket(ann)
     await manager.bootstrap(
-        request(), "Ops", "ops", "root@example.test", "pw-1234", "Root", operator=True
+        request(),
+        "Ops",
+        "ops",
+        "root@example.test",
+        "pw-1234",
+        "Root",
+        operator_role=OperatorRole.WRITE,
     )
     admin = await manager.admit_operator(
         await manager.authenticate_login(
@@ -1027,7 +1058,13 @@ async def test_a_claim_for_a_departed_members_item_still_runs_under_their_name(
     assert ctx.credential_kind is CredentialKind.INTERNAL and ctx.has(Permission.WRITE)
     # Only the tenant must be live.
     await manager.bootstrap(
-        request(), "Ops", "ops", "root@example.test", "pw-1234", "Root", operator=True
+        request(),
+        "Ops",
+        "ops",
+        "root@example.test",
+        "pw-1234",
+        "Root",
+        operator_role=OperatorRole.WRITE,
     )
     admin = await manager.admit_operator(
         await manager.authenticate_login(
@@ -1334,10 +1371,16 @@ async def test_a_slug_taken_meanwhile_leaves_no_identity_behind(
     # An existing person asked to be promoted: the refused tenant promotes nobody.
     with pytest.raises(UniqueKeyTaken):
         await manager.bootstrap(
-            request(), "Ops", "acme", "ann@example.test", "pw-1234", "Ann", operator=True
+            request(),
+            "Ops",
+            "acme",
+            "ann@example.test",
+            "pw-1234",
+            "Ann",
+            operator_role=OperatorRole.WRITE,
         )
     ann = await storage.read_identity_by_email("ann@example.test")
-    assert ann is not None and not ann.is_operator
+    assert ann is not None and ann.operator_role is None
 
 
 class DownOnCreateStorage(TenancyStorageMemoryImpl):

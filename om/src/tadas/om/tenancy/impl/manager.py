@@ -22,6 +22,7 @@ from tadas.om.opcontext import (
     IdentityContext,
     OpContext,
     OperatorContext,
+    OperatorRole,
     Permission,
     RequestContext,
     Role,
@@ -54,7 +55,7 @@ from tadas.om.tenancy.types.issued import (
 from tadas.om.tenancy.types.membership import Membership
 from tadas.om.tenancy.types.org import Org
 from tadas.om.tenancy.types.page import ApiKeyPage, UserPage
-from tadas.om.tenancy.types.role import permissions_of
+from tadas.om.tenancy.types.role import operator_permissions_of, permissions_of
 from tadas.om.tenancy.types.session import Session
 from tadas.om.tenancy.types.socket_ticket import SocketPrincipal, SocketTicket
 from tadas.om.tenancy.types.user import User
@@ -84,6 +85,17 @@ def mint_token(kind: CredentialKind) -> str:
     return PREFIX_FOR_KIND[kind] + secrets.token_urlsafe(32)
 
 
+def widens_operator_role(identity: Identity, granted: OperatorRole) -> bool:
+    """Whether granting `granted` gives the identity a permission its entry
+    does not hold: a promotion, never a demotion, as the seeding reads it."""
+    held = (
+        frozenset()
+        if identity.operator_role is None
+        else operator_permissions_of(identity.operator_role)
+    )
+    return not operator_permissions_of(granted) <= held
+
+
 class TenancyManagerImpl(TenancyManagerInterface):
     def __init__(
         self,
@@ -108,15 +120,17 @@ class TenancyManagerImpl(TenancyManagerInterface):
         password: str,
         display_name: str,
         *,
-        operator: bool = False,
+        operator_role: OperatorRole | None = None,
     ) -> tuple[OpContext, Org]:
         if await self._storage.read_org_by_slug(slug) is not None:
             raise Conflict(f"org slug {slug!r} is taken")
         now = utcnow()
         # The identity as it should read once the tenant exists: new, or promoted
-        # to operator. It is not written here; it lands in the create below, so
-        # a slug taken meanwhile leaves no identity carrying this attempt's
-        # password or flag, and a retry with another password is not kept out.
+        # to the operator role asked for. It is not written here; it lands in
+        # the create below, so a slug taken meanwhile leaves no identity carrying
+        # this attempt's password or role, and a retry with another password is
+        # not kept out. A role is never narrowed: a write operator seeding a
+        # second org as a read one keeps write.
         identity = await self._storage.read_identity_by_email(email)
         to_write: Identity | None = None
         if identity is None:
@@ -129,11 +143,15 @@ class TenancyManagerImpl(TenancyManagerInterface):
                 updated_by=identity_id,
                 email=email,
                 password_hash=hash_password(password, secrets.token_bytes(16)),
-                is_operator=operator,
+                operator_role=operator_role,
             )
-        elif operator and not identity.is_operator:
+        elif operator_role is not None and widens_operator_role(identity, operator_role):
             identity = to_write = identity.model_copy(
-                update={"is_operator": True, "updated_at": now, "updated_by": identity.id}
+                update={
+                    "operator_role": operator_role,
+                    "updated_at": now,
+                    "updated_by": identity.id,
+                }
             )
         user_id = new_id()
         org = Org(
@@ -356,7 +374,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
 
     async def admit_operator(self, ictx: IdentityContext) -> OperatorContext:
         identity = await self._storage.read_identity(ictx.identity_id)
-        if identity is None or not identity.is_operator:
+        if identity is None or identity.operator_role is None:
             raise NotAnOperator("this identity is not an operator")
         return OperatorContext(
             request_id=ictx.request_id,
@@ -367,6 +385,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
             email=identity.email,
             credential_kind=ictx.credential_kind,
             credential_id=ictx.credential_id,
+            permissions=operator_permissions_of(identity.operator_role),
         )
 
     async def resume(
