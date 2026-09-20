@@ -1,5 +1,5 @@
 # Account-level resources every environment shares: the image registry
-# (production promotes the digests dev already ran, so both pull from the
+# (production promotes the digests staging already ran, so both pull from the
 # same repositories), the state bucket, and the role the deploy workflow
 # assumes through GitHub's OIDC provider.
 
@@ -61,7 +61,7 @@ resource "aws_s3_bucket_public_access_block" "state" {
 }
 
 # The deploy role. Trust is the boundary: only jobs of this repository that
-# run in its `dev` environment or its approval-gated `production` environment
+# run in its `staging` environment or its approval-gated `production` environment
 # may assume it (a job with an environment presents that environment as its
 # subject, never the branch). Applying an environment creates networks,
 # databases, and IAM roles, which is why the permission set is the
@@ -95,7 +95,7 @@ data "aws_iam_policy_document" "deploy_assume" {
       test     = "StringLike"
       variable = "token.actions.githubusercontent.com:sub"
       values = [
-        "repo:${var.github_repository}:environment:dev",
+        "repo:${var.github_repository}:environment:staging",
         "repo:${var.github_repository}:environment:production",
       ]
     }

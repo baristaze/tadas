@@ -427,7 +427,7 @@ everything in-process for tests.
 - `terraform/`: every cloud resource. `modules/` holds one module per
   resource family (`network`, `cluster`, `database`, `cache`, `queue`,
   `buckets`, `secrets`, `load_balancer`, `certificate`, `domain_records`,
-  `portal`, `service`); `environments/dev` and `environments/prod`
+  `portal`, `service`); `environments/staging` and `environments/prod`
   instantiate the same graph and differ only in variables, including
   the image digests; `shared/` holds the registry, the state bucket, and
   the deploy role. The load balancer's idle timeout is read from
@@ -462,7 +462,7 @@ everything in-process for tests.
   is its self-test, run by hand. [The deploy runbook](runbooks/deploy.md)
   says what to check at the pause.
 - Public names are inputs: the API at `api_domain_name` (the load balancer,
-  e.g. `api.tadas.fyi`, `dev-api.tadas.fyi` for dev) and the portal at
+  e.g. `api.tadas.fyi`, `api.staging.tadas.fyi` for staging) and the portal at
   `app_domain_name` (a private S3 bucket behind CloudFront, e.g.
   `app.tadas.fyi`), with certificates and records in one Route 53 zone. The
   portal reads `/config.json`, written per environment by Terraform, before

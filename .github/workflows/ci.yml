@@ -83,7 +83,7 @@ jobs:
     timeout-minutes: 10
     strategy:
       matrix:
-        root: [shared, environments/dev, environments/prod]
+        root: [shared, environments/staging, environments/prod]
     steps:
       - uses: actions/checkout@v7
       - uses: hashicorp/setup-terraform@v4

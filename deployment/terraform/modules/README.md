@@ -3,14 +3,15 @@
 Every cloud resource is declared here; nothing is clicked into place.
 Three kinds of root live under this folder:
 
-- `environments/<name>/`: one root per environment (`dev`, `prod`; the
-  process reads the name as `TADAS_ENVIRONMENT`, `dev` or `production`).
-  Every environment instantiates the same module graph from `main.tf`
-  and differs only in `variables.tf`, so a change that works in dev
-  reaches production as a scale change. Both take the image digests as
-  variables; `.github/workflows/deploy.yml` passes what it built.
+- `environments/<name>/`: one root per environment (`staging`, `prod`;
+  the process reads the name as `TADAS_ENVIRONMENT`, `staging` or
+  `production`). Every environment instantiates the same module graph
+  from `main.tf` and differs only in `variables.tf`, so a change that
+  works in staging reaches production as a scale change. Both take the
+  image digests as variables; `.github/workflows/deploy.yml` passes what
+  it built.
 - `shared/`: account-level resources every environment uses: the image
-  registry (production promotes the digests dev already ran), the state
+  registry (production promotes the digests staging already ran), the state
   bucket, and the deploy role that GitHub's OIDC provider may assume.
 - `modules/`: one module per resource family, each with `versions.tf`,
   `variables.tf`, `main.tf`, and `outputs.tf`.
@@ -40,9 +41,9 @@ Every root declares an empty `backend "s3"` block and receives bucket,
 key, and region as `-backend-config` arguments:
 
 ```bash
-terraform -chdir=deployment/terraform/environments/dev init \
+terraform -chdir=deployment/terraform/environments/staging init \
   -backend-config="bucket=$TF_STATE_BUCKET" \
-  -backend-config="key=environments/dev/terraform.tfstate" \
+  -backend-config="key=environments/staging/terraform.tfstate" \
   -backend-config="region=us-east-1" \
   -backend-config="use_lockfile=true"
 ```
@@ -58,11 +59,16 @@ OIDC session provides them.
 Each environment has two public names in one Route 53 hosted zone, all three
 inputs rather than code:
 
-| Input | dev | production |
-|-------|-----|------------|
+| Input | staging | production |
+|-------|---------|------------|
 | `dns_zone_name` | `tadas.fyi` | `tadas.fyi` |
-| `api_domain_name` | `dev-api.tadas.fyi` | `api.tadas.fyi` |
-| `app_domain_name` | `dev-app.tadas.fyi` | `app.tadas.fyi` |
+| `api_domain_name` | `api.staging.tadas.fyi` | `api.tadas.fyi` |
+| `app_domain_name` | `app.staging.tadas.fyi` | `app.tadas.fyi` |
+
+Each environment has one base domain: production's is the zone itself,
+staging's is `staging.` under it, and `api.` and `app.` sit under the base
+domain. The two names are inputs, not a computed shape, so any name inside
+the zone works; the certificate and the alias record are per name.
 
 `deploy.yml` passes them from GitHub variables (`DNS_ZONE_NAME` for the
 repository, `API_DOMAIN_NAME` and `APP_DOMAIN_NAME` per GitHub environment);
@@ -84,7 +90,7 @@ connects there directly.
 
 The build carries no environment. Terraform writes `/config.json` per
 environment (`apiUrl`, `sentryDsn`, `environment`), and `deploy.yml` builds
-the portal once, publishes it to dev with `scripts/deploy_portal.sh` after
+the portal once, publishes it to staging with `scripts/deploy_portal.sh` after
 the apply, and publishes the same files to production. `portal_sentry_dsn`
 turns browser error reporting on. The `api_url` and `portal_url` outputs are
 where an environment answers.
@@ -103,7 +109,7 @@ project in sentry.io or a hosted GlitchTip, then, once per environment:
 
 ```bash
 aws secretsmanager put-secret-value \
-  --secret-id tadas/dev/sentry_dsn --secret-string 'https://<key>@<host>/<project>'
+  --secret-id tadas/staging/sentry_dsn --secret-string 'https://<key>@<host>/<project>'
 ```
 
 Tasks read the secret when they start, so roll the services afterwards

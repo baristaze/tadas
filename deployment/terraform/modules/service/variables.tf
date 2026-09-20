@@ -4,7 +4,7 @@ variable "name" {
 }
 
 variable "image" {
-  description = "Image reference by digest; production promotes what dev already ran."
+  description = "Image reference by digest; production promotes what staging already ran."
   type        = string
 }
 

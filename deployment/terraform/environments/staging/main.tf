@@ -1,7 +1,7 @@
 # The module graph is identical in every environment; only variables
 # differ. Each application process is one instance of the service module.
-# Production promotes the images dev already ran, by digest, behind an
-# approval gate: the image variables are the digests deploy.yml passes.
+# Production promotes the images staging already ran, by digest, behind an
+# approval gate: the image variables are the digests the deploy workflows pass.
 
 locals {
   # The environment every process reads, mirrored from .env.example. Every
