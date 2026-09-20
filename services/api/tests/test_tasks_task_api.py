@@ -3,8 +3,10 @@ from uuid import UUID, uuid4
 import httpx
 from api_support import add_member, sign_in_as
 
+from tadas.om.base import PROVENANCE_FIELDS
 from tadas.om.opcontext import Role
 from tadas.services.api.container import AppContainer
+from tadas.services.api.types.tasks import UpdateTaskRequest
 
 
 async def add(
@@ -135,3 +137,27 @@ async def test_task_errors_use_the_envelope(
 
     anonymous = await client.get("/v1/tasks")
     assert anonymous.status_code == 401
+
+
+def test_the_partial_update_cannot_name_provenance() -> None:
+    """The service's merge copies the request's set fields onto the stored
+    task; the request type has no provenance field to set and forbids extra
+    ones, so the translation cannot rewrite who made a row or its deletion."""
+    reserved = PROVENANCE_FIELDS | {"id", "updated_at", "updated_by", "position"}
+    assert set(UpdateTaskRequest.model_fields).isdisjoint(reserved)
+    assert UpdateTaskRequest.model_config.get("extra") == "forbid"
+
+
+async def test_a_patch_naming_provenance_is_refused(
+    client: httpx.AsyncClient, owner: dict[str, str]
+) -> None:
+    created = await client.post("/v1/tasks", headers=owner, json={"title": "keep me"})
+    assert created.status_code == 201
+    task_id = created.json()["id"]
+    for field in ("created_by", "created_at", "deleted_at", "deleted_by"):
+        patched = await client.patch(
+            f"/v1/tasks/{task_id}", headers=owner, json={"title": "x", field: None}
+        )
+        assert patched.status_code == 422, (field, patched.text)
+    unchanged = await client.get(f"/v1/tasks/{task_id}", headers=owner)
+    assert unchanged.json() == created.json()

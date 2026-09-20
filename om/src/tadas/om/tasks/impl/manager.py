@@ -1,7 +1,7 @@
 from datetime import timedelta
 from uuid import UUID
 
-from tadas.om.base import Platform, utcnow
+from tadas.om.base import PROVENANCE_FIELDS, Platform, utcnow
 from tadas.om.exceptions import NotFound, ValidationFailed
 from tadas.om.opcontext import OpContext, Permission
 from tadas.om.outbox import OutboxRelayInterface
@@ -79,10 +79,16 @@ class TasksManagerImpl(TasksManagerInterface):
         ctx.require(Permission.WRITE)
         current = await self.get_task(ctx, task.id)  # existence and tenancy, or NotFound
         await self._verify(ctx, task)
-        update: dict[str, object] = {"updated_at": utcnow(), "updated_by": ctx.user_id}
+        # The copy starts from the stored row: the caller's entity supplies the
+        # fields a caller may change, and the provenance stays as stored.
+        update: dict[str, object] = {
+            **task.model_dump(exclude=set(PROVENANCE_FIELDS)),
+            "updated_at": utcnow(),
+            "updated_by": ctx.user_id,
+        }
         if current.status == TaskStatus.DONE and task.status == TaskStatus.OPEN:
             update["position"] = await self._top_position(ctx, exclude=task.id)
-        updated = task.model_copy(update=update)
+        updated = current.model_copy(update=update)
         await self._write(ctx, updated, "updated")
         return updated
 
