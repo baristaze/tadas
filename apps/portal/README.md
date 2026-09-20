@@ -41,10 +41,13 @@ Zustand, one realtime channel.
 - `src/realtime/RealtimeProvider.tsx` owns the one socket; the loop
   itself (ticket, reconnect with backoff, the stream cursor and its
   replay) is `channel.ts`, without React, run in its test over a fake
-  socket and fake timers. A socket counts as connected once the hello
-  frame arrives, so a server that accepts and closes at once still
-  backs off. Envelopes (`envelopes.ts`) route into the query cache
-  (`router.ts`), never into components. The ping interval comes from
+  socket and fake timers. The reconnect delay doubles to a cap and half
+  of each wait is jitter, because a socket drops for a shared reason: a
+  bare curve would bring every tab back at the same instant. A socket
+  counts as connected once the hello frame arrives, so a server that
+  accepts and closes at once still backs off. Envelopes (`envelopes.ts`)
+  route into the query cache (`router.ts`), never into components. The
+  ping interval comes from
   `deployment/realtime-timeouts.json`.
 - Design tokens and the kit live in `src/design/`; the operator console
   imports them from here.

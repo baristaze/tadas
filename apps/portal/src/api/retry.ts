@@ -45,7 +45,8 @@ export function mayRetryRequest(method: string, idempotencyKey?: string): boolea
  * per attempt and capped, then halved and topped up from `random`. Half the
  * window is fixed and half is jitter, so callers that failed together do not
  * return together, and the shortest wait of one attempt is still the longest
- * wait of the one before it, which is what makes the growth assertable.
+ * wait of the one before it wherever the curve doubles, which is what makes
+ * the growth assertable.
  */
 export function retryDelayMs(
   attempt: number,
