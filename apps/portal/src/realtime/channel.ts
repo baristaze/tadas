@@ -76,19 +76,22 @@ export function openChannel(deps: ChannelDeps): Channel {
   };
 
   // Pages through the stream after `after`, applying each record through
-  // the router; false when the fetch failed and the cursor stayed put.
-  const replay = async (after: number): Promise<boolean> => {
+  // the router, until the last page, a failed fetch, or a page that moved
+  // the cursor nowhere: its records sit ahead of the cursor (a seq between
+  // is not in storage yet), so reading the same page again would too. The
+  // cursor stays where it is, and the next push or pong retries from there.
+  const replay = async (after: number): Promise<void> => {
     let from = after;
     for (;;) {
       let page: EventView[];
       try {
         page = await deps.fetchEventsAfter(from, deps.pageSize);
       } catch {
-        return false;
+        return;
       }
       for (const event of page) apply(eventEnvelope(event));
-      if (isLastPage(page.length, deps.pageSize)) return true;
-      from = cursor ?? from;
+      if (isLastPage(page.length, deps.pageSize) || cursor === null || cursor <= from) return;
+      from = cursor;
     }
   };
 
@@ -101,14 +104,12 @@ export function openChannel(deps: ChannelDeps): Channel {
     }
     const gap = apply(envelope);
     if (gap === null) return;
-    const replayed = await replay(gap);
+    await replay(gap);
     if (apply(envelope) === null) return;
-    // Still out of order: the push is worth routing either way. After a
-    // failed replay the cursor stays so the next push retries the fetch.
+    // Still ahead of the cursor: the push is worth routing either way, but
+    // the cursor never moves past seqs that were not replayed, so the next
+    // push or pong retries the fetch from where it stands.
     deps.route(envelope);
-    if (replayed && isEntityChanged(envelope)) {
-      cursor = envelope.payload.seq;
-    }
   };
 
   const enqueue = (work: () => Promise<void>) => {

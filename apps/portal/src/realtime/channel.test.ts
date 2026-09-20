@@ -46,6 +46,8 @@ function push(seq: number): Envelope {
   return { type: "event", topic: "entity_changed", sent_at: null, payload: { kind: "tasks.task.updated", target_id: `t${seq}`, seq, actor_id: "u1" } };
 }
 
+const seqOf = (e: Envelope) => (e as { payload: { seq: number } }).payload.seq;
+
 const hello = (seq: number) => ({ type: "hello", sent_at: null, org_id: "o1", user_id: "u1", seq, ping_interval_seconds: 25 });
 
 /** The stream in storage, as pages after a seq. */
@@ -192,6 +194,50 @@ describe("stream cursor", () => {
     await flush();
     expect(h.fetches).toEqual([5, 7]);
     expect(channel.cursor()).toBe(8);
-    expect(h.routed.filter((e) => e.type === "event").map((e) => (e as { payload: { seq: number } }).payload.seq)).toEqual([6, 7, 8]);
+    expect(h.routed.filter((e) => e.type === "event").map(seqOf)).toEqual([6, 7, 8]);
+  });
+
+  it("stops paging when a page moves the cursor nowhere", async () => {
+    // Seq 6 is not in storage yet; every page after 5 starts at 7 and is full.
+    const stream = [event(7), event(8), event(9)];
+    let calls = 0;
+    const h = harness((after) => {
+      calls += 1;
+      if (calls > 3) throw new Error("hammered");
+      return stream.filter((e) => e.seq > after).slice(0, 2);
+    }, 2);
+    channel = h.channel;
+    await flush();
+    h.sockets[0]!.accept();
+    await flush();
+    h.sockets[0]!.receive(hello(5));
+    await flush();
+    h.sockets[0]!.receive(push(9));
+    await flush();
+    expect(h.fetches).toEqual([5]);
+    expect(channel.cursor()).toBe(5);
+    // The push is still worth routing: the entity did change.
+    expect(h.routed.filter((e) => e.type === "event").map(seqOf)).toEqual([9]);
+  });
+
+  it("never moves the cursor past seqs that were not replayed", async () => {
+    // Storage answers with a short page that skips 6: the replay ends, the gap stays.
+    const h = harness((after) => [event(7), event(8)].filter((e) => e.seq > after));
+    channel = h.channel;
+    await flush();
+    h.sockets[0]!.accept();
+    await flush();
+    h.sockets[0]!.receive(hello(5));
+    await flush();
+    h.sockets[0]!.receive(push(8));
+    await flush();
+    expect(h.routed.filter((e) => e.type === "event").map(seqOf)).toEqual([8]);
+    expect(channel.cursor()).toBe(5);
+
+    // Once 6 exists, the next push replays through it and the cursor catches up.
+    const h2 = h;
+    h2.sockets[0]!.receive(push(6));
+    await flush();
+    expect(channel.cursor()).toBe(6);
   });
 });
