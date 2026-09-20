@@ -35,6 +35,8 @@ LOCAL_DEFAULT_SERVES_THE_CLOUD = {
     "otel_endpoint": "traces go to the collector sidecar, wired in the task, not a knob",
     "aws_timeout_seconds": "the local default is the tuning",
     "valkey_timeout_seconds": "the local default is the tuning",
+    "valkey_breaker_failures": "the local bound is the bound",
+    "valkey_breaker_cooldown_seconds": "the local cool-down is the cool-down",
     "otel_timeout_seconds": "the local default is the tuning",
     "version": "the image carries it",
     "metrics_host": "the collector sidecar shares the task's network namespace; 127.0.0.1 serves",

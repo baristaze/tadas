@@ -50,6 +50,17 @@ class InfraSettings(BaseSettings):
     topics_backend: Literal["memory", "valkey"] = "memory"
     valkey_url: str = "valkey://127.0.0.1:56379/0"
 
+    # The one breaker in front of Valkey, shared by every cache scope and the
+    # topic publisher. A Valkey that is down answers every call with the whole
+    # of `valkey_timeout_seconds`, and the timeouts alone are what exhaust the
+    # pool the calls are made from. After this many calls in a row that spend
+    # the timeout, each answers at once for the cool-down the way that backend
+    # failing answers, then one call goes through to decide whether to close.
+    # Opening costs failures * timeout, and the cool-down is what that buys, so
+    # the cool-down is worth several times the timeout.
+    valkey_breaker_failures: int = Field(default=3, ge=1)
+    valkey_breaker_cooldown_seconds: float = Field(default=30.0, gt=0)
+
     buckets_backend: Literal["local", "s3"] = "local"
     buckets_root: Path = Path(".local/buckets")
     s3_endpoint_url: str | None = None
