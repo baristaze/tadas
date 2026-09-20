@@ -192,10 +192,39 @@ def login(
 
 @app.command()
 def logout(api: Api = None) -> None:
-    """Revoke the session and forget it."""
-    if config.token() is not None:
-        run(lambda client: client.logout(), api)
-    typer.echo("signed out" if config.clear_session() else "no session to forget")
+    """Revoke the session `login` kept and forget it. `TADAS_TOKEN` is the
+    environment's credential, not the CLI's to revoke, and is left alone."""
+    session = config.load_session()
+    if session is None:
+        hint = "; TADAS_TOKEN is the environment's, unset it" if config.token() else ""
+        typer.echo(f"no session to forget{hint}")
+        return
+
+    async def revoke() -> str:
+        # The token goes back to the API that issued it and nowhere else.
+        async with build_client(api or session.api_url, session.token) as client:
+            try:
+                await client.logout()
+            except ApiError as error:
+                # Revoked or expired already, or no longer a session token:
+                # nothing is left to revoke.
+                if error.status in (401, 422):
+                    return f"signed out; the session was already gone ({error.code})"
+                raise
+        return "signed out"
+
+    # The file goes whatever the API answered: a session the caller gave up
+    # is not run as again, and the exit code says whether it was revoked.
+    try:
+        try:
+            outcome = asyncio.run(revoke())
+        finally:
+            config.clear_session()
+    except ApiError as error:
+        _fail(f"session forgotten, not revoked; the API refused: {error}", EXIT_REFUSED)
+    except httpx.TransportError as error:
+        _fail(f"session forgotten, not revoked; cannot reach the API: {error}", EXIT_UNREACHABLE)
+    typer.echo(outcome)
 
 
 @app.command()
