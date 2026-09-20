@@ -2,7 +2,12 @@
 do across every tenant. Every operation takes `OperatorContext` and nothing
 else; the tenant manager takes `OpContext` and nothing else, so the type
 system keeps the two planes apart. A read requires `OperatorPermission.READ`
-and a write `OperatorPermission.WRITE`, which the allowlist entry grants."""
+and a write `OperatorPermission.WRITE`, which the allowlist entry grants.
+
+A read of a tenant's rows names the tenant, reads them through that
+namespace's storage under the named tenant, and is logged with the tenant
+and the operator, so support access has a trail. The creates are the same
+creates the seeding commands run: one implementation, two entry points."""
 
 from __future__ import annotations
 
@@ -10,16 +15,108 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 from uuid import UUID
 
+from tadas.om.events.types.event import Event
+from tadas.om.idempotency.types.attempt import Attempt
+from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor
+from tadas.om.tasks.types.page import TaskPage
+from tadas.om.tasks.types.task import TaskStatus
 from tadas.om.tenancy.types.org import Org
+from tadas.om.tenancy.types.page import UserPage
+from tadas.om.tenancy.types.size import PlatformSize
+from tadas.om.tenancy.types.user import User
 
 if TYPE_CHECKING:
-    from tadas.om.opcontext import OperatorContext
+    from tadas.om.opcontext import OperatorContext, Role
 
 
 class TenancyOperatorManagerInterface(ABC):
+    # Across every tenant.
+
     @abstractmethod
     async def get_orgs(self, admin: OperatorContext, limit: int) -> list[Org]:
         """Every org, deleted ones included, sorted by id."""
+        ...
+
+    @abstractmethod
+    async def size(self, admin: OperatorContext) -> PlatformSize:
+        """How big the platform is: live tenants and users, and the tasks and
+        events of the last twenty-four hours."""
+        ...
+
+    @abstractmethod
+    async def create_org(
+        self,
+        admin: OperatorContext,
+        name: str,
+        slug: str,
+        owner_email: str,
+        owner_password: str,
+        owner_name: str,
+        attempt: Attempt | None = None,
+    ) -> Org:
+        """An org with its owner, the way `bootstrap` seeds one: the owner's
+        identity is created, or kept with its password when the email is
+        known. A taken slug is `Conflict`. `attempt`, when given, is the
+        attempt a retried request runs under: the org is created on its id,
+        and an org already written under that id is the rerun of this create
+        and is returned as stored."""
+        ...
+
+    # One named tenant.
+
+    @abstractmethod
+    async def get_org(self, admin: OperatorContext, org_id: UUID) -> Org:
+        """The org, deleted or not; `NotFound` when no org has the id."""
+        ...
+
+    @abstractmethod
+    async def get_members(
+        self, admin: OperatorContext, org_id: UUID, after: UUID | None, limit: int
+    ) -> UserPage:
+        """The tenant's live members, by id, a page at a time, as the tenant's
+        own `get_users` pages them."""
+        ...
+
+    @abstractmethod
+    async def add_member(
+        self,
+        admin: OperatorContext,
+        org_id: UUID,
+        email: str,
+        password: str,
+        display_name: str,
+        role: Role,
+        attempt: Attempt | None = None,
+    ) -> User:
+        """A person in the org, the way `add-member` seeds one: the identity is
+        created if the email is new, and a person who is already a member is
+        returned as they are. The owner role and the service role are refused
+        by name: the one owner is the one `create_org` minted. The rows record
+        the operator's identity as their maker, since an operator has no user
+        in the tenant. `attempt` as on `create_org`, for the user's id."""
+        ...
+
+    @abstractmethod
+    async def get_tasks(
+        self,
+        admin: OperatorContext,
+        org_id: UUID,
+        status: TaskStatus,
+        cursor: OpenTaskCursor | TaskCursor | None,
+        limit: int,
+    ) -> TaskPage:
+        """One page of the tenant's tasks in `status`, every task of the team,
+        in the order the tenant's own list reads: the open list by position
+        after an `OpenTaskCursor`, the done list newest first before a
+        `TaskCursor`. A cursor of the other list is `ValidationFailed`."""
+        ...
+
+    @abstractmethod
+    async def get_events(
+        self, admin: OperatorContext, org_id: UUID, after_seq: int, limit: int
+    ) -> list[Event]:
+        """The tenant's events after `after_seq`, oldest first, as the tenant's
+        own replay reads them."""
         ...
 
     @abstractmethod

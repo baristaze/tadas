@@ -8,7 +8,6 @@ from uuid import UUID
 from tadas.infra.cache import CacheInterface
 from tadas.om.base import EMPTY_UUID, Platform, new_id, utcnow
 from tadas.om.exceptions import (
-    Conflict,
     CredentialExpired,
     InvalidCredential,
     NotAnOperator,
@@ -30,6 +29,7 @@ from tadas.om.opcontext import (
 )
 from tadas.om.outbox import OutboxRelayInterface
 from tadas.om.outbox.types.row import OutboxRow, outbox_row, snapshot
+from tadas.om.tenancy.impl.creates import add_member_to, create_org_with_owner
 from tadas.om.tenancy.manager import TenancyManagerInterface
 from tadas.om.tenancy.rules import (
     DUMMY_PASSWORD_HASH,
@@ -37,7 +37,6 @@ from tadas.om.tenancy.rules import (
     PREFIX_FOR_KIND,
     capped_role,
     credential_kind_of,
-    hash_password,
     hash_token,
     role_at_most,
     verify_password,
@@ -85,17 +84,6 @@ def mint_token(kind: CredentialKind) -> str:
     return PREFIX_FOR_KIND[kind] + secrets.token_urlsafe(32)
 
 
-def widens_operator_role(identity: Identity, granted: OperatorRole) -> bool:
-    """Whether granting `granted` gives the identity a permission its entry
-    does not hold: a promotion, never a demotion, as the seeding reads it."""
-    held = (
-        frozenset()
-        if identity.operator_role is None
-        else operator_permissions_of(identity.operator_role)
-    )
-    return not operator_permissions_of(granted) <= held
-
-
 class TenancyManagerImpl(TenancyManagerInterface):
     def __init__(
         self,
@@ -122,69 +110,16 @@ class TenancyManagerImpl(TenancyManagerInterface):
         *,
         operator_role: OperatorRole | None = None,
     ) -> tuple[OpContext, Org]:
-        if await self._storage.read_org_by_slug(slug) is not None:
-            raise Conflict(f"org slug {slug!r} is taken")
-        now = utcnow()
-        # The identity as it should read once the tenant exists: new, or promoted
-        # to the operator role asked for. It is not written here; it lands in
-        # the create below, so a slug taken meanwhile leaves no identity carrying
-        # this attempt's password or role, and a retry with another password is
-        # not kept out. A role is never narrowed: a write operator seeding a
-        # second org as a read one keeps write.
-        identity = await self._storage.read_identity_by_email(email)
-        to_write: Identity | None = None
-        if identity is None:
-            identity_id = new_id()
-            identity = to_write = Identity(
-                id=identity_id,
-                created_at=now,
-                updated_at=now,
-                created_by=identity_id,
-                updated_by=identity_id,
-                email=email,
-                password_hash=hash_password(password, secrets.token_bytes(16)),
-                operator_role=operator_role,
-            )
-        elif operator_role is not None and widens_operator_role(identity, operator_role):
-            identity = to_write = identity.model_copy(
-                update={
-                    "operator_role": operator_role,
-                    "updated_at": now,
-                    "updated_by": identity.id,
-                }
-            )
-        user_id = new_id()
-        org = Org(
-            id=new_id(),
-            name=org_name,
-            created_at=now,
-            updated_at=now,
-            created_by=user_id,
-            updated_by=user_id,
+        org, user, membership = await create_org_with_owner(
+            self._storage,
+            org_id=new_id(),
+            org_name=org_name,
             slug=slug,
-        )
-        user = User(
-            id=user_id,
-            created_at=now,
-            updated_at=now,
-            created_by=user_id,
-            updated_by=user_id,
-            identity_id=identity.id,
             email=email,
+            password=password,
             display_name=display_name,
+            operator_role=operator_role,
         )
-        membership = Membership(
-            id=new_id(),
-            created_at=now,
-            updated_at=now,
-            created_by=user_id,
-            updated_by=user_id,
-            user_id=user_id,
-            role=Role.OWNER,
-        )
-        # One commit: a slug taken meanwhile leaves no org without its owner,
-        # and no identity without its org.
-        await self._storage.create_org_with_owner(org.id, org, user, membership, to_write)
         # The principal now exists; everything after this line runs under it.
         ctx = build_context(
             rctx,
@@ -225,51 +160,19 @@ class TenancyManagerImpl(TenancyManagerInterface):
             raise ValidationFailed("service is not a membership role")
         if not role_at_most(role, ctx.security.role):
             raise NotAuthorized(f"cannot grant role {role.value} above {ctx.security.role.value}")
-        now = utcnow()
-        # A new identity lands in the create below, never before it.
-        identity = await self._storage.read_identity_by_email(email)
-        to_write: Identity | None = None
-        if identity is None:
-            identity_id = new_id()
-            identity = to_write = Identity(
-                id=identity_id,
-                created_at=now,
-                updated_at=now,
-                created_by=identity_id,
-                updated_by=identity_id,
-                email=email,
-                password_hash=hash_password(password, secrets.token_bytes(16)),
-            )
-        for org_id, existing in await self._storage.read_users_by_identity(identity.id):
-            if org_id == org.id and existing.deleted_at is None:
-                return ctx, existing, False
-        user_id = new_id()
-        user = User(
-            id=user_id,
-            created_at=now,
-            updated_at=now,
-            created_by=ctx.user_id,
-            updated_by=ctx.user_id,
-            identity_id=identity.id,
+        user, created = await add_member_to(
+            self._storage,
+            self._relay,
+            org_id=ctx.org_id,
+            user_id=new_id(),
             email=email,
+            password=password,
             display_name=display_name,
-        )
-        membership = Membership(
-            id=new_id(),
-            created_at=now,
-            updated_at=now,
-            created_by=ctx.user_id,
-            updated_by=ctx.user_id,
-            user_id=user_id,
             role=role,
+            actor_id=ctx.user_id,
+            request=ctx,
         )
-        # One commit: the user, the membership, and the outbox row land together,
-        # so a concurrent add of the same person leaves no membership without
-        # its user and no user without a membership.
-        row = outbox_row(ctx, "tenancy.user.created", user.id, snapshot(user))
-        await self._storage.create_member(ctx.org_id, user, membership, (row,), to_write)
-        await self._relay.relay(ctx.org_id, row)
-        return ctx, user, True
+        return ctx, user, created
 
     async def login(self, rctx: RequestContext, email: str, password: str) -> IssuedLogin:
         identity = await self._storage.read_identity_by_email(email)

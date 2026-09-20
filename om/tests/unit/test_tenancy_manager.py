@@ -40,6 +40,7 @@ from tadas.om.outbox.impl.relay import OutboxRelayImpl
 from tadas.om.outbox.relay import OutboxRelayInterface
 from tadas.om.outbox.storage.impl.memory import OutboxStorageMemoryImpl
 from tadas.om.outbox.types.row import OutboxRow
+from tadas.om.tasks.storage.impl.memory import TasksStorageMemoryImpl
 from tadas.om.tenancy.impl.manager import TenancyManagerImpl, TenancyOptions
 from tadas.om.tenancy.impl.operator import TenancyOperatorManagerImpl, TenancyOperatorOptions
 from tadas.om.tenancy.rules import DUMMY_PASSWORD_HASH, hash_password, hash_token, verify_password
@@ -158,8 +159,11 @@ def manager(
 def operator(
     storage: TenancyStorageMemoryImpl, infra: InfraLocalImpl, outbox: OutboxStorageMemoryImpl
 ) -> TenancyOperatorManagerImpl:
-    relay = OutboxRelayImpl(outbox, EventStorageMemoryImpl(), infra.get_topics())
-    return TenancyOperatorManagerImpl(storage, relay, TenancyOperatorOptions())
+    events = EventStorageMemoryImpl()
+    relay = OutboxRelayImpl(outbox, events, infra.get_topics())
+    return TenancyOperatorManagerImpl(
+        storage, TasksStorageMemoryImpl(outbox), events, relay, TenancyOperatorOptions()
+    )
 
 
 async def sign_in(manager: TenancyManagerImpl, email: str, org_id: UUID) -> OpContext:
