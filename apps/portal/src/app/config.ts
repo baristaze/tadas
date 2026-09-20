@@ -9,6 +9,8 @@ export interface RuntimeConfig {
   apiUrl: string;
   sentryDsn: string;
   environment: string;
+  /** The deadline of every call the transport client makes; one setting, one default. */
+  requestTimeoutMs: number;
 }
 
 export interface BuildEnv {
@@ -18,9 +20,14 @@ export interface BuildEnv {
 }
 
 const LOCAL_API = "http://127.0.0.1:8000";
+export const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function timeoutOrDefault(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : DEFAULT_REQUEST_TIMEOUT_MS;
 }
 
 /** Pure: the fetched config if it is one, else the build variables. An empty
@@ -31,12 +38,14 @@ export function resolveConfig(fetched: unknown, env: BuildEnv, origin: string): 
       apiUrl: fetched.apiUrl || origin,
       sentryDsn: typeof fetched.sentryDsn === "string" ? fetched.sentryDsn : "",
       environment: typeof fetched.environment === "string" ? fetched.environment : "unknown",
+      requestTimeoutMs: timeoutOrDefault(fetched.requestTimeoutMs),
     };
   }
   return {
     apiUrl: env.VITE_API_URL || LOCAL_API,
     sentryDsn: env.VITE_SENTRY_DSN ?? "",
     environment: env.VITE_SENTRY_ENVIRONMENT ?? "local",
+    requestTimeoutMs: DEFAULT_REQUEST_TIMEOUT_MS,
   };
 }
 

@@ -24,9 +24,14 @@ variable "api_url" {
 }
 
 variable "sentry_dsn" {
-  description = "The portal's error-reporting DSN; browser DSNs are public by design. Empty turns reporting off."
+  description = "The portal's error-reporting DSN; browser DSNs are public by design. Empty turns reporting off. Its origin is the one address beside the API the Content-Security-Policy lets the page reach."
   type        = string
   default     = ""
+
+  validation {
+    condition     = var.sentry_dsn == "" || can(regex("^(https?://)[^@/]+@([^/]+)", var.sentry_dsn))
+    error_message = "sentry_dsn is empty or scheme://key@host/project."
+  }
 }
 
 variable "price_class" {
