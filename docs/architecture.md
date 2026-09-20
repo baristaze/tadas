@@ -444,8 +444,9 @@ backoff that grows with consecutive failures.
   `topics/breaker.py`) and answers the way the dependency's own failure
   answers, at once and without going out, so nothing above can tell an
   open breaker from a Valkey that is down: a `get` is a miss, a `put`
-  and an `invalidate` are dropped, `increment` is the count no count
-  that the login limit reads as fail open, and a publish is dropped, a
+  and an `invalidate` are dropped, `increment` answers no count in the
+  window asked for, which the login limit reads as fail open, and a
+  publish is dropped, a
   topic being best effort. A payload of the wrong type still raises,
   because the breaker declines to pay the timeout and never to keep the
   contract. Its four outcomes are counted under the `valkey_breaker`
@@ -499,7 +500,7 @@ everything in-process for tests.
   credential id or, on an unauthenticated route, the client address,
   admission, edge idempotency), routers for tenancy, tasks, and the
   operator plane
-  under `/v1/admin/*`, health and readiness and metrics outside `/v1`, and the
+  under `/v1/admin/*`, health, readiness, and metrics outside `/v1`, and the
   realtime channel at `/v1/realtime` opened with a single-use ticket.
   The client address is the peer's, or the one `X-Forwarded-For` names
   when the peer is one of `TADAS_TRUSTED_PROXIES` (empty locally; the
@@ -687,9 +688,9 @@ everything in-process for tests.
   list refetched. The reorder is one flow with its effects handed in
   (`src/features/tasks/reorder.ts`), so the stale case runs in a test
   without React. The socket's loop (`src/realtime/channel.ts`: ticket,
-  reconnect with a backoff that doubles and carries jitter, so tabs a
-  shared failure dropped together do not come back together, the
-  degraded polling mode, the cursor and its
+  reconnect with a backoff that doubles and carries jitter, so tabs
+  dropped by one shared failure do not come back at the same instant,
+  the degraded polling mode, the cursor and its
   replay) has no React in it and runs in its test over a fake socket and
   fake timers; the provider hands it the query cache, the transport
   client, and the connection store. A socket counts as connected once
@@ -715,9 +716,9 @@ everything in-process for tests.
   rejects a call that runs out with `RequestTimeout`, which carries the
   app's one retry (`src/api/retry.ts`, `retryAttempts` and
   `retryBaseDelayMs` in the same config): a read or a POST under an
-  `Idempotency-Key` may be sent twice and nothing else may, a deadline
-  and the three statuses that say the server could not serve this call
-  are what it retries, any other status being a decision that does not
+  `Idempotency-Key` may be sent twice and nothing else may, a deadline,
+  a connection that failed before an answer, and a 502, 503, or 504 are
+  what it retries, any other status being a decision that does not
   change for being asked again, and the wait doubles per attempt and
   carries jitter. TanStack Query's own retry is off, queries and
   mutations alike, so a failing API sees those attempts and no multiple
@@ -751,8 +752,8 @@ everything in-process for tests.
   frames mirrored by hand (`envelopes.py`); the placement rule
   (`stream.py`); and the channel (`realtime.py`): ticket, one
   subscription, pings, gaps replayed from `/v1/events`, reconnect with a
-  backoff that carries jitter, so listeners one failure dropped together
-  do not come back together. The demo recorders use it; the interval before it existed is
+  backoff that carries jitter, so listeners dropped by one failure do
+  not come back at the same instant. The demo recorders use it; the interval before it existed is
   [ADR 0004](adr/0004-demo-recorder-calls-the-api-directly.md).
 - `apps/cli` (`tadas-cli`, `tadas`): Typer over the Python client. Command
   mode (`add`, `ls`, `edit`, `done`, `reopen`, `rm`, `mv`) does one call
