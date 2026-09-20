@@ -86,7 +86,7 @@ function TaskGroups({ vm }: { vm: TasksVm }) {
     onEdit: () => vm.startEditing(entry.task.id),
     onCancelEdit: vm.stopEditing,
     onSave: (edit: Parameters<TasksVm["save"]>[1]) => void vm.save(entry.task, edit),
-    onDelete: () => vm.destroy(entry.task),
+    onDelete: () => void vm.destroy(entry.task),
   });
 
   return (

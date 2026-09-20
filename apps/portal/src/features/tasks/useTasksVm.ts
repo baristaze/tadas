@@ -186,11 +186,17 @@ export function useTasksVm() {
     }
   };
 
-  const destroy = (task: TaskView) => {
+  const destroy = async (task: TaskView) => {
     editOpen((data) => pagesWithout(data, task.id));
     editDone((data) => pagesWithout(data, task.id));
     setEditingId(null);
-    remove.mutate({ id: task.id, version: task.version }, { onError: fail, onSettled: refresh });
+    try {
+      await remove.mutateAsync({ id: task.id, version: task.version });
+    } catch (cause) {
+      fail(cause);
+    } finally {
+      refresh();
+    }
   };
 
   const drop = (movedId: string, targetId: string, side: DropSide) =>

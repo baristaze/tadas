@@ -136,3 +136,18 @@ it("sends one write for a draft submitted twice before the first answers", async
   expect(vm().saving).toBe(false);
   expect(vm().error).toBeNull();
 });
+
+it("says the first delete was refused even after a second delete started", async () => {
+  await mount();
+  await act(async () => void vm().destroy(alpha));
+  await act(async () => void vm().destroy(beta));
+  expect(net.writes.map((w) => `${w.method} ${w.path}`)).toEqual([
+    "DELETE /v1/tasks/t1?version=1",
+    "DELETE /v1/tasks/t2?version=1",
+  ]);
+  await act(async () => {
+    net.writes[0]!.reject(refused());
+    net.writes[1]!.resolve({ ...beta, deleted_at: "2026-09-20T10:02:00Z" });
+  });
+  expect(vm().error).toBe(STALE_MESSAGE);
+});

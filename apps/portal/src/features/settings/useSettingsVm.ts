@@ -34,8 +34,16 @@ export function useSettingsVm() {
     }
   };
 
-  const revokeApiKey = (id: string) =>
-    revokeKey.mutate(id, { onError: (caught) => notify(errorMessage(caught, "The key was not revoked.")) });
+  // Awaited, not handed to `mutate` as per-call callbacks: one hook holds one
+  // mutation observer, and a second revoke started before the first answers
+  // drops the first call's callbacks, so its refusal would go unsaid.
+  const revokeApiKey = async (id: string) => {
+    try {
+      await revokeKey.mutateAsync(id);
+    } catch (caught) {
+      notify(errorMessage(caught, "The key was not revoked."));
+    }
+  };
 
   // The server session is revoked, then the token and the cache go; the
   // realtime channel closes with the token. A sign-out finishes here even
@@ -65,3 +73,5 @@ export function useSettingsVm() {
     signingOut: logout.isPending,
   };
 }
+
+export type SettingsVm = ReturnType<typeof useSettingsVm>;
