@@ -34,6 +34,16 @@ skill reads `GET /v1/me/identity` to check the entry before it reads a
 tenant. Every operator read of a tenant's rows logs one line with the
 org id and the operator's identity id, and no tenant data.
 
+The two operator creates carry an `Idempotency-Key` like every
+creating route. Their markers have no tenant, so they are recorded
+under the system scope (`EMPTY_UUID`) keyed by the operator's identity
+id, through `begin_for_operator`, `finish_for_operator`, and
+`release_for_operator` on the idempotency manager, and the system-scope
+sweep that purges the platform's own markers purges them too. The CLI's
+`bootstrap` and `add-member` and the operator's `create_org` and
+`add_member` share one private path, `tenancy/impl/creates.py`, so the
+seed and the API create the same rows.
+
 ## Consequences
 
 - A support agent cannot delete an org, create one, or add a member,
@@ -45,4 +55,7 @@ org id and the operator's identity id, and no tenant data.
   posture as the cloud profiles beside it.
 - The migration renames a column in one step, which
   [ADR 0006](0006-pre-release-compatibility.md) allows before the
-  first deployment.
+  first deployment. It is the last such rename: the environments are
+  about to exist, and from the first deploy a rename is two releases.
+- Operator markers live under the system scope by design; a later
+  operator namespace of its own would move them, and nothing else.
