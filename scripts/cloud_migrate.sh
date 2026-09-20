@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Run `tadas-api migrate --all` once, as a one-off task on the API task
-# definition an environment root just applied, and fail if it fails. Used by
-# .github/workflows/deploy.yml after `terraform apply`; runs from the repo
-# root with the AWS session that applied the environment.
+# definition an environment root just applied, and fail if it fails. The
+# deploys run the migration inside the apply, before the services roll; this
+# is the by-hand runner, from the repo root with the AWS session that applied
+# the environment.
 #
-#   scripts/cloud_migrate.sh deployment/terraform/environments/dev
+#   scripts/cloud_migrate.sh deployment/terraform/environments/staging
 set -euo pipefail
 
 root="${1:?usage: cloud_migrate.sh <terraform environment dir>}"
