@@ -78,7 +78,11 @@ context on keeps the stage the callee needs.
   every operation that issues a credential or grants a membership refuses
   it by name before the ladder is asked. The operator plane (every org, delete an org) is a second
   manager, `TenancyOperatorManagerInterface`, which takes `OperatorContext`
-  and nothing else. A socket ticket is a row; redeeming it is one conditional
+  and nothing else. Deleting an org soft-deletes the row and lands
+  `tenancy.org.deleted` beside it, so every socket of the tenant closes;
+  a claim of its queued work fails the item in the same call, and once
+  the retention has passed the sweep purges every row of the tenant and
+  keeps the org row as the record. A socket ticket is a row; redeeming it is one conditional
   update on its hash, and the cache only remembers a redeemed one so a
   replay is refused without a round trip. Every unique key the schema
   declares (an identity's email, an org's slug, one live user per identity
@@ -98,17 +102,25 @@ context on keeps the stage the callee needs.
   `bootstrap` lands the org, its first user, and the owner's membership in
   one commit (`create_org_with_owner`), `add_member` the user, the
   membership, and the outbox row (`create_member`), so a concurrent
-  duplicate leaves no partial tenant behind. Removing a member ends their
-  membership with them: it is soft-deleted beside the user, hidden from
-  every read, and out of reach of a role change. A sign-in verifies the
+  duplicate leaves no partial tenant behind; the identity each mints or
+  promotes lands in that same commit, so a refused tenant leaves no
+  identity behind. Removing a member revokes their sessions and api
+  keys, each announced, and ends their membership with them in one
+  commit (`remove_member`): soft-deleted beside the user, hidden from
+  every read, out of reach of a role change, and never a live user
+  without a membership. A sign-in verifies the
   password against a fixed dummy hash when the email is unknown, so the
   response time does not say which emails exist, and runs scrypt off the
   event loop. Sessions and api keys are listed newest first and filtered
   at the storage (live at the instant asked; a member's own keys), so a
   page of dead rows never hides a live one; the purge also removes
   sessions revoked or expired and socket tickets redeemed or expired past
-  the retention. Login credentials, stored under the system scope, are
-  outside the per-tenant sweep today.
+  the retention. Login credentials are stored under the system scope,
+  and the sweep mints a service context for that scope first, so the
+  expired ones are purged like a tenant's dead sessions; api keys are
+  purged once revoked or expired. Exchanging a login for an org that is
+  gone, or a membership that has ended, is `NotAuthorized` (403), not a
+  sign-in failure: the login itself still stands.
 - `work`: the table-backed work queue in the `queue` role; a row's
   routing field is its `lane`, payload shapes are fixed per `WorkKind`
   by `WORK_PAYLOADS`. Enqueue is a create: it validates the payload, and
@@ -134,7 +146,10 @@ context on keeps the stage the callee needs.
   `TaskCursor` over (updated_at, id) for the done one, all passed
   unchanged from the manager to storage; the visibility, cursor, and
   placement rules are pure functions in `tasks.rules`, which the memory
-  impl calls and the Postgres impl mirrors in SQL. A task carries a
+  impl calls and the Postgres impl mirrors in SQL. A gap halved down to
+  float precision is renumbered: the whole open list gets whole-number
+  positions in one compare-and-set over every row (`update_tasks`),
+  each announced. A task carries a
   `version` because it is edited from two windows and two terminals at
   once ([ADR 0009](adr/0009-tasks-carry-a-version.md)): the manager's
   copy increments it on update, move, and soft delete, and the storage
@@ -198,7 +213,9 @@ context on keeps the stage the callee needs.
   carries the key, a replay answers with the row, `key` null, and
   `Idempotent-Replayed: true`, and the secret exists in one place, as a
   digest. The key lands in a unique index, so the gateway refuses one
-  longer than 255 characters with a 422. The sweep purges finished and
+  longer than 255 characters with a 422, and an empty one the same way:
+  a header present with nothing in it is a malformed request, not an
+  absence. The sweep purges finished and
   released records after the idempotency retention (24 hours; a retry
   that late begins afresh) and held pending ones past ten times the
   pending lease, a marker no retry came back for.
@@ -316,7 +333,9 @@ backoff that grows with consecutive failures.
   so a downstream that hangs cannot hold a replica's whole pool:
   `TADAS_AWS_TIMEOUT_SECONDS` bounds connect and read on every AWS client
   (`tadas.infra.aws_clients` is the one module that names botocore's
-  client configuration), `TADAS_VALKEY_TIMEOUT_SECONDS` every Valkey
+  client configuration; an SQS long poll is capped two seconds below it,
+  and at the queue's own twenty, so an empty poll answers empty instead
+  of timing out), `TADAS_VALKEY_TIMEOUT_SECONDS` every Valkey
   request, and `TADAS_OTEL_TIMEOUT_SECONDS` every trace export. The
   Sentry SDK bounds its own transport.
 
@@ -334,9 +353,11 @@ everything in-process for tests.
   realtime channel at `/v1/realtime` opened with a single-use ticket.
   The client address is the peer's, or the one `X-Forwarded-For` names
   when the peer is one of `TADAS_TRUSTED_PROXIES` (empty locally; the
-  VPC block in the cloud, where the load balancer lives), so behind the
-  load balancer the login limit still counts per client and a peer
-  outside it cannot pick its own address. The envelope carries the
+  VPC block in the cloud, where the load balancer lives; each entry is
+  an address or a CIDR block, never `*`, which the settings refuse at
+  boot because a wildcard trusts every peer and so lets any caller pick
+  its own address), so behind the load balancer the login limit still
+  counts per client and a peer outside it cannot pick its own address. The envelope carries the
   exception's code and status; for a status of 500 or more its message
   is `internal error` and the real one goes to the log under the
   request id. An unhandled exception is answered inside the
@@ -367,7 +388,8 @@ everything in-process for tests.
   `tenancy.api_key.deleted`, the relay publishes each on the bus like
   any change, and the realtime service in every process hears it and
   closes the sockets it names with 4401 (the one the session or the key
-  opened, every one of the removed user), in whichever process they
+  opened, every one of the removed user, every one of a deleted org),
+  in whichever process they
   live. The expiry is the bound that covers a frame the bus dropped:
   the redemption yields the context beside the session's or the api
   key's expiry (`SocketPrincipal`), and the handler closes the socket
@@ -385,7 +407,8 @@ everything in-process for tests.
   load balancer's idle timeout in `deployment/realtime-timeouts.json`
   (`realtime/timeouts.py`, held to the file by
   `test_realtime_timeouts.py`): the client's application ping every 25
-  seconds, whose pong carries the head seq, and the server's protocol
+  seconds from a timer of its own, whatever the inbound traffic, whose
+  pong carries the head seq, and the server's protocol
   ping every 20 seconds, which uvicorn sends (`ws_ping_interval`,
   `ws_ping_timeout` in `server_options`) and which closes the socket
   when no pong arrives within 20 more; the two together stay below the
@@ -415,11 +438,15 @@ everything in-process for tests.
   `NOOP` on one lane (`TADAS_WORKER_LANE`, or `serve --lane`), lease
   renewal and self-fencing (a renewal refused with `LeaseLost` cancels
   the running task at once, because another worker holds the item now;
-  a renewal that fails for any other reason is retried and cancels the
-  task once half the lease has passed without one, before the lease
-  expires), a liveness heartbeat in the cache, and the
+  a renewal that fails for any other reason is retried once, each
+  attempt bounded by the time left to half the lease, and the task is
+  cancelled at half the lease if none succeeds, half the lease before
+  it expires), a liveness heartbeat in the cache (each beat bounded by
+  its interval, a store that stalls or raises counting as a failed
+  beat), and the
   maintenance sweep (requeue stale leases under one service context per
-  live tenant, then purge the tenant's soft-deleted tasks, removed
+  tenant, the system scope first and deleted tenants included, then
+  purge the tenant's soft-deleted tasks, removed
   members with their ended memberships, revoked api keys, dead sessions,
   and spent socket tickets past their retention (the one hard delete,
   30 days by default), its finished idempotency records and abandoned
@@ -450,8 +477,12 @@ everything in-process for tests.
   Zustand; sign-in, the tasks screen at `/` (My and Team's tasks, open in
   manual order and done newest first, both paged by the server's cursor
   with Show more, inline edit, drag to reorder), settings at `/settings`
-  (members, api keys, sign-out), and one realtime channel that
-  invalidates queries by the entity name inside a push's `kind`. Every
+  (members, api keys, sign-out, which revokes the server session and
+  empties the query cache with the token), and one realtime channel that
+  invalidates queries by the entity name inside a push's `kind`, or by
+  the query that carries the entity (a membership, through `me`); the
+  status says connecting from the moment a socket drops, degraded from
+  the second failed cycle, and closed on a 4401. Every
   write sends the version of the task the query cache holds; a write
   the server refused because the task changed since (the drag reorder
   is the natural case, from two windows) is said in one line and the
@@ -518,9 +549,11 @@ everything in-process for tests.
   (exit 1) and never overwrites it, and `ls` follows the cursor to the
   end of the list; `listen` prints every task change as one line (who did
   what to which task) as it arrives on the channel, `--mine` for the
-  caller's own. `login` keeps a session token under `TADAS_HOME`;
-  `TADAS_TOKEN` (a session token or an api key) and `TADAS_API_URL` win
-  over it. The rules of what is shown live in `model.py`, pure and unit
+  caller's own; a task read that fails is told on stderr and the change
+  skipped, the channel is not ended by it. `login` keeps a session token
+  under `TADAS_HOME`; `logout` revokes it at the API that issued it and
+  forgets the file whatever the API answers; `TADAS_TOKEN` (a session
+  token or an api key) and `TADAS_API_URL` win over it. The rules of what is shown live in `model.py`, pure and unit
   tested; the commands run in tests against the whole API in-process.
 
 ## Deployment (`deployment/`)
