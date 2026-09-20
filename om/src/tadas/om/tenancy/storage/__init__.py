@@ -44,6 +44,18 @@ class TenancyStorageInterface(ABC):
         ...
 
     @abstractmethod
+    async def count_orgs(self) -> int:
+        """Global: how many orgs are live (not soft-deleted), the tenant count
+        the operator plane's size reads."""
+        ...
+
+    @abstractmethod
+    async def count_users(self) -> int:
+        """Global: how many users are live across every tenant, the user count
+        the operator plane's size reads; a person in two orgs counts twice."""
+        ...
+
+    @abstractmethod
     async def read_orgs(self, limit: int, after_id: UUID | None = None) -> list[Org]:
         """Cross-tenant sweep: every tenant, for the operator plane and for sweeps,
         in id order; `after_id` pages, so a sweep reaches every tenant and not

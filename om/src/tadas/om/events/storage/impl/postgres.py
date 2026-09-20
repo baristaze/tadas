@@ -1,7 +1,8 @@
+from datetime import datetime
 from typing import Any, cast
 from uuid import UUID
 
-from sqlalchemy import Table, insert, select
+from sqlalchemy import Table, func, insert, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 
@@ -70,6 +71,11 @@ class EventStoragePostgresImpl(PgStorageBase, EventStorageInterface):
         async with self._session_for(stmt) as session:
             result = await session.execute(stmt)
             return [to_model(row, Event) for row in result.scalars()]
+
+    async def count_since(self, since: datetime) -> int:
+        stmt = select(func.count()).select_from(Events).where(Events.produced_at >= since)
+        async with self._session_for(stmt) as session:
+            return (await session.execute(stmt)).scalar_one()
 
     async def read_head(self, org_id: UUID) -> int:
         # The cursor row is the head: one row, never a scan of the stream.

@@ -171,6 +171,27 @@ class TaskStorageContract:
         assert await storage.read_done_tasks(org_b, mine(author), None, limit=10) == []
         assert len(await storage.read_done_tasks(org_a, team(), None, limit=10)) == 3
 
+    async def test_the_created_count_spans_every_tenant_and_every_state(
+        self, storage: TasksStorageInterface
+    ) -> None:
+        """The traffic figure the platform's size reads: tasks created at or
+        after the cut, in whichever tenant and whatever became of them since;
+        a task created before the cut is not traffic of the window."""
+        cut = utcnow()
+        assert await storage.count_created_since(cut) == 0
+        org_a, org_b = new_id(), new_id()
+        old = make_task("before the cut").model_copy(update={"created_at": cut - timedelta(days=2)})
+        await seed(storage, org_a, old)
+        done = make_task("done since", status=TaskStatus.DONE)
+        await seed(storage, org_a, done)
+        gone = make_task("deleted since")
+        await seed(storage, org_b, gone)
+        await storage.update_task(
+            org_b, gone.model_copy(update={"deleted_at": utcnow(), "version": 2}), 1, ()
+        )
+        assert await storage.count_created_since(cut) == 2
+        assert await storage.count_created_since(cut - timedelta(days=3)) == 3
+
     async def test_a_cursor_of_another_tenant_pages_nothing(
         self, storage: TasksStorageInterface
     ) -> None:

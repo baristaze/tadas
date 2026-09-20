@@ -4,6 +4,7 @@ named atomic method of this namespace, and the one number storage assigns,
 because only the database can order commits."""
 
 from abc import ABC, abstractmethod
+from datetime import datetime
 from uuid import UUID
 
 from tadas.om.events.types.event import Event
@@ -22,6 +23,12 @@ class EventStorageInterface(ABC):
     @abstractmethod
     async def read_after(self, org_id: UUID, after_seq: int, limit: int) -> list[Event]:
         """The tenant's events with seq greater than `after_seq`, ascending."""
+        ...
+
+    @abstractmethod
+    async def count_since(self, since: datetime) -> int:
+        """Global: how many events were produced at or after `since`, across
+        every tenant; the traffic the operator plane's size reads."""
         ...
 
     @abstractmethod
