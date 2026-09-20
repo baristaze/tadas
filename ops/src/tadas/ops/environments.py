@@ -1,5 +1,7 @@
-"""One named environment: where the API is, who the operator is, and where
-its signals are read back from. `staging` and `production` are read from an
+"""One named environment: where the API is, who the operator is (a read
+entry on the allowlist, what every read runs as) and who the provisioner is
+(a write entry, used only to create the tenants a traffic run needs), and
+where its signals are read back from. `staging` and `production` are read from an
 owner-only file outside the repository, `~/.config/tadas/ops/<env>.env`;
 `local` reads the same file when it exists and otherwise the compose stack's
 own knobs (`.env.example`, then `.env`) from the repository root, so the local
@@ -24,6 +26,8 @@ KEYS = (
     "TADAS_API_URL",
     "TADAS_OPERATOR_EMAIL",
     "TADAS_OPERATOR_PASSWORD",
+    "TADAS_PROVISIONER_EMAIL",
+    "TADAS_PROVISIONER_PASSWORD",
     "TADAS_ERROR_TRACKER_URL",
     "TADAS_ERROR_TRACKER_TOKEN",
     "TADAS_ERROR_TRACKER_ORG",
@@ -59,6 +63,8 @@ class Environment:
     api_url: str
     operator_email: str | None
     operator_password: str | None
+    provisioner_email: str | None
+    provisioner_password: str | None
     error_tracker_url: str | None
     error_tracker_token: str | None
     error_tracker_org: str
@@ -141,6 +147,8 @@ def environment_of(name: str, values: Mapping[str, str]) -> Environment:
         api_url=api_url.rstrip("/"),
         operator_email=get("TADAS_OPERATOR_EMAIL"),
         operator_password=get("TADAS_OPERATOR_PASSWORD"),
+        provisioner_email=get("TADAS_PROVISIONER_EMAIL"),
+        provisioner_password=get("TADAS_PROVISIONER_PASSWORD"),
         error_tracker_url=get(
             "TADAS_ERROR_TRACKER_URL", LOCAL_ERROR_TRACKER_URL if local else None
         ),

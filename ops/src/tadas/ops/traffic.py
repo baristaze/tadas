@@ -9,7 +9,7 @@ stood at the start, see one of its own changes arrive on the socket, sign
 out. A person thinks between steps.
 
 The tenants a run needs come from the operator plane (`POST /v1/admin/orgs`
-and its members) with the read-write operator identity of the environment;
+and its members) with the provisioner identity of the environment, a write entry;
 `orgs=0` drives the org and the two people `make seed` created instead, which
 is how the local stack is exercised with nothing provisioned."""
 
@@ -372,9 +372,10 @@ async def provision(
     operator of the environment. The orgs are left behind, named
     `ops-<stamp>-<n>`, so a later run over the same environment can read what
     this one wrote; the operator plane deletes them."""
-    if not env.operator_email or not env.operator_password:
+    if not env.provisioner_email or not env.provisioner_password:
         raise ValueError(
-            f"environment {env.name!r} names no operator; set TADAS_OPERATOR_EMAIL and _PASSWORD"
+            f"environment {env.name!r} names no provisioner; "
+            "set TADAS_PROVISIONER_EMAIL and TADAS_PROVISIONER_PASSWORD"
         )
     stamp = datetime.now(UTC).strftime("%Y%m%d%H%M%S")
     password = f"ops-{uuid4().hex}"
@@ -383,7 +384,7 @@ async def provision(
     async with ApiClient(
         env.api_url, app=OPERATOR_APP, app_version=app_version(), transport=transport
     ) as client:
-        login = await client.login(env.operator_email, env.operator_password)
+        login = await client.login(env.provisioner_email, env.provisioner_password)
         client.token = login.token
         for n in range(profile.orgs):
             slug = f"ops-{stamp}-{n + 1}"

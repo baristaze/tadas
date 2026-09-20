@@ -902,7 +902,9 @@ page; this section says what exists.
   `tadas-production-investigate`, the last two chaining from the user.
   Everything else an operator reaches lives in
   `~/.config/tadas/ops/<env>.env`, owner-only: the API's URL, the
-  operator identity, the error tracker's URL and token, and for
+  operator identity (a read entry), the provisioner identity (the
+  file's one write entry, used only by the traffic generator to create
+  a run's tenants), the error tracker's URL and token, and for
   `local` the Prometheus and Jaeger URLs of the `devx` profile. Every
   skill verifies the profile it holds with `sts get-caller-identity`
   before it reads, and refuses a wider one.

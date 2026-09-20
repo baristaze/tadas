@@ -38,11 +38,13 @@ aws sts get-caller-identity --profile tadas-<env>-investigate
 
 and refused under any other identity, `tadas-admin` above all. And the
 env file `~/.config/tadas/ops/<env>.env`, owner-only and outside the
-repository, whose operator identity (`TADAS_OPERATOR_EMAIL`,
-`TADAS_OPERATOR_PASSWORD` against `TADAS_API_URL`) creates the tenants
-the sessions run in; that identity's allowlist entry is `WRITE`, and
-the tenants it creates are the generator's own, named with the run
-id, so no real tenant is touched. Never print the password or the
+repository, whose provisioner identity (`TADAS_PROVISIONER_EMAIL`,
+`TADAS_PROVISIONER_PASSWORD` against `TADAS_API_URL`) creates the tenants
+the sessions run in; that identity's allowlist entry is `write`, it is
+the one write entry the file holds, and only this generator uses it.
+The tenants it creates are the generator's own, named with the run
+id, so no real tenant is touched. With `--orgs 0` the run drives the
+seeded people and needs no provisioner. Never print the password or the
 token.
 
 ## Procedure

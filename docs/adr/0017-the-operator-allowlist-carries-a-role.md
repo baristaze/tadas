@@ -31,8 +31,11 @@ session is exchanged, because the plane admits the identity stage. The
 supporter's credential in `~/.config/tadas/ops/<env>.env` is therefore
 an operator identity's email and password whose entry is read, and the
 skill reads `GET /v1/me/identity` to check the entry before it reads a
-tenant. Every operator read of a tenant's rows logs one line with the
-org id and the operator's identity id, and no tenant data.
+tenant. The traffic generator, which creates tenants of its own, holds
+a second identity in the same file, the provisioner, whose entry is
+write; nothing else reads it. Every operator read of a tenant's rows
+logs one line with the org id and the operator's identity id, and no
+tenant data.
 
 The two operator creates carry an `Idempotency-Key` like every
 creating route. Their markers have no tenant, so they are recorded

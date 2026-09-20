@@ -35,8 +35,11 @@ cloud.
   never in the repository.
 - The application credentials live in one owner-only file per
   environment outside the repository, `~/.config/tadas/ops/<env>.env`:
-  the API URL, the operator's email and password, and the error
-  tracker's URL and token.
+  the API URL, the operator's email and password (a read entry on the
+  allowlist, what every read runs as), the provisioner's email and
+  password (a write entry, used by the traffic generator alone to
+  create the tenants a run needs), and the error tracker's URL and
+  token.
 - A skill names the profile it needs, verifies which identity it holds
   before it runs, and refuses to run under a wider one.
 - The platform's own secrets live in the secret store. No secret is in

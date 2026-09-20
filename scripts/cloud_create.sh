@@ -254,13 +254,15 @@ if [ -f "$ops_file" ]; then
 else
   say "+ write $ops_file (mode 600):"
   say "  TADAS_API_URL=$api_url"
-  say "  TADAS_OPERATOR_EMAIL="
+  say "  TADAS_OPERATOR_EMAIL=         # a read entry on the operator allowlist"
   say "  TADAS_OPERATOR_PASSWORD="
+  say "  TADAS_PROVISIONER_EMAIL=      # a write entry; only the traffic generator uses it"
+  say "  TADAS_PROVISIONER_PASSWORD="
   say "  TADAS_ERROR_TRACKER_URL="
   say "  TADAS_ERROR_TRACKER_TOKEN="
   if ! $dry_run; then
     mkdir -p "$ops_dir"
-    (umask 077; printf 'TADAS_API_URL=%s\nTADAS_OPERATOR_EMAIL=\nTADAS_OPERATOR_PASSWORD=\nTADAS_ERROR_TRACKER_URL=\nTADAS_ERROR_TRACKER_TOKEN=\n' "$api_url" > "$ops_file")
+    (umask 077; printf 'TADAS_API_URL=%s\nTADAS_OPERATOR_EMAIL=\nTADAS_OPERATOR_PASSWORD=\nTADAS_PROVISIONER_EMAIL=\nTADAS_PROVISIONER_PASSWORD=\nTADAS_ERROR_TRACKER_URL=\nTADAS_ERROR_TRACKER_TOKEN=\n' "$api_url" > "$ops_file")
     chmod 600 "$ops_file"
   fi
 fi

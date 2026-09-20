@@ -50,7 +50,8 @@ above all. Every `aws` command below carries
 
 The env file `~/.config/tadas/ops/<env>.env` is owner-only and outside
 the repository. It holds `TADAS_API_URL`, `TADAS_OPERATOR_EMAIL`,
-`TADAS_OPERATOR_PASSWORD`, `TADAS_ERROR_TRACKER_URL`, and
+`TADAS_OPERATOR_PASSWORD` (a `read` entry; the file's `write` entry,
+`TADAS_PROVISIONER_EMAIL`, belongs to the traffic generator alone), `TADAS_ERROR_TRACKER_URL`, and
 `TADAS_ERROR_TRACKER_TOKEN`; `local.env` adds `TADAS_PROMETHEUS_URL` and
 `TADAS_JAEGER_URL`. Never print the password or the token.
 

@@ -155,6 +155,8 @@ async def test_a_run_over_the_seeded_org_bounds_sessions_and_reports() -> None:
         api_url="http://test",
         operator_email=None,
         operator_password=None,
+        provisioner_email=None,
+        provisioner_password=None,
         error_tracker_url=None,
         error_tracker_token=None,
         error_tracker_org="tadas",
@@ -195,6 +197,8 @@ async def test_a_failed_session_pauses_the_worker_and_a_429_pauses_it_longer() -
         api_url="http://test",
         operator_email=None,
         operator_password=None,
+        provisioner_email=None,
+        provisioner_password=None,
         error_tracker_url=None,
         error_tracker_token=None,
         error_tracker_org="tadas",
@@ -236,12 +240,14 @@ async def test_a_failed_session_pauses_the_worker_and_a_429_pauses_it_longer() -
     assert result.outcomes[0].rate_limited
 
 
-async def test_a_run_needs_seeded_people_or_an_operator() -> None:
+async def test_a_run_needs_seeded_people_or_a_provisioner() -> None:
     env = Environment(
         name="staging",
         api_url="http://test",
         operator_email=None,
         operator_password=None,
+        provisioner_email=None,
+        provisioner_password=None,
         error_tracker_url=None,
         error_tracker_token=None,
         error_tracker_org="t",
@@ -256,7 +262,7 @@ async def test_a_run_needs_seeded_people_or_an_operator() -> None:
         await run_traffic(
             env, LIGHT, duration_seconds=1, orgs=0, transport=httpx.MockTransport(FakeApi())
         )
-    with pytest.raises(ValueError, match="operator"):
+    with pytest.raises(ValueError, match="provisioner"):
         await run_traffic(
             env, LIGHT, duration_seconds=1, orgs=1, transport=httpx.MockTransport(FakeApi())
         )

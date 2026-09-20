@@ -47,7 +47,8 @@ database login: the role denies `rds-db:connect` and holds no database
 URL. The operator identity is the env file's,
 `~/.config/tadas/ops/<env>.env`, owner-only and outside the
 repository: `TADAS_API_URL`, `TADAS_OPERATOR_EMAIL`,
-`TADAS_OPERATOR_PASSWORD`, `TADAS_ERROR_TRACKER_URL`,
+`TADAS_OPERATOR_PASSWORD` (a `read` entry; the file's `write` entry,
+`TADAS_PROVISIONER_EMAIL`, belongs to the traffic generator alone), `TADAS_ERROR_TRACKER_URL`,
 `TADAS_ERROR_TRACKER_TOKEN`, and for `local.env` the twins
 `TADAS_PROMETHEUS_URL` and `TADAS_JAEGER_URL`. The identity's allowlist
 entry is `READ`; a `WRITE` identity is refused by this skill even when
