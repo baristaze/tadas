@@ -1,22 +1,57 @@
 """The listener over the in-process API and a scripted channel: each change
 is fetched and told as one line, deletes are told from memory, `--mine`
-filters, and connection states reach stderr."""
+filters, connection states reach stderr, and a read that fails skips the
+change without ending the stream."""
 
 import asyncio
 import io
 from collections.abc import AsyncIterator, Callable
 from datetime import datetime
 
-from api_support import OWNER
-from cli_support import BOB, Stack
+import httpx
+import pytest
+from api_support import OWNER, add_member
+from cli_support import BOB, Hop, Stack
 
 from tadas.apps.cli.listen import listen
-from tadas.client.client import ApiClient
+from tadas.client.client import ApiClient, ApiError
 from tadas.client.envelopes import EntityChanged
 from tadas.client.realtime import State
 from tadas.client.types import TaskStatus, TaskView
+from tadas.om.opcontext import Role
 
 CLOCK = datetime(2026, 9, 18, 9, 30, 0)
+CAROL = {"email": "carol@example.test", "password": "pw-9999"}
+
+Failure = tuple[Callable[[httpx.Request], bool], Exception | int]
+
+
+class Flaky(Hop):
+    """The in-process API, with scripted failures: the first request each
+    predicate matches gets the exception raised or the status answered
+    instead, in order."""
+
+    def __init__(self, stack: Stack, failures: list[Failure]) -> None:
+        super().__init__(stack.tc)
+        self.failures = list(failures)
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        if self.failures and self.failures[0][0](request):
+            _, failure = self.failures.pop(0)
+            if isinstance(failure, Exception):
+                raise failure
+            return httpx.Response(
+                failure, json={"error": {"code": "unavailable", "message": "later"}}
+            )
+        return await super().handle_async_request(request)
+
+
+def is_task_read(request: httpx.Request) -> bool:
+    return request.method == "GET" and request.url.path.startswith("/v1/tasks/")
+
+
+def is_users_read(request: httpx.Request) -> bool:
+    return request.method == "GET" and request.url.path == "/v1/users"
 
 
 def test_every_change_becomes_one_line(stack: Stack) -> None:
@@ -118,3 +153,97 @@ def test_a_deleted_task_seen_before_the_listener_started_still_has_a_title(stack
         "09:30:00  Ann created a task: a task",
         "09:30:00  Ann deleted a task: a task",
     ]
+
+
+def test_a_read_that_fails_skips_the_change_and_keeps_listening(stack: Stack) -> None:
+    """The channel reconnects on its own; a task read that fails at the wire
+    or with a 5xx is this change's failure, told on stderr, and the next
+    change to the task shows its state. An actor who cannot be looked up is
+    told as someone."""
+    owner = stack.session_token(OWNER["email"], OWNER["password"])
+    bob = stack.session_token(BOB["email"], BOB["password"])
+    out, err = io.StringIO(), io.StringIO()
+    flaky = Flaky(
+        stack,
+        [
+            (is_task_read, httpx.ConnectError("refused")),
+            (is_task_read, 503),
+            (is_users_read, httpx.ReadTimeout("slow")),
+        ],
+    )
+
+    async def scripted(
+        client: ApiClient, on_state: Callable[[State], None]
+    ) -> AsyncIterator[EntityChanged]:
+        async with stack.client(bob) as as_bob, stack.client(owner) as as_owner:
+            seq = 0
+
+            async def latest() -> EntityChanged:
+                nonlocal seq
+                event = (await as_owner.events_after(seq))[-1]
+                seq = event.seq
+                return EntityChanged.of_event(event)
+
+            first = await as_bob.create_task("Migrate DB")
+            yield await latest()  # the read fails at the wire
+            await as_bob.create_task("Write changelog")
+            yield await latest()  # the read answers 503
+            await as_owner.update_task(first.id, version=first.version, status=TaskStatus.done)
+            yield await latest()  # read fine, told
+            await add_member(
+                stack.container, stack.org_id, CAROL["email"], CAROL["password"], Role.MEMBER
+            )
+            async with stack.client(stack.session_token(**CAROL)) as as_carol:
+                await as_carol.create_task("Onboard")
+            yield await latest()  # the members read for the new actor times out
+
+    async def drive() -> None:
+        async with ApiClient(
+            "http://test",
+            app="cli",
+            app_version="cli@test",
+            token=owner,
+            transport=flaky,
+        ) as client:
+            await listen(
+                client, mine=False, out=out, err=err, channel=scripted, clock=lambda: CLOCK
+            )
+
+    asyncio.run(drive())
+    assert out.getvalue().splitlines() == [
+        "listening as Ann at Acme: the team's tasks",
+        "09:30:00  Ann updated a task: Migrate DB",
+        "09:30:00  someone created a task: Onboard",
+    ]
+    assert err.getvalue().splitlines() == [
+        "09:30:00  a change was not shown, the task could not be read: refused",
+        "09:30:00  a change was not shown, the task could not be read: unavailable: later",
+    ]
+    assert flaky.failures == []  # every scripted failure was met
+
+
+def test_a_read_refused_with_401_ends_the_listener(stack: Stack) -> None:
+    """A dead credential is not a change's failure: it ends the listener,
+    which the command turns into exit 3."""
+    owner = stack.session_token(OWNER["email"], OWNER["password"])
+
+    async def scripted(
+        client: ApiClient, on_state: Callable[[State], None]
+    ) -> AsyncIterator[EntityChanged]:
+        async with stack.client(owner) as as_owner:
+            await as_owner.create_task("Migrate DB")
+            yield EntityChanged.of_event((await as_owner.events_after(0))[-1])
+
+    async def drive() -> None:
+        async with ApiClient(
+            "http://test",
+            app="cli",
+            app_version="cli@test",
+            token=owner,
+            transport=Flaky(stack, [(is_task_read, 401)]),
+        ) as client:
+            await listen(client, mine=False, out=io.StringIO(), channel=scripted)
+
+    with pytest.raises(ApiError) as refused:
+        asyncio.run(drive())
+    assert refused.value.status == 401
