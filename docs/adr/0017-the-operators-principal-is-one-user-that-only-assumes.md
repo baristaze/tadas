@@ -1,4 +1,4 @@
-# ADR 0016: The operators' principal is one IAM user that can only assume the read-only roles
+# ADR 0017: The operators' principal is one IAM user that can only assume the read-only roles
 
 **Status**: accepted (2026-09-20)
 
@@ -31,7 +31,7 @@ and the arns in `operator_principal_arns`.
 
 The supporter holds no cloud role of its own. It is the investigate
 profile plus an operator identity whose allowlist entry is read, and
-the tenant's rows are read through the operator plane (ADR 0017).
+the tenant's rows are read through the operator plane (ADR 0018).
 
 ## Consequences
 

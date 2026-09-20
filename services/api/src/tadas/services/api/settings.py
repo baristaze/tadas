@@ -3,7 +3,7 @@ knobs that belong to this service, all under the TADAS_ prefix."""
 
 import ipaddress
 
-from pydantic import field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import SettingsConfigDict
 
 from tadas.infra.impl.settings import InfraSettings
@@ -27,21 +27,34 @@ class ApiSettings(StorageSettings, InfraSettings):
 
     login_rate_limit: int = 10
     login_rate_window_seconds: int = 60
-    realtime_send_buffer_size: int = 256
+    # The socket's two send lanes, each bounded on its own. The stream lane
+    # holds the event hints, and a full one drops its oldest: the client that
+    # sees the gap replays from storage. The control lane holds the frames
+    # that say where the socket stands (hello, pong, subscribed,
+    # unsubscribed, error), and it is small because a socket offers few of
+    # them; a lane that fills is a fault of the process, not a burst.
+    realtime_send_buffer_size: int = Field(default=256, gt=0)
+    realtime_control_buffer_size: int = Field(default=16, gt=0)
     # The readiness probe's own deadline, shorter than the interval it is
     # polled on (the container probe asks every 10 seconds and gives up at 3,
     # the load balancer every 15 and gives up at 5), so a hung database or an
     # exhausted pool makes the probe answer "not ready" instead of making it
     # stop answering. Seconds.
     readiness_timeout_seconds: float = 2.0
-    # Admission: the requests this process keeps in flight at once, and what
-    # a refusal past that tells the client to wait. The bound is a multiple
-    # of what the process can actually work on, which is the declared size of
-    # the pool it opens per role and no more, since the pools carry no
-    # overflow. A burst still waits briefly on a checkout, which has a bound
-    # of its own, and only a flood is refused; it is not the login rate
-    # limit, which is fairness between subjects and fails open.
-    admission_in_flight_limit: int = 64
+    # Admission: the requests this process keeps in flight at once, counted
+    # in two budgets, and what a refusal past either tells the client to
+    # wait. Reads (GET, HEAD) and writes are budgeted apart so that a read
+    # storm, which is what a client that was offline replaying its backlog
+    # is, cannot take every slot from the commands. Together they are the one
+    # bound the process had, which is a multiple of what it can actually work
+    # on: the declared size of the pool it opens per role and no more, since
+    # the pools carry no overflow. Reads are the many and writes the few, so
+    # that is how the bound is split. A burst still waits briefly on a
+    # checkout, which has a bound of its own, and only a flood is refused; it
+    # is not the login rate limit, which is fairness between subjects and
+    # fails open.
+    admission_limit_reads: int = Field(default=48, gt=0)
+    admission_limit_writes: int = Field(default=16, gt=0)
     admission_retry_after_seconds: int = 1
 
     @field_validator("trusted_proxies")

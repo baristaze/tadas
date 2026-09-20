@@ -79,6 +79,66 @@ write down with it; the list with its own `WHERE` is caught by
 `test_the_session_reads_and_writes_are_tenant_scoped` alone, which is
 what a narrow probe should look like.
 
+## The second fence, and the control that proves it is live
+
+Since the row-level security adoption there are two fences. The
+predicate in the query is the first and the only one the business layer
+relies on; every policy in `om/migrations/sql/*/202609202000_row_level_security.up.sql`
+is the second, and it catches the predicate that went missing. A control
+against the second fence takes two runs, because a control that only
+runs with the policy live proves nothing about the suite: run one says
+the fence holds, run two says the suite would have seen the breach.
+
+## The last run over Postgres with the policy live: 2026-09-20
+
+One query, `TasksStoragePostgresImpl._live` in
+`om/src/tadas/om/tasks/storage/impl/postgres.py`, the helper the two task
+lists share and the query this runbook already names as the past hole.
+The tenant comparison came out of it:
+
+```python
+def _live(org_id: UUID, status: TaskStatus) -> ColumnElement[bool]:
+    return and_(Tasks.status == status.value, Tasks.deleted_at.is_(None))
+```
+
+Both runs are `uv run pytest -q -m integration --ignore=om/tests/integration/test_migrations.py`
+on the compose stack. The migration round trip is left out on purpose:
+it downgrades and upgrades every chain inside the run, which puts the
+policy back under the second run's feet.
+
+| Run | Policy on `core.tasks` | What the suite reported |
+|-----|------------------------|-------------------------|
+| One | live | `130 passed, 1022 deselected` |
+| Two | `ALTER TABLE core.tasks DISABLE ROW LEVEL SECURITY` | `6 failed, 124 passed, 1022 deselected` |
+
+Run one is the second fence holding: every task query lost its tenant
+and no case saw a row of another tenant, because the policy refused to
+return one. Run two is the suite proving it can see a breach. It named:
+
+```
+om/tests/integration/test_row_level_security.py::test_every_table_holds_the_policy_its_scope_declares[tasks]
+om/tests/integration/test_task_storage_postgres.py::TestTaskStoragePostgres::test_reads_are_tenant_scoped
+om/tests/integration/test_task_storage_postgres.py::TestTaskStoragePostgres::test_the_done_list_is_tenant_scoped_on_its_own
+om/tests/integration/test_task_storage_postgres.py::TestTaskStoragePostgres::test_a_cursor_of_another_tenant_pages_nothing
+om/tests/integration/test_task_storage_postgres.py::TestTaskStoragePostgres::test_create_reports_another_tenants_id_and_lands_nothing
+om/tests/integration/test_task_storage_postgres.py::TestTaskStoragePostgres::test_a_bulk_update_refuses_a_row_of_another_tenant_and_lands_none
+```
+
+Five are the cross-tenant cases the missing predicate reaches, the same
+five the memory control finds. The sixth is the policy check itself,
+which reads `pg_class` and says the table no longer holds what its scope
+declares: the run disabled a fence and the suite said so, which is the
+check doing its own job.
+
+The predicate went back and the policy with it; `make test-integration`
+is `137 passed, 1 skipped, 1022 deselected`.
+
+Running it again: take one predicate out, run the suite with the policy
+live and expect green, disable the policy on that table against the test
+database and run again and expect red, then put both back. Read the
+failures, not only the count: run two must name the cases of the methods
+that query serves.
+
 ## The hole the control found
 
 `read_done_tasks` carries a `WHERE` of its own, and the suite had a

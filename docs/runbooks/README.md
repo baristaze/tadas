@@ -15,8 +15,9 @@ touches and the ADR that explains why it is shaped that way.
   what turns on under it, and how to read that it happened.
 - [tenant-isolation.md](tenant-isolation.md): where the cross-tenant
   cases live, how to run the negative control that says what they
-  catch, what the last run showed, and what the two storage impls
-  answer differently.
+  catch over the memory impls and the two-run control that says the
+  row-level security policies are live, what the last runs showed, and
+  what the two storage impls answer differently.
 - [support.md](support.md): how a support investigation runs: a
   tenant names a problem, the supporter takes the org id, runs
   `ops-root-cause`, what it reads and in which order, and what is

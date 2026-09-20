@@ -353,7 +353,35 @@ context on keeps the stage the callee needs.
 
 Every table belongs to one database role (`core`, `activity`, `queue`,
 `admin`); the map in `tadas.om.storage.roles` decides the schema, the
-pool, and the migration chain. Migrations are hand-written SQL under
+pool, and the migration chain.
+
+Every table also belongs to one tenancy scope, and that map, in
+`tadas.om.storage.scopes`, decides the row-level security policy it
+carries: `system` for a global table (no policy), `org` for rows that
+belong to a tenant, `both` for rows that belong to a tenant and to a
+person in it, and `identity` for rows that belong to an identity and no
+tenant, which no table is today. The policy is the second fence
+([ADR 0016](adr/0016-row-level-security-is-the-second-fence.md)). The
+first one is the predicate in the query, and it is the only one the
+business layer relies on: no manager and no impl assumes a policy
+exists, and the cross-tenant cases of the contract suites run unchanged
+over Postgres. The policy is what catches the predicate that went
+missing. `PgStorageBase._session_for` is the funnel every statement
+already passes, and it takes the scope of the call, so the tenant is
+named once per transaction and not once per query: it writes
+`app.org_id`, and `app.user_id` when the call narrows to one person,
+with `set_config(..., true)`, which dies with the transaction. Each
+policy is `FOR ALL`, `USING` and `WITH CHECK` the same expression, with
+`FORCE ROW LEVEL SECURITY` so the owner is held too, and the
+application's login is never a superuser and never carries `BYPASSRLS`,
+either of which walks past every policy. A transaction that names no
+tenant reads nothing and is refused every write: fail closed, with the
+silent read the accepted price. `EMPTY_UUID` as the tenant is the system
+scope, the cross-tenant sweeps and the login lookups, spelled at the
+call site and held to the enumerated exceptions by
+`om/tests/unit/test_session_scope.py`. What proves the policy is live
+rather than merely enabled is the two-run negative control in
+[the tenant isolation runbook](runbooks/tenant-isolation.md). Migrations are hand-written SQL under
 `om/migrations/sql/<role>/` with Alembic wrappers; `core`, `activity`,
 and `queue` have chains today, and `admin` has no table yet. Each role's
 pool carries bounds of its own: a size, how long a checkout waits before
@@ -521,9 +549,15 @@ everything in-process for tests.
   is minted and belongs in neither the access log nor the metrics.
   The chain is CORS, then the request id, then admission, then the
   router. Admission is the bound on what this process has in flight
-  (`gateway/admission.py`, `TADAS_ADMISSION_IN_FLIGHT_LIMIT`): past it a
-  request is refused at once with `Unavailable` (503, code
-  `unavailable`) in the one envelope and a `Retry-After` of
+  (`gateway/admission.py`), and it is two bounds: a read lane for `GET`
+  and `HEAD` (`TADAS_ADMISSION_LIMIT_READS`) and a write lane for every
+  other method (`TADAS_ADMISSION_LIMIT_WRITES`), counted apart so that a
+  read storm, which is what a client replaying its backlog after an
+  outage is, cannot take every slot from the commands. A method the
+  process does not know is a write, since the cheaper budget is not the
+  one to hand an invented method. Past a lane's bound a request is
+  refused at once with `Unavailable` (503, code `unavailable`) in the
+  one envelope, naming the lane that is full, and a `Retry-After` of
   `TADAS_ADMISSION_RETRY_AFTER_SECONDS`, so a saturated process answers
   and says why instead of queueing work it cannot start. It is not the
   rate limit beside it, and the two fail in opposite directions: a rate
@@ -533,11 +567,14 @@ everything in-process for tests.
   inside CORS because a browser has to read the refusal and its header,
   and inside the request id because a refusal is an answer of this API
   like any other, with an id to correlate on, a line in the access log,
-  and a count of its own (`admission` / `admitted`, `refused`). The
-  three operational routes are never refused, since a saturated process
-  must still be able to say that it is saturated and the collector must
-  still be able to read by how much, and a socket holds no slot, a bound
-  a long-lived connection can fill being no bound on requests.
+  and a count per lane (`admission_reads` and `admission_writes` /
+  `admitted`, `refused`; a lane is a subsystem of its own, since the one
+  outcome counter carries the two labels every subsystem shares). The
+  three operational routes are never refused in either lane, since a
+  saturated process must still be able to say that it is saturated and
+  the collector must still be able to read by how much, and a socket
+  holds no slot, a bound a long-lived connection can fill being no bound
+  on requests.
   `/healthz` answers from the process alone and `/readyz` asks storage
   whether it can serve a request right now, under
   `TADAS_READINESS_TIMEOUT_SECONDS`, shorter than the interval it is
@@ -579,9 +616,19 @@ everything in-process for tests.
   is not a revocation: the socket carries hints, and the next request
   sees the new role.
   The login route takes the request stage alone.
-  Per socket the process keeps one bounded send buffer
-  (`realtime/send_buffer.py`, `TADAS_REALTIME_SEND_BUFFER_SIZE`) and a
-  drainer; a full buffer drops the oldest frame and the client replays.
+  Per socket the process keeps one send buffer of two bounded lanes
+  (`realtime/send_buffer.py`) and a drainer. A frame that says where the
+  socket stands is a control frame (`hello`, `pong`, `subscribed`,
+  `unsubscribed`, `error`) and an event hint is a stream frame; the
+  drainer writes the control lane first, so a burst of hints never
+  delays the pong that carries the head seq and never evicts it. A full
+  stream lane (`TADAS_REALTIME_SEND_BUFFER_SIZE`) drops its oldest
+  frame, logs it, counts it, and the client that sees the gap replays.
+  The control lane has a small bound of its own
+  (`TADAS_REALTIME_CONTROL_BUFFER_SIZE`), and a lane that fills there is
+  a fault of the process rather than a burst, so its drop is logged as
+  an error. The revocation close and the transport keepalive are not
+  buffered at all.
   A peer that drops mid-stream ends the drainer with a disconnect; the
   teardown treats that as the normal end of a socket, not an error.
   Two pings keep a socket alive, one per direction, both pinned with the
@@ -893,10 +940,10 @@ page; this section says what exists.
   `rds-db:connect`, the other environment by tag, and every `iam:*`
   write. The supporter holds no role of its own: it is the investigate
   profile plus an operator identity whose allowlist entry is read
-  ([ADR 0017](adr/0017-the-operator-allowlist-carries-a-role.md)).
+  ([ADR 0018](adr/0018-the-operator-allowlist-carries-a-role.md)).
   The principal an agent holds is the IAM user `tadas-operators`, whose
   one permission is `sts:AssumeRole` on the investigate roles
-  ([ADR 0016](adr/0016-the-operators-principal-is-one-user-that-only-assumes.md)).
+  ([ADR 0017](adr/0017-the-operators-principal-is-one-user-that-only-assumes.md)).
 - **Credentials.** Four profiles in `~/.aws/config`: `tadas-admin`,
   `tadas-operators`, `tadas-staging-investigate`,
   `tadas-production-investigate`, the last two chaining from the user.
@@ -1017,7 +1064,15 @@ sets nor lists, with a reason, as one it leaves at the local default.
 `make migrate-check` compares
 every role's ORM metadata with the migrated schema; it needs the compose
 database, so CI's integration job runs it and the fast gate does not
-([ADR 0003](adr/0003-migrate-check-in-the-integration-job.md)).
+([ADR 0003](adr/0003-migrate-check-in-the-integration-job.md)). It
+compares tables, columns, and indexes, and a policy is invisible to it,
+so `om/tests/unit/test_scopes.py` holds the scope map to the tables and
+to the migration chain in the fast gate, and
+`om/tests/integration/test_row_level_security.py` reads `pg_class` and
+`pg_policies` off the migrated database and asserts every table holds
+what its scope declares, that the login is neither a superuser nor
+`BYPASSRLS`, and that a transaction with no scope reads nothing and is
+refused its writes.
 
 ## Decisions
 

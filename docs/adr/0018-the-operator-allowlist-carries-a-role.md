@@ -1,4 +1,4 @@
-# ADR 0017: The operator allowlist carries a role, and an operator signs in as a person
+# ADR 0018: The operator allowlist carries a role, and an operator signs in as a person
 
 **Status**: accepted (2026-09-20)
 
