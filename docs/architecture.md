@@ -393,7 +393,12 @@ and secrets with interfaces, each with a local or memory impl and a
 cloud impl (Valkey, S3, SQS, Secrets Manager). Infra imports nothing
 from the object model: it has its own frozen model base, its own
 exception root (`InfraException`, with the same `http_status` and `code`
-shape the platform root has, so the gateway presents both alike), and
+shape the platform root has, so the gateway presents both alike;
+`InfraUnavailable` (503, code `unavailable`) stands beside
+`InfraNotFound` and `InfraValidationFailed` as the mirror of the
+platform's `Unavailable`, and `BackendUnreachable` is a leaf under it
+that inherits the code, so one code reaches the wire whichever side
+says the call cannot be served now), and
 the system scope as a value (`SYSTEM_SCOPE`, equal to the model's
 `EMPTY_UUID`; a unit test holds the two together). Topics today:
 `work_available` (`lane`, `kind`) and `entity_changed` (`kind`,
@@ -426,12 +431,41 @@ backoff that grows with consecutive failures.
   window by a failure between two commands. Each infra root builds one
   cache per `CacheScope` in its constructor, like every other member
   (ADR 0007), so the boot line names every scope.
+- One breaker stands in front of Valkey (`infra/breaker.py`), and there
+  is one of it: the four cache scopes and the topic publisher hold the
+  same instance, because a breaker stands for a dependency and not for
+  an interface, so the first of them to pay the timeouts opens it for
+  all of them. What it counts is the cost and not the error: a call that
+  spends the whole of `TADAS_VALKEY_TIMEOUT_SECONDS` is a failure,
+  `TADAS_VALKEY_BREAKER_FAILURES` of them in a row open it, it refuses
+  for `TADAS_VALKEY_BREAKER_COOLDOWN_SECONDS`, and then one call goes
+  through alone to decide whether it closes. It raises nothing. A
+  decoration over each interface holds it (`cache/breaker.py`,
+  `topics/breaker.py`) and answers the way the dependency's own failure
+  answers, at once and without going out, so nothing above can tell an
+  open breaker from a Valkey that is down: a `get` is a miss, a `put`
+  and an `invalidate` are dropped, `increment` is the count no count
+  that the login limit reads as fail open, and a publish is dropped, a
+  topic being best effort. A payload of the wrong type still raises,
+  because the breaker declines to pay the timeout and never to keep the
+  contract. Its four outcomes are counted under the `valkey_breaker`
+  subsystem: `opened`, `refused` once per call it turns away, `probed`
+  for the call it lets through, and `closed`. While it is open the
+  `cache` hit and miss counters and `topics` / `publish_failed` go
+  quiet, since the dependency is not being asked at all, and those
+  outcomes are what say why: an alert on `publish_failed` alone would
+  fall silent exactly when the bus is worst. `subscribe` and the
+  lifecycle calls pass through untouched, and the listener is not behind
+  the breaker at all: it is one task on a subscriber of its own, nothing
+  waits on it, and the reconnect backoff above is its bound. The memory
+  impls are not wrapped either, being a dict on the process's own event
+  loop, which cannot time out and cannot be down.
 - The AWS impls translate every driver error into an `InfraException`
   leaf (`tadas.infra.exceptions`) through the one module that names
   botocore (`tadas.infra.aws_errors`): a service answer the impl cannot
   map is `BackendFailed` under its error code; an endpoint, connection,
-  or timeout failure is `BackendUnreachable` (503) under the driver's
-  error class; any other driver error is `BackendFailed` under that
+  or timeout failure is `BackendUnreachable` under the driver's error
+  class; any other driver error is `BackendFailed` under that
   class. Not-found codes keep their `NotFound` shape. The hosted secrets
   impl answers `has` with a describe, never a fetch of the value, and
   `put` is a create with a new version on `ResourceExistsException`,
