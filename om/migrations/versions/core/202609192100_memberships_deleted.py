@@ -9,7 +9,7 @@ from tadas.om.storage.migrate import run_sql
 from tadas.om.storage.roles import DatabaseRole
 
 revision = "202609192100"
-down_revision = "202609191600"
+down_revision = "202609192001"
 branch_labels = None
 depends_on = None
 
