@@ -17,7 +17,7 @@ on the first response, and a replay says so."""
 import hashlib
 import logging
 from collections.abc import Awaitable, Callable
-from typing import Annotated
+from typing import Annotated, Protocol
 from uuid import UUID
 
 from fastapi import Depends, Header, Request, Response
@@ -28,7 +28,9 @@ from tadas.om.base import new_id
 from tadas.om.exceptions import IdempotencyAttemptLost, IdempotencyInProgress, PlatformException
 from tadas.om.idempotency import IdempotencyManagerInterface
 from tadas.om.idempotency.types.attempt import Attempt
-from tadas.om.opcontext import OpContext
+from tadas.om.idempotency.types.record import IdempotencyRecord
+from tadas.om.opcontext import OpContext, OperatorContext
+from tadas.services.api.gateway.admin import OperatorCtx
 from tadas.services.api.gateway.auth import Ctx
 from tadas.services.api.gateway.resolve import container_of
 from tadas.services.api.types.common import ErrorBody, ErrorResponse
@@ -52,6 +54,51 @@ def request_digest(method: str, path: str, body: bytes) -> str:
     return digest.hexdigest()
 
 
+class Marker(Protocol):
+    """The three moves on the marker of one principal's key, bound to the
+    principal: the tenant plane's under (tenant, user), the operator plane's
+    under (system scope, operator). `Idempotency` below runs the same
+    record-replay-finish over either."""
+
+    async def begin(self, key: str, request_digest: str, target_id: UUID) -> IdempotencyRecord: ...
+
+    async def finish(
+        self, key: str, attempt_id: UUID, status: int, body: str
+    ) -> IdempotencyRecord: ...
+
+    async def release(self, key: str, attempt_id: UUID) -> None: ...
+
+
+class TenantMarker:
+    def __init__(self, manager: IdempotencyManagerInterface, ctx: OpContext) -> None:
+        self._manager = manager
+        self._ctx = ctx
+
+    async def begin(self, key: str, request_digest: str, target_id: UUID) -> IdempotencyRecord:
+        return await self._manager.begin(self._ctx, key, request_digest, target_id)
+
+    async def finish(self, key: str, attempt_id: UUID, status: int, body: str) -> IdempotencyRecord:
+        return await self._manager.finish(self._ctx, key, attempt_id, status, body)
+
+    async def release(self, key: str, attempt_id: UUID) -> None:
+        await self._manager.release(self._ctx, key, attempt_id)
+
+
+class OperatorMarker:
+    def __init__(self, manager: IdempotencyManagerInterface, admin: OperatorContext) -> None:
+        self._manager = manager
+        self._admin = admin
+
+    async def begin(self, key: str, request_digest: str, target_id: UUID) -> IdempotencyRecord:
+        return await self._manager.begin_for_operator(self._admin, key, request_digest, target_id)
+
+    async def finish(self, key: str, attempt_id: UUID, status: int, body: str) -> IdempotencyRecord:
+        return await self._manager.finish_for_operator(self._admin, key, attempt_id, status, body)
+
+    async def release(self, key: str, attempt_id: UUID) -> None:
+        await self._manager.release_for_operator(self._admin, key, attempt_id)
+
+
 class Idempotency:
     """Wraps the one creating call of a route so the outcome cannot escape
     without being recorded: `run` begins the record, calls the handler with the
@@ -64,15 +111,9 @@ class Idempotency:
     stored, the re-mint of a secret, can be made conditional on the marker
     still holding this attempt, the way `finish` and the release are."""
 
-    def __init__(
-        self,
-        manager: IdempotencyManagerInterface,
-        ctx: OpContext,
-        key: str | None,
-        digest: str,
-    ) -> None:
-        self._manager = manager
-        self._ctx = ctx
+    def __init__(self, marker: Marker, request_id: UUID, key: str | None, digest: str) -> None:
+        self._marker = marker
+        self._request_id = request_id
         self._key = key
         self._digest = digest
         self.target_id: UUID = new_id()
@@ -85,7 +126,7 @@ class Idempotency:
             # no attempt for a write to be conditional on.
             return _json(await handler(Attempt(target_id=self.target_id)), status)
         try:
-            record = await self._manager.begin(self._ctx, self._key, self._digest, self.target_id)
+            record = await self._marker.begin(self._key, self._digest, self.target_id)
         except IdempotencyInProgress:
             OUTCOMES.labels(subsystem="idempotency", outcome="in_progress").inc()
             raise
@@ -129,7 +170,7 @@ class Idempotency:
     async def _finish(self, attempt_id: UUID, status: int, body: str) -> bool:
         assert self._key is not None
         try:
-            await self._manager.finish(self._ctx, self._key, attempt_id, status, body)
+            await self._marker.finish(self._key, attempt_id, status, body)
         except IdempotencyAttemptLost:
             self._lost("finish")
             return False
@@ -138,7 +179,7 @@ class Idempotency:
     async def _release(self, attempt_id: UUID) -> None:
         assert self._key is not None
         try:
-            await self._manager.release(self._ctx, self._key, attempt_id)
+            await self._marker.release(self._key, attempt_id)
         except IdempotencyAttemptLost:
             self._lost("release")
             return
@@ -155,7 +196,7 @@ class Idempotency:
     def _error_body(self, code: str, message: str) -> str:
         """The error envelope as the handler would have sent it, so a retry sees
         the same refusal the first attempt saw."""
-        error = ErrorBody(code=code, message=message, request_id=self._ctx.request_id)
+        error = ErrorBody(code=code, message=message, request_id=self._request_id)
         return ErrorResponse(error=error).model_dump_json()
 
     def _with_request_id(self, body: str) -> str:
@@ -183,13 +224,26 @@ def _json(view: BaseModel, status: int) -> Response:
     return Response(content=view.model_dump_json(), status_code=status, media_type=JSON)
 
 
+IdempotencyKey = Annotated[str | None, Header(min_length=1, max_length=KEY_MAX_LENGTH)]
+
+
 async def idempotency(
-    request: Request,
-    ctx: Ctx,
-    idempotency_key: Annotated[str | None, Header(min_length=1, max_length=KEY_MAX_LENGTH)] = None,
+    request: Request, ctx: Ctx, idempotency_key: IdempotencyKey = None
 ) -> Idempotency:
     digest = request_digest(request.method, request.url.path, await request.body())
-    return Idempotency(container_of(request).managers.idempotency, ctx, idempotency_key, digest)
+    marker = TenantMarker(container_of(request).managers.idempotency, ctx)
+    return Idempotency(marker, ctx.request_id, idempotency_key, digest)
+
+
+async def operator_idempotency(
+    request: Request, admin: OperatorCtx, idempotency_key: IdempotencyKey = None
+) -> Idempotency:
+    """The operator plane's creating routes carry a key like every other: the
+    marker is the operator's, in the system scope, and the run is the same."""
+    digest = request_digest(request.method, request.url.path, await request.body())
+    marker = OperatorMarker(container_of(request).managers.idempotency, admin)
+    return Idempotency(marker, admin.request_id, idempotency_key, digest)
 
 
 Idem = Annotated[Idempotency, Depends(idempotency)]
+OperatorIdem = Annotated[Idempotency, Depends(operator_idempotency)]

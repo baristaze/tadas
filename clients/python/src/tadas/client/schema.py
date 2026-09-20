@@ -21,6 +21,22 @@ class AddTaskRequest(BaseModel):
     title: Annotated[str, Field(max_length=500, title='Title')]
 
 
+class CreateOrgRequest(BaseModel):
+    """
+    An org with its owner, as `bootstrap` seeds one. The owner's identity
+    is created with the password, or kept with its own when the email is
+    known already.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    name: Annotated[str, Field(max_length=200, min_length=1, title='Name')]
+    owner_email: Annotated[str, Field(min_length=1, title='Owner Email')]
+    owner_name: Annotated[str, Field(max_length=200, min_length=1, title='Owner Name')]
+    owner_password: Annotated[str, Field(min_length=1, title='Owner Password')]
+    slug: Annotated[str, Field(max_length=100, min_length=1, title='Slug')]
+
+
 class CredentialKind(StrEnum):
     api_key = 'api_key'
     session_token = 'session_token'
@@ -102,6 +118,20 @@ class Permission(StrEnum):
     write = 'write'
     manage_members = 'manage_members'
     manage_keys = 'manage_keys'
+
+
+class PlatformSizeView(BaseModel):
+    """
+    How big the platform is, what the first responder to an alarm reads
+    before it escalates: live tenants and users, and the tasks created and
+    events produced in the last twenty-four hours, a window that starts at
+    `since` and ends at the read.
+    """
+    events_last_24h: Annotated[int, Field(title='Events Last 24H')]
+    since: Annotated[AwareDatetime, Field(title='Since')]
+    tasks_last_24h: Annotated[int, Field(title='Tasks Last 24H')]
+    tenants: Annotated[int, Field(title='Tenants')]
+    users: Annotated[int, Field(title='Users')]
 
 
 class Role(StrEnum):
@@ -208,6 +238,21 @@ class AddApiKeyRequest(BaseModel):
     name: Annotated[str, Field(title='Name')]
     role: Role
     ttl_days: Annotated[TtlDays | None, Field(title='Ttl Days')] = None
+
+
+class AddMemberRequest(BaseModel):
+    """
+    A person in the org, as `add-member` seeds one; the owner and the
+    service role are refused, since the one owner is the one the create
+    minted.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    display_name: Annotated[str, Field(max_length=200, min_length=1, title='Display Name')]
+    email: Annotated[str, Field(min_length=1, title='Email')]
+    password: Annotated[str, Field(min_length=1, title='Password')]
+    role: Role
 
 
 class ApiKeyView(BaseModel):
