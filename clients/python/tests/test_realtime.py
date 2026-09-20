@@ -237,6 +237,22 @@ async def test_a_refused_ticket_stops_the_channel() -> None:
     assert channel.state == "closed"
 
 
+async def test_a_4401_mid_stream_stops_the_channel_after_what_arrived() -> None:
+    """The server closes an open socket with 4401 when the session behind it
+    expires or is revoked; what arrived before stays delivered, and the
+    channel raises its refusal instead of reconnecting."""
+    socket = FakeSocket([HELLO, SUBSCRIBED, push(1), Close(4401, "credential_expired")])
+    states: list[str] = []
+    channel = Channel(client_over([]), on_state=states.append, connect=connect_to([socket], []))
+    seen: list[int] = []
+    with pytest.raises(ChannelRefused, match="credential_expired"):
+        async for change in channel:
+            seen.append(change.seq)
+    assert seen == [1]
+    assert channel.state == "closed"
+    assert states == ["connecting", "open", "closed"]
+
+
 async def test_silence_is_answered_with_a_ping(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(realtime, "MIN_PING_SECONDS", 0.01)
     hello = json.loads(HELLO)
