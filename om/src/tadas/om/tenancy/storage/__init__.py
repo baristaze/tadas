@@ -109,6 +109,19 @@ class TenancyStorageInterface(ABC):
         ...
 
     @abstractmethod
+    async def issue_api_key(
+        self, org_id: UUID, api_key: ApiKey, outbox_row: OutboxRow
+    ) -> tuple[ApiKey, bool]:
+        """The create of a key: lands the key and its outbox row together and
+        returns `(api_key, True)`. When the id is already written, the rerun of
+        a create that issues a secret, it writes the new `key_hash` (with
+        `updated_at` and `updated_by`) onto that row instead, lands no outbox
+        row, and returns `(the row as stored, False)`; the row keeps its name,
+        role, expiry, and issuer. An id written under another issuer raises
+        Conflict and changes nothing."""
+        ...
+
+    @abstractmethod
     async def write_api_key(
         self, org_id: UUID, api_key: ApiKey, outbox_row: OutboxRow | None = None
     ) -> None: ...

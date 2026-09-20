@@ -128,12 +128,20 @@ class TenancyManagerInterface(ABC):
 
     @abstractmethod
     async def service_context(self, rctx: RequestContext, org_id: UUID, user_id: UUID) -> OpContext:
-        """Platform-internal: rebuilds a person's principal under the service role."""
+        """Platform-internal: the context a claimed work item runs under. Minted
+        for the tenant on the service role, with `user_id` kept as the
+        attribution: the person authorized the work once, at enqueue, so only
+        the org must be live, not their user or membership; a member who has
+        left does not stop the work they asked for. A deleted org is refused
+        with InvalidCredential."""
         ...
 
     @abstractmethod
     async def service_contexts(self, rctx: RequestContext) -> list[OpContext]:
-        """Platform-internal: one service context per live tenant, for sweeps."""
+        """Platform-internal: one service context per live tenant, for sweeps.
+        Minted for the tenant, not for a member: it carries the tenant, the
+        service role, and the system user (`EMPTY_UUID`) as its user id, so a
+        tenant whose members have all left is still swept."""
         ...
 
     # The principal.
@@ -199,9 +207,12 @@ class TenancyManagerInterface(ABC):
         ttl: timedelta | None = None,
         api_key_id: UUID | None = None,
     ) -> IssuedApiKey:
-        """`api_key_id`, when given, is the id a retried request carries; a key
-        that already exists under it raises Conflict, because its secret was
-        shown once and cannot be shown again."""
+        """Role-capped at the caller's role; the service role is refused by name.
+        `api_key_id`, when given, is the id a retried request carries. A key
+        that already exists under it is the rerun of a create that issues a
+        secret: the secret is re-minted on that row in the same write and a
+        fresh `IssuedApiKey` with the same id comes back, since the first secret
+        reached no one; the old secret stops authenticating."""
         ...
 
     @abstractmethod

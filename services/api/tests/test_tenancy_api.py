@@ -1,3 +1,4 @@
+from datetime import timedelta
 from pathlib import Path
 from uuid import UUID, uuid4
 
@@ -7,6 +8,7 @@ from api_support import OWNER, add_member, build_container, run, seed_request, s
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
+from tadas.om.idempotency.impl.manager import IdempotencyOptions
 from tadas.om.opcontext import Role
 from tadas.services.api.app import create_app
 from tadas.services.api.container import AppContainer
@@ -94,6 +96,64 @@ async def test_api_key_creation_replays_on_the_same_idempotency_key(
     assert revoked.status_code == 200 and revoked.json()["deleted_at"] is not None
     refused = await client.get("/v1/me", headers={"Authorization": f"Bearer {first.json()['key']}"})
     assert refused.status_code == 401
+
+
+async def test_a_member_cannot_mint_a_service_key(
+    client: httpx.AsyncClient, container: AppContainer, owner: dict[str, str]
+) -> None:
+    org_id = UUID((await client.get("/v1/orgs/current", headers=owner)).json()["id"])
+    await add_member(container, org_id, "bob@example.test", "pw-1234", Role.MEMBER)
+    bob = await sign_in_as(client, "bob@example.test", "pw-1234", org_id)
+    for headers in (bob, owner):
+        refused = await client.post(
+            "/v1/api-keys", headers=headers, json={"name": "svc", "role": "service"}
+        )
+        assert refused.status_code == 422, refused.text
+        assert refused.json()["error"]["code"] == "validation_failed"
+    assert (await client.get("/v1/api-keys", headers=owner)).json() == []
+
+
+async def test_a_crash_between_the_key_create_and_finish_reissues_the_secret(
+    client: httpx.AsyncClient,
+    container: AppContainer,
+    owner: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The key landed, then the process died before the outcome reached the
+    # marker, so the secret reached no one. The retry takes the marker over and
+    # runs the create again on the same id: a fresh secret on the same key.
+    manager = container.managers.idempotency
+    monkeypatch.setattr(manager, "_options", IdempotencyOptions(pending_ttl=timedelta(0)))
+    original_finish = manager.finish
+    crashed = False
+
+    async def crash_once(ctx, key, status, body):
+        nonlocal crashed
+        if not crashed:
+            crashed = True
+            raise RuntimeError("the process died before finish")
+        return await original_finish(ctx, key, status, body)
+
+    monkeypatch.setattr(manager, "finish", crash_once)
+    headers = {**owner, "Idempotency-Key": "key-crash-1"}
+    body = {"name": "ci", "role": "member"}
+    first = await client.post("/v1/api-keys", headers=headers, json=body)
+    assert first.status_code == 500 and crashed
+    keys = (await client.get("/v1/api-keys", headers=owner)).json()
+    assert len(keys) == 1, "the create landed before the crash"
+
+    retry = await client.post("/v1/api-keys", headers=headers, json=body)
+    assert retry.status_code == 201, retry.text
+    assert "Idempotent-Replayed" not in retry.headers
+    assert retry.json()["api_key"]["id"] == keys[0]["id"]
+    assert (await client.get("/v1/api-keys", headers=owner)).json() == [retry.json()["api_key"]]
+    as_machine = await client.get(
+        "/v1/me", headers={"Authorization": f"Bearer {retry.json()['key']}"}
+    )
+    assert as_machine.status_code == 200, as_machine.text
+    replay = await client.post("/v1/api-keys", headers=headers, json=body)
+    assert replay.status_code == 201 and replay.headers["Idempotent-Replayed"] == "true"
+    assert replay.json() == retry.json()
 
 
 async def test_api_key_ttl_is_bounded_on_the_wire(

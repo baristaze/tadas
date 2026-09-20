@@ -213,6 +213,7 @@ def test_build_context_copies_the_request_stage_and_reads_security() -> None:
     assert ctx.credential_kind is ctx.security.credential_kind
     assert ctx.credential_id == ctx.security.credential_id
     assert ctx.org_id == ctx.security.org_id and ctx.user_id == ctx.security.user_id
+    assert ctx.role is ctx.security.role
 
 
 # The scopes: typed assignments pyright proves, and the runtime reads them.

@@ -15,7 +15,24 @@ from contracts.factories import (
 )
 from tadas.om.base import new_id, utcnow
 from tadas.om.exceptions import Conflict, TenantMismatch
+from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.tenancy.storage import TenancyStorageInterface
+from tadas.om.tenancy.types.api_key import ApiKey
+
+
+def make_key_row(api_key: ApiKey) -> OutboxRow:
+    """The outbox row a key's create lands with; the memory outbox the root
+    wires receives it, the Postgres one inserts it in the same commit."""
+    return OutboxRow(
+        id=new_id(),
+        created_at=utcnow(),
+        kind="tenancy.api_key.created",
+        target_id=api_key.id,
+        payload={"name": api_key.name},
+        actor_id=api_key.user_id,
+        request_id=new_id(),
+        app="api",
+    )
 
 
 class TenancyStorageContract:
@@ -145,6 +162,40 @@ class TenancyStorageContract:
         await storage.write_session(org.id, revoked)
         assert revoked not in await storage.read_sessions(org.id, user_id, limit=10)
         assert await storage.read_session(org.id, revoked.id) == revoked
+
+    async def test_issue_api_key_creates_once_and_reissues_the_secret_on_a_rerun(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        org = make_org()
+        user_id = new_id()
+        first_hash, second_hash = uuid4().hex, uuid4().hex
+        api_key = make_api_key(user_id, first_hash)
+        assert await storage.issue_api_key(org.id, api_key, make_key_row(api_key)) == (
+            api_key,
+            True,
+        )
+        # The rerun presents the same id with a new digest, and a name and a
+        # clock of its own; only the digest (and the update stamp) lands.
+        later = utcnow() + timedelta(seconds=1)
+        rerun = api_key.model_copy(
+            update={"key_hash": second_hash, "name": "renamed", "updated_at": later}
+        )
+        stored, created = await storage.issue_api_key(org.id, rerun, make_key_row(rerun))
+        assert created is False
+        assert (stored.id, stored.name, stored.created_at) == (
+            api_key.id,
+            api_key.name,
+            api_key.created_at,
+        )
+        assert (stored.key_hash, stored.updated_at) == (second_hash, later)
+        assert await storage.read_api_key(org.id, api_key.id) == stored
+        assert await storage.read_api_key_by_hash(first_hash) is None
+        assert await storage.read_api_key_by_hash(second_hash) == (org.id, stored)
+        # Another issuer presenting the id is refused and changes nothing.
+        other = rerun.model_copy(update={"user_id": new_id(), "key_hash": uuid4().hex})
+        with pytest.raises(Conflict):
+            await storage.issue_api_key(org.id, other, make_key_row(other))
+        assert await storage.read_api_key(org.id, api_key.id) == stored
 
     async def test_api_key_lookup_by_hash_returns_the_tenant(
         self, storage: TenancyStorageInterface
