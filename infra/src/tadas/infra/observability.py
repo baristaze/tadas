@@ -15,6 +15,8 @@ from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExport
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.trace import Link
+from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
 
 request_id_var: ContextVar[str | None] = ContextVar("tadas_request_id", default=None)
@@ -129,6 +131,36 @@ def current_trace_id() -> str | None:
     if not span_context.is_valid:
         return None
     return format(span_context.trace_id, "032x")
+
+
+TRACEPARENT = "traceparent"
+_propagator = TraceContextTextMapPropagator()
+
+
+def current_traceparent() -> str | None:
+    """The W3C `traceparent` of the span in progress, which is the form a
+    handoff carries: an id names a trace, and only the header carries what a
+    later span links to. Empty when no tracer is configured or no span is
+    open, and the far side then starts a trace of its own."""
+    carrier: dict[str, str] = {}
+    _propagator.inject(carrier)
+    return carrier.get(TRACEPARENT)
+
+
+def links_to(traceparent: str | None) -> tuple[Link, ...]:
+    """The link a span raises against the trace context a handoff carried. A
+    link and not a parent: a durable queue holds an item well past the end of
+    the request that filled it, so the causal edge joins two traces instead of
+    stretching one over both. Empty when the handoff carried no trace context
+    or carried one this version cannot read, and the span then starts a trace
+    of its own."""
+    if not traceparent:
+        return ()
+    extracted = _propagator.extract({TRACEPARENT: traceparent})
+    span_context = trace.get_current_span(extracted).get_span_context()
+    if not span_context.is_valid:
+        return ()
+    return (Link(span_context),)
 
 
 def metrics_exposition() -> tuple[bytes, str]:
