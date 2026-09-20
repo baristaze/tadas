@@ -12,7 +12,8 @@ from tadas.infra.observability import request_id_var
 from tadas.om.base import EMPTY_UUID, new_id, utcnow
 from tadas.om.exceptions import LeaseLost
 from tadas.om.opcontext import OpContext, RequestContext
-from tadas.om.outbox.types.row import outbox_row, snapshot
+from tadas.om.outbox.storage import OutboxStorageInterface
+from tadas.om.outbox.types.row import OutboxRow, outbox_row, snapshot
 from tadas.om.tasks.types.task import Task
 from tadas.om.work import WorkManagerInterface
 from tadas.om.work.types.handler import WorkHandlerInterface
@@ -148,6 +149,12 @@ def start_loop(
         options=options,
     )
     return loop, asyncio.create_task(loop.run())
+
+
+async def claim_all(outbox: OutboxStorageInterface) -> list[tuple[UUID, OutboxRow]]:
+    """What the sweep would claim now, with no grace and no delay after it."""
+    zero = timedelta(0)
+    return await outbox.claim_pending(100, utcnow(), zero, zero, zero)
 
 
 async def until(predicate: Callable[[], bool], within: float = 3.0) -> None:
@@ -354,17 +361,19 @@ async def test_sweep_relays_the_outbox_and_purges_done_rows(tmp_path: Path) -> N
         updated_by=ctx.user_id,
         title="left behind",
     )
-    row = outbox_row(ctx, "tasks.task.created", task.id, snapshot(task))
+    row = outbox_row(ctx, "tasks.task.created", task.id, snapshot(task)).model_copy(
+        update={"created_at": now - timedelta(minutes=1)}  # older than the relay's grace
+    )
     await container.storage.get_tasks_storage().write_task(ctx.org_id, task, row)
     outbox = container.storage.get_outbox_storage()
-    assert [r.id for _, r in await outbox.read_pending(10)] == [row.id]
+    assert [r.id for _, r in await claim_all(outbox)] == [row.id]
     loop, task_ = start_loop(
         container, NoopHandlerImpl(), fast_options(outbox_retention=timedelta(0))
     )
     await until(lambda: loop.sweeps >= 2)
     loop.stop()
     await task_
-    assert await outbox.read_pending(10) == [], "the sweep relayed the row"
+    assert await claim_all(outbox) == [], "the sweep relayed the row"
     events = await container.managers.events.get_events(ctx, after_seq=0, limit=10)
     assert [(e.id, e.kind, e.target_id) for e in events] == [(row.id, row.kind, task.id)]
     # With no retention the second sweep purged the done row: nothing pending,
