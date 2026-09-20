@@ -1,9 +1,9 @@
-import asyncio
 from datetime import timedelta
 from uuid import UUID
 
 import pytest
 
+from contracts.racing import race
 from tadas.om.base import new_id, utcnow
 from tadas.om.exceptions import DuplicateWorkItem, TenantMismatch
 from tadas.om.work.storage import WorkStorageInterface
@@ -58,25 +58,31 @@ class WorkStorageContract:
         assert await storage.claim_next(lane, [WorkKind.NOOP], "w2", LEASE) is None
         assert await storage.read_item(org, item.id) == claimed
 
-    async def test_a_raced_claim_admits_exactly_one(
+    async def test_two_claims_admit_exactly_one(
         self, storage: WorkStorageInterface, lane: str
     ) -> None:
-        # Two workers claim the one available item at the same moment. The
-        # claim is one statement, so exactly one of them holds the item
-        # afterwards, and the row names that worker with one attempt spent.
+        # Two workers reach for the one available item. The claim is one
+        # statement, so exactly one of them holds the item afterwards, and the
+        # row names that worker with one attempt spent. See contracts/racing.py
+        # for what each impl's run of this proves.
         org = new_id()
         item = make_item(lane=lane)
         await storage.create_item(org, item)
-        outcomes = await asyncio.gather(
+        run = await race(
             storage.claim_next(lane, [WorkKind.NOOP], "w1", LEASE),
             storage.claim_next(lane, [WorkKind.NOOP], "w2", LEASE),
         )
-        winners = [claimed for claimed in outcomes if claimed is not None]
-        assert len(winners) == 1
-        claimed_org, claimed = winners[0]
+        assert len(run.admitted) == 1, run.summary()
+        winner = run.admitted[0]
+        assert winner is not None
+        claimed_org, claimed = winner
         assert claimed_org == org and claimed.id == item.id
         assert claimed.claimed_by in ("w1", "w2") and claimed.attempts == 1
         assert claimed.claim_token is not None
+        assert await storage.read_item(org, item.id) == claimed
+        # The refusal the claim gives whoever arrives after it: the item is
+        # held, so a third worker finds nothing and the row is untouched.
+        assert await storage.claim_next(lane, [WorkKind.NOOP], "w3", LEASE) is None
         assert await storage.read_item(org, item.id) == claimed
 
     async def test_claim_takes_the_oldest_available_in_its_queue(

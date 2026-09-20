@@ -1,9 +1,9 @@
-import asyncio
 from datetime import datetime, timedelta
 from uuid import UUID
 
 import pytest
 
+from contracts.racing import race
 from tadas.om.base import new_id, utcnow
 from tadas.om.exceptions import DuplicateIdempotencyKey, TenantMismatch
 from tadas.om.idempotency.storage import IdempotencyStorageInterface
@@ -180,30 +180,34 @@ class IdempotencyStorageContract:
         assert await rearm(org) is None
         assert await storage.read_record(org, record.user_id, record.key) == finished
 
-    async def test_a_raced_rearm_admits_exactly_one(
-        self, storage: IdempotencyStorageInterface
-    ) -> None:
-        # Two retries find the same released marker at the same moment. The
-        # re-arm is one conditional write, so exactly one of them holds the
-        # marker afterwards, and the record names that one's attempt.
+    async def test_two_rearms_admit_exactly_one(self, storage: IdempotencyStorageInterface) -> None:
+        # Two retries reach the same released marker. The re-arm is one
+        # conditional write, so exactly one of them holds the marker
+        # afterwards, and the record names that one's attempt. See
+        # contracts/racing.py for what each impl's run of this proves.
         org = new_id()
         record = make_record().model_copy(update={"attempt_id": None})
         await storage.write_record(org, record)
         restarted_at = utcnow()
         attempts = [new_id(), new_id()]
-        outcomes = await asyncio.gather(
+        run = await race(
             *(
                 storage.rearm_released(org, record.user_id, record.key, restarted_at, attempt_id)
                 for attempt_id in attempts
             )
         )
-        winners = [armed for armed in outcomes if armed is not None]
-        assert len(winners) == 1
+        assert len(run.admitted) == 1, run.summary()
         stored = await storage.read_record(org, record.user_id, record.key)
-        assert stored is not None and stored == winners[0]
+        assert stored is not None and stored == run.admitted[0]
         assert stored.attempt_id in attempts
         assert stored.pending and stored.created_at == restarted_at
         assert stored.target_id == record.target_id
+        # The refusal the conditional write gives whoever arrives after it:
+        # the marker is armed, so there is no released marker to re-arm.
+        assert (
+            await storage.rearm_released(org, record.user_id, record.key, utcnow(), new_id())
+            is None
+        )
 
     async def test_take_over_is_one_conditional_write(
         self, storage: IdempotencyStorageInterface
@@ -253,18 +257,19 @@ class IdempotencyStorageContract:
         assert await take_over(org, later) is None
         assert await take_over(new_id(), later) is None
 
-    async def test_a_raced_take_over_admits_exactly_one(
+    async def test_two_take_overs_admit_exactly_one(
         self, storage: IdempotencyStorageInterface
     ) -> None:
-        # Two retries find the same abandoned marker at the same moment. The
-        # take-over is one conditional write, so exactly one of them holds the
-        # marker afterwards, and the record names that one's attempt.
+        # Two retries reach the same abandoned marker. The take-over is one
+        # conditional write, so exactly one of them holds the marker
+        # afterwards, and the record names that one's attempt. See
+        # contracts/racing.py for what each impl's run of this proves.
         org = new_id()
         record = make_record(created_at=utcnow() - timedelta(minutes=10))
         await storage.write_record(org, record)
         cutoff, restarted_at = utcnow() - timedelta(minutes=2), utcnow()
         attempts = [new_id(), new_id()]
-        outcomes = await asyncio.gather(
+        run = await race(
             *(
                 storage.take_over_pending(
                     org, record.user_id, record.key, cutoff, restarted_at, attempt_id
@@ -272,12 +277,19 @@ class IdempotencyStorageContract:
                 for attempt_id in attempts
             )
         )
-        winners = [taken for taken in outcomes if taken is not None]
-        assert len(winners) == 1
+        assert len(run.admitted) == 1, run.summary()
         stored = await storage.read_record(org, record.user_id, record.key)
-        assert stored is not None and stored == winners[0]
+        assert stored is not None and stored == run.admitted[0]
         assert stored.attempt_id in attempts
         assert stored.pending and stored.created_at == restarted_at
+        # The refusal the conditional write gives whoever arrives after it:
+        # the lease restarted, so the same cut-off matches nothing.
+        assert (
+            await storage.take_over_pending(
+                org, record.user_id, record.key, cutoff, utcnow(), new_id()
+            )
+            is None
+        )
 
     async def test_purge_counts_finished_and_released_past_the_cut_and_pending_past_theirs(
         self, storage: IdempotencyStorageInterface

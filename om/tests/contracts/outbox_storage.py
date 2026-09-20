@@ -3,12 +3,12 @@ with the task it belongs to, the sweep claims it across tenants one attempt
 at a time, the relay marks it done or records the failure, and the purge
 deletes what is settled."""
 
-import asyncio
 from datetime import datetime, timedelta
 from uuid import UUID
 
 import pytest
 
+from contracts.racing import race
 from contracts.task_storage import make_task
 from tadas.om.base import new_id, utcnow
 from tadas.om.outbox.storage import OutboxStorageInterface
@@ -113,9 +113,12 @@ class OutboxStorageContract:
         again = [r for _, r in await claim_all(outbox, now=later) if r.id == poison_row.id]
         assert len(again) == 1 and again[0].attempts == 2 and again[0].last_error == "bus down"
 
-    async def test_two_concurrent_sweeps_claim_disjoint_sets(
+    async def test_two_sweeps_claim_disjoint_sets(
         self, tasks: TasksStorageInterface, outbox: OutboxStorageInterface
     ) -> None:
+        # Two relays sweep the same four rows, two apiece. The claim spends an
+        # attempt and sets the next one in the one write, so no row is in both
+        # sets. See contracts/racing.py for what each impl's run of this proves.
         org = new_id()
         rows: list[OutboxRow] = []
         for _ in range(4):
@@ -124,14 +127,17 @@ class OutboxStorageContract:
             await tasks.create_task(org, task, row)
             rows.append(row)
         now = utcnow()
-        outcomes = await asyncio.gather(
+        run = await race(
             outbox.claim_pending(2, now, NO_DELAY, timedelta(hours=1), timedelta(hours=1)),
             outbox.claim_pending(2, now, NO_DELAY, timedelta(hours=1), timedelta(hours=1)),
         )
-        first = {r.id for _, r in outcomes[0]}
-        second = {r.id for _, r in outcomes[1]}
-        assert first and second and not (first & second)
+        first = {r.id for _, r in run.outcomes[0]}
+        second = {r.id for _, r in run.outcomes[1]}
+        assert first and second and not (first & second), run.summary()
         assert (first | second) >= {row.id for row in rows}
+        # The refusal the claim gives whoever sweeps after it: every row is
+        # spent and waiting out its delay, so a third sweep claims nothing.
+        assert await claim_all(outbox, now=now) == []
 
     async def test_a_row_younger_than_the_grace_is_left_to_the_request_path(
         self, tasks: TasksStorageInterface, outbox: OutboxStorageInterface

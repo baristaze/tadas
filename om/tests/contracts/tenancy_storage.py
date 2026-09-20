@@ -1,4 +1,3 @@
-import asyncio
 from datetime import timedelta
 from unittest.mock import ANY
 from uuid import UUID, uuid4
@@ -14,6 +13,7 @@ from contracts.factories import (
     make_socket_ticket,
     make_user,
 )
+from contracts.racing import race
 from tadas.om.base import new_id, utcnow
 from tadas.om.exceptions import Conflict, NotFound, RowDeleted, TenantMismatch, UniqueKeyTaken
 from tadas.om.opcontext import Role
@@ -693,16 +693,18 @@ class TenancyStorageContract:
     async def test_a_socket_ticket_is_consumed_by_exactly_one_redeemer(
         self, storage: TenancyStorageInterface
     ) -> None:
+        # Five sockets present the one ticket. The consume is one conditional
+        # write, so exactly one of them is let in. See contracts/racing.py for
+        # what each impl's run of this proves.
         org = make_org()
         ticket = make_socket_ticket(new_id(), uuid4().hex)
         await storage.write_socket_ticket(org.id, ticket)
         redeemed_at = utcnow()
-        outcomes = await asyncio.gather(
+        run = await race(
             *(storage.consume_socket_ticket(ticket.ticket_hash, redeemed_at) for _ in range(5))
         )
-        consumed = [o for o in outcomes if o is not None]
-        assert len(consumed) == 1
-        assert consumed[0] == (org.id, ticket.model_copy(update={"redeemed_at": redeemed_at}))
+        assert len(run.admitted) == 1, run.summary()
+        assert run.admitted[0] == (org.id, ticket.model_copy(update={"redeemed_at": redeemed_at}))
         assert await storage.consume_socket_ticket(ticket.ticket_hash, utcnow()) is None
         assert await storage.consume_socket_ticket("missing", utcnow()) is None
 

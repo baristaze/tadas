@@ -1,7 +1,6 @@
-import asyncio
-
 import pytest
 
+from contracts.racing import race
 from tadas.om.base import new_id, utcnow
 from tadas.om.events.storage import EventStorageInterface
 from tadas.om.events.types.event import Event
@@ -64,27 +63,28 @@ class EventStorageContract:
         assert again == first and first.seq == 1
         assert [e.seq for e in await storage.read_after(org, 0, 10)] == [1]
 
-    async def test_concurrent_appends_never_share_or_skip_a_seq(
+    async def test_many_appends_never_share_or_skip_a_seq(
         self, storage: EventStorageInterface
     ) -> None:
-        # N appends race on one tenant's cursor and leave with 1..N: no gap, no
-        # duplicate, and the head is the last of them.
+        # N appends reach one tenant's cursor and leave with 1..N: no gap, no
+        # duplicate, and the head is the last of them. See contracts/racing.py
+        # for what each impl's run of this proves.
         org, n = new_id(), 32
-        appended = await asyncio.gather(
-            *(storage.append_event(org, make_event()) for _ in range(n))
-        )
+        run = await race(*(storage.append_event(org, make_event()) for _ in range(n)))
+        appended = run.outcomes
         assert sorted(e.seq for e in appended) == list(range(1, n + 1))
         assert [e.seq for e in await storage.read_after(org, 0, n * 2)] == list(range(1, n + 1))
         assert await storage.read_head(org) == n
+        # The cursor the appends left is the one the next append takes from.
+        assert (await storage.append_event(org, make_event())).seq == n + 1
 
-    async def test_concurrent_appends_keep_one_cursor_per_tenant(
+    async def test_many_appends_keep_one_cursor_per_tenant(
         self, storage: EventStorageInterface
     ) -> None:
-        # Two tenants racing at once never see each other's numbers.
+        # Two tenants appending at once never see each other's numbers.
         org_a, org_b, n = new_id(), new_id(), 16
-        appended = await asyncio.gather(
-            *(storage.append_event(org, make_event()) for org in (org_a, org_b) * n)
-        )
+        run = await race(*(storage.append_event(org, make_event()) for org in (org_a, org_b) * n))
+        appended = run.outcomes
         assert sorted(e.seq for e in appended[0::2]) == list(range(1, n + 1))
         assert sorted(e.seq for e in appended[1::2]) == list(range(1, n + 1))
         assert await storage.read_head(org_a) == n
