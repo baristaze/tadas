@@ -404,15 +404,20 @@ class TenancyManagerImpl(TenancyManagerInterface):
         return await self.resume(rctx, org_id, behind.credential_kind, behind.credential_id)
 
     async def service_context(self, rctx: RequestContext, org_id: UUID, user_id: UUID) -> OpContext:
-        org, user, membership = await self._principal(org_id, user_id)
+        # Minted for the tenant on the service role's authority; the person is
+        # the attribution, not the authority: they authorized the work once, at
+        # enqueue, so neither their user nor their membership is read, and a
+        # member who has left does not stop the work they asked for.
+        org = await self._storage.read_org(org_id)
+        if org is None or org.deleted_at is not None:
+            raise InvalidCredential("the org is gone")
         return build_context(
             rctx,
-            user_id=user.id,
+            user_id=user_id,
             org_id=org.id,
             role=Role.SERVICE,
             permissions=permissions_of(Role.SERVICE),
             credential_kind=CredentialKind.INTERNAL,
-            teams=membership.teams,
         )
 
     async def _every_org(self) -> list[Org]:

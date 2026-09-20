@@ -128,7 +128,12 @@ class TenancyManagerInterface(ABC):
 
     @abstractmethod
     async def service_context(self, rctx: RequestContext, org_id: UUID, user_id: UUID) -> OpContext:
-        """Platform-internal: rebuilds a person's principal under the service role."""
+        """Platform-internal: the context a claimed work item runs under. Minted
+        for the tenant on the service role, with `user_id` kept as the
+        attribution: the person authorized the work once, at enqueue, so only
+        the org must be live, not their user or membership; a member who has
+        left does not stop the work they asked for. A deleted org is refused
+        with InvalidCredential."""
         ...
 
     @abstractmethod

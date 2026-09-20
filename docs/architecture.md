@@ -185,9 +185,11 @@ everything in-process for tests.
   contexts carry. The sweep's service contexts are minted for the tenant,
   not for a member: each carries the tenant, the service role, and the
   system user (`EMPTY_UUID`) as its actor, at one read per page of
-  tenants, so a tenant whose members have all left is still swept; the
-  claim of a work item still rebuilds the enqueuer's principal under the
-  service role, so attribution survives the asynchronous hop.
+  tenants, so a tenant whose members have all left is still swept. The
+  claim of a work item is minted the same way, with the enqueuer's
+  `user_id` kept as the attribution: the person authorized the work once,
+  at enqueue, so only the org must be live, and a member who has left
+  does not stop the work they asked for.
   `tadas-api serve | migrate | bootstrap | add-member | openapi`
   (`bootstrap` and `add-member` are what `make seed` runs; both produce
   the context the seeding then runs under).

@@ -584,6 +584,39 @@ async def test_resume_and_service_contexts(manager: TenancyManagerImpl) -> None:
         await manager.resume(request(), org.id, CredentialKind.SESSION_TOKEN, new_id())
 
 
+async def test_a_claim_for_a_departed_members_item_still_runs_under_their_name(
+    manager: TenancyManagerImpl,
+    storage: TenancyStorageMemoryImpl,
+    operator: TenancyOperatorManagerImpl,
+) -> None:
+    owner, org = await manager.bootstrap(
+        request(), "Acme", "acme", "ann@example.test", "pw-1234", "Ann"
+    )
+    ann = await storage.read_user(org.id, owner.user_id)
+    assert ann is not None
+    now = utcnow()
+    await storage.write_user(
+        org.id, ann.model_copy(update={"deleted_at": now, "deleted_by": ann.id, "updated_at": now})
+    )
+    # The person authorized the work at enqueue; the claim keeps them as the
+    # attribution and runs on the service role's authority.
+    ctx = await manager.service_context(request(), org.id, ann.id)
+    assert ctx.user_id == ann.id and ctx.role is Role.SERVICE
+    assert ctx.credential_kind is CredentialKind.INTERNAL and ctx.has(Permission.WRITE)
+    # Only the tenant must be live.
+    await manager.bootstrap(
+        request(), "Ops", "ops", "root@example.test", "pw-1234", "Root", operator=True
+    )
+    admin = await manager.admit_operator(
+        await manager.authenticate_login(
+            request(), (await manager.login(request(), "root@example.test", "pw-1234")).token
+        )
+    )
+    await operator.delete_org(admin, org.id)
+    with pytest.raises(InvalidCredential):
+        await manager.service_context(request(), org.id, ann.id)
+
+
 async def test_a_tenant_whose_members_have_all_left_is_still_swept(
     manager: TenancyManagerImpl, storage: TenancyStorageMemoryImpl, infra: InfraLocalImpl
 ) -> None:
@@ -596,9 +629,6 @@ async def test_a_tenant_whose_members_have_all_left_is_still_swept(
     await storage.write_user(
         org.id, ann.model_copy(update={"deleted_at": now, "deleted_by": ann.id, "updated_at": now})
     )
-    with pytest.raises(InvalidCredential):
-        await manager.service_context(request(), org.id, ann.id)
-
     contexts = await manager.service_contexts(request())
     assert [c.org_id for c in contexts] == [org.id]
     ctx = contexts[0]

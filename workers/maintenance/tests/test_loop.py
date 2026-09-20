@@ -250,6 +250,30 @@ async def test_sweep_requeues_stale_items_per_tenant(tmp_path: Path) -> None:
     assert stored.attempts == 2, "the sweep kept the lost attempt; the rerun spent one more"
 
 
+async def test_a_departed_members_queued_item_still_runs(tmp_path: Path) -> None:
+    container = build_container(tmp_path)
+    ctx = await sign_in(container)
+    item = make_item(ctx)
+    await container.managers.work.enqueue(ctx, item)
+    tenancy_storage = container.storage.get_tenancy_storage()
+    ann = await tenancy_storage.read_user(ctx.org_id, ctx.user_id)
+    assert ann is not None
+    now = utcnow()
+    await tenancy_storage.write_user(
+        ctx.org_id,
+        ann.model_copy(update={"deleted_at": now, "deleted_by": ann.id, "updated_at": now}),
+    )
+
+    handler = SlowHandler(hold=0)
+    loop, task = start_loop(container, handler, fast_options())
+    await until(lambda: handler.finished == [item.id])
+    loop.stop()
+    await task
+    stored = await container.storage.get_work_storage().read_item(ctx.org_id, item.id)
+    assert stored is not None and stored.status is WorkStatus.DONE
+    assert stored.created_by == ctx.user_id, "the attribution survived the hop"
+
+
 async def test_sweep_reaches_a_tenant_whose_members_have_all_left(tmp_path: Path) -> None:
     # The stale item sits on a lane this loop never claims from, so what moves
     # it is the sweep alone; the tenant's only member is gone by then.
