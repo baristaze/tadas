@@ -48,8 +48,10 @@ The `environment` module is the graph itself, and the only module a root
 calls. It takes the `aws.us_east_1` provider alias as well as the default
 one, because CloudFront reads certificates from that region alone. Its
 inputs are the whole difference between two environments: the address
-space, the name prefixes, the instance classes, the replica counts, and
-the database's multi-az and deletion protection. Reading the two module
+space, the name prefixes, the instance classes, the replica counts, the
+database's pool size, and the database's multi-az and deletion
+protection. What each set of numbers costs is in
+[../../cloud/README.md](../../cloud/README.md). Reading the two module
 calls side by side is how the environments are compared.
 
 Three inputs of the `environment` module are operations rather than

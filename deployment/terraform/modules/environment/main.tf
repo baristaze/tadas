@@ -26,6 +26,7 @@ locals {
     TADAS_SECRETS_NAME_PREFIX = module.secrets.application_prefix
     TADAS_AWS_REGION          = var.region
     TADAS_LOG_JSON            = "true"
+    TADAS_DATABASE_POOL_SIZE  = tostring(var.database_pool_size)
   }
 
   process_secrets = {

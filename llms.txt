@@ -24,6 +24,7 @@ served to it. Exposure is by listing, never by folder.
 - [Deployment](deployment/README.md): the two twins and the branch convention
 - [The local stack](deployment/local/README.md): every URL and port, one service at a time
 - [Terraform](deployment/terraform/modules/README.md): the roots, the modules, the state, the credentials
+- [Cloud cost](deployment/cloud/README.md): the five sizes, each environment's size, the postures and their budgets
 - [Operations](ops/README.md): roles, profiles, credentials, signals, the ops binary, the skills, the first responder
 - [Stress tests](ops/stress/README.md): what a good one is and the scenario file
 - [Runbooks](docs/runbooks/README.md): one file per operational procedure

@@ -120,7 +120,7 @@ write. Sessions last one hour.
 ### The budget and the anomaly monitor
 
 `shared` declares a monthly cost budget (`monthly_budget_usd`, default
-300) that mails `owner_email` at 50, 80, and 100 percent of the amount
+400, sized in [the cloud pricing](../../deployment/cloud/README.md)) that mails `owner_email` at 50, 80, and 100 percent of the amount
 and when the forecast crosses it, and an anomaly monitor on each
 service's spend that reports a jump of 20 USD or more daily. Every
 resource carries `tadas:environment`, so a cost report splits by it.

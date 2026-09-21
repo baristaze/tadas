@@ -43,9 +43,9 @@ variable "owner_email" {
 }
 
 variable "monthly_budget_usd" {
-  description = "The monthly cost budget for the account, in USD. The reference for a team of two with staging and production is 300."
+  description = "The monthly cost budget for the account, in USD. Sized for the demo posture, staging at XS and production at S, which runs about 245 a month; deployment/cloud/README.md prices every size."
   type        = number
-  default     = 300
+  default     = 400
 }
 
 variable "anomaly_impact_usd" {
