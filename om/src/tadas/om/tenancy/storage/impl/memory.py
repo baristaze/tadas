@@ -165,12 +165,14 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
     async def read_user(self, org_id: UUID, user_id: UUID) -> User | None:
         return self._get(self._users, org_id, user_id)
 
-    async def read_users_by_identity(self, identity_id: UUID) -> list[tuple[UUID, User]]:
+    async def read_users_by_identity(
+        self, identity_id: UUID, limit: int
+    ) -> list[tuple[UUID, User]]:
         return [
             (org_id, user)
             for org_id, user in self._rows_across_tenants(self._users)
             if user.identity_id == identity_id and user.deleted_at is None
-        ]
+        ][:limit]
 
     async def write_user(
         self, org_id: UUID, user: User, outbox_rows: tuple[OutboxRow, ...] = ()

@@ -136,7 +136,12 @@ context on keeps the stage the callee needs.
   expired ones are purged like a tenant's dead sessions; api keys are
   purged once revoked or expired. Exchanging a login for an org that is
   gone, or a membership that has ended, is `NotAuthorized` (403), not a
-  sign-in failure: the login itself still stands.
+  sign-in failure: the login itself still stands. One person is a
+  member of at most `max_orgs_per_identity` orgs (100, an option of both
+  tenancy managers). Every read of the users one identity is asks for
+  one past the bound; an add or an org create past it is
+  `MembershipLimitReached` (409), and a read that still finds more (two
+  adds that raced) is refused the same way, never cut short.
 - `work`: the table-backed work queue in the `queue` role; a row's
   routing field is its `lane`, payload shapes are fixed per `WorkKind`
   by `WORK_PAYLOADS`. Enqueue is a create: it validates the payload, and
