@@ -32,6 +32,5 @@ class MaintenanceSettings(StorageSettings, InfraSettings):
     worker_capacity: int = Field(default=4, gt=0)
     worker_lease_seconds: int = Field(default=60, gt=0)
     worker_heartbeat_seconds: int = Field(default=10, gt=0)
-    worker_heartbeat_failure_limit: int = Field(default=3, gt=0)
     worker_sweep_seconds: int = Field(default=30, gt=0)
     worker_poll_seconds: int = Field(default=5, gt=0)

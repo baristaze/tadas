@@ -588,9 +588,9 @@ async def test_removing_a_member_soft_deletes_the_user_and_ends_access(
     with pytest.raises(NotFound):
         await manager.remove_member(admin, cid.id)
     # The membership ended with the member: no list shows it, no role change reaches it.
-    assert [m.user_id for m in await manager.get_memberships(owner, limit=10)] == sorted(
-        [owner.user_id, bob.id]
-    )
+    assert [
+        m.user_id for m in (await manager.get_memberships(owner, None, limit=10)).items
+    ] == sorted([owner.user_id, bob.id])
     with pytest.raises(NotFound):
         await manager.update_membership_role(owner, cid.id, Role.VIEWER)
     ended = await storage.read_membership_for_user(org.id, cid.id)
@@ -699,7 +699,9 @@ async def test_a_removal_that_fails_leaves_the_member_whole(
     with pytest.raises(RuntimeError):
         await manager.remove_member(owner, cid.id)
     assert cid.id in [u.id for u in (await manager.get_users(owner, None, limit=10)).items]
-    assert cid.id in [m.user_id for m in await manager.get_memberships(owner, limit=10)]
+    assert cid.id in [
+        m.user_id for m in (await manager.get_memberships(owner, None, limit=10)).items
+    ]
     _, _, created = await manager.add_member(
         request(), "acme", "cid@example.test", "pw-1234", "Cid", Role.MEMBER
     )
@@ -942,8 +944,12 @@ async def test_operator_gate_admits_only_operators_signing_in(
     identity = await manager.authenticate_login(request(), operator_login.token)
     admin = await manager.admit_operator(identity)
     assert admin.email == "root@example.test"
-    assert len(await operator.get_orgs(admin, limit=10)) == 2
-    assert len(await operator.get_orgs(admin, limit=1)) == 1
+    every = await operator.get_orgs(admin, None, limit=10)
+    assert len(every.items) == 2 and not every.has_more
+    first = await operator.get_orgs(admin, None, limit=1)
+    assert len(first.items) == 1 and first.has_more
+    rest = await operator.get_orgs(admin, first.items[0].id, limit=1)
+    assert rest.items == every.items[1:] and not rest.has_more
 
     # A tenant session is not the person's own sign-in: the identity stage refuses it.
     ops_org = next(m.org for m in operator_login.memberships if m.org.slug == "ops")
@@ -1281,7 +1287,7 @@ async def test_add_member_seeds_a_second_person_once(manager: TenancyManagerImpl
     assert ctx.security.role is Role.OWNER
     assert ctx.security.credential_kind is CredentialKind.INTERNAL
     assert bob.created_by == owner.user_id
-    membership = await manager.get_memberships(owner, limit=10)
+    membership = (await manager.get_memberships(owner, None, limit=10)).items
     assert [(m.user_id, m.created_by) for m in membership if m.user_id == bob.id] == [
         (bob.id, owner.user_id)
     ]
@@ -1521,6 +1527,32 @@ async def test_every_member_is_reachable_a_page_at_a_time(
             break
         after = page.items[-1].id
     assert paged == every
+
+
+async def test_memberships_pair_with_members_page_for_page(
+    manager: TenancyManagerImpl, storage: TenancyStorageMemoryImpl
+) -> None:
+    """A page of memberships read with the cursor and limit of a page of users
+    carries exactly those members' roles, so no member of a large org is
+    listed without one."""
+    _, org = await manager.bootstrap(
+        request(), "Acme", "acme", "ann@example.test", "pw-1234", "Ann"
+    )
+    for index in range(4):
+        await add_member(storage, org.id, f"member-{index}@example.test", Role.MEMBER)
+    owner = await sign_in(manager, "ann@example.test", org.id)
+    after: UUID | None = None
+    pages = 0
+    while True:
+        users = await manager.get_users(owner, after, limit=2)
+        roles = await manager.get_memberships(owner, after, limit=2)
+        assert [m.user_id for m in roles.items] == [u.id for u in users.items]
+        assert roles.has_more == users.has_more
+        pages += 1
+        if not users.has_more:
+            break
+        after = users.items[-1].id
+    assert pages == 3
 
 
 async def test_one_person_joins_at_most_the_bound_of_orgs(

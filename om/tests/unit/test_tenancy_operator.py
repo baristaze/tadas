@@ -106,7 +106,11 @@ async def test_a_read_operator_reads_and_is_refused_every_write(
         writer, "Acme", "acme", "ann@example.test", PASSWORD, "Ann"
     )
     assert reader.permissions == {OperatorPermission.READ}
-    assert {o.slug for o in await plane.operator.get_orgs(reader, 10)} == {"acme", "root", "sup"}
+    assert {o.slug for o in (await plane.operator.get_orgs(reader, None, 10)).items} == {
+        "acme",
+        "root",
+        "sup",
+    }
     assert (await plane.operator.get_org(reader, org.id)).slug == "acme"
     assert (await plane.operator.size(reader)).tenants == 3
     for write in (

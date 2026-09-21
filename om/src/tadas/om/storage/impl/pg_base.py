@@ -115,9 +115,11 @@ class PgStorageBase:
         tenant is named once per transaction and not once per query. `org_id`
         is required; `EMPTY_UUID` is the system scope, the transaction that
         reads across tenants, and it is never a default. `user_id` narrows a
-        `both`-scoped table to one person, and `identity_id` is the person of
-        an `identity`-scoped table. The settings go in before anything else,
-        so they are the first statement of the transaction the session opens;
+        `both`-scoped table that names the user to one person, and
+        `identity_id` narrows one whose person is the identity behind it
+        (`users`) and is the person of an `identity`-scoped table. The
+        settings go in before anything else, so they are the first statement
+        of the transaction the session opens;
         a commit or a rollback ends that transaction and takes them with it,
         which is why a method that runs a second transaction opens a second
         session."""

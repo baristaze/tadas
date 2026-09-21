@@ -15,12 +15,14 @@ from tadas.services.api.types.admin import (
 )
 from tadas.services.api.types.events import OperatorEventView
 from tadas.services.api.types.tasks import TaskPageView
-from tadas.services.api.types.tenancy import OrgView, UserPageView, UserView
+from tadas.services.api.types.tenancy import OrgPageView, OrgView, UserPageView, UserView
 
 
 class AdminServiceInterface(ABC):
     @abstractmethod
-    async def get_orgs(self, admin: OperatorContext, limit: int) -> list[OrgView]: ...
+    async def get_orgs(self, admin: OperatorContext, cursor: str | None, limit: int) -> OrgPageView:
+        """One page of every org; `cursor` is the previous page's `next_cursor`."""
+        ...
 
     @abstractmethod
     async def me(self, admin: OperatorContext) -> OperatorView: ...

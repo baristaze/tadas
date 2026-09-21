@@ -12,8 +12,8 @@ the database, the cache, and the topic bus.
   `/v1/auth/sessions`, `/v1/auth/logout`)
 - **Me.** The current org, my user, my identity, and my display name.
   (`/v1/orgs/current`, `/v1/me`, `/v1/me/identity`)
-- **Members.** The org's members a page at a time, a member's role,
-  removing a member. (`/v1/users`, `/v1/memberships`,
+- **Members.** The org's members and their roles a page at a time,
+  a member's role, removing a member. (`/v1/users`, `/v1/memberships`,
   `/v1/memberships/{user_id}`)
 - **Credentials.** My live sessions and revoking one; the org's API
   keys, creating one, revoking one; a ticket for the live channel.
@@ -26,8 +26,8 @@ the database, the cache, and the topic bus.
   single-use ticket. (`/v1/realtime`)
 - **The operator plane.** For an identity on the operator allowlist,
   across every org: create an org with its owner, add a member, read
-  an org, its members, its tasks, and its events, list every org,
-  delete an org, and read the platform's size: the tenant count, the
+  an org, its members, its tasks, and its events, list every org a
+  page at a time, delete an org, and read the platform's size: the tenant count, the
   user count, and the tasks of the last twenty-four hours.
   (`/v1/admin/orgs`, `/v1/admin/orgs/{org_id}`,
   `/v1/admin/orgs/{org_id}/members`, `/v1/admin/orgs/{org_id}/tasks`,

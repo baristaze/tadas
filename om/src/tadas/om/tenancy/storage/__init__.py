@@ -144,8 +144,13 @@ class TenancyStorageInterface(ABC):
         ...
 
     @abstractmethod
-    async def read_memberships(self, org_id: UUID, limit: int) -> list[Membership]:
-        """The tenant's live memberships, sorted by id; an ended one is hidden."""
+    async def read_memberships(
+        self, org_id: UUID, limit: int, after_user_id: UUID | None = None
+    ) -> list[Membership]:
+        """The tenant's live memberships, by user id ascending, so a page of
+        them covers the same members as the page of `read_users` that ends on
+        the same id; an ended one is hidden. `after_user_id` is the user id
+        the previous page ended on (`is_after_in_id_order`)."""
         ...
 
     @abstractmethod

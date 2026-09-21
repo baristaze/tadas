@@ -179,7 +179,9 @@ async def test_no_by_id_route_reaches_another_tenants_row(
     keys = await client.get("/v1/api-keys", headers=other.headers, params={"limit": 200})
     assert sorted(k["id"] for k in keys.json()["items"]) == sorted(other.api_key_ids)
     members = await client.get("/v1/memberships", headers=other.headers)
-    assert sorted(m["user_id"] for m in members.json()) == sorted([other.owner_id, other.member_id])
+    assert sorted(m["user_id"] for m in members.json()["items"]) == sorted(
+        [other.owner_id, other.member_id]
+    )
     assert (await client.get("/v1/me", headers=other.headers)).status_code == 200
 
 

@@ -679,6 +679,18 @@ export interface components {
             role: components["schemas"]["Role"];
             user: components["schemas"]["UserView"];
         };
+        /**
+         * MembershipPageView
+         * @description One page of the tenant's memberships, by user id; `next_cursor` as on
+         *     `UserPageView`. A page read with the same limit as a page of users
+         *     covers the same members, so roles pair with members page for page.
+         */
+        MembershipPageView: {
+            /** Items */
+            items: components["schemas"]["MembershipView"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+        };
         /** MembershipView */
         MembershipView: {
             /**
@@ -763,6 +775,17 @@ export interface components {
              */
             identity_id: string;
             operator_role: components["schemas"]["OperatorRole"];
+        };
+        /**
+         * OrgPageView
+         * @description One page of every org, by id, for the operator plane; `next_cursor` as
+         *     on `UserPageView`.
+         */
+        OrgPageView: {
+            /** Items */
+            items: components["schemas"]["OrgView"][];
+            /** Next Cursor */
+            next_cursor: string | null;
         };
         /** OrgView */
         OrgView: {
@@ -1013,6 +1036,7 @@ export interface operations {
     list_orgs_v1_admin_orgs_get: {
         parameters: {
             query?: {
+                cursor?: string | null;
                 limit?: number;
             };
             header?: {
@@ -1031,7 +1055,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["OrgView"][];
+                    "application/json": components["schemas"]["OrgPageView"];
                 };
             };
             /** @description Validation Error */
@@ -1698,6 +1722,7 @@ export interface operations {
     list_memberships_v1_memberships_get: {
         parameters: {
             query?: {
+                cursor?: string | null;
                 limit?: number;
             };
             header?: {
@@ -1716,7 +1741,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["MembershipView"][];
+                    "application/json": components["schemas"]["MembershipPageView"];
                 };
             };
             /** @description Validation Error */

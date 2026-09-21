@@ -61,7 +61,6 @@ LOCAL_DEFAULT_SERVES_THE_CLOUD = {
     "worker_capacity": "the local default is the tuning",
     "worker_lease_seconds": "the local default is the tuning",
     "worker_heartbeat_seconds": "the local default is the tuning",
-    "worker_heartbeat_failure_limit": "the local default is the tuning",
     "worker_sweep_seconds": "the local default is the tuning",
     "worker_poll_seconds": "the local default is the tuning",
 }
@@ -140,7 +139,6 @@ BOUNDED = (
     "worker_capacity",
     "worker_lease_seconds",
     "worker_heartbeat_seconds",
-    "worker_heartbeat_failure_limit",
     "worker_sweep_seconds",
     "worker_poll_seconds",
 )

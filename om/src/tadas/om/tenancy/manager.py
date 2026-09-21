@@ -21,7 +21,7 @@ from tadas.om.tenancy.types.identity import Identity
 from tadas.om.tenancy.types.issued import IssuedApiKey, IssuedLogin, IssuedSession, IssuedTicket
 from tadas.om.tenancy.types.membership import Membership
 from tadas.om.tenancy.types.org import Org
-from tadas.om.tenancy.types.page import ApiKeyPage, UserPage
+from tadas.om.tenancy.types.page import ApiKeyPage, MembershipPage, UserPage
 from tadas.om.tenancy.types.session import Session
 from tadas.om.tenancy.types.socket_ticket import SocketPrincipal
 from tadas.om.tenancy.types.user import User
@@ -184,7 +184,13 @@ class TenancyManagerInterface(ABC):
     # Memberships.
 
     @abstractmethod
-    async def get_memberships(self, ctx: OpContext, limit: int) -> list[Membership]: ...
+    async def get_memberships(
+        self, ctx: OpContext, after: UUID | None, limit: int
+    ) -> MembershipPage:
+        """The tenant's memberships, by user id, a page at a time as `get_users`
+        pages: a page ending on the same user id covers the same members, so
+        the two lists pair page for page."""
+        ...
 
     @abstractmethod
     async def update_membership_role(self, ctx: OpContext, user_id: UUID, role: Role) -> Membership:

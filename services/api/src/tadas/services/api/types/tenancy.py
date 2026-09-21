@@ -117,6 +117,23 @@ class UserPageView(View):
     next_cursor: str | None
 
 
+class MembershipPageView(View):
+    """One page of the tenant's memberships, by user id; `next_cursor` as on
+    `UserPageView`. A page read with the same limit as a page of users
+    covers the same members, so roles pair with members page for page."""
+
+    items: list[MembershipView]
+    next_cursor: str | None
+
+
+class OrgPageView(View):
+    """One page of every org, by id, for the operator plane; `next_cursor` as
+    on `UserPageView`."""
+
+    items: list[OrgView]
+    next_cursor: str | None
+
+
 class ApiKeyPageView(View):
     """One page of the api key list, newest first; `next_cursor` as on
     `UserPageView`."""

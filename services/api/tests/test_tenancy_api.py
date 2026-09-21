@@ -312,7 +312,7 @@ async def test_members_are_promoted_and_removed_by_a_member_manager(
     assert [u["email"] for u in users.json()["items"]] == [OWNER["email"]]
     # The membership ended with the member: not listed, not changeable.
     memberships = await client.get("/v1/memberships", headers=owner)
-    assert str(bob.id) not in [m["user_id"] for m in memberships.json()]
+    assert str(bob.id) not in [m["user_id"] for m in memberships.json()["items"]]
     gone = await client.patch(f"/v1/memberships/{bob.id}", headers=owner, json={"role": "viewer"})
     assert gone.status_code == 404
 
@@ -378,7 +378,7 @@ async def test_operator_routes_need_an_operator_sign_in(
         "/v1/admin/orgs", headers={"Authorization": f"Bearer {login.json()['token']}"}
     )
     assert admitted.status_code == 200
-    assert sorted(o["slug"] for o in admitted.json()) == ["acme", "ops"]
+    assert sorted(o["slug"] for o in admitted.json()["items"]) == ["acme", "ops"]
 
 
 async def test_operators_delete_an_org(
@@ -483,6 +483,42 @@ async def test_the_key_list_pages_so_the_oldest_key_is_still_reachable(
     oldest = created[0]
     revoked = await client.delete(f"/v1/api-keys/{oldest}", headers=owner)
     assert revoked.status_code == 200 and revoked.json()["deleted_at"] is not None
+
+
+async def test_the_membership_list_pages_beside_the_member_list(
+    client: httpx.AsyncClient, container: AppContainer, owner: dict[str, str]
+) -> None:
+    """Every membership is reached by following `next_cursor`, and each page
+    holds the roles of the members on the page of `/v1/users` read with the
+    same cursor and limit, so no member of a large org is shown without one."""
+    org_id = UUID((await client.get("/v1/orgs/current", headers=owner)).json()["id"])
+    for index in range(4):
+        await add_member(container, org_id, f"m{index}@example.test", "pw-1234", Role.MEMBER)
+
+    listed: list[str] = []
+    users_cursor: str | None = None
+    roles_cursor: str | None = None
+    while True:
+        users = await client.get(
+            "/v1/users", headers=owner, params={"limit": 2} | page_at(users_cursor)
+        )
+        roles = await client.get(
+            "/v1/memberships", headers=owner, params={"limit": 2} | page_at(roles_cursor)
+        )
+        assert roles.status_code == 200, roles.text
+        page = [m["user_id"] for m in roles.json()["items"]]
+        assert page == [u["id"] for u in users.json()["items"]]
+        listed += page
+        users_cursor = users.json()["next_cursor"]
+        roles_cursor = roles.json()["next_cursor"]
+        assert (roles_cursor is None) == (users_cursor is None)
+        if roles_cursor is None:
+            break
+    assert len(listed) == 5 and len(set(listed)) == 5
+
+
+def page_at(cursor: str | None) -> dict[str, str]:
+    return {"cursor": cursor} if cursor else {}
 
 
 async def test_a_cursor_from_another_list_is_refused(

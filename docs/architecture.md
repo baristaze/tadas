@@ -123,11 +123,14 @@ context on keeps the stage the callee needs.
   response time does not say which emails exist, and runs scrypt off the
   event loop. Sessions and api keys are listed newest first and filtered
   at the storage (live at the instant asked; a member's own keys), so a
-  page of dead rows never hides a live one. Members and api keys answer
-  a page (`UserPage`, `ApiKeyPage`: items, `has_more`) after a cursor,
-  which is the id the previous page ended on, since both lists are
-  ordered by id - members ascending, keys descending, an id being minted
-  in time order; the manager asks storage for one row past the page and
+  page of dead rows never hides a live one. Members, memberships, api
+  keys, and the operator's org list answer a page (`UserPage`,
+  `MembershipPage`, `ApiKeyPage`, `OrgPage`: items, `has_more`) after a
+  cursor, which is the id the previous page ended on, since every one of
+  them is ordered by one unique id - members and orgs ascending,
+  memberships by user id ascending so a page of roles pairs with the
+  page of members that ends on the same id, keys descending, an id
+  being minted in time order; the manager asks storage for one row past the page and
   keeps it out, so a limit is a page size and never a ceiling past which
   a live key stops being listed. The purge also removes
   sessions revoked or expired and socket tickets redeemed or expired past
@@ -682,9 +685,10 @@ everything in-process for tests.
   a renewal that fails for any other reason is retried once, each
   attempt bounded by the time left to half the lease, and the task is
   cancelled at half the lease if none succeeds, half the lease before
-  it expires), a liveness heartbeat in the cache (each beat bounded by
-  its interval, a store that stalls or raises counting as a failed
-  beat), and the
+  it expires), a liveness heartbeat held in memory and published to the
+  cache as best effort (each publish bounded by its interval; a cache
+  that stalls or raises leaves the worker unpublished and still
+  claiming, since the queue and its leases live in Postgres), and the
   maintenance sweep (requeue stale leases under one service context per
   tenant, a batch of `requeue_batch` (100) per tenant per sweep bounded
   in the statement and the rest on the next sweep, the system scope
@@ -706,9 +710,9 @@ everything in-process for tests.
   `tenant_expired`, so the whole sweep reads one answer.
   `tadas-maintenance serve | health`.
   The serving process answers `/metrics` and `/healthz` on
-  `TADAS_METRICS_PORT` (9464) from one thread: `/healthz` reads the
-  loop's own liveness key through the process's cache, on its event
-  loop, so the container probe costs one cache read and boots nothing;
+  `TADAS_METRICS_PORT` (9464) from one thread: `/healthz` asks the
+  loop for its last beat, on its event loop, so a blocked loop fails
+  the probe, a cache outage does not, and the probe boots nothing;
   the image's `HEALTHCHECK` and the task definition ask that URL, and
   `health` asks it by hand.
 - Every Python process builds its roots whole at boot, once: storage,

@@ -23,7 +23,7 @@ from tadas.om.tenancy.impl.creates import (
 from tadas.om.tenancy.operator import TenancyOperatorManagerInterface
 from tadas.om.tenancy.storage import TenancyStorageInterface
 from tadas.om.tenancy.types.org import Org
-from tadas.om.tenancy.types.page import UserPage
+from tadas.om.tenancy.types.page import OrgPage, UserPage
 from tadas.om.tenancy.types.size import PlatformSize
 from tadas.om.tenancy.types.user import User
 
@@ -61,9 +61,11 @@ class TenancyOperatorManagerImpl(TenancyOperatorManagerInterface):
 
     # Across every tenant.
 
-    async def get_orgs(self, admin: OperatorContext, limit: int) -> list[Org]:
+    async def get_orgs(self, admin: OperatorContext, after: UUID | None, limit: int) -> OrgPage:
         admin.require(OperatorPermission.READ)
-        return await self._storage.read_orgs(self._clamp(limit))
+        limit = self._clamp(limit)
+        rows = await self._storage.read_orgs(limit + 1, after)
+        return OrgPage(items=tuple(rows[:limit]), has_more=len(rows) > limit)
 
     async def size(self, admin: OperatorContext) -> PlatformSize:
         admin.require(OperatorPermission.READ)

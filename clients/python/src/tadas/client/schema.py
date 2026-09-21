@@ -347,6 +347,15 @@ class MembershipView(BaseModel):
     user_id: Annotated[UUID, Field(title='User Id')]
 
 
+class OrgPageView(BaseModel):
+    """
+    One page of every org, by id, for the operator plane; `next_cursor` as
+    on `UserPageView`.
+    """
+    items: Annotated[list[OrgView], Field(title='Items')]
+    next_cursor: Annotated[str | None, Field(title='Next Cursor')]
+
+
 class TaskPageView(BaseModel):
     """
     One page of a task list. `next_cursor` fetches the next page of the same
@@ -383,3 +392,13 @@ class IssuedLoginView(BaseModel):
     expires_at: Annotated[AwareDatetime, Field(title='Expires At')]
     memberships: Annotated[list[MembershipChoiceView], Field(title='Memberships')]
     token: Annotated[str, Field(title='Token')]
+
+
+class MembershipPageView(BaseModel):
+    """
+    One page of the tenant's memberships, by user id; `next_cursor` as on
+    `UserPageView`. A page read with the same limit as a page of users
+    covers the same members, so roles pair with members page for page.
+    """
+    items: Annotated[list[MembershipView], Field(title='Items')]
+    next_cursor: Annotated[str | None, Field(title='Next Cursor')]

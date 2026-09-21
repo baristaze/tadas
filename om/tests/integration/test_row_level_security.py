@@ -9,6 +9,7 @@ relying on nothing of the fence.
 
 import pytest
 from contracts.event_storage import make_event
+from contracts.factories import make_identity, make_user
 from contracts.idempotency_storage import make_record
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
@@ -20,6 +21,8 @@ from tadas.om.idempotency.storage.tables.idempotency_records import IdempotencyR
 from tadas.om.storage.impl.pg_base import SessionFactory
 from tadas.om.storage.roles import DatabaseRole, role_for
 from tadas.om.storage.scopes import POLICY_NAME, TABLE_SCOPES, ScopeKind, scope_for
+from tadas.om.tenancy.storage.impl.postgres import TenancyStoragePostgresImpl
+from tadas.om.tenancy.storage.tables.users import Users
 
 pytestmark = pytest.mark.integration
 
@@ -88,7 +91,9 @@ async def test_every_table_holds_the_policy_its_scope_declares(
         assert "'00000000-0000-0000-0000-000000000000'" in expression, (
             f"{table_name}: the system scope is not spelled in the policy"
         )
-        narrowed = scope.person_column is not None and scope.person_column in expression
+        narrowed = scope.narrowing is not None and all(
+            part in expression for part in scope.narrowing
+        )
         assert narrowed == (scope.kind is ScopeKind.BOTH), (
             f"{table_name} is {scope.kind.value} and the policy says otherwise: {expression}"
         )
@@ -139,3 +144,26 @@ async def test_a_narrowed_transaction_sees_only_its_person(pg_sessions: Sessions
         assert [row.key for row in await session.execute(read_all)] == ["mine"]
     async with markers._session_for(IdempotencyRecords, org, theirs.user_id) as session:
         assert [row.key for row in await session.execute(read_all)] == ["theirs"]
+
+
+async def test_a_user_is_narrowed_on_the_identity_behind_it(pg_sessions: Sessions) -> None:
+    """A user's person is its identity, so `users` narrows on `app.identity_id`.
+    A transaction that names a user id narrows no user row, since a user id
+    is never an identity id; one that names an identity sees that identity's
+    user and no other."""
+    org = new_id()
+    tenancy = TenancyStoragePostgresImpl(pg_sessions)
+    ann, bob = make_user(make_identity().id), make_user(make_identity().id)
+    await tenancy.write_user(org, ann)
+    await tenancy.write_user(org, bob)
+
+    read_all = text("SELECT id FROM core.users WHERE org_id = :org ORDER BY id")
+    every = sorted([ann.id, bob.id])
+    async with tenancy._session_for(Users, org) as session:
+        assert [row.id for row in await session.execute(read_all, {"org": org})] == every
+    async with tenancy._session_for(Users, org, ann.id) as session:
+        assert [row.id for row in await session.execute(read_all, {"org": org})] == every
+    async with tenancy._session_for(Users, org, identity_id=ann.identity_id) as session:
+        assert [row.id for row in await session.execute(read_all, {"org": org})] == [ann.id]
+    async with tenancy._session_for(Users, org, identity_id=bob.identity_id) as session:
+        assert [row.id for row in await session.execute(read_all, {"org": org})] == [bob.id]

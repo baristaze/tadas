@@ -1,8 +1,8 @@
 """The worker's HTTP surface, one thread on the metrics port: `/metrics`
 for the collector beside the process and `/healthz` for the container
-probe. The probe asks the serving loop's own cache for its liveness key,
-on the loop's event loop, so a probe costs one cache read in the running
-process and boots nothing."""
+probe. The probe asks the serving loop for its last beat, on the loop's
+event loop, so a blocked loop fails the probe, a probe boots nothing, and
+a cache outage does not fail it."""
 
 import asyncio
 import json
@@ -18,7 +18,7 @@ from tadas.infra.observability import metrics_exposition
 log = logging.getLogger(__name__)
 
 Probe = Callable[[], Coroutine[Any, Any, bool]]
-"""True while the serving worker's liveness key is present."""
+"""True while the serving worker's loop has beaten recently."""
 
 
 class WorkerHttpServer:

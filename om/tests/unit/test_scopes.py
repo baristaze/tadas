@@ -6,6 +6,7 @@ gate can say without one."""
 
 import importlib
 import pkgutil
+import re
 
 import pytest
 
@@ -56,9 +57,23 @@ def test_a_scope_declares_the_column_its_kind_needs() -> None:
     with pytest.raises(ValueError):
         TableScope(ScopeKind.BOTH)
     with pytest.raises(ValueError):
+        TableScope(ScopeKind.BOTH, person_column="user_id", identity_column="identity_id")
+    with pytest.raises(ValueError):
         TableScope(ScopeKind.IDENTITY)
     with pytest.raises(ValueError):
+        TableScope(ScopeKind.IDENTITY, person_column="user_id", identity_column="identity_id")
+    with pytest.raises(ValueError):
         TableScope(ScopeKind.ORG, person_column="user_id")
+
+
+def test_a_person_is_narrowed_on_the_setting_that_names_it() -> None:
+    """A row that names its user narrows on `app.user_id`; a row whose person
+    is the identity behind it narrows on `app.identity_id`. The two settings
+    carry different ids, so a column compared with the wrong one never
+    matches and a narrowed read comes back empty."""
+    assert scope_for("users").narrowing == ("identity_id", "app.identity_id")
+    assert scope_for("memberships").narrowing == ("user_id", "app.user_id")
+    assert scope_for("tasks").narrowing is None
 
 
 def test_a_global_table_is_the_system_scope_and_nothing_else_is() -> None:
@@ -91,6 +106,15 @@ def chain(role: DatabaseRole) -> str:
     )
 
 
+def policy_in(sql: str, qualified: str) -> str | None:
+    """The policy a table carries at the end of the chain: the last statement
+    that creates or alters it, since a later migration may narrow it anew."""
+    statements = re.findall(
+        rf"(?:CREATE|ALTER) POLICY {POLICY_NAME} ON {re.escape(qualified)}\b[^;]*;", sql
+    )
+    return statements[-1] if statements else None
+
+
 @pytest.mark.parametrize("table_name", sorted(TABLE_SCOPES))
 def test_the_chain_carries_the_policy_the_scope_declares(table_name: str) -> None:
     """A table added without a policy fails here, in the fast gate, and not
@@ -109,9 +133,16 @@ def test_the_chain_carries_the_policy_the_scope_declares(table_name: str) -> Non
         return
     assert enabled and forced, f"{table_name} has no row-level security in the chain"
     assert policy, f"{table_name} has no {POLICY_NAME} policy in the chain"
-    if scope.person_column is not None:
-        person = f"""{scope.person_column} = NULLIF(current_setting('app.user_id'"""
-        assert person in sql, f"{table_name} is narrowed on no person column"
+    latest = policy_in(sql, qualified)
+    assert latest is not None
+    settings = set(re.findall(r"current_setting\('(app\.\w+)'", latest))
+    if scope.narrowing is None:
+        assert settings == {"app.org_id"}, f"{table_name} is narrowed on {settings}"
+        return
+    column, setting = scope.narrowing
+    person = f"{column} = NULLIF(current_setting('{setting}', true), '')::uuid"
+    assert latest.count(person) == 2, f"{table_name} is not narrowed on {column} by {setting}"
+    assert settings == {"app.org_id", setting}, f"{table_name} reads {settings}"
 
 
 @pytest.mark.parametrize("role", list(DatabaseRole))
@@ -128,4 +159,8 @@ def test_the_system_scope_clause_is_spelled_in_every_policy(role: DatabaseRole) 
     assert policies == len(fenced), f"{role.value}: {policies} policies for {len(fenced)} tables"
     # Twice per policy: `USING` and `WITH CHECK` carry the same expression.
     empty_uuid = "'00000000-0000-0000-0000-000000000000'"
-    assert sql.count(f"current_setting('app.org_id', true) = {empty_uuid}") == 2 * policies
+    for name in fenced:
+        latest = policy_in(sql, name)
+        assert latest is not None, f"{name} has no policy"
+        spelled = latest.count(f"current_setting('app.org_id', true) = {empty_uuid}")
+        assert spelled == 2, f"{name}: the system scope is spelled {spelled} times"

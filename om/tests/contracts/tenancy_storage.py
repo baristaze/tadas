@@ -766,6 +766,26 @@ class TenancyStorageContract:
         assert await storage.read_membership_for_user(org.id, new_id()) is None
         assert await storage.read_memberships(org.id, limit=5) == [membership]
 
+    async def test_the_membership_list_pages_by_user_id(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        """Memberships are listed by user id, not by their own id, so a page of
+        them covers the members a page of users ending on the same id does.
+        The user ids here are minted newest first, against the membership ids."""
+        org = make_org()
+        user_ids = [new_id() for _ in range(5)][::-1]
+        memberships = [make_membership(user_id) for user_id in user_ids]
+        for membership in memberships:
+            await storage.write_membership(org.id, membership)
+        by_user = sorted(memberships, key=lambda m: m.user_id)
+        paged = []
+        after: UUID | None = None
+        while page := await storage.read_memberships(org.id, 2, after):
+            paged += page
+            after = page[-1].user_id
+        assert paged == by_user
+        assert await storage.read_memberships(org.id, 10, by_user[-1].user_id) == []
+
     async def test_an_ended_membership_is_hidden_from_reads_and_purged_past_retention(
         self, storage: TenancyStorageInterface
     ) -> None:
