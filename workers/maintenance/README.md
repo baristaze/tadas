@@ -26,7 +26,9 @@ replica told its lane.
 - **The sweep**, every thirty seconds by default, under one service
   context per org, the system scope first and deleted orgs included:
   - **Requeue** items whose lease has expired, or fail them when their
-    attempts are spent.
+    attempts are spent. One sweep takes a batch per org (a hundred by
+    default, `requeue_batch`), bounded in the statement; the rest wait
+    for the next sweep.
   - **Purge** each namespace's rows past its retention: deleted tasks,
     removed members with their ended memberships, revoked keys, dead
     sessions, spent tickets, finished idempotency records, and settled

@@ -51,13 +51,15 @@ class WorkStorageInterface(ABC):
 
     @abstractmethod
     async def requeue_stale(
-        self, org_id: UUID, now: datetime, stagger: timedelta
+        self, org_id: UUID, now: datetime, stagger: timedelta, limit: int
     ) -> list[WorkItem]:
-        """One conditional statement: every claimed item of the tenant whose lease
-        expired before `now` goes back to the queue, staggered by its position, or
-        fails when its attempts are spent, its claim token cleared either way so
-        the holder it had is refused; returns the items it changed, by id. The
-        requeue is the platform's write, like the claim, so it signs
+        """One conditional statement: the claimed items of the tenant whose lease
+        expired before `now`, the first `limit` of them by id, go back to the
+        queue, staggered by their position, or fail when their attempts are
+        spent, the claim token cleared either way so the holder it had is
+        refused; returns the items it changed, by id. The caller picks the
+        bound: the sweep passes its batch size and takes the rest next tick.
+        The requeue is the platform's write, like the claim, so it signs
         `updated_by` with EMPTY_UUID and takes no principal."""
         ...
 

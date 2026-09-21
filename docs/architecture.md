@@ -682,7 +682,9 @@ everything in-process for tests.
   its interval, a store that stalls or raises counting as a failed
   beat), and the
   maintenance sweep (requeue stale leases under one service context per
-  tenant, the system scope first and deleted tenants included, then
+  tenant, a batch of `requeue_batch` (100) per tenant per sweep bounded
+  in the statement and the rest on the next sweep, the system scope
+  first and deleted tenants included, then
   purge the tenant's soft-deleted tasks, removed
   members with their ended memberships, revoked api keys, dead sessions,
   and spent socket tickets past their retention (the one hard delete,
