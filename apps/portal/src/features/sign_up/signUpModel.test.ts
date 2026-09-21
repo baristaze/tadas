@@ -56,9 +56,9 @@ describe("signUpRefusal", () => {
     });
   });
 
-  it("says a taken slug as the server did, with the request id", () => {
+  it("says a taken slug as the server did, as a sentence", () => {
     const taken = new ApiError(409, "conflict", "org slug 'acme' is taken", "r2");
-    expect(signUpRefusal(taken, "x")).toEqual({ message: "org slug 'acme' is taken (r2)", signIn: false });
+    expect(signUpRefusal(taken, "x")).toEqual({ message: "Org slug 'acme' is taken.", signIn: false });
   });
 
   it("says a closed door plainly", () => {

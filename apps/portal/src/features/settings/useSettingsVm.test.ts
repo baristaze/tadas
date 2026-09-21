@@ -104,7 +104,7 @@ it("says the first revoke was refused even after a second revoke started", async
     net.writes[0]!.reject(new ApiError(404, "not_found", "no such key", "req-1"));
     net.writes[1]!.resolve(keyOf("k2", "second"));
   });
-  expect(useNoticesStore.getState().notices.map((n) => n.message)).toEqual(["no such key (req-1)"]);
+  expect(useNoticesStore.getState().notices.map((n) => n.message)).toEqual(["No such key."]);
 });
 
 it("says a created key whose secret was lost, instead of showing nothing", async () => {

@@ -2,6 +2,7 @@
 // says. No React, no fetch. The server decides; these checks only save a
 // round trip on what it would refuse anyway.
 import { ApiError } from "../../api";
+import { errorMessage } from "../../app/errorMessage";
 
 export const MIN_PASSWORD_LENGTH = 8;
 export const MAX_SLUG_LENGTH = 48;
@@ -58,13 +59,11 @@ export function slugAfterNameChange(orgName: string, slug: string, edited: boole
   return edited ? slug : suggestSlug(orgName);
 }
 
-/** A held email is said as a pointer to sign-in; everything else as the server said it. */
+/** A held email is said as a pointer to sign-in; everything else the way every screen says a failure. */
 export function signUpRefusal(caught: unknown, fallback: string): { message: string; signIn: boolean } {
   if (caught instanceof ApiError && caught.status === 409 && /email/.test(caught.message))
     return { message: "An account with this email exists. Sign in instead.", signIn: true };
   if (caught instanceof ApiError && caught.status === 404)
     return { message: "Sign-up is closed here. Ask an owner to add you.", signIn: false };
-  if (caught instanceof ApiError) return { message: `${caught.message} (${caught.requestId ?? "no id"})`, signIn: false };
-  if (caught instanceof Error && caught.message) return { message: caught.message, signIn: false };
-  return { message: fallback, signIn: false };
+  return { message: errorMessage(caught, fallback), signIn: false };
 }
