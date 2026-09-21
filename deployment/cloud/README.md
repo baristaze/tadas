@@ -51,13 +51,18 @@ $20 to $50.
 
 The fixed $75 is included in every total below.
 
-| Size | API tasks | Worker tasks | Postgres | Valkey | Pool | About a month |
-|------|-----------|--------------|----------|--------|------|---------------|
-| **XS** | 1 × 0.25 vCPU, 0.5 GB | 1 × 0.25, 0.5 | `db.t4g.micro`, one zone | 1 × `cache.t4g.micro` | 4 | **$115** |
-| **S** | 1 × 0.25, 0.5 | 1 × 0.25, 0.5 | `db.t4g.small`, one zone | 1 × `cache.t4g.micro` | 8 | **$130** |
-| **M** | 2 × 0.5, 1 | 1 × 0.25, 0.5 | `db.t4g.medium`, two zones | 2 × `cache.t4g.small` | 8 | **$260** |
-| **L** | 2 × 0.5, 1 | 2 × 0.5, 1 | `db.m6g.large`, two zones | 2 × `cache.m6g.large` | 12 | **$560** |
-| **XL** | 4 × 1, 2 | 2 × 1, 2 | `db.m6g.xlarge`, two zones, 100 GB | 2 × `cache.m6g.xlarge` | 12 | **$1,125** |
+| Size | API tasks | Worker tasks | Postgres | Valkey | Pool | Ceilings | About a month |
+|------|-----------|--------------|----------|--------|------|----------|---------------|
+| **XS** | 1 × 0.25 vCPU, 0.5 GB | 1 × 0.25, 0.5 | `db.t4g.micro`, one zone | 1 × `cache.t4g.micro` | 3 | 2, 1 | **$115** |
+| **S** | 1 × 0.25, 0.5 | 1 × 0.25, 0.5 | `db.t4g.small`, one zone | 1 × `cache.t4g.micro` | 5 | 3, 1 | **$130** |
+| **M** | 2 × 0.5, 1 | 1 × 0.25, 0.5 | `db.t4g.medium`, two zones | 2 × `cache.t4g.small` | 8 | 4, 2 | **$260** |
+| **L** | 2 × 0.5, 1 | 2 × 0.5, 1 | `db.m6g.large`, two zones | 2 × `cache.m6g.large` | 12 | 6, 2 | **$560** |
+| **XL** | 4 × 1, 2 | 2 × 1, 2 | `db.m6g.xlarge`, two zones, 100 GB | 2 × `cache.m6g.xlarge` | 12 | 12, 4 | **$1,125** |
+
+The ceilings are the autoscaling maximums, API first and worker
+second. A total is the month at the floor, with the flip off or with
+no load to answer. With the flip on, a busy month can add the tasks up
+to the ceilings: at most $9 at XS and $18 at S.
 
 The unit prices behind them:
 
@@ -77,8 +82,7 @@ What each size is for:
 - **S** is a demo that looks real. It is one of everything, and it
   survives a task restart but not the loss of a zone.
 - **M** is the first real customers. The database and the cache each
-  keep a standby in a second zone, and the API runs two replicas. It
-  is the smallest size where autoscaling makes sense.
+  keep a standby in a second zone, and the API runs two replicas.
 - **L** is production proper. It has headroom on every tier, and the
   database is out of the burstable class, so a long busy hour cannot
   run out of CPU credits.
@@ -96,16 +100,19 @@ per role. So one process can hold four times `database_pool_size`
 connections. A rollout may double the API's replicas for a moment, and
 the migration task opens a few more on top.
 
-The rule each size keeps: twice the API tasks, plus the worker tasks,
-times four, times the pool, stays under the instance's
-`max_connections`. The ceilings are about 80 for `db.t4g.micro`, 180
+The rule each size keeps: twice the API's ceiling, plus the worker's
+ceiling, times four, times the pool, stays under the instance's
+`max_connections`. Those limits are about 80 for `db.t4g.micro`, 180
 for `db.t4g.small`, 400 for `db.t4g.medium`, 850 for `db.m6g.large`,
-and 1,700 for `db.m6g.xlarge`.
+and 1,700 for `db.m6g.xlarge`. At XS that is 5 × 4 × 3 = 60, and at S
+it is 7 × 4 × 5 = 140.
 
-This is also why XS and S keep autoscaling off. At those sizes the
-database runs out of connections before the tasks run out of CPU. Turn
-the flip on ([../../docs/runbooks/scale.md](../../docs/runbooks/scale.md))
-at M or above, or lower the pool in the same pull request.
+Because the rule holds at the ceilings and not only at the floor,
+autoscaling stays one line at every size. `autoscaling_enabled` in the
+root turns it on or off
+([../../docs/runbooks/scale.md](../../docs/runbooks/scale.md)), and
+nothing else has to change with it. Raise a ceiling and the pool is
+the line to check in the same pull request.
 
 ## Postures
 

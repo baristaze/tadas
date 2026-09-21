@@ -89,7 +89,7 @@ variable "database_deletion_protection" {
 }
 
 variable "database_pool_size" {
-  description = "Connections each role's pool may open, per process (TADAS_DATABASE_POOL_SIZE). Four roles share one instance, so a process opens up to four times this, a rollout may double the API's replicas, and the migration task opens a few more: the sum stays under the instance class's max_connections (deployment/cloud/README.md)."
+  description = "Connections each role's pool may open, per process (TADAS_DATABASE_POOL_SIZE). Four roles share one instance, so a process opens up to four times this, a rollout may double the API's replicas, and the migration task opens a few more: the sum at the autoscaling ceilings stays under the instance class's max_connections, so the flip is safe (deployment/cloud/README.md)."
   type        = number
 }
 

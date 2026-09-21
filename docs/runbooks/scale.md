@@ -20,8 +20,11 @@ A pull request that sets `autoscaling_enabled = true` scales the
 environment. Nothing else needs to change: every lever below the flip
 is declared on (`enabled = true` by default in each service's object),
 with its ceiling (`max`) and the CPU it tracks (`target_cpu`, 60
-percent by default). Production's ceilings are 6 for the API and 2 for
-the maintenance worker; staging's are 2 and 1. One service can stay
+percent by default). Production's ceilings are 3 for the API and 1 for
+the maintenance worker; staging's are 2 and 1. Each size in
+[../../deployment/cloud/README.md](../../deployment/cloud/README.md)
+names its ceilings and a pool that holds at them, so the flip is safe
+at every size. One service can stay
 out with `enabled = false` in its object; the flip still governs the
 rest.
 
