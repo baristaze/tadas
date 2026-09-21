@@ -1,8 +1,9 @@
 """Pure rules of the tasks namespace: which tasks a filter shows, where a
 cursor cuts, and the arithmetic of the open list's manual order. Values in,
 values out; no clock, no storage, no settings. The manager and both storage
-impls call these; the relational impl spells the visibility and cursor rules
-in SQL where one statement must decide, and names the rule it mirrors."""
+impls call these; the relational impl spells the visibility, cursor, and
+follows rules in SQL where one statement must decide, and names the rule it
+mirrors."""
 
 from collections.abc import Sequence
 from uuid import UUID
@@ -43,16 +44,26 @@ def is_after(task: Task, cursor: OpenTaskCursor) -> bool:
 
 def top_position(places: Sequence[Place]) -> float:
     """The position above every open task, given their places ascending:
-    one below the smallest, or 0.0 when the list is empty."""
+    one below the smallest, or 0.0 when the list is empty. Only the first
+    place is read, so the top place alone is enough."""
     return places[0][0] - 1.0 if places else 0.0
+
+
+def follows(place: Place, anchor: Place) -> bool:
+    """Whether `place` comes after `anchor` in the order the open list reads:
+    the pair compared, so a place that ties with the anchor on position and
+    follows it on id is after it."""
+    return place > anchor
 
 
 def _following(anchor: Place, places: Sequence[Place]) -> Place | None:
     """The open place right after `anchor` in the order the list reads. A place
     that ties with the anchor on position and follows it on id is after it;
     reading positions alone would skip over it to the next larger position and
-    place a task the caller asked to follow the anchor behind its twin."""
-    after = [place for place in places if place > anchor]
+    place a task the caller asked to follow the anchor behind its twin. The
+    places may be every open place or only the first one after the anchor;
+    the answer is the same."""
+    after = [place for place in places if follows(place, anchor)]
     return min(after) if after else None
 
 

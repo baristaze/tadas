@@ -11,6 +11,7 @@ import pytest
 from tadas.om.base import new_id, utcnow
 from tadas.om.exceptions import TenantMismatch, VersionMismatch
 from tadas.om.outbox.types.row import OutboxRow
+from tadas.om.tasks.rules import follows
 from tadas.om.tasks.storage import TasksStorageInterface
 from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor, TaskFilter
 from tadas.om.tasks.types.task import Task, TaskScope, TaskStatus
@@ -138,7 +139,7 @@ class TaskStorageContract:
         await seed(storage, org_a, task)
         assert await storage.read_task(org_b, task.id) is None
         assert await storage.read_open_tasks(org_b, team(), None, limit=10) == []
-        assert await storage.read_open_places(org_b, exclude=None) == []
+        assert await storage.read_open_places(org_b, exclude=None, after=None, limit=10) == []
 
     async def test_write_refuses_another_tenant(self, storage: TasksStorageInterface) -> None:
         org_a, org_b = new_id(), new_id()
@@ -256,7 +257,9 @@ class TaskStorageContract:
             )
         assert await storage.read_task(org_b, mine.id) == mine
         assert await storage.read_task(org_a, theirs.id) == theirs
-        assert await storage.read_open_places(org_b, exclude=None) == [(0.5, mine.id)]
+        assert await storage.read_open_places(org_b, exclude=None, after=None, limit=10) == [
+            (0.5, mine.id)
+        ]
 
     async def test_update_is_a_compare_and_set_on_the_version(
         self, storage: TasksStorageInterface
@@ -295,12 +298,12 @@ class TaskStorageContract:
         listed = await storage.read_open_tasks(org, team(), None, limit=10)
         assert [t.title for t in listed] == ["t1", "t2", "t0"]
         assert len(await storage.read_open_tasks(org, team(), None, limit=2)) == 2
-        assert await storage.read_open_places(org, exclude=None) == [
+        assert await storage.read_open_places(org, exclude=None, after=None, limit=10) == [
             (-1.0, tasks[1].id),
             (2.0, tasks[2].id),
             (3.0, tasks[0].id),
         ]
-        assert await storage.read_open_places(org, exclude=tasks[1].id) == [
+        assert await storage.read_open_places(org, exclude=tasks[1].id, after=None, limit=10) == [
             (2.0, tasks[2].id),
             (3.0, tasks[0].id),
         ]
@@ -310,6 +313,31 @@ class TaskStorageContract:
             "t0",
         ]
         assert await storage.read_task(org, gone.id) == gone
+
+    async def test_open_places_are_bounded_and_follow_the_rule(
+        self, storage: TasksStorageInterface
+    ) -> None:
+        # The statement spells tasks.rules.follows and the open list's order;
+        # this case holds both impls to the function. Two tasks share a
+        # position, so the pair decides which follows the anchor.
+        org = new_id()
+        tasks = [make_task(f"p{i}", position=float(p)) for i, p in enumerate([1, 2, 2, 3, 4])]
+        for task in tasks:
+            await seed(storage, org, task)
+        every = sorted((t.position, t.id) for t in tasks)
+        assert await storage.read_open_places(org, None, None, limit=10) == every
+        assert await storage.read_open_places(org, None, None, limit=1) == every[:1]
+        assert await storage.read_open_places(org, None, None, limit=3) == every[:3]
+        for index, anchor in enumerate(every):
+            expected = [place for place in every if follows(place, anchor)]
+            assert expected == every[index + 1 :]
+            assert await storage.read_open_places(org, None, anchor, limit=10) == expected
+            assert await storage.read_open_places(org, None, anchor, limit=1) == expected[:1]
+        # Excluding the place that follows the anchor reads the one after it.
+        first, second, third = every[0], every[1], every[2]
+        assert await storage.read_open_places(org, second[1], first, limit=1) == [third]
+        # An anchor that is no task's place still cuts by the pair.
+        assert await storage.read_open_places(org, None, (2.5, new_id()), limit=1) == [every[3]]
 
     async def test_open_list_pages_by_position_cursor(self, storage: TasksStorageInterface) -> None:
         # Two tasks share a position (a seed, or a float that met its limit):
@@ -444,7 +472,7 @@ class TaskStorageContract:
         )
         assert await storage.read_task(org, first.id) == renumbered[0]
         assert await storage.read_task(org, second.id) == renumbered[1]
-        assert await storage.read_open_places(org, exclude=None) == [
+        assert await storage.read_open_places(org, exclude=None, after=None, limit=10) == [
             (0.0, first.id),
             (1.0, second.id),
         ]

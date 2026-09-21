@@ -174,7 +174,11 @@ context on keeps the stage the callee needs.
   `TaskCursor` over (updated_at, id) for the done one, all passed
   unchanged from the manager to storage; the visibility, cursor, and
   placement rules are pure functions in `tasks.rules`, which the memory
-  impl calls and the Postgres impl mirrors in SQL. A gap halved down to
+  impl calls and the Postgres impl mirrors in SQL. A placement reads one
+  open place, bounded in the statement: the top one for a task created
+  or reopened, the one that follows the anchor for a move
+  (`tasks.rules.follows`, which the statement spells and a contract case
+  holds to the function). A gap halved down to
   float precision is renumbered: the whole open list gets whole-number
   positions in one compare-and-set over every row (`update_tasks`),
   each announced. A task carries a

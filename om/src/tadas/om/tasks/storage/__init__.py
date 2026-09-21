@@ -32,11 +32,15 @@ class TasksStorageInterface(ABC):
         ...
 
     @abstractmethod
-    async def read_open_places(self, org_id: UUID, exclude: UUID | None) -> list[Place]:
-        """Every open task's place in the org — its (position, id) — ascending in
-        the order the open list reads; the neighbours a placement needs,
-        whatever list the caller was looking at. The id rides along because a
-        position is not unique (tasks.rules.Place)."""
+    async def read_open_places(
+        self, org_id: UUID, exclude: UUID | None, after: Place | None, limit: int
+    ) -> list[Place]:
+        """Open tasks' places in the org — their (position, id) — ascending in
+        the order the open list reads, strictly after `after` when one is given
+        (tasks.rules.follows), at most `limit` of them; the neighbours a
+        placement needs, whatever list the caller was looking at. The id rides
+        along because a position is not unique (tasks.rules.Place). The caller
+        picks the bound: a placement asks for the one place it reads."""
         ...
 
     @abstractmethod
