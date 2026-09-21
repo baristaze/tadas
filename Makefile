@@ -11,7 +11,11 @@ ifneq ($(wildcard .env),)
 include .env
 endif
 COMPOSE_ENV := --env-file .env.example $(if $(wildcard .env),--env-file .env)
-COMPOSE ?= docker compose $(COMPOSE_ENV) -f deployment/local/docker-compose.yml
+# The one switch between hosts: on Linux, host.docker.internal is the bridge
+# gateway, which a process on 127.0.0.1 never answers, so the devx collector
+# that scrapes the host processes joins the host's network there.
+COMPOSE_LINUX := $(if $(filter Linux,$(shell uname -s)),-f deployment/local/docker-compose.linux.yml)
+COMPOSE ?= docker compose $(COMPOSE_ENV) -f deployment/local/docker-compose.yml $(COMPOSE_LINUX)
 COMPOSE_FULL := $(COMPOSE) -f deployment/local/docker-compose.full.yml
 ROLES := core activity queue admin
 # The traffic run's knobs: `make traffic PROFILE=light DURATION=30`.
@@ -68,7 +72,7 @@ urls: ## Print the local URLs and the seeded sign-in
 infra-up: ## Start Postgres, the cache, the queue, and the object store
 	$(COMPOSE) up -d --wait
 
-devx-up: ## The local stack plus developer dashboards (pgweb, Valkey Admin, ElasticMQ UI, Prometheus, Grafana, Jaeger, GlitchTip)
+devx-up: ## The local stack plus developer dashboards (pgweb, Valkey Admin, ElasticMQ UI, Prometheus and its collector, Grafana, Jaeger, GlitchTip)
 	$(COMPOSE) --profile devx up -d --wait
 
 stack-up: ## The local stack plus the api, maintenance, and portal containers
@@ -137,8 +141,8 @@ test-unit: ## Unit tests over the memory impls
 test-integration: ## Integration tests over the compose stack
 	uv run pytest -q -m integration
 
-# The round trip: a real API process on 8000 (the host target Prometheus
-# scrapes) with the exporter and the DSN set, one session of traffic, then
+# The round trip: a real API process on 8000 (the host target the devx
+# collector scrapes and writes into Prometheus) with the exporter and the DSN set, one session of traffic, then
 # every signal read back by request id through the devx stores. Needs
 # `make devx-up` and `make migrate seed`; skips, naming why, when it cannot.
 test-telemetry: ## The telemetry round trip over the devx profile
