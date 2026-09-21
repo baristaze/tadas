@@ -836,7 +836,12 @@ everything in-process for tests.
 - `local/`: the compose stack (Postgres, Valkey, ElasticMQ, MinIO, and,
   under the `devx` profile, developer dashboards plus Prometheus, Grafana,
   Jaeger, and a seeded GlitchTip) and a second file that adds the
-  application containers, the portal among them.
+  application containers, the portal among them. Prometheus scrapes the
+  containers; the host processes, which stay on 127.0.0.1, are scraped by
+  an OpenTelemetry collector that remote-writes into Prometheus, the shape
+  of the cloud's sidecar. On Linux a third file, which the Makefile adds,
+  puts that collector on the host's network, the one place a loopback
+  listener answers.
 - `docker/`: one two-stage image per process, non-root, with a
   healthcheck (`/healthz` for the API and, on its metrics port, the
   worker; `/` for the portal's nginx). That probe decides whether the

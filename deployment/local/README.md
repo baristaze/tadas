@@ -7,7 +7,8 @@ Every command below runs from the repository root.
 |-----------------|------|
 | `docker-compose.yml` | Postgres, Valkey, ElasticMQ, MinIO |
 | `docker-compose.full.yml` | the `api`, `maintenance`, and `portal` containers, built from the working tree |
-| profile `devx` (in `docker-compose.yml`) | pgweb, Valkey Admin, ElasticMQ UI, Prometheus, Grafana, Jaeger, GlitchTip |
+| profile `devx` (in `docker-compose.yml`) | pgweb, Valkey Admin, ElasticMQ UI, Prometheus, the OpenTelemetry collector for host processes, Grafana, Jaeger, GlitchTip |
+| `docker-compose.linux.yml` | Linux only, added by the Makefile: the collector on the host's network (see Metrics below) |
 
 The compose project is `tadas`, so containers are named `tadas-<service>-1`
 and the volumes `tadas_postgres` and `tadas_minio`.
@@ -39,7 +40,8 @@ The data services' ports are fixed, since the `TADAS_*_URL` knobs name them.
 | maintenance metrics | http://127.0.0.1:9464/metrics (host process only) | `maintenance:9464` | |
 
 `maintenance` publishes no port; its healthcheck reads its liveness key in
-Valkey, and Prometheus scrapes its `/metrics` inside the network.
+Valkey, and Prometheus scrapes its `/metrics` inside the network. The
+`otel-collector` service publishes no port either and listens on nothing.
 
 Postgres has two logins. `tadas` is the application's: every process, every
 migration and every test connects as it, and the init script in
@@ -80,6 +82,10 @@ service is addressable:
 alias dc='docker compose -f deployment/local/docker-compose.yml -f deployment/local/docker-compose.full.yml --profile devx'
 ```
 
+On Linux, add `-f deployment/local/docker-compose.linux.yml` after the first
+file, as the Makefile does, or `dc up` puts the collector back on the compose
+network, where it cannot reach the host processes.
+
 | Goal | Command |
 |------|---------|
 | What is running, with health | `dc ps` |
@@ -88,8 +94,8 @@ alias dc='docker compose -f deployment/local/docker-compose.yml -f deployment/lo
 | Rebuild the portal (also after changing `VITE_API_URL`) | `dc up -d --build --wait portal` |
 | Restart a service without rebuilding | `dc restart maintenance` |
 | Stop the app containers, keep the backing services (to switch to `scripts/dev.sh`) | `dc stop api maintenance portal` |
-| Start only the dashboards | `dc up -d pgweb valkey-admin elasticmq-ui prometheus grafana jaeger glitchtip` |
-| Stop only the dashboards | `dc stop pgweb valkey-admin elasticmq-ui prometheus grafana jaeger glitchtip` |
+| Start only the dashboards | `dc up -d pgweb valkey-admin elasticmq-ui prometheus otel-collector grafana jaeger glitchtip` |
+| Stop only the dashboards | `dc stop pgweb valkey-admin elasticmq-ui prometheus otel-collector grafana jaeger glitchtip` |
 | Apply new migrations | `make migrate` |
 | Seed again, or other people | `make seed SEED_EMAIL=me@example.test SEED_MEMBER_EMAIL=you@example.test SEED_PASSWORD=secret SEED_SLUG=mine`, or set the `SEED_*` knobs in `.env` |
 | Record the README's demo GIF (empties the task list first) | `make demo-gif` |
@@ -115,10 +121,29 @@ keeps its keys; `flushall` above empties it, and `make reset` removes it.
 Everything below needs the `devx` profile (`make up` or `make devx-up`).
 
 - **Metrics.** The api serves `/metrics` on its own port, the worker on
-  `TADAS_METRICS_PORT` (9464). Prometheus scrapes both, as containers
-  (`api:8000`, `maintenance:9464`) and as host processes
-  (`host.docker.internal:8000` and `:9464`); whichever is not running shows
-  as down on http://localhost:59090/targets, which is expected. Grafana
+  `TADAS_METRICS_PORT` (9464). As containers (`api:8000`,
+  `maintenance:9464`), Prometheus scrapes them itself. As host processes,
+  which `scripts/dev.sh` binds to 127.0.0.1, an OpenTelemetry collector
+  scrapes them and remote-writes into Prometheus
+  (`otel-collector/collector.yml`, and `--web.enable-remote-write-receiver`
+  on Prometheus). That is the shape of the cloud's sidecar, which scrapes
+  its process over localhost, and it keeps the processes off every other
+  interface. The series carry the same labels either way: `job` (`api`,
+  `maintenance`), `instance`, and `runs_in` (`container` or `host`).
+  Whichever of the two is not running reads `up == 0`, which is expected;
+  http://localhost:59090/targets lists only the container targets, and
+  `up{runs_in="host"}` is the collector's view of the host processes.
+- **The collector's one switch.** Two settings place the collector: the
+  host it scrapes and the URL it writes to. By default it runs on the
+  compose network, scrapes `host.docker.internal:8000` and `:9464`, and
+  writes to `http://prometheus:9090/api/v1/write`. On Linux,
+  `host.docker.internal` is the Docker bridge gateway, which a loopback
+  listener never answers, so the Makefile adds `docker-compose.linux.yml`
+  when `uname -s` says Linux. That file puts the collector on the host's
+  network, where it scrapes `127.0.0.1:8000` and `:9464` and writes to
+  `http://127.0.0.1:${TADAS_PROMETHEUS_PORT}/api/v1/write`, host to
+  container, the way traces reach Jaeger. It listens on nothing, so the
+  host gains no port. Grafana
   opens on the provisioned Tadas overview dashboard (requests, statuses,
   p95 latency, cache, queue, and worker outcomes). Dashboards changed in the
   UI are lost with the container; export them into

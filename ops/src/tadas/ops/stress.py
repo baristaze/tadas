@@ -20,7 +20,9 @@ from tadas.ops.signals import SignalsInterface
 REQUESTS_COUNTER = "tadas_http_requests_total"
 POLL_SECONDS = 5.0
 READBACK_WAIT_SECONDS = 45.0
-"""Long enough for Prometheus' scrape interval (15 s) twice over."""
+"""Long enough for the local scrape interval (15 s) twice over and the
+collector's batch (5 s) that writes a host process's samples into
+Prometheus (deployment/local/otel-collector/collector.yml)."""
 
 
 @dataclass(frozen=True)
