@@ -117,7 +117,8 @@ seed: ## Create two local orgs with an owner, a member, and an admin of both to 
 		--name "$(SEED_ADMIN_NAME)" --email "$(SEED_ADMIN_EMAIL)" --password "$(SEED_PASSWORD)"
 
 # Needs `make up` (the seeded owner and member, the API on 8000, the portal on
-# 55173). Empties the task list, then records docs/media/realtime-demo.gif.
+# 55173). Empties the task list, then records docs/media/realtime-demo.gif:
+# Bob's window on the left, the owner's on the right.
 demo-gif: ## Record the README's realtime demo GIF against the running stack
 	uv run --with pillow python scripts/record_demo.py docs/media/realtime-demo.gif
 

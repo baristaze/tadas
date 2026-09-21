@@ -7,14 +7,18 @@ at the center (`om/`), one infrastructure toolkit (`infra/`), services
 and workers around them, and apps at the edge.
 
 <p align="center">
-  <img src="docs/media/realtime-demo.gif" width="876" alt="Two portal windows side by side, the owner on the left and Bob on the right, both on Team's Tasks. Tasks added in either window appear in the other at once, and a task completed in one fades out of Open and into Done in both.">
+  <img src="docs/media/realtime-demo.gif" width="876" alt="Two portal windows side by side, Bob on the left and the owner on the right, both on Team's Tasks. Bob adds three tasks, renames one and assigns it to the owner, drags it to the top by its handle, completes another, and deletes a third; each change appears in the owner's window at once.">
 </p>
 
 The portal in two windows, signed in as two of the people `make seed` creates:
-`owner@example.test` on the left, `bob@example.test` on the right, both on
-Team's Tasks. Every task one of them adds or completes reaches the other over
-the realtime channel as it happens. `make demo-gif` records it again from a
-running `make up` stack (`scripts/record_demo.py`).
+`bob@example.test` on the left, `owner@example.test` on the right, both on
+Team's Tasks. Bob takes tasks through their whole life: adds three, renames
+one and assigns it to the owner, drags it to the top by its handle, completes
+one, and deletes one. Every change reaches the owner's window over the
+realtime channel as it happens. Each window is narrower than half a laptop
+screen, and every task stays on one line there. `make demo-gif` records it
+again from a running `make up` stack (`scripts/record_demo.py`), and refuses
+to when a row would wrap.
 
 <p align="center">
   <img src="docs/media/cli-demo.gif" width="876" alt="Two terminals side by side. On the left Bob adds, edits, completes, reopens, and deletes tasks with the tadas command line. On the right the owner runs tadas listen, and every change appears as a line the moment it happens.">
@@ -24,7 +28,8 @@ The same thing from two terminals. On the left Bob works in command mode,
 one `tadas` call at a time; on the right the owner runs `tadas listen` and
 every change reaches the terminal over the same realtime channel the portal
 uses, as one line: who did what to which task. `make demo-cli-gif` records
-it from a running `make up` stack (`scripts/record_cli_demo.py`).
+it from a running `make up` stack (`scripts/record_cli_demo.py`), and refuses
+to when a line would wrap.
 
 ## Quick start
 

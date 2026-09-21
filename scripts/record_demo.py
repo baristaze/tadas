@@ -1,7 +1,7 @@
 """Records the realtime demo GIF in the root README: two portal windows side by
-side, the owner and Bob (the two people `make seed` creates), both on Team's
-Tasks, while a short script adds and completes tasks in one window and the
-other follows live.
+side, Bob (the member `make seed` creates) on the left and the owner on the
+right, both on Team's Tasks. Bob adds, edits and assigns, reorders by the
+handle, completes, and deletes tasks; the owner's window follows live.
 
 It drives a headless Chrome over the DevTools protocol, one isolated browser
 context per person. Each signs in through the API (a session token, the way
@@ -9,6 +9,11 @@ the API tests do) rather than through the form, over the Python client in
 `clients/python/` (ADR 0004 records the interval before that client
 existed). The task list is emptied first, then both windows are screencast
 and the frames are composed on one timeline into a GIF.
+
+Each window is under half the GIF's width, the size a README shows it at, and
+a task row stays on one line at that width: after every step the recorder
+checks both windows and stops, writing nothing, when a row wraps or the page
+scrolls sideways.
 
     make up
     uv run --with pillow python scripts/record_demo.py docs/media/realtime-demo.gif
@@ -30,7 +35,7 @@ import sys
 import tempfile
 import time
 import urllib.request
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 import websockets
@@ -159,20 +164,142 @@ class Window:
         )
         await self.cdp.send("Input.dispatchKeyEvent", {"type": "keyUp", **enter}, self.session)
 
-    async def complete(self, title: str) -> None:
+    def _row(self, title: str) -> str:
+        """A JS expression for the open or done row whose title is `title`."""
+        return f"""[...document.querySelectorAll("section ul > li")].find((li) =>
+              li.querySelector(".tadas-task-title")?.firstChild?.textContent
+                === {json.dumps(title)})"""
+
+    def _button(self, title: str, label: str) -> str:
+        """A JS expression for the row's button that says `label`."""
+        return (
+            f"[...{self._row(title)}.querySelectorAll('button')]"
+            f".find((b) => b.textContent === {json.dumps(label)})"
+        )
+
+    async def _centre(self, expression: str) -> dict[str, float]:
         box = await self.js(
             f"""(() => {{
-              const open = document.querySelectorAll("section ul")[0];
-              const rows = [...open.querySelectorAll(":scope > li")];
-              const title = {json.dumps(title)};
-              const row = rows.find((li) => li.querySelector("span").textContent === title);
-              const r = row.querySelector('input[type="checkbox"]').getBoundingClientRect();
+              const r = ({expression}).getBoundingClientRect();
               return {{ x: r.x + r.width / 2, y: r.y + r.height / 2 }};
             }})()"""
         )
+        if not box:
+            raise RuntimeError(f"{self.name}: nothing at {expression}")
+        return box
+
+    async def click(self, expression: str) -> None:
+        box = await self._centre(expression)
         for kind in ("mouseMoved", "mousePressed", "mouseReleased"):
             event = {"type": kind, "x": box["x"], "y": box["y"], "button": "left", "clickCount": 1}
             await self.cdp.send("Input.dispatchMouseEvent", event, self.session)
+
+    async def type_into(self, expression: str, text: str) -> None:
+        """Replaces the field's text, one character at a time."""
+        await self.js(f"(() => {{ const f = {expression}; f.focus(); f.select(); return true }})()")
+        for character in text:
+            await self.cdp.send("Input.insertText", {"text": character}, self.session)
+            await asyncio.sleep(0.07)
+
+    async def complete(self, title: str) -> None:
+        await self.click(f"{self._row(title)}.querySelector('input[type=\"checkbox\"]')")
+
+    async def edit(self, title: str, new_title: str, assignee: str) -> None:
+        """Opens the row's edit, retitles it, assigns it, and saves."""
+        await self.click(self._button(title, "edit"))
+        await asyncio.sleep(0.8)
+        form = f"{self._row(title)}.querySelector('form')"
+        await self.type_into(f"{form}.querySelector('input[type=\"text\"]')", new_title)
+        await asyncio.sleep(0.5)
+        # A select's menu is drawn outside the page and never reaches a
+        # screencast, so the choice is set the way React hears it.
+        await self.js(
+            f"""(() => {{
+              const select = {form}.querySelector("select");
+              const option = [...select.options]
+                .find((o) => o.textContent === {json.dumps(assignee)});
+              const set = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value").set;
+              set.call(select, option.value);
+              select.dispatchEvent(new Event("change", {{ bubbles: true }}));
+              return true;
+            }})()"""
+        )
+        await asyncio.sleep(0.8)
+        await self.click(f"{form}.querySelector('button[type=\"submit\"]')")
+
+    async def delete(self, title: str) -> None:
+        await self.click(self._button(title, "edit"))
+        await asyncio.sleep(1.0)
+        await self.click(self._button(title, "Delete"))
+
+    async def drag_above(self, title: str, target: str) -> None:
+        """Takes the row by its handle and drops it above the target row. The
+        drag is intercepted, so the drop is dispatched here, not by the OS."""
+        start = await self._centre(f"{self._row(title)}.querySelector('.tadas-handle')")
+        target_box = await self.js(
+            f"(() => {{ const r = {self._row(target)}.getBoundingClientRect();"
+            " return { x: r.x + r.width / 2, y: r.y + 6 } })()"
+        )
+        intercepted: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
+
+        def on_drag(message: dict[str, Any]) -> None:
+            if message.get("method") == "Input.dragIntercepted" and not intercepted.done():
+                intercepted.set_result(message["params"]["data"])
+
+        self.cdp.handlers.append(on_drag)
+        await self.cdp.send("Input.setInterceptDrags", {"enabled": True}, self.session)
+        try:
+            mouse = {"button": "left", "clickCount": 1}
+            await self.cdp.send(
+                "Input.dispatchMouseEvent", {"type": "mousePressed", **start, **mouse}, self.session
+            )
+            steps = 12
+            for n in range(1, steps + 1):
+                point = {
+                    "x": start["x"] + (target_box["x"] - start["x"]) * n / steps,
+                    "y": start["y"] + (target_box["y"] - start["y"]) * n / steps,
+                }
+                await self.cdp.send(
+                    "Input.dispatchMouseEvent",
+                    {"type": "mouseMoved", **point, **mouse, "buttons": 1},
+                    self.session,
+                )
+                await asyncio.sleep(0.04)
+            data = await asyncio.wait_for(intercepted, 5)
+            for kind in ("dragEnter", "dragOver", "drop"):
+                if kind == "drop":
+                    await asyncio.sleep(0.6)  # the drop line shows before the drop
+                event = {"type": kind, **target_box, "data": data}
+                await self.cdp.send("Input.dispatchDragEvent", event, self.session)
+            released = {"type": "mouseReleased", **target_box, **mouse}
+            await self.cdp.send("Input.dispatchMouseEvent", released, self.session)
+        finally:
+            self.cdp.handlers.remove(on_drag)
+            await self.cdp.send("Input.setInterceptDrags", {"enabled": False}, self.session)
+
+    async def check_layout(self) -> None:
+        """Every task row on one line with its whole title, and nothing wider
+        than the window. The portal ends a title that does not fit in an
+        ellipsis; the demo picks titles that fit, so it never shows one."""
+        problems = await self.js(
+            """(() => {
+              const found = [];
+              const page = document.documentElement;
+              if (page.scrollWidth > window.innerWidth)
+                found.push(`the page scrolls sideways: ${page.scrollWidth} > ${window.innerWidth}`);
+              for (const title of document.querySelectorAll(".tadas-task-title")) {
+                const line = title.parentElement;
+                const heights = [...line.children].map((c) => c.getBoundingClientRect().height);
+                if (line.getBoundingClientRect().height > Math.max(...heights) + 1)
+                  found.push(`the row "${title.textContent}" wraps`);
+                if (title.scrollWidth > title.clientWidth)
+                  found.push(`the title "${title.textContent}" is cut short`);
+              }
+              return found;
+            })()"""
+        )
+        if problems:
+            raise SystemExit(f"{self.name}: " + "; ".join(problems))
 
 
 async def open_window(
@@ -217,22 +344,24 @@ async def open_window(
 
 
 async def story(owner: Window, bob: Window) -> None:
-    """Additions alternate between the two; each completes the other's task."""
+    """Bob works through a task's whole life on the left; the owner watches.
+    Both windows are checked after every step."""
+
+    async def step(action: Awaitable[None], pause: float) -> None:
+        await action
+        await asyncio.sleep(pause)
+        for window in (bob, owner):
+            await window.check_layout()
+
     await asyncio.sleep(1.5)
-    await owner.add_task("Migrate DB")
-    await asyncio.sleep(1.6)
-    await bob.add_task("Review PR #42")
-    await asyncio.sleep(1.6)
-    await owner.add_task("Fix login test")
-    await asyncio.sleep(1.6)
-    await bob.add_task("Write changelog")
-    await asyncio.sleep(1.8)
-    await bob.complete("Migrate DB")
-    await asyncio.sleep(2.2)
-    await owner.complete("Review PR #42")
-    await asyncio.sleep(2.2)
-    await owner.add_task("Deploy to staging")
-    await asyncio.sleep(3.0)
+    await step(bob.add_task("Migrate DB"), 1.4)
+    await step(bob.add_task("Review PR #42"), 1.4)
+    await step(bob.add_task("Write changelog"), 1.8)
+    await step(bob.edit("Migrate DB", "Migrate the DB", "Local Owner"), 2.2)
+    await step(bob.drag_above("Migrate the DB", "Write changelog"), 2.2)
+    await step(bob.complete("Review PR #42"), 2.4)
+    await step(bob.delete("Write changelog"), 2.4)
+    await asyncio.sleep(0.8)
 
 
 def frame_at(frames: list[tuple[float, bytes]], moment: float) -> bytes:
@@ -245,7 +374,7 @@ def frame_at(frames: list[tuple[float, bytes]], moment: float) -> bytes:
     return chosen
 
 
-def compose(owner: Window, bob: Window, start: float, end: float, out: str) -> None:
+def compose(left: Window, right: Window, start: float, end: float, out: str) -> None:
     decoded: dict[int, Image.Image] = {}
 
     def image(data: bytes) -> Image.Image:
@@ -260,16 +389,16 @@ def compose(owner: Window, bob: Window, start: float, end: float, out: str) -> N
     step_ms = round(1000 / FPS)
     moment, last = start, None
     while moment <= end:
-        left, right = frame_at(owner.frames, moment), frame_at(bob.frames, moment)
-        if (id(left), id(right)) == last:
+        on_left, on_right = frame_at(left.frames, moment), frame_at(right.frames, moment)
+        if (id(on_left), id(on_right)) == last:
             durations[-1] += step_ms  # an unchanged moment lengthens the frame before it
         else:
             canvas = Image.new("RGB", (canvas_w, canvas_h), (220, 220, 216))
-            canvas.paste(image(left), (GAP, GAP))
-            canvas.paste(image(right), (GAP * 2 + WIDTH, GAP))
+            canvas.paste(image(on_left), (GAP, GAP))
+            canvas.paste(image(on_right), (GAP * 2 + WIDTH, GAP))
             frames.append(canvas)
             durations.append(step_ms)
-            last = (id(left), id(right))
+            last = (id(on_left), id(on_right))
         moment += step_ms / 1000
 
     # One palette for the whole GIF, from frames across the recording plus the
@@ -327,14 +456,15 @@ async def record(args: argparse.Namespace) -> None:
             pump = asyncio.create_task(cdp.pump())
             windows = [
                 await open_window(cdp, api, args.portal, name, email, args.password, args.zoom)
-                for name, email in (("owner", args.owner), ("bob", args.member))
+                for name, email in (("bob", args.member), ("owner", args.owner))
             ]
-            owner, bob = windows
+            bob, owner = windows
             if args.still:
                 for window in windows:
+                    await window.check_layout()
                     await still(window, args.out.removesuffix(".gif") + f"-{window.name}.png")
             else:
-                await screencast(cdp, owner, bob, args.out)
+                await screencast(cdp, bob, owner, args.out)
             pump.cancel()
     finally:
         chrome.terminate()
@@ -356,8 +486,9 @@ async def debugger_url() -> str:
     raise TimeoutError("Chrome did not open its debugging port")
 
 
-async def screencast(cdp: Cdp, owner: Window, bob: Window, out: str) -> None:
-    by_session = {owner.session: owner, bob.session: bob}
+async def screencast(cdp: Cdp, bob: Window, owner: Window, out: str) -> None:
+    """Bob on the left, the owner on the right."""
+    by_session = {bob.session: bob, owner.session: owner}
     acks: set[asyncio.Task[Any]] = set()
 
     def on_frame(message: dict[str, Any]) -> None:
@@ -372,16 +503,16 @@ async def screencast(cdp: Cdp, owner: Window, bob: Window, out: str) -> None:
         task.add_done_callback(acks.discard)
 
     cdp.handlers.append(on_frame)
-    for window in (owner, bob):
+    for window in (bob, owner):
         options = {"format": "jpeg", "quality": 92, "everyNthFrame": 1}
         await cdp.send("Page.startScreencast", options, window.session)
     await asyncio.sleep(0.8)
     start = time.time()
     await story(owner, bob)
     end = time.time()
-    for window in (owner, bob):
+    for window in (bob, owner):
         await cdp.send("Page.stopScreencast", {}, window.session)
-    compose(owner, bob, start, end, out)
+    compose(bob, owner, start, end, out)
 
 
 def main() -> None:
