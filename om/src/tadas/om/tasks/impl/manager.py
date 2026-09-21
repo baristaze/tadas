@@ -177,7 +177,7 @@ class TasksManagerImpl(TasksManagerInterface):
         """The clamp is on the page; the lookahead is one row past it, which
         storage was asked for and the page never carries. So a list truncated
         by the clamp still says a page follows, and the last page says none."""
-        return TaskPage(items=rows[:limit], has_more=len(rows) > limit)
+        return TaskPage(items=tuple(rows[:limit]), has_more=len(rows) > limit)
 
     @staticmethod
     def _own(ctx: OpContext, criterion: TaskFilter) -> None:

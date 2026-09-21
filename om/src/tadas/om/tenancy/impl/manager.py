@@ -443,7 +443,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
         ctx.require(Permission.READ)
         limit = self._clamp(limit)
         rows = await self._storage.read_users(ctx.org_id, after, limit + 1)
-        return UserPage(items=rows[:limit], has_more=len(rows) > limit)
+        return UserPage(items=tuple(rows[:limit]), has_more=len(rows) > limit)
 
     async def get_user(self, ctx: OpContext, user_id: UUID) -> User:
         ctx.require(Permission.READ)
@@ -593,7 +593,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
         # One row past the page, kept out of it: `has_more` is then a fact
         # about the rows, so no key is left unreachable behind a fixed limit.
         rows = await self._storage.read_api_keys(ctx.org_id, after, limit + 1, own_only)
-        return ApiKeyPage(items=rows[:limit], has_more=len(rows) > limit)
+        return ApiKeyPage(items=tuple(rows[:limit]), has_more=len(rows) > limit)
 
     async def create_api_key(
         self,

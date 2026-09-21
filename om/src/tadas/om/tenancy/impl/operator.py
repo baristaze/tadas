@@ -121,7 +121,7 @@ class TenancyOperatorManagerImpl(TenancyOperatorManagerInterface):
         limit = self._clamp(limit)
         rows = await self._storage.read_users(org_id, after, limit + 1)
         self._trail(admin, org_id, "members")
-        return UserPage(items=rows[:limit], has_more=len(rows) > limit)
+        return UserPage(items=tuple(rows[:limit]), has_more=len(rows) > limit)
 
     async def add_member(
         self,
@@ -184,7 +184,7 @@ class TenancyOperatorManagerImpl(TenancyOperatorManagerInterface):
                 raise ValidationFailed("the cursor is not one the done list issued")
             rows = await self._tasks.read_done_tasks(org_id, criterion, cursor, limit + 1)
         self._trail(admin, org_id, "tasks")
-        return TaskPage(items=rows[:limit], has_more=len(rows) > limit)
+        return TaskPage(items=tuple(rows[:limit]), has_more=len(rows) > limit)
 
     async def get_events(
         self, admin: OperatorContext, org_id: UUID, after_seq: int, limit: int

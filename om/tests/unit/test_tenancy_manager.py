@@ -457,7 +457,7 @@ async def test_no_one_mints_a_service_key(
     for ctx in (member, owner):
         with pytest.raises(ValidationFailed):
             await manager.create_api_key(ctx, "svc", Role.SERVICE)
-    assert (await manager.get_api_keys(owner, None, limit=10)).items == []
+    assert (await manager.get_api_keys(owner, None, limit=10)).items == ()
 
 
 async def test_a_rerun_of_the_create_reissues_the_secret_on_the_same_key(

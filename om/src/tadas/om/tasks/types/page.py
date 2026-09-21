@@ -7,5 +7,5 @@ from tadas.om.tasks.types.task import Task
 
 
 class TaskPage(Platform):
-    items: list[Task]
+    items: tuple[Task, ...]
     has_more: bool

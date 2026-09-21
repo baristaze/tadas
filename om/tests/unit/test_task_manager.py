@@ -140,7 +140,7 @@ async def open_titles(manager: TasksManagerImpl, ctx: OpContext, scope: TaskScop
     return [t.title for t in page.items]
 
 
-async def open_page(manager: TasksManagerImpl, ctx: OpContext, limit: int = 10) -> list[Task]:
+async def open_page(manager: TasksManagerImpl, ctx: OpContext, limit: int = 10) -> tuple[Task, ...]:
     return (await manager.get_open_tasks(ctx, own(ctx, TaskScope.TEAM), None, limit)).items
 
 
@@ -182,7 +182,7 @@ async def test_create_update_delete_record_and_push(
     deleted = await manager.delete_task(ctx, created.id, updated.version)
     assert deleted.deleted_at is not None and deleted.deleted_by == ctx.user_id
     assert deleted.version == 3
-    assert await open_page(manager, ctx) == []
+    assert await open_page(manager, ctx) == ()
     with pytest.raises(NotFound):
         await manager.get_task(ctx, created.id)
     pushes = [p for p in seen if isinstance(p, EntityChangedPayload)]
@@ -228,7 +228,7 @@ async def test_update_keeps_the_provenance_as_stored(manager: TasksManagerImpl) 
     revived = deleted.model_copy(update={"deleted_at": None, "deleted_by": None})
     with pytest.raises(NotFound):
         await manager.update_task(ann, revived)
-    assert await open_page(manager, ann) == []
+    assert await open_page(manager, ann) == ()
 
 
 async def test_new_tasks_go_to_the_top_of_the_open_list(manager: TasksManagerImpl) -> None:
@@ -247,7 +247,7 @@ async def test_done_leaves_the_open_list_and_reopening_returns_to_the_top(
     done = await manager.update_task(ctx, a.model_copy(update={"status": TaskStatus.DONE}))
     assert await open_titles(manager, ctx, TaskScope.TEAM) == ["b"]
     done_page = await manager.get_done_tasks(ctx, own(ctx, TaskScope.TEAM), None, limit=10)
-    assert done_page.items == [done] and not done_page.has_more
+    assert done_page.items == (done,) and not done_page.has_more
 
     await manager.create_task(ctx, make_task(ctx, "c"))
     await manager.update_task(ctx, done.model_copy(update={"status": TaskStatus.OPEN}))
@@ -335,7 +335,7 @@ async def test_authorize_then_verify(manager: TasksManagerImpl) -> None:
     viewer = context(Role.VIEWER)
     with pytest.raises(NotAuthorized):
         await manager.create_task(viewer, make_task(viewer))
-    assert await open_page(manager, viewer) == []
+    assert await open_page(manager, viewer) == ()
 
     member = context(Role.MEMBER)
     with pytest.raises(ValidationFailed):
@@ -358,7 +358,7 @@ async def test_tenancy_holds_across_contexts(manager: TasksManagerImpl) -> None:
         await manager.get_task(bob, task.id)
     with pytest.raises(NotFound):
         await manager.move_task(bob, task.id, None, task.version)
-    assert await open_page(manager, bob) == []
+    assert await open_page(manager, bob) == ()
 
 
 async def test_two_updates_from_one_snapshot_one_wins(manager: TasksManagerImpl) -> None:
