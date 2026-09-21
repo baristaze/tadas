@@ -35,6 +35,14 @@ class EventStorageMemoryImpl(MemoryStorageBase, EventStorageInterface):
         newer = [e for e in self._rows(self._events, org_id) if e.seq > after_seq]
         return sorted(newer, key=lambda e: e.seq)[:limit]
 
+    async def purge_tenant(self, org_id: UUID) -> int:
+        async with self._lock:
+            gone = [e.id for e in self._rows(self._events, org_id)]
+            for event_id in gone:
+                del self._events[event_id]
+            self._cursors.pop(org_id, None)
+            return len(gone)
+
     async def count_since(self, since: datetime) -> int:
         return sum(1 for event in self._every(self._events) if event.produced_at >= since)
 

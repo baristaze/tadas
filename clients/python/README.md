@@ -25,7 +25,8 @@ else in Python calls `/v1/*`.
   with no key are sent once, because nothing records their outcome and a
   second attempt could write twice. The delay doubles per attempt up to a
   cap and half of each wait is jitter, so callers that failed together do
-  not return together.
+  not return together; a `Retry-After` the server sends lengthens a wait
+  to it, never past the cap.
 - `envelopes.py` mirrors the socket's frames by hand, as the portal's
   `envelopes.ts` does; they are not in the OpenAPI document.
 - `stream.py` is the pure placement rule (next, seen, gap), the same cases
@@ -36,6 +37,9 @@ else in Python calls `/v1/*`.
   each wait is jitter, because a socket drops for a shared reason: a bare
   curve would bring every listener back at the same instant. `async for
   change in Channel(client)` yields every change once, in stream order.
+  A consumer that keeps its own copy of the state reads it in
+  `on_first_open`, which runs once after the first hello and before any
+  change, so nothing committed after that read is missed.
 
 ```python
 from tadas.client.client import ApiClient

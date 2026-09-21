@@ -9,7 +9,10 @@ from tadas.infra.secrets import SecretNotFound, SecretsInterface
 
 
 class SecretsAwsImpl(SecretsInterface):
-    """One client, opened at start() and closed at close()."""
+    """One client, opened at start() and closed at close(). The deployed task
+    roles read the application prefix and nothing more (modules/secrets and
+    the task boundary), so `put` and `delete` are refused in the cloud until
+    the change that first needs them widens both."""
 
     def __init__(
         self, session: aioboto3.Session, *, region: str, name_prefix: str, timeout: timedelta
@@ -64,10 +67,16 @@ class SecretsAwsImpl(SecretsInterface):
                 await client.put_secret_value(SecretId=self._name(name), SecretString=value)
 
     async def delete(self, name: str) -> None:
+        """Idempotent, as the local twin is: a secret that is not there is
+        already deleted."""
         with translated("secretsmanager", "delete"):
-            await self._client().delete_secret(
-                SecretId=self._name(name), ForceDeleteWithoutRecovery=True
-            )
+            try:
+                await self._client().delete_secret(
+                    SecretId=self._name(name), ForceDeleteWithoutRecovery=True
+                )
+            except ClientError as error:
+                if error_code(error) != "ResourceNotFoundException":
+                    raise
 
     def describe(self) -> str:
         return f"secrets=aws({self._region})"

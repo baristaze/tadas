@@ -97,8 +97,12 @@ never print the password or the token.
    ```bash
    aws cloudwatch get-metric-data --profile tadas-<env>-investigate \
      --start-time <start> --end-time <end> \
-     --metric-data-queries '[{"Id":"req","MetricStat":{"Metric":{"Namespace":"Tadas","MetricName":"tadas_http_requests_total","Dimensions":[{"Name":"service","Value":"api"},{"Name":"environment","Value":"<env>"}]},"Period":60,"Stat":"Sum"}}]'
+     --metric-data-queries '[{"Id":"req","Expression":"SUM(SEARCH('"'"'{Tadas,environment,method,route,service,status} MetricName=\"tadas_http_requests_total\" environment=\"<env>\"'"'"', '"'"'Sum'"'"', 60))","Period":60}]'
    ```
+
+   Every series carries all its labels as dimensions and CloudWatch
+   matches dimensions exactly, so a `MetricStat` naming only some of
+   them finds nothing; the `SEARCH` expression is the dashboard's own.
 
    Local:
 
@@ -184,7 +188,7 @@ never print the password or the token.
    and filter the spans on the attribute client-side; the query API
    ignores attribute filters. An empty answer means the process ran
    with no `TADAS_OTEL_ENDPOINT`, which is a finding, not an error.
-   With `--request-id`, filter on the `request_id` annotation in the
+   With `--request-id`, filter on the `tadas_request_id` annotation in the
    cloud and the `tadas.request_id` attribute locally instead.
 9. Cost, cloud only. The month to date against the budget:
 

@@ -1,9 +1,11 @@
 # Two kinds of secret live under one environment prefix. The platform's own
 # credentials (the database URL) are written here and injected into tasks by
 # the execution role. Application-managed secrets, the ones SecretsInterface
-# reads and writes at runtime, live under "<prefix>app/", which is the value of
-# TADAS_SECRETS_NAME_PREFIX, so a process can never rewrite its own bootstrap
-# credentials through the capability.
+# reads at runtime, live under "<prefix>app/", which is the value of
+# TADAS_SECRETS_NAME_PREFIX, so a process can never reach its own bootstrap
+# credentials through the capability. The grant is read-only, as the task
+# boundary in `shared` is: no code writes a secret at runtime yet, and the
+# change that makes one does widen both, together.
 
 data "aws_partition" "current" {}
 data "aws_region" "current" {}
@@ -12,12 +14,17 @@ data "aws_caller_identity" "current" {}
 locals {
   tags               = { "tadas:environment" = var.environment }
   application_prefix = "${var.prefix}app/"
-  secret_arn_prefix  = "arn:${data.aws_partition.current.partition}:secretsmanager:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:secret:"
+  # A deleted secret keeps its name for the recovery window, so a nuke
+  # followed by a create within it would be refused; the nuke's apply sets
+  # destroyable, and the delete that follows is immediate.
+  recovery_window_in_days = var.destroyable ? 0 : 30
+  secret_arn_prefix       = "arn:${data.aws_partition.current.partition}:secretsmanager:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:secret:"
 }
 
 resource "aws_secretsmanager_secret" "database_url" {
-  name = "${var.prefix}database_url"
-  tags = local.tags
+  name                    = "${var.prefix}database_url"
+  recovery_window_in_days = local.recovery_window_in_days
+  tags                    = local.tags
 }
 
 resource "aws_secretsmanager_secret_version" "database_url" {
@@ -30,8 +37,9 @@ resource "aws_secretsmanager_secret_version" "database_url" {
 # refuses an empty value), and never writes it again: set the real value once with
 #   aws secretsmanager put-secret-value --secret-id <prefix>sentry_dsn --secret-string <dsn>
 resource "aws_secretsmanager_secret" "sentry_dsn" {
-  name = "${var.prefix}sentry_dsn"
-  tags = local.tags
+  name                    = "${var.prefix}sentry_dsn"
+  recovery_window_in_days = local.recovery_window_in_days
+  tags                    = local.tags
 }
 
 resource "aws_secretsmanager_secret_version" "sentry_dsn" {
@@ -48,9 +56,6 @@ data "aws_iam_policy_document" "application" {
     actions = [
       "secretsmanager:GetSecretValue",
       "secretsmanager:DescribeSecret",
-      "secretsmanager:CreateSecret",
-      "secretsmanager:PutSecretValue",
-      "secretsmanager:DeleteSecret",
     ]
     resources = ["${local.secret_arn_prefix}${local.application_prefix}*"]
   }

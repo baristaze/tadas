@@ -470,7 +470,8 @@ data "aws_iam_policy_document" "pipeline" {
   }
 
   # Production promotes what staging already built, so it reads digests and
-  # never writes one.
+  # never pushes one; the one registry write it makes, the tag that keeps a
+  # promoted digest, is the `promote` policy at the end of this file.
   statement {
     sid = "Images"
     actions = concat(
@@ -651,4 +652,143 @@ resource "aws_iam_role_policy" "fences" {
   name   = "fences"
   role   = aws_iam_role.this.id
   policy = data.aws_iam_policy_document.fences.json
+}
+
+# The rest of the graph's reach, as managed policies: IAM caps a role's inline
+# policies at 10,240 characters together, and the five documents above fill
+# nearly all of it. Attached, not inline, they count against no such total;
+# their names sit outside `policy/tadas-<environment>-*`, the prefix this role
+# may edit, and the fences deny it every IAM call on its own role, so it can
+# neither change them nor detach them.
+
+# The alarms, the topic they notify, the dashboard, and the autoscaling lever.
+data "aws_iam_policy_document" "telemetry_and_scaling" {
+  statement {
+    sid = "RefreshWhatTheGraphTouches"
+    actions = [
+      "application-autoscaling:Describe*",
+      "application-autoscaling:List*",
+      "cloudwatch:Describe*",
+      "cloudwatch:Get*",
+      "cloudwatch:List*",
+      "sns:Get*",
+      "sns:List*",
+    ]
+    resources = ["*"]
+  }
+
+  statement {
+    sid = "AlarmsAndDashboard"
+    actions = [
+      "cloudwatch:DeleteAlarms",
+      "cloudwatch:DeleteDashboards",
+      "cloudwatch:PutDashboard",
+      "cloudwatch:PutMetricAlarm",
+      "cloudwatch:TagResource",
+      "cloudwatch:UntagResource",
+    ]
+    resources = [
+      "arn:${local.partition}:cloudwatch:${local.region}:${local.account}:alarm:${local.name_prefix}-*",
+      "arn:${local.partition}:cloudwatch::${local.account}:dashboard/${local.name_prefix}",
+    ]
+  }
+
+  statement {
+    sid = "AlarmTopic"
+    actions = [
+      "sns:CreateTopic",
+      "sns:DeleteTopic",
+      "sns:SetTopicAttributes",
+      "sns:Subscribe",
+      "sns:TagResource",
+      "sns:Unsubscribe",
+      "sns:UntagResource",
+    ]
+    resources = ["arn:${local.partition}:sns:${local.region}:${local.account}:${local.name_prefix}-*"]
+  }
+
+  # Scalable targets and their policies are tagged, so the fence on the other
+  # environment's tag covers them. The first target in an account also needs
+  # the service-linked role Application Auto Scaling acts as.
+  statement {
+    sid = "ScaleOutLever"
+    actions = [
+      "application-autoscaling:DeleteScalingPolicy",
+      "application-autoscaling:DeregisterScalableTarget",
+      "application-autoscaling:PutScalingPolicy",
+      "application-autoscaling:RegisterScalableTarget",
+      "application-autoscaling:TagResource",
+      "application-autoscaling:UntagResource",
+    ]
+    resources = ["*"]
+  }
+
+  statement {
+    sid       = "TheAutoscalingServiceLinkedRole"
+    actions   = ["iam:CreateServiceLinkedRole"]
+    resources = ["arn:${local.partition}:iam::${local.account}:role/aws-service-role/ecs.application-autoscaling.amazonaws.com/*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "iam:AWSServiceName"
+      values   = ["ecs.application-autoscaling.amazonaws.com"]
+    }
+  }
+}
+
+resource "aws_iam_policy" "telemetry_and_scaling" {
+  name   = "tadas-deploy-${var.environment}-telemetry-and-scaling"
+  policy = data.aws_iam_policy_document.telemetry_and_scaling.json
+}
+
+resource "aws_iam_role_policy_attachment" "telemetry_and_scaling" {
+  role       = aws_iam_role.this.name
+  policy_arn = aws_iam_policy.telemetry_and_scaling.arn
+}
+
+# S3 does not match an object call against its bucket's tags, so the tag fence
+# leaves the other environment's files readable through the wide `s3:Get*` the
+# refresh needs. Its bucket names carry the environment; this denies them by
+# name.
+data "aws_iam_policy_document" "object_fence" {
+  statement {
+    sid       = "NotTheOtherEnvironmentsObjects"
+    effect    = "Deny"
+    actions   = ["s3:*"]
+    resources = ["arn:${local.partition}:s3:::tadas-${var.other_environment}-*/*"]
+  }
+}
+
+resource "aws_iam_policy" "object_fence" {
+  name   = "tadas-deploy-${var.environment}-object-fence"
+  policy = data.aws_iam_policy_document.object_fence.json
+}
+
+resource "aws_iam_role_policy_attachment" "object_fence" {
+  role       = aws_iam_role.this.name
+  policy_arn = aws_iam_policy.object_fence.arn
+}
+
+# Production tags the digest it promotes `prod-<sha>` so the registry's
+# lifecycle never expires an image production runs (shared/main.tf). The tag
+# is a manifest put on a digest that exists; with no layer upload granted,
+# nothing new can be pushed. Only an environment that does not build gets it.
+data "aws_iam_policy_document" "promote" {
+  statement {
+    sid       = "TagThePromotedDigest"
+    actions   = ["ecr:PutImage"]
+    resources = local.image_repository_arns
+  }
+}
+
+resource "aws_iam_policy" "promote" {
+  count  = var.push_images ? 0 : 1
+  name   = "tadas-deploy-${var.environment}-promote"
+  policy = data.aws_iam_policy_document.promote.json
+}
+
+resource "aws_iam_role_policy_attachment" "promote" {
+  count      = var.push_images ? 0 : 1
+  role       = aws_iam_role.this.name
+  policy_arn = aws_iam_policy.promote[0].arn
 }

@@ -68,7 +68,9 @@ one run, and the `ops-cloud-deployment-create` skill narrates it. It
 refuses to run under any profile but `tadas-admin`, prints every command
 before it runs it, and with `--dry-run` prints them all and runs none.
 Its inputs are `DNS_ZONE_NAME`, `OWNER_EMAIL`, `ALARM_EMAIL`, and
-`TF_STATE_BUCKET`, as flags or environment variables. In order:
+`TF_STATE_BUCKET`, as flags or environment variables. The state bucket's
+name must not start with `tadas-staging-` or `tadas-production-`: the
+roles fence each environment's files by those prefixes. In order:
 
 1. `aws sts get-caller-identity` and `gh auth status`.
 2. `deployment/terraform/shared`, applied with local state because the
@@ -95,8 +97,14 @@ Its inputs are `DNS_ZONE_NAME`, `OWNER_EMAIL`, `ALARM_EMAIL`, and
    lines empty; the skills read it.
 7. The first deploy, through the pipeline like every other:
    `deploy-staging.yml` for staging, `release.yml` for production.
-8. When the deploy is green, the smoke test:
-   `uv run tadas-ops signals check --env <environment>`.
+8. When the deploy is green, the smoke test: one request through the
+   edge, then every signal read back by the request id it answered with.
+
+   ```bash
+   id=$(curl -s -o /dev/null -D - "https://<api host>/v1/me" \
+     | awk 'tolower($1) == "x-request-id:" { print $2 }' | tr -d '\r')
+   uv run tadas-ops signals check --env <environment> --request-id "$id"
+   ```
 
 `shared` is never applied by a deploy run; every deploy role denies the
 calls that would change the registry, the state bucket, or the trust.
@@ -128,7 +136,7 @@ resource carries `tadas:environment`, so a cost report splits by it.
 ### The alarm topic
 
 Each environment root declares an SNS topic `tadas-<environment>-alarms`
-with `alarm_email` subscribed (the address confirms by mail once) and six
+with `alarm_email` subscribed (the address confirms by mail once) and seven
 alarms to it: the load balancer's 5xx ratio and p95 latency, unhealthy
 targets, the database's CPU and free storage, and each service running
 fewer tasks than it wants. Another address subscribes by hand under the
@@ -208,7 +216,8 @@ git push --force origin <earlier main commit>:release
 The push runs `deploy-production` on that commit; approve its plan as
 above. It redeploys the digests and the portal build staging made for
 that commit, which the registry and the bucket still hold (the registry
-keeps the last 30 images per repository). The schema is not rolled
+keeps the last 30 images per repository and, beyond those, the last 10
+production ran, which the production deploy tags `prod-<sha>`). The schema is not rolled
 back: a migration is compatible with the release before it (expand and
 contract), so the earlier release runs against the newer schema. The
 next `release` dispatch fast-forwards `release` to `main` again.
@@ -279,8 +288,8 @@ each role trusts the name of the one it belongs to.
 ## When it fails
 
 - `deploy-staging` skipped every cloud job although the account exists:
-  set `AWS_STAGING_ROLE_ARN`, `TF_STATE_BUCKET`, `DNS_ZONE_NAME` as
-  repository variables (deployment/terraform/modules/README.md).
+  set `AWS_STAGING_ROLE_ARN`, `TF_STATE_BUCKET`, `DNS_ZONE_NAME`,
+  `ALARM_EMAIL` as repository variables (deployment/terraform/modules/README.md).
   `deploy-production` wants `AWS_PRODUCTION_PLAN_ROLE_ARN` and
   `AWS_PRODUCTION_ROLE_ARN` instead of the staging one. The
   public names follow the zone: `api.staging.<zone>`,

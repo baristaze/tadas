@@ -51,6 +51,7 @@ def build_loop(container: WorkerContainer, lane: str | None = None) -> WorkerLoo
             "tenancy": container.managers.tenancy.purge_deleted,
             "idempotency": container.managers.idempotency.purge,
             "work": container.managers.work.purge_settled,
+            "events": container.managers.events.purge_expired,
         },
         handlers={WorkKind.NOOP: NoopHandlerImpl()},
         topics=container.infra.get_topics(),

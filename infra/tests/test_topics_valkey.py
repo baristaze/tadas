@@ -163,3 +163,37 @@ async def test_a_received_message_resets_the_backoff(
         r.getMessage().rsplit(" in ", 1)[1] for r in caplog.records if r.levelno == logging.WARNING
     ]
     assert delays == ["0.0s", "0.1s", "0.0s"]
+
+
+async def test_a_bus_that_is_down_at_boot_does_not_fail_the_start(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The subscriber is the listener's to open: a bus that is down when the
+    process starts is carried by the backoff, and the first message after it
+    comes back still reaches its handlers."""
+    sent = work_available()
+    delivering = DeliveringSubscriber([Message("tadas:topics:work_available", sent)])
+    attempts = 0
+
+    async def open_after_one_failure(self: TopicsValkeyImpl) -> Any:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise GlideError("connection refused")
+        return delivering
+
+    monkeypatch.setattr(TopicsValkeyImpl, "_open_subscriber", open_after_one_failure)
+    monkeypatch.setattr(TopicsValkeyImpl, "RECONNECT_BACKOFF_SECONDS", (0.01,))
+    topics = TopicsValkeyImpl(ValkeyConnection("valkey://127.0.0.1:1/0", timedelta(seconds=1)))
+    received: asyncio.Queue[TopicPayload] = asyncio.Queue()
+
+    async def handler(payload: TopicPayload) -> None:
+        await received.put(payload)
+
+    topics.subscribe(Topics.WORK_AVAILABLE, "test", handler)
+    await topics.start()
+    got = await asyncio.wait_for(received.get(), timeout=2)
+    await topics.close()
+
+    assert got == sent
+    assert attempts == 2

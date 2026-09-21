@@ -89,7 +89,7 @@ variable "database_deletion_protection" {
 }
 
 variable "database_pool_size" {
-  description = "Connections each role's pool may open, per process (TADAS_DATABASE_POOL_SIZE). Four roles share one instance, so a process opens up to four times this, a rollout may double the API's replicas, and the migration task opens a few more: the sum at the autoscaling ceilings stays under the instance class's max_connections, so the flip is safe (deployment/cloud/README.md)."
+  description = "Connections the process's one pool may open (TADAS_DATABASE_POOL_SIZE); the four roles share one URL and so one pool. A rollout may double the API's replicas and the migration task opens a few more: the sum at the autoscaling ceilings stays under the instance class's max_connections, so the flip is safe (deployment/cloud/README.md)."
   type        = number
 }
 
@@ -157,6 +157,6 @@ variable "maintenance_autoscaling" {
 }
 
 variable "destroyable" {
-  description = "True on the nuke's way down only: buckets empty on destroy, the database skips its final snapshot and drops its deletion protection."
+  description = "True on the nuke's way down only: buckets empty on destroy, the database skips its final snapshot and drops its deletion protection, and the secrets skip their recovery window."
   type        = bool
 }

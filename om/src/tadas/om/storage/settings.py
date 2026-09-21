@@ -3,6 +3,7 @@ one set of pool bounds per role, each defaulting to the shared one."""
 
 from dataclasses import dataclass
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import make_url
 
@@ -38,24 +39,25 @@ class StorageSettings(BaseSettings):
     # queueing without end, and a query that hangs costs one call and not a
     # connection held until it dies. The size is the whole pool: the storage
     # root opens no connection past it. The shared value serves every role;
-    # a role with its own load profile takes its own.
-    database_pool_size: int = 12
-    database_pool_size_core: int | None = None
-    database_pool_size_activity: int | None = None
-    database_pool_size_queue: int | None = None
-    database_pool_size_admin: int | None = None
+    # a role with its own load profile takes its own. Every value is positive:
+    # a zero would read as "unset" below and silently take the shared value.
+    database_pool_size: int = Field(default=12, gt=0)
+    database_pool_size_core: int | None = Field(default=None, gt=0)
+    database_pool_size_activity: int | None = Field(default=None, gt=0)
+    database_pool_size_queue: int | None = Field(default=None, gt=0)
+    database_pool_size_admin: int | None = Field(default=None, gt=0)
 
-    database_checkout_timeout_seconds: float = 5.0
-    database_checkout_timeout_seconds_core: float | None = None
-    database_checkout_timeout_seconds_activity: float | None = None
-    database_checkout_timeout_seconds_queue: float | None = None
-    database_checkout_timeout_seconds_admin: float | None = None
+    database_checkout_timeout_seconds: float = Field(default=5.0, gt=0)
+    database_checkout_timeout_seconds_core: float | None = Field(default=None, gt=0)
+    database_checkout_timeout_seconds_activity: float | None = Field(default=None, gt=0)
+    database_checkout_timeout_seconds_queue: float | None = Field(default=None, gt=0)
+    database_checkout_timeout_seconds_admin: float | None = Field(default=None, gt=0)
 
-    database_statement_timeout_seconds: float = 10.0
-    database_statement_timeout_seconds_core: float | None = None
-    database_statement_timeout_seconds_activity: float | None = None
-    database_statement_timeout_seconds_queue: float | None = None
-    database_statement_timeout_seconds_admin: float | None = None
+    database_statement_timeout_seconds: float = Field(default=10.0, gt=0)
+    database_statement_timeout_seconds_core: float | None = Field(default=None, gt=0)
+    database_statement_timeout_seconds_activity: float | None = Field(default=None, gt=0)
+    database_statement_timeout_seconds_queue: float | None = Field(default=None, gt=0)
+    database_statement_timeout_seconds_admin: float | None = Field(default=None, gt=0)
 
     def refuse_remote(self) -> None:
         """For a development command (the seed, `make migrate`, the integration

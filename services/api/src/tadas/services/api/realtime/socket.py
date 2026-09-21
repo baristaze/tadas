@@ -147,12 +147,26 @@ async def channel(
     # The gateway accepted the socket before it redeemed the ticket.
     ctx = principal.ctx
     loop = asyncio.get_running_loop()
+
+    # The socket's authority ends with the credential behind its ticket: at
+    # its expiry, or at its revocation, the socket is closed with 4401,
+    # whatever the client does. It is attached before anything is awaited:
+    # the redemption checked the credential, and a revocation that landed
+    # during an await before the attach would find no socket to close.
+    ended: asyncio.Future[str] = loop.create_future()
+
+    def end(reason: str) -> None:
+        if not ended.done():
+            ended.set_result(reason)
+
+    detach = realtime.attach(ctx, end)
     # The head is read before the drainer exists: a task created first and a
     # read that raises after it leave the drainer waiting on the buffer for
     # the life of the process, one more on every reconnect through an outage.
     try:
         head = await realtime.head(ctx)
     except Exception:
+        detach()
         log.exception("the stream head could not be read for user %s", ctx.user_id)
         await close_quietly(websocket, code=CLOSE_INTERNAL_ERROR, reason=INTERNAL_ERROR)
         return
@@ -160,17 +174,8 @@ async def channel(
     subscriptions: dict[Topics, Callable[[], None]] = {}
     buffer.offer(HelloEnvelope(org_id=ctx.org_id, user_id=ctx.user_id, seq=head))
 
-    # The socket's authority ends with the credential behind its ticket: at
-    # its expiry the socket is closed with 4401, whatever the client does.
-    ended: asyncio.Future[str] = loop.create_future()
-
-    def end(reason: str) -> None:
-        if not ended.done():
-            ended.set_result(reason)
-
     remaining = (principal.expires_at - utcnow()).total_seconds()
     expiry = loop.call_later(max(remaining, 0.0), end, CREDENTIAL_EXPIRED)
-    detach = realtime.attach(ctx, end)
     commands = asyncio.create_task(
         serve_commands(websocket, ctx, realtime, buffer, subscriptions),
         name=f"commands-{ctx.user_id}",

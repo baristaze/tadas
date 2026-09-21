@@ -35,8 +35,9 @@ def build_container(
     """The test container over the memory storage root and the local infra
     root. A test that needs a bound or a deadline of its own names the
     settings it overrides, and one that needs storage to behave a certain way
-    passes its own root."""
-    settings = ApiSettings.model_validate({"environment": "test", **overrides})
+    passes its own root. The developer's `.env` is never read: its DSN would
+    send every error a test raises on purpose to the local tracker."""
+    settings = ApiSettings.model_validate({"_env_file": None, "environment": "test", **overrides})
     return AppContainer.for_tests(
         storage or StorageMemoryImpl(), InfraLocalImpl(tmp_path), settings
     )

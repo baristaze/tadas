@@ -35,3 +35,53 @@ def test_the_session_file_is_owner_only_from_creation(
     finally:
         os.umask(previous)
     assert config.load_session() == session
+
+
+def kept_session(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TADAS_HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("TADAS_TOKEN", raising=False)
+    monkeypatch.delenv("TADAS_API_URL", raising=False)
+    config.save_session(
+        config.Session(
+            api_url="https://api.example.test",
+            token="ses_kept",
+            email="ann@example.test",
+            display_name="Ann",
+            org_slug="acme",
+            org_name="Acme",
+        )
+    )
+
+
+def test_the_session_token_goes_to_the_api_that_issued_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    kept_session(tmp_path, monkeypatch)
+    assert config.credentials() == ("https://api.example.test", "ses_kept")
+    assert config.credentials("https://api.example.test/") == (
+        "https://api.example.test",
+        "ses_kept",
+    )
+
+
+@pytest.mark.parametrize("from_env", [False, True])
+def test_another_api_is_refused_the_session_token(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, from_env: bool
+) -> None:
+    kept_session(tmp_path, monkeypatch)
+    if from_env:
+        monkeypatch.setenv("TADAS_API_URL", "http://localhost:8000")
+    with pytest.raises(config.BadSetting, match=r"issued by https://api\.example\.test"):
+        config.credentials(None if from_env else "http://localhost:8000")
+
+
+def test_the_environments_token_never_goes_to_the_files_api(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    kept_session(tmp_path, monkeypatch)
+    monkeypatch.setenv("TADAS_TOKEN", "key_ci")
+    assert config.credentials() == (config.DEFAULT_API_URL, "key_ci")
+    assert config.credentials("https://other.example.test") == (
+        "https://other.example.test",
+        "key_ci",
+    )

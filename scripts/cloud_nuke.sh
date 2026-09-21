@@ -93,7 +93,7 @@ if [ "$environment" = "production" ]; then
   main_root="$(git show origin/main:deployment/terraform/environments/prod/main.tf 2>/dev/null)" \
     || refuse "cannot read environments/prod/main.tf on origin/main; fetch it, then run again"
   printf '%s\n' "$main_root" | grep -Eq '^\s*database_deletion_protection\s*=\s*false\s*$' \
-    || refuse "environments/prod/main.tf on origin/main still reads database_deletion_protection = true; lift it in a pull request, merge it, then run again"
+    || refuse "environments/prod/main.tf on origin/main does not read database_deletion_protection = false; lift it in a pull request, merge it, then run again"
 fi
 
 run() {
@@ -152,6 +152,6 @@ say "== 5. What remains"
 say "- the hosted zone $dns_zone_name and its name servers at the registrar (shared root)"
 say "- the state prefix $root/ and plans/$root/ in s3://$state_bucket (empty the prefix by hand if the environment is not coming back)"
 say "- the portal builds under builds/portal/ in s3://$state_bucket"
-say "- the images in the registry (shared root; the lifecycle policy keeps the last 30)"
+say "- the images in the registry (shared root; the lifecycle policy keeps the last 30, and the last 10 tagged prod-)"
 say "- the shared roles, the operators user, the budget, and the anomaly monitor (shared root)"
 say "- $HOME/.config/tadas/ops/$environment.env, and the profiles in $HOME/.aws"

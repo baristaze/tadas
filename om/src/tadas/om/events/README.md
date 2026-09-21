@@ -23,8 +23,13 @@ is one of the six kinds of thing [Tadas is made of](../../../../README.md).
 - **Read after a number.** Everything after a sequence number, oldest
   first, so a screen that was away catches up.
 - **Read the head.**
+- **Drop an expired tenant's stream.** Once a deleted org is past the
+  retention, the sweep drops its events and its cursor, as every
+  namespace drops that tenant's rows.
 
-Nothing else. No update, no delete.
+Nothing else. No update, and no other delete. An event about a user
+carries no email and no display name, so erasing a person from the user
+row erases them.
 
 ## The rules
 

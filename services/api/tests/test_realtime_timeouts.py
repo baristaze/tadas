@@ -50,7 +50,7 @@ async def test_the_server_ping_reaches_uvicorn_and_the_selected_protocol_honors_
     """The options name uvicorn's protocol ping, and the websocket protocol
     class uvicorn selects for this environment reads them: a protocol that
     ignored them would leave a socket to the load balancer's timeout."""
-    settings = ApiSettings.model_validate({"environment": "test"})
+    settings = ApiSettings.model_validate({"_env_file": None, "environment": "test"})
     options = server_options(settings)
     assert options["ws_ping_interval"] == SERVER_PING_INTERVAL_SECONDS
     assert options["ws_ping_timeout"] == SERVER_PING_TIMEOUT_SECONDS

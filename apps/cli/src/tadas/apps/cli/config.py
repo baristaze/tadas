@@ -141,3 +141,23 @@ def token() -> str | None:
         return from_env
     session = load_session()
     return session.token if session else None
+
+
+def credentials(option: str | None = None) -> tuple[str, str | None]:
+    """The API and the bearer a command sends, as a pair: a token goes only
+    to the API it belongs to. `TADAS_TOKEN` goes to `--api`, else
+    `TADAS_API_URL`, else local, never to the API the session file names.
+    The session file's token goes to the API that issued it; an `--api` or a
+    `TADAS_API_URL` naming another one is refused, not handed that token."""
+    explicit = option or os.environ.get("TADAS_API_URL") or None
+    if os.environ.get("TADAS_TOKEN"):
+        return explicit or DEFAULT_API_URL, token()
+    session = load_session()
+    if session is None:
+        return explicit or DEFAULT_API_URL, None
+    if explicit is not None and explicit.rstrip("/") != session.api_url.rstrip("/"):
+        raise BadSetting(
+            f"the session was issued by {session.api_url}, not {explicit}; "
+            f"run `tadas login --api {explicit}` there, or set TADAS_TOKEN"
+        )
+    return session.api_url, session.token

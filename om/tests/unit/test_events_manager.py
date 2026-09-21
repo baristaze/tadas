@@ -14,6 +14,7 @@ from tadas.om.opcontext import (
     Role,
     build_context,
 )
+from tadas.om.tenancy import TenancyManagerInterface
 from tadas.om.tenancy.types.role import permissions_of
 
 APP = AppContext(type=AppType.PORTAL, version="portal@test")
@@ -30,9 +31,28 @@ def context(role: Role = Role.MEMBER) -> OpContext:
     )
 
 
+class Retention(TenancyManagerInterface):
+    """The one question the events sweep asks of tenancy, answered as the
+    case sets it; any other method fails loudly as unimplemented."""
+
+    def __init__(self) -> None:
+        self.expired = False
+
+    async def tenant_expired(self, ctx: OpContext) -> bool:
+        return self.expired
+
+
+Retention.__abstractmethods__ = frozenset()
+
+
 @pytest.fixture
-def manager() -> EventsManagerImpl:
-    return EventsManagerImpl(EventStorageMemoryImpl(), EventsOptions(max_limit=2))
+def retention() -> Retention:
+    return Retention()  # pyright: ignore[reportAbstractUsage] (a partial double)
+
+
+@pytest.fixture
+def manager(retention: Retention) -> EventsManagerImpl:
+    return EventsManagerImpl(EventStorageMemoryImpl(), retention, EventsOptions(max_limit=2))
 
 
 async def test_append_sequences_per_tenant_and_reads_back_by_seq(
@@ -115,3 +135,17 @@ async def test_the_head_is_the_last_seq_of_the_callers_tenant(manager: EventsMan
     await manager.append_event(other, make_event(other.org_id))
     assert await manager.get_head(ctx) == 2
     assert await manager.get_head(other) == 1
+
+
+async def test_the_sweep_drops_a_stream_only_once_its_tenant_has_expired(
+    manager: EventsManagerImpl, retention: Retention
+) -> None:
+    ann = context(Role.OWNER)
+    await manager.append_event(ann, make_event(ann.org_id))
+    await manager.append_event(ann, make_event(ann.org_id, "tasks.task.updated"))
+    assert await manager.purge_expired(ann) == 0
+    assert len(await manager.get_events(ann, 0, 2)) == 2
+    retention.expired = True
+    assert await manager.purge_expired(ann) == 2
+    assert await manager.get_events(ann, 0, 2) == []
+    assert await manager.get_head(ann) == 0

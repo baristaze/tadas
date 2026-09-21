@@ -43,6 +43,10 @@ def settings_over_the_stack(tmp_path: Path) -> ApiSettings:
         buckets_root=tmp_path / "buckets",
         queues_backend="memory",
         secrets_backend="local",
+        # The rest comes from the environment and .env, the tracker's DSN
+        # and the collector aside: a test reports nothing anywhere.
+        sentry_dsn=None,
+        otel_endpoint=None,
     )
     settings.refuse_remote()
     return settings
@@ -64,7 +68,7 @@ async def two_processes(tmp_path: Path) -> AsyncIterator[TwoProcesses]:
     a = AppContainer.build(settings)
     b = AppContainer.build(settings)
     await a.start()
-    suffix = new_id().hex[:8]
+    suffix = new_id().hex[-8:]  # the random tail; a uuid7 leads with the clock
     email = f"ann-{suffix}@example.test"
     _, org = await a.managers.tenancy.bootstrap(
         seed_request(), "Acme", f"acme-{suffix}", email, OWNER["password"], OWNER["name"]

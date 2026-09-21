@@ -39,9 +39,10 @@ six kinds of thing [Tadas is made of](../../../../README.md).
   default, and the worker renews it while the job runs. Every
   transition is conditional on the claim token, in the statement
   itself, never on the worker's name, because one worker can hold the
-  same item twice across a requeue. A worker whose lease has passed is
-  refused, hands the item back, and spends no attempt; the requeue
-  clears the token.
+  same item twice across a requeue. Once the sweep has requeued an item
+  whose lease passed, the worker that held it is refused, hands nothing
+  back, and spends no attempt: the requeue cleared its token. Until the
+  sweep runs, a late worker's transition still lands.
 - **Attempts.** A claim spends one; a hand-back refunds it. An item
   has three by default. The delay before a retry doubles per attempt,
   up to a cap. Requeued items are staggered so a recovered dependency

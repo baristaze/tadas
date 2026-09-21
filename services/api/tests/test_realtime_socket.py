@@ -21,7 +21,7 @@ from uvicorn.protocols.utils import ClientDisconnected
 from tadas.infra.exceptions import BackendFailed
 from tadas.infra.topics import Topics
 from tadas.om.base import utcnow
-from tadas.om.opcontext import Role
+from tadas.om.opcontext import OpContext, Role
 from tadas.om.tenancy.rules import hash_token
 from tadas.services.api.app import create_app
 from tadas.services.api.container import AppContainer
@@ -35,6 +35,17 @@ def test_a_refused_ticket_closes_the_accepted_socket_with_4401(tmp_path: Path) -
     with TestClient(create_app(build_container(tmp_path))) as tc:
         with tc.websocket_connect("/v1/realtime?ticket=wst_not_a_ticket") as ws:
             # The handshake succeeded; the refusal is the first thing received.
+            with pytest.raises(WebSocketDisconnect) as closed:
+                ws.receive_json()
+    assert closed.value.code == CLOSE_UNAUTHENTICATED
+    assert closed.value.reason == "not_authenticated"
+
+
+def test_a_missing_ticket_closes_the_accepted_socket_with_4401(tmp_path: Path) -> None:
+    """No ticket at all is the same refusal as a bad one, not a handshake
+    failure the client cannot tell from any other."""
+    with TestClient(create_app(build_container(tmp_path))) as tc:
+        with tc.websocket_connect("/v1/realtime") as ws:
             with pytest.raises(WebSocketDisconnect) as closed:
                 ws.receive_json()
     assert closed.value.code == CLOSE_UNAUTHENTICATED
@@ -308,6 +319,43 @@ def test_a_hello_that_cannot_read_the_head_leaves_no_task_behind(
     # frame and not an HTTP response the server would refuse as a protocol error.
     assert closed.value.code == 1011
     assert closed.value.reason == "internal_error"
+
+
+def test_a_revocation_during_the_hello_still_closes_the_socket(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The ticket was good when it was redeemed, and the session is revoked
+    while the socket reads its head: the socket is attached before that read,
+    so the revocation finds it and it closes with 4401 instead of living until
+    the session would have expired."""
+    container = build_container(tmp_path)
+    _, org = run(
+        container.managers.tenancy.bootstrap(
+            seed_request(), "Acme", "acme", OWNER["email"], OWNER["password"], OWNER["name"]
+        )
+    )
+    service = container.services.get_realtime_service()
+    working = service.head
+    revoked: list[bool] = []
+
+    async def head_while_revoked(ctx: OpContext) -> int:
+        if not revoked:
+            revoked.append(True)
+            assert ctx.credential_id is not None
+            await container.managers.tenancy.revoke_session(ctx, ctx.credential_id)
+        return await working(ctx)
+
+    monkeypatch.setattr(service, "head", head_while_revoked)
+    with TestClient(create_app(container)) as tc:
+        headers = sign_in(tc, OWNER["email"], OWNER["password"], org.id)
+        with open_socket(tc, headers) as ws:
+            # The hello may or may not go out before the close does.
+            with pytest.raises(WebSocketDisconnect) as closed:
+                while True:
+                    assert ws.receive_json()["type"] == "hello"
+    assert revoked == [True]
+    assert closed.value.code == CLOSE_UNAUTHENTICATED
+    assert closed.value.reason == CREDENTIAL_REVOKED
 
 
 def socket_handlers(container: AppContainer) -> int:

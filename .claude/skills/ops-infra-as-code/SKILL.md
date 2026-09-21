@@ -39,7 +39,7 @@ and check that `Arn` reads
 `arn:aws:sts::<account>:assumed-role/tadas-investigate-<env>/...`.
 Refuse any other identity, the administrator profile `tadas-admin`
 above all. The role reads the state bucket under
-`environments/<env>/` and describes every resource, which is all a
+`environments/staging/` or `environments/prod/` and describes every resource, which is all a
 plan needs. It cannot lock the state and cannot write it, so the plan
 runs with `-lock=false`, and an apply under it fails by construction.
 
@@ -51,8 +51,9 @@ is read; this skill touches no application credential.
 1. Read `deployment/terraform/` whole before writing: `modules/`, both
    `environments/`, and `shared/`. The shape to keep:
    - One module graph. Every environment instantiates the same
-     modules; what differs is a variable in that environment's
-     `terraform.tfvars`, never a resource that exists in one root and
+     modules; what differs is a value in that environment's root
+     module call (`environments/<staging | prod>/main.tf`) or a `-var`
+     the pipeline passes, never a resource that exists in one root and
      not the other.
    - Variables, not clicks. A resource a person made in the console
      is imported or recreated here; nothing is left untracked.
@@ -65,7 +66,7 @@ is read; this skill touches no application credential.
      variable.
    - The budget in `shared`: `monthly_budget_usd`, the four
      notifications, the anomaly monitor, to `owner_email`.
-   - The alarm topic `tadas-<env>-alarms` and the six alarms, the
+   - The alarm topic `tadas-<env>-alarms` and the seven alarms, the
      dashboard `tadas-<env>`, the log retention on every group, and
      `default_tags` with `environment` on the provider.
 2. Write the change in the module that owns the resource, then wire
@@ -78,10 +79,22 @@ is read; this skill touches no application credential.
 4. Cloud only. Plan under the read-only profile:
 
    ```bash
-   cd deployment/terraform/environments/<env>
-   AWS_PROFILE=tadas-<env>-investigate terraform init -reconfigure
-   AWS_PROFILE=tadas-<env>-investigate terraform plan -lock=false -out=/dev/null
+   # <root> is staging or prod; production's root is environments/prod.
+   cd deployment/terraform/environments/<root>
+   AWS_PROFILE=tadas-<env>-investigate terraform init -reconfigure \
+     -backend-config="bucket=$TF_STATE_BUCKET" \
+     -backend-config="key=environments/<root>/terraform.tfstate" \
+     -backend-config="region=us-east-1" \
+     -backend-config="use_lockfile=true"
+   AWS_PROFILE=tadas-<env>-investigate terraform plan -lock=false -out=/dev/null \
+     -var "api_image=<in state>" -var "maintenance_image=<in state>" \
+     -var "dns_zone_name=$DNS_ZONE_NAME" -var "alarm_email=$ALARM_EMAIL" \
+     -var "api_domain_name=<api host>" -var "app_domain_name=<app host>"
    ```
+
+   The `-var` values are the ones the deploy workflow passes
+   (`.github/workflows/deploy-<staging | production>.yml`); the images
+   are the ones in state, so the plan shows the change and not a roll.
 
    Read the plan whole. A destroy the change did not ask for stops
    the run. A plan that fails on a permission the role lacks is a

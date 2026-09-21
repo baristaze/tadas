@@ -5,7 +5,7 @@ skips the change without ending the stream."""
 
 import asyncio
 import io
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import datetime
 
 import httpx
@@ -60,10 +60,13 @@ def test_every_change_becomes_one_line(stack: Stack) -> None:
     out, err = io.StringIO(), io.StringIO()
 
     async def scripted(
-        client: ApiClient, on_state: Callable[[State], None]
+        client: ApiClient,
+        on_state: Callable[[State], None],
+        on_first_open: Callable[[], Awaitable[None]],
     ) -> AsyncIterator[EntityChanged]:
         """Bob and the owner act while the owner listens; the changes are the
         pushes the socket would carry, read back from the event stream."""
+        await on_first_open()
         on_state("connecting")
         on_state("open")
         async with stack.client(bob) as as_bob, stack.client(owner) as as_owner:
@@ -125,8 +128,11 @@ def test_a_deleted_task_seen_before_the_listener_started_still_has_a_title(stack
     out = io.StringIO()
 
     async def scripted(
-        client: ApiClient, on_state: Callable[[State], None]
+        client: ApiClient,
+        on_state: Callable[[State], None],
+        on_first_open: Callable[[], Awaitable[None]],
     ) -> AsyncIterator[EntityChanged]:
+        await on_first_open()
         async with stack.client(owner) as as_owner:
             await as_owner.delete_task(old.id, old.version)
             deleted = (await as_owner.events_after(0))[-1]
@@ -178,8 +184,11 @@ def test_a_read_that_fails_every_attempt_skips_the_change_and_keeps_listening(
     )
 
     async def scripted(
-        client: ApiClient, on_state: Callable[[State], None]
+        client: ApiClient,
+        on_state: Callable[[State], None],
+        on_first_open: Callable[[], Awaitable[None]],
     ) -> AsyncIterator[EntityChanged]:
+        await on_first_open()
         async with stack.client(bob) as as_bob, stack.client(owner) as as_owner:
             seq = 0
 
@@ -234,8 +243,11 @@ def test_a_read_refused_with_401_ends_the_listener(stack: Stack) -> None:
     owner = stack.session_token(OWNER["email"], OWNER["password"])
 
     async def scripted(
-        client: ApiClient, on_state: Callable[[State], None]
+        client: ApiClient,
+        on_state: Callable[[State], None],
+        on_first_open: Callable[[], Awaitable[None]],
     ) -> AsyncIterator[EntityChanged]:
+        await on_first_open()
         async with stack.client(owner) as as_owner:
             await as_owner.create_task("Migrate DB")
             yield EntityChanged.of_event((await as_owner.events_after(0))[-1])
@@ -272,8 +284,11 @@ def test_a_read_that_answers_404_keeps_the_title_for_the_delete_that_follows(
             return await as_bob.create_task("Migrate DB", assignee_id=ann)
 
     async def scripted(
-        client: ApiClient, on_state: Callable[[State], None]
+        client: ApiClient,
+        on_state: Callable[[State], None],
+        on_first_open: Callable[[], Awaitable[None]],
     ) -> AsyncIterator[EntityChanged]:
+        await on_first_open()
         async with stack.client(bob) as as_bob, stack.client(owner) as as_owner:
             seq = (await as_owner.events_after(0))[-1].seq
 

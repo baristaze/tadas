@@ -78,7 +78,7 @@ HTTP latency p95 by route, outcomes per second; plus one row for the
 database, the cache, and the queue. A test holds the shared titles
 equal between the two definitions.
 
-**The alarms.** Six per environment, to one topic, `tadas-<env>-alarms`,
+**The alarms.** Seven per environment, to one topic, `tadas-<env>-alarms`,
 with an email subscription: the load balancer's 5xx ratio, unhealthy
 targets, database CPU, database free storage, running tasks below
 desired for the API and the worker, and the load balancer's p95
@@ -102,9 +102,11 @@ and the operator plane, and it holds a read credential.
 
 ## The skills
 
-Nine, under `.claude/skills/`. Every one takes
-`--env local|staging|production`, names the role it needs, what it
-reads, what it never does, and its report.
+Nine, under `.claude/skills/`. Every one that reads or drives an
+environment takes `--env local|staging|production` (create and nuke
+take `staging` or `production`; the scenario writer takes none), and
+every one names the role it needs, what it reads, what it never does,
+and its report.
 
 | Skill | Needs | Answers |
 |-------|-------|---------|

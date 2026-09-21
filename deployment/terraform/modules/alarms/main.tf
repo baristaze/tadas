@@ -1,9 +1,10 @@
 # The default alarm set of one environment, and the one topic they all go
-# to. Six alarms: the edge (5xx ratio, unhealthy targets, p95 latency), the
+# to. Seven alarms: the edge (5xx ratio, unhealthy targets, p95 latency), the
 # database (CPU, free storage), and the runtime (a service running fewer
-# tasks than it wants). The thresholds are inputs with defaults here, at the
+# tasks than it wants, one per service). The thresholds are inputs with defaults here, at the
 # leaf, because a threshold is a number and not shape; an environment that
-# wants another number passes it.
+# wants another number passes it through the environment module, which
+# exposes none of them yet.
 #
 # The first responder is an agent holding the investigate role: it reads the
 # alarm against the platform's size before it escalates, so the topic's
@@ -51,9 +52,13 @@ resource "aws_cloudwatch_metric_alarm" "http_5xx_ratio" {
   ok_actions         = [aws_sns_topic.alarms.arn]
   tags               = local.tags
 
+  # The load balancer publishes a 5xx count only for a minute that has one,
+  # and metric math yields nothing where any input is missing, so each count
+  # is filled with zero: 5xx from targets alone, or from the load balancer
+  # alone, still makes a ratio.
   metric_query {
     id          = "ratio"
-    expression  = "100 * (target_5xx + elb_5xx) / requests"
+    expression  = "100 * (FILL(target_5xx, 0) + FILL(elb_5xx, 0)) / requests"
     label       = "5xx percent"
     return_data = true
   }
@@ -165,14 +170,17 @@ resource "aws_cloudwatch_metric_alarm" "database_free_storage" {
 # The runtime: one alarm per service, on the gap between what it wants and
 # what runs. Container Insights publishes both counts per service; the gap
 # is a metric math expression so a scale-out (desired rises, running follows)
-# reads the same as a deploy.
+# reads the same as a deploy. Its window is longer than the others: the worker
+# rolls one task at a time with no second one beside it, so a routine deploy
+# leaves it at none for its drain plus a start, a few minutes that are not an
+# outage.
 resource "aws_cloudwatch_metric_alarm" "tasks_below_desired" {
   for_each = toset(var.service_names)
 
   alarm_name          = "${local.prefix}-${each.key}-tasks-below-desired"
-  alarm_description   = "The ${each.key} service ran fewer tasks than it wants for ${var.evaluation_periods} periods of ${var.period_seconds}s."
+  alarm_description   = "The ${each.key} service ran fewer tasks than it wants for ${var.tasks_below_desired_periods} periods of ${var.period_seconds}s."
   comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = var.evaluation_periods
+  evaluation_periods  = var.tasks_below_desired_periods
   threshold           = 0
   treat_missing_data  = "notBreaching"
   alarm_actions       = [aws_sns_topic.alarms.arn]

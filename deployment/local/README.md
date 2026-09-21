@@ -68,7 +68,6 @@ network, so enter host `valkey` and port `6379` (not `localhost` or
 | Everything up, migrated and seeded; keeps data | `make up` |
 | Stop everything, keep data | `make down` |
 | Wipe all data and start over | `make reset` |
-| Wipe all data and stop | `make infra-down` |
 | Only the backing services (for `scripts/dev.sh`) | `make infra-up` |
 | Backing services plus dashboards | `make devx-up` |
 | Backing services plus app containers, no dashboards | `make stack-up` |
@@ -79,7 +78,7 @@ Set this once per shell. It names both files and the profile, so every
 service is addressable:
 
 ```bash
-alias dc='docker compose -f deployment/local/docker-compose.yml -f deployment/local/docker-compose.full.yml --profile devx'
+alias dc='docker compose --env-file .env.example --env-file .env -f deployment/local/docker-compose.yml -f deployment/local/docker-compose.full.yml --profile devx'
 ```
 
 On Linux, add `-f deployment/local/docker-compose.linux.yml` after the first

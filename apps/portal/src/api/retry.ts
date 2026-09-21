@@ -56,3 +56,21 @@ export function retryDelayMs(
   const full = Math.min(baseMs * 2 ** Math.max(0, attempt - 1), MAX_RETRY_DELAY_MS);
   return full / 2 + (full / 2) * random();
 }
+
+/**
+ * A `Retry-After` in seconds, as the gateway sends it, in milliseconds; an
+ * HTTP date or anything unreadable is no ask at all.
+ */
+export function retryAfterHeaderMs(header: string | null): number | undefined {
+  if (header === null || !/^\d+$/.test(header.trim())) return undefined;
+  return Number(header.trim()) * 1000;
+}
+
+/**
+ * The wait before a retry: the curve's, or longer when the server asked for
+ * longer, and never past the cap, so an ask for minutes does not hold a
+ * screen that long.
+ */
+export function retryWaitMs(curveMs: number, serverAskedMs?: number): number {
+  return Math.min(Math.max(curveMs, serverAskedMs ?? 0), MAX_RETRY_DELAY_MS);
+}

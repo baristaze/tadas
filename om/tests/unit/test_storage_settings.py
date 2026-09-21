@@ -30,3 +30,19 @@ def test_the_migration_runner_refuses_a_remote_database_with_local(
     for command in (["upgrade", "--all"], ["check", "--all"], ["downgrade", "--all", "--to", "-1"]):
         with pytest.raises(SystemExit, match="refusing to touch"):
             migrate.main([*command, "--local"])
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "database_pool_size",
+        "database_pool_size_queue",
+        "database_checkout_timeout_seconds_core",
+        "database_statement_timeout_seconds_queue",
+    ],
+)
+def test_a_zero_bound_is_refused_rather_than_read_as_unset(field: str) -> None:
+    """A role's zero would fall through to the shared value, and a statement
+    deadline of zero means none to Postgres; neither is what was asked for."""
+    with pytest.raises(ValueError):
+        StorageSettings.model_validate({"_env_file": None, field: 0})

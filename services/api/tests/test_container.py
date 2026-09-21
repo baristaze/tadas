@@ -74,3 +74,18 @@ def test_add_member_refuses_a_role_no_membership_can_take(
         )
     assert exit_code.value.code == 2
     assert "invalid choice" in capsys.readouterr().err
+
+
+def test_the_test_container_never_reads_the_developers_env_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`make up` copies .env.example to .env with the local tracker's DSN in
+    it; a test container that read it would boot error reporting and send
+    every error a test raises on purpose to that tracker."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text(
+        "TADAS_SENTRY_DSN=http://key@127.0.0.1:1/1\nTADAS_OTEL_ENDPOINT=http://127.0.0.1:1\n"
+    )
+    built = AppContainer.for_tests(StorageMemoryImpl(), InfraLocalImpl(tmp_path))
+    assert built.settings.sentry_dsn is None
+    assert built.settings.otel_endpoint is None

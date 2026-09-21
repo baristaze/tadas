@@ -59,7 +59,7 @@ async def serving(container: AppContainer) -> AsyncIterator[Serving]:
         seed_request(), "Acme", "acme", OWNER["email"], OWNER["password"], OWNER["name"]
     )
     port = free_port()
-    settings = ApiSettings.model_validate({"environment": "test"})
+    settings = ApiSettings.model_validate({"_env_file": None, "environment": "test"})
     config = uvicorn.Config(
         create_app(container), host="127.0.0.1", port=port, **server_options(settings)
     )

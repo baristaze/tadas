@@ -59,7 +59,9 @@ them, but every one of them belongs to an org like everything else.
 
 An **event** is a line in the org's diary: which thing changed, how,
 by whom, and when. The lines are numbered one, two, three, with no
-gaps, and a line is never edited or removed. The live channel pushes
+gaps, and a line is never edited; the diary goes only with its org, once
+a deleted org's retention has passed. A line about a person records that
+something happened to them, never their email or name. The live channel pushes
 each new line to every open screen. A screen that was away reads the
 diary from the last number it saw and catches up.
 
@@ -90,9 +92,11 @@ a second task.
   of them.
 - Tasks belong to the org. Each is created by a user and may be
   assigned to a user.
-- Every change to a task, a user, a membership, a session, or an API
-  key writes an outbox row, which becomes an event in the org's diary,
-  which reaches every screen of the org.
+- Every change to a task, and every change to a user, a membership, a
+  session, or an API key that the org's screens act on (a member added,
+  changed, or removed, a credential revoked), writes an outbox row, which
+  becomes an event in the org's diary, which reaches every screen of the
+  org. Signing in, and creating an org, announce nothing.
 - A work item, an idempotency record, an event, and an outbox row each
   name the org they belong to, so the fence between orgs holds for them
   too.

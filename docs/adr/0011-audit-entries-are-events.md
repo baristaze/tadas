@@ -18,8 +18,8 @@ Tadas has no `audit` namespace. An audit entry is an `Event` in the
 append-only stream that carries every entity event behind a push. The
 actor, the request, and the app are on every event already, because
 the stream records who produced what; an audit entry adds its facts as
-the payload. The shape is a helper on the events manager,
-`audit_event(ctx, event_id, kind, target_id, facts)`, which reads the
+the payload. The shape is a module-level helper beside the events
+manager, `audit_event(ctx, event_id, kind, target_id, facts)`, which reads the
 actor, the request, and the app from the context and nothing else. The
 producers are the two dead letters: the work manager builds its entry
 through the helper and appends it through the manager under its
@@ -36,9 +36,9 @@ entry are one type, `Event`, in one table, ordered by one `seq`; the
 kind tells them apart (`<namespace>.<entity>.<action>` for an entity
 event, an audit kind for an entry), and the payload is fixed per kind
 (the entity's snapshot, or the entry's facts). The audit shape is the
-`audit_event` helper on the events manager: a producer with a context
-builds its entry through it and appends through
-`EventsManagerInterface.append`, so the principal and the app come from
+`audit_event` helper beside the events manager: a producer with a
+context builds its entry through it and appends through
+`EventsManagerInterface.append_event`, so the principal and the app come from
 the context and never from the caller. The relay is the one producer
 without a context, and it builds the same shape from the row's
 provenance and appends through the event storage, as it does for the
@@ -60,5 +60,5 @@ filter. The events table's retention is the audit retention, and a
 purge of the stream is a purge of the audit; an audit namespace with
 its own table is the shape that separates them, and that is the day
 it is built. A producer with a context goes through `audit_event` and
-the manager's `append`; an `Event` with an audit kind constructed by
+the manager's `append_event`; an `Event` with an audit kind constructed by
 hand anywhere but the relay is a finding.

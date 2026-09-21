@@ -14,7 +14,9 @@ from tadas.om.events.storage import EventStorageInterface
 from tadas.om.events.types.event import Event
 from tadas.om.exceptions import TenantMismatch
 
-CROSS_TENANT_CASES: frozenset[str] = frozenset({"append_event", "read_after", "read_head"})
+CROSS_TENANT_CASES: frozenset[str] = frozenset(
+    {"append_event", "purge_tenant", "read_after", "read_head"}
+)
 """Every method of `EventStorageInterface` that takes a tenant has a case in
 this module that presents another tenant's. `test_storage_exceptions.py` holds
 the two sets to each other, so a new method arrives with its case."""
@@ -83,6 +85,22 @@ class EventStorageContract:
         await storage.append_event(org_b, earlier)
         assert await storage.count_since(cut) == 2
         assert await storage.count_since(cut - timedelta(days=2)) == 3
+
+    async def test_a_tenant_purge_drops_its_stream_and_no_other(
+        self, storage: EventStorageInterface
+    ) -> None:
+        """The events and the cursor go together, so the tenant's stream is
+        gone whole; the other tenant's stays as it was."""
+        gone, kept = new_id(), new_id()
+        for _ in range(2):
+            await storage.append_event(gone, make_event(gone))
+        stays = await storage.append_event(kept, make_event(kept))
+        assert await storage.purge_tenant(gone) == 2
+        assert await storage.read_after(gone, 0, 10) == []
+        assert await storage.read_head(gone) == 0
+        assert await storage.read_after(kept, 0, 10) == [stays]
+        assert await storage.read_head(kept) == 1
+        assert await storage.purge_tenant(gone) == 0
 
     async def test_an_appended_event_names_its_own_tenant(
         self, storage: EventStorageInterface

@@ -95,15 +95,20 @@ Identity = Annotated[IdentityContext, Depends(current_identity)]
 
 
 async def socket_principal(
-    websocket: WebSocket, rctx: Rctx, ticket: Annotated[str, Query()]
+    websocket: WebSocket, rctx: Rctx, ticket: Annotated[str | None, Query()] = None
 ) -> SocketPrincipal:
     """The socket's principal and the instant its authority ends: the tenancy
     manager consumes the ticket once and re-checks the credential behind it.
     The handshake is accepted first, so a refusal reaches the client as a
     close with 4401 on an open socket; a close before the accept is an HTTP
     403 handshake failure on the wire, which no client can tell from any
-    other refusal. The handler receives the socket already accepted."""
+    other refusal. The handler receives the socket already accepted; a
+    missing ticket is optional to the framework for the same reason, so it
+    too is refused after the accept and not by validation before it."""
     await websocket.accept()
+    if not ticket:
+        log.info("socket refused: no ticket")
+        raise WebSocketException(code=CLOSE_UNAUTHENTICATED, reason=NotAuthenticated.code)
     tenancy = container_of(websocket).managers.tenancy
     try:
         return await tenancy.redeem_ticket(rctx, ticket)

@@ -28,7 +28,7 @@ DURATION ?= 30
 # `make arch-check ARCH_CHECK="python3 ../swe_guidelines/checkers/arch_check.py"`.
 ARCH_CHECK ?= uvx --python "$(shell cat .python-version)" --from "git+https://github.com/baristaze/swe_guidelines@v0.23.0\#subdirectory=checkers" arch-check
 
-.PHONY: help setup up down reset urls infra-up devx-up stack-up infra-down infra-reset migrate seed demo-gif demo-cli-gif migrate-check check lint format-check typecheck arch-check test-unit test-integration test-telemetry traffic openapi
+.PHONY: help setup up down reset urls infra-up devx-up stack-up infra-down infra-reset migrate seed demo-gif demo-cli-gif migrate-check benchmark-boot check lint format-check typecheck arch-check test-unit test-integration test-telemetry traffic openapi
 
 # This Makefile alone, never $(MAKEFILE_LIST): the includes above put
 # .env.example and .env in that list, and grep prefixes every match with the

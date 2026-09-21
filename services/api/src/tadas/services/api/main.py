@@ -146,7 +146,7 @@ def add_member(args: argparse.Namespace) -> int:
 
 
 def openapi(args: argparse.Namespace) -> int:
-    settings = ApiSettings.model_validate({"environment": "test"})
+    settings = ApiSettings.model_validate({"_env_file": None, "environment": "test"})
     boot(settings)
     with tempfile.TemporaryDirectory() as tmp:
         container = AppContainer.for_tests(StorageMemoryImpl(), InfraLocalImpl(Path(tmp)), settings)

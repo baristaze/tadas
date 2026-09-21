@@ -119,13 +119,18 @@ data "aws_iam_policy_document" "fences" {
     resources = ["*"]
   }
 
-  # The data plane: a tenant's files and exports, and the portal's files.
+  # The data plane: a tenant's files and exports, and the portal's files, of
+  # either environment: S3 does not match an object call against its bucket's
+  # tags, so the tag fence below does not cover the other environment's.
   # Never the state bucket, which carries no environment prefix in its name.
   statement {
-    sid       = "NoObjectsInTheDataBuckets"
-    effect    = "Deny"
-    actions   = ["s3:GetObject", "s3:GetObjectVersion"]
-    resources = ["arn:${local.partition}:s3:::${local.name_prefix}-*/*"]
+    sid     = "NoObjectsInTheDataBuckets"
+    effect  = "Deny"
+    actions = ["s3:GetObject", "s3:GetObjectVersion"]
+    resources = [
+      "arn:${local.partition}:s3:::${local.name_prefix}-*/*",
+      "arn:${local.partition}:s3:::tadas-${var.other_environment}-*/*",
+    ]
   }
 
   statement {

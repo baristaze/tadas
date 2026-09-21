@@ -177,23 +177,13 @@ an empty page.
 
 ## What the impls disagree on
 
-These are known and not fixed. Both impls refuse the cross-tenant call
-and both change nothing, so the boundary holds; what differs is what
-the caller is told, and a contract two impls answer differently is two
-contracts.
+Nothing, on the cross-tenant paths. Both impls refuse the cross-tenant
+call, change nothing, and tell the caller the same thing:
 
-- `remove_member` under another tenant raises `NotFound` over memory
-  (`om/src/tadas/om/tenancy/storage/impl/memory.py`, the `_get` guards
-  in `remove_member`) and `TenantMismatch` over Postgres
-  (`om/src/tadas/om/tenancy/storage/impl/postgres.py`, the `row.org_id`
-  check in `remove_member`). That is a 404 on one impl and a 409 on the
-  other. `test_remove_member_lands_whole_or_not_at_all` accepts both
-  and asserts what they agree on.
-- `append_event` refused for a tenant mismatch spends a sequence number
-  over memory and none over Postgres
-  (`om/src/tadas/om/events/storage/impl/memory.py`, `append_event`
-  takes the next `seq` before `_put` raises). Postgres rolls the number
-  back with the insert, which
-  `test_a_retried_append_consumes_no_seq` states for the retry of an
-  id the tenant already holds. Over memory, naming an id another tenant
-  holds moves the naming tenant's cursor.
+- `remove_member` under another tenant raises `NotFound` over both
+  impls, the answer an id that never existed gets; the contract in
+  `om/tests/contracts/tenancy_storage.py` asserts it.
+- `append_event` naming an id another tenant holds is fenced before
+  the sequence number is spent over memory, as Postgres rolls the
+  number back with the insert it refused, so it never moves the naming
+  tenant's cursor.

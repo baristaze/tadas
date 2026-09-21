@@ -10,6 +10,7 @@ lists the attribute under `indexed_attributes`. Without that, no filter by
 id exists, and the reader says so instead of guessing from the URL."""
 
 import asyncio
+import re
 from collections.abc import Callable, Mapping
 from contextlib import AbstractAsyncContextManager
 from datetime import UTC, datetime, timedelta
@@ -26,6 +27,8 @@ REQUEST_ID_ANNOTATION = "tadas_request_id"
 QUERY_POLL_SECONDS = 1.0
 QUERY_POLL_LIMIT = 30
 DEFAULT_LOOKBACK = timedelta(hours=1)
+METRIC_QUERIES_PER_CALL = 500
+"""The most queries one GetMetricData call takes."""
 
 
 class SessionLike(Protocol):
@@ -36,6 +39,21 @@ class SessionLike(Protocol):
 
 def log_group(environment: str) -> str:
     return f"/tadas/{environment}/api"
+
+
+def matches(dimensions: Mapping[str, str], labels: Mapping[str, str]) -> bool:
+    """Every label is on the series: an exact value, or a `~` pattern that
+    matches the whole value."""
+    for key, wanted in labels.items():
+        value = dimensions.get(key)
+        if value is None:
+            return False
+        if wanted.startswith("~"):
+            if re.fullmatch(wanted[1:], value) is None:
+                return False
+        elif value != wanted:
+            return False
+    return True
 
 
 def insights_query(request_id: str) -> str:
@@ -101,38 +119,70 @@ class SignalsCloudImpl(SignalsInterface):
     async def metric_delta(
         self, name: str, labels: Mapping[str, str], since: datetime
     ) -> float | None:
-        if any(value.startswith("~") for value in labels.values()):
-            # A dimension is exact; there is no series a pattern names here.
-            return None
+        """The collector exports every series with all its labels as
+        dimensions (`NoDimensionRollup`), and CloudWatch matches dimensions
+        exactly, so no single query names "every series of this counter".
+        The series of this environment are listed by name, the labels picked
+        among them (a `~` value as a pattern over the whole value, as
+        Prometheus reads it), and their sums over the window added up."""
         now = self._now()
         period = max(60, int(((now - since).total_seconds() // 60 + 1) * 60))
         async with self._session.client("cloudwatch") as cloudwatch:
-            data = await cloudwatch.get_metric_data(
-                MetricDataQueries=[
-                    {
-                        "Id": "m",
-                        "MetricStat": {
-                            "Metric": {
-                                "Namespace": NAMESPACE,
-                                "MetricName": name,
-                                "Dimensions": [
-                                    {"Name": key, "Value": value}
-                                    for key, value in sorted(labels.items())
-                                ],
+            series = [
+                dimensions
+                for dimensions in await self._series(cloudwatch, name)
+                if matches(dimensions, labels)
+            ]
+            if not series:
+                return None
+            total = 0.0
+            for first in range(0, len(series), METRIC_QUERIES_PER_CALL):
+                batch = series[first : first + METRIC_QUERIES_PER_CALL]
+                data = await cloudwatch.get_metric_data(
+                    MetricDataQueries=[
+                        {
+                            "Id": f"m{index}",
+                            "MetricStat": {
+                                "Metric": {
+                                    "Namespace": NAMESPACE,
+                                    "MetricName": name,
+                                    "Dimensions": [
+                                        {"Name": key, "Value": value}
+                                        for key, value in sorted(dimensions.items())
+                                    ],
+                                },
+                                "Period": period,
+                                "Stat": "Sum",
                             },
-                            "Period": period,
-                            "Stat": "Sum",
-                        },
-                        "ReturnData": True,
-                    }
-                ],
-                StartTime=since,
-                EndTime=now,
-            )
-        values: list[float] = []
-        for result in data.get("MetricDataResults", []):
-            values.extend(float(v) for v in result.get("Values", []))
-        return sum(values) if values else None
+                            "ReturnData": True,
+                        }
+                        for index, dimensions in enumerate(batch)
+                    ],
+                    StartTime=since,
+                    EndTime=now,
+                )
+                for result in data.get("MetricDataResults", []):
+                    total += sum(float(v) for v in result.get("Values", []))
+        return total
+
+    async def _series(self, cloudwatch: Any, name: str) -> list[dict[str, str]]:
+        """Every series of the metric that carries this environment's
+        dimension, as its dimensions; CloudWatch lists what it saw in the last
+        two weeks, which a window of hours is inside."""
+        found: list[dict[str, str]] = []
+        request: dict[str, Any] = {
+            "Namespace": NAMESPACE,
+            "MetricName": name,
+            "Dimensions": [{"Name": "environment", "Value": self.environment}],
+        }
+        while True:
+            page = await cloudwatch.list_metrics(**request)
+            for metric in page.get("Metrics", []):
+                found.append({d["Name"]: d["Value"] for d in metric.get("Dimensions", [])})
+            token = page.get("NextToken")
+            if not token:
+                return found
+            request["NextToken"] = token
 
     async def trace(self, request_id: str) -> TraceFound | None:
         now = self._now()

@@ -22,10 +22,12 @@ and it reads the signals back when it ends.
 - **The target is stated first.** A p95 and an error ratio, written
   in the scenario before the run. A run without a target is a
   demonstration, not a test.
-- **The signals are read back.** After the run, the request rate, the
-  error rate, the p95, the queue depth and age, and the worker outcomes
-  are read from the platform's own telemetry, not from the generator's
-  view alone, and the report says whether the target held.
+- **The signals are read back.** After the run, the platform's own
+  request counter and its 5xx count are read from its telemetry, and
+  the run fails when the platform counted no requests or more errors
+  than the target allows. The p95 the verdict holds to the target is
+  still the generator's; the platform's p95, the queue, and the worker
+  outcomes are not read back yet.
 
 The numbers a system is held to are the team's. The shape is not.
 
@@ -41,11 +43,14 @@ One YAML file per scenario under this folder.
 | `ramp_seconds` | How long concurrency takes to climb to the profile's. |
 | `target.p95_ms` | The p95 latency, in milliseconds, the run must stay under. |
 | `target.error_ratio` | The share of requests that may fail, as a fraction. |
-| `weights` | The relative weight of each route in a session, by route name. |
+| `weights` | The relative weight of each route in a session, by route name. Parsed, not applied yet: the generator's session shape is fixed. |
 
-`smoke.yaml` is the sanity run CI makes against the local stack:
-thirty seconds at the light profile.
+`smoke.yaml` is the smallest scenario: thirty seconds at the light
+profile against the local stack. CI's sanity run is `make traffic`, the
+same profile and duration with no target. Locally, `--orgs 0` drives
+the seeded org; without it the run provisions tenants through the
+operator plane and needs a provisioner configured.
 
 ```bash
-uv run tadas-ops stress --scenario ops/stress/smoke.yaml
+uv run tadas-ops stress --scenario ops/stress/smoke.yaml --orgs 0
 ```

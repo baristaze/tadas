@@ -2,6 +2,7 @@ import type { MembershipChoiceView } from "../../api";
 import { useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { errorMessage } from "../../app/errorMessage";
+import { forgetSession } from "../../app/forgetSession";
 import { useExchangeSession, useLogin } from "../../queries/tenancy";
 import { useNoticesStore } from "../../store/notices";
 import { useSessionStore } from "../../store/session";
@@ -22,6 +23,9 @@ export function useSignInVm() {
 
   const enter = async (token: string, membership: MembershipChoiceView) => {
     const issued = await exchange.mutateAsync({ loginToken: token, body: { org_id: membership.org.id } });
+    // A tab already signed in (another org, another person) drops that
+    // session first, so nothing fetched under it is shown under this one.
+    forgetSession();
     setSession(issued.token, issued.org.slug);
     navigate(landingPath((location.state as { from?: unknown } | null)?.from), { replace: true });
   };

@@ -252,7 +252,7 @@ class TenancyManagerInterface(ABC):
         login credentials that go; under a tenant deleted longer ago than the
         retention, every row of the tenant goes and the org row stays as the
         record. Erasing a person is this purge; personal data lives in named
-        fields (`email`, `display_name`)."""
+        fields (`email`, `display_name`), which no event about a user carries."""
         ...
 
     @abstractmethod

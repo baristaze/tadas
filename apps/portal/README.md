@@ -19,7 +19,8 @@ Zustand, one realtime channel.
   under its idempotency key may be sent twice, so a write the gateway
   does not record the outcome of is sent once. The rules and the curve
   are `src/api/retry.ts`: the delay doubles, half of each wait is jitter,
-  and the count and the first delay come from the runtime config.
+  a `Retry-After` the server sends lengthens a wait to it (never past the
+  cap), and the count and the first delay come from the runtime config.
 - Server state lives in TanStack Query (`src/queries/`), with keys from
   `src/queries/keys.ts`. The first key element is the entity name the
   server pushes, so a push invalidates by convention; an entity the
@@ -49,8 +50,8 @@ Zustand, one realtime channel.
   route into the query cache (`router.ts`), never into components. The
   ping interval comes from
   `deployment/realtime-timeouts.json`.
-- Design tokens and the kit live in `src/design/`; the operator console
-  imports them from here.
+- Design tokens and the kit live in `src/design/`; the operator console,
+  when it is built (ADR 0010), imports them from here.
 
 ## Run
 

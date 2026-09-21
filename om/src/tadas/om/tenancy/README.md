@@ -33,9 +33,11 @@ of the six kinds of thing [Tadas is made of](../../../../README.md).
 - **Read and change the profile.** The org, the person's own identity,
   and their display name. The email belongs to the identity.
 - **Manage members.** List the members a page at a time, change a
-  member's role, or remove a member. Removing ends the membership,
-  hides the user from every list, and revokes their sessions and API
-  keys, all in one step.
+  member's role, or remove a member. Removing revokes their sessions
+  and API keys, one by one, then ends the membership and hides the user
+  from every list in one step; a failure part way through leaves the
+  member with fewer credentials and still a member, and a retry
+  finishes it.
 - **Manage API keys.** Create one with a name, a role, and a lifetime
   of at most ninety days; list them (a member manager sees the org's,
   everyone else their own); revoke one.
@@ -51,7 +53,8 @@ of the six kinds of thing [Tadas is made of](../../../../README.md).
   passed.
 - **Sweep.** Removed members, revoked or expired keys and sessions,
   and spent tickets are deleted for good after the retention, thirty
-  days by default. Erasing a person is this purge.
+  days by default. Erasing a person is this purge: the events about a
+  user never carry their email or name.
 
 ## The rules
 

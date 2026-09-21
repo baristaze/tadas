@@ -48,6 +48,8 @@ export interface Channel {
 }
 
 export function openChannel(deps: ChannelDeps): Channel {
+  // The store's actions, which never change; its state changes on every set,
+  // so a read of it goes through deps.connection.getState() each time.
   const connection = deps.connection.getState();
   let socket: SocketLike | null = null;
   let pingTimer: ReturnType<typeof setInterval> | null = null;
@@ -165,7 +167,7 @@ export function openChannel(deps: ChannelDeps): Channel {
   // waits longer than the last.
   const settle = () => {
     clearStableTimer();
-    if (attempt === 0 && connection.status === "open") return;
+    if (attempt === 0 && deps.connection.getState().status === "open") return;
     attempt = 0;
     connection.reset();
     stopPolling();

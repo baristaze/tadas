@@ -23,7 +23,7 @@ class QueueSqsImpl(QueuesInterface):
     the redrive policy's receive count, so that transition is not observable
     here; `depth()` reports the dead-lettered count. A receive's wait is capped
     below the client's read timeout, so the timeout from settings bounds every
-    call, a long poll included."""
+    attempt, a long poll included."""
 
     def __init__(
         self,

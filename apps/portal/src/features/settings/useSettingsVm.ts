@@ -27,7 +27,15 @@ export function useSettingsVm() {
     if (!newKeyName.trim()) return;
     try {
       const issued = await createKey.mutateAsync({ name: newKeyName.trim(), role: "member" });
-      setIssuedKey(issued.key);
+      // A retried create the server answers from its record carries no
+      // secret: the first answer, the only one that had it, was lost. The key
+      // exists and nobody can use it, which is said, not shown as success.
+      if (issued.key === null) {
+        setIssuedKey(null);
+        notify(`The key "${issued.api_key.name}" was created, but its secret was lost on the way back; revoke it and create another.`);
+      } else {
+        setIssuedKey(issued.key);
+      }
       setNewKeyName("");
     } catch (caught) {
       notify(errorMessage(caught, "The key was not created."));

@@ -14,15 +14,19 @@ runs, and by the name typed into the command.
 
 ## Input
 
-`--env local|staging|production [--confirm <env>] [--dry-run]`
+`--env staging|production [--confirm <env>] [--dry-run]`
 
 `--env` is required; ask for it when missing. `--confirm production`
 is required for production and must be typed by the person, never
 filled in by the skill. `--dry-run` runs the script in its dry mode,
-which prints every command it would run and runs none. `local` is the
-compose stack: the script's local branch stops every container and
-removes the volumes, and needs no cloud, so the skill is testable
-with no account.
+which prints every command it would run and runs none. The script
+destroys a cloud environment only; the compose stack is `make reset`
+or `make down`, not this skill.
+
+The script also needs `DNS_ZONE_NAME`, `ALARM_EMAIL`, and
+`TF_STATE_BUCKET` (as environment variables or as `--dns-zone-name`,
+`--alarm-email`, `--state-bucket`), the same values the repository
+variables hold, and refuses without them.
 
 ## Role and credential
 
@@ -36,11 +40,13 @@ aws sts get-caller-identity --profile tadas-admin
 and check that `Arn` is the administrator's own identity in the
 account the environment belongs to, never
 `assumed-role/tadas-investigate-*`. Every `aws` command below carries
-`--profile tadas-admin`; the script inherits it.
+`--profile tadas-admin`; the script refuses unless `AWS_PROFILE`
+(or `--profile`) is `tadas-admin`.
 
-No env file is read. The script removes the environment's
-`~/.config/tadas/ops/<env>.env` and its investigate profile from
-`~/.aws/config` at the end, and says so.
+No env file is read. The script leaves the environment's
+`~/.config/tadas/ops/<env>.env` and its profiles in `~/.aws` in place
+and lists them under what remains; removing them is the person's
+call.
 
 ## Procedure
 
@@ -50,11 +56,13 @@ No env file is read. The script removes the environment's
      Without it, stop and say what is missing; never suggest the
      flag as a paste.
    - The root's `database_deletion_protection` reads `false` on
-     `main`, set by a merged pull request:
+     `main`, set by a merged pull request (the script reads the same
+     line and refuses otherwise):
 
      ```bash
      git fetch origin main
-     git show origin/main:deployment/terraform/environments/production/terraform.tfvars
+     git show origin/main:deployment/terraform/environments/prod/main.tf \
+       | grep database_deletion_protection
      gh pr list --state merged --search "deletion protection" --limit 5
      ```
 
@@ -80,15 +88,17 @@ No env file is read. The script removes the environment's
 
    Narrate each step as the script reaches it: the `destroyable`
    switch applied (`force_destroy` on the buckets,
-   `skip_final_snapshot` on the database) through one plan and apply
-   of the environment root; every `tadas-<env>-*` data bucket emptied,
-   versions included, and never the state bucket; `terraform destroy`
-   of the environment root; the GitHub environment and its variables
-   removed; the local profile and env file removed.
+   `skip_final_snapshot` on the database, no recovery window on the
+   secrets) through one apply of the environment root; `terraform
+   destroy` of the environment root, which empties every
+   `tadas-<env>-*` bucket it owns, versions included, and never the
+   state bucket; then the list of what remains.
 5. Read what remains and write the report. The zone stays, because
    the registrar delegates to it. The state prefix stays, empty, so
    a recreate finds its backend. `shared` stays: the roles, the
-   budget, the operators user serve the other environment. A resource
+   budget, the operators user serve the other environment. The GitHub
+   environment and its variables, the local env file, and the
+   profiles stay too; the script touches none of them. A resource
    the destroy could not remove is listed with the reason the script
    printed.
 
@@ -119,13 +129,12 @@ No env file is read. The script removes the environment's
 - Services: <names>
 - Database: <identifier>, final snapshot <skipped>
 - Buckets emptied and removed: <names>
-- GitHub environment and variables: <names>
-- Local profile and env file: tadas-<env>-investigate, ~/.config/tadas/ops/<env>.env
 
 ## Remains
 
 - Zone <name> (delegated at the registrar)
-- State prefix environments/<env>/ in <bucket>, empty
+- State prefix environments/<staging | prod>/ in <bucket>, empty
+- GitHub environment and variables; ~/.config/tadas/ops/<env>.env; the tadas-<env>-investigate profile
 - shared: <role>, <user>, budget
 - <resource the destroy could not remove>: <reason>
 ```

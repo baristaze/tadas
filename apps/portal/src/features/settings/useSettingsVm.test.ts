@@ -106,3 +106,17 @@ it("says the first revoke was refused even after a second revoke started", async
   });
   expect(useNoticesStore.getState().notices.map((n) => n.message)).toEqual(["no such key (req-1)"]);
 });
+
+it("says a created key whose secret was lost, instead of showing nothing", async () => {
+  await mount();
+  await act(async () => vm().setNewKeyName("ci"));
+  await act(async () => void vm().createApiKey());
+  expect(net.writes.map((w) => w.path)).toEqual(["/v1/api-keys"]);
+  await act(async () => {
+    net.writes[0]!.resolve({ api_key: keyOf("k3", "ci"), key: null });
+  });
+  expect(vm().issuedKey).toBeNull();
+  expect(useNoticesStore.getState().notices.map((n) => n.message)).toEqual([
+    'The key "ci" was created, but its secret was lost on the way back; revoke it and create another.',
+  ]);
+});

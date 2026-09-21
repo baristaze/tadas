@@ -99,6 +99,7 @@ module "secrets" {
   environment  = var.environment
   prefix       = "tadas/${var.environment}/"
   database_url = module.database.url
+  destroyable  = var.destroyable
 }
 
 # Two public names in one Route 53 zone: the API at the load balancer, the

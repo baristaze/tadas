@@ -279,8 +279,9 @@ class WorkManagerImpl(WorkManagerInterface):
         that token (`claim_token` in the statement itself). The token, not the
         worker's name, is the fence: one worker can hold one item twice across a
         requeue, and the first claim's copy must not settle the second. A worker
-        whose lease has passed is refused with LeaseLost, a Conflict, and hands
-        the item back without spending an attempt.
+        whose item the sweep requeued after its lease passed is refused with
+        LeaseLost, a Conflict, and spends no attempt; the lease's expiry alone
+        is not checked here, the sweep's requeue is what takes the item away.
 
         The copy starts from the stored row, so what a worker sends back cannot
         rewrite who asked for the work, when it was asked for, or what it is;

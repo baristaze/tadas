@@ -47,6 +47,12 @@ variable "evaluation_periods" {
   default     = 3
 }
 
+variable "tasks_below_desired_periods" {
+  description = "How many periods in a row a service must run fewer tasks than it wants before its alarm fires: longer than a deploy leaves the worker at none (its 120s drain plus a start)."
+  type        = number
+  default     = 6
+}
+
 variable "http_5xx_ratio_percent" {
   description = "5xx answers as a percentage of requests, above which the edge alarm fires."
   type        = number

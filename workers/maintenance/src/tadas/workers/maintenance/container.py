@@ -40,7 +40,7 @@ class WorkerContainer:
         settings: MaintenanceSettings | None = None,
     ) -> WorkerContainer:
         settings = settings or MaintenanceSettings.model_validate(
-            {"environment": "test", "worker_id": "maintenance-test"}
+            {"_env_file": None, "environment": "test", "worker_id": "maintenance-test"}
         )
         return cls(settings, storage, infra, build_managers(storage, infra))
 

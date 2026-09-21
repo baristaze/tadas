@@ -48,11 +48,8 @@ class TopicsBreakerImpl(TopicsInterface):
         check_payload(topic, payload)
         if not self._breaker.allows():
             return None
-        started = self._breaker.started()
-        try:
+        with self._breaker.measured():
             await self._inner.publish(topic, payload)
-        finally:
-            self._breaker.record(started)
 
     def subscribe(self, topic: Topics, consumer: str, handler: TopicHandler) -> Callable[[], None]:
         return self._inner.subscribe(topic, consumer, handler)

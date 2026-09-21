@@ -225,6 +225,19 @@ describe("the transport client's one retry", () => {
     expect(failure).toMatchObject({ status: 503, code: "unavailable" });
   });
 
+  it("carries the server's Retry-After on the error, in milliseconds", async () => {
+    const fetchImpl = vi.fn<typeof fetch>(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ error: { code: "unavailable", message: "busy", request_id: "r" } }), {
+          status: 503,
+          headers: { "content-type": "application/json", "retry-after": "1" },
+        }),
+      ),
+    );
+    const failure = await client({ fetchImpl }).get("/v1/tasks").catch((error: unknown) => error);
+    expect(failure).toMatchObject({ status: 503, retryAfterMs: 1000 });
+  });
+
   it("stops as soon as an attempt answers", async () => {
     const answers = [jsonResponse(503, {}), jsonResponse(200, { id: "t1" })];
     const fetchImpl = vi.fn<typeof fetch>(() => Promise.resolve(answers.shift()!));

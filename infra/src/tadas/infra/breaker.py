@@ -22,9 +22,11 @@ opens, `refused` once per call it refuses, `probed` for the one call it lets
 through after a cool-down, and `closed` when that call comes back in time.
 """
 
+import asyncio
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from datetime import timedelta
 
 from tadas.infra.observability import OUTCOMES
@@ -82,12 +84,30 @@ class Breaker:
         log.info("%s lets one call through after %gs", self._subsystem, self._cooldown)
         return True
 
-    def started(self) -> float:
-        """The moment a call that `allows()` let through goes out."""
-        return self._clock()
+    @contextmanager
+    def measured(self) -> Iterator[None]:
+        """Brackets a call that `allows()` let through and records what it
+        cost. A call cancelled before it spent the timeout (its caller left,
+        or an outer deadline passed) says nothing about the dependency: it is
+        neither a success that closes the breaker nor a failure, and a probe
+        cancelled that way frees the slot for the next call to probe. One
+        cancelled after the timeout still counts as slow."""
+        started = self._clock()
+        try:
+            yield
+        except asyncio.CancelledError:
+            if self._clock() - started >= self._slow:
+                self._failed()
+            else:
+                self._probing = False
+            raise
+        except BaseException:
+            self._record(started)
+            raise
+        self._record(started)
 
-    def record(self, started: float) -> None:
-        """The outcome of a call that went out, read as what it cost."""
+    def _record(self, started: float) -> None:
+        """The outcome of a call that came back, read as what it cost."""
         if self._clock() - started >= self._slow:
             self._failed()
         else:

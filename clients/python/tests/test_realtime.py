@@ -200,6 +200,42 @@ async def test_pushes_arrive_in_order_and_a_gap_is_replayed_from_the_stream() ->
     assert states == ["connecting", "open"]
 
 
+async def test_the_first_open_hook_runs_after_the_hello_and_before_any_change() -> None:
+    """A consumer's own read of the state comes after the head the channel
+    starts from, so a change committed between the two is still yielded."""
+    socket = FakeSocket([HELLO, SUBSCRIBED, push(1)])
+    order: list[str] = []
+
+    async def read_state() -> None:
+        order.append(f"hook, sent {len(socket.sent)}")
+
+    channel = Channel(client_over([]), connect=connect_to([socket], []), on_first_open=read_state)
+    async for change in channel:
+        order.append(f"change {change.seq}")
+        break
+    assert order == ["hook, sent 1", "change 1"], "after the subscribe, before the first change"
+
+
+async def test_a_first_open_hook_that_fails_runs_again_on_the_next_connect(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(realtime, "BACKOFF_SECONDS", (0.0,))
+    first = FakeSocket([HELLO, SUBSCRIBED, push(1)])
+    second = FakeSocket([HELLO, SUBSCRIBED, push(1)])
+    calls: list[int] = []
+
+    async def read_state() -> None:
+        calls.append(len(calls))
+        if len(calls) == 1:
+            raise httpx.ConnectError("refused")
+
+    channel = Channel(
+        client_over([]), connect=connect_to([first, second], []), on_first_open=read_state
+    )
+    assert await collect(channel, 1) == [1]
+    assert calls == [0, 1]
+
+
 async def test_a_pong_past_the_cursor_replays_what_no_frame_announced() -> None:
     # The push for seq 2 was dropped and nothing followed it; the pong says
     # the stream stands at 3, so the client replays after its cursor.
