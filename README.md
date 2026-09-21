@@ -10,7 +10,7 @@ and workers around them, and apps at the edge.
   <img src="docs/media/realtime-demo.gif" width="876" alt="Two portal windows side by side, the owner on the left and Bob on the right, both on Team's Tasks. Tasks added in either window appear in the other at once, and a task completed in one fades out of Open and into Done in both.">
 </p>
 
-The portal in two windows, signed in as the two people `make seed` creates:
+The portal in two windows, signed in as two of the people `make seed` creates:
 `owner@example.test` on the left, `bob@example.test` on the right, both on
 Team's Tasks. Every task one of them adds or completes reaches the other over
 the realtime channel as it happens. `make demo-gif` records it again from a
@@ -43,7 +43,7 @@ once. Once it is up:
 
 | What | URL | Sign-in and what it shows |
 |------|-----|---------------------------|
-| Portal | http://localhost:55173 | `owner@example.test` (owner) or `bob@example.test` (member), both `tadas-local`; the two people `make seed` creates |
+| Portal | http://localhost:55173 | `owner@example.test` (owner) or `bob@example.test` (member) of Acme, or `admin@admin.test` (owner of Fabrikam, admin of Acme), all `tadas-local`; the three people `make seed` creates. The admin is in two orgs, so the org picker and the org chip show |
 | API | http://127.0.0.1:8000 | Swagger UI at `/docs`, Prometheus metrics at `/metrics` |
 | pgweb | http://localhost:58081 | Postgres: schemas `core`, `activity`, `queue`, `admin`; run SQL |
 | Valkey Admin | http://localhost:58080 | Valkey: keys, metrics, commands; add a connection to host `valkey`, port `6379`, no username or password |
@@ -89,7 +89,7 @@ make setup        # Python and TypeScript dependencies
 cp .env.example .env
 make infra-up     # Postgres, Valkey, ElasticMQ, MinIO on host ports 55432, 56379, 59324, 59000
 make migrate      # every role's migration chain
-make seed         # org "acme" with the owner and the member of the table above (the SEED_* knobs in .env)
+make seed         # orgs "acme" and "fabrikam" with the three people of the table above (the SEED_* knobs in .env)
 ```
 
 ## Run
@@ -104,10 +104,11 @@ make stack-up     # in containers, built from the working tree: API, worker, por
 
 The API is at the same address either way; only the portal's port differs:
 `scripts/dev.sh` serves it from Vite on http://localhost:5173, `make
-stack-up` from nginx on the port in the table above. Sign in as each of
-the two seeded people in two browser windows to see "My Tasks" differ from
-"Team's Tasks" and to watch changes arrive live, or create an account at
-`/sign-up`, which is how a person enters a deployed environment.
+stack-up` from nginx on the port in the table above. Sign in as the
+seeded owner and member in two browser windows to see "My Tasks" differ from
+"Team's Tasks" and to watch changes arrive live, as the seeded admin to
+switch between two orgs, or create an account at `/sign-up`, which is how
+a person enters a deployed environment.
 
 ### Dashboards
 
