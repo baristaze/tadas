@@ -1,11 +1,12 @@
 """Pure: how a task is shown, how a change is told, which tasks are mine,
-and how a short id names a task. Values in, values out; no client, no clock,
-no terminal, so every rule is unit tested without either."""
+how a short id names a task, and which org a slug names. Values in, values
+out; no client, no clock, no terminal, so every rule is unit tested without
+either."""
 
 from collections.abc import Callable, Sequence
 from uuid import UUID
 
-from tadas.client.types import TaskStatus, TaskView
+from tadas.client.types import MembershipChoiceView, TaskStatus, TaskView
 
 SHORT_ID = 8
 NameOf = Callable[[UUID | None], str]
@@ -75,3 +76,26 @@ def describe(
     if before.position != after.position:
         return f"{actor} moved a task: {title}"
     return f"{actor} updated a task: {title}"
+
+
+def choose_org(
+    memberships: Sequence[MembershipChoiceView], slug: str | None
+) -> MembershipChoiceView:
+    """The org a sign-in or a switch enters: the one `slug` names, or the only
+    one when no slug is given. Anything else is a LookupError whose message is
+    the slugs to choose from."""
+    choices = [m for m in memberships if slug is None or m.org.slug == slug]
+    if len(choices) == 1:
+        return choices[0]
+    raise LookupError(", ".join(sorted(m.org.slug for m in memberships)) or "none")
+
+
+def org_lines(memberships: Sequence[MembershipChoiceView], current: str | None) -> str:
+    """One line per org, by name, the current one marked with `*`."""
+    ordered = sorted(memberships, key=lambda m: (m.org.name.lower(), m.org.slug))
+    width = max((len(m.org.slug) for m in ordered), default=0)
+    return "\n".join(
+        f"{'*' if m.org.slug == current else ' '} {m.org.slug:<{width}}"
+        f"  {m.org.name} ({m.role.value})"
+        for m in ordered
+    )

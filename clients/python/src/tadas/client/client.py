@@ -19,6 +19,8 @@ from tadas.client.types import (
     IssuedLoginView,
     IssuedSessionView,
     IssuedTicketView,
+    MembershipChoicePageView,
+    MembershipChoiceView,
     MeView,
     OperatorEventView,
     OperatorView,
@@ -314,6 +316,26 @@ class ApiClient:
 
     # Tenancy
 
+    async def sign_up(
+        self, email: str, password: str, display_name: str, org_name: str, org_slug: str
+    ) -> IssuedLoginView:
+        """A new person and their first org; answered as a sign-in is. Sent
+        once: it carries no idempotency key, and a retry would meet the email
+        the first attempt took."""
+        body = await self.request(
+            "POST",
+            "/v1/auth/signup",
+            json={
+                "email": email,
+                "password": password,
+                "display_name": display_name,
+                "org_name": org_name,
+                "org_slug": org_slug,
+            },
+            token=None,
+        )
+        return IssuedLoginView.model_validate(body)
+
     async def login(self, email: str, password: str) -> IssuedLoginView:
         body = await self.request(
             "POST", "/v1/auth/login", json={"email": email, "password": password}, token=None
@@ -325,6 +347,40 @@ class ApiClient:
             "POST", "/v1/auth/sessions", json={"org_id": str(org_id)}, token=login_token
         )
         return IssuedSessionView.model_validate(body)
+
+    async def memberships(
+        self, *, cursor: str | None = None, limit: int = LIMIT_MAX
+    ) -> MembershipChoicePageView:
+        """The signed-in person's places, with the session the client holds."""
+        params: dict[str, Any] = {"limit": limit}
+        if cursor:
+            params["cursor"] = cursor
+        body = await self.request("GET", "/v1/auth/memberships", params=params)
+        return MembershipChoicePageView.model_validate(body)
+
+    async def every_membership(self, limit: int = LIMIT_MAX) -> list[MembershipChoiceView]:
+        """Every place, page after page, as `every_user` reads the members."""
+        found: list[MembershipChoiceView] = []
+        cursor: str | None = None
+        while True:
+            page = await self.memberships(cursor=cursor, limit=limit)
+            found += page.items
+            if page.next_cursor is None:
+                return found
+            cursor = page.next_cursor
+
+    async def switch_session(self, org_id: UUID) -> IssuedSessionView:
+        """The exchange presented with the session the client holds: the API
+        ends that session in the same write, and the client carries the new
+        one from here on, so it never holds two."""
+        issued = await self.exchange_session(self._require_token(), org_id)
+        self.token = issued.token
+        return issued
+
+    def _require_token(self) -> str:
+        if not self.token:
+            raise ApiError(401, "not_authenticated", "no session to switch from", None)
+        return self.token
 
     async def logout(self) -> SessionView:
         return SessionView.model_validate(await self.request("POST", "/v1/auth/logout"))

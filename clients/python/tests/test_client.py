@@ -1,6 +1,7 @@
 """The transport client over a mock transport: what it sends, how it turns a
 refusal into a typed error, and which call it sends again."""
 
+import json
 from typing import Any, cast
 from uuid import UUID, uuid4
 
@@ -175,6 +176,78 @@ async def test_the_sign_in_flow_uses_the_credential_it_is_given() -> None:
     assert exchanged.token == "ses_2" and exchanged.org.slug == "acme"
     assert "authorization" not in recorder.requests[0].headers
     assert recorder.requests[1].headers["authorization"] == "Bearer lgn_1"
+
+
+CHOICE = {"org": ORG, "user": USER, "role": "owner"}
+LOGIN = {"token": "lgn_1", "expires_at": "2026-09-18T13:00:00Z", "memberships": [CHOICE]}
+
+
+async def test_sign_up_carries_no_bearer_and_no_key_and_is_sent_once() -> None:
+    recorder = Recorder({"/v1/auth/signup": httpx.Response(503, json={})})
+    async with client_over(recorder, token="ses_stale") as client:
+        with pytest.raises(ApiError):
+            await client.sign_up("dee@example.test", "long-enough", "Dee", "Bakery", "bakery")
+    [sent] = recorder.requests
+    assert "authorization" not in sent.headers and "idempotency-key" not in sent.headers
+    assert json.loads(sent.content) == {
+        "email": "dee@example.test",
+        "password": "long-enough",
+        "display_name": "Dee",
+        "org_name": "Bakery",
+        "org_slug": "bakery",
+    }
+    recorder.respond["/v1/auth/signup"] = httpx.Response(200, json=LOGIN)
+    async with client_over(recorder, token=None) as client:
+        issued = await client.sign_up("dee@example.test", "long-enough", "Dee", "Bakery", "bakery")
+    assert issued.token == "lgn_1" and issued.memberships[0].org.slug == "acme"
+
+
+async def test_the_memberships_are_read_page_after_page_with_the_session() -> None:
+    pages = iter(
+        [
+            httpx.Response(200, json={"items": [CHOICE], "next_cursor": "c1"}),
+            httpx.Response(200, json={"items": [CHOICE], "next_cursor": None}),
+        ]
+    )
+    sent: list[httpx.Request] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        sent.append(request)
+        return next(pages)
+
+    client = ApiClient(
+        "http://test/",
+        app="cli",
+        app_version="cli@test",
+        token="ses_1",
+        transport=httpx.MockTransport(answer),
+    )
+    async with client:
+        every = await client.every_membership(limit=1)
+    assert len(every) == 2
+    assert [r.url.params.get("cursor") for r in sent] == [None, "c1"]
+    assert all(r.headers["authorization"] == "Bearer ses_1" for r in sent)
+
+
+async def test_a_switch_presents_the_session_and_carries_the_new_one() -> None:
+    switched = {
+        "token": "ses_2",
+        "expires_at": "2026-09-19T12:00:00Z",
+        "org": ORG,
+        "user": USER,
+        "role": "member",
+    }
+    recorder = Recorder({"/v1/auth/sessions": httpx.Response(200, json=switched)})
+    async with client_over(recorder, token="ses_1") as client:
+        issued = await client.switch_session(UUID(ORG["id"]))
+        assert client.token == "ses_2" and issued.role.value == "member"
+        await client.task(UUID(TASK["id"]))
+    assert recorder.requests[0].headers["authorization"] == "Bearer ses_1"
+    assert recorder.requests[1].headers["authorization"] == "Bearer ses_2"
+    async with client_over(recorder, token=None) as client:
+        with pytest.raises(ApiError) as refused:
+            await client.switch_session(UUID(ORG["id"]))
+    assert refused.value.status == 401
 
 
 async def test_a_refusal_is_a_typed_error_with_the_request_id() -> None:
