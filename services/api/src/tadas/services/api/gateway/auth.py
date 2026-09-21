@@ -82,10 +82,11 @@ Ctx = Annotated[OpContext, Depends(current_context)]
 
 async def signup_open(request: Request) -> None:
     """The sign-up door, open unless `signup_enabled` is False. Closed, the
-    route answers 404 as a route that does not exist would, by choice: a
-    closed door says nothing about there being one."""
+    route answers 404 exactly as a route that does not exist does, before
+    the body is read, by choice: a closed door says nothing about there
+    being one."""
     if not container_of(request).settings.signup_enabled:
-        raise NotFound("not found")
+        raise NotFound("Not Found")
 
 
 async def current_identity(

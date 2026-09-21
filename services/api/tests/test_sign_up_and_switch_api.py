@@ -94,8 +94,12 @@ async def test_a_closed_sign_up_answers_as_no_route_would(tmp_path: Path) -> Non
         transport = ASGITransport(app=app, raise_app_exceptions=False)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             closed = await client.post("/v1/auth/signup", json=DEE)
-            assert closed.status_code == 404, closed.text
-            assert closed.json()["error"]["code"] == "not_found"
+            missing = await client.post("/v1/auth/no-such-route", json=DEE)
+            malformed = await client.post("/v1/auth/signup", json={})
+            for answer in (closed, missing, malformed):
+                assert answer.status_code == 404, answer.text
+                error = answer.json()["error"]
+                assert (error["code"], error["message"]) == ("not_found", "Not Found")
     storage = container.storage.get_tenancy_storage()
     assert await storage.read_identity_by_email(DEE["email"]) is None
 
