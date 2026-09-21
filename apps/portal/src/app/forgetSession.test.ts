@@ -49,4 +49,20 @@ describe("forgetSession", () => {
     expect(useSessionStore.getState().orgSlug).toBeNull();
     expect(queryClient.getQueryCache().getAll()).toEqual([]);
   });
+
+  it("leaves a newer session alone when an old one's refusal arrives late", async () => {
+    const { forgetSessionIfHeld } = await import("./forgetSession");
+    const { queryClient } = await import("./queryClient");
+    const { useSessionStore } = await import("../store/session");
+    useSessionStore.getState().setSession("ses_new", "beta");
+    queryClient.setQueryData(["me"], { org: { slug: "beta" } });
+
+    forgetSessionIfHeld("ses_old");
+    expect(useSessionStore.getState().token).toBe("ses_new");
+    expect(queryClient.getQueryData(["me"])).toEqual({ org: { slug: "beta" } });
+
+    forgetSessionIfHeld("ses_new");
+    expect(useSessionStore.getState().token).toBeNull();
+    expect(queryClient.getQueryCache().getAll()).toEqual([]);
+  });
 });

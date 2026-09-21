@@ -139,7 +139,19 @@ context on keeps the stage the callee needs.
   expired ones are purged like a tenant's dead sessions; api keys are
   purged once revoked or expired. Exchanging a login for an org that is
   gone, or a membership that has ended, is `NotAuthorized` (403), not a
-  sign-in failure: the login itself still stands. One person is a
+  sign-in failure: the login itself still stands. Sign-up
+  (`sign_up`, on the request stage) lands the new identity, its org, the
+  owner's user, and the owner membership in one commit
+  (`create_org_with_owner`, always with a new identity, so a raced email
+  meets the unique key) and answers as a login does. `POST
+  /v1/auth/signup` has its own rate limit per client address, no
+  Idempotency-Key (the marker is kept per tenant and principal, and
+  sign-up has neither), and `TADAS_SIGNUP_ENABLED` (true by default),
+  which, false, makes it answer the router's own 404. An exchange
+  presented with a session is a switch: `replace_session` revokes it and
+  lands the new one in one transaction, each statement under its own
+  tenant's scope, with the revocation's outbox row, so the old socket
+  closes. One person is a
   member of at most `max_orgs_per_identity` orgs (100, an option of both
   tenancy managers). Every read of the users one identity is asks for
   one past the bound; an add or an org create past it is
@@ -607,9 +619,10 @@ everything in-process for tests.
   and `X-App-Version`, the current trace id) and asks the tenancy
   manager for every stronger stage: `Ctx` is `authenticate` over the
   bearer (a session token or an api key), `Identity` is
-  `authenticate_login` over it (the sign-in credential, on the tenant
-  choice and the operator gate), `OperatorCtx` is `admit_operator` over the
-  identity, and the socket builds the request stage from its scope,
+  `authenticate_login` over it (the sign-in credential or a live session,
+  on the tenant choice, the switch, `GET /v1/auth/memberships`, and the
+  operator gate), `OperatorCtx` is `admit_operator` over the identity,
+  which admits the sign-in credential alone, and the socket builds the request stage from its scope,
   accepts the handshake, and then redeems its ticket: a refusal is a
   close with code 4401 on the open socket, which both clients read as
   "sign in again" (a close before the accept would reach the wire as an
@@ -738,7 +751,10 @@ everything in-process for tests.
   request that filled it; an item that carries none starts a trace of its
   own, which is what a process with no tracer configured does anyway.
 - `apps/portal` (`@tadas/portal`): React, Vite, TanStack Query,
-  Zustand; sign-in, the tasks screen at `/` (My and Team's tasks, open in
+  Zustand; sign-in and sign-up (`/sign-up`), the picker when a person
+  has several orgs, an org chip in the chrome that switches the tab's
+  one session (the old tenant's cache dropped, the socket reopened), the
+  tasks screen at `/` (My and Team's tasks, open in
   manual order and done newest first, both paged by the server's cursor
   with Show more, inline edit, drag to reorder), settings at `/settings`
   (members, api keys with Show more, sign-out, which revokes the server

@@ -10,7 +10,7 @@ from fastapi import Depends, Header, Query, Request, WebSocket, WebSocketExcepti
 from starlette.requests import HTTPConnection
 
 from tadas.infra.observability import current_trace_id
-from tadas.om.exceptions import NotAuthenticated, PlatformException, ValidationFailed
+from tadas.om.exceptions import NotAuthenticated, NotFound, PlatformException, ValidationFailed
 from tadas.om.opcontext import AppContext, AppType, IdentityContext, OpContext, RequestContext
 from tadas.om.tenancy.types.socket_ticket import SocketPrincipal
 from tadas.services.api.gateway.observability import request_id_of
@@ -80,13 +80,25 @@ async def current_context(
 Ctx = Annotated[OpContext, Depends(current_context)]
 
 
+async def signup_open(request: Request) -> None:
+    """The sign-up door, open unless `signup_enabled` is False. Closed, the
+    route answers 404 exactly as a route that does not exist does, before
+    the body is read, by choice: a closed door says nothing about there
+    being one."""
+    if not container_of(request).settings.signup_enabled:
+        raise NotFound("Not Found")
+
+
 async def current_identity(
     request: Request,
     rctx: Rctx,
     authorization: Annotated[str | None, Header()] = None,
 ) -> IdentityContext:
-    """The identity stage: the tenant-less sign-in credential, accepted only
-    where a tenant is chosen or an operator is admitted."""
+    """The identity stage: the person's own sign-in, accepted where a tenant is
+    chosen, the person's places are listed, or an operator is admitted. The
+    tenant-less sign-in credential proves it, and so does a live session,
+    which proves its user's identity as well as its tenant; the operator gate
+    then takes the sign-in credential alone."""
     tenancy = container_of(request).managers.tenancy
     return await tenancy.authenticate_login(rctx, bearer_of(authorization))
 

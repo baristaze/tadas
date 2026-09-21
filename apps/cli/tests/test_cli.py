@@ -14,6 +14,7 @@ from typer.testing import CliRunner
 from tadas.apps.cli import config, main
 from tadas.client.client import ApiClient
 from tadas.om.base import new_id, utcnow
+from tadas.om.opcontext import Role
 from tadas.om.tasks.types.task import Task
 
 
@@ -465,3 +466,74 @@ def test_a_session_that_cannot_be_forgotten_is_a_usage_error(
     result = CliRunner().invoke(main.app, ["logout"], catch_exceptions=False)
     assert result.exit_code == 2, result.output
     assert result.output.startswith("the session cannot be forgotten: "), result.output
+
+
+def second_org(stack: Stack) -> None:
+    """The owner also belongs to Beta, as a member."""
+    tenancy = stack.container.managers.tenancy
+    run(tenancy.bootstrap(seed_request(), "Beta", "beta", "bea@example.test", "pw-1234", "Bea"))
+    run(
+        tenancy.add_member(
+            seed_request(), "beta", OWNER["email"], OWNER["password"], OWNER["name"], Role.MEMBER
+        )
+    )
+
+
+def test_orgs_lists_where_the_person_belongs_and_marks_the_current_one(stack: Stack) -> None:
+    second_org(stack)
+    stack.tadas(
+        "login",
+        "--email",
+        OWNER["email"],
+        "--password",
+        OWNER["password"],
+        "--org",
+        "acme",
+        token=None,
+    )
+    listed = stack.tadas("orgs", token=None)
+    assert listed.exit_code == 0, listed.output
+    assert listed.output == "* acme  Acme (owner)\n  beta  Beta (member)\n"
+    as_json = stack.tadas("orgs", "--json", token=None)
+    assert sorted(m["org"]["slug"] for m in json.loads(as_json.output)) == ["acme", "beta"]
+
+
+def test_switch_moves_the_kept_session_and_ends_the_old_one(stack: Stack) -> None:
+    second_org(stack)
+    stack.tadas(
+        "login",
+        "--email",
+        OWNER["email"],
+        "--password",
+        OWNER["password"],
+        "--org",
+        "acme",
+        token=None,
+    )
+    before = config.load_session()
+    assert before is not None
+    moved = stack.tadas("switch", "beta", token=None)
+    assert moved.exit_code == 0, moved.output
+    assert moved.output == "switched to Beta as Ann (member); the old session is ended\n"
+    after = config.load_session()
+    assert after is not None and after.org_slug == "beta" and after.token != before.token
+    who = stack.tadas("whoami", token=None)
+    assert who.output == "Ann <ann@example.test> at Beta (member)\n"
+    # The session the file held before is over.
+    old = stack.tadas("whoami", token=before.token)
+    assert old.exit_code == 3, old.output
+
+
+def test_switch_to_an_org_the_person_is_not_in_is_a_usage_error(stack: Stack) -> None:
+    stack.tadas("login", "--email", OWNER["email"], "--password", OWNER["password"], token=None)
+    before = config.load_session()
+    out = stack.tadas("switch", "nope", token=None)
+    assert out.exit_code == 2, out.output
+    assert "no org 'nope' to switch to; yours are: acme" in out.output
+    assert config.load_session() == before
+
+
+def test_switch_needs_a_kept_session(stack: Stack) -> None:
+    out = stack.tadas("switch", "acme")  # TADAS_TOKEN is the environment's, not the CLI's
+    assert out.exit_code == 3, out.output
+    assert "no kept session to switch" in out.output

@@ -1,6 +1,6 @@
-"""The tenancy service: sign in, choose a tenant, the principal, members,
-sessions, and api keys. The two operations before a principal exists take
-the stage the gateway reached (the request, then the identity); each
+"""The tenancy service: sign up, sign in, choose a tenant, the principal,
+members, sessions, and api keys. The operations before a principal exists
+take the stage the gateway reached (the request, then the identity); each
 produces the credential the next request presents."""
 
 from abc import ABC, abstractmethod
@@ -18,11 +18,13 @@ from tadas.services.api.types.tenancy import (
     IssuedLoginView,
     IssuedSessionView,
     LoginRequest,
+    MembershipChoicePageView,
     MembershipPageView,
     MembershipView,
     MeView,
     OrgView,
     SessionView,
+    SignUpRequest,
     UpdateMembershipRequest,
     UpdateMeRequest,
     UserPageView,
@@ -31,6 +33,11 @@ from tadas.services.api.types.tenancy import (
 
 
 class TenancyServiceInterface(ABC):
+    @abstractmethod
+    async def sign_up(self, rctx: RequestContext, body: SignUpRequest) -> IssuedLoginView:
+        """Platform-internal: no principal exists yet; the answer is a sign-in's."""
+        ...
+
     @abstractmethod
     async def login(self, rctx: RequestContext, body: LoginRequest) -> IssuedLoginView:
         """Platform-internal: no principal exists yet."""
@@ -41,6 +48,14 @@ class TenancyServiceInterface(ABC):
         self, ictx: IdentityContext, body: ExchangeSessionRequest
     ) -> IssuedSessionView:
         """Platform-internal: the identity carries no tenant; the body chooses one."""
+        ...
+
+    @abstractmethod
+    async def get_identity_memberships(
+        self, ictx: IdentityContext, cursor: str | None, limit: int
+    ) -> MembershipChoicePageView:
+        """Platform-internal: the identity's places, before or across tenants;
+        `cursor` as on `get_users`."""
         ...
 
     @abstractmethod

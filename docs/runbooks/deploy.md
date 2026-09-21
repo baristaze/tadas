@@ -106,6 +106,11 @@ roles fence each environment's files by those prefixes. In order:
    uv run tadas-ops signals check --env <environment> --request-id "$id"
    ```
 
+9. The first person: the environment carries no seed (`make seed` is
+   local), so open the portal and sign up at `/sign-up`. That creates
+   the identity, the first org, and its owner. Sign-up stays open unless
+   `TADAS_SIGNUP_ENABLED=false`, which makes the route answer 404.
+
 `shared` is never applied by a deploy run; every deploy role denies the
 calls that would change the registry, the state bucket, or the trust.
 

@@ -58,7 +58,11 @@ def rate_limit_options(settings: ApiSettings) -> RateLimitOptions:
         login=RateLimit(
             limit=settings.login_rate_limit,
             window=timedelta(seconds=settings.login_rate_window_seconds),
-        )
+        ),
+        signup=RateLimit(
+            limit=settings.signup_rate_limit,
+            window=timedelta(seconds=settings.signup_rate_window_seconds),
+        ),
     )
 
 

@@ -60,6 +60,11 @@ class EventView(BaseModel):
 
 
 class ExchangeSessionRequest(BaseModel):
+    """
+    The org to enter. Presented with the sign-in credential, it opens the
+    first session; presented with a session, it is a switch, and that session
+    ends in the same write.
+    """
     model_config = ConfigDict(
         extra='forbid',
     )
@@ -177,6 +182,24 @@ class SessionView(BaseModel):
     expires_at: Annotated[AwareDatetime, Field(title='Expires At')]
     id: Annotated[UUID, Field(title='Id')]
     revoked_at: Annotated[AwareDatetime | None, Field(title='Revoked At')]
+
+
+class SignUpRequest(BaseModel):
+    """
+    A new person, their first org, and their password. The answer is a
+    sign-in's (`IssuedLoginView`), so the client goes on through the same
+    choice and exchange. `org_slug` is lower-case letters and digits joined
+    by hyphens; a held email and a taken slug are both 409. No email is
+    verified.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    display_name: Annotated[str, Field(max_length=200, min_length=1, title='Display Name')]
+    email: Annotated[str, Field(max_length=320, min_length=3, title='Email')]
+    org_name: Annotated[str, Field(max_length=200, min_length=1, title='Org Name')]
+    org_slug: Annotated[str, Field(max_length=48, min_length=1, title='Org Slug')]
+    password: Annotated[str, Field(max_length=200, min_length=8, title='Password')]
 
 
 class TaskScope(StrEnum):
@@ -392,6 +415,16 @@ class IssuedLoginView(BaseModel):
     expires_at: Annotated[AwareDatetime, Field(title='Expires At')]
     memberships: Annotated[list[MembershipChoiceView], Field(title='Memberships')]
     token: Annotated[str, Field(title='Token')]
+
+
+class MembershipChoicePageView(BaseModel):
+    """
+    One page of the signed-in person's places, each the org, the user, and
+    the role: the same choice a sign-in answers with. `next_cursor` as on
+    `UserPageView`.
+    """
+    items: Annotated[list[MembershipChoiceView], Field(title='Items')]
+    next_cursor: Annotated[str | None, Field(title='Next Cursor')]
 
 
 class MembershipPageView(BaseModel):

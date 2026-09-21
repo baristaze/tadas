@@ -25,8 +25,8 @@ Zustand, one realtime channel.
   `src/queries/keys.ts`. The first key element is the entity name the
   server pushes, so a push invalidates by convention; an entity the
   convention does not reach on its own (a membership, read through
-  `me`; a user, read through `me` as well as its own list) is named in
-  the router's table instead.
+  `me` and the person's list of places; a user, read through `me` as
+  well as its own list) is named in the router's table instead.
 - Client state lives in Zustand (`src/store/`): the session token, the
   connection status, the transient notices a failed write leaves
   (`notices.ts`, rendered by `src/app/Notices.tsx` over the kit's
@@ -50,6 +50,18 @@ Zustand, one realtime channel.
   route into the query cache (`router.ts`), never into components. The
   ping interval comes from
   `deployment/realtime-timeouts.json`.
+- One tenant at a time. A person enters through sign-in (`/sign-in`) or
+  sign-up (`/sign-up`: email, name, password, the org and its short
+  name), and both answer with the person's places: one goes straight in,
+  several show a picker, none says so. The exchange turns the choice into
+  the one session the tab holds. The org chip in the chrome
+  (`src/app/OrgChip.tsx`) shows the current org and, with more than one
+  place, opens the list and switches: the exchange is presented with the
+  current session, which the server ends in the same write, and
+  `adoptSession` then drops the old tenant (`forgetSession`: the token
+  and every cached answer) before the new session is set. The token
+  change reopens the realtime socket; a late 4401 from the old socket
+  signs nothing out, since it belongs to a token the tab no longer holds.
 - Design tokens and the kit live in `src/design/`; the operator console,
   when it is built (ADR 0010), imports them from here.
 
@@ -67,8 +79,8 @@ in a container at http://localhost:55173, from
 that bundle (build argument `VITE_API_URL`, default
 `http://127.0.0.1:8000`), so a change to it needs a rebuild, which
 `make stack-up` does. Sign in as `owner@example.test` (owner) or
-`bob@example.test` (member), both `tadas-local`, after `make seed`; see the
-root README for every local URL.
+`bob@example.test` (member), both `tadas-local`, after `make seed`, or
+create an account at `/sign-up`; see the root README for every local URL.
 
 ## Configuration
 

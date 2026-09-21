@@ -11,6 +11,7 @@ import json
 import sys
 from collections.abc import Callable, Coroutine
 from importlib.metadata import PackageNotFoundError, version
+from pathlib import Path
 from typing import Annotated, Any, NoReturn
 from uuid import UUID
 
@@ -19,10 +20,10 @@ import typer
 
 from tadas.apps.cli import config
 from tadas.apps.cli.listen import listen as run_listener
-from tadas.apps.cli.model import resolve, short_id, task_table
+from tadas.apps.cli.model import choose_org, org_lines, resolve, short_id, task_table
 from tadas.client.client import UNSET, ApiClient, ApiError, Unset
 from tadas.client.realtime import ChannelRefused
-from tadas.client.types import TaskScope, TaskStatus, TaskView, UserView
+from tadas.client.types import IssuedSessionView, TaskScope, TaskStatus, TaskView, UserView
 
 EXIT_REFUSED = 1
 EXIT_USAGE = 2
@@ -180,31 +181,77 @@ def login(
     async def go() -> None:
         async with build_client(api_url, None) as client:
             issued = await client.login(email, password)
-            choices = issued.memberships
-            if org is not None:
-                choices = [m for m in choices if m.org.slug == org]
-            if len(choices) != 1:
-                slugs = ", ".join(m.org.slug for m in issued.memberships) or "none"
+            try:
+                chosen = choose_org(issued.memberships, org)
+            except LookupError as slugs:
                 # The API signed the person in; what is missing is the flag.
                 _fail(f"choose an org with --org: {slugs}", EXIT_USAGE)
-            chosen = choices[0]
             session = await client.exchange_session(issued.token, chosen.org.id)
-            path = config.save_session(
-                config.Session(
-                    api_url=api_url,
-                    token=session.token,
-                    email=session.user.email,
-                    display_name=session.user.display_name,
-                    org_slug=session.org.slug,
-                    org_name=session.org.name,
-                )
-            )
+            path = keep(api_url, session)
             typer.echo(
                 f"signed in as {session.user.display_name} at {session.org.name}"
                 f" ({session.role.value}); session kept in {path}"
             )
 
     _run(go())
+
+
+def keep(api_url: str, session: IssuedSessionView) -> Path:
+    """The one session the CLI holds, in the file the next command reads."""
+    return config.save_session(
+        config.Session(
+            api_url=api_url,
+            token=session.token,
+            email=session.user.email,
+            display_name=session.user.display_name,
+            org_slug=session.org.slug,
+            org_name=session.org.name,
+        )
+    )
+
+
+@app.command()
+def orgs(as_json: Json = False, api: Api = None) -> None:
+    """The orgs you belong to; `*` marks the one the session is in."""
+
+    async def go(client: ApiClient) -> None:
+        memberships = await client.every_membership()
+        if as_json:
+            typer.echo(json.dumps([m.model_dump(mode="json") for m in memberships], indent=2))
+            return
+        current = (await client.me()).org.slug
+        typer.echo(org_lines(memberships, current))
+
+    run(go, api)
+
+
+@app.command()
+def switch(
+    org: Annotated[str, typer.Argument(help="The slug of the org to switch to; see `tadas orgs`.")],
+) -> None:
+    """Move the kept session to another org. The API ends the old session in
+    the same write, so the CLI never holds two. `TADAS_TOKEN` is the
+    environment's credential, not the CLI's to end, so only the kept session
+    switches."""
+    session = config.load_session()
+    if session is None:
+        _fail("no kept session to switch; run `tadas login`", EXIT_NOT_SIGNED_IN)
+    client = setting(lambda: build_client(session.api_url, session.token))
+
+    async def go() -> None:
+        async with client:
+            try:
+                chosen = choose_org(await client.every_membership(), org)
+            except LookupError as slugs:
+                _fail(f"no org {org!r} to switch to; yours are: {slugs}", EXIT_USAGE)
+            switched = await client.switch_session(chosen.org.id)
+            keep(session.api_url, switched)
+            typer.echo(
+                f"switched to {switched.org.name} as {switched.user.display_name}"
+                f" ({switched.role.value}); the old session is ended"
+            )
+
+    _run(go(), signed_in=True)
 
 
 @app.command()

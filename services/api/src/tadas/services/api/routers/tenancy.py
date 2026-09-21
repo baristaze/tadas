@@ -1,12 +1,12 @@
-"""Tenancy routes: sign in, choose a tenant, read the principal, manage
-members, sessions, and api keys. Every function is one call into the
-tenancy service."""
+"""Tenancy routes: sign up, sign in, choose or switch a tenant, read the
+principal, manage members, sessions, and api keys. Every function is one call
+into the tenancy service."""
 
 from uuid import UUID
 
-from fastapi import APIRouter, Response
+from fastapi import APIRouter, Depends, Response
 
-from tadas.services.api.gateway.auth import Ctx, Identity, Rctx
+from tadas.services.api.gateway.auth import Ctx, Identity, Rctx, signup_open
 from tadas.services.api.gateway.idempotency import Idem
 from tadas.services.api.gateway.ratelimit import rate_limited
 from tadas.services.api.gateway.resolve import TenancyService
@@ -21,11 +21,13 @@ from tadas.services.api.types.tenancy import (
     IssuedLoginView,
     IssuedSessionView,
     LoginRequest,
+    MembershipChoicePageView,
     MembershipPageView,
     MembershipView,
     MeView,
     OrgView,
     SessionView,
+    SignUpRequest,
     UpdateMembershipRequest,
     UpdateMeRequest,
     UserPageView,
@@ -33,6 +35,19 @@ from tadas.services.api.types.tenancy import (
 )
 
 router = APIRouter(tags=["tenancy"])
+
+
+# No Idempotency-Key, as on the sign-in: the marker is kept per tenant and
+# principal, and this route has neither. A retry after a lost answer meets
+# the held email (409), and the person signs in with the password they chose.
+# It answers what a sign-in answers, with a sign-in's status.
+@router.post(
+    "/auth/signup",
+    response_model=IssuedLoginView,
+    dependencies=[Depends(signup_open), rate_limited("signup")],
+)
+async def sign_up(rctx: Rctx, tenancy: TenancyService, body: SignUpRequest) -> IssuedLoginView:
+    return await tenancy.sign_up(rctx, body)
 
 
 @router.post("/auth/login", response_model=IssuedLoginView, dependencies=[rate_limited("login")])
@@ -45,6 +60,16 @@ async def exchange_session(
     identity: Identity, tenancy: TenancyService, body: ExchangeSessionRequest
 ) -> IssuedSessionView:
     return await tenancy.exchange_session(identity, body)
+
+
+@router.get("/auth/memberships", response_model=MembershipChoicePageView)
+async def list_my_memberships(
+    identity: Identity,
+    tenancy: TenancyService,
+    cursor: str | None = None,
+    limit: int = LIMIT_DEFAULT,
+) -> MembershipChoicePageView:
+    return await tenancy.get_identity_memberships(identity, cursor, limit)
 
 
 @router.post("/auth/logout", response_model=SessionView)

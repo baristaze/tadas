@@ -2,16 +2,14 @@ import type { MembershipChoiceView } from "../../api";
 import { useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { errorMessage } from "../../app/errorMessage";
-import { forgetSession } from "../../app/forgetSession";
+import { adoptSession } from "../../app/adoptSession";
 import { useExchangeSession, useLogin } from "../../queries/tenancy";
 import { useNoticesStore } from "../../store/notices";
-import { useSessionStore } from "../../store/session";
 import { checkCredentials, chooseOrg, landingPath, type OrgChoice } from "./signInModel";
 
 export function useSignInVm() {
   const navigate = useNavigate();
   const location = useLocation();
-  const setSession = useSessionStore((s) => s.setSession);
   const notify = useNoticesStore((s) => s.notify);
   const login = useLogin();
   const exchange = useExchangeSession();
@@ -25,8 +23,7 @@ export function useSignInVm() {
     const issued = await exchange.mutateAsync({ loginToken: token, body: { org_id: membership.org.id } });
     // A tab already signed in (another org, another person) drops that
     // session first, so nothing fetched under it is shown under this one.
-    forgetSession();
-    setSession(issued.token, issued.org.slug);
+    adoptSession(issued);
     navigate(landingPath((location.state as { from?: unknown } | null)?.from), { replace: true });
   };
 
@@ -70,5 +67,6 @@ export function useSignInVm() {
     setPassword,
     submit,
     pick,
+    goToSignUp: () => navigate("/sign-up"),
   };
 }

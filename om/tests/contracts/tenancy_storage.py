@@ -50,6 +50,7 @@ CROSS_TENANT_CASES: frozenset[str] = frozenset(
         "read_user",
         "read_users",
         "remove_member",
+        "replace_session",
         "write_api_key",
         "write_membership",
         "write_org",
@@ -757,6 +758,156 @@ class TenancyStorageContract:
         assert found == expected, "by user id"
         # The bound is in the statement, and both impls cut at the same row.
         assert await storage.read_users_by_identity(identity.id, limit=1) == expected[:1]
+
+    async def test_create_org_with_owner_refuses_a_new_identity_on_a_held_email(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        """A sign-up always brings a new identity; one whose email another
+        identity holds meets the unique key, and neither it nor its tenant lands."""
+        email = f"{uuid4().hex}@example.test"
+        held = make_identity(email)
+        await storage.write_identity(held)
+        newcomer = make_identity(email)
+        org = make_org()
+        owner = make_user(newcomer.id, email)
+        with pytest.raises(UniqueKeyTaken):
+            await storage.create_org_with_owner(
+                org.id, org, owner, make_membership(owner.id, Role.OWNER), newcomer
+            )
+        assert await storage.read_identity(newcomer.id) is None
+        assert await storage.read_org(org.id) is None
+        assert await storage.read_user(org.id, owner.id) is None
+        assert await storage.read_identity_by_email(email) == held
+
+    async def test_the_memberships_of_an_identity_span_tenants_and_skip_the_gone(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        identity = make_identity()
+        places = []
+        for name in ("A", "B", "C", "D"):
+            org = make_org(name)
+            user = make_user(identity.id)
+            role = Role.OWNER if name == "A" else Role.MEMBER
+            await storage.create_org_with_owner(org.id, org, user, make_membership(user.id, role))
+            places.append((org, user, role))
+        # Someone else's place is never listed.
+        stranger_org = make_org("E")
+        stranger = make_user(make_identity().id)
+        await storage.create_org_with_owner(
+            stranger_org.id, stranger_org, stranger, make_membership(stranger.id, Role.OWNER)
+        )
+        # A deleted org, and a removed user, are places nobody holds.
+        gone_org, _, _ = places[1]
+        await storage.write_org(
+            gone_org.id,
+            gone_org.model_copy(update={"deleted_at": utcnow(), "deleted_by": new_id()}),
+        )
+        left_org, left_user, _ = places[2]
+        ended = await storage.read_membership_for_user(left_org.id, left_user.id)
+        assert ended is not None
+        now = utcnow()
+        await storage.remove_member(
+            left_org.id,
+            left_user.model_copy(update={"deleted_at": now, "deleted_by": new_id()}),
+            ended.model_copy(update={"deleted_at": now, "deleted_by": new_id()}),
+            (),
+        )
+        live = sorted((places[0], places[3]), key=lambda place: place[1].id)
+        found = await storage.read_memberships_by_identity(identity.id, limit=10)
+        assert [(m.org.id, m.user.id, m.role) for m in found] == [
+            (org.id, user.id, role) for org, user, role in live
+        ], "the living, by user id"
+        assert found[0].org == live[0][0] and found[0].user == live[0][1]
+        # The bound and the cursor cut at the same rows in both impls.
+        first = await storage.read_memberships_by_identity(identity.id, limit=1)
+        assert first == found[:1]
+        rest = await storage.read_memberships_by_identity(identity.id, 10, first[0].user.id)
+        assert rest == found[1:]
+
+    async def test_a_session_is_found_by_id_across_tenants(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        org = make_org()
+        session = make_session(new_id(), new_id(), uuid4().hex)
+        await storage.write_session(org.id, session)
+        assert await storage.read_session_by_id(session.id) == (org.id, session)
+        assert await storage.read_session_by_id(new_id()) is None
+
+    async def test_replace_session_ends_one_and_lands_the_other_in_one_commit(
+        self, storage: TenancyStorageInterface, outbox: OutboxStorageInterface
+    ) -> None:
+        org_a, org_b = make_org("A"), make_org("B")
+        identity_id = new_id()
+        old = make_session(identity_id, new_id(), uuid4().hex)
+        await storage.write_session(org_a.id, old)
+        new = make_session(identity_id, new_id(), uuid4().hex)
+        ended = old.model_copy(update={"revoked_at": utcnow()})
+        row = make_session_row(org_a.id, ended)
+        await storage.replace_session(org_b.id, new, org_a.id, ended, (row,))
+        assert await storage.read_session(org_a.id, old.id) == ended
+        assert await storage.read_session(org_b.id, new.id) == new
+        assert await storage.read_session_by_token_hash(new.token_hash) == (org_b.id, new)
+        landed = [r for r in await claim_all(outbox) if r.target_id == old.id]
+        assert [(r.id, r.org_id) for r in landed] == [(row.id, org_a.id)]
+        # An ended session cannot be ended again: two switches admit one.
+        again = make_session(identity_id, new_id(), uuid4().hex)
+        with pytest.raises(Conflict):
+            await storage.replace_session(org_b.id, again, org_a.id, ended, ())
+        assert await storage.read_session(org_b.id, again.id) is None
+
+    async def test_two_replacements_of_one_session_admit_one(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        """Two tabs switching on one session at once: the row lock, or the memory
+        lock, lets one through and the other finds the session ended."""
+        org_a, org_b = make_org("A"), make_org("B")
+        old = make_session(new_id(), new_id(), uuid4().hex)
+        await storage.write_session(org_a.id, old)
+        ended = old.model_copy(update={"revoked_at": utcnow()})
+        candidates = [make_session(old.identity_id, new_id(), uuid4().hex) for _ in range(3)]
+
+        async def switch(new: Session) -> Session | None:
+            try:
+                await storage.replace_session(org_b.id, new, org_a.id, ended, ())
+            except Conflict:
+                return None
+            return new
+
+        run = await race(*(switch(new) for new in candidates))
+        assert len(run.admitted) == 1, run.summary()
+        landed = [await storage.read_session(org_b.id, new.id) for new in candidates]
+        assert [s for s in landed if s is not None] == run.admitted
+
+    async def test_replace_session_never_ends_another_tenants_session(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        """The ended session is named with its tenant; named with another one,
+        nothing is ended and nothing lands."""
+        org_a, org_b = make_org("A"), make_org("B")
+        old = make_session(new_id(), new_id(), uuid4().hex)
+        await storage.write_session(org_a.id, old)
+        new = make_session(old.identity_id, new_id(), uuid4().hex)
+        ended = old.model_copy(update={"revoked_at": utcnow()})
+        with pytest.raises(NotFound):
+            await storage.replace_session(org_b.id, new, org_b.id, ended, ())
+        assert await storage.read_session(org_a.id, old.id) == old
+        assert await storage.read_session(org_b.id, new.id) is None
+        assert await storage.read_session_by_token_hash(new.token_hash) is None
+
+    async def test_replace_session_lands_nothing_when_the_new_token_is_taken(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        org_a, org_b = make_org("A"), make_org("B")
+        taken = make_session(new_id(), new_id(), uuid4().hex)
+        await storage.write_session(org_b.id, taken)
+        old = make_session(new_id(), new_id(), uuid4().hex)
+        await storage.write_session(org_a.id, old)
+        new = make_session(old.identity_id, new_id(), taken.token_hash)
+        ended = old.model_copy(update={"revoked_at": utcnow()})
+        with pytest.raises(UniqueKeyTaken):
+            await storage.replace_session(org_b.id, new, org_a.id, ended, ())
+        assert await storage.read_session(org_a.id, old.id) == old, "the old one still lives"
+        assert await storage.read_session(org_b.id, new.id) is None
 
     async def test_membership_for_user(self, storage: TenancyStorageInterface) -> None:
         org = make_org()

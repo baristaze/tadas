@@ -97,3 +97,46 @@ def test_the_table_has_a_header_and_one_line_per_task() -> None:
     for column in ("STATUS", "ASSIGNEE", "TITLE"):
         assert lines[0].index(column) == len(lines[0].split(column)[0])
     assert lines[0].index("ASSIGNEE") == lines[1].index("Bob")
+
+
+def membership(slug: str, name: str, role: str = "member"):
+    from tadas.client.types import MembershipChoiceView
+
+    return MembershipChoiceView.model_validate(
+        {
+            "org": {
+                "id": str(uuid4()),
+                "name": name,
+                "slug": slug,
+                "created_at": "2026-09-18T12:00:00Z",
+            },
+            "user": {
+                "id": str(uuid4()),
+                "email": "ann@example.test",
+                "display_name": "Ann",
+                "created_at": "2026-09-18T12:00:00Z",
+            },
+            "role": role,
+        }
+    )
+
+
+def test_choose_org_takes_the_slug_or_the_only_one() -> None:
+    from tadas.apps.cli.model import choose_org
+
+    acme, beta = membership("acme", "Acme"), membership("beta", "Beta")
+    assert choose_org([acme], None) == acme
+    assert choose_org([acme, beta], "beta") == beta
+    with pytest.raises(LookupError, match=r"^acme, beta$"):
+        choose_org([beta, acme], None)
+    with pytest.raises(LookupError, match=r"^acme$"):
+        choose_org([acme], "nope")
+    with pytest.raises(LookupError, match=r"^none$"):
+        choose_org([], None)
+
+
+def test_org_lines_sort_by_name_and_mark_the_current_org() -> None:
+    from tadas.apps.cli.model import org_lines
+
+    lines = org_lines([membership("z-team", "Zeta"), membership("acme", "Acme", "owner")], "z-team")
+    assert lines == "  acme    Acme (owner)\n* z-team  Zeta (member)"

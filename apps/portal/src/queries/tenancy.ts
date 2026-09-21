@@ -9,8 +9,11 @@ import type {
   IssuedLoginView,
   IssuedSessionView,
   LoginRequest,
+  MembershipChoicePageView,
+  MembershipChoiceView,
   MeView,
   SessionView,
+  SignUpRequest,
   UserPageView,
   UserView,
 } from "../api";
@@ -23,6 +26,8 @@ import { keys } from "./keys";
  * gives; the key list is read a page at a time on the screen that shows it. */
 const USERS_PAGE_SIZE = 200;
 export const API_KEYS_PAGE_SIZE = 50;
+/** A person belongs to at most a hundred orgs; the chip reads them whole. */
+const MY_MEMBERSHIPS_PAGE_SIZE = 200;
 
 export function useMe() {
   return useQuery({ queryKey: keys.me, queryFn: ({ signal }) => api.get<MeView>("/v1/me", { signal }) });
@@ -102,6 +107,43 @@ export function useRevokeApiKey() {
   });
 }
 
+/** The orgs the signed-in person belongs to, page after page, read with the
+ * session this tab holds. The chip needs the whole list to offer a switch. */
+export function useMyMemberships() {
+  const query = useInfiniteQuery({
+    queryKey: keys.myMemberships.list(MY_MEMBERSHIPS_PAGE_SIZE),
+    initialPageParam: null as string | null,
+    getNextPageParam: (last: MembershipChoicePageView) => last.next_cursor,
+    queryFn: ({ pageParam, signal }) => {
+      const cursor = pageParam ? `&cursor=${encodeURIComponent(pageParam)}` : "";
+      return api.get<MembershipChoicePageView>(
+        `/v1/auth/memberships?limit=${MY_MEMBERSHIPS_PAGE_SIZE}${cursor}`,
+        { signal },
+      );
+    },
+  });
+  const { hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage } = query;
+  const walking = hasNextPage && !isFetchNextPageError;
+  useEffect(() => {
+    if (walking && !isFetchingNextPage) void fetchNextPage();
+  }, [walking, isFetchingNextPage, fetchNextPage]);
+  return {
+    ...query,
+    data: query.data?.pages.flatMap((page) => page.items) as MembershipChoiceView[] | undefined,
+    isPending: query.isPending || walking,
+  };
+}
+
+/** A new person and their first org. Answered as a sign-in is, so the flow
+ * goes on to the exchange. Sent once, with no bearer and no idempotency key:
+ * a retry would meet the email the first attempt took. */
+export function useSignUp() {
+  return useMutation({
+    mutationFn: (body: SignUpRequest) =>
+      api.post<IssuedLoginView>("/v1/auth/signup", body, { token: null }),
+  });
+}
+
 export function useLogin() {
   return useMutation({
     mutationFn: (body: LoginRequest) =>
@@ -118,5 +160,13 @@ export function useExchangeSession() {
   return useMutation({
     mutationFn: ({ loginToken, body }: { loginToken: string; body: ExchangeSessionRequest }) =>
       api.post<IssuedSessionView>("/v1/auth/sessions", body, { token: loginToken }),
+  });
+}
+
+/** The switch: the exchange presented with the session this tab holds. The
+ * server ends that session in the same write and answers with the new one. */
+export function useSwitchOrg() {
+  return useMutation({
+    mutationFn: (orgId: string) => api.post<IssuedSessionView>("/v1/auth/sessions", { org_id: orgId }),
   });
 }

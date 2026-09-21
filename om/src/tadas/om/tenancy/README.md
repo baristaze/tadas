@@ -16,7 +16,9 @@ of the six kinds of thing [Tadas is made of](../../../../README.md).
 - **Membership**: the user's place in the org, with a role.
 - **Session**: a signed-in visit. A login is a session with no org
   yet, the one sign-in produces; exchanging it for an org gives a
-  session in that org. Only the hash of the token is kept.
+  session in that org. A live session also proves who the person is,
+  so it can list their orgs and be exchanged for a session in another
+  one. Only the hash of the token is kept.
 - **API key**: a named, expiring credential for a program, with a
   role. Only the hash is kept; the key is shown once.
 - **Socket ticket**: a single-use, short-lived pass for the live
@@ -24,10 +26,23 @@ of the six kinds of thing [Tadas is made of](../../../../README.md).
 
 ## What can happen
 
+- **Sign up.** A person nobody knows yet gives an email, a name, a
+  password, and an org with its slug. The identity, the org, and the
+  owner membership land together, and the answer is what a sign-in
+  answers: a login and the one org. A held email or a taken slug is
+  refused and nothing lands. The email is not verified, by choice. This
+  is how a person enters a deployed environment; the seeding below is
+  local only. A setting closes it, and then it answers as if it did not
+  exist.
 - **Sign in.** Email and password give a login that lists the orgs the
   person belongs to. The login is exchanged for a session in one of
   them. An unknown email costs the same time as a wrong password, so
   the answer does not say which emails exist.
+- **List my orgs, and switch.** A login or a live session lists the
+  orgs the person belongs to, a page at a time. Exchanging a live
+  session for another org is a switch: the session presented ends in
+  the same step that issues the new one, so a person holds one session
+  per tab.
 - **Sign out.** The session presented is revoked. A person can also
   list their own live sessions in the org and revoke any one of them.
 - **Read and change the profile.** The org, the person's own identity,
@@ -43,8 +58,8 @@ of the six kinds of thing [Tadas is made of](../../../../README.md).
   everyone else their own); revoke one.
 - **Open the live channel.** Issue a socket ticket; redeem it once.
 - **Seed an environment.** Create an org with its first owner, or add
-  a person to an org. Both are the platform's own operations; there is
-  no invitation flow yet.
+  a person to an org. Both are the platform's own operations, run by
+  `make seed` on a local environment; there is no invitation flow yet.
 - **Operate across orgs.** An operator, admitted from the allowlist,
   can create an org with its owner, add a member, read an org, its
   members, its tasks, and its events, read the platform's size, list
@@ -75,6 +90,9 @@ of the six kinds of thing [Tadas is made of](../../../../README.md).
 - **Secrets are fingerprints.** A session token, an API key, and a
   socket ticket are stored as hashes. The plain value is shown once.
 - **A ticket works once.** A second redemption is refused.
+- **The operator plane takes the sign-in alone.** A session proves the
+  person, but it is a tenant's credential, and the operator plane
+  refuses it; only the login admits an operator.
 - **A gone org refuses its logins.** Exchanging a login for an org
   that is deleted, or a membership that has ended, is refused as not
   authorized; the login itself still stands.

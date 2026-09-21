@@ -199,6 +199,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/auth/memberships": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List My Memberships */
+        get: operations["list_my_memberships_v1_auth_memberships_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/auth/sessions": {
         parameters: {
             query?: never;
@@ -210,6 +227,23 @@ export interface paths {
         put?: never;
         /** Exchange Session */
         post: operations["exchange_session_v1_auth_sessions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/auth/signup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Sign Up */
+        post: operations["sign_up_v1_auth_signup_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -571,7 +605,12 @@ export interface components {
              */
             target_id: string;
         };
-        /** ExchangeSessionRequest */
+        /**
+         * ExchangeSessionRequest
+         * @description The org to enter. Presented with the sign-in credential, it opens the
+         *     first session; presented with a session, it is a switch, and that session
+         *     ends in the same write.
+         */
         ExchangeSessionRequest: {
             /**
              * Org Id
@@ -672,6 +711,18 @@ export interface components {
             permissions: components["schemas"]["Permission"][];
             role: components["schemas"]["Role"];
             user: components["schemas"]["UserView"];
+        };
+        /**
+         * MembershipChoicePageView
+         * @description One page of the signed-in person's places, each the org, the user, and
+         *     the role: the same choice a sign-in answers with. `next_cursor` as on
+         *     `UserPageView`.
+         */
+        MembershipChoicePageView: {
+            /** Items */
+            items: components["schemas"]["MembershipChoiceView"][];
+            /** Next Cursor */
+            next_cursor: string | null;
         };
         /** MembershipChoiceView */
         MembershipChoiceView: {
@@ -861,6 +912,26 @@ export interface components {
             id: string;
             /** Revoked At */
             revoked_at: string | null;
+        };
+        /**
+         * SignUpRequest
+         * @description A new person, their first org, and their password. The answer is a
+         *     sign-in's (`IssuedLoginView`), so the client goes on through the same
+         *     choice and exchange. `org_slug` is lower-case letters and digits joined
+         *     by hyphens; a held email and a taken slug are both 409. No email is
+         *     verified.
+         */
+        SignUpRequest: {
+            /** Display Name */
+            display_name: string;
+            /** Email */
+            email: string;
+            /** Org Name */
+            org_name: string;
+            /** Org Slug */
+            org_slug: string;
+            /** Password */
+            password: string;
         };
         /**
          * TaskPageView
@@ -1543,6 +1614,42 @@ export interface operations {
             };
         };
     };
+    list_my_memberships_v1_auth_memberships_get: {
+        parameters: {
+            query?: {
+                cursor?: string | null;
+                limit?: number;
+            };
+            header?: {
+                authorization?: string | null;
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MembershipChoicePageView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     exchange_session_v1_auth_sessions_post: {
         parameters: {
             query?: never;
@@ -1567,6 +1674,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["IssuedSessionView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    sign_up_v1_auth_signup_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SignUpRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssuedLoginView"];
                 };
             };
             /** @description Validation Error */

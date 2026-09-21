@@ -22,7 +22,7 @@ The data services' ports are fixed, since the `TADAS_*_URL` knobs name them.
 
 | Service | From the host | Inside the compose network | Sign-in |
 |---------|---------------|----------------------------|---------|
-| portal | http://localhost:55173 | `portal:8080` | `owner@example.test` (owner) or `bob@example.test` (member), both `tadas-local` (after `make seed`) |
+| portal | http://localhost:55173 | `portal:8080` | `owner@example.test` (owner) or `bob@example.test` (member), both `tadas-local` (after `make seed`), or an account made at `/sign-up` |
 | api | http://127.0.0.1:8000 (`/docs`, `/metrics`, `/healthz`) | `api:8000` | |
 | postgres | `127.0.0.1:55432` | `postgres:5432` | `tadas` / `tadas`, database `tadas`; the superuser is `postgres` / `postgres` |
 | valkey | `127.0.0.1:56379` | `valkey:6379` | none: user `default`, no password |

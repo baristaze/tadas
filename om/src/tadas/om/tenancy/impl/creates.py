@@ -1,12 +1,13 @@
-"""The two creates the tenancy namespace has two entry points for: an org
-with its owner, and a member of an org. The seeding commands (`bootstrap`,
-`add-member`) reach them through the tenant manager's transitions, under a
-request stage; the operator plane reaches them through the operator manager,
-under an operator. Both build the same rows and land them in the same named
-atomic write, so a tenant seeded from the command line and one created over
-the API are indistinguishable afterwards. Nothing here constructs a stage or
-decides who may call: the callers authorize, this module verifies, copies,
-and writes."""
+"""The creates the tenancy namespace has more than one entry point for: an
+org with its owner, and a member of an org. The seeding commands
+(`bootstrap`, `add-member`) reach them through the tenant manager's
+transitions, under a request stage; the operator plane reaches them through
+the operator manager, under an operator; a sign-up reaches the first one with
+a person nobody has seen before. Every path builds the same rows and lands
+them in the same named atomic write, so a tenant seeded from the command line,
+one created over the operator API, and one signed up are indistinguishable
+afterwards. Nothing here constructs a stage or decides who may call: the
+callers authorize, this module verifies, copies, and writes."""
 
 import secrets
 from collections.abc import Mapping
@@ -107,6 +108,21 @@ async def identity_for(
     return identity, None
 
 
+def new_identity(email: str, password_hash: str, now: datetime) -> Identity:
+    """A person nobody has seen before, as a sign-up makes one: the provenance
+    names the identity itself, since no one else acted."""
+    identity_id = new_id()
+    return Identity(
+        id=identity_id,
+        created_at=now,
+        updated_at=now,
+        created_by=identity_id,
+        updated_by=identity_id,
+        email=email,
+        password_hash=password_hash,
+    )
+
+
 async def create_org_with_owner(
     storage: TenancyStorageInterface,
     *,
@@ -128,6 +144,19 @@ async def create_org_with_owner(
     now = utcnow()
     identity, to_write = await identity_for(storage, email, password, operator_role, now)
     refuse_one_more(identity.id, await users_of(storage, identity.id, max_orgs), max_orgs)
+    org, user, membership = owner_rows(org_id, org_name, slug, identity, display_name, now)
+    # One commit: a slug taken meanwhile leaves no org without its owner,
+    # and no identity without its org.
+    await storage.create_org_with_owner(org.id, org, user, membership, to_write)
+    return org, user, membership
+
+
+def owner_rows(
+    org_id: UUID, org_name: str, slug: str, identity: Identity, display_name: str, now: datetime
+) -> tuple[Org, User, Membership]:
+    """The org, its owner's user, and the owner membership, as every create of
+    a tenant builds them. The org and its rows are the owner's own: the owner
+    is the first actor of the tenant, so the provenance names the owner's user."""
     user_id = new_id()
     org = Org(
         id=org_id,
@@ -145,7 +174,7 @@ async def create_org_with_owner(
         created_by=user_id,
         updated_by=user_id,
         identity_id=identity.id,
-        email=email,
+        email=identity.email,
         display_name=display_name,
     )
     membership = Membership(
@@ -157,9 +186,6 @@ async def create_org_with_owner(
         user_id=user_id,
         role=Role.OWNER,
     )
-    # One commit: a slug taken meanwhile leaves no org without its owner,
-    # and no identity without its org.
-    await storage.create_org_with_owner(org.id, org, user, membership, to_write)
     return org, user, membership
 
 
