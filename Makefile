@@ -23,9 +23,10 @@ PROFILE ?= light
 DURATION ?= 30
 
 # The guideline's static checker, at the ref of the guideline this project
-# follows. Offline, point it at a checkout:
+# follows, on the project's Python: the checker refuses a Python older than
+# .python-version. Offline, point it at a checkout:
 # `make arch-check ARCH_CHECK="python3 ../swe_guidelines/checkers/arch_check.py"`.
-ARCH_CHECK ?= uvx --from "git+https://github.com/baristaze/swe_guidelines@deterministic-checkers\#subdirectory=checkers" arch-check
+ARCH_CHECK ?= uvx --python "$(shell cat .python-version)" --from "git+https://github.com/baristaze/swe_guidelines@deterministic-checkers\#subdirectory=checkers" arch-check
 
 .PHONY: help setup up down reset urls infra-up devx-up stack-up infra-down infra-reset migrate seed demo-gif demo-cli-gif migrate-check check lint format-check typecheck arch-check test-unit test-integration test-telemetry traffic openapi
 
