@@ -22,7 +22,13 @@ ROLES := core activity queue admin
 PROFILE ?= light
 DURATION ?= 30
 
-.PHONY: help setup up down reset urls infra-up devx-up stack-up infra-down infra-reset migrate seed demo-gif demo-cli-gif migrate-check check lint format-check typecheck test-unit test-integration test-telemetry traffic openapi
+# The guideline's static checker, at the tag of the guideline this project
+# follows, on the project's Python: the checker refuses a Python older than
+# .python-version. Offline, point it at a checkout:
+# `make arch-check ARCH_CHECK="python3 ../swe_guidelines/checkers/arch_check.py"`.
+ARCH_CHECK ?= uvx --python "$(shell cat .python-version)" --from "git+https://github.com/baristaze/swe_guidelines@v0.23.0\#subdirectory=checkers" arch-check
+
+.PHONY: help setup up down reset urls infra-up devx-up stack-up infra-down infra-reset migrate seed demo-gif demo-cli-gif migrate-check check lint format-check typecheck arch-check test-unit test-integration test-telemetry traffic openapi
 
 # This Makefile alone, never $(MAKEFILE_LIST): the includes above put
 # .env.example and .env in that list, and grep prefixes every match with the
@@ -123,7 +129,7 @@ migrate-check: ## Compare every role's ORM metadata with the migrated schema
 benchmark-boot: ## Time the imports and the construction of every root
 	uv run --package tadas-api python scripts/benchmark_boot.py
 
-check: lint format-check typecheck test-unit ## The fast local gate
+check: lint format-check typecheck arch-check test-unit ## The fast local gate
 	@if [ -d apps ]; then pnpm run lint && pnpm run typecheck && pnpm run test; fi
 
 lint: ## Ruff lint
@@ -134,6 +140,9 @@ format-check: ## Ruff format, check only
 
 typecheck: ## Pyright over every distribution
 	uv run pyright
+
+arch-check: ## The guideline's static checks, configured in pyproject.toml
+	$(ARCH_CHECK)
 
 test-unit: ## Unit tests over the memory impls
 	uv run pytest -q -m "not integration and not e2e and not telemetry"

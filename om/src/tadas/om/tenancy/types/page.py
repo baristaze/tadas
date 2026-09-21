@@ -9,10 +9,10 @@ from tadas.om.tenancy.types.user import User
 
 
 class UserPage(Platform):
-    items: list[User]
+    items: tuple[User, ...]
     has_more: bool
 
 
 class ApiKeyPage(Platform):
-    items: list[ApiKey]
+    items: tuple[ApiKey, ...]
     has_more: bool

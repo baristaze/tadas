@@ -1,7 +1,12 @@
-"""Import direction, checked rather than written down: the object model and
-the infrastructure toolkit never import a service or a worker, and no module
-of the object model reaches past an infra interface to an impl. A static
-scan of the source files; nothing here imports the modules it inspects."""
+"""Import direction, checked rather than written down: no module of the
+object model reaches past an infra interface to an impl. A static scan of
+the source files; nothing here imports the modules it inspects.
+
+That the object model and infra import no service or worker, and that
+infra imports nothing from the object model, is `make arch-check` (CON-12
+and CON-10). What stays here is what the checker does not decide: an infra
+module that is not a capability's interface package, such as
+`tadas.infra.aws_clients` or `tadas.infra.breaker`, is an impl too."""
 
 import ast
 import importlib.util
@@ -9,8 +14,6 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-
-FORBIDDEN_EVERYWHERE = ("tadas.services", "tadas.workers")
 
 INFRA_INTERFACE_MODULES = frozenset(
     {
@@ -69,31 +72,7 @@ def is_infra_impl(name: str) -> bool:
     return is_under(name, "tadas.infra") and name not in INFRA_INTERFACE_MODULES
 
 
-ALL_MODULES = [*modules_under("tadas.om"), *modules_under("tadas.infra")]
-
-
-@pytest.mark.parametrize("module,path", ALL_MODULES, ids=[m for m, _ in ALL_MODULES])
-def test_om_and_infra_never_import_a_service_or_a_worker(module: str, path: Path) -> None:
-    offending = [
-        name
-        for name in imported_modules(module, path)
-        if any(is_under(name, prefix) for prefix in FORBIDDEN_EVERYWHERE)
-    ]
-    assert offending == [], f"{module} imports {offending}"
-
-
-INFRA_MODULES = [(m, p) for m, p in ALL_MODULES if is_under(m, "tadas.infra")]
-
-
-@pytest.mark.parametrize("module,path", INFRA_MODULES, ids=[m for m, _ in INFRA_MODULES])
-def test_infra_never_imports_the_object_model(module: str, path: Path) -> None:
-    """The object model imports infra interfaces; infra imports nothing from
-    the object model. The system scope is compared by value on both sides."""
-    offending = [name for name in imported_modules(module, path) if is_under(name, "tadas.om")]
-    assert offending == [], f"{module} imports {offending}"
-
-
-OM_MODULES = [(m, p) for m, p in ALL_MODULES if is_under(m, "tadas.om")]
+OM_MODULES = list(modules_under("tadas.om"))
 
 
 @pytest.mark.parametrize("module,path", OM_MODULES, ids=[m for m, _ in OM_MODULES])
@@ -108,13 +87,8 @@ def test_om_reaches_infra_only_through_interfaces(module: str, path: Path) -> No
 
 
 def test_the_scan_sees_the_whole_tree() -> None:
-    names = {m for m, _ in ALL_MODULES}
-    assert {
-        "tadas.om.root",
-        "tadas.om.base",
-        "tadas.infra.root",
-        "tadas.infra.impl.configured",
-    } <= names
+    names = {m for m, _ in OM_MODULES}
+    assert {"tadas.om.root", "tadas.om.base", "tadas.om.tasks.impl.manager"} <= names
     assert is_infra_impl("tadas.infra.cache.valkey")
     assert is_infra_impl("tadas.infra.impl.local")
     assert is_infra_impl("tadas.infra.topics.dispatch")
