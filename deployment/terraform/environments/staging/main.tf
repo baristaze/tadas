@@ -21,14 +21,14 @@ module "environment" {
 
   # Scale: size XS, the demo posture (deployment/cloud/README.md prices
   # every size). Everything below is what makes this environment the smaller
-  # one. The pool is sized to the instance: a db.t4g.micro takes about 80
-  # connections.
+  # one. The pool is sized to the instance at the autoscaling ceilings, so
+  # the flip below is safe: a db.t4g.micro takes about 80 connections.
   vpc_cidr                     = "10.10.0.0/16"
   bucket_prefix                = "tadas-staging"
   database_instance_class      = "db.t4g.micro"
   database_multi_az            = false
   database_deletion_protection = false
-  database_pool_size           = 4
+  database_pool_size           = 3
   cache_node_type              = "cache.t4g.micro"
   cache_node_count             = 1
   api_desired_count            = 1
