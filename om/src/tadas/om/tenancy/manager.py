@@ -21,7 +21,7 @@ from tadas.om.tenancy.types.identity import Identity
 from tadas.om.tenancy.types.issued import IssuedApiKey, IssuedLogin, IssuedSession, IssuedTicket
 from tadas.om.tenancy.types.membership import Membership
 from tadas.om.tenancy.types.org import Org
-from tadas.om.tenancy.types.page import ApiKeyPage, MembershipPage, UserPage
+from tadas.om.tenancy.types.page import ApiKeyPage, MembershipPage, OrgMembershipPage, UserPage
 from tadas.om.tenancy.types.session import Session
 from tadas.om.tenancy.types.socket_ticket import SocketPrincipal
 from tadas.om.tenancy.types.user import User
@@ -83,22 +83,64 @@ class TenancyManagerInterface(ABC):
         ...
 
     @abstractmethod
+    async def sign_up(
+        self,
+        rctx: RequestContext,
+        email: str,
+        password: str,
+        display_name: str,
+        org_name: str,
+        org_slug: str,
+    ) -> IssuedLogin:
+        """Platform-internal: a person nobody knows yet creates their identity,
+        their first org, and the owner membership, in one commit, and is signed
+        in. The answer is a sign-in's: the credential that carries no tenant and
+        the memberships (the one), so the client goes on through the same
+        choice and exchange. An email an identity already holds is Conflict,
+        and so is a taken slug; so is a sign-up that raced another for either,
+        and nothing lands then. No email is verified, by choice: this is the
+        door a deployed environment has, and whether it is open is the
+        caller's setting, not this operation's."""
+        ...
+
+    @abstractmethod
     async def login(self, rctx: RequestContext, email: str, password: str) -> IssuedLogin:
         """Platform-internal: verifies a sign-in and issues a credential that carries no tenant."""
         ...
 
     @abstractmethod
     async def authenticate_login(self, rctx: RequestContext, credential: str) -> IdentityContext:
-        """Platform-internal: the transition to the identity stage. Verifies a
-        login credential (the person's own sign-in, `lgn_`) and produces the
-        identity behind it; a session token or an api key is refused with
-        InvalidCredential. Every operation on an identity starts here."""
+        """Platform-internal: the transition to the identity stage. Verifies the
+        person's own sign-in and produces the identity behind it: the login
+        credential (`lgn_`), or a live session token (`ses_`), which proves the
+        identity of its user as well as the tenant, so a signed-in app lists
+        its memberships and switches with the one bearer it holds. A revoked
+        or expired session, or one whose user, membership, or org is gone, is
+        refused; an api key is refused with InvalidCredential, since it is an
+        agent's and not the person's sign-in. Every operation on an identity
+        starts here."""
         ...
 
     @abstractmethod
     async def exchange_login(self, ictx: IdentityContext, org_id: UUID) -> IssuedSession:
         """Platform-internal: exchanges the verified identity for a tenant-scoped
-        session token; NotAuthorized when the identity is not a member of `org_id`."""
+        session token; NotAuthorized when the identity is not a member of
+        `org_id`. An identity proven by a session is a switch: that session
+        ends in the same write that lands the new one, announced as any
+        revocation is, so its socket closes and a tab never holds two live
+        sessions. A session another write already ended is refused with
+        CredentialExpired and nothing lands."""
+        ...
+
+    @abstractmethod
+    async def get_identity_memberships(
+        self, ictx: IdentityContext, after: UUID | None, limit: int
+    ) -> OrgMembershipPage:
+        """Platform-internal: no tenant is chosen, so the list is the identity's.
+        The places the verified identity holds, each its org, its user, and its
+        role, the same choice a sign-in answers with; by user id, a page at a
+        time as `get_users` pages. Deleted orgs and ended memberships are not
+        listed."""
         ...
 
     @abstractmethod
@@ -111,8 +153,10 @@ class TenancyManagerInterface(ABC):
     async def admit_operator(self, ictx: IdentityContext) -> OperatorContext:
         """Platform-internal: the transition to the operator stage. Admits the
         verified identity when it is on the operator allowlist, NotAnOperator
-        otherwise, with the permissions the entry's role grants. The identity
-        stage already guarantees the credential is the person's own sign-in."""
+        otherwise, with the permissions the entry's role grants. Only the
+        login credential admits: the identity stage also accepts a tenant
+        session, and a tenant's credential never reaches the operator plane,
+        so one is refused with InvalidCredential."""
         ...
 
     @abstractmethod

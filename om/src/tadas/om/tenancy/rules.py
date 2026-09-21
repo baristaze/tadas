@@ -5,6 +5,7 @@ relational one spells them in SQL and names the rule it mirrors."""
 
 import hashlib
 import hmac
+import re
 from datetime import timedelta
 from uuid import UUID
 
@@ -64,6 +65,38 @@ def verify_password(password: str, stored: str) -> bool:
         return False
     candidate = hash_password(password, bytes.fromhex(salt_hex))
     return hmac.compare_digest(candidate, stored)
+
+
+MIN_PASSWORD_LENGTH = 8
+"""The shortest password a sign-up accepts. A sign-in checks no length: a
+password set before this rule, or by the seeding, still signs in."""
+
+MAX_SLUG_LENGTH = 48
+"""The longest slug a sign-up accepts."""
+
+SLUG_PATTERN = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
+"""A sign-up's slug: lower-case letters and digits in runs joined by single hyphens."""
+
+
+def check_sign_up(email: str, password: str, display_name: str, org_name: str, slug: str) -> None:
+    """The shape of a sign-up, refused with ValueError naming the field. There
+    is no email verification: an address with one `@` and a dot after it is
+    the whole check, a choice and not an oversight (the sign-up is the door a
+    deployed environment has, and a demo needs no mailbox)."""
+    local, at, domain = email.partition("@")
+    if not at or not local or "." not in domain or "@" in domain or email != email.strip():
+        raise ValueError("enter an email address")
+    if len(password) < MIN_PASSWORD_LENGTH:
+        raise ValueError(f"a password has at least {MIN_PASSWORD_LENGTH} characters")
+    if not display_name.strip():
+        raise ValueError("a display name is required")
+    if not org_name.strip():
+        raise ValueError("an organization name is required")
+    if len(slug) > MAX_SLUG_LENGTH or not SLUG_PATTERN.fullmatch(slug):
+        raise ValueError(
+            f"a slug is lower-case letters and digits joined by hyphens, "
+            f"at most {MAX_SLUG_LENGTH} characters"
+        )
 
 
 def role_at_most(requested: Role, ceiling: Role) -> bool:

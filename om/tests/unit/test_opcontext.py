@@ -92,7 +92,7 @@ async def test_login_then_authenticate_login_produces_the_identity_stage(
     assert (ictx.request_id, ictx.app, ictx.trace_id) == (rctx.request_id, rctx.app, rctx.trace_id)
 
 
-async def test_authenticate_login_refuses_a_session_token_and_an_api_key(
+async def test_authenticate_login_takes_a_session_token_and_refuses_an_api_key(
     manager: TenancyManagerImpl,
 ) -> None:
     _, org = await manager.bootstrap(
@@ -101,8 +101,10 @@ async def test_authenticate_login_refuses_a_session_token_and_an_api_key(
     login = await manager.login(request(), "ann@example.test", "pw-1234")
     ictx = await manager.authenticate_login(request(), login.token)
     session = await manager.exchange_login(ictx, org.id)
-    with pytest.raises(InvalidCredential):
-        await manager.authenticate_login(request(), session.token)
+    # A live session proves the identity of its user as well as the tenant.
+    by_session = await manager.authenticate_login(request(), session.token)
+    assert by_session.identity_id == ictx.identity_id
+    assert by_session.credential_kind is CredentialKind.SESSION_TOKEN
     ctx = await manager.authenticate(request(), session.token)
     key = await manager.create_api_key(ctx, "ci", Role.MEMBER)
     with pytest.raises(InvalidCredential):

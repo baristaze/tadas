@@ -87,6 +87,7 @@ REQUEST_TRANSITIONS: frozenset[tuple[str, str]] = frozenset(
         # Take `RequestContext`, the weakest stage: nobody is known yet.
         ("TenancyManagerInterface", "bootstrap"),
         ("TenancyManagerInterface", "add_member"),
+        ("TenancyManagerInterface", "sign_up"),
         ("TenancyManagerInterface", "login"),
         ("TenancyManagerInterface", "authenticate_login"),
         ("TenancyManagerInterface", "authenticate"),
@@ -103,6 +104,7 @@ IDENTITY_TRANSITIONS: frozenset[tuple[str, str]] = frozenset(
     {
         # Take `IdentityContext`: a person is verified, no tenant is chosen.
         ("TenancyManagerInterface", "exchange_login"),
+        ("TenancyManagerInterface", "get_identity_memberships"),
         ("TenancyManagerInterface", "admit_operator"),
     }
 )
