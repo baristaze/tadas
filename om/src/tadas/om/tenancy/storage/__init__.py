@@ -126,8 +126,13 @@ class TenancyStorageInterface(ABC):
     async def read_user(self, org_id: UUID, user_id: UUID) -> User | None: ...
 
     @abstractmethod
-    async def read_users_by_identity(self, identity_id: UUID) -> list[tuple[UUID, User]]:
-        """Cross-tenant sweep: the users one identity is, in every tenant, with the tenant."""
+    async def read_users_by_identity(
+        self, identity_id: UUID, limit: int
+    ) -> list[tuple[UUID, User]]:
+        """Cross-tenant sweep: the live users one identity is, in every tenant,
+        with the tenant, by user id, at most `limit` of them. The caller picks
+        the bound: the manager asks for one past the orgs a person may join, so
+        a list cut short is told from a whole one."""
         ...
 
     @abstractmethod

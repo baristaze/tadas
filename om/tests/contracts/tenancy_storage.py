@@ -752,10 +752,11 @@ class TenancyStorageContract:
         user_a, user_b = make_user(identity.id), make_user(identity.id)
         await storage.write_user(org_a.id, user_a)
         await storage.write_user(org_b.id, user_b)
-        found = await storage.read_users_by_identity(identity.id)
-        assert sorted(found, key=lambda pair: pair[1].id) == sorted(
-            [(org_a.id, user_a), (org_b.id, user_b)], key=lambda pair: pair[1].id
-        )
+        found = await storage.read_users_by_identity(identity.id, limit=10)
+        expected = sorted([(org_a.id, user_a), (org_b.id, user_b)], key=lambda pair: pair[1].id)
+        assert found == expected, "by user id"
+        # The bound is in the statement, and both impls cut at the same row.
+        assert await storage.read_users_by_identity(identity.id, limit=1) == expected[:1]
 
     async def test_membership_for_user(self, storage: TenancyStorageInterface) -> None:
         org = make_org()

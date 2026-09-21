@@ -98,7 +98,7 @@ class WorkStoragePostgresImpl(PgStorageBase, WorkStorageInterface):
             return claimed
 
     async def requeue_stale(
-        self, org_id: UUID, now: datetime, stagger: timedelta
+        self, org_id: UUID, now: datetime, stagger: timedelta, limit: int
     ) -> list[WorkItem]:
         stale_filter = (
             WorkItems.org_id == org_id,
@@ -111,6 +111,8 @@ class WorkStoragePostgresImpl(PgStorageBase, WorkStorageInterface):
                 (func.row_number().over(order_by=WorkItems.id) - 1).label("position"),
             )
             .where(*stale_filter)
+            .order_by(WorkItems.id)
+            .limit(limit)
             .subquery("stale")
         )
         exhausted = WorkItems.attempts >= WorkItems.max_attempts  # rules.is_exhausted, in SQL

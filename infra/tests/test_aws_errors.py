@@ -123,7 +123,7 @@ async def test_every_other_code_becomes_a_platform_exception() -> None:
     with pytest.raises(BackendFailed):
         await (await buckets("SlowDown")).put(new_id(), Buckets.EXPORTS, "k", b"", "text/plain")
     with pytest.raises(BackendFailed):
-        await (await buckets("AccessDenied")).list(new_id(), Buckets.EXPORTS, "")
+        await (await buckets("AccessDenied")).list(new_id(), Buckets.EXPORTS, "", limit=10)
     with pytest.raises(BackendFailed) as raised:
         await (await secrets("AccessDeniedException")).get("token")
     assert "from the driver" not in raised.value.message

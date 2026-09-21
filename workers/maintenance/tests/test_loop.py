@@ -114,8 +114,8 @@ class LeaseLosingWork(WorkManagerInterface):
         self.renewals += 1
         raise LeaseLost("held elsewhere")
 
-    async def requeue_stale(self, ctx: OpContext) -> int:
-        return await self._inner.requeue_stale(ctx)
+    async def requeue_stale(self, ctx: OpContext, limit: int) -> int:
+        return await self._inner.requeue_stale(ctx, limit)
 
     async def purge_settled(self, ctx: OpContext) -> int:
         return await self._inner.purge_settled(ctx)
@@ -540,6 +540,41 @@ async def test_sweep_requeues_stale_items_per_tenant(tmp_path: Path) -> None:
     assert stored.attempts == 2, "the sweep kept the lost attempt; the rerun spent one more"
 
 
+class RequeueRecordingWork(LeaseLosingWork):
+    """Decorates the real manager: records the batch size every sweep passes."""
+
+    def __init__(self, inner: WorkManagerInterface) -> None:
+        super().__init__(inner)
+        self.requeue_limits: list[int] = []
+
+    async def extend_lease(self, ctx: OpContext, item: WorkItem, lease: timedelta) -> WorkItem:
+        return await self._inner.extend_lease(ctx, item, lease)
+
+    async def requeue_stale(self, ctx: OpContext, limit: int) -> int:
+        self.requeue_limits.append(limit)
+        return await self._inner.requeue_stale(ctx, limit)
+
+
+async def test_sweep_requeues_a_batch_per_tenant_and_the_rest_next_tick(tmp_path: Path) -> None:
+    container = build_container(tmp_path)
+    ctx = await sign_in(container)
+    items = [make_item(ctx) for _ in range(3)]
+    for item in items:
+        await container.managers.work.enqueue(ctx, item)
+        lost = await container.managers.work.claim(
+            request(), "default", [WorkKind.NOOP], "gone-worker", timedelta(seconds=-1)
+        )
+        assert lost is not None
+    work = RequeueRecordingWork(container.managers.work)
+    handler = RecordingHandler()
+    loop, task = start_loop(container, handler, fast_options(requeue_batch=1), work=work)
+    await until(lambda: sorted(h.id for h in handler.handled) == sorted(i.id for i in items))
+    loop.stop()
+    await task
+    assert loop.sweeps >= 3, "one stale item per sweep, so three sweeps at least"
+    assert set(work.requeue_limits) == {1}
+
+
 async def test_a_departed_members_queued_item_still_runs(tmp_path: Path) -> None:
     container = build_container(tmp_path)
     ctx = await sign_in(container)
@@ -646,7 +681,9 @@ async def test_a_lost_lease_is_never_written_over(tmp_path: Path) -> None:
     assert held is not None and held.status is WorkStatus.CLAIMED
     # The sweep deems the lease expired (its clock runs an hour ahead) and
     # hands the item back before this worker's handler finishes.
-    requeued = await storage.requeue_stale(ctx.org_id, utcnow() + timedelta(hours=1), timedelta(0))
+    requeued = await storage.requeue_stale(
+        ctx.org_id, utcnow() + timedelta(hours=1), timedelta(0), limit=10
+    )
     assert [r.id for r in requeued] == [item.id]
     await until(lambda: len(handler.finished) == 1)
     await until(lambda: loop.running == 0)

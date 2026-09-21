@@ -59,6 +59,14 @@ def _after(cursor: OpenTaskCursor) -> ColumnElement[bool]:
     )
 
 
+def _follows(anchor: Place) -> ColumnElement[bool]:
+    """Mirrors tasks.rules.follows in SQL: the pair compared, as the open list
+    orders it."""
+    return tuple_(Tasks.position, Tasks.id) > tuple_(
+        literal(anchor[0], Double()), literal(anchor[1], Uuid())
+    )
+
+
 class TasksStoragePostgresImpl(PgStorageBase, TasksStorageInterface):
     async def read_open_tasks(
         self, org_id: UUID, criterion: TaskFilter, after: OpenTaskCursor | None, limit: int
@@ -82,13 +90,17 @@ class TasksStoragePostgresImpl(PgStorageBase, TasksStorageInterface):
             result = await session.execute(stmt)
             return [to_model(row, Task) for row in result.scalars()]
 
-    async def read_open_places(self, org_id: UUID, exclude: UUID | None) -> list[Place]:
+    async def read_open_places(
+        self, org_id: UUID, exclude: UUID | None, after: Place | None, limit: int
+    ) -> list[Place]:
         # Ordered by (position, id), the order the open list reads: positions
         # tie, and the id decides between two that do (tasks.rules.Place).
         stmt = select(Tasks.position, Tasks.id).where(_live(org_id, TaskStatus.OPEN))
         if exclude is not None:
             stmt = stmt.where(Tasks.id != exclude)
-        stmt = stmt.order_by(Tasks.position, Tasks.id)
+        if after is not None:
+            stmt = stmt.where(_follows(after))
+        stmt = stmt.order_by(Tasks.position, Tasks.id).limit(limit)
         async with self._session_for(stmt, org_id) as session:
             return [(position, task_id) for position, task_id in (await session.execute(stmt))]
 

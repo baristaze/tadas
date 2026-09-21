@@ -14,7 +14,11 @@ from tadas.om.tasks.storage import TasksStorageInterface
 from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor, TaskFilter
 from tadas.om.tasks.types.page import TaskPage
 from tadas.om.tasks.types.task import TaskScope, TaskStatus
-from tadas.om.tenancy.impl.creates import add_member_to, create_org_with_owner
+from tadas.om.tenancy.impl.creates import (
+    MAX_ORGS_PER_IDENTITY,
+    add_member_to,
+    create_org_with_owner,
+)
 from tadas.om.tenancy.operator import TenancyOperatorManagerInterface
 from tadas.om.tenancy.storage import TenancyStorageInterface
 from tadas.om.tenancy.types.org import Org
@@ -30,6 +34,8 @@ SIZE_WINDOW = timedelta(hours=24)
 
 class TenancyOperatorOptions(Platform):
     max_limit: int = 200
+    max_orgs_per_identity: int = MAX_ORGS_PER_IDENTITY
+    """The tenant manager's bound, held the same on this plane."""
 
 
 class TenancyOperatorManagerImpl(TenancyOperatorManagerInterface):
@@ -94,6 +100,7 @@ class TenancyOperatorManagerImpl(TenancyOperatorManagerInterface):
             email=owner_email,
             password=owner_password,
             display_name=owner_name,
+            max_orgs=self._options.max_orgs_per_identity,
         )
         log.info("operator %s created org %s", admin.identity_id, org.id)
         return org
@@ -148,6 +155,7 @@ class TenancyOperatorManagerImpl(TenancyOperatorManagerInterface):
             role=role,
             actor_id=admin.identity_id,
             request=admin,
+            max_orgs=self._options.max_orgs_per_identity,
         )
         if created:
             log.info("operator %s added user %s to org %s", admin.identity_id, user.id, org_id)

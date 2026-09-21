@@ -175,11 +175,14 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
             row = (await session.execute(stmt)).scalar_one_or_none()
             return None if row is None else to_model(row, User)
 
-    async def read_users_by_identity(self, identity_id: UUID) -> list[tuple[UUID, User]]:
+    async def read_users_by_identity(
+        self, identity_id: UUID, limit: int
+    ) -> list[tuple[UUID, User]]:
         stmt = (
             select(Users)
             .where(Users.identity_id == identity_id, Users.deleted_at.is_(None))
             .order_by(Users.id)
+            .limit(limit)
         )
         async with self._session_for(stmt, EMPTY_UUID) as session:
             result = await session.execute(stmt)

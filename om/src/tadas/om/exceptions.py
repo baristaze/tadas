@@ -41,6 +41,14 @@ class VersionMismatch(Conflict):
     code = "version_mismatch"
 
 
+class MembershipLimitReached(Conflict):
+    """One identity is a member of as many orgs as a person may join. A create
+    that would add one more is refused, and a read that finds more than the
+    bound (two adds that raced) is refused rather than cut short."""
+
+    code = "membership_limit_reached"
+
+
 class ValidationFailed(PlatformException):
     http_status = 422
     code = "validation_failed"

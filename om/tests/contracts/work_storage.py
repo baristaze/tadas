@@ -140,7 +140,7 @@ class WorkStorageContract:
 
         now = utcnow()
         stagger = timedelta(seconds=5)
-        changed = await storage.requeue_stale(org_a, now, stagger)
+        changed = await storage.requeue_stale(org_a, now, stagger, limit=10)
         assert [item.id for item in changed] == sorted(item.id for item in stale)
         for position, item in enumerate(changed):
             assert item.claimed_by is None and item.lease_expires_at is None
@@ -157,7 +157,33 @@ class WorkStorageContract:
         assert held is not None and held.status is WorkStatus.CLAIMED
         other = await storage.read_item(org_b, elsewhere.id)
         assert other is not None and other.status is WorkStatus.CLAIMED
-        assert await storage.requeue_stale(org_a, utcnow(), stagger) == []
+        assert await storage.requeue_stale(org_a, utcnow(), stagger, limit=10) == []
+
+    async def test_requeue_stale_takes_a_batch_and_leaves_the_rest_for_the_next(
+        self, storage: WorkStorageInterface, lane: str
+    ) -> None:
+        # The bound is in the statement: the first `limit` stale items by id
+        # move, staggered from zero, and the next call moves the rest.
+        org = new_id()
+        items = [make_item(lane=lane) for _ in range(5)]
+        for item in items:
+            await storage.create_item(org, item)
+        for _ in items:
+            expired = timedelta(seconds=-1)
+            assert await storage.claim_next(lane, [WorkKind.NOOP], "w1", expired) is not None
+        ids = sorted(item.id for item in items)
+        now = utcnow()
+        stagger = timedelta(seconds=5)
+        first = await storage.requeue_stale(org, now, stagger, limit=2)
+        assert [item.id for item in first] == ids[:2]
+        assert [item.available_at for item in first] == [now, now + stagger]
+        for item_id in ids[2:]:
+            left = await storage.read_item(org, item_id)
+            assert left is not None and left.status is WorkStatus.CLAIMED
+        rest = await storage.requeue_stale(org, now, stagger, limit=10)
+        assert [item.id for item in rest] == ids[2:]
+        assert [item.available_at for item in rest] == [now + stagger * i for i in range(3)]
+        assert await storage.requeue_stale(org, now, stagger, limit=10) == []
 
     async def test_write_if_held_is_conditional_on_the_claim_token(
         self, storage: WorkStorageInterface, lane: str
@@ -195,7 +221,7 @@ class WorkStorageContract:
         assert first is not None
         stale = first[1]
         assert stale.claim_token is not None
-        assert len(await storage.requeue_stale(org, utcnow(), timedelta(0))) == 1
+        assert len(await storage.requeue_stale(org, utcnow(), timedelta(0), limit=10)) == 1
         second = await storage.claim_next(lane, [WorkKind.NOOP], "w1", LEASE)
         assert second is not None
         fresh = second[1]

@@ -227,10 +227,10 @@ class WorkManagerImpl(WorkManagerInterface):
             ctx, item, {"lease_expires_at": now + lease, "updated_at": now}
         )
 
-    async def requeue_stale(self, ctx: OpContext) -> int:
+    async def requeue_stale(self, ctx: OpContext, limit: int) -> int:
         ctx.require(Permission.WRITE)
         requeued = await self._storage.requeue_stale(
-            ctx.org_id, utcnow(), self._options.stale_stagger
+            ctx.org_id, utcnow(), self._options.stale_stagger, max(1, limit)
         )
         if requeued:
             log.info("requeued %d stale work items in org %s", len(requeued), ctx.org_id)

@@ -69,7 +69,7 @@ class WorkStorageMemoryImpl(MemoryStorageBase, WorkStorageInterface):
         return None
 
     async def requeue_stale(
-        self, org_id: UUID, now: datetime, stagger: timedelta
+        self, org_id: UUID, now: datetime, stagger: timedelta, limit: int
     ) -> list[WorkItem]:
         changed: list[WorkItem] = []
         async with self._lock:
@@ -79,7 +79,7 @@ class WorkStorageMemoryImpl(MemoryStorageBase, WorkStorageInterface):
                 if item.status is WorkStatus.CLAIMED
                 and item.lease_expires_at is not None
                 and item.lease_expires_at < now
-            ]
+            ][:limit]
             for position, item in enumerate(stale):
                 if is_exhausted(item):
                     update = {"status": WorkStatus.FAILED}

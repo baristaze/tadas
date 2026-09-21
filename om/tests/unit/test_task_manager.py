@@ -660,3 +660,42 @@ async def test_a_deleted_tenants_tasks_all_go_once_the_retention_has_passed(
             await manager.get_task(ctx, task_id)
     assert (await manager.get_task(elsewhere, kept.id)).id == kept.id
     assert await manager.purge_deleted(ctx) == 0, "idempotent"
+
+
+async def test_a_placement_reads_one_place_however_long_the_open_list(
+    manager: TasksManagerImpl,
+) -> None:
+    """Creating, reopening, and moving a task each read one open place, bounded
+    in the statement, never the open list; and the order reads as before."""
+    ctx = context(Role.MEMBER)
+    storage = manager._storage  # type: ignore[attr-defined]
+    read = storage.read_open_places
+    reads: list[tuple[int, int]] = []
+
+    async def counted(
+        org_id: UUID, exclude: UUID | None, after: tuple[float, UUID] | None, limit: int
+    ) -> list[tuple[float, UUID]]:
+        places = await read(org_id, exclude, after, limit)
+        reads.append((limit, len(places)))
+        return places
+
+    storage.read_open_places = counted
+    tasks = [await manager.create_task(ctx, make_task(ctx, f"t{i}")) for i in range(30)]
+    titles = [f"t{i}" for i in reversed(range(30))]
+    assert await open_titles(manager, ctx, TaskScope.TEAM) == titles
+    await move(manager, ctx, tasks[0].id, after_id=tasks[29].id)
+    titles.remove("t0")
+    titles.insert(1, "t0")
+    assert await open_titles(manager, ctx, TaskScope.TEAM) == titles
+    await move(manager, ctx, tasks[29].id, after_id=tasks[1].id)
+    titles.remove("t29")
+    titles.append("t29")
+    assert await open_titles(manager, ctx, TaskScope.TEAM) == titles
+    done = await manager.get_task(ctx, tasks[5].id)
+    done = await manager.update_task(ctx, done.model_copy(update={"status": TaskStatus.DONE}))
+    await manager.update_task(ctx, done.model_copy(update={"status": TaskStatus.OPEN}))
+    titles.remove("t5")
+    titles.insert(0, "t5")
+    assert await open_titles(manager, ctx, TaskScope.TEAM) == titles
+    assert len(reads) == 30 + 2 + 1
+    assert all(limit == 1 and returned <= 1 for limit, returned in reads)
