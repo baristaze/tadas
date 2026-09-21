@@ -66,3 +66,47 @@ markers = [
     "slow: takes more than a few seconds",
     "telemetry: needs the devx profile",
 ]
+
+# The guideline's static checker (`make arch-check`). The layout is the
+# guideline's, so only the package and the project's own lists are named.
+[tool.arch-check]
+package = "tadas"
+
+# The storage methods that take no tenant, the same list
+# om/tests/unit/test_storage_exceptions.py holds.
+[tool.arch-check.options.CTX-12]
+tenantless = [
+    "EventStorageInterface.count_since",
+    "OutboxStorageInterface.claim_pending",
+    "OutboxStorageInterface.purge_done",
+    "TasksStorageInterface.count_created_since",
+    "TenancyStorageInterface.consume_socket_ticket",
+    "TenancyStorageInterface.count_orgs",
+    "TenancyStorageInterface.count_users",
+    "TenancyStorageInterface.read_api_key_by_hash",
+    "TenancyStorageInterface.read_identity",
+    "TenancyStorageInterface.read_identity_by_email",
+    "TenancyStorageInterface.read_org_by_slug",
+    "TenancyStorageInterface.read_orgs",
+    "TenancyStorageInterface.read_session_by_token_hash",
+    "TenancyStorageInterface.read_users_by_identity",
+    "TenancyStorageInterface.write_identity",
+    "WorkStorageInterface.claim_next",
+]
+
+# The sites that build a stage above the request stage, the same list
+# om/tests/unit/test_stage_construction.py holds: the helper that assembles
+# a tenant context and the tenancy manager's transitions.
+[tool.arch-check.options.CTX-26]
+sites = [
+    "om/src/tadas/om/opcontext.py::build_context",
+    "om/src/tadas/om/tenancy/impl/manager.py::TenancyManagerImpl.bootstrap",
+    "om/src/tadas/om/tenancy/impl/manager.py::TenancyManagerImpl.add_member",
+    "om/src/tadas/om/tenancy/impl/manager.py::TenancyManagerImpl.authenticate_login",
+    "om/src/tadas/om/tenancy/impl/manager.py::TenancyManagerImpl.authenticate",
+    "om/src/tadas/om/tenancy/impl/manager.py::TenancyManagerImpl.admit_operator",
+    "om/src/tadas/om/tenancy/impl/manager.py::TenancyManagerImpl.resume",
+    "om/src/tadas/om/tenancy/impl/manager.py::TenancyManagerImpl.service_context",
+    "om/src/tadas/om/tenancy/impl/manager.py::TenancyManagerImpl.service_contexts",
+]
+builders = ["build_context"]
