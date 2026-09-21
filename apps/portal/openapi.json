@@ -273,6 +273,7 @@
       },
       "ExchangeSessionRequest": {
         "additionalProperties": false,
+        "description": "The org to enter. Presented with the sign-in credential, it opens the\nfirst session; presented with a session, it is a switch, and that session\nends in the same write.",
         "properties": {
           "org_id": {
             "format": "uuid",
@@ -489,6 +490,35 @@
           "app"
         ],
         "title": "MeView",
+        "type": "object"
+      },
+      "MembershipChoicePageView": {
+        "description": "One page of the signed-in person's places, each the org, the user, and\nthe role: the same choice a sign-in answers with. `next_cursor` as on\n`UserPageView`.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/MembershipChoiceView"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "MembershipChoicePageView",
         "type": "object"
       },
       "MembershipChoiceView": {
@@ -851,6 +881,51 @@
           "revoked_at"
         ],
         "title": "SessionView",
+        "type": "object"
+      },
+      "SignUpRequest": {
+        "additionalProperties": false,
+        "description": "A new person, their first org, and their password. The answer is a\nsign-in's (`IssuedLoginView`), so the client goes on through the same\nchoice and exchange. `org_slug` is lower-case letters and digits joined\nby hyphens; a held email and a taken slug are both 409. No email is\nverified.",
+        "properties": {
+          "display_name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Display Name",
+            "type": "string"
+          },
+          "email": {
+            "maxLength": 320,
+            "minLength": 3,
+            "title": "Email",
+            "type": "string"
+          },
+          "org_name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Org Name",
+            "type": "string"
+          },
+          "org_slug": {
+            "maxLength": 48,
+            "minLength": 1,
+            "title": "Org Slug",
+            "type": "string"
+          },
+          "password": {
+            "maxLength": 200,
+            "minLength": 8,
+            "title": "Password",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email",
+          "password",
+          "display_name",
+          "org_name",
+          "org_slug"
+        ],
+        "title": "SignUpRequest",
         "type": "object"
       },
       "TaskPageView": {
@@ -2672,6 +2747,113 @@
         ]
       }
     },
+    "/v1/auth/memberships": {
+      "get": {
+        "operationId": "list_my_memberships_v1_auth_memberships_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app-version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Version"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MembershipChoicePageView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List My Memberships",
+        "tags": [
+          "tenancy"
+        ]
+      }
+    },
     "/v1/auth/sessions": {
       "post": {
         "operationId": "exchange_session_v1_auth_sessions_post",
@@ -2758,6 +2940,81 @@
           }
         },
         "summary": "Exchange Session",
+        "tags": [
+          "tenancy"
+        ]
+      }
+    },
+    "/v1/auth/signup": {
+      "post": {
+        "operationId": "sign_up_v1_auth_signup_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-app",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app-version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Version"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SignUpRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssuedLoginView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Sign Up",
         "tags": [
           "tenancy"
         ]

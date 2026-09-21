@@ -60,6 +60,20 @@ class LoginRequest(RequestBody):
     password: str
 
 
+class SignUpRequest(RequestBody):
+    """A new person, their first org, and their password. The answer is a
+    sign-in's (`IssuedLoginView`), so the client goes on through the same
+    choice and exchange. `org_slug` is lower-case letters and digits joined
+    by hyphens; a held email and a taken slug are both 409. No email is
+    verified."""
+
+    email: str = Field(min_length=3, max_length=320)
+    password: str = Field(min_length=8, max_length=200)
+    display_name: str = Field(min_length=1, max_length=200)
+    org_name: str = Field(min_length=1, max_length=200)
+    org_slug: str = Field(min_length=1, max_length=48)
+
+
 class IssuedLoginView(View):
     """Carries the freshly minted login credential in the clear, once."""
 
@@ -68,7 +82,20 @@ class IssuedLoginView(View):
     memberships: list[MembershipChoiceView]
 
 
+class MembershipChoicePageView(View):
+    """One page of the signed-in person's places, each the org, the user, and
+    the role: the same choice a sign-in answers with. `next_cursor` as on
+    `UserPageView`."""
+
+    items: list[MembershipChoiceView]
+    next_cursor: str | None
+
+
 class ExchangeSessionRequest(RequestBody):
+    """The org to enter. Presented with the sign-in credential, it opens the
+    first session; presented with a session, it is a switch, and that session
+    ends in the same write."""
+
     org_id: UUID
 
 

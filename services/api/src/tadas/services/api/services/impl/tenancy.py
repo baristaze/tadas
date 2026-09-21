@@ -18,12 +18,14 @@ from tadas.services.api.types.tenancy import (
     IssuedLoginView,
     IssuedSessionView,
     LoginRequest,
+    MembershipChoicePageView,
     MembershipChoiceView,
     MembershipPageView,
     MembershipView,
     MeView,
     OrgView,
     SessionView,
+    SignUpRequest,
     UpdateMembershipRequest,
     UpdateMeRequest,
     UserPageView,
@@ -57,6 +59,16 @@ class TenancyServiceImpl(TenancyServiceInterface):
     def __init__(self, tenancy: TenancyManagerInterface) -> None:
         self._tenancy = tenancy
 
+    async def sign_up(self, rctx: RequestContext, body: SignUpRequest) -> IssuedLoginView:
+        issued = await self._tenancy.sign_up(
+            rctx, body.email, body.password, body.display_name, body.org_name, body.org_slug
+        )
+        return IssuedLoginView(
+            token=issued.token,
+            expires_at=issued.expires_at,
+            memberships=[MembershipChoiceView.model_validate(m) for m in issued.memberships],
+        )
+
     async def login(self, rctx: RequestContext, body: LoginRequest) -> IssuedLoginView:
         issued = await self._tenancy.login(rctx, body.email, body.password)
         return IssuedLoginView(
@@ -70,6 +82,21 @@ class TenancyServiceImpl(TenancyServiceInterface):
     ) -> IssuedSessionView:
         issued = await self._tenancy.exchange_login(ictx, body.org_id)
         return IssuedSessionView.model_validate(issued)
+
+    async def get_identity_memberships(
+        self, ictx: IdentityContext, cursor: str | None, limit: int
+    ) -> MembershipChoicePageView:
+        limit = clamp_limit(limit)
+        after = decode_cursor("identity-memberships", cursor) if cursor else None
+        page = await self._tenancy.get_identity_memberships(ictx, after, limit)
+        return MembershipChoicePageView(
+            items=[MembershipChoiceView.model_validate(m) for m in page.items],
+            next_cursor=(
+                encode_cursor("identity-memberships", page.items[-1].user.id)
+                if page.has_more
+                else None
+            ),
+        )
 
     async def logout(self, ctx: OpContext) -> SessionView:
         return SessionView.model_validate(await self._tenancy.logout(ctx))

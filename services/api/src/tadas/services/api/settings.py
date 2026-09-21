@@ -27,6 +27,13 @@ class ApiSettings(StorageSettings, InfraSettings):
 
     login_rate_limit: int = 10
     login_rate_window_seconds: int = 60
+    # Sign-up is open by default: a deployed environment has no other door,
+    # since the seeding is local. False closes it, and the route then answers
+    # 404 as a route that does not exist would. Its budget is its own, per
+    # client address, the way the login's is.
+    signup_enabled: bool = True
+    signup_rate_limit: int = 10
+    signup_rate_window_seconds: int = 60
     # The socket's two send lanes, each bounded on its own. The stream lane
     # holds the event hints, and a full one drops its oldest: the client that
     # sees the gap replays from storage. The control lane holds the frames
