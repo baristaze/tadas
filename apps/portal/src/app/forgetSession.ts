@@ -10,3 +10,10 @@ export function forgetSession(): void {
   useSessionStore.getState().clear();
   queryClient.clear();
 }
+
+/** A refusal that belongs to a token the tab no longer holds says nothing
+ * about the session it holds now: a switch ends the old session, and the
+ * old socket's close can arrive after the new session is set. */
+export function forgetSessionIfHeld(token: string): void {
+  if (useSessionStore.getState().token === token) forgetSession();
+}

@@ -1,10 +1,11 @@
-// The bar above every signed-in page: the org, the two destinations, and who is
-// signed in. The live channel's state is the dot in the bottom-right corner.
+// The bar above every signed-in page: the org chip, the two destinations, and
+// who is signed in. The live channel's state is the dot in the bottom-right corner.
 import { NavLink } from "react-router-dom";
 import { Muted } from "../design/kit";
 import { tokens } from "../design/tokens";
 import { useMe } from "../queries/tenancy";
 import { ConnectionDot } from "./ConnectionDot";
+import { OrgChip } from "./OrgChip";
 
 const linkStyle = ({ isActive }: { isActive: boolean }) => ({
   color: isActive ? tokens.color.text : tokens.color.muted,
@@ -25,7 +26,7 @@ export function AppNav() {
         borderBottom: `1px solid ${tokens.color.border}`,
       }}
     >
-      <strong>{me.data?.org.name ?? "Tadas"}</strong>
+      <OrgChip />
       <NavLink to="/" end style={linkStyle}>
         Tasks
       </NavLink>

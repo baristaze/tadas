@@ -5,7 +5,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import type { IssuedTicketView } from "../api";
 import { useEffect, type ReactNode } from "react";
 import { api } from "../app/api";
-import { forgetSession } from "../app/forgetSession";
+import { forgetSessionIfHeld } from "../app/forgetSession";
 import { Banner } from "../design/kit";
 import { EVENTS_PAGE, fetchEventsAfter } from "../queries/events";
 import { useConnectionStore } from "../store/connection";
@@ -29,7 +29,9 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
       refreshAll: () => queryClient.invalidateQueries(),
       connection: useConnectionStore,
       pageSize: EVENTS_PAGE,
-      onUnauthenticated: forgetSession,
+      // A socket opened under a session a switch has ended closes with 4401
+      // too; only a close for the session the tab still holds signs it out.
+      onUnauthenticated: () => forgetSessionIfHeld(token),
     });
     return () => channel.stop();
   }, [token, queryClient]);

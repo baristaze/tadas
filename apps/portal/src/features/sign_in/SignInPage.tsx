@@ -1,4 +1,5 @@
-import { Button, Card, Muted, Page, TextField } from "../../design/kit";
+import { Button, Card, LinkButton, Muted, Page, TextField } from "../../design/kit";
+import { tokens } from "../../design/tokens";
 import { useSignInVm } from "./useSignInVm";
 
 export function SignInPage() {
@@ -22,10 +23,13 @@ export function SignInPage() {
             autoComplete="current-password"
           />
           {vm.error ? <Muted>{vm.error}</Muted> : null}
-          <div>
+          <div style={{ display: "flex", alignItems: "center", gap: tokens.space.md }}>
             <Button type="submit" disabled={vm.busy}>
               Sign in
             </Button>
+            <Muted>
+              New here? <LinkButton onClick={vm.goToSignUp}>Create an account</LinkButton>
+            </Muted>
           </div>
         </form>
       </Card>

@@ -68,12 +68,14 @@ describe("routeEnvelope", () => {
     expect(seen).toEqual([keys.apiKeys.all]);
   });
 
-  it("refreshes who the user is when a membership changes, since the role rides the me query", () => {
+  it("refreshes who the user is and their places when a membership changes, since the role rides both", () => {
     // A user demoted to viewer loses the add, edit, and drag controls on the
     // push, not on the next reload.
     const { queryClient, seen } = recording();
-    expect(routeEnvelope(queryClient, pushOf("tenancy.membership.updated"))).toEqual({ invalidated: [keys.me] });
-    expect(seen).toEqual([keys.me]);
+    expect(routeEnvelope(queryClient, pushOf("tenancy.membership.updated"))).toEqual({
+      invalidated: [keys.me, keys.myMemberships.all],
+    });
+    expect(seen).toEqual([keys.me, keys.myMemberships.all]);
   });
 
   it("refreshes who the user is when a user changes, since the name rides the me query", () => {
