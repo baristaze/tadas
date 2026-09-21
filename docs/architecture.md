@@ -1056,7 +1056,10 @@ manager's transitions or the helper they use, so only a transition
 produces a stage above the request stage. `test_role_rules.py` holds the
 role ladder to the permission table and keeps the service role off it.
 `test_interfaces.py` fails on a `*Interface` under `tadas.om` or
-`tadas.infra` that is not an `ABC` with every public method abstract.
+`tadas.infra` that is not an `ABC` with every public method abstract,
+and on a storage interface method or a bucket listing that returns a
+list and takes no `limit`; the contract suites hold both impls to the
+bound, in the statement and at the same row.
 `infra/tests/test_timeouts.py` scans every source root and fails on a
 client construction that names no timeout. The storage contracts race
 the named atomic methods, not only call them: two claimers and two
