@@ -1037,12 +1037,18 @@ page; this section says what exists.
 
 ## Checks
 
-Rules a program can check are checked in `om/tests/unit/`:
-`test_import_direction.py` scans every module under `tadas.om` and
-`tadas.infra` statically and fails on an import of a service or a
-worker, on an infra module importing the object model, or on an
-object-model module outside `tadas.om.root` importing an infra impl
-rather than an interface. `test_storage_exceptions.py` lists every
+The guideline's static checker runs first. `make arch-check` runs
+`arch-check` at the guideline's ref over every source tree, in the fast
+gate after the types; `[tool.arch-check]` in `pyproject.toml` names the
+package, the tenant-less storage methods (CTX-12), the sites that build
+a stage (CTX-26), and the one exception, STO-26 on `api_keys`
+([ADR 0019](adr/0019-an-api-key-hash-stays-unique-after-revocation.md)).
+It holds the import direction of the object model and infra (CON-10,
+CON-12) on its own. The rest of what a program can check is checked in
+`om/tests/unit/`: `test_import_direction.py` scans every module under
+`tadas.om` statically and fails on one outside `tadas.om.root`
+importing an infra impl rather than an interface.
+`test_storage_exceptions.py` lists every
 storage method that does not take `org_id` first, asserts every manager
 operation takes a context stage first (the outbox relay is the stated
 exception), and names the transitions that take `RequestContext` or

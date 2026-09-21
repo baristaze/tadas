@@ -131,7 +131,8 @@ nothing else, `make migrate` and `make seed` for the database, and
 ## Check
 
 ```bash
-make check             # lint, format, types, unit tests (the fast gate)
+make check             # lint, format, types, arch-check, unit tests (the fast gate)
+make arch-check        # the guideline's static checks, configured in pyproject.toml
 make migrate-check     # every role's ORM metadata against the migrated schema
 make test-integration  # the same storage contracts over Postgres, plus migrations
 ```
