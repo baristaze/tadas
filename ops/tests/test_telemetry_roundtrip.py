@@ -1,9 +1,9 @@
 """The telemetry round trip: the API as a real process on port 8000 (the one
-host target Prometheus scrapes), with the trace exporter and the error
-tracker set, one session of traffic through the edge, and then every signal
-read back by request id through the local reader: the log line that names
-it, the counter that moved, the trace that exists, the error event that
-carries it.
+host target the devx collector scrapes and writes into Prometheus), with the
+trace exporter and the error tracker set, one session of traffic through the
+edge, and then every signal read back by request id through the local
+reader: the log line that names it, the counter that moved, the trace that
+exists, the error event that carries it.
 
 The error leg is a second process of the same binary on a free port whose
 database is unreachable: a route that raises past the gateway is answered
@@ -26,6 +26,7 @@ from uuid import uuid4
 
 import httpx
 import pytest
+import yaml
 
 from tadas.ops.environments import Environment, load_environment, parse_env_file
 from tadas.ops.profiles import LIGHT
@@ -36,18 +37,38 @@ pytestmark = pytest.mark.telemetry
 
 REPO = Path(__file__).resolve().parents[2]
 PORT = 8000
-# Prometheus scrapes `host.docker.internal:8000` from inside its container.
-# Docker Desktop forwards that name to the host's loopback, but on a Linux
-# host it is the bridge gateway's address, which a process bound to
-# 127.0.0.1 never answers: the target stays down and no counter is scraped.
-# So on Linux the scraped API binds every interface, as a container does.
-SCRAPED_HOST = "0.0.0.0" if sys.platform == "linux" else "127.0.0.1"
+COLLECTOR_CONFIG = REPO / "deployment" / "local" / "otel-collector" / "collector.yml"
 OTLP_ENDPOINT = "http://127.0.0.1:54318"
 BOOT_SECONDS = 30
-SCRAPE_WAIT_SECONDS = 45
 TRACE_WAIT_SECONDS = 30
 ERROR_WAIT_SECONDS = 60
 REQUESTS_COUNTER = "tadas_http_requests_total"
+DURATION_UNITS = {"ms": 0.001, "s": 1.0, "m": 60.0}
+
+
+def duration_seconds(text: str) -> float:
+    """A collector duration (`15s`, `500ms`, `1m`) in seconds."""
+    for unit in sorted(DURATION_UNITS, key=len, reverse=True):
+        if text.endswith(unit):
+            return float(text.removesuffix(unit)) * DURATION_UNITS[unit]
+    raise ValueError(f"not a duration: {text!r}")
+
+
+def scrape_wait_seconds() -> float:
+    """How long a counter takes to reach Prometheus, from the collector's own
+    config: a scrape that sees it comes within one scrape interval, and the
+    batch that holds it goes out within the batch timeout. The deadline is
+    three intervals and one flush, so a missed or slow scrape and a retried
+    send still land inside it."""
+    config = yaml.safe_load(COLLECTOR_CONFIG.read_text())
+    interval = duration_seconds(
+        config["receivers"]["prometheus"]["config"]["global"]["scrape_interval"]
+    )
+    flush = duration_seconds(config["processors"]["batch"]["timeout"])
+    return 3 * interval + flush
+
+
+SCRAPE_WAIT_SECONDS = scrape_wait_seconds()
 
 
 def port_taken(port: int) -> bool:
@@ -145,7 +166,7 @@ def stores(env: Environment) -> None:
 def api(stores: None, tmp_path_factory: pytest.TempPathFactory) -> Iterator[Served]:
     if port_taken(PORT):
         pytest.skip(
-            f"port {PORT} is taken (the api container, or scripts/dev.sh); Prometheus scrapes "
+            f"port {PORT} is taken (the api container, or scripts/dev.sh); the collector scrapes "
             "only 8000 on the host, so the round trip needs it"
         )
     knobs = compose_knobs()
@@ -154,7 +175,6 @@ def api(stores: None, tmp_path_factory: pytest.TempPathFactory) -> Iterator[Serv
         tmp_path_factory.mktemp("api") / "api.log",
         {
             "TADAS_ENVIRONMENT": "local",
-            "TADAS_HOST": SCRAPED_HOST,
             "TADAS_OTEL_ENDPOINT": OTLP_ENDPOINT,
             "TADAS_SENTRY_DSN": knobs["TADAS_SENTRY_DSN"],
             "TADAS_LOG_JSON": "true",
@@ -227,7 +247,7 @@ async def test_every_signal_reads_back_by_the_request_id_of_a_write(
     assert lines, f"no log line carries {request_id}"
     assert any("POST /v1/tasks 201" in line for line in lines), lines
 
-    # The counter that moved: the scrape lags the run by up to its interval.
+    # The counter that moved: the collector's scrape and its batch lag the run.
     labels = {"route": "/v1/tasks", "method": "POST", "status": "201"}
 
     async def counted() -> float | None:
