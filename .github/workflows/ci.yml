@@ -76,12 +76,16 @@ jobs:
       # healthcheck passes, GlitchTip's included, and then reports the seed's
       # clean exit (a one-shot service) as a failure, so the seed's own exit
       # code and GlitchTip's health are read back instead of the wait's.
+      # The runner is Linux, so the Makefile puts the collector that scrapes
+      # the host processes on the host's network; the round trip's counter
+      # leg is the proof that it reaches the API on 127.0.0.1.
       - name: the compose stack with the devx profile
         run: |
           make devx-up || true
           test "$(docker inspect -f '{{.State.Health.Status}}' tadas-glitchtip-1)" = healthy
           test "$(docker inspect -f '{{.State.ExitCode}}' tadas-glitchtip-seed-1)" = 0
           docker logs tadas-glitchtip-seed-1 | tail -n 1
+          test "$(docker inspect -f '{{.HostConfig.NetworkMode}}' tadas-otel-collector-1)" = host
       - run: make migrate seed
       - run: make test-telemetry
       - name: the API on 8000 for the traffic run
@@ -92,6 +96,9 @@ jobs:
       - name: the API's log, on a failure
         if: failure()
         run: tail -n 100 api.log || true
+      - name: the collector's log, on a failure
+        if: failure()
+        run: docker logs tadas-otel-collector-1 2>&1 | tail -n 50 || true
       - run: make down
         if: always()
 
