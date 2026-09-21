@@ -14,6 +14,12 @@ from tadas.om.tasks.types.page import TaskPage
 from tadas.om.tasks.types.task import Task, TaskScope, TaskStatus
 from tadas.om.tenancy import TenancyManagerInterface
 
+NEIGHBOURS = 1
+"""How many open places a placement reads: the top one for a task placed on
+top, the one after the anchor for a move. The rules decide from that place
+alone (tasks.rules.top_position, position_after, is_between), so the read
+stays one row however long the open list grows."""
+
 
 class TasksOptions(Platform):
     max_limit: int = 200
@@ -118,8 +124,11 @@ class TasksManagerImpl(TasksManagerInterface):
             anchor = await self.get_task(ctx, after_id)
             if anchor.status != TaskStatus.OPEN:
                 raise ValidationFailed("a task can only be placed after an open task")
-            places = await self._storage.read_open_places(ctx.org_id, exclude=task_id)
             at = (anchor.position, anchor.id)
+            # The one place that follows the anchor is all the rules read.
+            places = await self._storage.read_open_places(
+                ctx.org_id, exclude=task_id, after=at, limit=NEIGHBOURS
+            )
             position = position_after(at, places)
             if not is_between(at, position, places):
                 return await self._renumber(ctx, task, anchor, version)
@@ -176,7 +185,11 @@ class TasksManagerImpl(TasksManagerInterface):
             raise ValidationFailed("a task list is scoped to the caller")
 
     async def _top_position(self, ctx: OpContext, exclude: UUID) -> float:
-        return top_position(await self._storage.read_open_places(ctx.org_id, exclude=exclude))
+        # The top place is all the rule reads.
+        top = await self._storage.read_open_places(
+            ctx.org_id, exclude=exclude, after=None, limit=NEIGHBOURS
+        )
+        return top_position(top)
 
     async def _renumber(self, ctx: OpContext, task: Task, anchor: Task, version: int) -> Task:
         """The gap after the anchor has closed at float precision, so the open

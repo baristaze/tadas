@@ -1,9 +1,12 @@
+import random
 from uuid import UUID
 
 from contracts.task_storage import make_task
 
 from tadas.om.base import new_id
 from tadas.om.tasks.rules import (
+    Place,
+    follows,
     is_after,
     is_before,
     is_between,
@@ -89,3 +92,30 @@ def test_is_after_cuts_the_open_list_by_position_then_id() -> None:
     assert not is_after(task, OpenTaskCursor(position=3.0, id=task.id))
     assert is_after(task, OpenTaskCursor(position=2.0, id=UUID(int=task.id.int - 1)))
     assert not is_after(task, OpenTaskCursor(position=2.0, id=UUID(int=task.id.int + 1)))
+
+
+def test_the_one_place_a_bounded_read_returns_decides_as_every_place_does() -> None:
+    """A placement reads one place, not the open list: the top place for a task
+    placed on top, the first place that follows the anchor for a move. Over
+    lists with ties and with tight gaps, the rules answer the same from that
+    one place as from every place."""
+    rng = random.Random(29)
+    for _ in range(500):
+        positions = [float(rng.choice([0, 1, 1, 2, 2.5, 3])) for _ in range(rng.randint(0, 8))]
+        places: list[Place] = sorted((p, new_id()) for p in positions)
+        top = places[:1]
+        assert top_position(top) == top_position(places)
+        for anchor in [*places, (rng.choice([0.5, 1.0, 4.0]), new_id())]:
+            following = [p for p in places if p != anchor and follows(p, anchor)][:1]
+            others = [p for p in places if p != anchor]
+            position = position_after(anchor, others)
+            assert position_after(anchor, following) == position
+            assert is_between(anchor, position, following) == is_between(anchor, position, others)
+
+
+def test_follows_compares_the_pair() -> None:
+    low, high = sorted((new_id(), new_id()))
+    assert follows((1.0, high), (1.0, low))
+    assert not follows((1.0, low), (1.0, high))
+    assert not follows((1.0, low), (1.0, low))
+    assert follows((2.0, low), (1.0, high))

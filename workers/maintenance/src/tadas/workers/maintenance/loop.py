@@ -54,6 +54,7 @@ class LoopOptions(Platform):
     sweep_interval: timedelta = timedelta(seconds=30)
     poll_interval: timedelta = timedelta(seconds=5)
     outbox_batch: int = 100  # pending rows relayed per sweep
+    requeue_batch: int = 100  # stale work items requeued per tenant per sweep
     # Done rows are purged after this. It outlives the database backup retention
     # (`backup_retention_days` in the database module), so a role restored to an
     # earlier point than its siblings is reconciled by relaying the outbox again.
@@ -376,7 +377,7 @@ class WorkerLoop:
             contexts = []
         for ctx in contexts:
             try:
-                await self._work.requeue_stale(ctx)
+                await self._work.requeue_stale(ctx, self._options.requeue_batch)
             except Exception:
                 log.exception("sweep: requeue_stale failed for tenant %s", ctx.org_id)
             for name, purge in self._purges.items():

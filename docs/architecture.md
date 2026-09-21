@@ -136,7 +136,12 @@ context on keeps the stage the callee needs.
   expired ones are purged like a tenant's dead sessions; api keys are
   purged once revoked or expired. Exchanging a login for an org that is
   gone, or a membership that has ended, is `NotAuthorized` (403), not a
-  sign-in failure: the login itself still stands.
+  sign-in failure: the login itself still stands. One person is a
+  member of at most `max_orgs_per_identity` orgs (100, an option of both
+  tenancy managers). Every read of the users one identity is asks for
+  one past the bound; an add or an org create past it is
+  `MembershipLimitReached` (409), and a read that still finds more (two
+  adds that raced) is refused the same way, never cut short.
 - `work`: the table-backed work queue in the `queue` role; a row's
   routing field is its `lane`, payload shapes are fixed per `WorkKind`
   by `WORK_PAYLOADS`. Enqueue is a create: it validates the payload, and
@@ -174,7 +179,11 @@ context on keeps the stage the callee needs.
   `TaskCursor` over (updated_at, id) for the done one, all passed
   unchanged from the manager to storage; the visibility, cursor, and
   placement rules are pure functions in `tasks.rules`, which the memory
-  impl calls and the Postgres impl mirrors in SQL. A gap halved down to
+  impl calls and the Postgres impl mirrors in SQL. A placement reads one
+  open place, bounded in the statement: the top one for a task created
+  or reopened, the one that follows the anchor for a move
+  (`tasks.rules.follows`, which the statement spells and a contract case
+  holds to the function). A gap halved down to
   float precision is renumbered: the whole open list gets whole-number
   positions in one compare-and-set over every row (`update_tasks`),
   each announced. A task carries a
@@ -438,7 +447,9 @@ message and a queued row written before a deploy still parse, and the
 two sides roll out in either order. `actor_id` is the field that came
 later, so it defaults to `NO_ACTOR`, the reserved UUID no person's id
 equals: a frame from a replica one release behind is a change by nobody
-the client knows, not a frame dropped as malformed. A topic is best effort. Every capability interface declares `start()` and `close()`; the
+the client knows, not a frame dropped as malformed. A bucket listing is
+bounded like a storage read: keys in lexical order, at most `limit`, after
+the key `after` names (S3 `MaxKeys` and `StartAfter`). A topic is best effort. Every capability interface declares `start()` and `close()`; the
 roots call them unconditionally: the Valkey topic listener opens its
 subscriber in `start()`, and each hosted impl (S3, SQS, Secrets Manager)
 opens its one client there, holds it through an exit stack for every
@@ -673,7 +684,9 @@ everything in-process for tests.
   its interval, a store that stalls or raises counting as a failed
   beat), and the
   maintenance sweep (requeue stale leases under one service context per
-  tenant, the system scope first and deleted tenants included, then
+  tenant, a batch of `requeue_batch` (100) per tenant per sweep bounded
+  in the statement and the rest on the next sweep, the system scope
+  first and deleted tenants included, then
   purge the tenant's soft-deleted tasks, removed
   members with their ended memberships, revoked api keys, dead sessions,
   and spent socket tickets past their retention (the one hard delete,
@@ -1048,7 +1061,10 @@ manager's transitions or the helper they use, so only a transition
 produces a stage above the request stage. `test_role_rules.py` holds the
 role ladder to the permission table and keeps the service role off it.
 `test_interfaces.py` fails on a `*Interface` under `tadas.om` or
-`tadas.infra` that is not an `ABC` with every public method abstract.
+`tadas.infra` that is not an `ABC` with every public method abstract,
+and on a storage interface method or a bucket listing that returns a
+list and takes no `limit`; the contract suites hold both impls to the
+bound, in the statement and at the same row.
 `infra/tests/test_timeouts.py` scans every source root and fails on a
 client construction that names no timeout. The storage contracts race
 the named atomic methods, not only call them: two claimers and two

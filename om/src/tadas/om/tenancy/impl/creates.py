@@ -14,7 +14,7 @@ from uuid import UUID
 
 from tadas.infra.observability import current_traceparent
 from tadas.om.base import new_id, utcnow
-from tadas.om.exceptions import Conflict, ValidationFailed
+from tadas.om.exceptions import Conflict, MembershipLimitReached, ValidationFailed
 from tadas.om.opcontext import OperatorRole, RequestScope, Role
 from tadas.om.outbox import OutboxRelayInterface
 from tadas.om.outbox.types.row import OutboxRow, snapshot
@@ -25,6 +25,32 @@ from tadas.om.tenancy.types.membership import Membership
 from tadas.om.tenancy.types.org import Org
 from tadas.om.tenancy.types.role import operator_permissions_of
 from tadas.om.tenancy.types.user import User
+
+MAX_ORGS_PER_IDENTITY = 100
+"""How many orgs one person may be a member of: the default of the managers'
+option, which is the bound on every read of the users one identity is."""
+
+
+async def users_of(
+    storage: TenancyStorageInterface, identity_id: UUID, most: int
+) -> list[tuple[UUID, User]]:
+    """Every live user one identity is, across tenants, with the tenant. The
+    read asks for one past `most`, so a list cut short is never taken for the
+    whole: more than `most` (two adds that raced past the refusal below) is
+    `MembershipLimitReached`, never a silent truncation that would hide the
+    org a sign-in or an add is about."""
+    users = await storage.read_users_by_identity(identity_id, most + 1)
+    if len(users) > most:
+        raise MembershipLimitReached(f"identity {identity_id} is a member of more than {most} orgs")
+    return users
+
+
+def refuse_one_more(identity_id: UUID, users: list[tuple[UUID, User]], most: int) -> None:
+    """A create that adds a user to an identity already at `most` is refused."""
+    if len(users) >= most:
+        raise MembershipLimitReached(
+            f"identity {identity_id} is already a member of {most} orgs, the most one may join"
+        )
 
 
 def widens_operator_role(identity: Identity, granted: OperatorRole) -> bool:
@@ -83,6 +109,7 @@ async def create_org_with_owner(
     email: str,
     password: str,
     display_name: str,
+    max_orgs: int,
     operator_role: OperatorRole | None = None,
 ) -> tuple[Org, User, Membership]:
     """An org, its owner's user, and the owner membership, in one commit, with
@@ -93,6 +120,7 @@ async def create_org_with_owner(
         raise Conflict(f"org slug {slug!r} is taken")
     now = utcnow()
     identity, to_write = await identity_for(storage, email, password, operator_role, now)
+    refuse_one_more(identity.id, await users_of(storage, identity.id, max_orgs), max_orgs)
     user_id = new_id()
     org = Org(
         id=org_id,
@@ -140,6 +168,7 @@ async def add_member_to(
     role: Role,
     actor_id: UUID,
     request: RequestScope,
+    max_orgs: int,
 ) -> tuple[User, bool]:
     """A person in an org: the identity is created if the email is new (an
     existing identity keeps its password), then the user and the membership
@@ -148,14 +177,17 @@ async def add_member_to(
     with False. `actor_id` is who the rows record as their maker: the org's
     creator on the seeding path, the operator's identity on the operator plane,
     which has no user in the tenant. The service role is refused by name: it is
-    the role a sweep's context carries, never a membership."""
+    the role a sweep's context carries, never a membership. A person already a
+    member of `max_orgs` orgs is refused with `MembershipLimitReached`."""
     if role is Role.SERVICE:
         raise ValidationFailed("service is not a membership role")
     now = utcnow()
     identity, to_write = await identity_for(storage, email, password, None, now)
-    for member_org_id, existing in await storage.read_users_by_identity(identity.id):
+    users = await users_of(storage, identity.id, max_orgs)
+    for member_org_id, existing in users:
         if member_org_id == org_id and existing.deleted_at is None:
             return existing, False
+    refuse_one_more(identity.id, users, max_orgs)
     user = User(
         id=user_id,
         created_at=now,

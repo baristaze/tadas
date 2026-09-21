@@ -6,6 +6,7 @@ from pathlib import Path
 from uuid import UUID
 
 import pytest
+from contracts.factories import make_user
 from contracts.outbox_storage import claim_all
 
 from tadas.infra.cache import CacheInterface, CacheScope
@@ -17,6 +18,7 @@ from tadas.om.exceptions import (
     Conflict,
     CredentialExpired,
     InvalidCredential,
+    MembershipLimitReached,
     NotAnOperator,
     NotAuthorized,
     NotFound,
@@ -1417,7 +1419,9 @@ class RacedUserStorage(TenancyStorageMemoryImpl):
     """The read of the identity's users misses: another request added the same
     person between our read and our write."""
 
-    async def read_users_by_identity(self, identity_id: UUID) -> list[tuple[UUID, User]]:
+    async def read_users_by_identity(
+        self, identity_id: UUID, limit: int
+    ) -> list[tuple[UUID, User]]:
         return []
 
 
@@ -1492,3 +1496,41 @@ async def test_every_member_is_reachable_a_page_at_a_time(
             break
         after = page.items[-1].id
     assert paged == every
+
+
+async def test_one_person_joins_at_most_the_bound_of_orgs(
+    infra: InfraLocalImpl, outbox: OutboxStorageMemoryImpl
+) -> None:
+    """The users one identity is are read bounded, at one past the orgs a
+    person may join. A create that would add one more is refused; a member
+    already in the org is still found at the bound; and a list past the bound
+    (two adds that raced) is refused, never cut short, since the org a sign-in
+    names could be the row cut off."""
+    storage = TenancyStorageMemoryImpl(outbox)
+    manager = make_manager(storage, infra, TenancyOptions(max_orgs_per_identity=2), outbox=outbox)
+    _, first = await manager.bootstrap(request(), "A", "a", "ann@example.test", "pw-1234", "Ann")
+    _, second = await manager.bootstrap(request(), "B", "b", "ann@example.test", "pw-1234", "Ann")
+    await manager.bootstrap(request(), "C", "c", "cid@example.test", "pw-1234", "Cid")
+    with pytest.raises(MembershipLimitReached):
+        await manager.bootstrap(request(), "D", "d", "ann@example.test", "pw-1234", "Ann")
+    assert await storage.read_org_by_slug("d") is None
+    with pytest.raises(MembershipLimitReached):
+        await manager.add_member(request(), "c", "ann@example.test", "pw-1234", "Ann", Role.MEMBER)
+    _, again, created = await manager.add_member(
+        request(), "a", "ann@example.test", "pw-1234", "Ann", Role.MEMBER
+    )
+    assert not created and again.email == "ann@example.test"
+    login = await manager.login(request(), "ann@example.test", "pw-1234")
+    assert {m.org.id for m in login.memberships} == {first.id, second.id}
+
+    # A third user lands past the refusal, the way two racing adds would.
+    identity = await storage.read_identity_by_email("ann@example.test")
+    assert identity is not None
+    third = await storage.read_org_by_slug("c")
+    assert third is not None
+    await storage.write_user(third.id, make_user(identity.id, "ann@example.test"))
+    with pytest.raises(MembershipLimitReached):
+        await manager.login(request(), "ann@example.test", "pw-1234")
+    ictx = await manager.authenticate_login(request(), login.token)
+    with pytest.raises(MembershipLimitReached):
+        await manager.exchange_login(ictx, first.id)

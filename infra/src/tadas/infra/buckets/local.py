@@ -37,7 +37,9 @@ class BucketsLocalImpl(BucketsInterface):
     async def exists(self, org_id: UUID, bucket: Buckets, key: str) -> bool:
         return await asyncio.to_thread(self._path(org_id, bucket, key).is_file)
 
-    async def list(self, org_id: UUID, bucket: Buckets, prefix: str) -> list[str]:
+    async def list(
+        self, org_id: UUID, bucket: Buckets, prefix: str, limit: int, after: str | None = None
+    ) -> list[str]:
         base = self._root / bucket.value / str(org_id)
 
         def walk() -> list[str]:
@@ -48,7 +50,13 @@ class BucketsLocalImpl(BucketsInterface):
                 for p in base.rglob("*")
                 if p.is_file() and not p.name.endswith(".content-type")
             ]
-            return sorted(k for k in keys if k.startswith(prefix))
+            # Code-point order, which is the byte order of the object store's
+            # UTF-8 keys; a filesystem has no listing that stops early, so the
+            # walk is whole and the answer is bounded.
+            listed = sorted(
+                k for k in keys if k.startswith(prefix) and (after is None or k > after)
+            )
+            return listed[:limit]
 
         return await asyncio.to_thread(walk)
 

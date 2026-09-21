@@ -210,7 +210,7 @@ async def test_the_same_worker_re_claiming_after_a_requeue_refuses_its_stale_cop
     )
     assert first is not None
     stale_ctx, stale = first
-    assert await managers.work.requeue_stale(ctx) == 1
+    assert await managers.work.requeue_stale(ctx, limit=100) == 1
     second = await managers.work.claim(request(), "default", [WorkKind.NOOP], "w1", LEASE)
     assert second is not None
     fresh_ctx, fresh = second
@@ -238,7 +238,7 @@ async def test_transitions_refuse_a_lost_lease_and_a_missing_item(
     )
     assert claimed is not None
     work_ctx, held = claimed
-    assert await managers.work.requeue_stale(ctx) == 1
+    assert await managers.work.requeue_stale(ctx, limit=100) == 1
 
     with pytest.raises(LeaseLost):
         await managers.work.complete(work_ctx, held)
@@ -279,9 +279,13 @@ async def test_requeue_stale_runs_per_tenant_under_a_maintenance_context(
     contexts = await managers.work.maintenance_contexts(request())
     assert [c.org_id for c in contexts] == [EMPTY_UUID, ctx.org_id]
     assert all(c.security.role is Role.SERVICE for c in contexts)
-    assert await managers.work.requeue_stale(contexts[0]) == 0, "nothing queued under the system"
-    assert await managers.work.requeue_stale(contexts[1]) == 2
-    assert await managers.work.requeue_stale(contexts[1]) == 0
+    assert await managers.work.requeue_stale(contexts[0], limit=100) == 0, (
+        "nothing queued under the system"
+    )
+    # The sweep's batch bounds one pass; the next pass takes the rest.
+    assert await managers.work.requeue_stale(contexts[1], limit=1) == 1
+    assert await managers.work.requeue_stale(contexts[1], limit=1) == 1
+    assert await managers.work.requeue_stale(contexts[1], limit=100) == 0
 
     again = await managers.work.claim(request(), "default", [WorkKind.NOOP], "w2", LEASE)
     assert again is not None and again[1].attempts == 2 and again[1].id != exhausted.id
@@ -524,7 +528,9 @@ async def test_every_write_after_the_enqueue_is_the_platforms(
 
     expired = timedelta(seconds=-1)
     assert await managers.work.claim(request(), "stale", [WorkKind.NOOP], "w1", expired) is not None
-    assert await managers.work.requeue_stale(ctx) == 1, "the sweep runs under a person here"
+    assert await managers.work.requeue_stale(ctx, limit=100) == 1, (
+        "the sweep runs under a person here"
+    )
     requeued = await storage.get_work_storage().read_item(ctx.org_id, items["stale"].id)
     assert requeued is not None and requeued.updated_by == EMPTY_UUID
 

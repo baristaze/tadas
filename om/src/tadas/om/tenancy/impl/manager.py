@@ -29,7 +29,12 @@ from tadas.om.opcontext import (
 )
 from tadas.om.outbox import OutboxRelayInterface
 from tadas.om.outbox.types.row import OutboxRow, outbox_row, snapshot
-from tadas.om.tenancy.impl.creates import add_member_to, create_org_with_owner
+from tadas.om.tenancy.impl.creates import (
+    MAX_ORGS_PER_IDENTITY,
+    add_member_to,
+    create_org_with_owner,
+    users_of,
+)
 from tadas.om.tenancy.manager import TenancyManagerInterface
 from tadas.om.tenancy.rules import (
     DUMMY_PASSWORD_HASH,
@@ -75,6 +80,9 @@ class TenancyOptions(Platform):
     api_key_ttl: timedelta = MAX_API_KEY_TTL
     ticket_ttl: timedelta = timedelta(seconds=60)
     max_limit: int = 200
+    max_orgs_per_identity: int = MAX_ORGS_PER_IDENTITY
+    """How many orgs one person may join; the bound on every read of the users
+    one identity is. An add past it is refused (`MembershipLimitReached`)."""
     retention: timedelta = timedelta(days=30)
     """Removed members, revoked keys, dead sessions, and spent socket tickets
     are purged this long after they ended."""
@@ -118,6 +126,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
             email=email,
             password=password,
             display_name=display_name,
+            max_orgs=self._options.max_orgs_per_identity,
             operator_role=operator_role,
         )
         # The principal now exists; everything after this line runs under it.
@@ -171,6 +180,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
             role=role,
             actor_id=ctx.user_id,
             request=ctx,
+            max_orgs=self._options.max_orgs_per_identity,
         )
         return ctx, user, created
 
@@ -784,7 +794,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
         and picks another tenant. A gone org, user, or membership is refused the
         same way; InvalidCredential is for a credential that fails, and a login
         that names a tenant it cannot enter has not failed."""
-        users = await self._storage.read_users_by_identity(identity_id)
+        users = await users_of(self._storage, identity_id, self._options.max_orgs_per_identity)
         user = next((user for user_org, user in users if user_org == org_id), None)
         if user is None:
             raise NotAuthorized("this identity is not a member of that org")
@@ -798,7 +808,8 @@ class TenancyManagerImpl(TenancyManagerInterface):
 
     async def _memberships_of(self, identity_id: UUID) -> tuple[OrgMembership, ...]:
         found: list[OrgMembership] = []
-        for org_id, user in await self._storage.read_users_by_identity(identity_id):
+        most = self._options.max_orgs_per_identity
+        for org_id, user in await users_of(self._storage, identity_id, most):
             org = await self._storage.read_org(org_id)
             membership = await self._storage.read_membership_for_user(org_id, user.id)
             if org is None or org.deleted_at is not None or membership is None:
