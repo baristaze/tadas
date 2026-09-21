@@ -44,6 +44,8 @@ STORAGE_EXCEPTIONS: frozenset[tuple[str, str]] = frozenset(
         ("TasksStorageInterface", "count_created_since"),
         ("EventStorageInterface", "count_since"),
         ("TenancyStorageInterface", "read_users_by_identity"),
+        ("TenancyStorageInterface", "read_memberships_by_identity"),
+        ("TenancyStorageInterface", "read_session_by_id"),
         ("TenancyStorageInterface", "read_session_by_token_hash"),
         ("TenancyStorageInterface", "read_api_key_by_hash"),
         ("TenancyStorageInterface", "consume_socket_ticket"),

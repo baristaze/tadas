@@ -9,6 +9,7 @@ from uuid import UUID
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.tenancy.types.api_key import ApiKey
 from tadas.om.tenancy.types.identity import Identity
+from tadas.om.tenancy.types.issued import OrgMembership
 from tadas.om.tenancy.types.membership import Membership
 from tadas.om.tenancy.types.org import Org
 from tadas.om.tenancy.types.session import Session
@@ -136,6 +137,18 @@ class TenancyStorageInterface(ABC):
         ...
 
     @abstractmethod
+    async def read_memberships_by_identity(
+        self, identity_id: UUID, limit: int, after_user_id: UUID | None = None
+    ) -> list[OrgMembership]:
+        """Cross-tenant sweep: the places one identity holds, each the org, the
+        user, and the role, by user id ascending, at most `limit` of them. Only
+        the living: a deleted org, a removed user, or an ended membership is
+        left out in the statement, so a page is never short because of rows
+        the caller would drop. `after_user_id` is the user id the previous
+        page ended on (`is_after_in_id_order`)."""
+        ...
+
+    @abstractmethod
     async def write_user(
         self, org_id: UUID, user: User, outbox_rows: tuple[OutboxRow, ...] = ()
     ) -> None:
@@ -181,11 +194,36 @@ class TenancyStorageInterface(ABC):
         ...
 
     @abstractmethod
+    async def read_session_by_id(self, session_id: UUID) -> tuple[UUID, Session] | None:
+        """Cross-tenant lookup: the identity stage holds the id of the session it
+        was proven by, not its tenant; the tenant travels back."""
+        ...
+
+    @abstractmethod
     async def write_session(
         self, org_id: UUID, session: Session, outbox_rows: tuple[OutboxRow, ...] = ()
     ) -> None:
         """A revocation is a session write with a handoff: the row announcing
         it lands beside the session, so the socket it opened hears of it."""
+        ...
+
+    @abstractmethod
+    async def replace_session(
+        self,
+        org_id: UUID,
+        session: Session,
+        ended_org_id: UUID,
+        ended: Session,
+        outbox_rows: tuple[OutboxRow, ...],
+    ) -> None:
+        """A named atomic write: the new session lands in `org_id` and the one it
+        replaces, revoked, lands in `ended_org_id` with the outbox rows that
+        announce the revocation, in one commit or not at all, so a tab that
+        switches tenants never holds two live sessions. The ended session must
+        be in `ended_org_id` and still live as stored (not revoked); otherwise
+        nothing lands: NotFound for a session that is not in that tenant,
+        Conflict for one another write already ended. Two switches racing on
+        one session admit one."""
         ...
 
     @abstractmethod

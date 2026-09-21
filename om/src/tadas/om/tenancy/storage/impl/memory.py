@@ -11,6 +11,7 @@ from tadas.om.tenancy.rules import is_after_in_id_order, is_after_newest_first
 from tadas.om.tenancy.storage import TenancyStorageInterface
 from tadas.om.tenancy.types.api_key import ApiKey
 from tadas.om.tenancy.types.identity import Identity
+from tadas.om.tenancy.types.issued import OrgMembership
 from tadas.om.tenancy.types.membership import Membership
 from tadas.om.tenancy.types.org import Org
 from tadas.om.tenancy.types.session import Session
@@ -174,6 +175,22 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
             if user.identity_id == identity_id and user.deleted_at is None
         ][:limit]
 
+    async def read_memberships_by_identity(
+        self, identity_id: UUID, limit: int, after_user_id: UUID | None = None
+    ) -> list[OrgMembership]:
+        found: list[OrgMembership] = []
+        for org_id, user in self._rows_across_tenants(self._users):
+            if user.identity_id != identity_id or user.deleted_at is not None:
+                continue
+            if after_user_id is not None and not is_after_in_id_order(user.id, after_user_id):
+                continue
+            org = self._get(self._orgs, org_id, org_id)
+            membership = await self.read_membership_for_user(org_id, user.id)
+            if org is None or org.deleted_at is not None or membership is None:
+                continue
+            found.append(OrgMembership(org=org, user=user, role=membership.role))
+        return found[:limit]
+
     async def write_user(
         self, org_id: UUID, user: User, outbox_rows: tuple[OutboxRow, ...] = ()
     ) -> None:
@@ -249,6 +266,9 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
             None,
         )
 
+    async def read_session_by_id(self, session_id: UUID) -> tuple[UUID, Session] | None:
+        return self._sessions.get(session_id)
+
     async def write_session(
         self, org_id: UUID, session: Session, outbox_rows: tuple[OutboxRow, ...] = ()
     ) -> None:
@@ -259,6 +279,32 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
             "uq_sessions_token_hash",
         )
         self._put(self._sessions, org_id, session, outbox_rows)
+
+    async def replace_session(
+        self,
+        org_id: UUID,
+        session: Session,
+        ended_org_id: UUID,
+        ended: Session,
+        outbox_rows: tuple[OutboxRow, ...],
+    ) -> None:
+        # Every check, then every write: the twin of one commit.
+        async with self._lock:
+            stored = self._get(self._sessions, ended_org_id, ended.id)
+            if stored is None:
+                raise NotFound(f"session {ended.id} is not in {ended_org_id}")
+            if stored.revoked_at is not None:
+                raise Conflict(f"session {ended.id} has already ended")
+            if session.id in self._sessions:
+                raise UniqueKeyTaken(f"session {session.id} is already written")
+            self._require_free(
+                self._every(self._sessions),
+                session,
+                lambda other: other.token_hash == session.token_hash,
+                "uq_sessions_token_hash",
+            )
+            self._put(self._sessions, ended_org_id, ended, outbox_rows)
+            self._put(self._sessions, org_id, session)
 
     async def read_api_keys(
         self, org_id: UUID, after: UUID | None, limit: int, user_id: UUID | None = None

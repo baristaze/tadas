@@ -10,7 +10,7 @@ from tadas.om.exceptions import Conflict, NotFound, UniqueKeyTaken
 from tadas.om.idempotency.storage.tables.idempotency_records import IdempotencyRecords
 from tadas.om.outbox.storage.tables.outbox_rows import OutboxRows
 from tadas.om.outbox.types.row import OutboxRow
-from tadas.om.storage.impl.pg_base import PgStorageBase, violated_constraint
+from tadas.om.storage.impl.pg_base import PgStorageBase, set_scope, violated_constraint
 from tadas.om.storage.utils.translation import apply_row, to_model, to_row
 from tadas.om.tenancy.storage import TenancyStorageInterface
 from tadas.om.tenancy.storage.tables.api_keys import ApiKeys
@@ -22,6 +22,7 @@ from tadas.om.tenancy.storage.tables.socket_tickets import SocketTickets
 from tadas.om.tenancy.storage.tables.users import Users
 from tadas.om.tenancy.types.api_key import ApiKey
 from tadas.om.tenancy.types.identity import Identity
+from tadas.om.tenancy.types.issued import OrgMembership
 from tadas.om.tenancy.types.membership import Membership
 from tadas.om.tenancy.types.org import Org
 from tadas.om.tenancy.types.session import Session
@@ -188,6 +189,40 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
             result = await session.execute(stmt)
             return [(row.org_id, to_model(row, User)) for row in result.scalars()]
 
+    async def read_memberships_by_identity(
+        self, identity_id: UUID, limit: int, after_user_id: UUID | None = None
+    ) -> list[OrgMembership]:
+        # One statement over three tables of the core role, the living only,
+        # so the bound cuts the rows the caller keeps.
+        stmt = (
+            select(Users, Orgs, Memberships)
+            .join(Orgs, (Orgs.org_id == Users.org_id) & (Orgs.id == Users.org_id))
+            .join(
+                Memberships,
+                (Memberships.org_id == Users.org_id) & (Memberships.user_id == Users.id),
+            )
+            .where(
+                Users.identity_id == identity_id,
+                Users.deleted_at.is_(None),
+                Orgs.deleted_at.is_(None),
+                Memberships.deleted_at.is_(None),
+            )
+            .order_by(Users.id)
+            .limit(limit)
+        )
+        if after_user_id is not None:
+            stmt = stmt.where(Users.id > after_user_id)  # is_after_in_id_order
+        async with self._session_for(stmt, EMPTY_UUID) as session:
+            result = await session.execute(stmt)
+            return [
+                OrgMembership(
+                    org=to_model(org, Org),
+                    user=to_model(user, User),
+                    role=to_model(membership, Membership).role,
+                )
+                for user, org, membership in result.tuples()
+            ]
+
     async def write_user(
         self, org_id: UUID, user: User, outbox_rows: tuple[OutboxRow, ...] = ()
     ) -> None:
@@ -260,10 +295,48 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
             row = (await session.execute(stmt)).scalar_one_or_none()
             return None if row is None else (row.org_id, to_model(row, Session))
 
+    async def read_session_by_id(self, session_id: UUID) -> tuple[UUID, Session] | None:
+        stmt = select(Sessions).where(Sessions.id == session_id)
+        async with self._session_for(stmt, EMPTY_UUID) as session:
+            row = (await session.execute(stmt)).scalar_one_or_none()
+            return None if row is None else (row.org_id, to_model(row, Session))
+
     async def write_session(
         self, org_id: UUID, session: Session, outbox_rows: tuple[OutboxRow, ...] = ()
     ) -> None:
         await self._upsert(Sessions, org_id, session, outbox_rows)
+
+    async def replace_session(
+        self,
+        org_id: UUID,
+        session: Session,
+        ended_org_id: UUID,
+        ended: Session,
+        outbox_rows: tuple[OutboxRow, ...],
+    ) -> None:
+        # One transaction, two tenants, and never the system scope: the ended
+        # session is revoked under its own tenant, then the scope is set again
+        # to the new session's tenant for its insert, so each statement is
+        # fenced by the tenant it touches. The row lock makes a second switch
+        # on the same session wait and then find it ended.
+        async with self._session_for(Sessions, ended_org_id) as db:
+            row = await db.get(Sessions, ended.id, with_for_update=True)
+            if row is None or row.org_id != ended_org_id:
+                raise NotFound(f"session {ended.id} is not in {ended_org_id}")
+            if row.revoked_at is not None:
+                raise Conflict(f"session {ended.id} has already ended")
+            apply_row(row, ended)
+            for outbox_row in outbox_rows:
+                db.add(to_row(outbox_row, OutboxRows, org_id=ended_org_id))
+            try:
+                await db.flush()
+                await set_scope(db, org_id, None, None)
+                db.add(to_row(session, Sessions, org_id=org_id))
+                await db.commit()
+            except IntegrityError as error:
+                await db.rollback()
+                taken = violated_constraint(error) or "a unique key"
+                raise UniqueKeyTaken(f"sessions {session.id}: {taken} is taken") from error
 
     async def read_api_keys(
         self, org_id: UUID, after: UUID | None, limit: int, user_id: UUID | None = None
