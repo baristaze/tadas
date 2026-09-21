@@ -163,8 +163,8 @@ def test_a_binary_frame_is_a_bad_command_and_the_socket_stays_open(tmp_path: Pat
             assert ws.receive_json()["type"] == "pong"
 
 
-def session_token_expiring_in(container: AppContainer, seconds: float) -> str:
-    """Signs the owner in and shortens the session behind the token in storage."""
+def session_token(container: AppContainer) -> str:
+    """Signs the owner in and returns the session token."""
     _, org = run(
         container.managers.tenancy.bootstrap(
             seed_request(), "Acme", "acme", OWNER["email"], OWNER["password"], OWNER["name"]
@@ -177,23 +177,29 @@ def session_token_expiring_in(container: AppContainer, seconds: float) -> str:
         identity = await tenancy.authenticate_login(seed_request(), login.token)
         return (await tenancy.exchange_login(identity, org.id)).token
 
-    token = run(issue())
+    return run(issue())
+
+
+def expire_session_in(container: AppContainer, token: str, seconds: float) -> None:
+    """Shortens the session behind the token in storage."""
     storage = container.storage.get_tenancy_storage()
     found = run(storage.read_session_by_token_hash(hash_token(token)))
     assert found is not None
     org_id, session = found
     shortened = session.model_copy(update={"expires_at": utcnow() + timedelta(seconds=seconds)})
     run(storage.write_session(org_id, shortened))
-    return token
 
 
 def test_a_socket_is_closed_with_4401_when_the_session_behind_it_expires(tmp_path: Path) -> None:
-    """The client does nothing; the server closes at the session's expiry."""
+    """The client does nothing; the server closes at the session's expiry.
+    The session is shortened once the app is up and the ticket issued, so a
+    slow start does not spend the lifetime before the socket opens."""
     container = build_container(tmp_path)
-    token = session_token_expiring_in(container, 0.2)
+    token = session_token(container)
     with TestClient(create_app(container)) as tc:
         headers = {"Authorization": f"Bearer {token}"}
         ticket = tc.post("/v1/realtime/tickets", headers=headers).json()["ticket"]
+        expire_session_in(container, token, 1.0)
         with tc.websocket_connect(f"/v1/realtime?ticket={ticket}") as ws:
             assert ws.receive_json()["type"] == "hello"
             with pytest.raises(WebSocketDisconnect) as closed:
