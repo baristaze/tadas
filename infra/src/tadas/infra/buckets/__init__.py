@@ -36,7 +36,13 @@ class BucketsInterface(ABC):
     async def exists(self, org_id: UUID, bucket: Buckets, key: str) -> bool: ...
 
     @abstractmethod
-    async def list(self, org_id: UUID, bucket: Buckets, prefix: str) -> list[str]: ...
+    async def list(
+        self, org_id: UUID, bucket: Buckets, prefix: str, limit: int, after: str | None = None
+    ) -> list[str]:
+        """The tenant's keys under `prefix`, in lexical order, at most `limit`
+        of them, strictly after `after` when one is given. The next page
+        starts after the last key returned. The caller picks the bound."""
+        ...
 
     @abstractmethod
     async def delete(self, org_id: UUID, bucket: Buckets, key: str) -> None: ...

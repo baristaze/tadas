@@ -447,7 +447,9 @@ message and a queued row written before a deploy still parse, and the
 two sides roll out in either order. `actor_id` is the field that came
 later, so it defaults to `NO_ACTOR`, the reserved UUID no person's id
 equals: a frame from a replica one release behind is a change by nobody
-the client knows, not a frame dropped as malformed. A topic is best effort. Every capability interface declares `start()` and `close()`; the
+the client knows, not a frame dropped as malformed. A bucket listing is
+bounded like a storage read: keys in lexical order, at most `limit`, after
+the key `after` names (S3 `MaxKeys` and `StartAfter`). A topic is best effort. Every capability interface declares `start()` and `close()`; the
 roots call them unconditionally: the Valkey topic listener opens its
 subscriber in `start()`, and each hosted impl (S3, SQS, Secrets Manager)
 opens its one client there, holds it through an exit stack for every

@@ -12,7 +12,7 @@ model.
 | Capability | What it promises | Local twin | In the cloud |
 |------------|------------------|------------|--------------|
 | Cache | Fast reads of data that is expensive to fetch, in named scopes so unrelated consumers never share a key; one atomic counter with a window, for rate limits; fails open | In-process memory, or Valkey in the compose stack | Valkey (ElastiCache), encrypted in transit |
-| Buckets | Large blobs, every key prefixed with the tenant so one org cannot read or list another's; put, get, exists, list, delete, and presigned URLs | In-process, or MinIO over the S3 API | S3, one private versioned bucket per member |
+| Buckets | Large blobs, every key prefixed with the tenant so one org cannot read or list another's; put, get, exists, a bounded list (lexical, `limit`, `after`), delete, and presigned URLs | In-process, or MinIO over the S3 API | S3, one private versioned bucket per member |
 | Topics | Wake-ups and live updates: `work_available` and `entity_changed`; best effort, so a missed message costs latency and never work | In-process, or Valkey pub/sub | Valkey pub/sub |
 | Queues | Work whose producer is outside the platform and cannot be told to wait; at least once, no deduplication, so the consumer is idempotent; depth is readable | In-process, or ElasticMQ over the SQS API | SQS, one queue and one dead-letter queue per member |
 | Secrets | Get, has, put, delete by name; the object model holds a reference, never a value | The settings object, read once at boot from `.env` and the environment | Secrets Manager |

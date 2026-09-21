@@ -9,6 +9,8 @@ from tadas.infra.aws_errors import ClientError, error_code, translated
 from tadas.infra.buckets import BlobNotFound, Buckets, BucketsInterface, object_key
 
 NOT_FOUND_CODES = frozenset({"404", "NoSuchKey", "NotFound"})
+MAX_KEYS_PER_CALL = 1000
+"""The most keys one ListObjectsV2 call returns."""
 
 
 class BucketsS3Impl(BucketsInterface):
@@ -77,18 +79,30 @@ class BucketsS3Impl(BucketsInterface):
                 raise
             return True
 
-    async def list(self, org_id: UUID, bucket: Buckets, prefix: str) -> list[str]:
+    async def list(
+        self, org_id: UUID, bucket: Buckets, prefix: str, limit: int, after: str | None = None
+    ) -> list[str]:
+        """The store lists in UTF-8 byte order and stops at `MaxKeys`, at most
+        a thousand a call; a larger `limit` continues within itself."""
         tenant_prefix = f"{org_id}/"
         keys: list[str] = []
+        request: dict[str, Any] = {
+            "Bucket": self._bucket(bucket),
+            "Prefix": tenant_prefix + prefix,
+        }
+        if after is not None:
+            request["StartAfter"] = tenant_prefix + after
         with translated("s3", "list"):
             s3 = self._client()
-            paginator = s3.get_paginator("list_objects_v2")
-            async for page in paginator.paginate(
-                Bucket=self._bucket(bucket), Prefix=tenant_prefix + prefix
-            ):
-                for item in page.get("Contents", []):
-                    keys.append(item["Key"][len(tenant_prefix) :])
-        return sorted(keys)
+            while len(keys) < limit:
+                page = await s3.list_objects_v2(
+                    **request, MaxKeys=min(limit - len(keys), MAX_KEYS_PER_CALL)
+                )
+                keys.extend(item["Key"][len(tenant_prefix) :] for item in page.get("Contents", []))
+                if not page.get("IsTruncated"):
+                    break
+                request["ContinuationToken"] = page["NextContinuationToken"]
+        return keys[:limit]
 
     async def delete(self, org_id: UUID, bucket: Buckets, key: str) -> None:
         with translated("s3", "delete"):
