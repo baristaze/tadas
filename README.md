@@ -49,7 +49,7 @@ once. Once it is up:
 | Valkey Admin | http://localhost:58080 | Valkey: keys, metrics, commands; add a connection to host `valkey`, port `6379`, no username or password |
 | ElasticMQ UI | http://localhost:53000 | SQS queues and their messages |
 | Grafana | http://localhost:53001 | No sign-in; opens on the Tadas overview dashboard over Prometheus, and Jaeger traces |
-| Prometheus | http://localhost:59090 | Raw metrics from the api and the worker, as containers or host processes |
+| Prometheus | http://localhost:59090 | Raw metrics from the api and the worker: scraped as containers, or written in by the devx collector for host processes |
 | Jaeger | http://localhost:56686 | Traces, once processes export them (see Dashboards) |
 | GlitchTip | http://localhost:58000 | `admin@example.test` / `tadas-local`; errors from the api, the worker, and the portal |
 | MinIO console | http://localhost:59001 | `tadas` / `tadastadas`; the S3 buckets |
