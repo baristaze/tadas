@@ -92,7 +92,9 @@ class AppContainer:
         infra: InfraInterface,
         settings: ApiSettings | None = None,
     ) -> AppContainer:
-        settings = settings or ApiSettings.model_validate({"environment": "test"})
+        settings = settings or ApiSettings.model_validate(
+            {"_env_file": None, "environment": "test"}
+        )
         return cls.over(settings, storage, infra)
 
     @classmethod

@@ -3,8 +3,8 @@ on the lane while a slot is free, run each item as a task that names the
 request that caused the work, raises a span linked to that request's trace,
 renews its lease and cancels itself when the lease is lost or renewal keeps
 failing, heartbeat liveness,
-sweep on a timer (stale leases, the outbox, done outbox rows), and drain
-first on stop."""
+sweep on a timer (stale leases and every namespace's purge per tenant, then
+the outbox and done outbox rows), and drain first on stop."""
 
 import asyncio
 import contextlib
@@ -367,7 +367,8 @@ class WorkerLoop:
             await asyncio.sleep(self._options.sweep_interval.total_seconds())
 
     async def _sweep_once(self) -> None:
-        """One service context per live tenant, then every step under each of them;
+        """One service context per tenant, the system scope first and deleted
+        tenants included (their purges run there), then every step under each;
         then the cross-tenant steps of the outbox. Every step is idempotent and
         wrapped, so a failing tenant or step never stops the rest."""
         try:

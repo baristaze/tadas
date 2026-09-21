@@ -8,7 +8,9 @@ import {
   DEFAULT_RETRY_BASE_DELAY_MS,
   isRetryableStatus,
   mayRetryRequest,
+  retryAfterHeaderMs,
   retryDelayMs,
+  retryWaitMs,
 } from "./retry";
 
 export interface ErrorEnvelope {
@@ -19,13 +21,22 @@ export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
   readonly requestId: string | null;
+  /** How long the server asked a retry to wait (its `Retry-After`), when it did. */
+  readonly retryAfterMs: number | undefined;
 
-  constructor(status: number, code: string, message: string, requestId: string | null) {
+  constructor(
+    status: number,
+    code: string,
+    message: string,
+    requestId: string | null,
+    retryAfterMs?: number,
+  ) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.code = code;
     this.requestId = requestId;
+    this.retryAfterMs = retryAfterMs;
   }
 }
 
@@ -184,15 +195,17 @@ export function createClient(options: ClientOptions): ApiClient {
     if (response.status === 401 && token && token === options.getToken()) options.onUnauthorized();
     const parsed = isJson(response.headers.get("content-type")) ? parseJson(text) : undefined;
     if (!response.ok) {
+      const retryAfterMs = retryAfterHeaderMs(response.headers.get("retry-after"));
       if (isErrorEnvelope(parsed)) {
         throw new ApiError(
           response.status,
           parsed.error.code,
           parsed.error.message,
           parsed.error.request_id ?? requestId,
+          retryAfterMs,
         );
       }
-      throw new ApiError(response.status, "unknown_error", statusMessage(response), requestId);
+      throw new ApiError(response.status, "unknown_error", statusMessage(response), requestId, retryAfterMs);
     }
     if (response.status === 204 || text === "") return undefined as T;
     if (parsed === undefined) {
@@ -219,7 +232,8 @@ export function createClient(options: ClientOptions): ApiClient {
       } catch (error) {
         const spent = retry >= bound;
         if (spent || requestOptions.signal?.aborted || !isRetryableFailure(error)) throw error;
-        await wait(retryDelayMs(retry + 1, retryBaseDelayMs), requestOptions.signal);
+        const serverAsked = error instanceof ApiError ? error.retryAfterMs : undefined;
+        await wait(retryWaitMs(retryDelayMs(retry + 1, retryBaseDelayMs), serverAsked), requestOptions.signal);
         // The caller gave up while this one waited; its reason is the answer.
         if (requestOptions.signal?.aborted) throw error;
       }

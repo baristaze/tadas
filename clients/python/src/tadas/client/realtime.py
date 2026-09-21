@@ -8,7 +8,7 @@ every change once."""
 import asyncio
 import logging
 import random
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import AbstractAsyncContextManager, suppress
 from typing import Literal, Protocol
 
@@ -80,9 +80,16 @@ class Channel:
         *,
         on_state: Callable[[State], None] | None = None,
         connect: Connect | None = None,
+        on_first_open: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
+        """`on_first_open` runs once, after the first hello and before any
+        change is yielded: a consumer that keeps its own copy of the state
+        reads it there, so nothing committed after the head it starts from
+        is missed and nothing before it is replayed. It runs again on the
+        next connect when it fails."""
         self._client = client
         self._on_state = on_state or (lambda _: None)
+        self._on_first_open = on_first_open
         self._connect = connect or self._connect_default
         self._attempt = 0
         self.cursor: Cursor = None
@@ -156,7 +163,11 @@ class Channel:
                     if self.cursor is None:
                         # The first session starts where the stream stands; a later
                         # reconnect then has a position to replay from even if no
-                        # push ever reached this session.
+                        # push ever reached this session. The consumer's own read
+                        # comes after that head, and the cursor is set once it
+                        # has landed.
+                        if self._on_first_open is not None:
+                            await self._on_first_open()
                         self.cursor = hello.seq
                     else:
                         # Anything that happened while the socket was down.

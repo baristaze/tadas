@@ -32,6 +32,14 @@ class EventStorageInterface(ABC):
         ...
 
     @abstractmethod
+    async def purge_tenant(self, org_id: UUID) -> int:
+        """The hard delete of a deleted tenant's stream once its retention has
+        passed: every event and the cursor row, as every namespace drops a
+        tenant past it; returns how many events went. The one delete this
+        append-only stream has."""
+        ...
+
+    @abstractmethod
     async def read_head(self, org_id: UUID) -> int:
         """The tenant's last assigned seq, read from the cursor row; 0 before the
         first append. What a client that has seen no push yet replays from, and

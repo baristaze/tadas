@@ -233,6 +233,8 @@ jobs:
           TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
           DNS_ZONE_NAME: ${{ vars.DNS_ZONE_NAME }}
           ALARM_EMAIL: ${{ vars.ALARM_EMAIL }}
+          # Empty (unset) leaves browser error reporting off, the root default.
+          PORTAL_SENTRY_DSN: ${{ vars.PORTAL_SENTRY_DSN_STAGING }}
           API_IMAGE: ${{ needs.images.outputs.api_image }}
           MAINTENANCE_IMAGE: ${{ needs.images.outputs.maintenance_image }}
         run: |
@@ -247,7 +249,8 @@ jobs:
             -var "dns_zone_name=$DNS_ZONE_NAME" \
             -var "alarm_email=$ALARM_EMAIL" \
             -var "api_domain_name=api.staging.$DNS_ZONE_NAME" \
-            -var "app_domain_name=app.staging.$DNS_ZONE_NAME"
+            -var "app_domain_name=app.staging.$DNS_ZONE_NAME" \
+            -var "portal_sentry_dsn=$PORTAL_SENTRY_DSN"
           terraform -chdir=deployment/terraform/environments/staging show -no-color tfplan > plan.txt
           {
             echo "## staging plan"

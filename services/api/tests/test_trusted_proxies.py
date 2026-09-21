@@ -78,7 +78,7 @@ async def test_an_untrusted_peer_cannot_choose_its_address(served: Served) -> No
 
 
 def test_no_proxy_means_the_peer_is_the_client() -> None:
-    options = server_options(ApiSettings.model_validate({"environment": "test"}))
+    options = server_options(ApiSettings.model_validate({"_env_file": None, "environment": "test"}))
     assert options["proxy_headers"] is False
     uvicorn.Config(create_app, factory=True, **options)  # loads as `serve` runs it
 
@@ -90,10 +90,14 @@ def test_a_proxy_is_named_by_address_or_block_and_never_by_wildcard(entry: str) 
     name that is not an address or a CIDR block is refused too, so a typo
     cannot pass as a trusted host."""
     with pytest.raises(ValidationError, match="trusted_proxies"):
-        ApiSettings.model_validate({"environment": "test", "trusted_proxies": [entry]})
+        ApiSettings.model_validate(
+            {"_env_file": None, "environment": "test", "trusted_proxies": [entry]}
+        )
 
 
 def test_addresses_and_blocks_are_trusted_proxies() -> None:
     proxies = ["10.10.3.7", "10.10.0.0/16", "fd00::/8"]
-    settings = ApiSettings.model_validate({"environment": "test", "trusted_proxies": proxies})
+    settings = ApiSettings.model_validate(
+        {"_env_file": None, "environment": "test", "trusted_proxies": proxies}
+    )
     assert server_options(settings)["forwarded_allow_ips"] == proxies

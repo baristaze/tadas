@@ -8,10 +8,12 @@ answer, a pong, carries the tenant's head seq. The server sends a protocol
 ping every `SERVER_PING_INTERVAL_SECONDS` and closes the socket when no
 pong arrives within `SERVER_PING_TIMEOUT_SECONDS`; that pong is answered
 by the client's socket implementation (a browser answers it whatever the
-tab's timers do), so a background tab whose timers are throttled keeps its
-socket open and only its head-seq check slows down. The interval plus the
-timeout stays below the load balancer's idle timeout, so the server, not
-the load balancer, is what ends a dead socket."""
+tab's timers do), so a peer that is gone is found without the client's
+help. The handler also closes a socket that has sent no application frame
+for `IDLE_TIMEOUT_SECONDS`, three client pings: a background tab whose
+timers are throttled past that is closed and reconnects when it wakes. The
+interval plus the timeout stays below the load balancer's idle timeout, so
+the server, not the load balancer, is what ends a dead socket."""
 
 PING_INTERVAL_SECONDS = 25
 """How often a client pings; the hello frame names it."""

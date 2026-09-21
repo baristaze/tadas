@@ -17,7 +17,7 @@ the database, the cache, and the topic bus.
   `/v1/memberships/{user_id}`)
 - **Credentials.** My live sessions and revoking one; the org's API
   keys, creating one, revoking one; a ticket for the live channel.
-  (`/v1/sessions`, `/v1/api-keys`, `/v1/tickets`)
+  (`/v1/sessions`, `/v1/api-keys`, `/v1/realtime/tickets`)
 - **Tasks.** Open and done lists a page at a time, one task, create,
   edit, move, delete. (`/v1/tasks`, `/v1/tasks/{task_id}`,
   `/v1/tasks/{task_id}/move`)
@@ -45,16 +45,19 @@ the database, the cache, and the topic bus.
   it. A caller may send one; otherwise the gateway mints it. Every
   log line of the request, its trace, and its error report carry the
   same id, and a refusal quotes it.
-- **An idempotency key on every create.** A creating `POST` carries
-  `Idempotency-Key`, one to 255 characters. The same key with the same
+- **An idempotency key on every create.** A creating `POST` may carry
+  `Idempotency-Key`, one to 255 characters; every client this repository
+  ships sends one, and a create without it runs once per request. The same key with the same
   request gets the first answer back, marked `Idempotent-Replayed:
   true`; the same key with a different request is refused. A secret
   is in the first answer only.
 - **The calling app and its version.** `x-app` and `x-app-version`
   name the client, and travel into the provenance of every write.
 - **One error envelope.** Every refusal, the framework's own included,
-  is one shape: a code, a status, a message. A 5xx says `internal
-  error` and the real message goes to the log under the request id.
+  is one shape: a code, a message, and the request id, under the HTTP
+  status. A 5xx says `internal error` and the real message goes to the
+  log under the request id; the admission 503 alone says which bound it
+  hit, with a `Retry-After`.
 - **Bearer by prefix.** The credential's prefix says what it is: a
   session token, an API key, a login, or a ticket. A missing or
   invalid one is a 401; a route asked with the wrong kind is refused.
@@ -90,7 +93,6 @@ container the server does.
 | `bootstrap` | Seeds a fresh environment with one org and its owner; `--operator` puts the owner on the operator allowlist with write. |
 | `add-member` | Seeds a person into an existing org; a no-op for a member. |
 | `openapi` | Emits the OpenAPI document the clients are generated from. |
-| `inspect` | Read-only views for a root-cause investigation, over the operator plane; it changes nothing. |
 
 The migration runs inside every cloud deploy, as a one-off task before
 the service rolls; a failed migration leaves the old tasks serving.

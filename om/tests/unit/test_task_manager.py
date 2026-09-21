@@ -101,8 +101,8 @@ def events_storage() -> EventStorageMemoryImpl:
 
 
 @pytest.fixture
-def events(events_storage: EventStorageMemoryImpl) -> EventsManagerImpl:
-    return EventsManagerImpl(events_storage, EventsOptions())
+def events(events_storage: EventStorageMemoryImpl, members: Members) -> EventsManagerImpl:
+    return EventsManagerImpl(events_storage, members, EventsOptions())
 
 
 @pytest.fixture

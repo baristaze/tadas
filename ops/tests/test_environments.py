@@ -62,3 +62,11 @@ def test_a_cloud_file_names_everything_and_the_process_env_overrides(tmp_path: P
     assert env.aws_profile == "tadas-staging-investigate" and env.aws_region == "eu-west-1"
     assert env.error_tracker_org == "acme" and env.seed is None
     assert env.prometheus_url is None and env.jaeger_url is None
+
+
+@pytest.mark.parametrize("name", ["prod", "dev", "Staging"])
+def test_an_unknown_environment_is_refused_rather_than_run_locally(
+    tmp_path: Path, name: str
+) -> None:
+    with pytest.raises(ValueError, match="is not one of local, production, staging"):
+        load_environment(name, home=tmp_path, root=tmp_path, process_env={})

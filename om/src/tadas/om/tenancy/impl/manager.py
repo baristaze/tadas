@@ -33,6 +33,7 @@ from tadas.om.tenancy.impl.creates import (
     MAX_ORGS_PER_IDENTITY,
     add_member_to,
     create_org_with_owner,
+    user_snapshot,
     users_of,
 )
 from tadas.om.tenancy.manager import TenancyManagerInterface
@@ -510,7 +511,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
                 "updated_by": ctx.user_id,
             }
         )
-        row = outbox_row(ctx, "tenancy.user.deleted", removed.id, snapshot(removed))
+        row = outbox_row(ctx, "tenancy.user.deleted", removed.id, user_snapshot(removed))
         await self._storage.remove_member(ctx.org_id, removed, ended, (row,))
         # The removal is announced first, so a socket of theirs closes because
         # their membership ended, not because a credential was revoked; then
@@ -705,7 +706,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
     # left behind.
 
     async def _write_user(self, ctx: OpContext, user: User, action: str) -> None:
-        row = outbox_row(ctx, f"tenancy.user.{action}", user.id, snapshot(user))
+        row = outbox_row(ctx, f"tenancy.user.{action}", user.id, user_snapshot(user))
         await self._storage.write_user(ctx.org_id, user, (row,))
         await self._relay.relay(ctx.org_id, row)
 

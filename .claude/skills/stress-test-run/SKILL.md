@@ -16,7 +16,8 @@ skill holds it to it.
 
 `<name>` names `ops/stress/<name>.yaml` and is required; `--env` is
 required; ask for either when missing. `--report` writes the run's
-table and the verdict as JSON beside printing them. `local` runs
+table as JSON beside printing it; the verdict is printed, not written
+to the file. `local` runs
 against the compose stack and needs no cloud; it proves the scenario
 and the wiring, and its numbers are the developer's machine's, not
 the platform's.
@@ -64,8 +65,11 @@ token.
 
    ```bash
    uv run tadas-ops stress --scenario ops/stress/<name>.yaml \
-     --env <env> [--report <path>]
+     --env <env> [--orgs 0] [--report <path>]
    ```
+
+   `--orgs 0` drives the seeded org; without it the run provisions the
+   profile's tenants and needs a provisioner in the env file.
 
    The generator ramps, soaks, and prints the table: requests by
    route and status, p50, p95, p99, and the error ratio, then two

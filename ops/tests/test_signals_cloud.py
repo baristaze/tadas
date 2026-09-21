@@ -36,13 +36,50 @@ class FakeLogs:
         }
 
 
+def series(**dimensions: str) -> dict[str, Any]:
+    labels = {"environment": "staging", "service": "api", "method": "GET"} | dimensions
+    return {
+        "Namespace": "Tadas",
+        "MetricName": "tadas_http_requests_total",
+        "Dimensions": [{"Name": k, "Value": v} for k, v in labels.items()],
+    }
+
+
 class FakeCloudWatch:
+    """Lists its series two pages at a time and answers every query with the
+    values the series was given; a series is known by its route and status."""
+
     def __init__(self) -> None:
+        self.metrics = [
+            series(route="/v1/tasks", status="200"),
+            series(route="/v1/tasks", status="201"),
+            series(route="/v1/tasks", status="503"),
+            series(route="/v1/me", status="500"),
+        ]
+        self.values = {
+            ("/v1/tasks", "200"): [3.0, 4.0],
+            ("/v1/tasks", "201"): [2.0],
+            ("/v1/tasks", "503"): [1.0],
+            ("/v1/me", "500"): [5.0],
+        }
+        self.listed: list[dict[str, Any]] = []
         self.calls: list[dict[str, Any]] = []
+
+    async def list_metrics(self, **kwargs: Any) -> dict[str, Any]:
+        self.listed.append(kwargs)
+        start = int(kwargs.get("NextToken", "0"))
+        page = self.metrics[start : start + 2]
+        more = start + 2 < len(self.metrics)
+        return {"Metrics": page} | ({"NextToken": str(start + 2)} if more else {})
 
     async def get_metric_data(self, **kwargs: Any) -> dict[str, Any]:
         self.calls.append(kwargs)
-        return {"MetricDataResults": [{"Id": "m", "Values": [3.0, 4.0]}]}
+        results = []
+        for query in kwargs["MetricDataQueries"]:
+            dims = {d["Name"]: d["Value"] for d in query["MetricStat"]["Metric"]["Dimensions"]}
+            values = self.values.get((dims["route"], dims["status"]), [])
+            results.append({"Id": query["Id"], "Values": values})
+        return {"MetricDataResults": results}
 
 
 class FakeXRay:
@@ -127,24 +164,44 @@ async def test_log_lines_run_an_insights_query_and_poll_it_to_completion() -> No
     assert impl.slept == [1.0]  # type: ignore[attr-defined]
 
 
-async def test_the_metric_delta_sums_the_namespace_metric_over_the_window() -> None:
+async def test_the_metric_delta_sums_every_series_of_the_environment() -> None:
+    """The collector exports each series with every label as a dimension, so
+    a query naming none finds nothing: the series are listed, then summed."""
     session = FakeSession()
     delta = await reader(session).metric_delta(
-        "tadas_http_requests_total",
-        {"route": "/v1/tasks", "status": "201"},
-        NOW - timedelta(minutes=3),
+        "tadas_http_requests_total", {}, NOW - timedelta(minutes=3)
     )
-    assert delta == 7.0
+    assert delta == 15.0
+    assert [call.get("NextToken") for call in session.cloudwatch.listed] == [None, "2"]
+    assert session.cloudwatch.listed[0]["Dimensions"] == [
+        {"Name": "environment", "Value": "staging"}
+    ]
     call = session.cloudwatch.calls[0]
     stat = call["MetricDataQueries"][0]["MetricStat"]
     assert stat["Metric"]["Namespace"] == "Tadas"
-    assert stat["Metric"]["Dimensions"] == [
-        {"Name": "route", "Value": "/v1/tasks"},
-        {"Name": "status", "Value": "201"},
-    ]
     assert stat["Stat"] == "Sum" and stat["Period"] == 240
     assert call["StartTime"] == NOW - timedelta(minutes=3) and call["EndTime"] == NOW
-    assert await reader(session).metric_delta("c", {"status": "~5.."}, NOW) is None
+
+
+async def test_the_metric_delta_picks_series_by_exact_label_or_pattern() -> None:
+    session = FakeSession()
+    impl = reader(session)
+    exact = await impl.metric_delta("tadas_http_requests_total", {"status": "201"}, NOW)
+    assert exact == 2.0
+    server_errors = await impl.metric_delta("tadas_http_requests_total", {"status": "~5.."}, NOW)
+    assert server_errors == 6.0
+    both = await impl.metric_delta(
+        "tadas_http_requests_total", {"route": "/v1/tasks", "status": "~5.."}, NOW
+    )
+    assert both == 1.0
+
+
+async def test_no_matching_series_is_none_and_a_quiet_one_is_zero() -> None:
+    session = FakeSession()
+    impl = reader(session)
+    assert await impl.metric_delta("tadas_http_requests_total", {"status": "~4.."}, NOW) is None
+    session.cloudwatch.values.clear()
+    assert await impl.metric_delta("tadas_http_requests_total", {}, NOW) == 0.0
 
 
 async def test_the_trace_is_filtered_on_the_annotation() -> None:

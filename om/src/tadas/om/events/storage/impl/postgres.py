@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Any, cast
 from uuid import UUID
 
-from sqlalchemy import Table, func, insert, select
+from sqlalchemy import Table, delete, func, insert, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 
@@ -72,6 +72,15 @@ class EventStoragePostgresImpl(PgStorageBase, EventStorageInterface):
         async with self._session_for(stmt, org_id) as session:
             result = await session.execute(stmt)
             return [to_model(row, Event) for row in result.scalars()]
+
+    async def purge_tenant(self, org_id: UUID) -> int:
+        events = delete(Events).where(Events.org_id == org_id).returning(Events.id)
+        cursor = delete(EventCursors).where(EventCursors.org_id == org_id)
+        async with self._session_for(Events, org_id) as session:
+            purged = len((await session.execute(events)).scalars().all())
+            await session.execute(cursor)
+            await session.commit()
+            return purged
 
     async def count_since(self, since: datetime) -> int:
         stmt = select(func.count()).select_from(Events).where(Events.produced_at >= since)

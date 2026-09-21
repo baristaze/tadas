@@ -38,7 +38,7 @@ size:
 | NAT gateway, and the data through it | $35 | The tasks live in private subnets and reach the registry and AWS APIs through it |
 | Load balancer | $18 | The API's public edge, with its certificate |
 | Three public IPv4 addresses | $11 | The NAT's address and one per zone for the load balancer |
-| Telemetry: Container Insights, the app's metrics, logs, six alarms, the dashboard | $10 | What an operator reads; this line grows with traffic |
+| Telemetry: Container Insights, the app's metrics, logs, seven alarms, the dashboard | $10 | What an operator reads; this line grows with traffic |
 | Secrets, queues, buckets, the portal's CDN, traces | $2 | At demo traffic most of it is inside the free allowances |
 
 The telemetry line is the least certain. Each series the app exports
@@ -91,21 +91,25 @@ What each size is for:
 
 A size is a starting point, not a contract. An environment can run L's
 database with M's tasks when the database is what is short. Every
-knob is one line in the root's module call.
+knob the `environment` module exposes is one line in the root's module
+call; the database's storage, the alarm thresholds, and the retentions
+keep their module defaults until a change passes them through.
 
 ## The pool follows the database
 
-Four database roles share one instance, and each process opens a pool
-per role. So one process can hold four times `database_pool_size`
-connections. A rollout may double the API's replicas for a moment, and
-the migration task opens a few more on top.
+Four database roles share one instance, and in the cloud they share
+one URL and one set of bounds, so each process opens one pool of
+`database_pool_size` connections for all four (the storage root builds
+one engine per distinct URL and bounds). A role given a URL or a size
+of its own gets a pool of its own on top. A rollout may double the
+API's replicas for a moment, and the migration task opens a few more.
 
 The rule each size keeps: twice the API's ceiling, plus the worker's
-ceiling, times four, times the pool, stays under the instance's
-`max_connections`. Those limits are about 80 for `db.t4g.micro`, 180
-for `db.t4g.small`, 400 for `db.t4g.medium`, 850 for `db.m6g.large`,
-and 1,700 for `db.m6g.xlarge`. At XS that is 5 × 4 × 3 = 60, and at S
-it is 7 × 4 × 5 = 140.
+ceiling, times the pool, stays under the instance's `max_connections`.
+Those limits are about 80 for `db.t4g.micro`, 180 for `db.t4g.small`,
+400 for `db.t4g.medium`, 850 for `db.m6g.large`, and 1,700 for
+`db.m6g.xlarge`. At XS that is 5 × 3 = 15, and at S it is 7 × 5 = 35;
+the rule would still hold if a role moved to a pool of its own.
 
 Because the rule holds at the ceilings and not only at the floor,
 autoscaling stays one line at every size. `autoscaling_enabled` in the

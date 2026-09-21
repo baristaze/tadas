@@ -16,7 +16,9 @@ from tadas.client.client import (
     ApiClient,
     ApiError,
     may_retry,
+    retry_after_seconds,
     retry_delay_seconds,
+    retry_wait_seconds,
 )
 from tadas.client.realtime import Channel
 from tadas.client.types import Role, TaskStatus
@@ -233,6 +235,22 @@ async def test_a_401_from_an_old_request_keeps_the_replacement_token() -> None:
         with pytest.raises(ApiError):
             await client.me()
         assert client.token == "ses_new"
+
+
+async def test_an_answer_that_is_not_json_is_a_typed_error() -> None:
+    """Pointed at the portal's nginx, every path answers index.html with a
+    200: that is said as `not_json`, never raised as a decoding traceback."""
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text="<!doctype html>", headers={"x-request-id": "r-1"})
+
+    async with ApiClient(
+        "http://test", app="cli", app_version="cli@test", transport=httpx.MockTransport(respond)
+    ) as client:
+        with pytest.raises(ApiError) as refused:
+            await client.me()
+    assert refused.value.code == "not_json"
+    assert refused.value.status == 200 and refused.value.request_id == "r-1"
 
 
 # The retry. The waits are zero in the cases below: the curve is asserted on
@@ -523,3 +541,29 @@ async def test_admin_me_reads_the_operators_own_entry() -> None:
         view = await client.admin_me()
     assert view.email == "sup@example.test" and view.operator_role.value == "read"
     assert recorder.requests[0].headers["authorization"] == "Bearer lgn_1"
+
+
+def test_the_servers_retry_after_is_read_in_whole_seconds() -> None:
+    assert retry_after_seconds("2") == 2.0
+    assert retry_after_seconds(None) is None
+    assert retry_after_seconds("Wed, 21 Oct 2026 07:28:00 GMT") is None
+
+
+def test_a_retry_waits_at_least_what_the_server_asked_up_to_the_cap() -> None:
+    assert retry_wait_seconds(0.2, 1.0) == 1.0
+    assert retry_wait_seconds(1.5, 1.0) == 1.5
+    assert retry_wait_seconds(0.2, None) == 0.2
+    assert retry_wait_seconds(0.2, 60.0) == MAX_BACKOFF_SECONDS
+
+
+async def test_the_retry_after_rides_on_the_error() -> None:
+    def respond(request: httpx.Request) -> httpx.Response:
+        body = {"error": {"code": "unavailable", "message": "busy", "request_id": "r"}}
+        return httpx.Response(503, json=body, headers={"retry-after": "1"})
+
+    async with ApiClient(
+        "http://test", app="cli", app_version="cli@test", transport=httpx.MockTransport(respond)
+    ) as client:
+        with pytest.raises(ApiError) as refused:
+            await client.me()
+    assert refused.value.retry_after == 1.0

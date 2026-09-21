@@ -43,8 +43,8 @@ six kinds of thing [Tadas is made of](../../../../README.md).
   move changes one task and no other.
 - **Renumbering.** Halving a gap runs out of room eventually. When the
   midpoint equals a neighbour, the whole open list is renumbered with
-  whole numbers in one step, every task announced, and the gaps are
-  wide again.
+  whole numbers in one step, every task whose position changed
+  announced, and the gaps are wide again.
 - **A page is a page.** A page holds at most two hundred tasks, and
   "another page follows" is a fact about the rows, not a guess.
 - **Assignment is checked when it changes.** Assigning a task to

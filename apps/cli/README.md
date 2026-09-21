@@ -36,7 +36,10 @@ uv run tadas listen                           # the team's tasks; --mine for you
   `$TADAS_HOME/session.json` (default `~/.config/tadas`, mode 600).
   `TADAS_TOKEN` in the environment wins over the file and may hold an api
   key; `TADAS_API_URL` or `--api` names the API (default
-  `http://127.0.0.1:8000`); `TADAS_HTTP_TIMEOUT_SECONDS` bounds every call
+  `http://127.0.0.1:8000`). A token goes only to its own API: the file's
+  to the API that issued it, and an `--api` or `TADAS_API_URL` naming
+  another one is refused (exit 2); `TADAS_TOKEN` to the API named, never
+  to the file's; `TADAS_HTTP_TIMEOUT_SECONDS` bounds every call
   and the socket's open (default 30), `TADAS_HTTP_RETRIES` how many extra
   attempts a retryable failure gets (default 2, and 0 sends every call
   exactly once) and `TADAS_HTTP_RETRY_BACKOFF_SECONDS` the wait before the

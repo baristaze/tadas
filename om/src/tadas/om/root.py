@@ -33,7 +33,6 @@ class Managers:
 
 
 def build_managers(storage: StorageInterface, infra: InfraInterface) -> Managers:
-    events = EventsManagerImpl(storage.get_event_storage(), EventsOptions())
     # The relay every core-role manager hands its outbox rows to. It reaches
     # the work manager through the root below, because a row of kind
     # `work.<kind>` is enqueued there: the work manager needs the tenancy
@@ -51,6 +50,7 @@ def build_managers(storage: StorageInterface, infra: InfraInterface) -> Managers
         infra.get_cache(CacheScope.REALTIME_TICKET),
         TenancyOptions(),
     )
+    events = EventsManagerImpl(storage.get_event_storage(), tenancy, EventsOptions())
     work = WorkManagerImpl(
         storage.get_work_storage(),
         tenancy,

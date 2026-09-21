@@ -2,6 +2,7 @@ import logging
 from datetime import timedelta
 from uuid import UUID
 
+from tadas.infra.observability import current_traceparent
 from tadas.om.base import EMPTY_UUID, Platform, new_id, utcnow
 from tadas.om.events.storage import EventStorageInterface
 from tadas.om.events.types.event import Event
@@ -223,6 +224,7 @@ class TenancyOperatorManagerImpl(TenancyOperatorManagerInterface):
             actor_id=admin.identity_id,
             request_id=admin.request_id,
             app=admin.app.type.value,
+            traceparent=current_traceparent(),
         )
         await self._storage.write_org(org_id, deleted, (row,))
         await self._relay.relay(org_id, row)

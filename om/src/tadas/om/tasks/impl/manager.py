@@ -2,7 +2,7 @@ from datetime import timedelta
 from uuid import UUID
 
 from tadas.om.base import PROVENANCE_FIELDS, Platform, utcnow
-from tadas.om.exceptions import NotFound, ValidationFailed, VersionMismatch
+from tadas.om.exceptions import NotFound, TenantMismatch, ValidationFailed, VersionMismatch
 from tadas.om.opcontext import OpContext, Permission
 from tadas.om.outbox import OutboxRelayInterface
 from tadas.om.outbox.types.row import OutboxRow, outbox_row, snapshot
@@ -67,10 +67,17 @@ class TasksManagerImpl(TasksManagerInterface):
     async def create_task(self, ctx: OpContext, task: Task) -> Task:
         ctx.require(Permission.WRITE)
         await self._verify(ctx, task)
+        # The platform stamps the provenance and the clock, as enqueue does:
+        # a caller cannot backdate a task or create one already deleted.
+        now = utcnow()
         created = task.model_copy(
             update={
+                "created_at": now,
+                "updated_at": now,
                 "created_by": ctx.user_id,
                 "updated_by": ctx.user_id,
+                "deleted_at": None,
+                "deleted_by": None,
                 "status": TaskStatus.OPEN,
                 "position": await self._top_position(ctx, exclude=task.id),
                 "version": 1,
@@ -82,7 +89,9 @@ class TasksManagerImpl(TasksManagerInterface):
             # is a retry, and a retry must not create twice: the insert reported
             # the id and nothing changed, so the row as stored is the answer.
             existing = await self._storage.read_task(ctx.org_id, created.id)
-            assert existing is not None
+            if existing is None:
+                # The id is held, and not in this tenant: refused, never a 500.
+                raise TenantMismatch(f"task {created.id} is not in {ctx.org_id}")
             return existing
         for row in rows:  # a write that also starts work carries a second row here
             await self._relay.relay(ctx.org_id, row)

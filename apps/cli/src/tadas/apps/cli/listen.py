@@ -7,7 +7,7 @@ stderr, the change is skipped, and the task's next change shows its state.
 Only a dead credential (401) ends the listener."""
 
 import sys
-from collections.abc import AsyncIterable, Callable
+from collections.abc import AsyncIterable, Awaitable, Callable
 from datetime import datetime
 from typing import TextIO
 from uuid import UUID
@@ -21,11 +21,15 @@ from tadas.client.realtime import Channel, State
 from tadas.client.types import TaskScope, TaskStatus, TaskView
 
 Changes = AsyncIterable[EntityChanged]
-OpenChannel = Callable[[ApiClient, Callable[[State], None]], Changes]
+OpenChannel = Callable[[ApiClient, Callable[[State], None], Callable[[], Awaitable[None]]], Changes]
 
 
-def open_channel(client: ApiClient, on_state: Callable[[State], None]) -> Changes:
-    return Channel(client, on_state=on_state)
+def open_channel(
+    client: ApiClient,
+    on_state: Callable[[State], None],
+    on_first_open: Callable[[], Awaitable[None]],
+) -> Changes:
+    return Channel(client, on_state=on_state, on_first_open=on_first_open)
 
 
 ReadFailure = (ApiError, httpx.TransportError)
@@ -92,7 +96,13 @@ async def listen(
     me = await client.me()
     names = Names(client)
     await names.load()
-    known = await known_tasks(client)
+    # Read once the channel has its first hello, so a change committed
+    # between this read and the head the channel starts from is still told.
+    known: dict[UUID, TaskView] = {}
+
+    async def remember_every_task() -> None:
+        known.update(await known_tasks(client))
+
     scope = "my tasks" if mine else "the team's tasks"
     print(f"listening as {me.user.display_name} at {me.org.name}: {scope}", file=out, flush=True)
 
@@ -106,7 +116,7 @@ async def listen(
             print("connected again; anything missed is replayed", file=err, flush=True)
         last = state
 
-    async for change in channel(client, on_state):
+    async for change in channel(client, on_state, remember_every_task):
         if change.entity != "task":
             continue
         before = known.get(change.target_id)

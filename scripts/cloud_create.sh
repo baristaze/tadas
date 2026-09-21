@@ -226,9 +226,14 @@ append_config tadas-staging-investigate "role_arn = $staging_role" "source_profi
 append_config tadas-production-investigate "role_arn = $production_role" "source_profile = tadas-operators" "region = $region"
 
 say "== 4. The repository variables, from the shared outputs"
-run gh variable set AWS_STAGING_ROLE_ARN --body "$(output_of staging_deploy_role_arn)"
-run gh variable set AWS_PRODUCTION_PLAN_ROLE_ARN --body "$(output_of production_plan_role_arn)"
-run gh variable set AWS_PRODUCTION_ROLE_ARN --body "$(output_of production_deploy_role_arn)"
+# Read into variables first: a substitution inside an argument does not stop
+# the run under `set -e`, and a failed read would set the variable empty.
+staging_deploy_role="$(output_of staging_deploy_role_arn)"
+production_plan_role="$(output_of production_plan_role_arn)"
+production_deploy_role="$(output_of production_deploy_role_arn)"
+run gh variable set AWS_STAGING_ROLE_ARN --body "$staging_deploy_role"
+run gh variable set AWS_PRODUCTION_PLAN_ROLE_ARN --body "$production_plan_role"
+run gh variable set AWS_PRODUCTION_ROLE_ARN --body "$production_deploy_role"
 run gh variable set TF_STATE_BUCKET --body "$state_bucket"
 run gh variable set DNS_ZONE_NAME --body "$dns_zone_name"
 run gh variable set ALARM_EMAIL --body "$alarm_email"
@@ -273,6 +278,7 @@ case "$environment" in
   production) run gh workflow run release.yml --ref main ;;
 esac
 
-say "== 8. When the deploy is green, the smoke test"
-say "uv run tadas-ops signals check --env $environment"
+say "== 8. When the deploy is green, the smoke test: one request, then its signals by request id"
+say "id=\$(curl -s -o /dev/null -D - $api_url/v1/me | awk 'tolower(\$1) == \"x-request-id:\" { print \$2 }' | tr -d '\\r')"
+say "uv run tadas-ops signals check --env $environment --request-id \"\$id\""
 say "The environment root is deployment/terraform/$root; the operator's file is $ops_file."

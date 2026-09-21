@@ -51,7 +51,7 @@ from tadas.om.tenancy.types.identity import Identity
 from tadas.om.tenancy.types.membership import Membership
 from tadas.om.tenancy.types.org import Org
 from tadas.om.tenancy.types.socket_ticket import SocketPrincipal
-from tadas.om.tenancy.types.user import User
+from tadas.om.tenancy.types.user import PERSONAL_FIELDS, User
 
 APP = AppContext(type=AppType.PORTAL, version="portal@test")
 
@@ -635,6 +635,31 @@ async def test_removing_a_member_revokes_their_credentials_and_announces_each(
         ]
     )
     assert await claim_all(outbox) == []
+
+
+async def test_no_event_about_a_user_carries_who_they_are(
+    storage: TenancyStorageMemoryImpl, infra: InfraLocalImpl, outbox: OutboxStorageMemoryImpl
+) -> None:
+    """The stream outlives a removed member; the purge that erases a person
+    reaches the user row and not the stream, so the stream never holds the
+    email or the name."""
+    relay = SpyRelay(OutboxRelayImpl(outbox, EventStorageMemoryImpl(), infra.get_topics()))
+    manager = TenancyManagerImpl(
+        storage, relay, infra.get_cache(CacheScope.REALTIME_TICKET), TenancyOptions()
+    )
+    _, org = await manager.bootstrap(
+        request(), "Acme", "acme", "ann@example.test", "pw-1234", "Ann"
+    )
+    owner = await sign_in(manager, "ann@example.test", org.id)
+    _, bob, _ = await manager.add_member(
+        request(), "acme", "bob@example.test", "pw-1234", "Bob", Role.MEMBER
+    )
+    await manager.remove_member(owner, bob.id)
+    about_users = [r for _, r in relay.rows if r.kind.startswith("tenancy.user.")]
+    assert [r.kind for r in about_users] == ["tenancy.user.created", "tenancy.user.deleted"]
+    for row in about_users:
+        assert not PERSONAL_FIELDS & set(row.payload), row.kind
+        assert row.payload["identity_id"] == str(bob.identity_id)
 
 
 class DownOnRemoveStorage(TenancyStorageMemoryImpl):

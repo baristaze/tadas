@@ -56,6 +56,14 @@ class RecordingClient:
         assert name in self.existing
         return {"Name": name}
 
+    async def delete_secret(self, **request: Any) -> dict[str, Any]:
+        name = request["SecretId"]
+        self.calls.append(("delete_secret", name))
+        if name not in self.existing:
+            raise client_error("ResourceNotFoundException")
+        self.existing.remove(name)
+        return {"Name": name}
+
 
 class FakeSession:
     def __init__(self, client: RecordingClient) -> None:
@@ -108,3 +116,15 @@ async def test_any_other_answer_to_has_is_a_backend_failure() -> None:
     with pytest.raises(BackendFailed) as raised:
         await impl.has("x")
     assert raised.value.message == "secretsmanager has failed with AccessDeniedException"
+
+
+async def test_delete_is_idempotent_like_the_local_twin() -> None:
+    store = RecordingClient({"tadas/present"})
+    impl = await secrets(store)
+    await impl.delete("present")
+    await impl.delete("present")
+    assert store.existing == set()
+    assert store.calls == [
+        ("delete_secret", "tadas/present"),
+        ("delete_secret", "tadas/present"),
+    ]

@@ -7,7 +7,9 @@ import {
   MAX_RETRY_DELAY_MS,
   isRetryableStatus,
   mayRetryRequest,
+  retryAfterHeaderMs,
   retryDelayMs,
+  retryWaitMs,
 } from "./retry";
 
 describe("which request may be sent twice", () => {
@@ -78,5 +80,21 @@ describe("the delay between attempts", () => {
   it("caps however far the doubling runs", () => {
     expect(retryDelayMs(20, 250, () => 1)).toBe(MAX_RETRY_DELAY_MS);
     expect(retryDelayMs(20, 250, () => 0)).toBe(MAX_RETRY_DELAY_MS / 2);
+  });
+});
+
+describe("the server's Retry-After", () => {
+  it("is read in whole seconds and ignored in any other shape", () => {
+    expect(retryAfterHeaderMs("2")).toBe(2000);
+    expect(retryAfterHeaderMs(" 1 ")).toBe(1000);
+    expect(retryAfterHeaderMs(null)).toBeUndefined();
+    expect(retryAfterHeaderMs("Wed, 21 Oct 2026 07:28:00 GMT")).toBeUndefined();
+  });
+
+  it("lengthens a shorter wait, never shortens one, and stops at the cap", () => {
+    expect(retryWaitMs(200, 1000)).toBe(1000);
+    expect(retryWaitMs(1500, 1000)).toBe(1500);
+    expect(retryWaitMs(200)).toBe(200);
+    expect(retryWaitMs(200, 60_000)).toBe(5_000);
   });
 });

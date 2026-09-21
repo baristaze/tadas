@@ -15,14 +15,17 @@ tenants, members, concurrency, and think time.
 
 ## Input
 
-`--env local|staging|production --profile light|regular|heavy|stress [--duration 60] [--report <path>]`
+`--env local|staging|production --profile light|regular|heavy|stress [--duration <seconds>] [--orgs <n>] [--report <path>]`
 
 `--env` and `--profile` are required; ask for them when missing.
-`--duration` is in seconds, sixty by default. `--report` writes the
-table as JSON beside printing it. `local` drives the API at
+`--duration` is in seconds, the profile's own by default (60, 300,
+600, or 900 from light to stress). `--report` writes the table as JSON
+beside printing it. `--orgs` is how many tenants the run provisions,
+the profile's number by default; `--orgs 0` drives the seeded people
+of `.env` instead and needs no provisioner. `local` drives the API at
 `http://127.0.0.1:8000`, started by `scripts/dev.sh` or `make up`, and
-needs no cloud; its file is `~/.config/tadas/ops/local.env`, and when
-the file is absent the seeded people of `.env` are used. `stress` is the top profile; a run at it with a target
+needs no cloud; its file is `~/.config/tadas/ops/local.env`, and
+without a provisioner in it a local run takes `--orgs 0`. `stress` is the top profile; a run at it with a target
 is `stress-test-run`, not this skill.
 
 ## Role and credential
@@ -59,7 +62,7 @@ token.
 
    ```bash
    uv run tadas-ops traffic --env <env> --profile <profile> \
-     --duration <seconds> [--report <path>]
+     [--duration <seconds>] [--orgs 0] [--report <path>]
    ```
 
    The thirty-second wiring check, which CI runs against the local

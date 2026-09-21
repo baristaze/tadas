@@ -14,7 +14,8 @@ MAX_KEYS_PER_CALL = 1000
 
 
 class BucketsS3Impl(BucketsInterface):
-    """A client is opened per call, so this impl has no lifecycle of its own."""
+    """One client, opened by `start()` and closed by `close()` through the
+    holder; every call borrows it."""
 
     def __init__(
         self,

@@ -192,6 +192,8 @@ jobs:
           TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
           DNS_ZONE_NAME: ${{ vars.DNS_ZONE_NAME }}
           ALARM_EMAIL: ${{ vars.ALARM_EMAIL }}
+          # Empty (unset) leaves browser error reporting off, the root default.
+          PORTAL_SENTRY_DSN: ${{ vars.PORTAL_SENTRY_DSN_PRODUCTION }}
           API_IMAGE: ${{ needs.resolve.outputs.api_image }}
           MAINTENANCE_IMAGE: ${{ needs.resolve.outputs.maintenance_image }}
           SHA: ${{ github.sha }}
@@ -208,7 +210,8 @@ jobs:
             -var "dns_zone_name=$DNS_ZONE_NAME" \
             -var "alarm_email=$ALARM_EMAIL" \
             -var "api_domain_name=api.$DNS_ZONE_NAME" \
-            -var "app_domain_name=app.$DNS_ZONE_NAME"
+            -var "app_domain_name=app.$DNS_ZONE_NAME" \
+            -var "portal_sentry_dsn=$PORTAL_SENTRY_DSN"
           terraform -chdir=deployment/terraform/environments/prod show -no-color tfplan > plan.txt
           plan_key="plans/environments/prod/$SHA-$RUN.tfplan"
           aws s3 cp deployment/terraform/environments/prod/tfplan "s3://$TF_STATE_BUCKET/$plan_key"
@@ -250,6 +253,36 @@ jobs:
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
           terraform_wrapper: false
+      # Before anything changes: the registry's lifecycle keeps the images
+      # tagged `prod-`, so the digests production is about to run are never
+      # expired under it. The digest is named, so a manifest that came back
+      # altered is refused rather than tagged as a new image.
+      - name: keep the promoted images
+        env:
+          API_IMAGE: ${{ needs.resolve.outputs.api_image }}
+          MAINTENANCE_IMAGE: ${{ needs.resolve.outputs.maintenance_image }}
+          SHA: ${{ github.sha }}
+        run: |
+          keep() {
+            local image="$1" repository digest manifest media out
+            repository="${image%@*}"
+            repository="${repository#*/}"
+            digest="${image##*@}"
+            manifest="$(aws ecr batch-get-image --repository-name "$repository" \
+              --image-ids "imageDigest=$digest" --query 'images[0].imageManifest' --output text)"
+            media="$(aws ecr batch-get-image --repository-name "$repository" \
+              --image-ids "imageDigest=$digest" --query 'images[0].imageManifestMediaType' --output text)"
+            if ! out="$(aws ecr put-image --repository-name "$repository" --image-tag "prod-$SHA" \
+                --image-digest "$digest" --image-manifest "$manifest" \
+                --image-manifest-media-type "$media" 2>&1)"; then
+              case "$out" in
+                *ImageAlreadyExistsException*) echo "$repository@$digest is tagged prod-$SHA already" ;;
+                *) echo "$out" >&2; exit 1 ;;
+              esac
+            fi
+          }
+          keep "$API_IMAGE"
+          keep "$MAINTENANCE_IMAGE"
       # Exactly the approved plan: Terraform refuses it once the state moved.
       # The migration runs inside, on the new API task definition, before
       # either service rolls.

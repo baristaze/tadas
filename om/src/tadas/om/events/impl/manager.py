@@ -3,6 +3,7 @@ from tadas.om.events.manager import EventsManagerInterface
 from tadas.om.events.storage import EventStorageInterface
 from tadas.om.events.types.event import Event
 from tadas.om.opcontext import OpContext, Permission
+from tadas.om.tenancy import TenancyManagerInterface
 
 
 class EventsOptions(Platform):
@@ -10,8 +11,14 @@ class EventsOptions(Platform):
 
 
 class EventsManagerImpl(EventsManagerInterface):
-    def __init__(self, storage: EventStorageInterface, options: EventsOptions) -> None:
+    def __init__(
+        self,
+        storage: EventStorageInterface,
+        tenancy: TenancyManagerInterface,
+        options: EventsOptions,
+    ) -> None:
         self._storage = storage
+        self._tenancy = tenancy
         self._options = options
 
     async def append_event(self, ctx: OpContext, event: Event) -> Event:
@@ -30,6 +37,12 @@ class EventsManagerImpl(EventsManagerInterface):
     async def get_events(self, ctx: OpContext, after_seq: int, limit: int) -> list[Event]:
         ctx.require(Permission.READ)
         return await self._storage.read_after(ctx.org_id, max(0, after_seq), self._clamp(limit))
+
+    async def purge_expired(self, ctx: OpContext) -> int:
+        ctx.require(Permission.WRITE)
+        if await self._tenancy.tenant_expired(ctx):
+            return await self._storage.purge_tenant(ctx.org_id)
+        return 0
 
     async def get_head(self, ctx: OpContext) -> int:
         ctx.require(Permission.READ)

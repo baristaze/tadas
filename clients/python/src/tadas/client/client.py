@@ -113,12 +113,21 @@ class ApiError(Exception):
     """The API refused: the status and the stable code from the error envelope,
     and the request id to quote when asking why."""
 
-    def __init__(self, status: int, code: str, message: str, request_id: str | None) -> None:
+    def __init__(
+        self,
+        status: int,
+        code: str,
+        message: str,
+        request_id: str | None,
+        retry_after: float | None = None,
+    ) -> None:
         super().__init__(message)
         self.status = status
         self.code = code
         self.message = message
         self.request_id = request_id
+        self.retry_after = retry_after
+        """How long the server asked a retry to wait, its `Retry-After`, when it did."""
 
     def __str__(self) -> str:
         suffix = f" (request {self.request_id})" if self.request_id else ""
@@ -130,8 +139,23 @@ def trust_store() -> ssl.SSLContext:
     return truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
 
 
+def retry_after_seconds(header: str | None) -> float | None:
+    """A `Retry-After` in seconds, as the gateway sends it; an HTTP date or
+    anything unreadable is no ask at all."""
+    if header is None or not header.strip().isdigit():
+        return None
+    return float(header.strip())
+
+
+def retry_wait_seconds(curve: float, server_asked: float | None) -> float:
+    """The wait before a retry: the curve's, or longer when the server asked
+    for longer, and never past the cap."""
+    return min(max(curve, server_asked or 0.0), MAX_BACKOFF_SECONDS)
+
+
 def _error_of(response: httpx.Response) -> ApiError:
     request_id = response.headers.get(REQUEST_ID_HEADER)
+    retry_after = retry_after_seconds(response.headers.get("retry-after"))
     try:
         body = response.json()
     except ValueError:
@@ -145,8 +169,11 @@ def _error_of(response: httpx.Response) -> ApiError:
             str(envelope.get("request_id") or request_id)
             if (envelope.get("request_id") or request_id)
             else None,
+            retry_after,
         )
-    return ApiError(response.status_code, "unknown_error", response.reason_phrase, request_id)
+    return ApiError(
+        response.status_code, "unknown_error", response.reason_phrase, request_id, retry_after
+    )
 
 
 class ApiClient:
@@ -226,6 +253,7 @@ class ApiClient:
         outcome for would be a second write."""
         bound = self.retries if may_retry(method, idempotency_key) else 0
         for attempt in range(bound + 1):
+            server_asked: float | None = None
             try:
                 return await self._attempt(
                     method,
@@ -238,10 +266,12 @@ class ApiClient:
             except ApiError as error:
                 if attempt == bound or error.status not in RETRYABLE_STATUSES:
                     raise
+                server_asked = error.retry_after
             except RETRYABLE_FAILURES:
                 if attempt == bound:
                     raise
-            await asyncio.sleep(retry_delay_seconds(attempt + 1, self.backoff_seconds))
+            curve = retry_delay_seconds(attempt + 1, self.backoff_seconds)
+            await asyncio.sleep(retry_wait_seconds(curve, server_asked))
         raise AssertionError("the loop returns or raises on its last attempt")
 
     async def _attempt(
@@ -268,7 +298,19 @@ class ApiClient:
             self.token = None
         if response.is_error:
             raise _error_of(response)
-        return response.json() if response.content else None
+        if not response.content:
+            return None
+        try:
+            return response.json()
+        except ValueError:
+            # Something that is not the API answered (a proxy's page, the
+            # portal's index.html): said as a refusal, not a traceback.
+            raise ApiError(
+                response.status_code,
+                "not_json",
+                f"{method} {path} answered with something other than JSON",
+                response.headers.get(REQUEST_ID_HEADER),
+            ) from None
 
     # Tenancy
 

@@ -40,20 +40,14 @@ class CacheBreakerImpl(CacheInterface):
     async def get(self, org_id: UUID, key: str) -> bytes | None:
         if not self._breaker.allows():
             return None
-        started = self._breaker.started()
-        try:
+        with self._breaker.measured():
             return await self._inner.get(org_id, key)
-        finally:
-            self._breaker.record(started)
 
     async def put(self, org_id: UUID, key: str, value: bytes, ttl: timedelta) -> None:
         if not self._breaker.allows():
             return None
-        started = self._breaker.started()
-        try:
+        with self._breaker.measured():
             await self._inner.put(org_id, key, value, ttl)
-        finally:
-            self._breaker.record(started)
 
     async def invalidate(self, org_id: UUID, key: str) -> None:
         """Dropped while open, and the entry it would have removed stays
@@ -62,11 +56,8 @@ class CacheBreakerImpl(CacheInterface):
         leaves behind anyway; the breaker only declines to pay for it."""
         if not self._breaker.allows():
             return None
-        started = self._breaker.started()
-        try:
+        with self._breaker.measured():
             await self._inner.invalidate(org_id, key)
-        finally:
-            self._breaker.record(started)
 
     async def increment(self, org_id: UUID, key: str, ttl: timedelta) -> tuple[int, timedelta]:
         """The count no count, and the window asked for: the same pair the
@@ -75,11 +66,8 @@ class CacheBreakerImpl(CacheInterface):
         down, and a caller cannot tell the two apart."""
         if not self._breaker.allows():
             return 0, ttl
-        started = self._breaker.started()
-        try:
+        with self._breaker.measured():
             return await self._inner.increment(org_id, key, ttl)
-        finally:
-            self._breaker.record(started)
 
     def describe(self) -> str:
         return f"{self._inner.describe()}+{self._breaker.describe()}"

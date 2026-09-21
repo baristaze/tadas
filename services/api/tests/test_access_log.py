@@ -44,7 +44,10 @@ async def test_the_access_line_carries_the_request_id(
 
 def test_uvicorn_keeps_no_access_log_and_prints_no_query_string() -> None:
     assert (
-        server_options(ApiSettings.model_validate({"environment": "test"}))["access_log"] is False
+        server_options(ApiSettings.model_validate({"_env_file": None, "environment": "test"}))[
+            "access_log"
+        ]
+        is False
     )
     configure_server_logging()
     uvicorn_error = logging.getLogger("uvicorn.error")

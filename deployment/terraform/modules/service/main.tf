@@ -54,7 +54,9 @@ locals {
         log_stream_name         = "{TaskId}"
         dimension_rollup_option = "NoDimensionRollup"
       }
-      awsxray = {}
+      # The request id becomes the annotation `tadas_request_id`, the one
+      # filter by id X-Ray has (ops/src/tadas/ops/signals/cloud.py).
+      awsxray = { indexed_attributes = ["tadas.request_id"] }
     }
     service = {
       extensions = ["health_check"]

@@ -36,6 +36,22 @@ def test_login_keeps_a_session_and_whoami_reads_it(stack: Stack) -> None:
     assert stack.tadas("logout", token=None).output == "no session to forget\n"
 
 
+def test_login_naming_an_org_the_person_is_not_in_is_a_usage_error(stack: Stack) -> None:
+    out = stack.tadas(
+        "login",
+        "--email",
+        OWNER["email"],
+        "--password",
+        OWNER["password"],
+        "--org",
+        "nope",
+        token=None,
+    )
+    assert out.exit_code == 2, out.output
+    assert "choose an org with --org: acme" in out.output
+    assert config.load_session() is None
+
+
 def test_logout_forgets_a_session_the_api_already_revoked(stack: Stack) -> None:
     """A session revoked elsewhere, or expired, answers 401: there is nothing
     left to revoke, so the file goes and the command succeeds."""
@@ -72,6 +88,46 @@ def test_logout_revokes_the_kept_session_and_leaves_the_environments_token_alone
     assert again.exit_code == 0
     assert again.output == "no session to forget; TADAS_TOKEN is the environment's, unset it\n"
     assert stack.tadas("whoami", token=bob).exit_code == 0
+
+
+def test_logout_never_sends_the_session_to_another_api(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The session's token goes back to the API that issued it: an `--api`
+    naming another one is refused, nothing is sent, and the file stays."""
+    monkeypatch.setenv("TADAS_HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("TADAS_TOKEN", raising=False)
+    config.save_session(
+        config.Session(
+            api_url="https://api.example.test",
+            token="ses_kept",
+            email="ann@example.test",
+            display_name="Ann",
+            org_slug="acme",
+            org_name="Acme",
+        )
+    )
+    sent: list[httpx.Request] = []
+
+    def record(request: httpx.Request) -> httpx.Response:
+        sent.append(request)
+        return httpx.Response(200, json={})
+
+    monkeypatch.setattr(
+        main,
+        "build_client",
+        lambda url, token: ApiClient(
+            url,
+            app="cli",
+            app_version="cli@test",
+            token=token,
+            transport=httpx.MockTransport(record),
+        ),
+    )
+    result = CliRunner().invoke(main.app, ["logout", "--api", "http://localhost:8000"])
+    assert result.exit_code == main.EXIT_USAGE, result.output
+    assert sent == []
+    assert config.load_session() is not None
 
 
 def test_logout_forgets_the_session_when_the_api_cannot_be_reached(

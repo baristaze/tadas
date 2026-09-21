@@ -33,7 +33,8 @@ replica told its lane.
     removed members with their ended memberships, revoked keys, dead
     sessions, spent tickets, finished idempotency records, and settled
     work items. Under an org deleted longer ago than the retention,
-    every row goes and the org row stays as the record. Each namespace
+    every row goes, its event stream included, and the org row stays as
+    the record. Each namespace
     purges its own rows and asks tenancy the one question, whether the
     org has expired.
   - **Relay** the outbox rows the request path left behind, one
@@ -47,9 +48,9 @@ replica told its lane.
   running process and answers 200 while it is there; the container
   probe and the `health` subcommand ask that URL. `/metrics` on the
   same port is what the collector scrapes.
-- **Drain first.** On stop, the loop claims nothing new, waits for the
-  items it holds, hands back what did not finish, and marks itself
-  offline. A cloud rollout replaces one worker at a time, because a
+- **Drain first.** On stop, the loop claims nothing new, cancels the
+  items it holds and waits for each to hand its item back to the queue
+  for another worker, then marks itself offline. A cloud rollout replaces one worker at a time, because a
   worker holds leases.
 
 ## The subcommands

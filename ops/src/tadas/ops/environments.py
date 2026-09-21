@@ -177,6 +177,11 @@ def load_environment(
     it for `local`, and the process environment over both. A cloud environment
     with no file is an error: its addresses and its operator are secrets that
     live nowhere else."""
+    if name != "local" and name not in CLOUD_ENVIRONMENTS:
+        # A typo (`prod`) or an environment this tool has no reader for
+        # (`dev`) would otherwise run against the local stack unannounced.
+        known = ", ".join(sorted({"local", *CLOUD_ENVIRONMENTS}))
+        raise ValueError(f"environment {name!r} is not one of {known}")
     values: dict[str, str] = {}
     local = name not in CLOUD_ENVIRONMENTS
     if local:

@@ -198,6 +198,29 @@ async def test_only_the_probe_goes_out_while_it_is_in_flight() -> None:
     assert await probe == b"inner", "the probe is a real call and answers what the backend said"
 
 
+async def test_a_probe_cancelled_in_time_neither_closes_nor_blocks_the_next_probe() -> None:
+    """A probe whose caller left says nothing about the backend: the breaker
+    stays open, and the next call is the probe instead of waiting behind one
+    that will never answer."""
+    cache, inner, clock, breaker = a_breaker()
+    await spend_the_timeout(cache, inner, FAILURES)
+    clock.advance(COOLDOWN.total_seconds())
+    inner.calls.clear()
+    inner.cost = 0.001
+    inner.gate = asyncio.Event()
+    inner.started.clear()
+    org = new_id()
+    probe = asyncio.create_task(cache.get(org, "k"))
+    await inner.started.wait()
+    probe.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await probe
+    assert breaker.is_open, "a cancelled probe is not a success"
+    inner.gate = None
+    assert await cache.get(org, "k") == b"inner", "the next call is the probe"
+    assert not breaker.is_open
+
+
 async def test_every_impl_that_shares_a_breaker_shares_its_failures() -> None:
     """One breaker stands for one dependency, not for one interface: the cache
     scope that pays the timeouts opens it for every other scope and for the

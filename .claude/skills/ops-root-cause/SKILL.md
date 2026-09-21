@@ -128,7 +128,7 @@ the file holds one. Never print the password or the token.
    ```bash
    aws xray get-trace-summaries --profile tadas-<env>-investigate \
      --start-time <start> --end-time <end> \
-     --filter-expression 'annotation.request_id = "<id>"'
+     --filter-expression 'annotation.tadas_request_id = "<id>"'
    ```
 
    Local, Jaeger's v3 API (the service is the process name, `api`, and

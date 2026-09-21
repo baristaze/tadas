@@ -75,12 +75,12 @@ def setting[T](read: Callable[[], T]) -> T:
 def run[T](work: Callable[[ApiClient], Coroutine[Any, Any, T]], api: str | None = None) -> T:
     """Runs one command's coroutine under a signed-in client and turns what
     goes wrong into a line on stderr and an exit code."""
-    bearer = setting(config.token)
+    api_url, bearer = setting(lambda: config.credentials(api))
     if bearer is None:
         _fail("not signed in; run `tadas login`", EXIT_NOT_SIGNED_IN)
 
     async def go() -> T:
-        async with build_client(config.api_url(api), bearer) as client:
+        async with build_client(api_url, bearer) as client:
             return await work(client)
 
     return _run(go(), signed_in=True)
@@ -185,7 +185,8 @@ def login(
                 choices = [m for m in choices if m.org.slug == org]
             if len(choices) != 1:
                 slugs = ", ".join(m.org.slug for m in issued.memberships) or "none"
-                _fail(f"choose an org with --org: {slugs}", EXIT_REFUSED)
+                # The API signed the person in; what is missing is the flag.
+                _fail(f"choose an org with --org: {slugs}", EXIT_USAGE)
             chosen = choices[0]
             session = await client.exchange_session(issued.token, chosen.org.id)
             path = config.save_session(
@@ -216,13 +217,21 @@ def logout(api: Api = None) -> None:
         typer.echo(f"no session to forget{hint}")
         return
 
+    # The token goes back to the API that issued it and nowhere else: an
+    # `--api` naming another one is refused before the file is touched,
+    # never handed the session's token.
+    if api is not None and api.rstrip("/") != session.api_url.rstrip("/"):
+        _fail(
+            f"the session was issued by {session.api_url}, not {api}; "
+            "run `tadas logout` without --api",
+            EXIT_USAGE,
+        )
     # Before the file is touched: a setting the environment got wrong means
     # the API is never asked, and a session nobody tried to revoke is not
     # forgotten over a typo.
-    client = setting(lambda: build_client(api or session.api_url, session.token))
+    client = setting(lambda: build_client(session.api_url, session.token))
 
     async def revoke() -> str:
-        # The token goes back to the API that issued it and nowhere else.
         async with client:
             try:
                 await client.logout()

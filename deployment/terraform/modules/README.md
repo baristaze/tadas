@@ -55,7 +55,7 @@ protection. What each set of numbers costs is in
 calls side by side is how the environments are compared.
 
 Three inputs of the `environment` module are operations rather than
-scale. `alarm_email` is where the environment's six alarms deliver.
+scale. `alarm_email` is where the environment's seven alarms deliver.
 `autoscaling_enabled` is the one flip: each service's lever under it
 (`api_autoscaling`, `maintenance_autoscaling`: a ceiling, a CPU target,
 and `enabled = true` by default) takes effect only when it is true, and
@@ -138,8 +138,10 @@ environment (`apiUrl`, `sentryDsn`, `environment`). `deploy-staging.yml`
 builds the portal once, publishes it with `scripts/deploy_portal.sh` after
 the apply, and keeps the build by the commit in the state bucket
 (`builds/portal/<sha>/`); `deploy-production.yml` publishes those same files
-to production. `portal_sentry_dsn`
-turns browser error reporting on. The `api_url` and `portal_url` outputs are
+to production. `portal_sentry_dsn`, the root's variable, turns browser
+error reporting on; the deploy workflows pass it from the repository
+variables `PORTAL_SENTRY_DSN_STAGING` and `PORTAL_SENTRY_DSN_PRODUCTION`,
+and an unset one leaves reporting off. The `api_url` and `portal_url` outputs are
 where an environment answers.
 
 ## Telemetry and error reporting

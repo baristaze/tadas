@@ -66,7 +66,9 @@ class TopicsValkeyImpl(TopicsInterface):
                 await subscriber.close()
 
     async def start(self) -> None:
-        self._subscriber = await self._open_subscriber()
+        # The listener opens the subscriber itself, so a bus that is down at
+        # boot is the listener's backoff to carry and not a process that
+        # fails to start.
         self._listener = asyncio.create_task(self._listen(), name="topics-valkey-listener")
 
     async def close(self) -> None:
@@ -87,7 +89,8 @@ class TopicsValkeyImpl(TopicsInterface):
             try:
                 if self._subscriber is None:
                     self._subscriber = await self._open_subscriber()
-                    log.info("topics listener reconnected after %d failures", self._failures)
+                    if self._failures:
+                        log.info("topics listener reconnected after %d failures", self._failures)
                 await self._receive(self._subscriber)
             except GlideError as error:
                 self._failures += 1

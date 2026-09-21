@@ -13,14 +13,18 @@ request; the administrator profile goes back in the drawer.
 
 ## Input
 
-`--env local|staging|production [--dry-run]`
+`--env staging|production [--dry-run]`
 
 `--env` is required; ask for it when missing. `--dry-run` runs the
 script in its dry mode, which prints every command it would run and
 runs none, so the whole path is readable before the first resource
-exists. `local` is the compose stack: the skill runs `make up` through
-the script's local branch and the smoke test against it, and needs no
-cloud, so the skill is testable with no account.
+exists. The script creates a cloud environment only; the compose stack
+is `make up`, not this skill.
+
+The script also needs `DNS_ZONE_NAME`, `OWNER_EMAIL`, `ALARM_EMAIL`,
+and `TF_STATE_BUCKET` (as environment variables or as
+`--dns-zone-name`, `--owner-email`, `--alarm-email`, `--state-bucket`)
+and refuses without them; ask for any that is missing.
 
 ## Role and credential
 
@@ -37,15 +41,18 @@ account the environment belongs to (the account id
 with administrator access, never `assumed-role/tadas-investigate-*`.
 An investigate profile cannot create a state bucket or a role, and
 the skill stops rather than try. Every `aws` command below carries
-`--profile tadas-admin`; the script inherits it.
+`--profile tadas-admin`; the script refuses unless `AWS_PROFILE` (or
+`--profile`) is `tadas-admin`.
 
 The GitHub login is `gh auth status`; it names a user who can write
 the repository's variables and environments.
 
 No env file is read. The script writes one: `~/.config/tadas/ops/<env>.env`,
-owner-only, from the first operator it bootstraps, and it writes the
-operator profiles into `~/.aws/config`. The skill prints the names of
-what was written and never a value.
+owner-only, with `TADAS_API_URL` set and the operator, provisioner, and
+error tracker lines empty for the person to fill in. It writes the
+operators' key into `~/.aws/credentials` and the profiles into
+`~/.aws/config`. The skill prints the names of what was written and
+never a value.
 
 ## Procedure
 
@@ -67,16 +74,18 @@ what was written and never a value.
 
 3. Narrate each step as the script reaches it, in one line each, so
    the person can stop it between two:
-   - The state backend: the state bucket with versioning and the lock
-     table, the prefix `environments/<env>/`.
+   - The state backend: the state bucket with versioning, made by
+     `shared` on its first apply; the lock is a lockfile beside each
+     state (`use_lockfile`), and the environment's state lives under
+     `environments/staging/` or `environments/prod/`.
    - `shared`: the investigate role `tadas-investigate-<env>` with its
      fences, the permission boundary, the budget and the anomaly
      monitor, the operators user `tadas-operators` with its one
      `sts:AssumeRole` policy, the zone.
    - The operators user's access key, minted once and written into
-     `~/.aws/config` as the profile `tadas-operators`, with
-     `tadas-<env>-investigate` chained from it by `role_arn` and
-     `source_profile`. The key is never printed and never lands in
+     `~/.aws/credentials` as `tadas-operators`, with
+     `tadas-<env>-investigate` chained from it in `~/.aws/config` by
+     `role_arn` and `source_profile`. The key is never printed and never lands in
      the repository.
    - The GitHub variables (account id, region, the base domain, the
      zone) and the environments `staging` and `production`, the
@@ -86,9 +95,10 @@ what was written and never a value.
      nothing and applies nothing itself; it dispatches the deploy
      workflow, which applies the environment as every later merge
      does.
-   - The smoke test: the telemetry round trip against the deployed
-     base, one traffic session read back by request id through
-     CloudWatch, X-Ray, and the error tracker.
+   - The smoke test, which the script prints for the person to run
+     once the deploy is green: one request through the edge, then
+     `tadas-ops signals check --request-id` reading its log lines, its
+     metric, its trace, and its error event back by that id.
 4. Check the result with the investigate profile the script wrote,
    because that is the profile every later skill holds:
 
@@ -124,7 +134,7 @@ what was written and never a value.
 
 ## Made
 
-- State backend: <bucket>, <table>, prefix environments/<env>/
+- State backend: <bucket>, prefix environments/<staging | prod>/
 - shared: <role>, <user>, budget <usd>/month, zone <name> (<created | existing>)
 - Profiles written: tadas-operators, tadas-<env>-investigate (~/.aws/config)
 - Env file written: ~/.config/tadas/ops/<env>.env

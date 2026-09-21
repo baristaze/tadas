@@ -55,20 +55,22 @@ no profile and no env file.
    name: <name>
    env: <env>
    profile: <heavy | stress>
-   duration_s: <duration>
-   ramp_s: <ramp>
-   soak_s: <soak>
+   duration_seconds: <ramp + soak>
+   ramp_seconds: <ramp>
    target:
      p95_ms: <ms>
      error_ratio: <ratio>
      note: "<who chose these numbers and when>"
-   routes:
-     - step: <session step name>
-       weight: <n>
+   weights:
+     <session step name>: <n>
    ```
 
-   `duration_s` is at least `ramp_s + soak_s`. Weights are integers
-   and sum to any number; the generator normalizes them.
+   These are the keys `tadas-ops stress` reads (`ops/src/tadas/ops/stress.py`,
+   `ops/stress/smoke.yaml`); `env` and `target.note` are notes it
+   ignores. The soak is what follows the ramp: `duration_seconds` is
+   `ramp_seconds + soak`, and the ramp must fit in it. The generator
+   does not apply `weights` yet; its session shape is fixed, so write
+   them as the intent and say so in the output.
 4. Read it back and check every field is set and the total holds.
    Say in the output that a real run is the platform developer's
    choice and that the run skill is `stress-test-run`.

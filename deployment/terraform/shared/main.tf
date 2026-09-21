@@ -37,17 +37,35 @@ resource "aws_ecr_lifecycle_policy" "this" {
   for_each = aws_ecr_repository.this
 
   repository = each.value.name
+  # Production runs whatever it was last released on, however many merges
+  # ago, so the count alone would expire it. The production deploy tags each
+  # digest it promotes `prod-<sha>`, and an image a rule of higher priority
+  # selects is never expired by a lower one: the last ten releases stay, for
+  # the tasks production replaces and for a rollback.
   policy = jsonencode({
-    rules = [{
-      rulePriority = 1
-      description  = "keep the last 30 images"
-      selection = {
-        tagStatus   = "any"
-        countType   = "imageCountMoreThan"
-        countNumber = 30
-      }
-      action = { type = "expire" }
-    }]
+    rules = [
+      {
+        rulePriority = 1
+        description  = "keep the last 10 images production ran"
+        selection = {
+          tagStatus     = "tagged"
+          tagPrefixList = ["prod-"]
+          countType     = "imageCountMoreThan"
+          countNumber   = 10
+        }
+        action = { type = "expire" }
+      },
+      {
+        rulePriority = 2
+        description  = "keep the last 30 images"
+        selection = {
+          tagStatus   = "any"
+          countType   = "imageCountMoreThan"
+          countNumber = 30
+        }
+        action = { type = "expire" }
+      },
+    ]
   })
 }
 
@@ -356,6 +374,16 @@ data "aws_iam_policy_document" "plan_production_fences" {
     effect    = "Deny"
     actions   = ["s3:*"]
     resources = ["${aws_s3_bucket.state.arn}/environments/staging/*"]
+  }
+
+  # S3 does not match an object call against its bucket's tags, so the tag
+  # fence above leaves staging's files readable through ReadOnlyAccess; its
+  # bucket names carry the environment, and this denies them by name.
+  statement {
+    sid       = "NotStagingsObjects"
+    effect    = "Deny"
+    actions   = ["s3:*"]
+    resources = ["arn:${local.partition}:s3:::tadas-staging-*/*"]
   }
 
   # ReadOnlyAccess is a read of the whole account; these are the two reads a

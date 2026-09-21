@@ -56,11 +56,12 @@ now=$(date +%s); aws cloudwatch get-metric-data \
 
 ## The alarms
 
-Six per environment, to the topic `tadas-<environment>-alarms`, from
+Seven per environment (one of them per service), to the topic `tadas-<environment>-alarms`, from
 `deployment/terraform/modules/alarms`. Their thresholds are the
 module's inputs with defaults: 5 percent 5xx, 1 second p95, 80 percent
 database CPU, 2 GiB free storage, one unhealthy target, one task below
-desired; three periods of one minute each.
+desired; three periods of one minute each, six for the tasks below
+desired, which a routine worker deploy would otherwise trip.
 
 ```bash
 aws cloudwatch describe-alarms --alarm-name-prefix tadas-staging- \

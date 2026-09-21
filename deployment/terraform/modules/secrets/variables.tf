@@ -13,3 +13,8 @@ variable "database_url" {
   type        = string
   sensitive   = true
 }
+
+variable "destroyable" {
+  description = "True on the nuke's way down only: the secrets are deleted at once, so a rebuild within the recovery window can create them again under the same names."
+  type        = bool
+}

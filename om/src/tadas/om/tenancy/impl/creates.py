@@ -9,7 +9,9 @@ decides who may call: the callers authorize, this module verifies, copies,
 and writes."""
 
 import secrets
+from collections.abc import Mapping
 from datetime import datetime
+from typing import Any
 from uuid import UUID
 
 from tadas.infra.observability import current_traceparent
@@ -24,11 +26,16 @@ from tadas.om.tenancy.types.identity import Identity
 from tadas.om.tenancy.types.membership import Membership
 from tadas.om.tenancy.types.org import Org
 from tadas.om.tenancy.types.role import operator_permissions_of
-from tadas.om.tenancy.types.user import User
+from tadas.om.tenancy.types.user import PERSONAL_FIELDS, User
 
 MAX_ORGS_PER_IDENTITY = 100
 """How many orgs one person may be a member of: the default of the managers'
 option, which is the bound on every read of the users one identity is."""
+
+
+def user_snapshot(user: User) -> Mapping[str, Any]:
+    """What an event about a user records: the user without who they are."""
+    return snapshot(user, exclude=PERSONAL_FIELDS)
 
 
 async def users_of(
@@ -216,7 +223,7 @@ async def add_member_to(
         org_id=org_id,
         kind="tenancy.user.created",
         target_id=user.id,
-        payload=snapshot(user),
+        payload=user_snapshot(user),
         actor_id=actor_id,
         request_id=request.request_id,
         traceparent=current_traceparent(),

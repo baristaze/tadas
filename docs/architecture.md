@@ -354,7 +354,9 @@ context on keeps the stage the callee needs.
   once and consumes no number. An id another tenant owns is refused
   before the number is spent, over both impls, as Postgres rolls the
   number back with the insert it refused, so a write this tenant cannot
-  make never moves its cursor. No update, no delete. The entity events reach the stream through
+  make never moves its cursor. No update, and one delete: the sweep drops a
+  tenant's whole stream once the deleted tenant is past the retention. An
+  event about a user leaves out `email` and `display_name`. The entity events reach the stream through
   the event storage, from the outbox relay; the manager's `append_event` is for
   an audit entry (the work manager's dead letter), requires `WRITE`, and
   stamps the tenant, the actor, the request, and the app from the
@@ -853,7 +855,10 @@ everything in-process for tests.
 - `terraform/`: every cloud resource. `modules/` holds one module per
   resource family (`network`, `cluster`, `database`, `cache`, `queue`,
   `buckets`, `secrets`, `load_balancer`, `certificate`, `domain_records`,
-  `portal`, `service`, `alarms`, `dashboard`); `environments/staging`
+  `portal`, `service`, `alarms`, `dashboard`), `environment`, the graph
+  that wires them and that each root calls, and `deploy_role` and
+  `investigate_role`, which `shared/` instantiates once per
+  environment; `environments/staging`
   and `environments/prod` instantiate the same graph and differ only in
   variables, including the image digests, the autoscaling flip, and
   the alarm address; `shared/` holds the registry, the state bucket,
@@ -978,22 +983,24 @@ page; this section says what exists.
   `ops-investigate`, `ops-watch`, `ops-root-cause`, `ops-infra-as-code`,
   `ops-cloud-deployment-create`, `ops-cloud-deployment-nuke`,
   `ops-simulate-traffic`, `stress-test-create-or-update`,
-  `stress-test-run`. Every one takes `--env local|staging|production`,
-  and `local` reads the compose stack's twins, so each is exercised
-  with no cloud. The first responder is an agent: `ops-investigate` and
+  `stress-test-run`. Every one that reads or drives an environment
+  takes `--env local|staging|production`, and `local` reads the
+  compose stack's twins, so each is exercised with no cloud; create
+  and nuke take `staging` or `production` only, and
+  `stress-test-create-or-update` writes a file and touches none. The first responder is an agent: `ops-investigate` and
   `ops-watch` read the platform's size (`tadas-ops size`) before they
   escalate an alarm, and a platform of one tenant and one user is the
   developer at work.
 - **Dashboards and alarms.** `modules/dashboard` declares the CloudWatch
-  dashboard `tadas-<env>` from a template whose five panels carry the
-  titles of the local Grafana dashboard
+  dashboard `tadas-<env>` from a template whose first five panels carry
+  the titles of the local Grafana dashboard
   (`deployment/local/grafana/dashboards/tadas-overview.json`), and
   `infra/tests/test_dashboard_parity.py` holds the titles equal.
   `modules/alarms` declares the SNS topic `tadas-<env>-alarms`, the
-  email subscription from `alarm_email`, and six alarms: the load
+  email subscription from `alarm_email`, and seven alarms: the load
   balancer's 5xx ratio, its unhealthy targets, its p95, the database's
-  CPU and free storage, and each service running below its desired
-  count. [runbooks/operate.md](runbooks/operate.md) reads them.
+  CPU and free storage, and each of the two services running below its
+  desired count. [runbooks/operate.md](runbooks/operate.md) reads them.
 - **Scale-out.** Every service declares an autoscaling target and a
   CPU target-tracking policy in `modules/service`, created only when
   its `autoscaling.enabled` is true. The environment module ANDs each

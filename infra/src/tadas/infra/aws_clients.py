@@ -13,8 +13,9 @@ from botocore.config import Config
 
 
 def client_config(timeout: timedelta) -> Config:
-    """Connect and read bounded by the same timeout; a hung endpoint costs at
-    most that per call, and botocore's default retries stay."""
+    """Connect and read bounded by the same timeout, per attempt. botocore's
+    default retries stay, and they retry a timeout too, so a call to an
+    endpoint that keeps hanging costs a few attempts of this, not one."""
     seconds = timeout.total_seconds()
     return Config(connect_timeout=seconds, read_timeout=seconds)
 
