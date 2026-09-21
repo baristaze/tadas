@@ -72,6 +72,14 @@ markers = [
 [tool.arch-check]
 package = "tadas"
 
+# A revoked key's hash stays refused; the lookup reads revoked keys to
+# answer "revoked".
+[[tool.arch-check.exception]]
+rule = "STO-26"
+path = "om/src/tadas/om/tenancy/storage/tables/api_keys.py"
+adr = "docs/adr/0019-an-api-key-hash-stays-unique-after-revocation.md"
+reason = "an api key hash digests a fresh random secret and the lookup reads revoked keys too"
+
 # The storage methods that take no tenant, the same list
 # om/tests/unit/test_storage_exceptions.py holds.
 [tool.arch-check.options.CTX-12]
