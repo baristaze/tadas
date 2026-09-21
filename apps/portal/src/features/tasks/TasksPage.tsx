@@ -34,7 +34,7 @@ export function TasksPage() {
         >
           <input
             aria-label="New task"
-            placeholder="Add a task, e.g. migrate DB"
+            placeholder={vm.scope === "mine" ? "Add a task for yourself…" : "Add a task for the team…"}
             value={vm.title}
             onChange={(event) => vm.setTitle(event.target.value)}
             maxLength={500}
@@ -103,6 +103,7 @@ function TaskGroups({ vm }: { vm: TasksVm }) {
                 vm.canWrite && !entry.leaving
                   ? {
                       draggable: grabbedId === entry.task.id,
+                      dragging: draggedId === entry.task.id,
                       dropIndicator: over?.id === entry.task.id && draggedId !== entry.task.id ? over.side : null,
                       onGrab: () => setGrabbedId(entry.task.id),
                       onDragStart: (event: DragEvent) => {

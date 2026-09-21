@@ -5,8 +5,12 @@ import { tokens } from "../../design/tokens";
 import type { DropSide, TaskRow } from "./tasksModel";
 import type { TaskEdit } from "./useTasksVm";
 
+/** The handle's column; every row keeps it, so the boxes line up in both groups. */
+const HANDLE_WIDTH = 14;
+
 export interface DragProps {
   draggable: boolean;
+  dragging: boolean;
   dropIndicator: DropSide | null;
   onGrab: () => void;
   onDragStart: (event: DragEvent) => void;
@@ -53,7 +57,9 @@ export function TaskItem({
   const indicator = drag?.dropIndicator;
   return (
     <li
-      className={leaving ? "tadas-leaving" : arriving ? "tadas-arriving" : undefined}
+      className={[leaving ? "tadas-leaving" : arriving ? "tadas-arriving" : "", drag?.dragging ? "tadas-dragging" : ""]
+        .filter(Boolean)
+        .join(" ") || undefined}
       draggable={drag?.draggable ?? false}
       onDragStart={drag?.onDragStart}
       onDragOver={drag?.onDragOver}
@@ -68,53 +74,61 @@ export function TaskItem({
         pointerEvents: leaving ? "none" : undefined,
       }}
     >
-      {/* The title keeps a readable width and wraps by words; when the row runs
-          out of room, the pills and links move to a line of their own. */}
-      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: tokens.space.sm }}>
+      {/* One line at any width: the title gives way first and ends in an
+          ellipsis; the handle, the box, the pills, and the link keep their size. */}
+      <div style={{ display: "flex", alignItems: "center", gap: tokens.space.sm }}>
+        <span
+          role={drag ? "button" : undefined}
+          aria-label={drag ? `Drag to reorder ${row.title}` : undefined}
+          aria-hidden={drag ? undefined : true}
+          title={drag ? "Drag to reorder" : undefined}
+          onMouseDown={drag?.onGrab}
+          className={drag ? "tadas-handle" : undefined}
+          style={{
+            width: HANDLE_WIDTH,
+            flexShrink: 0,
+            textAlign: "center",
+            cursor: drag ? "grab" : undefined,
+            color: tokens.color.muted,
+            userSelect: "none",
+          }}
+        >
+          {drag ? "⠿" : null}
+        </span>
         <input
           type="checkbox"
           aria-label={row.done ? `Reopen ${row.title}` : `Mark ${row.title} done`}
           checked={struck}
           disabled={!canWrite || leaving}
           onChange={onToggle}
-          style={{ width: 18, height: 18, flexShrink: 0, cursor: canWrite ? "pointer" : "default" }}
+          style={{ width: 18, height: 18, margin: 0, flexShrink: 0, cursor: canWrite ? "pointer" : "default" }}
         />
         <span
+          className="tadas-task-title"
+          title={row.notes ? `${row.title}\n\n${row.notes}` : row.title}
+          onDoubleClick={canWrite && !leaving && !editing ? onEdit : undefined}
           style={{
-            flex: "1 1 8em",
+            flex: "1 1 auto",
             minWidth: 0,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
             textDecoration: struck ? "line-through" : "none",
             color: struck ? tokens.color.muted : tokens.color.text,
-            overflowWrap: "break-word",
           }}
         >
           {row.title}
+          {row.notes ? <span style={{ color: tokens.color.muted }}> — {row.notes}</span> : null}
         </span>
-        <span
-          style={{
-            marginLeft: "auto",
-            display: "flex",
-            flexWrap: "wrap",
-            justifyContent: "flex-end",
-            alignItems: "center",
-            gap: tokens.space.sm,
-          }}
-        >
-          <Pill title={`Created by ${row.createdBy}`}>· {row.createdBy}</Pill>
-          {row.assignee ? <Pill title="Assigned to">assigned to {row.assignee}</Pill> : null}
-          {canWrite && !leaving ? <LinkButton onClick={editing ? onCancelEdit : onEdit}>{editing ? "close" : "edit"}</LinkButton> : null}
-          {drag ? (
-            <span
-              role="button"
-              aria-label={`Drag to reorder ${row.title}`}
-              title="Drag to reorder"
-              onMouseDown={drag.onGrab}
-              style={{ cursor: "grab", color: tokens.color.muted, userSelect: "none", padding: `0 ${tokens.space.xs}` }}
-            >
-              ⠿
-            </span>
-          ) : null}
-        </span>
+        <Pill title={`Created by ${row.createdBy}`}>{row.createdBy}</Pill>
+        {row.assignee ? (
+          <Pill title={`Assigned to ${row.assignee}`} tone={row.assignee === "you" ? "accent" : "plain"}>
+            for {row.assignee}
+          </Pill>
+        ) : null}
+        {canWrite && !leaving ? (
+          <LinkButton onClick={editing ? onCancelEdit : onEdit}>{editing ? "close" : "edit"}</LinkButton>
+        ) : null}
       </div>
       {editing ? <EditForm key={task.id} version={task.version} row={row} saving={saving} assigneeOptions={assigneeOptions} onSave={onSave} onCancel={onCancelEdit} onDelete={onDelete} /> : null}
     </li>
@@ -150,7 +164,7 @@ function EditForm({
         event.preventDefault();
         onSave({ title, notes, assigneeId: assigneeId || null, version: draftVersion });
       }}
-      style={{ display: "grid", gap: tokens.space.md, padding: `${tokens.space.md} 0 ${tokens.space.sm} 26px` }}
+      style={{ display: "grid", gap: tokens.space.md, padding: `${tokens.space.md} 0 ${tokens.space.sm} ${HANDLE_WIDTH + 18 + 16}px` }}
     >
       <TextField label="Title" value={title} onChange={setTitle} />
       <TextArea label="Notes" value={notes} onChange={setNotes} />

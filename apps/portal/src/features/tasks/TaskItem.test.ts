@@ -66,3 +66,36 @@ it("holds the Save button while the save it started is in flight", async () => {
   await render(true);
   expect(save().disabled).toBe(true);
 });
+
+it("leads with the drag handle, keeps one line, and names the creator without a marker", async () => {
+  const task: TaskView = {
+    id: "t3", title: "Migrate DB", notes: "", status: "open", assignee_id: "u1",
+    position: 0, version: 1, created_by: "u1", deleted_at: null,
+    created_at: "2026-09-20T10:00:00Z", updated_at: "2026-09-20T10:00:00Z",
+  };
+  const onEdit = vi.fn();
+  const drag = {
+    draggable: false, dragging: false, dropIndicator: null, onGrab: vi.fn(),
+    onDragStart: vi.fn(), onDragOver: vi.fn(), onDrop: vi.fn(), onDragEnd: vi.fn(),
+  };
+  await act(async () => {
+    root.render(createElement(TaskItem, {
+      task, row: taskRow(task, new Map(), "u1"), leaving: false,
+      listMountedAt: Date.now(), canWrite: true, editing: false, saving: false,
+      assigneeOptions: [{ value: "", label: "Unassigned" }], drag,
+      onToggle: vi.fn(), onEdit, onCancelEdit: vi.fn(), onDelete: vi.fn(), onSave: vi.fn(),
+    }));
+  });
+  const line = container.querySelector("li > div") as HTMLElement;
+  const [handle, box, title] = [...line.children] as HTMLElement[];
+  expect(handle!.getAttribute("aria-label")).toBe("Drag to reorder Migrate DB");
+  expect(box!.getAttribute("type")).toBe("checkbox");
+  expect(title!.textContent).toBe("Migrate DB");
+  expect(title!.style.whiteSpace).toBe("nowrap");
+  expect(line.style.flexWrap).toBe("");
+  const pills = [...line.querySelectorAll("span[title]")].map((pill) => pill.textContent);
+  expect(pills).toContain("you");
+  expect(pills).toContain("for you");
+  await act(async () => title!.dispatchEvent(new MouseEvent("dblclick", { bubbles: true })));
+  expect(onEdit).toHaveBeenCalledOnce();
+});
