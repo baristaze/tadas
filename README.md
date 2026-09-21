@@ -65,8 +65,10 @@ for hot reload.
 ## The command line
 
 `apps/cli` ships `tadas`: one command at a time, or `listen` for what the
-team does as it happens. It signs in as one of the seeded people above
-and keeps the session under `~/.config/tadas`.
+team does as it happens. It signs in as one of the seeded people above,
+or anyone who signed up, and keeps one session under `~/.config/tadas`;
+`tadas orgs` and `tadas switch <slug>` move it between the orgs a person
+belongs to.
 
 ```bash
 uv run tadas login --email bob@example.test   # prompts for the password
@@ -104,7 +106,8 @@ The API is at the same address either way; only the portal's port differs:
 `scripts/dev.sh` serves it from Vite on http://localhost:5173, `make
 stack-up` from nginx on the port in the table above. Sign in as each of
 the two seeded people in two browser windows to see "My Tasks" differ from
-"Team's Tasks" and to watch changes arrive live.
+"Team's Tasks" and to watch changes arrive live, or create an account at
+`/sign-up`, which is how a person enters a deployed environment.
 
 ### Dashboards
 
@@ -145,6 +148,11 @@ dispatches the `release` workflow, which fast-forwards `release` to
 `main`, and then approves the production plan. Nobody commits to
 `release`. [docs/runbooks/deploy.md](docs/runbooks/deploy.md) has the
 steps, the rollback, and the protection to set on the branch.
+
+A deployed environment carries no seed: `make seed` is local. A person
+enters staging or production through sign-up in the portal, which
+creates their identity, their first org, and its owner membership, and
+is open unless `TADAS_SIGNUP_ENABLED=false`.
 
 ## Operate
 
