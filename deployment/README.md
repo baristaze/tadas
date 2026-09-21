@@ -9,7 +9,7 @@ the cloud from Terraform. Nothing is clicked into place in either.
 
 | Piece | Locally (compose) | In the cloud (Terraform) |
 |-------|-------------------|--------------------------|
-| The API process | the `api` container, or a host process with hot reload | a container service behind a load balancer, several replicas, rolled one task definition at a time |
+| The API process | the `api` container, or a host process with hot reload | a container service behind a load balancer, as many replicas as the size names, rolled one task definition at a time |
 | The maintenance worker | the `maintenance` container, or a host process | a container service of its own, rolled one at a time because it holds leases |
 | The portal | nginx in a container, or Vite on the host | a private bucket behind a CDN, publishing the build staging made |
 | Postgres | one container, four schemas, one per database role | a managed instance with backups and storage that grows on its own |
@@ -31,6 +31,8 @@ cannot reach its database leaves the rotation without being killed.
   is off.
 - [The Terraform](terraform/modules/README.md): the roots, the
   modules, the state, and the credentials each root needs.
+- [What the cloud costs](cloud/README.md): the five sizes, what each
+  environment runs, the postures and their budgets.
 
 ## The convention
 

@@ -1,8 +1,8 @@
 # Production: the `release` branch's environment. The graph is
 # ../../modules/environment, the same one staging runs; this call is the
 # parameter set that makes it production. Nothing here differs from staging
-# but the numbers, the names, and the two protections a production database
-# carries.
+# but the numbers, the names, and the deletion protection a production
+# database carries.
 
 module "environment" {
   source    = "../../modules/environment"
@@ -20,20 +20,25 @@ module "environment" {
   cors_origins      = var.cors_origins
   portal_sentry_dsn = var.portal_sentry_dsn
 
-  # Scale. Everything below is what differs from staging: the graph does not.
+  # Scale: size S, the demo posture (deployment/cloud/README.md prices
+  # every size, and names what changes when real customers arrive: size L,
+  # with a second zone for the database and the cache). Everything below is
+  # what differs from staging: the graph does not. The pool is sized to the
+  # instance: a db.t4g.small takes about 180 connections.
   vpc_cidr                     = "10.20.0.0/16"
   bucket_prefix                = "tadas-production"
-  database_instance_class      = "db.m6g.large"
-  database_multi_az            = true
+  database_instance_class      = "db.t4g.small"
+  database_multi_az            = false
   database_deletion_protection = true
-  cache_node_type              = "cache.m6g.large"
-  cache_node_count             = 2
-  api_desired_count            = 2
-  api_cpu                      = 512
-  api_memory                   = 1024
-  maintenance_desired_count    = 2
-  maintenance_cpu              = 512
-  maintenance_memory           = 1024
+  database_pool_size           = 8
+  cache_node_type              = "cache.t4g.micro"
+  cache_node_count             = 1
+  api_desired_count            = 1
+  api_cpu                      = 256
+  api_memory                   = 512
+  maintenance_desired_count    = 1
+  maintenance_cpu              = 256
+  maintenance_memory           = 512
 
   # Operations. `autoscaling_enabled` is the one flip: every lever below it
   # is on, so true scales the whole environment, and the flip is a pull

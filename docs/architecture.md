@@ -1002,7 +1002,8 @@ page; this section says what exists.
   `desired_count` stays the truth an apply resets to, and the policy
   raises it from there ([runbooks/scale.md](runbooks/scale.md)).
 - **Cost.** `shared/` declares a monthly budget (`monthly_budget_usd`,
-  300 by default) with alerts at 50, 80, and 100 percent actual and
+  400 by default, sized in
+  [deployment/cloud/README.md](../deployment/cloud/README.md)) with alerts at 50, 80, and 100 percent actual and
   100 percent forecast to `owner_email`, and a cost anomaly monitor
   by service with a daily subscription above 20 dollars of impact.
   Every log group has a retention and every resource carries
