@@ -2,7 +2,19 @@
 import type { CSSProperties, ReactNode } from "react";
 import { tokens } from "../tokens";
 
-export function Page({ title, nav, children }: { title: string; nav?: ReactNode; children: ReactNode }) {
+/** A page: one centered column. `narrow` is the sign-in and sign-up width,
+ * a single column of fields; the side padding shrinks with a narrow window. */
+export function Page({
+  title,
+  nav,
+  narrow = false,
+  children,
+}: {
+  title: string;
+  nav?: ReactNode;
+  narrow?: boolean;
+  children: ReactNode;
+}) {
   return (
     <main
       style={{
@@ -11,14 +23,24 @@ export function Page({ title, nav, children }: { title: string; nav?: ReactNode;
         color: tokens.color.text,
         fontFamily: tokens.font.family,
         fontSize: tokens.font.size.md,
-        padding: tokens.space.xl,
+        padding: `${narrow ? "12vh" : tokens.space.xl} clamp(${tokens.space.md}, 4vw, ${tokens.space.xl})`,
       }}
     >
-      {nav ? <div style={{ maxWidth: 880 }}>{nav}</div> : null}
-      <h1 style={{ fontSize: tokens.font.size.xl, margin: 0, marginBottom: tokens.space.lg }}>
-        {title}
-      </h1>
-      <div style={{ display: "grid", gap: tokens.space.lg, maxWidth: 880 }}>{children}</div>
+      <div style={{ maxWidth: narrow ? 400 : 880, margin: "0 auto" }}>
+        {nav}
+        <h1
+          style={{
+            fontSize: tokens.font.size.xl,
+            margin: 0,
+            marginBottom: tokens.space.lg,
+            textAlign: narrow ? "center" : undefined,
+          }}
+        >
+          {title}
+        </h1>
+        {/* minmax(0, 1fr): a row that never wraps shrinks with the column instead of widening it. */}
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: tokens.space.lg }}>{children}</div>
+      </div>
     </main>
   );
 }
@@ -30,7 +52,7 @@ export function Card({ title, children }: { title?: string; children: ReactNode 
         background: tokens.color.surface,
         border: `1px solid ${tokens.color.border}`,
         borderRadius: tokens.radius.md,
-        padding: tokens.space.lg,
+        padding: `clamp(${tokens.space.md}, 4vw, ${tokens.space.lg})`,
       }}
     >
       {title ? (
@@ -49,12 +71,14 @@ export function Button({
   type = "button",
   disabled,
   tone = "accent",
+  wide = false,
 }: {
   children: ReactNode;
   onClick?: () => void;
   type?: "button" | "submit";
   disabled?: boolean;
   tone?: "accent" | "danger" | "plain";
+  wide?: boolean;
 }) {
   const background =
     tone === "accent" ? tokens.color.accent : tone === "danger" ? tokens.color.danger : "transparent";
@@ -64,7 +88,9 @@ export function Button({
       type={type}
       onClick={onClick}
       disabled={disabled}
+      className="tadas-button"
       style={{
+        width: wide ? "100%" : undefined,
         background,
         color,
         border: tone === "plain" ? `1px solid ${tokens.color.border}` : "none",
@@ -129,6 +155,15 @@ export function Banner({ children }: { children: ReactNode }) {
   );
 }
 
+/** What went wrong, in the danger colour, announced to a screen reader. */
+export function ErrorText({ children }: { children: ReactNode }) {
+  return (
+    <span role="alert" style={{ color: tokens.color.danger, fontSize: tokens.font.size.sm }}>
+      {children}
+    </span>
+  );
+}
+
 export function Muted({ children, style }: { children: ReactNode; style?: CSSProperties }) {
   return <span style={{ color: tokens.color.muted, ...style }}>{children}</span>;
 }
@@ -172,16 +207,25 @@ export function Table({ headers, rows }: { headers: string[]; rows: ReactNode[][
   );
 }
 
-export function Pill({ children, title }: { children: ReactNode; title?: string }) {
+export function Pill({
+  children,
+  title,
+  tone = "plain",
+}: {
+  children: ReactNode;
+  title?: string;
+  tone?: "plain" | "accent";
+}) {
   return (
     <span
       title={title}
       style={{
         display: "inline-block",
+        flexShrink: 0,
         fontSize: tokens.font.size.sm,
-        color: tokens.color.muted,
-        background: tokens.color.bg,
-        border: `1px solid ${tokens.color.border}`,
+        color: tone === "accent" ? tokens.color.accent : tokens.color.muted,
+        background: tone === "accent" ? tokens.color.surface : tokens.color.bg,
+        border: `1px solid ${tone === "accent" ? tokens.color.accent : tokens.color.border}`,
         borderRadius: 999,
         padding: `0 ${tokens.space.sm}`,
         whiteSpace: "nowrap",
@@ -198,6 +242,7 @@ export function LinkButton({ children, onClick }: { children: ReactNode; onClick
       type="button"
       onClick={onClick}
       style={{
+        flexShrink: 0,
         background: "none",
         border: "none",
         padding: 0,

@@ -1,18 +1,18 @@
-import { Button, Card, LinkButton, Muted, Page, TextField } from "../../design/kit";
+import { Button, Card, ErrorText, LinkButton, Muted, Page, TextField } from "../../design/kit";
 import { tokens } from "../../design/tokens";
 import { useSignUpVm } from "./useSignUpVm";
 
 export function SignUpPage() {
   const vm = useSignUpVm();
   return (
-    <Page title="Create your Tadas account">
+    <Page title="Create your Tadas account" narrow>
       <Card>
         <form
           onSubmit={(event) => {
             event.preventDefault();
             void vm.submit();
           }}
-          style={{ display: "grid", gap: 16 }}
+          style={{ display: "grid", gap: tokens.space.md }}
         >
           <TextField label="Email" type="email" value={vm.email} onChange={vm.setEmail} autoComplete="username" />
           <TextField label="Your name" value={vm.displayName} onChange={vm.setDisplayName} autoComplete="name" />
@@ -26,20 +26,18 @@ export function SignUpPage() {
           <TextField label="Organization" value={vm.orgName} onChange={vm.setOrgName} autoComplete="organization" />
           <TextField label="Short name (in links and the command line)" value={vm.orgSlug} onChange={vm.setOrgSlug} />
           {vm.error ? (
-            <Muted>
+            <ErrorText>
               {vm.error} {vm.offerSignIn ? <LinkButton onClick={vm.goToSignIn}>Sign in</LinkButton> : null}
-            </Muted>
+            </ErrorText>
           ) : null}
-          <div style={{ display: "flex", alignItems: "center", gap: tokens.space.md }}>
-            <Button type="submit" disabled={vm.busy}>
-              Create account
-            </Button>
-            <Muted>
-              Have an account? <LinkButton onClick={vm.goToSignIn}>Sign in</LinkButton>
-            </Muted>
-          </div>
+          <Button type="submit" wide disabled={vm.busy}>
+            {vm.busy ? "Creating your account…" : "Create account"}
+          </Button>
         </form>
       </Card>
+      <Muted style={{ textAlign: "center", fontSize: tokens.font.size.sm }}>
+        Have an account? <LinkButton onClick={vm.goToSignIn}>Sign in</LinkButton>
+      </Muted>
     </Page>
   );
 }
