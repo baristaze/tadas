@@ -229,8 +229,8 @@ module "maintenance" {
     TADAS_SERVICE_NAME = "maintenance"
   })
 
-  # The serving process answers /healthz on its metrics port from its own
-  # liveness key; the probe boots nothing.
+  # The serving process answers /healthz on its metrics port from its
+  # loop's last beat, held in memory; the probe boots nothing.
   health_check_command = [
     "CMD-SHELL",
     "python -c \"import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:9464/healthz').status == 200 else 1)\"",

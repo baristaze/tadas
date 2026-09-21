@@ -21,6 +21,7 @@ from tadas.services.api.types.tenancy import (
     IssuedLoginView,
     IssuedSessionView,
     LoginRequest,
+    MembershipPageView,
     MembershipView,
     MeView,
     OrgView,
@@ -78,11 +79,11 @@ async def list_users(
     return await tenancy.get_users(ctx, cursor, limit)
 
 
-@router.get("/memberships", response_model=list[MembershipView])
+@router.get("/memberships", response_model=MembershipPageView)
 async def list_memberships(
-    ctx: Ctx, tenancy: TenancyService, limit: int = LIMIT_DEFAULT
-) -> list[MembershipView]:
-    return await tenancy.get_memberships(ctx, limit)
+    ctx: Ctx, tenancy: TenancyService, cursor: str | None = None, limit: int = LIMIT_DEFAULT
+) -> MembershipPageView:
+    return await tenancy.get_memberships(ctx, cursor, limit)
 
 
 @router.patch("/memberships/{user_id}", response_model=MembershipView)

@@ -19,6 +19,7 @@ from tadas.services.api.types.tenancy import (
     IssuedSessionView,
     LoginRequest,
     MembershipChoiceView,
+    MembershipPageView,
     MembershipView,
     MeView,
     OrgView,
@@ -32,9 +33,10 @@ from tadas.services.api.types.tenancy import (
 
 def encode_cursor(listed: str, entity_id: UUID) -> str:
     """Opaque on the wire: the list a cursor belongs to and the id its page
-    ended on. The tenancy lists are ordered by id - members ascending, keys
-    newest first - so the id is the whole mark, as a task list encodes its
-    (position, id) or (updated_at, id)."""
+    ended on. The tenancy lists are ordered by one unique id - members and
+    orgs ascending, memberships by user id ascending, keys newest first - so
+    the id is the whole mark, as a task list encodes its (position, id) or
+    (updated_at, id)."""
     return base64.urlsafe_b64encode(f"{listed}|{entity_id}".encode()).decode().rstrip("=")
 
 
@@ -106,9 +108,18 @@ class TenancyServiceImpl(TenancyServiceInterface):
             next_cursor=encode_cursor("users", page.items[-1].id) if page.has_more else None,
         )
 
-    async def get_memberships(self, ctx: OpContext, limit: int) -> list[MembershipView]:
-        memberships = await self._tenancy.get_memberships(ctx, clamp_limit(limit))
-        return [MembershipView.model_validate(m) for m in memberships]
+    async def get_memberships(
+        self, ctx: OpContext, cursor: str | None, limit: int
+    ) -> MembershipPageView:
+        limit = clamp_limit(limit)
+        after = decode_cursor("memberships", cursor) if cursor else None
+        page = await self._tenancy.get_memberships(ctx, after, limit)
+        return MembershipPageView(
+            items=[MembershipView.model_validate(m) for m in page.items],
+            next_cursor=(
+                encode_cursor("memberships", page.items[-1].user_id) if page.has_more else None
+            ),
+        )
 
     async def update_membership_role(
         self, ctx: OpContext, user_id: UUID, body: UpdateMembershipRequest

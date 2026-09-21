@@ -511,6 +511,35 @@
         "title": "MembershipChoiceView",
         "type": "object"
       },
+      "MembershipPageView": {
+        "description": "One page of the tenant's memberships, by user id; `next_cursor` as on\n`UserPageView`. A page read with the same limit as a page of users\ncovers the same members, so roles pair with members page for page.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/MembershipView"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "MembershipPageView",
+        "type": "object"
+      },
       "MembershipView": {
         "properties": {
           "id": {
@@ -651,6 +680,35 @@
           "operator_role"
         ],
         "title": "OperatorView",
+        "type": "object"
+      },
+      "OrgPageView": {
+        "description": "One page of every org, by id, for the operator plane; `next_cursor` as\non `UserPageView`.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/OrgView"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "OrgPageView",
         "type": "object"
       },
       "OrgView": {
@@ -1208,6 +1266,22 @@
         "parameters": [
           {
             "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
             "name": "limit",
             "required": false,
             "schema": {
@@ -1270,11 +1344,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/OrgView"
-                  },
-                  "title": "Response List Orgs V1 Admin Orgs Get",
-                  "type": "array"
+                  "$ref": "#/components/schemas/OrgPageView"
                 }
               }
             },
@@ -3056,6 +3126,22 @@
         "parameters": [
           {
             "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
             "name": "limit",
             "required": false,
             "schema": {
@@ -3118,11 +3204,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/MembershipView"
-                  },
-                  "title": "Response List Memberships V1 Memberships Get",
-                  "type": "array"
+                  "$ref": "#/components/schemas/MembershipPageView"
                 }
               }
             },

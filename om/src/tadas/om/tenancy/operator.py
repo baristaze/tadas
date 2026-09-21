@@ -21,7 +21,7 @@ from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor
 from tadas.om.tasks.types.page import TaskPage
 from tadas.om.tasks.types.task import TaskStatus
 from tadas.om.tenancy.types.org import Org
-from tadas.om.tenancy.types.page import UserPage
+from tadas.om.tenancy.types.page import OrgPage, UserPage
 from tadas.om.tenancy.types.size import PlatformSize
 from tadas.om.tenancy.types.user import User
 
@@ -33,8 +33,9 @@ class TenancyOperatorManagerInterface(ABC):
     # Across every tenant.
 
     @abstractmethod
-    async def get_orgs(self, admin: OperatorContext, limit: int) -> list[Org]:
-        """Every org, deleted ones included, sorted by id."""
+    async def get_orgs(self, admin: OperatorContext, after: UUID | None, limit: int) -> OrgPage:
+        """Every org, deleted ones included, by id, a page at a time: `after` is
+        the id the previous page ended on, and `has_more` says another follows."""
         ...
 
     @abstractmethod

@@ -42,10 +42,12 @@ replica told its lane.
     attempts are spent.
   - **Purge** the outbox rows done or failed past eight days, which
     outlives the database backup retention.
-- **Liveness.** The worker writes a heartbeat into the cache every ten
-  seconds by default, each beat bounded by its interval. Its
-  `/healthz`, served on the metrics port, reads that key through the
-  running process and answers 200 while it is there; the container
+- **Liveness.** The worker beats every ten seconds by default, in
+  memory, and publishes each beat to the cache as best effort, bounded
+  by its interval, so other replicas can see it. Its `/healthz`, served
+  on the metrics port, answers 200 while the last beat is within three
+  intervals; a cache outage neither fails the probe nor stops claiming,
+  because the queue and its leases live in Postgres. The container
   probe and the `health` subcommand ask that URL. `/metrics` on the
   same port is what the collector scrapes.
 - **Drain first.** On stop, the loop claims nothing new, cancels the

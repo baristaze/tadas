@@ -59,7 +59,7 @@ from tadas.om.tenancy.types.issued import (
 )
 from tadas.om.tenancy.types.membership import Membership
 from tadas.om.tenancy.types.org import Org
-from tadas.om.tenancy.types.page import ApiKeyPage, UserPage
+from tadas.om.tenancy.types.page import ApiKeyPage, MembershipPage, UserPage
 from tadas.om.tenancy.types.role import operator_permissions_of, permissions_of
 from tadas.om.tenancy.types.session import Session
 from tadas.om.tenancy.types.socket_ticket import SocketPrincipal, SocketTicket
@@ -455,9 +455,13 @@ class TenancyManagerImpl(TenancyManagerInterface):
 
     # Memberships.
 
-    async def get_memberships(self, ctx: OpContext, limit: int) -> list[Membership]:
+    async def get_memberships(
+        self, ctx: OpContext, after: UUID | None, limit: int
+    ) -> MembershipPage:
         ctx.require(Permission.READ)
-        return await self._storage.read_memberships(ctx.org_id, self._clamp(limit))
+        limit = self._clamp(limit)
+        rows = await self._storage.read_memberships(ctx.org_id, limit + 1, after)
+        return MembershipPage(items=tuple(rows[:limit]), has_more=len(rows) > limit)
 
     async def update_membership_role(self, ctx: OpContext, user_id: UUID, role: Role) -> Membership:
         ctx.require(Permission.MANAGE_MEMBERS)

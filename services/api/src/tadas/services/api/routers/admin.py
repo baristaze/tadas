@@ -23,7 +23,7 @@ from tadas.services.api.types.admin import (
 from tadas.services.api.types.common import LIMIT_DEFAULT
 from tadas.services.api.types.events import OperatorEventView
 from tadas.services.api.types.tasks import TaskPageView
-from tadas.services.api.types.tenancy import OrgView, UserPageView, UserView
+from tadas.services.api.types.tenancy import OrgPageView, OrgView, UserPageView, UserView
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -40,11 +40,14 @@ async def platform_size(admin: OperatorCtx, service: AdminService) -> PlatformSi
     return await service.size(admin)
 
 
-@router.get("/orgs", response_model=list[OrgView])
+@router.get("/orgs", response_model=OrgPageView)
 async def list_orgs(
-    admin: OperatorCtx, service: AdminService, limit: int = LIMIT_DEFAULT
-) -> list[OrgView]:
-    return await service.get_orgs(admin, limit)
+    admin: OperatorCtx,
+    service: AdminService,
+    cursor: str | None = None,
+    limit: int = LIMIT_DEFAULT,
+) -> OrgPageView:
+    return await service.get_orgs(admin, cursor, limit)
 
 
 @router.post("/orgs", response_model=OrgView, status_code=201)

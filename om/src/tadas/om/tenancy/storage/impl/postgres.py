@@ -199,13 +199,18 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
                 f"identity {user.identity_id} already has a live user in this org"
             ) from error
 
-    async def read_memberships(self, org_id: UUID, limit: int) -> list[Membership]:
+    async def read_memberships(
+        self, org_id: UUID, limit: int, after_user_id: UUID | None = None
+    ) -> list[Membership]:
+        # uq_memberships_org_id_user_id covers the live rows in this order.
         stmt = (
             select(Memberships)
             .where(Memberships.org_id == org_id, Memberships.deleted_at.is_(None))
-            .order_by(Memberships.id)
+            .order_by(Memberships.user_id)
             .limit(limit)
         )
+        if after_user_id is not None:
+            stmt = stmt.where(Memberships.user_id > after_user_id)  # is_after_in_id_order
         async with self._session_for(stmt, org_id) as session:
             result = await session.execute(stmt)
             return [to_model(row, Membership) for row in result.scalars()]

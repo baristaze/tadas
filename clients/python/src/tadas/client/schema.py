@@ -9,16 +9,16 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, RootModel
 
 
 class TtlDays(RootModel[int]):
-    root: Annotated[int, Field(ge=1, le=90, title='Ttl Days')]
+    root: Annotated[int, Field(ge=1, le=90, title="Ttl Days")]
 
 
 class AddTaskRequest(BaseModel):
     model_config = ConfigDict(
-        extra='forbid',
+        extra="forbid",
     )
-    assignee_id: Annotated[UUID | None, Field(title='Assignee Id')] = None
-    notes: Annotated[str | None, Field(title='Notes')] = ''
-    title: Annotated[str, Field(max_length=500, title='Title')]
+    assignee_id: Annotated[UUID | None, Field(title="Assignee Id")] = None
+    notes: Annotated[str | None, Field(title="Notes")] = ""
+    title: Annotated[str, Field(max_length=500, title="Title")]
 
 
 class CreateOrgRequest(BaseModel):
@@ -27,22 +27,23 @@ class CreateOrgRequest(BaseModel):
     is created with the password, or kept with its own when the email is
     known already.
     """
+
     model_config = ConfigDict(
-        extra='forbid',
+        extra="forbid",
     )
-    name: Annotated[str, Field(max_length=200, min_length=1, title='Name')]
-    owner_email: Annotated[str, Field(min_length=1, title='Owner Email')]
-    owner_name: Annotated[str, Field(max_length=200, min_length=1, title='Owner Name')]
-    owner_password: Annotated[str, Field(min_length=1, title='Owner Password')]
-    slug: Annotated[str, Field(max_length=100, min_length=1, title='Slug')]
+    name: Annotated[str, Field(max_length=200, min_length=1, title="Name")]
+    owner_email: Annotated[str, Field(min_length=1, title="Owner Email")]
+    owner_name: Annotated[str, Field(max_length=200, min_length=1, title="Owner Name")]
+    owner_password: Annotated[str, Field(min_length=1, title="Owner Password")]
+    slug: Annotated[str, Field(max_length=100, min_length=1, title="Slug")]
 
 
 class CredentialKind(StrEnum):
-    api_key = 'api_key'
-    session_token = 'session_token'
-    login = 'login'
-    socket_ticket = 'socket_ticket'
-    internal = 'internal'
+    api_key = "api_key"
+    session_token = "session_token"
+    login = "login"
+    socket_ticket = "socket_ticket"
+    internal = "internal"
 
 
 class EventView(BaseModel):
@@ -52,18 +53,19 @@ class EventView(BaseModel):
     stays inside, an event is a record and not a second read path. The rename
     from `entity`/`entity_id`/`action` stayed under `/v1` (ADR 0006).
     """
-    actor_id: Annotated[UUID, Field(title='Actor Id')]
-    kind: Annotated[str, Field(title='Kind')]
-    produced_at: Annotated[AwareDatetime, Field(title='Produced At')]
-    seq: Annotated[int, Field(title='Seq')]
-    target_id: Annotated[UUID, Field(title='Target Id')]
+
+    actor_id: Annotated[UUID, Field(title="Actor Id")]
+    kind: Annotated[str, Field(title="Kind")]
+    produced_at: Annotated[AwareDatetime, Field(title="Produced At")]
+    seq: Annotated[int, Field(title="Seq")]
+    target_id: Annotated[UUID, Field(title="Target Id")]
 
 
 class ExchangeSessionRequest(BaseModel):
     model_config = ConfigDict(
-        extra='forbid',
+        extra="forbid",
     )
-    org_id: Annotated[UUID, Field(title='Org Id')]
+    org_id: Annotated[UUID, Field(title="Org Id")]
 
 
 class IssuedTicketView(BaseModel):
@@ -71,16 +73,17 @@ class IssuedTicketView(BaseModel):
     Carries the freshly minted socket ticket in the clear, once; redeeming
     it opens the channel and re-checks the credential behind it.
     """
-    expires_in_seconds: Annotated[int, Field(title='Expires In Seconds')]
-    ticket: Annotated[str, Field(title='Ticket')]
+
+    expires_in_seconds: Annotated[int, Field(title="Expires In Seconds")]
+    ticket: Annotated[str, Field(title="Ticket")]
 
 
 class LoginRequest(BaseModel):
     model_config = ConfigDict(
-        extra='forbid',
+        extra="forbid",
     )
-    email: Annotated[str, Field(title='Email')]
-    password: Annotated[str, Field(title='Password')]
+    email: Annotated[str, Field(title="Email")]
+    password: Annotated[str, Field(title="Password")]
 
 
 class MoveTaskRequest(BaseModel):
@@ -88,11 +91,12 @@ class MoveTaskRequest(BaseModel):
     Places an open task right after `after_id`; null puts it at the top.
     `version` is the moved task's, as on `UpdateTaskRequest`.
     """
+
     model_config = ConfigDict(
-        extra='forbid',
+        extra="forbid",
     )
-    after_id: Annotated[UUID | None, Field(title='After Id')] = None
-    version: Annotated[int, Field(ge=1, title='Version')]
+    after_id: Annotated[UUID | None, Field(title="After Id")] = None
+    version: Annotated[int, Field(ge=1, title="Version")]
 
 
 class OperatorEventView(BaseModel):
@@ -101,13 +105,14 @@ class OperatorEventView(BaseModel):
     a tenant's own feed leaves out: the request that produced it and the app
     it came from, which is what a support investigation correlates on.
     """
-    actor_id: Annotated[UUID, Field(title='Actor Id')]
-    app: Annotated[str, Field(title='App')]
-    kind: Annotated[str, Field(title='Kind')]
-    produced_at: Annotated[AwareDatetime, Field(title='Produced At')]
-    request_id: Annotated[UUID, Field(title='Request Id')]
-    seq: Annotated[int, Field(title='Seq')]
-    target_id: Annotated[UUID, Field(title='Target Id')]
+
+    actor_id: Annotated[UUID, Field(title="Actor Id")]
+    app: Annotated[str, Field(title="App")]
+    kind: Annotated[str, Field(title="Kind")]
+    produced_at: Annotated[AwareDatetime, Field(title="Produced At")]
+    request_id: Annotated[UUID, Field(title="Request Id")]
+    seq: Annotated[int, Field(title="Seq")]
+    target_id: Annotated[UUID, Field(title="Target Id")]
 
 
 class OperatorRole(StrEnum):
@@ -116,8 +121,9 @@ class OperatorRole(StrEnum):
     includes read; the tenancy namespace's table says which permissions each
     role holds, as it does for `Role`.
     """
-    read = 'read'
-    write = 'write'
+
+    read = "read"
+    write = "write"
 
 
 class OperatorView(BaseModel):
@@ -126,24 +132,25 @@ class OperatorView(BaseModel):
     entry grants, so a skill checks it holds the entry it expects before it
     reads anything.
     """
-    email: Annotated[str, Field(title='Email')]
-    identity_id: Annotated[UUID, Field(title='Identity Id')]
+
+    email: Annotated[str, Field(title="Email")]
+    identity_id: Annotated[UUID, Field(title="Identity Id")]
     operator_role: OperatorRole
 
 
 class OrgView(BaseModel):
-    created_at: Annotated[AwareDatetime, Field(title='Created At')]
-    deleted_at: Annotated[AwareDatetime | None, Field(title='Deleted At')] = None
-    id: Annotated[UUID, Field(title='Id')]
-    name: Annotated[str, Field(title='Name')]
-    slug: Annotated[str, Field(title='Slug')]
+    created_at: Annotated[AwareDatetime, Field(title="Created At")]
+    deleted_at: Annotated[AwareDatetime | None, Field(title="Deleted At")] = None
+    id: Annotated[UUID, Field(title="Id")]
+    name: Annotated[str, Field(title="Name")]
+    slug: Annotated[str, Field(title="Slug")]
 
 
 class Permission(StrEnum):
-    read = 'read'
-    write = 'write'
-    manage_members = 'manage_members'
-    manage_keys = 'manage_keys'
+    read = "read"
+    write = "write"
+    manage_members = "manage_members"
+    manage_keys = "manage_keys"
 
 
 class PlatformSizeView(BaseModel):
@@ -153,75 +160,78 @@ class PlatformSizeView(BaseModel):
     events produced in the last twenty-four hours, a window that starts at
     `since` and ends at the read.
     """
-    events_last_24h: Annotated[int, Field(title='Events Last 24H')]
-    since: Annotated[AwareDatetime, Field(title='Since')]
-    tasks_last_24h: Annotated[int, Field(title='Tasks Last 24H')]
-    tenants: Annotated[int, Field(title='Tenants')]
-    users: Annotated[int, Field(title='Users')]
+
+    events_last_24h: Annotated[int, Field(title="Events Last 24H")]
+    since: Annotated[AwareDatetime, Field(title="Since")]
+    tasks_last_24h: Annotated[int, Field(title="Tasks Last 24H")]
+    tenants: Annotated[int, Field(title="Tenants")]
+    users: Annotated[int, Field(title="Users")]
 
 
 class Role(StrEnum):
-    owner = 'owner'
-    admin = 'admin'
-    member = 'member'
-    viewer = 'viewer'
-    service = 'service'
+    owner = "owner"
+    admin = "admin"
+    member = "member"
+    viewer = "viewer"
+    service = "service"
 
 
 class SessionView(BaseModel):
     """
     Only the hash of a token is ever kept, so a session view carries no secret.
     """
-    created_at: Annotated[AwareDatetime, Field(title='Created At')]
+
+    created_at: Annotated[AwareDatetime, Field(title="Created At")]
     credential_kind: CredentialKind
-    expires_at: Annotated[AwareDatetime, Field(title='Expires At')]
-    id: Annotated[UUID, Field(title='Id')]
-    revoked_at: Annotated[AwareDatetime | None, Field(title='Revoked At')]
+    expires_at: Annotated[AwareDatetime, Field(title="Expires At")]
+    id: Annotated[UUID, Field(title="Id")]
+    revoked_at: Annotated[AwareDatetime | None, Field(title="Revoked At")]
 
 
 class TaskScope(StrEnum):
     """
     Which tasks a list shows. The org is the team.
     """
-    mine = 'mine'
-    team = 'team'
+
+    mine = "mine"
+    team = "team"
 
 
 class TaskStatus(StrEnum):
-    open = 'open'
-    done = 'done'
+    open = "open"
+    done = "done"
 
 
 class TaskView(BaseModel):
-    assignee_id: Annotated[UUID | None, Field(title='Assignee Id')]
-    created_at: Annotated[AwareDatetime, Field(title='Created At')]
-    created_by: Annotated[UUID, Field(title='Created By')]
-    deleted_at: Annotated[AwareDatetime | None, Field(title='Deleted At')]
-    id: Annotated[UUID, Field(title='Id')]
-    notes: Annotated[str, Field(title='Notes')]
-    position: Annotated[float, Field(title='Position')]
+    assignee_id: Annotated[UUID | None, Field(title="Assignee Id")]
+    created_at: Annotated[AwareDatetime, Field(title="Created At")]
+    created_by: Annotated[UUID, Field(title="Created By")]
+    deleted_at: Annotated[AwareDatetime | None, Field(title="Deleted At")]
+    id: Annotated[UUID, Field(title="Id")]
+    notes: Annotated[str, Field(title="Notes")]
+    position: Annotated[float, Field(title="Position")]
     status: TaskStatus
-    title: Annotated[str, Field(title='Title')]
-    updated_at: Annotated[AwareDatetime, Field(title='Updated At')]
-    version: Annotated[int, Field(title='Version')]
+    title: Annotated[str, Field(title="Title")]
+    updated_at: Annotated[AwareDatetime, Field(title="Updated At")]
+    version: Annotated[int, Field(title="Version")]
 
 
 class UpdateMeRequest(BaseModel):
     model_config = ConfigDict(
-        extra='forbid',
+        extra="forbid",
     )
-    display_name: Annotated[str, Field(max_length=200, min_length=1, title='Display Name')]
+    display_name: Annotated[str, Field(max_length=200, min_length=1, title="Display Name")]
 
 
 class UpdateMembershipRequest(BaseModel):
     model_config = ConfigDict(
-        extra='forbid',
+        extra="forbid",
     )
     role: Role
 
 
 class Title(RootModel[str]):
-    root: Annotated[str, Field(max_length=500, title='Title')]
+    root: Annotated[str, Field(max_length=500, title="Title")]
 
 
 class UpdateTaskRequest(BaseModel):
@@ -232,38 +242,39 @@ class UpdateTaskRequest(BaseModel):
     is refused with 409 `version_mismatch` when another write landed since,
     so the caller reads again and decides over the current task.
     """
+
     model_config = ConfigDict(
-        extra='forbid',
+        extra="forbid",
     )
-    assignee_id: Annotated[UUID | None, Field(title='Assignee Id')] = None
-    notes: Annotated[str | None, Field(title='Notes')] = None
+    assignee_id: Annotated[UUID | None, Field(title="Assignee Id")] = None
+    notes: Annotated[str | None, Field(title="Notes")] = None
     status: TaskStatus | None = None
-    title: Annotated[Title | None, Field(title='Title')] = None
-    version: Annotated[int, Field(ge=1, title='Version')]
+    title: Annotated[Title | None, Field(title="Title")] = None
+    version: Annotated[int, Field(ge=1, title="Version")]
 
 
 class UserView(BaseModel):
-    created_at: Annotated[AwareDatetime, Field(title='Created At')]
-    display_name: Annotated[str, Field(title='Display Name')]
-    email: Annotated[str, Field(title='Email')]
-    id: Annotated[UUID, Field(title='Id')]
+    created_at: Annotated[AwareDatetime, Field(title="Created At")]
+    display_name: Annotated[str, Field(title="Display Name")]
+    email: Annotated[str, Field(title="Email")]
+    id: Annotated[UUID, Field(title="Id")]
 
 
 class ValidationError(BaseModel):
-    ctx: Annotated[dict[str, Any] | None, Field(title='Context')] = None
-    input: Annotated[Any | None, Field(title='Input')] = None
-    loc: Annotated[list[str | int], Field(title='Location')]
-    msg: Annotated[str, Field(title='Message')]
-    type: Annotated[str, Field(title='Error Type')]
+    ctx: Annotated[dict[str, Any] | None, Field(title="Context")] = None
+    input: Annotated[Any | None, Field(title="Input")] = None
+    loc: Annotated[list[str | int], Field(title="Location")]
+    msg: Annotated[str, Field(title="Message")]
+    type: Annotated[str, Field(title="Error Type")]
 
 
 class AddApiKeyRequest(BaseModel):
     model_config = ConfigDict(
-        extra='forbid',
+        extra="forbid",
     )
-    name: Annotated[str, Field(title='Name')]
+    name: Annotated[str, Field(title="Name")]
     role: Role
-    ttl_days: Annotated[TtlDays | None, Field(title='Ttl Days')] = None
+    ttl_days: Annotated[TtlDays | None, Field(title="Ttl Days")] = None
 
 
 class AddMemberRequest(BaseModel):
@@ -272,27 +283,28 @@ class AddMemberRequest(BaseModel):
     service role are refused, since the one owner is the one the create
     minted.
     """
+
     model_config = ConfigDict(
-        extra='forbid',
+        extra="forbid",
     )
-    display_name: Annotated[str, Field(max_length=200, min_length=1, title='Display Name')]
-    email: Annotated[str, Field(min_length=1, title='Email')]
-    password: Annotated[str, Field(min_length=1, title='Password')]
+    display_name: Annotated[str, Field(max_length=200, min_length=1, title="Display Name")]
+    email: Annotated[str, Field(min_length=1, title="Email")]
+    password: Annotated[str, Field(min_length=1, title="Password")]
     role: Role
 
 
 class ApiKeyView(BaseModel):
-    created_at: Annotated[AwareDatetime, Field(title='Created At')]
-    deleted_at: Annotated[AwareDatetime | None, Field(title='Deleted At')]
-    expires_at: Annotated[AwareDatetime, Field(title='Expires At')]
-    id: Annotated[UUID, Field(title='Id')]
-    name: Annotated[str, Field(title='Name')]
+    created_at: Annotated[AwareDatetime, Field(title="Created At")]
+    deleted_at: Annotated[AwareDatetime | None, Field(title="Deleted At")]
+    expires_at: Annotated[AwareDatetime, Field(title="Expires At")]
+    id: Annotated[UUID, Field(title="Id")]
+    name: Annotated[str, Field(title="Name")]
     role: Role
-    user_id: Annotated[UUID, Field(title='User Id')]
+    user_id: Annotated[UUID, Field(title="User Id")]
 
 
 class HTTPValidationError(BaseModel):
-    detail: Annotated[list[ValidationError] | None, Field(title='Detail')] = None
+    detail: Annotated[list[ValidationError] | None, Field(title="Detail")] = None
 
 
 class IdentityView(BaseModel):
@@ -301,9 +313,10 @@ class IdentityView(BaseModel):
     `operator_role` is the allowlist entry: null for a person who is not an
     operator.
     """
-    created_at: Annotated[AwareDatetime, Field(title='Created At')]
-    email: Annotated[str, Field(title='Email')]
-    id: Annotated[UUID, Field(title='Id')]
+
+    created_at: Annotated[AwareDatetime, Field(title="Created At")]
+    email: Annotated[str, Field(title="Email")]
+    id: Annotated[UUID, Field(title="Id")]
     operator_role: OperatorRole | None
 
 
@@ -314,22 +327,23 @@ class IssuedApiKeyView(BaseModel):
     Idempotency-Key answers with `key` null and `Idempotent-Replayed: true`. A
     client that lost the first response revokes the key and issues another.
     """
+
     api_key: ApiKeyView
-    key: Annotated[str | None, Field(title='Key')]
+    key: Annotated[str | None, Field(title="Key")]
 
 
 class IssuedSessionView(BaseModel):
-    expires_at: Annotated[AwareDatetime, Field(title='Expires At')]
+    expires_at: Annotated[AwareDatetime, Field(title="Expires At")]
     org: OrgView
     role: Role
-    token: Annotated[str, Field(title='Token')]
+    token: Annotated[str, Field(title="Token")]
     user: UserView
 
 
 class MeView(BaseModel):
-    app: Annotated[str, Field(title='App')]
+    app: Annotated[str, Field(title="App")]
     org: OrgView
-    permissions: Annotated[list[Permission], Field(title='Permissions')]
+    permissions: Annotated[list[Permission], Field(title="Permissions")]
     role: Role
     user: UserView
 
@@ -341,10 +355,20 @@ class MembershipChoiceView(BaseModel):
 
 
 class MembershipView(BaseModel):
-    id: Annotated[UUID, Field(title='Id')]
+    id: Annotated[UUID, Field(title="Id")]
     role: Role
-    teams: Annotated[list[UUID], Field(title='Teams')]
-    user_id: Annotated[UUID, Field(title='User Id')]
+    teams: Annotated[list[UUID], Field(title="Teams")]
+    user_id: Annotated[UUID, Field(title="User Id")]
+
+
+class OrgPageView(BaseModel):
+    """
+    One page of every org, by id, for the operator plane; `next_cursor` as
+    on `UserPageView`.
+    """
+
+    items: Annotated[list[OrgView], Field(title="Items")]
+    next_cursor: Annotated[str | None, Field(title="Next Cursor")]
 
 
 class TaskPageView(BaseModel):
@@ -353,8 +377,9 @@ class TaskPageView(BaseModel):
     list, open or done, and is null on the last page. The page size is
     clamped, and a list the clamp cut still says a page follows.
     """
-    items: Annotated[list[TaskView], Field(title='Items')]
-    next_cursor: Annotated[str | None, Field(title='Next Cursor')]
+
+    items: Annotated[list[TaskView], Field(title="Items")]
+    next_cursor: Annotated[str | None, Field(title="Next Cursor")]
 
 
 class UserPageView(BaseModel):
@@ -363,8 +388,9 @@ class UserPageView(BaseModel):
     and is null on the last one, so a client reads every member instead of
     whatever a fixed limit happened to cover.
     """
-    items: Annotated[list[UserView], Field(title='Items')]
-    next_cursor: Annotated[str | None, Field(title='Next Cursor')]
+
+    items: Annotated[list[UserView], Field(title="Items")]
+    next_cursor: Annotated[str | None, Field(title="Next Cursor")]
 
 
 class ApiKeyPageView(BaseModel):
@@ -372,14 +398,27 @@ class ApiKeyPageView(BaseModel):
     One page of the api key list, newest first; `next_cursor` as on
     `UserPageView`.
     """
-    items: Annotated[list[ApiKeyView], Field(title='Items')]
-    next_cursor: Annotated[str | None, Field(title='Next Cursor')]
+
+    items: Annotated[list[ApiKeyView], Field(title="Items")]
+    next_cursor: Annotated[str | None, Field(title="Next Cursor")]
 
 
 class IssuedLoginView(BaseModel):
     """
     Carries the freshly minted login credential in the clear, once.
     """
-    expires_at: Annotated[AwareDatetime, Field(title='Expires At')]
-    memberships: Annotated[list[MembershipChoiceView], Field(title='Memberships')]
-    token: Annotated[str, Field(title='Token')]
+
+    expires_at: Annotated[AwareDatetime, Field(title="Expires At")]
+    memberships: Annotated[list[MembershipChoiceView], Field(title="Memberships")]
+    token: Annotated[str, Field(title="Token")]
+
+
+class MembershipPageView(BaseModel):
+    """
+    One page of the tenant's memberships, by user id; `next_cursor` as on
+    `UserPageView`. A page read with the same limit as a page of users
+    covers the same members, so roles pair with members page for page.
+    """
+
+    items: Annotated[list[MembershipView], Field(title="Items")]
+    next_cursor: Annotated[str | None, Field(title="Next Cursor")]

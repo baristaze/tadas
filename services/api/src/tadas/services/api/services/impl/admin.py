@@ -17,7 +17,7 @@ from tadas.services.api.types.admin import (
 from tadas.services.api.types.common import clamp_limit
 from tadas.services.api.types.events import OperatorEventView
 from tadas.services.api.types.tasks import TaskPageView, TaskView
-from tadas.services.api.types.tenancy import OrgView, UserPageView, UserView
+from tadas.services.api.types.tenancy import OrgPageView, OrgView, UserPageView, UserView
 
 
 class AdminServiceImpl(AdminServiceInterface):
@@ -28,9 +28,14 @@ class AdminServiceImpl(AdminServiceInterface):
     def __init__(self, tenancy: TenancyOperatorManagerInterface) -> None:
         self._tenancy = tenancy
 
-    async def get_orgs(self, admin: OperatorContext, limit: int) -> list[OrgView]:
-        orgs = await self._tenancy.get_orgs(admin, clamp_limit(limit))
-        return [OrgView.model_validate(o) for o in orgs]
+    async def get_orgs(self, admin: OperatorContext, cursor: str | None, limit: int) -> OrgPageView:
+        limit = clamp_limit(limit)
+        after = decode_cursor("orgs", cursor) if cursor else None
+        page = await self._tenancy.get_orgs(admin, after, limit)
+        return OrgPageView(
+            items=[OrgView.model_validate(o) for o in page.items],
+            next_cursor=encode_cursor("orgs", page.items[-1].id) if page.has_more else None,
+        )
 
     async def me(self, admin: OperatorContext) -> OperatorView:
         role = OperatorRole.WRITE if admin.has(OperatorPermission.WRITE) else OperatorRole.READ

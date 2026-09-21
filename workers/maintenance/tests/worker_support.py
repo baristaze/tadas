@@ -78,7 +78,6 @@ def fast_options(**overrides: object) -> LoopOptions:
         "capacity": 2,
         "lease": timedelta(seconds=0.6),
         "heartbeat_interval": timedelta(seconds=0.05),
-        "heartbeat_failure_limit": 2,
         "sweep_interval": timedelta(seconds=0.1),
         "poll_interval": timedelta(seconds=0.05),
     }

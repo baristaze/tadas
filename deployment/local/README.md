@@ -39,9 +39,10 @@ The data services' ports are fixed, since the `TADAS_*_URL` knobs name them.
 | GlitchTip (devx) | http://localhost:58000 | `glitchtip:8000` | `admin@example.test` / `tadas-local` |
 | maintenance metrics | http://127.0.0.1:9464/metrics (host process only) | `maintenance:9464` | |
 
-`maintenance` publishes no port; its healthcheck reads its liveness key in
-Valkey, and Prometheus scrapes its `/metrics` inside the network. The
-`otel-collector` service publishes no port either and listens on nothing.
+`maintenance` publishes no port; its healthcheck asks its own `/healthz`,
+which answers from the loop's last beat in memory, and Prometheus scrapes
+its `/metrics` inside the network. The `otel-collector` service publishes
+no port either and listens on nothing.
 
 Postgres has two logins. `tadas` is the application's: every process, every
 migration and every test connects as it, and the init script in

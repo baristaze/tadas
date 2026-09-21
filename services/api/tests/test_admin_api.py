@@ -124,7 +124,9 @@ async def test_every_route_is_held_to_its_permission(
         expected = 201 if method == "POST" else 200
         assert as_writer.status_code == expected, f"{method} {path}: {as_writer.text}"
     # The refused writes landed nothing: the org is only now deleted, by the writer.
-    orgs = {o["slug"]: o for o in (await client.get("/v1/admin/orgs", headers=reader)).json()}
+    orgs = {
+        o["slug"]: o for o in (await client.get("/v1/admin/orgs", headers=reader)).json()["items"]
+    }
     assert orgs["acme"]["deleted_at"] is not None and orgs["other"]["deleted_at"] is None
 
 
@@ -188,6 +190,44 @@ async def test_an_operator_reads_one_tenant_and_leaves_a_trail(
     # Seven reads landed; the cursor of the other list was refused before any.
     assert len(trail) == 7 and all(org_id in line for line in trail)
     assert not any("example.test" in line or "first" in line for line in trail)
+
+
+async def test_the_org_list_pages_past_one_page(
+    client: httpx.AsyncClient, reader: dict[str, str], writer: dict[str, str]
+) -> None:
+    """Every tenant is reached by following `next_cursor`, whatever the page
+    size, so the plane sees past the clamp; a tenant's cursor is refused."""
+    for index in range(3):
+        created = await client.post(
+            "/v1/admin/orgs",
+            headers={**writer, "Idempotency-Key": f"org-page-{index}"},
+            json={
+                "name": f"Org {index}",
+                "slug": f"org-{index}",
+                "owner_email": f"owner-{index}@example.test",
+                "owner_password": PASSWORD,
+                "owner_name": "Owner",
+            },
+        )
+        assert created.status_code == 201, created.text
+    every = (await client.get("/v1/admin/orgs", headers=reader, params={"limit": 200})).json()
+    assert every["next_cursor"] is None
+
+    listed: list[str] = []
+    cursor: str | None = None
+    while True:
+        params = {"limit": 2} | ({"cursor": cursor} if cursor else {})
+        page = await client.get("/v1/admin/orgs", headers=reader, params=params)
+        assert page.status_code == 200, page.text
+        listed += [o["id"] for o in page.json()["items"]]
+        cursor = page.json()["next_cursor"]
+        if cursor is None:
+            break
+    assert listed == [o["id"] for o in every["items"]]
+    assert len(listed) >= 5
+
+    made_up = await client.get("/v1/admin/orgs", headers=reader, params={"cursor": "not-a-cursor"})
+    assert made_up.status_code == 422, made_up.text
 
 
 async def test_the_size_is_what_the_first_responder_reads(

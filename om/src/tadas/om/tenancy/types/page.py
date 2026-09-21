@@ -5,6 +5,8 @@ a task list answers."""
 
 from tadas.om.base import Platform
 from tadas.om.tenancy.types.api_key import ApiKey
+from tadas.om.tenancy.types.membership import Membership
+from tadas.om.tenancy.types.org import Org
 from tadas.om.tenancy.types.user import User
 
 
@@ -15,4 +17,14 @@ class UserPage(Platform):
 
 class ApiKeyPage(Platform):
     items: tuple[ApiKey, ...]
+    has_more: bool
+
+
+class MembershipPage(Platform):
+    items: tuple[Membership, ...]
+    has_more: bool
+
+
+class OrgPage(Platform):
+    items: tuple[Org, ...]
     has_more: bool

@@ -35,8 +35,10 @@ class ScopeKind(str, Enum):
 
     BOTH = "both"
     """Rows belong to a tenant and to a person in it. The policy is on
-    `org_id`, narrowed on the declared person column when the transaction
-    names a person and not narrowed when it does not."""
+    `org_id`, narrowed when the transaction names the person and not narrowed
+    when it does not: on the declared person column against `app.user_id`,
+    or, for a row whose person is the identity behind it, on the declared
+    identity column against `app.identity_id`."""
 
 
 @dataclass(frozen=True)
@@ -46,14 +48,28 @@ class TableScope:
     identity_column: str | None = None
 
     def __post_init__(self) -> None:
-        if self.kind is ScopeKind.BOTH and self.person_column is None:
-            raise ValueError("a both-scoped table declares its person column")
-        if self.kind is ScopeKind.IDENTITY and self.identity_column is None:
-            raise ValueError("an identity-scoped table declares its identity column")
+        if self.kind is ScopeKind.BOTH and (self.person_column is None) == (
+            self.identity_column is None
+        ):
+            raise ValueError("a both-scoped table declares its person or its identity column")
+        if self.kind is ScopeKind.IDENTITY and (
+            self.identity_column is None or self.person_column is not None
+        ):
+            raise ValueError("an identity-scoped table declares its identity column alone")
         if self.kind in (ScopeKind.SYSTEM, ScopeKind.ORG) and (
             self.person_column or self.identity_column
         ):
             raise ValueError(f"a {self.kind.value}-scoped table declares no column")
+
+    @property
+    def narrowing(self) -> tuple[str, str] | None:
+        """The column the policy narrows on and the setting it compares with,
+        or None for a table no person narrows."""
+        if self.person_column is not None:
+            return self.person_column, USER_SETTING
+        if self.identity_column is not None:
+            return self.identity_column, IDENTITY_SETTING
+        return None
 
 
 TABLE_SCOPES: dict[str, TableScope] = {
@@ -67,8 +83,9 @@ TABLE_SCOPES: dict[str, TableScope] = {
     "events": TableScope(ScopeKind.ORG),
     "event_cursors": TableScope(ScopeKind.ORG),
     # A tenant's rows that also belong to one person in it. A user's person
-    # is the identity behind it; every other row here names the user.
-    "users": TableScope(ScopeKind.BOTH, person_column="identity_id"),
+    # is the identity behind it, so it narrows on `app.identity_id`; every
+    # other row here names the user and narrows on `app.user_id`.
+    "users": TableScope(ScopeKind.BOTH, identity_column="identity_id"),
     "memberships": TableScope(ScopeKind.BOTH, person_column="user_id"),
     "sessions": TableScope(ScopeKind.BOTH, person_column="user_id"),
     "api_keys": TableScope(ScopeKind.BOTH, person_column="user_id"),

@@ -191,8 +191,13 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
                 f"identity {user.identity_id} already has a live user in this org",
             )
 
-    async def read_memberships(self, org_id: UUID, limit: int) -> list[Membership]:
-        return [m for m in self._rows(self._memberships, org_id) if m.deleted_at is None][:limit]
+    async def read_memberships(
+        self, org_id: UUID, limit: int, after_user_id: UUID | None = None
+    ) -> list[Membership]:
+        live = [m for m in self._rows(self._memberships, org_id) if m.deleted_at is None]
+        if after_user_id is not None:
+            live = [m for m in live if is_after_in_id_order(m.user_id, after_user_id)]
+        return sorted(live, key=lambda m: m.user_id)[:limit]
 
     async def read_membership_for_user(self, org_id: UUID, user_id: UUID) -> Membership | None:
         return next(

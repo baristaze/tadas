@@ -18,6 +18,7 @@ from tadas.services.api.types.tenancy import (
     IssuedLoginView,
     IssuedSessionView,
     LoginRequest,
+    MembershipPageView,
     MembershipView,
     MeView,
     OrgView,
@@ -64,7 +65,11 @@ class TenancyServiceInterface(ABC):
         ...
 
     @abstractmethod
-    async def get_memberships(self, ctx: OpContext, limit: int) -> list[MembershipView]: ...
+    async def get_memberships(
+        self, ctx: OpContext, cursor: str | None, limit: int
+    ) -> MembershipPageView:
+        """One page of the tenant's memberships; `cursor` as on `get_users`."""
+        ...
 
     @abstractmethod
     async def update_membership_role(

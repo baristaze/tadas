@@ -693,17 +693,45 @@ async def test_a_lost_lease_is_never_written_over(tmp_path: Path) -> None:
     await task
 
 
-async def test_heartbeat_failure_pauses_claiming(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "liveness",
+    [MissingLiveness(), StallingLiveness(), RaisingLiveness()],
+    ids=["missing", "stalling", "raising"],
+)
+async def test_a_cache_outage_neither_stops_claiming_nor_fails_liveness(
+    tmp_path: Path, liveness: CacheInterface
+) -> None:
+    # The queue and its leases live in the database, so a liveness store that
+    # drops writes, hangs, or refuses connections leaves the worker unpublished
+    # and nothing else: it claims, and its probe stays healthy. Each beat is
+    # bounded by its interval, so the stop still returns although marking
+    # offline hangs too.
     container = build_container(tmp_path)
     ctx = await sign_in(container)
     handler = RecordingHandler()
-    loop, task = start_loop(container, handler, fast_options(), liveness=MissingLiveness())
-    await until(lambda: loop.paused)
+    options = fast_options()
+    loop, task = start_loop(container, handler, options, liveness=liveness)
     await container.managers.work.enqueue(ctx, make_item(ctx))
-    await asyncio.sleep(0.2)
-    assert handler.handled == [], "a worker whose heartbeats fail claims nothing new"
+    await until(lambda: len(handler.handled) == 1)
+    await asyncio.sleep((options.heartbeat_interval * 4).total_seconds())
+    assert loop.alive(), "the probe follows the loop's own beat, not the cache"
+    assert loop.online is False, "nothing was published"
     loop.stop()
-    await task
+    await asyncio.wait_for(task, 2.0)
+    await asyncio.wait_for(loop.wait_drained(), 1.0)
+
+
+async def test_liveness_fails_once_the_heartbeat_stops(tmp_path: Path) -> None:
+    container = build_container(tmp_path)
+    await sign_in(container)
+    options = fast_options()
+    loop, task = start_loop(container, RecordingHandler(), options)
+    await until(loop.alive)
+    heartbeat = next(t for t in asyncio.all_tasks() if t.get_name() == "heartbeat")
+    heartbeat.cancel()
+    await until(lambda: not loop.alive())
+    loop.stop()
+    await asyncio.wait_for(task, 2.0)
 
 
 async def test_stop_drains_first_and_goes_offline_last(tmp_path: Path) -> None:
@@ -756,36 +784,6 @@ async def test_stop_goes_offline_even_when_a_release_fails(tmp_path: Path) -> No
     assert loop.online is False
     names = {t.get_name() for t in asyncio.all_tasks()}
     assert not names & {"heartbeat", "sweep"}, "the timers were cancelled"
-
-
-async def test_a_stalled_liveness_store_counts_as_a_failed_heartbeat(tmp_path: Path) -> None:
-    # Each heartbeat is bounded by its interval, so a store that never answers
-    # pauses claiming the way one whose writes never stick does, and the stop
-    # still returns although marking offline hangs too.
-    container = build_container(tmp_path)
-    ctx = await sign_in(container)
-    handler = RecordingHandler()
-    loop, task = start_loop(container, handler, fast_options(), liveness=StallingLiveness())
-    await until(lambda: loop.paused)
-    await container.managers.work.enqueue(ctx, make_item(ctx))
-    await asyncio.sleep(0.2)
-    assert handler.handled == [], "a worker whose heartbeats stall claims nothing new"
-    loop.stop()
-    await asyncio.wait_for(task, 2.0)
-    await asyncio.wait_for(loop.wait_drained(), 1.0)
-
-
-async def test_a_raising_liveness_store_counts_as_a_failed_heartbeat(tmp_path: Path) -> None:
-    container = build_container(tmp_path)
-    await sign_in(container)
-    loop, task = start_loop(
-        container, RecordingHandler(), fast_options(), liveness=RaisingLiveness()
-    )
-    await until(lambda: loop.paused)
-    loop.stop()
-    await asyncio.wait_for(task, 2.0)
-    await asyncio.wait_for(loop.wait_drained(), 1.0)
-    assert loop.online is False
 
 
 def test_outbox_retention_outlives_the_database_backup_retention() -> None:

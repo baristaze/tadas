@@ -2,8 +2,8 @@
 on the lane while a slot is free, run each item as a task that names the
 request that caused the work, raises a span linked to that request's trace,
 renews its lease and cancels itself when the lease is lost or renewal keeps
-failing, heartbeat liveness,
-sweep on a timer (stale leases and every namespace's purge per tenant, then
+failing, beat liveness in memory and publish it to the cache as best
+effort, sweep on a timer (stale leases and every namespace's purge per tenant, then
 the outbox and done outbox rows), and drain first on stop."""
 
 import asyncio
@@ -50,7 +50,6 @@ class LoopOptions(Platform):
     capacity: int = 4
     lease: timedelta = timedelta(seconds=60)
     heartbeat_interval: timedelta = timedelta(seconds=10)
-    heartbeat_failure_limit: int = 3
     sweep_interval: timedelta = timedelta(seconds=30)
     poll_interval: timedelta = timedelta(seconds=5)
     outbox_batch: int = 100  # pending rows relayed per sweep
@@ -85,8 +84,7 @@ class WorkerLoop:
         self._stopping = asyncio.Event()
         self._drained = asyncio.Event()
         self._running: dict[asyncio.Task[None], tuple[OpContext, WorkItem]] = {}
-        self._heartbeat_failures = 0
-        self.paused = False
+        self._last_beat: float | None = None
         self.online = False
         self.sweeps = 0
 
@@ -147,7 +145,7 @@ class WorkerLoop:
         # leave a runnable item waiting out the whole poll interval.
         while not self._stopping.is_set():
             self._wake.clear()
-            if not self.paused and len(self._running) < self._options.capacity:
+            if len(self._running) < self._options.capacity:
                 claimed = await self._try_claim()
                 if claimed:
                     continue
@@ -317,14 +315,28 @@ class WorkerLoop:
 
     # Liveness.
 
+    def alive(self) -> bool:
+        """True while the heartbeat has beaten within three intervals. The beat is
+        the loop's own, held in memory: it stops when the event loop blocks or
+        the heartbeat task dies, and a cache that is down does not stop it. The
+        queue and its leases live in the database, so a cache outage is no
+        reason to stop claiming or to be restarted."""
+        if self._last_beat is None:
+            return False
+        since = asyncio.get_running_loop().time() - self._last_beat
+        return since < (self._options.heartbeat_interval * 3).total_seconds()
+
     async def _heartbeat_forever(self) -> None:
         while True:
             await self._heartbeat_once()
             await asyncio.sleep(self._options.heartbeat_interval.total_seconds())
 
     async def _heartbeat_once(self) -> None:
-        """One beat, bounded by the interval: a store that stalls or raises counts
-        as a beat that did not stick, the same as one whose reads come back empty."""
+        """One beat: recorded in memory first, then published to the cache as best
+        effort, bounded by the interval, so other replicas and operators can see
+        the worker. A store that stalls, raises, or reads back empty leaves the
+        worker unpublished and nothing else."""
+        self._last_beat = asyncio.get_running_loop().time()
         key = f"worker:{self._options.worker_id}"
         ttl = self._options.heartbeat_interval * 3
         try:
@@ -332,22 +344,13 @@ class WorkerLoop:
                 await self._liveness.put(EMPTY_UUID, key, b"online", ttl)
                 stored = await self._liveness.get(EMPTY_UUID, key) is not None
         except Exception as error:
-            log.warning("heartbeat failed: %r", error)
+            log.warning("heartbeat not published: %r", error)
             stored = False
-        if not stored:
-            self._heartbeat_failures += 1
-            if (
-                self._heartbeat_failures >= self._options.heartbeat_failure_limit
-                and not self.paused
-            ):
-                log.error("heartbeat failed %d times; claiming paused", self._heartbeat_failures)
-                self.paused = True
-            return
-        self.online = True
-        if self.paused:
-            log.info("heartbeat recovered; claiming resumed")
-        self._heartbeat_failures = 0
-        self.paused = False
+        if stored and not self.online:
+            log.info("heartbeat published")
+        elif not stored and self.online:
+            log.warning("heartbeat no longer published; claiming continues")
+        self.online = stored
 
     async def _mark_offline(self) -> None:
         """Bounded like a beat: a key that cannot be removed expires on its own."""

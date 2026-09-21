@@ -18,7 +18,6 @@ from tadas.infra.observability import (
     name_process,
 )
 from tadas.infra.trust import install_trust_store
-from tadas.om.base import EMPTY_UUID
 from tadas.om.work.types.work_item import WorkKind
 from tadas.workers.maintenance.container import WorkerContainer
 from tadas.workers.maintenance.handler import NoopHandlerImpl
@@ -36,7 +35,6 @@ def loop_options(settings: MaintenanceSettings, lane: str | None = None) -> Loop
         capacity=settings.worker_capacity,
         lease=timedelta(seconds=settings.worker_lease_seconds),
         heartbeat_interval=timedelta(seconds=settings.worker_heartbeat_seconds),
-        heartbeat_failure_limit=settings.worker_heartbeat_failure_limit,
         sweep_interval=timedelta(seconds=settings.worker_sweep_seconds),
         poll_interval=timedelta(seconds=settings.worker_poll_seconds),
     )
@@ -82,12 +80,12 @@ async def serve(lane: str | None) -> int:
     for sig in (signal.SIGTERM, signal.SIGINT):
         running.add_signal_handler(sig, loop.stop)
     # /metrics for Prometheus locally and the collector sidecar in the cloud,
-    # /healthz for the container probe: the liveness key the loop heartbeats
-    # into, read through the running process's own cache.
+    # /healthz for the container probe: the loop's own last beat, held in
+    # memory, so a cache outage never restarts a worker.
     http = WorkerHttpServer(
         settings.metrics_host,
         settings.metrics_port,
-        liveness_probe(container, settings.worker_id),
+        liveness_probe(loop),
         running,
     )
     http.start()
@@ -100,11 +98,9 @@ async def serve(lane: str | None) -> int:
     return 0
 
 
-def liveness_probe(container: WorkerContainer, worker_id: str) -> Probe:
-    cache = container.infra.get_cache(CacheScope.WORKER_LIVENESS)
-
+def liveness_probe(loop: WorkerLoop) -> Probe:
     async def alive() -> bool:
-        return await cache.get(EMPTY_UUID, f"worker:{worker_id}") is not None
+        return loop.alive()
 
     return alive
 
