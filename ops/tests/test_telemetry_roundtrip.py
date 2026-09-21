@@ -36,6 +36,12 @@ pytestmark = pytest.mark.telemetry
 
 REPO = Path(__file__).resolve().parents[2]
 PORT = 8000
+# Prometheus scrapes `host.docker.internal:8000` from inside its container.
+# Docker Desktop forwards that name to the host's loopback, but on a Linux
+# host it is the bridge gateway's address, which a process bound to
+# 127.0.0.1 never answers: the target stays down and no counter is scraped.
+# So on Linux the scraped API binds every interface, as a container does.
+SCRAPED_HOST = "0.0.0.0" if sys.platform == "linux" else "127.0.0.1"
 OTLP_ENDPOINT = "http://127.0.0.1:54318"
 BOOT_SECONDS = 30
 SCRAPE_WAIT_SECONDS = 45
@@ -148,6 +154,7 @@ def api(stores: None, tmp_path_factory: pytest.TempPathFactory) -> Iterator[Serv
         tmp_path_factory.mktemp("api") / "api.log",
         {
             "TADAS_ENVIRONMENT": "local",
+            "TADAS_HOST": SCRAPED_HOST,
             "TADAS_OTEL_ENDPOINT": OTLP_ENDPOINT,
             "TADAS_SENTRY_DSN": knobs["TADAS_SENTRY_DSN"],
             "TADAS_LOG_JSON": "true",
