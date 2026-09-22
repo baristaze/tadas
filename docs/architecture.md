@@ -316,7 +316,7 @@ context on keeps the stage the callee needs.
   pending lease, a marker no retry came back for.
 - `outbox`: the transactional outbox. A manager that writes a core row
   hands the storage the `OutboxRow`s that announce it (`org_id`, `kind`,
-  `target_id`, the record's snapshot as `payload`, the actor, the
+  `target_id`, a `payload` of ids only (a task's is empty), the actor, the
   request, and that request's `traceparent`, read off the tracer, since
   the context carries the trace id and a span links to the header) as one tuple, and the storage base inserts them all in one
   commit (`_insert(..., outbox_rows)` for a create, which

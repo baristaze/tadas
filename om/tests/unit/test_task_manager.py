@@ -26,7 +26,7 @@ from tadas.om.opcontext import (
 )
 from tadas.om.outbox.impl.relay import OutboxOptions, OutboxRelayImpl
 from tadas.om.outbox.storage.impl.memory import OutboxStorageMemoryImpl
-from tadas.om.outbox.types.row import OutboxRow, outbox_row, snapshot
+from tadas.om.outbox.types.row import OutboxRow, outbox_row
 from tadas.om.tasks.impl.manager import TasksManagerImpl, TasksOptions
 from tadas.om.tasks.storage.impl.memory import TasksStorageMemoryImpl
 from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor, TaskFilter
@@ -128,7 +128,7 @@ def manager(
 
 def _row(ctx: OpContext, task: Task) -> OutboxRow:
     """One outbox row, for the writes a test makes straight to storage."""
-    return outbox_row(ctx, "tasks.task.updated", task.id, snapshot(task))
+    return outbox_row(ctx, "tasks.task.updated", task.id, {})
 
 
 def own(ctx: OpContext, scope: TaskScope) -> TaskFilter:
@@ -193,11 +193,12 @@ async def test_create_update_delete_record_and_push(
         ("tasks.task.updated", created.id, 2),
         ("tasks.task.deleted", created.id, 3),
     ]
-    # Every push is a record: the event carries the row's id, the snapshot, and
-    # the caller's provenance; the outbox row behind it is done.
+    # Every push is a record: the event carries the row's id and the caller's
+    # provenance, and ids only, never a field's value; the outbox row behind
+    # it is done.
     recorded = await events.get_events(ctx, after_seq=0, limit=10)
     assert [e.id for e in recorded] == [p.idempotency_key for p in pushes]
-    assert recorded[0].payload["title"] == created.title
+    assert [e.payload for e in recorded] == [{}, {}, {}]
     assert recorded[0].actor_id == ctx.user_id and recorded[0].request_id == ctx.request_id
     assert recorded[0].app == "portal"
     assert await claim_all(outbox) == []
@@ -598,8 +599,9 @@ async def test_a_gap_closed_at_float_precision_renumbers_the_open_list(
     assert 40 < moves < 120, "a gap of one closes after fifty-odd halvings"
     # The renumbering is a write per task whose position changed, each announced
     # and recorded like any update, with nothing left pending in the outbox.
+    # Every one of the three moved to a whole number, so it is the last three.
     recorded = await events.get_events(ctx, after_seq=0, limit=1000)
-    renumbering = [e for e in recorded if e.payload["position"] in (0.0, 1.0, 2.0)][-3:]
+    renumbering = recorded[-3:]
     assert {e.target_id for e in renumbering} == {a.id, b.id, c.id}
     assert all(e.kind == "tasks.task.updated" for e in renumbering)
     assert await claim_all(outbox) == []

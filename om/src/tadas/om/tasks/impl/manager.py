@@ -5,7 +5,7 @@ from tadas.om.base import PROVENANCE_FIELDS, Platform, utcnow
 from tadas.om.exceptions import NotFound, PreconditionFailed, TenantMismatch, ValidationFailed
 from tadas.om.opcontext import OpContext, Permission
 from tadas.om.outbox import OutboxRelayInterface
-from tadas.om.outbox.types.row import OutboxRow, outbox_row, snapshot
+from tadas.om.outbox.types.row import OutboxRow, outbox_row
 from tadas.om.tasks.manager import TasksManagerInterface
 from tadas.om.tasks.rules import is_between, position_after, renumbered, top_position
 from tadas.om.tasks.storage import TasksStorageInterface
@@ -83,7 +83,7 @@ class TasksManagerImpl(TasksManagerInterface):
                 "version": 1,
             }
         )
-        rows = (outbox_row(ctx, "tasks.task.created", created.id, snapshot(created)),)
+        rows = (outbox_row(ctx, "tasks.task.created", created.id, {}),)  # ids only
         if not await self._storage.create_task(ctx.org_id, created, rows):
             # Ids are minted above storage, so the only way to present one twice
             # is a retry, and a retry must not create twice: the insert reported
@@ -231,7 +231,7 @@ class TasksManagerImpl(TasksManagerInterface):
                     "version": current.version + 1,
                 }
             )
-            rows = (outbox_row(ctx, "tasks.task.updated", placed.id, snapshot(placed)),)
+            rows = (outbox_row(ctx, "tasks.task.updated", placed.id, {}),)
             updates.append((placed, current.version, rows))
             if current.id == task.id:
                 moved = placed
@@ -276,8 +276,10 @@ class TasksManagerImpl(TasksManagerInterface):
         conditioned on the version the caller read; the relay then appends the
         event and pushes at once, and the sweep catches what a crash left
         behind. Every push is also a record, so a client that missed the push
-        replays by seq."""
-        rows = (outbox_row(ctx, f"tasks.task.{action}", task.id, snapshot(task)),)
+        replays by seq. A row carries ids and never a field's value, so the
+        relay and the stream hold nothing a person's erasure has to find; a
+        client that hears of a change reads the task."""
+        rows = (outbox_row(ctx, f"tasks.task.{action}", task.id, {}),)
         await self._storage.update_task(ctx.org_id, task, expected_version, rows)
         for row in rows:
             await self._relay.relay(ctx.org_id, row)
