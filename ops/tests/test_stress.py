@@ -21,6 +21,18 @@ def test_the_smoke_scenario_parses() -> None:
     assert scenario.weights == {"full": 1.0}
 
 
+def test_every_scenario_a_run_can_name_parses() -> None:
+    """The files under ops/stress, not the fixture beside these tests: a
+    scenario that does not parse is found here and not on the environment."""
+    folder = HERE.parent / "stress"
+    scenarios = {load_scenario(path).name: path.name for path in sorted(folder.glob("*.yaml"))}
+    assert scenarios == {"smoke": "smoke.yaml", "staging": "staging.yaml"}
+    staging = load_scenario(folder / "staging.yaml")
+    assert staging.profile.name == "regular"
+    assert (staging.duration_seconds, staging.ramp_seconds) == (180.0, 30.0)
+    assert (staging.target.p95_ms, staging.target.error_ratio) == (900.0, 0.01)
+
+
 @pytest.mark.parametrize(
     ("data", "message"),
     [
