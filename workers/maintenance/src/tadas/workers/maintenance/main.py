@@ -1,6 +1,16 @@
 """The worker binary: settings, container, stop handlers, `serve`, and the
 `health` probe, which asks the serving process's `/healthz`."""
 
+# ruff: noqa: E402
+# The trust store goes in before anything else is imported. It replaces
+# ssl.SSLContext, and a module that bound the old class first (urllib3, and
+# botocore through it) builds a context whose options setter then calls
+# itself until the process dies. So the injection is the first statement of
+# every process, and nothing above it imports urllib3.
+from tadas.infra.trust import install_trust_store
+
+install_trust_store()
+
 import argparse
 import asyncio
 import logging
@@ -17,7 +27,6 @@ from tadas.infra.observability import (
     configure_tracing,
     name_process,
 )
-from tadas.infra.trust import install_trust_store
 from tadas.om.work.types.work_item import WorkKind
 from tadas.workers.maintenance.container import WorkerContainer
 from tadas.workers.maintenance.handler import NoopHandlerImpl
