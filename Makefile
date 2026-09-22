@@ -21,6 +21,10 @@ ROLES := core activity queue admin
 # The traffic run's knobs: `make traffic PROFILE=light DURATION=30`.
 PROFILE ?= light
 DURATION ?= 30
+# Where `make collector-scrape` points the devx collector's api target; the
+# default is the knob the compose stack reads, so with no argument the target
+# goes back to where `make devx-up` put it.
+SCRAPE_PORT ?= $(TADAS_COLLECTOR_SCRAPE_PORT)
 
 # The guideline's static checker, at the tag of the guideline this project
 # follows, on the project's Python: the checker refuses a Python older than
@@ -28,7 +32,7 @@ DURATION ?= 30
 # `make arch-check ARCH_CHECK="python3 ../swe_guidelines/checkers/arch_check.py"`.
 ARCH_CHECK ?= uvx --python "$(shell cat .python-version)" --from "git+https://github.com/baristaze/swe_guidelines@v0.31.1\#subdirectory=checkers" arch-check
 
-.PHONY: help setup up down reset urls infra-up devx-up stack-up infra-down infra-reset migrate seed demo-gif demo-cli-gif migrate-check benchmark-boot check lint format-check typecheck arch-check test-unit test-integration test-telemetry traffic openapi
+.PHONY: help setup up down reset urls infra-up devx-up stack-up infra-down infra-reset collector-scrape migrate seed demo-gif demo-cli-gif migrate-check benchmark-boot check lint format-check typecheck arch-check test-unit test-integration test-telemetry traffic openapi
 
 # This Makefile alone, never $(MAKEFILE_LIST): the includes above put
 # .env.example and .env in that list, and grep prefixes every match with the
@@ -93,6 +97,14 @@ infra-down: ## Stop the dependencies; the data stays, as after `make down`
 infra-reset: ## Recreate the dependencies with their volumes removed, and nothing else
 	$(COMPOSE) down -v --remove-orphans
 	$(MAKE) --no-print-directory infra-up
+
+# The devx collector scrapes one host target for the api, and a collector
+# reads a changed config only when it is recreated, so the two go together
+# here. With no argument it puts the collector back on the .env port, which
+# is what the telemetry round trip runs when it is done with the free port
+# it took.
+collector-scrape: ## Point the devx collector at SCRAPE_PORT on the host and recreate it
+	TADAS_COLLECTOR_SCRAPE_PORT=$(SCRAPE_PORT) $(COMPOSE) --profile devx up -d --wait --no-deps otel-collector
 
 # The local targets (migrate, migrate-check, seed, test-integration) refuse a
 # database whose host is not local, so a stray .env never points them at a
@@ -162,12 +174,12 @@ test-unit: ## Unit tests over the memory impls
 test-integration: ## Integration tests over the compose stack
 	uv run pytest -q -m integration
 
-# The round trip: a real API process on 8000 (the host target the devx
-# collector scrapes and writes into Prometheus) with the exporter and the DSN set, one session of traffic, then
-# every signal read back by request id through the devx stores. Needs
-# `make devx-up` and `make migrate seed`; skips, naming what is missing, when
-# it cannot run. With TADAS_TELEMETRY_REQUIRED=1 the same miss is a failure,
-# which is how CI runs it.
+# The round trip: a real API process on a free port, the devx collector aimed
+# at that port while it runs, the exporter and the DSN set, one session of
+# traffic, then every signal read back by request id through the devx stores.
+# Needs `make devx-up` and `make migrate seed`; skips, naming what is missing,
+# when it cannot run. With TADAS_TELEMETRY_REQUIRED=1 the same miss is a
+# failure, which is how CI runs it.
 test-telemetry: ## The telemetry round trip over the devx profile
 	uv run pytest -q -m telemetry
 

@@ -1,7 +1,7 @@
-"""The telemetry round trip: the API as a real process on port 8000 (the one
-host target the devx collector scrapes and writes into Prometheus), with the
-trace exporter and the error tracker set, one session of traffic through the
-edge, and then every signal read back by request id through the local
+"""The telemetry round trip: the API as a real process on a port this run
+picks, the devx collector aimed at that port for as long as the run lasts,
+the trace exporter and the error tracker set, one session of traffic through
+the edge, and then every signal read back by request id through the local
 reader: the log line that names it, the counter that moved, the trace that
 exists, the error event that carries it.
 
@@ -22,7 +22,7 @@ import subprocess
 import sys
 import time
 from collections.abc import Awaitable, Callable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import NoReturn
@@ -40,7 +40,6 @@ from tadas.ops.traffic import run_traffic
 pytestmark = pytest.mark.telemetry
 
 REPO = Path(__file__).resolve().parents[2]
-PORT = 8000
 COLLECTOR_CONFIG = REPO / "deployment" / "local" / "otel-collector" / "collector.yml"
 OTLP_ENDPOINT = "http://127.0.0.1:54318"
 BOOT_SECONDS = 30
@@ -87,12 +86,6 @@ def unmet(what: str) -> NoReturn:
     if os.environ.get(REQUIRED, "").strip().lower() in ("1", "true", "yes"):
         pytest.fail(f"{what}; the round trip is required here ({REQUIRED} is set)")
     pytest.skip(f"{what}; set {REQUIRED}=1 to make this a failure instead of a skip")
-
-
-def port_taken(port: int) -> bool:
-    with socket.socket() as probe:
-        probe.settimeout(0.5)
-        return probe.connect_ex(("127.0.0.1", port)) == 0
 
 
 def free_port() -> int:
@@ -164,6 +157,26 @@ def serve(port: int, log: Path, overrides: dict[str, str]) -> Served:
     pytest.fail(f"the API did not come up on {port}:\n" + "\n".join(served.lines()[-20:]))
 
 
+def scrape(port: int | None) -> None:
+    """Point the devx collector's api target at a port on the host, or at the
+    `.env` default when the port is None, and recreate the container, which
+    is the only way a collector reads a changed config. `make
+    collector-scrape` owns the compose command, including the file Linux
+    needs, so this test does not have a second copy of it."""
+    argument = [] if port is None else [f"SCRAPE_PORT={port}"]
+    done = subprocess.run(
+        ["make", "collector-scrape", *argument],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        # A nested make would otherwise inherit the outer one's jobserver.
+        env={**os.environ, "MAKEFLAGS": ""},
+    )
+    if done.returncode != 0:
+        where = "the default port" if port is None else f"port {port}"
+        pytest.fail(f"the collector would not scrape {where}:\n{done.stdout}\n{done.stderr}")
+
+
 @pytest.fixture(scope="module")
 def env() -> Environment:
     return load_environment("local", root=REPO)
@@ -182,14 +195,14 @@ def stores(env: Environment) -> None:
 
 @pytest.fixture(scope="module")
 def api(stores: None, tmp_path_factory: pytest.TempPathFactory) -> Iterator[Served]:
-    if port_taken(PORT):
-        unmet(
-            f"port {PORT} is taken (the api container, or scripts/dev.sh); the collector scrapes "
-            "only 8000 on the host, so the round trip needs it"
-        )
+    """The round trip's API: a real process on a free port, with the devx
+    collector aimed at that port while it runs. The port used to have to be
+    8000, the collector's one host target; now the target follows the
+    process, so the round trip runs beside whatever already holds 8000 and
+    puts the collector back when it is done."""
     knobs = compose_knobs()
     served = serve(
-        PORT,
+        free_port(),
         tmp_path_factory.mktemp("api") / "api.log",
         {
             "TADAS_ENVIRONMENT": "local",
@@ -198,8 +211,17 @@ def api(stores: None, tmp_path_factory: pytest.TempPathFactory) -> Iterator[Serv
             "TADAS_LOG_JSON": "true",
         },
     )
+    scrape(served.port)
     yield served
+    scrape(None)
     served.stop()
+
+
+@pytest.fixture(scope="module")
+def api_env(env: Environment, api: Served) -> Environment:
+    """The environment the traffic run drives: this one, at the port this
+    run's API took."""
+    return replace(env, api_url=api.base_url)
 
 
 @pytest.fixture(scope="module")
@@ -255,15 +277,15 @@ async def poll[T](
 
 
 async def test_every_signal_reads_back_by_the_request_id_of_a_write(
-    env: Environment, api: Served
+    api_env: Environment, api: Served
 ) -> None:
     since = datetime.now(UTC) - timedelta(seconds=5)
-    result = await run_traffic(env, LIGHT, duration_seconds=90, orgs=0, max_sessions=1)
+    result = await run_traffic(api_env, LIGHT, duration_seconds=90, orgs=0, max_sessions=1)
     outcome = result.outcomes[0]
     assert outcome.completed, outcome.failure or result.report.table()
     assert outcome.saw_own_change
     request_id = outcome.write_request_ids[0]
-    signals = reader(env, api)
+    signals = reader(api_env, api)
     writes = len(outcome.write_request_ids)
 
     # The log line that names it.

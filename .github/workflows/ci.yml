@@ -78,7 +78,10 @@ jobs:
       # code and GlitchTip's health are read back instead of the wait's.
       # The runner is Linux, so the Makefile puts the collector that scrapes
       # the host processes on the host's network; the round trip's counter
-      # leg is the proof that it reaches the API on 127.0.0.1.
+      # leg is the proof that it reaches the API on 127.0.0.1, at the free
+      # port the test takes and aims the collector at for the length of the
+      # run. It puts the default target back afterwards, which is what the
+      # traffic step below then needs.
       - name: the compose stack with the devx profile
         run: |
           make devx-up || true
