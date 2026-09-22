@@ -43,7 +43,7 @@ output "policy_arn" {
 }
 
 output "sentry_dsn_secret_arn" {
-  description = "Injected into every task as TADAS_SENTRY_DSN; \"off\" until set, which leaves reporting off."
+  description = "Injected into every task as TADAS_SENTRY_DSN; the product's one project, the same DSN in every environment, and \"off\" until set, which leaves reporting off."
   value       = aws_secretsmanager_secret.sentry_dsn.arn
   depends_on  = [aws_secretsmanager_secret_version.sentry_dsn]
 }

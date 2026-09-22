@@ -113,6 +113,11 @@ resource "aws_secretsmanager_secret_version" "totp_encryption_key" {
 }
 
 # The Sentry-compatible DSN errors report to (sentry.io or a hosted GlitchTip).
+# There is one tracker project for the product, and every environment holds the
+# same project's DSN here: what separates the events is the environment each
+# process sends on every event, not the project it sends to. The secret is per
+# environment because a secret is per account and production's account cannot
+# read staging's, so the one DSN is written into each account once.
 # Terraform creates it as "off", which leaves reporting off (Secrets Manager
 # refuses an empty value), and never writes it again: set the real value once with
 #   aws secretsmanager put-secret-value --secret-id <prefix>sentry_dsn --secret-string <dsn>
