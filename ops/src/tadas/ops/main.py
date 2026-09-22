@@ -254,9 +254,7 @@ async def size_command(
 
 def sso_profile_of(env_name: str) -> str:
     """The person's own Identity Center profile for the environment, from
-    deployment/cloud/environments.json: the provisioner's token is read under
-    it, never under an agent's investigate profile, which is denied every
-    secret value."""
+    deployment/cloud/environments.json."""
     root = repository_root()
     if root is None:
         raise ValueError(
@@ -266,11 +264,22 @@ def sso_profile_of(env_name: str) -> str:
     return str(layout["environments"][env_name]["sso_profile"])
 
 
-async def read_provisioner_token(env: Environment) -> str:
-    """The token the grant job wrote into `tadas-<env>-provisioner-token`."""
+async def read_provisioner_token(env: Environment, profile: str | None = None) -> str:
+    """The token the grant job wrote into `tadas-<env>-provisioner-token`,
+    read under the person's own sign-in: the Identity Center profile by
+    default, or the one named (production's sign-in reads nothing secret,
+    so there it is the power or the administrator profile). Never an
+    investigate profile: the investigate role is denied every secret value,
+    and an agent never holds this token's source."""
+    chosen = profile or sso_profile_of(env.name)
+    if chosen.endswith("-investigate"):
+        raise ValueError(
+            f"{chosen} is an agent's read-only profile and reads no secret; "
+            "copy the provisioner's token under your own sign-in (--profile)"
+        )
     session = cast(
         SessionLike,
-        aioboto3.Session(profile_name=sso_profile_of(env.name), region_name=env.aws_region),
+        aioboto3.Session(profile_name=chosen, region_name=env.aws_region),
     )
     async with session.client("secretsmanager") as secrets:
         answer = await secrets.get_secret_value(SecretId=f"tadas-{env.name}-provisioner-token")
@@ -337,7 +346,7 @@ async def token_command(
                 file=sys.stderr,
             )
             return USAGE
-        token = await read_provisioner_token(env)
+        token = await read_provisioner_token(env, args.profile)
         key = "TADAS_PROVISIONER_TOKEN"
     write_value(file, key, token)
     print(f"wrote {key} into {file}; it expires within the hour")
@@ -381,6 +390,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_token = sub.add_parser("token", help="write an operator token into the env file")
     p_token.add_argument("--env", required=True)
     p_token.add_argument("--identity", required=True, choices=["operator", "provisioner"])
+    p_token.add_argument(
+        "--profile",
+        help="provisioner only: the person's own AWS profile that reads the secret; "
+        "the environment's sign-in profile when absent (production's needs tadas-prod-power)",
+    )
     return parser
 
 

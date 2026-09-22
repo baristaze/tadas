@@ -53,7 +53,11 @@ cloud.
   printing it. `--identity provisioner` copies the token the
   `grant-operator.yml` workflow wrote into the secret
   `tadas-<env>-provisioner-token`, under the person's own sign-in
-  profile. A command whose token was refused names this one.
+  (`--profile`; staging's sign-in profile by default, and in production
+  `tadas-prod-power` or the administrator, since production's everyday
+  sign-in reads no secret). Never under an investigate profile: that
+  role is denied every secret value, so no agent fills this line. A
+  command whose token was refused names this one.
 - A skill names the profile it needs, verifies which identity it holds
   before it runs, and refuses to run under a wider one.
 - The platform's own secrets live in the secret store. No secret is in

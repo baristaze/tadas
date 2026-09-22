@@ -481,7 +481,12 @@ say "  gh workflow run grant-operator.yml --ref $grant_branch -f environment=$en
 say "    The operator enrols the second factor at the console's first sign-in, then runs, in their own terminal:"
 say "    uv run tadas-ops token --env $environment --identity operator"
 say "  gh workflow run grant-operator.yml ... -f email=<provisioner> -f permission=write -f mint_token=provisioner"
-say "    then: uv run tadas-ops token --env $environment --identity provisioner (the token lasts an hour: mint it again, with mint_token alone, before each traffic run)"
+case "$environment" in
+  staging) own_profile="" ;;
+  production) own_profile=" --profile tadas-prod-power" ;;
+esac
+say "    then, under your own sign-in and never an agent's: uv run tadas-ops token --env $environment --identity provisioner$own_profile"
+say "    (the token lasts an hour: mint it again, with mint_token alone, before each traffic run)"
 say "  gh workflow run grant-operator.yml ... -f email=<smoke identity> -f permission=read"
 say "    then: gh variable set SMOKE_EMAIL --env $environment --body <smoke identity>"
 say "Until SMOKE_EMAIL is set, every deploy's smoke step is skipped, and says so."

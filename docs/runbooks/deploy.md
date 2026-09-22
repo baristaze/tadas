@@ -267,8 +267,10 @@ Production's runs use `--ref release -f environment=production`.
   `mint_token=provisioner` right before a traffic run, since a token
   lasts an hour; `uv run tadas-ops token --env <env> --identity
   provisioner` copies it from `tadas-<env>-provisioner-token` into the
-  env file under the person's sign-in profile. In production the
-  provisioner is disabled again after the run.
+  env file under the person's own sign-in (`--profile tadas-prod-power`
+  in production, whose everyday sign-in reads no secret), never under
+  an agent's investigate profile, which is denied every secret value.
+  In production the provisioner is disabled again after the run.
 - **The smoke identity** is granted `read`, and the environment's
   `SMOKE_EMAIL` variable names it:
   `gh variable set SMOKE_EMAIL --env <staging|production> --body <email>`.
@@ -279,7 +281,8 @@ Every deploy runs it after the rollout: staging as the `smoke` job,
 production at the end of the apply job, since a job of its own would
 wait for a second approval. `scripts/cloud_smoke.sh` mints the smoke
 identity's token through the grant task into
-`tadas-<env>-smoke-token`, reads it into the step's shell alone
+`tadas-<env>-smoke-token` (the root's
+`operator_token_secret_names.smoke`), reads it into the step's shell alone
 (masked), and calls `GET /v1/admin/me` with it through the edge. The
 summary names the request id. While `SMOKE_EMAIL` is empty the step is
 skipped with a notice, not failed. A staging run whose smoke failed is

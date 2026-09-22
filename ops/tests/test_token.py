@@ -47,7 +47,7 @@ async def test_the_operator_token_is_minted_in_a_terminal_and_written_unprinted(
     answers = iter(["secret", "123456"])
     monkeypatch.setattr(ops_main.getpass, "getpass", lambda prompt: next(answers))
     code = await token_command(
-        argparse.Namespace(env="staging", identity="operator"),
+        argparse.Namespace(env="staging", identity="operator", profile=None),
         transport=httpx.MockTransport(mint_route),
     )
     assert code == 0
@@ -62,7 +62,7 @@ async def test_the_operator_token_is_never_minted_without_a_terminal(
     env_file(tmp_path, "staging")
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setattr("sys.stdin", io.StringIO())
-    code = await token_command(argparse.Namespace(env="staging", identity="operator"))
+    code = await token_command(argparse.Namespace(env="staging", identity="operator", profile=None))
     assert code == 2
 
 
@@ -71,5 +71,20 @@ async def test_the_provisioner_token_is_copied_only_in_a_cloud_environment(
 ) -> None:
     env_file(tmp_path, "local")
     monkeypatch.setenv("HOME", str(tmp_path))
-    code = await token_command(argparse.Namespace(env="local", identity="provisioner"))
+    code = await token_command(
+        argparse.Namespace(env="local", identity="provisioner", profile=None)
+    )
     assert code == 2
+
+
+async def test_the_provisioner_token_is_never_read_under_an_investigate_profile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env_file(tmp_path, "staging")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    with pytest.raises(ValueError, match="reads no secret"):
+        await token_command(
+            argparse.Namespace(
+                env="staging", identity="provisioner", profile="tadas-staging-investigate"
+            )
+        )
