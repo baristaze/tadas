@@ -42,9 +42,6 @@ pytestmark = pytest.mark.telemetry
 REPO = Path(__file__).resolve().parents[2]
 COLLECTOR_CONFIG = REPO / "deployment" / "local" / "otel-collector" / "collector.yml"
 OTLP_ENDPOINT = "http://127.0.0.1:54318"
-BOOT_SECONDS = 30
-TRACE_WAIT_SECONDS = 30
-ERROR_WAIT_SECONDS = 60
 REQUESTS_COUNTER = "tadas_http_requests_total"
 DURATION_UNITS = {"ms": 0.001, "s": 1.0, "m": 60.0}
 
@@ -52,6 +49,29 @@ REQUIRED = "TADAS_TELEMETRY_REQUIRED"
 """Where the round trip must run: the CI job sets it, a developer's machine
 does not. A run that skips because the stack is not up is a kindness on a
 laptop and a lie in CI, where the job goes green having proved nothing."""
+
+BOOT_SECONDS = 30.0
+"""How long an API process gets to answer /healthz. Nothing governs it: it is
+a whole interpreter's imports and one container's construction, so it is a
+bound on a boot that hangs, not a schedule."""
+
+ERROR_WAIT_SECONDS = 60.0
+"""How long an error event gets to become findable, and the one wait here
+with nothing behind it. The client adds no schedule to derive from:
+sentry_sdk's worker sends an event as soon as the report queues it, and
+nothing batches on that side. What the wait is really for is the tracker's
+own ingest, which turns an accepted envelope into an event the issue search
+answers with, on the image's schedule and not on one this repository sets.
+The poll returns the moment the event lands, so the number only bounds a
+failure."""
+
+SPAN_BATCH_DELAY = timedelta(seconds=5)
+OTEL_TIMEOUT = timedelta(seconds=10)
+"""The trace exporter's schedule, handed to the API process below
+(`OTEL_BSP_SCHEDULE_DELAY` and `TADAS_OTEL_TIMEOUT_SECONDS`) so the wait for
+a trace is derived from the settings the process runs under rather than from
+a guess about them: the batch processor ships a batch every delay, and
+`configure_tracing` bounds each shipment with the timeout."""
 
 
 def duration_seconds(text: str) -> float:
@@ -76,7 +96,16 @@ def scrape_wait_seconds() -> float:
     return 3 * interval + flush
 
 
+def trace_wait_seconds() -> float:
+    """How long a span takes to reach Jaeger, from the exporter settings the
+    fixture hands the process: two batch delays and one bounded export, so a
+    batch that closed just before the last span of the session, and a send
+    that had to be retried, both land inside it."""
+    return 2 * SPAN_BATCH_DELAY.total_seconds() + OTEL_TIMEOUT.total_seconds()
+
+
 SCRAPE_WAIT_SECONDS = scrape_wait_seconds()
+TRACE_WAIT_SECONDS = trace_wait_seconds()
 
 
 def unmet(what: str) -> NoReturn:
@@ -207,6 +236,8 @@ def api(stores: None, tmp_path_factory: pytest.TempPathFactory) -> Iterator[Serv
         {
             "TADAS_ENVIRONMENT": "local",
             "TADAS_OTEL_ENDPOINT": OTLP_ENDPOINT,
+            "TADAS_OTEL_TIMEOUT_SECONDS": str(OTEL_TIMEOUT.total_seconds()),
+            "OTEL_BSP_SCHEDULE_DELAY": str(int(SPAN_BATCH_DELAY.total_seconds() * 1000)),
             "TADAS_SENTRY_DSN": knobs["TADAS_SENTRY_DSN"],
             "TADAS_LOG_JSON": "true",
         },
@@ -303,7 +334,8 @@ async def test_every_signal_reads_back_by_the_request_id_of_a_write(
     delta = await poll(counted, SCRAPE_WAIT_SECONDS, every=5.0)
     assert delta is not None, f"Prometheus did not count the {writes} creating calls"
 
-    # The trace that exists: the batch exporter ships every few seconds.
+    # The trace that exists: the batch exporter ships on the schedule the
+    # fixture set, and TRACE_WAIT_SECONDS is two of those and one export.
     trace = await poll(lambda: signals.trace(request_id), TRACE_WAIT_SECONDS)
     assert trace is not None, f"Jaeger holds no trace with tadas.request_id={request_id}"
     assert "POST /v1/tasks" in trace.span_names, trace
