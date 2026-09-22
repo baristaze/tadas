@@ -16,6 +16,7 @@ from tadas.infra.observability import (
 from tadas.infra.root import InfraInterface
 from tadas.infra.trust import install_trust_store
 from tadas.om.root import Managers, TenancyOperatorOptions, TenancyOptions, build_managers
+from tadas.om.storage.impl.memory import StorageMemoryImpl
 from tadas.om.storage.impl.postgres import StoragePostgresImpl
 from tadas.om.storage.root import StorageInterface
 from tadas.services.api.gateway.ratelimit import RateLimit, RateLimitOptions
@@ -99,6 +100,12 @@ def postgres_storage(settings: ApiSettings) -> StorageInterface:
         settings.role_pools(),
         system_urls=settings.system_role_urls(),
     )
+
+
+def memory_storage() -> StorageInterface:
+    """The storage root in memory, for a command that reads the app's shape
+    and no data: the OpenAPI document is emitted over it."""
+    return StorageMemoryImpl()
 
 
 class AppContainer:

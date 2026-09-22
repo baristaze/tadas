@@ -21,9 +21,8 @@ from tadas.om.base import new_id
 from tadas.om.exceptions import Conflict
 from tadas.om.opcontext import AppContext, AppType, OperatorRole, RequestContext, Role
 from tadas.om.storage import migrate
-from tadas.om.storage.impl.memory import StorageMemoryImpl
 from tadas.services.api.app import create_app
-from tadas.services.api.container import AppContainer, boot, postgres_storage
+from tadas.services.api.container import AppContainer, boot, memory_storage, postgres_storage
 from tadas.services.api.gateway.observability import QueryStringRedactor
 from tadas.services.api.realtime.timeouts import (
     SERVER_PING_INTERVAL_SECONDS,
@@ -212,7 +211,7 @@ def openapi(args: argparse.Namespace) -> int:
     settings = ApiSettings.model_validate({"_env_file": None, "environment": "test"})
     boot(settings)
     with tempfile.TemporaryDirectory() as tmp:
-        container = AppContainer.for_tests(StorageMemoryImpl(), InfraLocalImpl(Path(tmp)), settings)
+        container = AppContainer.for_tests(memory_storage(), InfraLocalImpl(Path(tmp)), settings)
         document = create_app(container).openapi()
     text = json.dumps(document, indent=2, sort_keys=True) + "\n"
     if args.out == "-":
