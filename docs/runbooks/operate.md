@@ -24,7 +24,7 @@ aws sts get-caller-identity --query Arn --output text
 ```
 
 A skill that sees any other role in that answer stops, the sign-in's
-role (PowerUserAccess, TadasReadOnly) included. The commands
+role (PowerUserAccess, ReadOnlyAccess) included. The commands
 below are staging's; production's replace `staging` with `production`
 in every name.
 

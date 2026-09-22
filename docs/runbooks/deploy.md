@@ -177,7 +177,9 @@ access key.
 | Profile | Holds | Used by |
 |---------|-------|---------|
 | `tadas-staging-admin`, `tadas-prod-admin` | the account's administrator permission set, granted for the bootstrap | create and nuke, nothing else |
-| `tadas-staging`, `tadas-prod` | a person's sign-in: PowerUserAccess in staging, TadasReadOnly in production, which writes nothing | the `source_profile` of the investigate profile, never a skill directly |
+| `tadas-staging`, `tadas-prod` | a person's sign-in: PowerUserAccess in staging, ReadOnlyAccess in production, which writes nothing | the `source_profile` of the investigate profile, never a skill directly |
+| `tadas-staging-ro` | a person's read-only sign-in in staging (ReadOnlyAccess) | inspection by a person, never a skill |
+| `tadas-prod-power` | PowerUserAccess in production | a change a person explicitly authorized, never a skill and never by default |
 | `tadas-staging-investigate` | `role_arn` = `tadas-investigate-staging`, `source_profile` = `tadas-staging` | every read of staging |
 | `tadas-production-investigate` | `role_arn` = `tadas-investigate-production`, `source_profile` = `tadas-prod` | every read of production |
 
