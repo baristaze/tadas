@@ -5,7 +5,8 @@ to expect. A runbook names the process, the setting, or the table it
 touches and the ADR that explains why it is shaped that way.
 
 - [deploy.md](deploy.md): staging is `main`, production is `release`;
-  cutting a release, approving its plan, rolling back, what a failed
+  granting an operator, the smoke test, cutting a release, approving
+  its plan, the fast rollback and the revert, what a failed
   migration does, the protection on `release`, and what to do when the
   cloud is not configured.
 - [operate.md](operate.md): the profile an investigation runs under,
@@ -18,6 +19,10 @@ touches and the ADR that explains why it is shaped that way.
   catch over the memory impls and the two-run control that says the
   row-level security policies are live, what the last runs showed, and
   what the two storage impls answer differently.
+- [restore.md](restore.md): what is backed up and for how long, a
+  restore as break-glass to a new instance, the rehearsal and its
+  record, and relaying the outbox again when one role comes back
+  earlier than the others.
 - [support.md](support.md): how a support investigation runs: a
   tenant names a problem, the supporter takes the org id, runs
   `ops-root-cause`, what it reads and in which order, and what is
