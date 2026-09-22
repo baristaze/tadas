@@ -86,6 +86,36 @@ def run_sql(role: DatabaseRole, filename: str) -> None:
         bind.exec_driver_sql(statement)
 
 
+def backfill(
+    connection: Connection, role: DatabaseRole, table: str, count_sql: str, update_sql: str
+) -> int:
+    """A data migration under the fence it runs beneath. The migration login
+    owns the table and FORCE binds the owner, and a migration names no tenant,
+    so a bare UPDATE would match no row and succeed. This lifts the fence for
+    its own statements and puts it back, in the caller's transaction.
+
+    A backfill that touched nothing looks like one that had nothing to do, so
+    the rows it means to touch are counted first (`count_sql`, one number) and
+    compared with the rows `update_sql` reports. A difference fails, and the
+    whole transaction rolls back, the fence included. Returns the count."""
+    if role_for(table) is not role:
+        raise RuntimeError(f"table {table} belongs to role {role_for(table).value}")
+    check_role_of_sql(role, f"{count_sql};{update_sql}")
+    qualified = f"{role.value}.{table}"
+    connection.exec_driver_sql(f"ALTER TABLE {qualified} NO FORCE ROW LEVEL SECURITY")
+    expected = connection.exec_driver_sql(count_sql).scalar_one()
+    touched = connection.exec_driver_sql(update_sql).rowcount
+    if touched != expected:
+        raise RuntimeError(f"backfill of {qualified} touched {touched} rows of {expected}")
+    connection.exec_driver_sql(f"ALTER TABLE {qualified} FORCE ROW LEVEL SECURITY")
+    return touched
+
+
+def run_backfill(role: DatabaseRole, table: str, count_sql: str, update_sql: str) -> int:
+    """Called by a wrapper under versions/<role>/ for a data migration; see `backfill`."""
+    return backfill(op.get_bind(), role, table, count_sql, update_sql)
+
+
 def load_tables() -> None:
     """Imports every namespace's table modules so Base.metadata holds them all.
     Without this the CLI compares an empty metadata and reports every migrated
