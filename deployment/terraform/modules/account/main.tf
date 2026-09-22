@@ -287,6 +287,18 @@ data "aws_iam_policy_document" "task_boundary" {
     resources = ["arn:${local.partition}:secretsmanager:*:${local.account}:secret:tadas/${var.environment}/*"]
   }
 
+  # The one secret write a task may hold: the grant task minting an operator
+  # token into one of the two token secrets. The graph gives it to that task
+  # alone; this is the ceiling that lets it.
+  statement {
+    sid     = "ItsOwnOperatorTokens"
+    actions = ["secretsmanager:PutSecretValue"]
+    resources = [
+      "arn:${local.partition}:secretsmanager:*:${local.account}:secret:tadas-${var.environment}-provisioner-token-??????",
+      "arn:${local.partition}:secretsmanager:*:${local.account}:secret:tadas-${var.environment}-smoke-token-??????",
+    ]
+  }
+
   statement {
     sid = "ItsOwnLogStreams"
     actions = [

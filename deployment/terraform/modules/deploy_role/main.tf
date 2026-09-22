@@ -365,13 +365,18 @@ data "aws_iam_policy_document" "graph_data" {
     ]
   }
 
-  # The database password and the error-reporting DSN. A refresh reads them,
-  # which is why a credential that can plan an environment is a credential
-  # that can read its secrets; only these two prefixes, though.
+  # The database URLs, the error-reporting DSN, and the TOTP key under the
+  # prefix, and the two operator tokens by name. A refresh reads them, which
+  # is why a credential that can plan an environment is a credential that can
+  # read its secrets; the smoke job reads its token the same way.
   statement {
-    sid       = "Secrets"
-    actions   = ["secretsmanager:*"]
-    resources = ["arn:${local.partition}:secretsmanager:${local.region}:${local.account}:secret:${local.secret_prefix}*"]
+    sid     = "Secrets"
+    actions = ["secretsmanager:*"]
+    resources = [
+      "arn:${local.partition}:secretsmanager:${local.region}:${local.account}:secret:${local.secret_prefix}*",
+      "arn:${local.partition}:secretsmanager:${local.region}:${local.account}:secret:${local.name_prefix}-provisioner-token-*",
+      "arn:${local.partition}:secretsmanager:${local.region}:${local.account}:secret:${local.name_prefix}-smoke-token-*",
+    ]
   }
 
   statement {
