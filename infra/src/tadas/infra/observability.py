@@ -19,6 +19,7 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.trace import Link
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
+from sentry_sdk.scrubber import DEFAULT_DENYLIST, EventScrubber
 
 request_id_var: ContextVar[str | None] = ContextVar("tadas_request_id", default=None)
 """Set at the entry point that builds the context, so log lines get it for free.
@@ -129,6 +130,22 @@ def configure_logging(level: str, json_logs: bool) -> None:
     root.setLevel(level.upper())
 
 
+SCRUBBED_KEYS = [*DEFAULT_DENYLIST, "bearer", "idempotency-key", "idempotency_key", "database_url"]
+"""What the scrubber blanks wherever it appears in an event, headers and
+nested values included: the SDK's own list (passwords, tokens, cookies, the
+authorization header) and the few names this platform adds."""
+
+ERROR_REPORTING_PRIVACY: dict[str, Any] = {
+    # No personal data, no request body, and no frame locals: a local of a
+    # frame that holds a password or a bearer would otherwise ride along.
+    "send_default_pii": False,
+    "include_local_variables": False,
+    "max_request_body_size": "never",
+    "event_scrubber": EventScrubber(denylist=SCRUBBED_KEYS, recursive=True),
+}
+"""The privacy half of the tracker's settings, held apart so a test reads it."""
+
+
 def configure_error_reporting(
     dsn: str | None, environment: str, service_name: str, release: str | None = None
 ) -> None:
@@ -150,8 +167,8 @@ def configure_error_reporting(
         release=f"{service_name}@{release}" if release else None,
         server_name=service_name,
         traces_sample_rate=0.0,
-        send_default_pii=False,
         before_send=tag_request_id,
+        **ERROR_REPORTING_PRIVACY,
     )
     sentry_sdk.set_tag("service", service_name)
 

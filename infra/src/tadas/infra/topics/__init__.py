@@ -7,7 +7,7 @@ and a missed wake-up degrades to polling latency, never to lost work."""
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
@@ -35,7 +35,7 @@ class TopicPayload(BaseModel):
     truncated: bool = False
 
 
-class Topics(str, Enum):
+class Topics(StrEnum):
     WORK_AVAILABLE = "work_available"
     ENTITY_CHANGED = "entity_changed"  # kind, target_id, seq: the realtime producer
 

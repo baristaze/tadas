@@ -19,7 +19,7 @@ Roles, permissions, credential kinds, and app types are declared here, so
 this module imports nothing above `base.py` and the tenancy namespace reads
 them rather than the other way round."""
 
-from enum import Enum
+from enum import StrEnum
 from typing import Protocol
 from uuid import UUID
 
@@ -48,7 +48,7 @@ __all__ = [
 ]
 
 
-class Role(str, Enum):
+class Role(StrEnum):
     OWNER = "owner"
     ADMIN = "admin"
     MEMBER = "member"
@@ -56,14 +56,14 @@ class Role(str, Enum):
     SERVICE = "service"  # a worker: on a person's earlier request, or a sweep of a tenant
 
 
-class Permission(str, Enum):
+class Permission(StrEnum):
     READ = "read"
     WRITE = "write"
     MANAGE_MEMBERS = "manage_members"
     MANAGE_KEYS = "manage_keys"
 
 
-class OperatorRole(str, Enum):
+class OperatorRole(StrEnum):
     """What an allowlist entry lets an operator do across every tenant. Write
     includes read; the tenancy namespace's table says which permissions each
     role holds, as it does for `Role`."""
@@ -72,12 +72,12 @@ class OperatorRole(str, Enum):
     WRITE = "write"
 
 
-class OperatorPermission(str, Enum):
+class OperatorPermission(StrEnum):
     READ = "read"
     WRITE = "write"
 
 
-class CredentialKind(str, Enum):
+class CredentialKind(StrEnum):
     API_KEY = "api_key"
     SESSION_TOKEN = "session_token"
     LOGIN = "login"
@@ -85,7 +85,7 @@ class CredentialKind(str, Enum):
     INTERNAL = "internal"
 
 
-class AppType(str, Enum):
+class AppType(StrEnum):
     PORTAL = "portal"
     ADMIN = "admin"
     CLI = "cli"

@@ -150,7 +150,8 @@ context on keeps the stage the callee needs.
   which, false, makes it answer the router's own 404. With no email
   verification, sign-up has two accepted costs: a held address answers
   `409`, so anyone can test which addresses have an account, and anyone
-  can claim an address that is not theirs. An exchange
+  can claim an address that is not theirs. With no verified address
+  there is no account recovery either. An exchange
   presented with a session is a switch: `replace_session` revokes it and
   lands the new one in one transaction, each statement under its own
   tenant's scope, with the revocation's outbox row, so the old socket

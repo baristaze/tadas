@@ -8,7 +8,7 @@ policy exists. The policy is what catches the predicate that went missing.
 """
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
 ORG_SETTING = "app.org_id"
 USER_SETTING = "app.user_id"
@@ -21,7 +21,7 @@ POLICY_NAME = "tenant_fence"
 """One policy per table, `FOR ALL`, `USING` and `WITH CHECK` the same."""
 
 
-class ScopeKind(str, Enum):
+class ScopeKind(StrEnum):
     SYSTEM = "system"
     """A global table: no tenant, no person, no policy."""
 

@@ -3,7 +3,7 @@ with it, so one tenant's blobs cannot be read or listed by another."""
 
 from abc import ABC, abstractmethod
 from datetime import timedelta
-from enum import Enum
+from enum import StrEnum
 from uuid import UUID
 
 from tadas.infra.exceptions import BlobNotFound, InvalidBucketKey
@@ -11,7 +11,7 @@ from tadas.infra.exceptions import BlobNotFound, InvalidBucketKey
 __all__ = ["BlobNotFound", "Buckets", "BucketsInterface", "InvalidBucketKey", "object_key"]
 
 
-class Buckets(str, Enum):
+class Buckets(StrEnum):
     USER_FILE_UPLOADS = "user-file-uploads"
     EXPORTS = "exports"
 
