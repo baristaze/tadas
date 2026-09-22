@@ -1,6 +1,8 @@
 # ADR 0018: The operator allowlist carries a role, and an operator signs in as a person
 
-**Status**: accepted (2026-09-20)
+**Status**: accepted (2026-09-20), amended (2026-09-22): only the
+grant job writes the allowlist, and an agent holds an operator token,
+not a password.
 
 ## Context
 
@@ -62,3 +64,29 @@ seed and the API create the same rows.
   about to exist, and from the first deploy a rename is two releases.
 - Operator markers live under the system scope by design; a later
   operator namespace of its own would move them, and nothing else.
+
+## Amended: the grant job and operator tokens
+
+- **Only the grant job writes the allowlist.** In a deployed
+  environment `tadas-api grant-operator --email <e> --permission
+  read|write`, or `--disable`, is the one writer of `operator_role`. It
+  runs as a one-off task from `grant-operator.yml` (ADR 0022), audited
+  under the system scope. `bootstrap --operator` and `--operator-role`
+  are local only.
+- **A person signs in with a second factor.** An operator enrols a
+  TOTP secret with `POST /v1/admin/me/totp` and `/confirm`. Until it is
+  confirmed, the plane admits the enrolment and nothing else; after,
+  it admits a sign-in only when that sign-in verified a code, and a
+  code is accepted once.
+- **An agent holds an operator token.** A token is a `sessions` row of
+  kind `operator_token` under the system scope: one permission, an hour
+  at most, stored as its digest, capped by the entry on every request.
+  A person mints one with `POST /v1/admin/me/tokens` from a sign-in
+  with a code, and the grant job mints the provisioner's and the smoke
+  identity's into the secret store. So the env file under
+  `~/.config/tadas/ops/` holds `TADAS_OPERATOR_TOKEN` (read) and
+  `TADAS_PROVISIONER_TOKEN` (write), never an email and password.
+
+This is the operator credential the Consequences above call a later
+step. It produces an identity stage, not a tenant one, and it lives in
+`sessions`, not in a tenant's `api_keys`.
