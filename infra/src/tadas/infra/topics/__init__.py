@@ -30,6 +30,9 @@ class TopicPayload(BaseModel):
     idempotency_key: UUID  # uuid_v7, set by the producer
     produced_at: datetime
     org_id: UUID
+    # Set by a bus that trims a payload; the consumer re-reads the record. No
+    # bus here trims yet, and a consumer treats every frame as a hint anyway.
+    truncated: bool = False
 
 
 class Topics(str, Enum):

@@ -15,6 +15,7 @@ from api_support import add_member, sign_in_as
 from tadas.om.idempotency.impl.manager import IdempotencyOptions
 from tadas.om.opcontext import Role
 from tadas.services.api.container import AppContainer
+from tadas.services.api.gateway.ratelimit import RateLimited
 
 BODY = {"title": "Write the scaffold", "notes": "and test it"}
 
@@ -162,6 +163,33 @@ async def test_a_failure_is_not_an_outcome_the_retry_runs_again(
     assert replay.status_code == 201 and replay.headers["Idempotent-Replayed"] == "true"
     listed = await client.get("/v1/tasks", headers=owner)
     assert [t["id"] for t in listed.json()["items"]] == [retry.json()["id"]]
+
+
+async def test_a_429_is_not_an_outcome_the_retry_runs_again(
+    client: httpx.AsyncClient,
+    container: AppContainer,
+    owner: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A 429 is an answer about now: the marker is released, not finished with
+    # the 429, so the retry runs the request instead of replaying the refusal.
+    original = container.managers.tasks.create_task
+    limited = False
+
+    async def limit_once(ctx, task):
+        nonlocal limited
+        if not limited:
+            limited = True
+            raise RateLimited(timedelta(seconds=1))
+        return await original(ctx, task)
+
+    monkeypatch.setattr(container.managers.tasks, "create_task", limit_once)
+    headers = {**owner, "Idempotency-Key": "limited-1"}
+    first = await client.post("/v1/tasks", headers=headers, json=BODY)
+    assert first.status_code == 429 and limited
+    retry = await client.post("/v1/tasks", headers=headers, json=BODY)
+    assert retry.status_code == 201, retry.text
+    assert "Idempotent-Replayed" not in retry.headers
 
 
 async def test_a_failure_after_the_row_landed_does_not_create_twice(

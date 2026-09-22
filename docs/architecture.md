@@ -147,7 +147,10 @@ context on keeps the stage the callee needs.
   /v1/auth/signup` has its own rate limit per client address, no
   Idempotency-Key (the marker is kept per tenant and principal, and
   sign-up has neither), and `TADAS_SIGNUP_ENABLED` (true by default),
-  which, false, makes it answer the router's own 404. An exchange
+  which, false, makes it answer the router's own 404. With no email
+  verification, sign-up has two accepted costs: a held address answers
+  `409`, so anyone can test which addresses have an account, and anyone
+  can claim an address that is not theirs. An exchange
   presented with a session is a switch: `replace_session` revokes it and
   lands the new one in one transaction, each statement under its own
   tenant's scope, with the revocation's outbox row, so the old socket

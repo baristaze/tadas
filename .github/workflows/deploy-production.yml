@@ -354,3 +354,18 @@ jobs:
         run: aws s3 sync "s3://$ARTIFACTS_BUCKET/builds/portal/$SHA" portal-dist
       - name: publish the same portal to production
         run: scripts/deploy_portal.sh deployment/terraform/environments/prod portal-dist
+      # After the rollout, readiness is asked once more, through the edge: the
+      # load balancer probes liveness only, so this is where a new release
+      # that cannot reach its storage fails the run. It never replaces a task.
+      - name: the new release is ready
+        run: |
+          API_DOMAIN_NAME="$(jq -er .environments.production.api_domain_name deployment/cloud/environments.json)"
+          for _ in $(seq 1 10); do
+            if curl -fsS --max-time 10 "https://$API_DOMAIN_NAME/readyz" >/dev/null; then
+              echo "\`https://$API_DOMAIN_NAME/readyz\` answers ready." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "::error::https://$API_DOMAIN_NAME/readyz did not answer ready within the rollout's grace; the release is serving but not ready."
+          exit 1
