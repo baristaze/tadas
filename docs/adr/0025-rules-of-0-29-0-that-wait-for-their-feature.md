@@ -43,6 +43,11 @@ These are deviations, each recorded with its reason and its route back:
   are not removed. TAZ-60, after TAZ-53.
 - **A second factor and short-lived tokens for operators (`OPS-07`).**
   TAZ-57.
+- **A session's idle lifetime.** A session ends at its absolute lifetime
+  (`TADAS_SESSION_LIFETIME_SECONDS`, twelve hours), however long it sat
+  unused. An idle lifetime needs a `last_seen_at` written, throttled, by
+  every authenticated request, and the check in each of the four places
+  a session is verified. TAZ-61.
 - **The enqueue permission covering the handler's calls.** Every handler
   today is system maintenance, and no user-caused work kind exists yet.
   TAZ-58 lands with the first one.
