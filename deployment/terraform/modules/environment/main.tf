@@ -55,6 +55,12 @@ locals {
     TADAS_DATABASE_POOL_SIZE = "2"
   })
 
+  # The API's admission bounds follow its pool, as the settings' defaults
+  # do (48 and 16 over 12): four reads in flight per connection, and a
+  # third as many writes.
+  admission_limit_reads  = 4 * var.database_pool_size
+  admission_limit_writes = ceil(4 * var.database_pool_size / 3)
+
   process_policies = [
     module.queue.policy_arn,
     module.buckets.policy_arn,
@@ -277,10 +283,12 @@ module "api" {
   })
 
   environment_variables = merge(local.process_environment, {
-    TADAS_SERVICE_NAME = "api"
-    TADAS_HOST         = "0.0.0.0"
-    TADAS_PORT         = "8000"
-    TADAS_CORS_ORIGINS = jsonencode(concat(["https://${var.app_domain_name}"], var.cors_origins))
+    TADAS_SERVICE_NAME           = "api"
+    TADAS_ADMISSION_LIMIT_READS  = tostring(local.admission_limit_reads)
+    TADAS_ADMISSION_LIMIT_WRITES = tostring(local.admission_limit_writes)
+    TADAS_HOST                   = "0.0.0.0"
+    TADAS_PORT                   = "8000"
+    TADAS_CORS_ORIGINS           = jsonencode(concat(["https://${var.app_domain_name}"], var.cors_origins))
     # The edge serves the API and liveness; the interactive docs are local.
     TADAS_INTERACTIVE_DOCS = "false"
     # The load balancer lives in the VPC, so its X-Forwarded-For names the client.

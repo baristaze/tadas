@@ -24,13 +24,14 @@ module "environment" {
   # with a second zone for the database and the cache). Everything below is
   # what differs from staging: the graph does not. The pool is sized to the
   # instance at the autoscaling ceilings, so the flip below is safe: a
-  # db.t4g.small takes about 180 connections.
+  # db.t4g.small takes about 180 connections, and (2 x 3 API + 1 worker) x
+  # 2 pools x 10 + 8 for the one-off tasks is 148.
   vpc_cidr                     = "10.20.0.0/16"
   bucket_prefix                = "tadas-production"
   database_instance_class      = "db.t4g.small"
   database_multi_az            = false
   database_deletion_protection = true
-  database_pool_size           = 5
+  database_pool_size           = 10
   cache_node_type              = "cache.t4g.micro"
   cache_node_count             = 1
   api_desired_count            = 1
