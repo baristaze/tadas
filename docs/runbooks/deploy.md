@@ -100,6 +100,12 @@ profiles that hold them, are in [operate.md](operate.md).
 
 ## Create the environment
 
+Before the first run, the organization, the two accounts, Identity
+Center, the permission sets, the local profiles, and the Cloudflare
+token exist, as
+[deployment/cloud/first_time_manual.md](../../deployment/cloud/first_time_manual.md)
+says. That part is by hand, once; everything below is scripted.
+
 `scripts/cloud_create.sh <staging|production>` is the administrator's
 one run per account, and the `ops-cloud-deployment-create` skill
 narrates it. It runs under the environment's administrator profile

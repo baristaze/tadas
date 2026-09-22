@@ -23,6 +23,12 @@ exists. With `--dry-run` the skill runs the dry mode only and stops;
 the real run is a second invocation without the flag. The script creates a cloud environment only; the compose stack
 is `make up`, not this skill.
 
+The accounts themselves, Identity Center, the permission sets, the
+local profiles, and the Cloudflare token are made by hand, once, as
+`deployment/cloud/first_time_manual.md` says. When a profile the skill
+needs is missing, or Cost Explorer is off, point the person there
+rather than working around it.
+
 Everything about the environment's account comes from
 `deployment/cloud/environments.json`: the account id, the region, the
 administrator profile, the Identity Center profile an operator signs in

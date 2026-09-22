@@ -4,7 +4,9 @@ Tadas runs in AWS as two environments built from one graph: staging
 from `main` and production from `release`
 ([../README.md](../README.md)). Each environment has an AWS account of
 its own, named in [environments.json](environments.json), and both run
-in us-west-2. The graph is fixed. What an environment
+in us-west-2. The organization, the accounts, Identity Center, and the
+profiles are set up once by hand, as
+[first_time_manual.md](first_time_manual.md) says. The graph is fixed. What an environment
 costs comes from its numbers: the instance classes, the replica counts,
 and whether the database and the cache keep a second zone. This page
 names five sizes for those numbers, prices each one, and says which
