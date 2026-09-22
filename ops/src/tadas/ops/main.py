@@ -38,6 +38,7 @@ from tadas.ops.stress import (
     read_back,
     verdict,
     window_start,
+    with_duration,
 )
 from tadas.ops.traffic import (
     OPERATOR_APP,
@@ -145,6 +146,8 @@ async def traffic_command(args: argparse.Namespace) -> tuple[int, Report]:
 async def stress_command(args: argparse.Namespace) -> tuple[int, Report]:
     env = load_environment(args.env)
     scenario = load_scenario(Path(args.scenario))
+    if args.duration is not None:
+        scenario = with_duration(scenario, args.duration)
     result = await run_traffic(
         env,
         scenario.profile,
@@ -377,6 +380,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_stress.add_argument("--scenario", required=True, help="ops/stress/<name>.yaml")
     p_stress.add_argument("--env", default="local")
     p_stress.add_argument("--orgs", type=int)
+    p_stress.add_argument(
+        "--duration",
+        type=float,
+        help="seconds; the scenario's when absent. The target does not move with it.",
+    )
     p_stress.add_argument("--report")
 
     p_signals = sub.add_parser("signals", help="read the signals back")
