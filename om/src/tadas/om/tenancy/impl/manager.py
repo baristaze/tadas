@@ -15,6 +15,7 @@ from tadas.om.exceptions import (
     NotAnOperator,
     NotAuthorized,
     NotFound,
+    SignInDelayed,
     UniqueKeyTaken,
     ValidationFailed,
 )
@@ -52,6 +53,7 @@ from tadas.om.tenancy.rules import (
     hash_password,
     hash_token,
     role_at_most,
+    sign_in_delay,
     verify_password,
 )
 from tadas.om.tenancy.storage import TenancyStorageInterface
@@ -88,6 +90,12 @@ class TenancyOptions(Platform):
 
     login_ttl: timedelta = timedelta(minutes=10)
     session_ttl: timedelta = timedelta(hours=12)
+    sign_in_free_failures: int = 3
+    """Failed sign-ins in a row an identity may make before the next waits."""
+    sign_in_delay_base: timedelta = timedelta(seconds=1)
+    sign_in_delay_cap: timedelta = timedelta(minutes=5)
+    """The wait starts at the base and doubles with each failure past the
+    free ones, up to the cap, whatever address the attempts come from."""
     api_key_ttl: timedelta = MAX_API_KEY_TTL
     ticket_ttl: timedelta = timedelta(seconds=60)
     max_limit: int = 200
@@ -231,13 +239,33 @@ class TenancyManagerImpl(TenancyManagerInterface):
 
     async def login(self, rctx: RequestContext, email: str, password: str) -> IssuedLogin:
         identity = await self._storage.read_identity_by_email(email)
+        now = utcnow()
+        # The per-address limit rides the cache and fails open. This one is
+        # counted per identity in the tenancy role's own storage, so a guessed
+        # identity waits whatever address the guesses come from, and it holds
+        # when the cache is down. The wait is checked before the password.
+        if identity is not None:
+            wait = sign_in_delay(
+                identity.failed_sign_ins,
+                identity.last_failed_sign_in_at,
+                now,
+                free=self._options.sign_in_free_failures,
+                base=self._options.sign_in_delay_base,
+                cap=self._options.sign_in_delay_cap,
+            )
+            if wait > timedelta(0):
+                raise SignInDelayed(wait)
         # The hash is verified on a miss too, against a fixed dummy, so an
         # unknown email costs what a wrong password costs; scrypt runs off the
         # event loop, so a sign-in never stalls every other request.
         stored = DUMMY_PASSWORD_HASH if identity is None else identity.password_hash
         verified = await asyncio.to_thread(verify_password, password, stored)
         if identity is None or not verified:
+            if identity is not None:
+                await self._storage.record_failed_sign_in(identity.id, now)
             raise InvalidCredential("email or password is wrong")
+        if identity.failed_sign_ins:
+            await self._storage.clear_failed_sign_ins(identity.id)
         return await self._issue_login(identity, await self._memberships_of(identity.id))
 
     async def _issue_login(

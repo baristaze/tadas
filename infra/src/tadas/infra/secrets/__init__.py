@@ -1,28 +1,50 @@
 """Secrets: a capability, not a domain. The object model holds references;
 the value is resolved at the point of use and discarded. Errors name the
-secret and the store, never the value."""
+secret and the store, never the value.
+
+A secret belongs to a tenant, as a cache entry and a bucket object do: every
+call takes the `org_id` first, and each tenant's secrets sit under a prefix
+of their own, so a name one tenant presents never resolves to another
+tenant's secret, or to one of the platform's. The platform's own credentials
+(the database URL, the error tracker's DSN) are not read through here: they
+reach the process at start."""
 
 from abc import ABC, abstractmethod
+from uuid import UUID
 
-from tadas.infra.exceptions import SecretNotFound, SecretsFileNotPrivate
+from tadas.infra.exceptions import InvalidSecretName, SecretNotFound, SecretsFileNotPrivate
 
-__all__ = ["SecretNotFound", "SecretsFileNotPrivate", "SecretsInterface"]
+__all__ = [
+    "InvalidSecretName",
+    "SecretNotFound",
+    "SecretsFileNotPrivate",
+    "SecretsInterface",
+    "scoped_name",
+]
+
+
+def scoped_name(org_id: UUID, name: str) -> str:
+    """The name a store keeps a tenant's secret under: `org/<org_id>/<name>`.
+    A name is one segment, so no name climbs out of its tenant's prefix."""
+    if not name or name != name.strip() or "/" in name or name in {".", ".."}:
+        raise InvalidSecretName(f"a secret name is one segment with no '/': {name!r}")
+    return f"org/{org_id}/{name}"
 
 
 class SecretsInterface(ABC):
     @abstractmethod
-    async def get(self, name: str) -> str:
+    async def get(self, org_id: UUID, name: str) -> str:
         """Raises SecretNotFound."""
         ...
 
     @abstractmethod
-    async def has(self, name: str) -> bool: ...
+    async def has(self, org_id: UUID, name: str) -> bool: ...
 
     @abstractmethod
-    async def put(self, name: str, value: str) -> None: ...
+    async def put(self, org_id: UUID, name: str, value: str) -> None: ...
 
     @abstractmethod
-    async def delete(self, name: str) -> None: ...
+    async def delete(self, org_id: UUID, name: str) -> None: ...
 
     @abstractmethod
     def describe(self) -> str: ...

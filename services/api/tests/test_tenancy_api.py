@@ -73,6 +73,25 @@ async def test_login_is_rate_limited_per_client(client: httpx.AsyncClient) -> No
     assert int(rejected.headers["Retry-After"]) >= 1
 
 
+async def test_a_guessed_identity_waits_before_its_next_sign_in(
+    client: httpx.AsyncClient, container: AppContainer
+) -> None:
+    """Per identity and in the database, beside the per-address limit: after
+    three wrong passwords even the right one is answered 429 with the wait,
+    and the refusal names no other identity."""
+    await container.managers.tenancy.bootstrap(
+        seed_request(), "Acme", "acme", OWNER["email"], OWNER["password"], OWNER["name"]
+    )
+    wrong = {"email": OWNER["email"], "password": "nope"}
+    for _ in range(3):
+        assert (await client.post("/v1/auth/login", json=wrong)).status_code == 401
+    right = {"email": OWNER["email"], "password": OWNER["password"]}
+    delayed = await client.post("/v1/auth/login", json=right)
+    assert delayed.status_code == 429
+    assert delayed.json()["error"]["code"] == "sign_in_delayed"
+    assert int(delayed.headers["Retry-After"]) >= 1
+
+
 async def test_api_key_creation_replays_on_the_same_idempotency_key(
     client: httpx.AsyncClient, owner: dict[str, str]
 ) -> None:

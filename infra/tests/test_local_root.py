@@ -18,8 +18,8 @@ async def test_every_capability_works_over_the_local_root(tmp_path: Path) -> Non
     assert await infra.get_buckets().get(org, Buckets.EXPORTS, "f.txt") == b"hi"
     await infra.get_queues().send(Queues.WEBHOOKS, b"m")
     assert (await infra.get_queues().depth(Queues.WEBHOOKS)).visible == 1
-    await infra.get_secrets().put("s", "v")
-    assert await infra.get_secrets().get("s") == "v"
+    await infra.get_secrets().put(org, "s", "v")
+    assert await infra.get_secrets().get(org, "s") == "v"
     assert infra.get_topics().describe() == "topics=memory"
     assert len(infra.describe()) == len(CacheScope) + 4
     await infra.close()

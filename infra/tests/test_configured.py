@@ -4,6 +4,7 @@ from typing import cast
 import pytest
 from pydantic import ValidationError
 
+from tadas.infra.base import new_id
 from tadas.infra.cache import CacheScope
 from tadas.infra.cache.breaker import CacheBreakerImpl
 from tadas.infra.impl.configured import InfraConfiguredImpl, UnsafeConfiguration
@@ -163,10 +164,11 @@ def test_every_cache_scope_is_built_at_construction(tmp_path: Path) -> None:
 
 
 async def test_secret_overrides_reach_the_local_secrets_impl(tmp_path: Path) -> None:
+    org = new_id()
     infra = InfraConfiguredImpl(
-        local_settings(tmp_path, secret_overrides={"API_TOKEN": "from-boot"})
+        local_settings(tmp_path, secret_overrides={f"{org.hex}_API_TOKEN".upper(): "from-boot"})
     )
-    assert await infra.get_secrets().get("api_token") == "from-boot"
+    assert await infra.get_secrets().get(org, "api_token") == "from-boot"
 
 
 @pytest.mark.parametrize("value", ["", "off", " OFF "])

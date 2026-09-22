@@ -6,9 +6,17 @@ from datetime import timedelta
 from enum import StrEnum
 from uuid import UUID
 
+from tadas.infra.base import InfraModel
 from tadas.infra.exceptions import BlobNotFound, InvalidBucketKey
 
-__all__ = ["BlobNotFound", "Buckets", "BucketsInterface", "InvalidBucketKey", "object_key"]
+__all__ = [
+    "BlobNotFound",
+    "Buckets",
+    "BucketsInterface",
+    "InvalidBucketKey",
+    "PresignedUpload",
+    "object_key",
+]
 
 
 class Buckets(StrEnum):
@@ -21,6 +29,16 @@ def object_key(org_id: UUID, key: str) -> str:
     if not key or key.startswith("/") or ".." in key.split("/"):
         raise InvalidBucketKey(f"bucket key {key!r} is not a relative path")
     return f"{org_id}/{key}"
+
+
+class PresignedUpload(InfraModel):
+    """One bounded upload a browser makes straight to the store: a form POST
+    of `fields`, then the file, to `url`. The store refuses a body larger
+    than the bound it was signed with, or of another content type, so a URL
+    handed out cannot fill the bucket."""
+
+    url: str
+    fields: tuple[tuple[str, str], ...]
 
 
 class BucketsInterface(ABC):
@@ -53,9 +71,18 @@ class BucketsInterface(ABC):
     ) -> str | None: ...
 
     @abstractmethod
-    async def presign_put(
-        self, org_id: UUID, bucket: Buckets, key: str, content_type: str, ttl: timedelta
-    ) -> str | None: ...
+    async def presign_upload(
+        self,
+        org_id: UUID,
+        bucket: Buckets,
+        key: str,
+        content_type: str,
+        max_bytes: int,
+        ttl: timedelta,
+    ) -> PresignedUpload | None:
+        """An upload bounded by `content_type` and `max_bytes`, or None where
+        the store cannot presign (the local impl)."""
+        ...
 
     @abstractmethod
     def describe(self) -> str: ...

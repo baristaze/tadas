@@ -1246,6 +1246,24 @@ class TenancyStorageContract:
         assert await storage.consume_socket_ticket(ticket.ticket_hash, utcnow()) is None
         assert await storage.consume_socket_ticket("missing", utcnow()) is None
 
+    async def test_failed_sign_ins_made_at_once_are_each_counted(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        # Guesses at one identity arrive together; the count moves in the
+        # statement, so none of them is lost to a read written back by another.
+        identity = make_identity()
+        await storage.write_identity(identity)
+        failed_at = utcnow()
+        await race(*(storage.record_failed_sign_in(identity.id, failed_at) for _ in range(5)))
+        counted = await storage.read_identity(identity.id)
+        assert counted is not None
+        assert counted.failed_sign_ins == 5
+        assert counted.last_failed_sign_in_at == failed_at
+        await storage.clear_failed_sign_ins(identity.id)
+        cleared = await storage.read_identity(identity.id)
+        assert cleared is not None
+        assert (cleared.failed_sign_ins, cleared.last_failed_sign_in_at) == (0, None)
+
     async def test_purge_removes_members_with_their_memberships_and_revoked_keys(
         self, storage: TenancyStorageInterface
     ) -> None:

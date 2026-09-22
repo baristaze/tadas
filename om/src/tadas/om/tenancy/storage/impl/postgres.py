@@ -46,6 +46,28 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
     async def write_identity(self, identity: Identity) -> None:
         await self._upsert_global(Identities, identity)
 
+    async def record_failed_sign_in(self, identity_id: UUID, at: datetime) -> None:
+        # The count moves in the statement, so guesses made at once are each
+        # counted rather than one read and written back by all of them.
+        stmt = (
+            update(Identities)
+            .where(Identities.id == identity_id)
+            .values(failed_sign_ins=Identities.failed_sign_ins + 1, last_failed_sign_in_at=at)
+        )
+        async with self._session_for(stmt, EMPTY_UUID) as session:
+            await session.execute(stmt)
+            await session.commit()
+
+    async def clear_failed_sign_ins(self, identity_id: UUID) -> None:
+        stmt = (
+            update(Identities)
+            .where(Identities.id == identity_id)
+            .values(failed_sign_ins=0, last_failed_sign_in_at=None)
+        )
+        async with self._session_for(stmt, EMPTY_UUID) as session:
+            await session.execute(stmt)
+            await session.commit()
+
     async def read_org(self, org_id: UUID) -> Org | None:
         stmt = select(Orgs).where(Orgs.org_id == org_id, Orgs.id == org_id)
         async with self._session_for(stmt, org_id) as session:

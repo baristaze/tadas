@@ -22,6 +22,7 @@ from tadas.om.exceptions import (
     NotAnOperator,
     NotAuthorized,
     NotFound,
+    SignInDelayed,
     UniqueKeyTaken,
     ValidationFailed,
 )
@@ -295,6 +296,39 @@ async def test_login_rejects_a_wrong_password(manager: TenancyManagerImpl) -> No
         await manager.login(request(), "ann@example.test", "nope")
     with pytest.raises(InvalidCredential):
         await manager.login(request(), "nobody@example.test", "pw-1234")
+
+
+async def test_a_run_of_failed_sign_ins_makes_the_next_one_wait(
+    manager: TenancyManagerImpl, storage: TenancyStorageMemoryImpl
+) -> None:
+    """Counted per identity, in the tenancy role's own storage: the wait holds
+    whatever address the guesses come from, and even the right password is
+    not checked before it has passed."""
+    await manager.bootstrap(request(), "Acme", "acme", "ann@example.test", "pw-1234", "Ann")
+    for _ in range(3):
+        with pytest.raises(InvalidCredential):
+            await manager.login(request(), "ann@example.test", "nope")
+    with pytest.raises(SignInDelayed) as delayed:
+        await manager.login(request(), "ann@example.test", "pw-1234")
+    assert timedelta(0) < delayed.value.retry_after <= timedelta(seconds=1)
+    identity = await storage.read_identity_by_email("ann@example.test")
+    assert identity is not None and identity.failed_sign_ins == 3
+    # Once the wait has passed, the right password signs in and ends the run.
+    await storage.write_identity(
+        identity.model_copy(update={"last_failed_sign_in_at": utcnow() - timedelta(minutes=1)})
+    )
+    await manager.login(request(), "ann@example.test", "pw-1234")
+    identity = await storage.read_identity_by_email("ann@example.test")
+    assert identity is not None and identity.failed_sign_ins == 0
+    assert identity.last_failed_sign_in_at is None
+
+
+async def test_an_unknown_email_is_never_delayed_and_counts_nothing(
+    manager: TenancyManagerImpl,
+) -> None:
+    for _ in range(6):
+        with pytest.raises(InvalidCredential):
+            await manager.login(request(), "nobody@example.test", "nope")
 
 
 async def test_an_unknown_email_costs_a_password_check_off_the_event_loop(

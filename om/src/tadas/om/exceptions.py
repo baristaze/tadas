@@ -1,6 +1,8 @@
 """Every exception raised inside the platform is rooted here. The root
 carries the status and the stable code a boundary needs to present it."""
 
+from datetime import timedelta
+
 
 class PlatformException(Exception):
     """Root of every exception raised inside the platform."""
@@ -104,6 +106,18 @@ class InvalidCredential(TenancyException, NotAuthenticated):
 
 class CredentialExpired(TenancyException, NotAuthenticated):
     """The credential was valid once and is not any more."""
+
+
+class SignInDelayed(TenancyException):
+    """A run of failed sign-ins for this identity: the next attempt is not
+    checked before `retry_after` has passed."""
+
+    http_status = 429
+    code = "sign_in_delayed"
+
+    def __init__(self, retry_after: timedelta) -> None:
+        super().__init__("too many failed sign-ins; try again later")
+        self.retry_after = retry_after
 
 
 class NotAnOperator(TenancyException, NotAuthorized):

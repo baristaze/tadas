@@ -34,6 +34,19 @@ class TenancyStorageInterface(ABC):
         """Global table: identities have no tenant."""
         ...
 
+    @abstractmethod
+    async def record_failed_sign_in(self, identity_id: UUID, at: datetime) -> None:
+        """Global table: identities have no tenant. One more failed sign-in
+        in the identity's run, counted in the statement itself, so guesses
+        made at once are each counted."""
+        ...
+
+    @abstractmethod
+    async def clear_failed_sign_ins(self, identity_id: UUID) -> None:
+        """Global table: identities have no tenant. Ends the run on a
+        sign-in that succeeded."""
+        ...
+
     # Orgs are the tenants; their own id is their org_id.
     @abstractmethod
     async def read_org(self, org_id: UUID) -> Org | None: ...

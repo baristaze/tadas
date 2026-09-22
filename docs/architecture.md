@@ -533,8 +533,11 @@ backoff that grows with consecutive failures.
   not a read followed by a write.
 - Environment names are one set, shared with Terraform: `local` and
   `test` allow the local backends; `dev`, `staging`, and `production`
-  refuse them; any other name is refused at boot. The local secrets
-  impl receives its `TADAS_SECRET_<NAME>` overrides from the settings
+  refuse them; any other name is refused at boot. A secret belongs to a
+  tenant: every `SecretsInterface` call takes the `org_id` first, each
+  store keeps a tenant's secrets under `org/<org_id>/`, and a name is one
+  segment, so none climbs out of its tenant's prefix. The local secrets
+  impl receives its `TADAS_SECRET_<ORG>_<NAME>` overrides from the settings
   object, collected once at boot from `.env` and from the environment
   over it, the two sources every other setting has; nothing below
   settings reads either. `.env.example` documents every knob.

@@ -111,8 +111,8 @@ async def test_not_found_codes_keep_their_shape() -> None:
         await (await buckets("NoSuchKey")).get(new_id(), Buckets.EXPORTS, "k")
     assert await (await buckets("404")).exists(new_id(), Buckets.EXPORTS, "k") is False
     with pytest.raises(SecretNotFound):
-        await (await secrets("ResourceNotFoundException")).get("token")
-    assert await (await secrets("ResourceNotFoundException")).has("token") is False
+        await (await secrets("ResourceNotFoundException")).get(new_id(), "token")
+    assert await (await secrets("ResourceNotFoundException")).has(new_id(), "token") is False
 
 
 async def test_every_other_code_becomes_a_platform_exception() -> None:
@@ -125,10 +125,10 @@ async def test_every_other_code_becomes_a_platform_exception() -> None:
     with pytest.raises(BackendFailed):
         await (await buckets("AccessDenied")).list(new_id(), Buckets.EXPORTS, "", limit=10)
     with pytest.raises(BackendFailed) as raised:
-        await (await secrets("AccessDeniedException")).get("token")
+        await (await secrets("AccessDeniedException")).get(new_id(), "token")
     assert "from the driver" not in raised.value.message
     with pytest.raises(BackendFailed):
-        await (await secrets("AccessDeniedException")).delete("token")
+        await (await secrets("AccessDeniedException")).delete(new_id(), "token")
 
 
 @pytest.mark.parametrize(
@@ -153,7 +153,7 @@ async def test_a_backend_that_cannot_be_reached_is_unreachable(failure: BotoCore
     with pytest.raises(BackendUnreachable):
         await (await buckets(failure)).get(new_id(), Buckets.EXPORTS, "k")
     with pytest.raises(BackendUnreachable):
-        await (await secrets(failure)).get("token")
+        await (await secrets(failure)).get(new_id(), "token")
 
 
 async def test_any_other_driver_error_is_a_backend_failure() -> None:

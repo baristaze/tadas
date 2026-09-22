@@ -15,7 +15,7 @@ from tadas.infra.observability import (
 )
 from tadas.infra.root import InfraInterface
 from tadas.infra.trust import install_trust_store
-from tadas.om.root import Managers, build_managers
+from tadas.om.root import Managers, TenancyOptions, build_managers
 from tadas.om.storage.impl.postgres import StoragePostgresImpl
 from tadas.om.storage.root import StorageInterface
 from tadas.services.api.gateway.ratelimit import RateLimit, RateLimitOptions
@@ -51,6 +51,16 @@ def boot(settings: ApiSettings) -> None:
         timedelta(seconds=settings.otel_timeout_seconds),
     )
     _booted = True
+
+
+def tenancy_options(settings: ApiSettings) -> TenancyOptions:
+    return TenancyOptions(
+        login_ttl=timedelta(seconds=settings.login_lifetime_seconds),
+        session_ttl=timedelta(seconds=settings.session_lifetime_seconds),
+        sign_in_free_failures=settings.sign_in_free_failures,
+        sign_in_delay_base=timedelta(seconds=settings.sign_in_delay_base_seconds),
+        sign_in_delay_cap=timedelta(seconds=settings.sign_in_delay_cap_seconds),
+    )
 
 
 def rate_limit_options(settings: ApiSettings) -> RateLimitOptions:
@@ -106,7 +116,7 @@ class AppContainer:
         cls, settings: ApiSettings, storage: StorageInterface, infra: InfraInterface
     ) -> AppContainer:
         """Managers, then services, over whichever roots the caller chose."""
-        managers = build_managers(storage, infra)
+        managers = build_managers(storage, infra, tenancy_options(settings))
         services = build_services(managers, infra)
         return cls(settings, storage, infra, managers, services, rate_limit_options(settings))
 

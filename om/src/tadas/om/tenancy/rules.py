@@ -6,7 +6,7 @@ relational one spells them in SQL and names the rule it mirrors."""
 import hashlib
 import hmac
 import re
-from datetime import timedelta
+from datetime import datetime, timedelta
 from uuid import UUID
 
 from tadas.om.opcontext import CredentialKind, Role
@@ -135,3 +135,22 @@ def is_after_newest_first(entity_id: UUID, cursor: UUID) -> bool:
     since an id is minted in time order; a row is on the next page when its
     id sorts strictly before the cursor's."""
     return entity_id < cursor
+
+
+def sign_in_delay(
+    failures: int,
+    last_failed_at: datetime | None,
+    now: datetime,
+    *,
+    free: int,
+    base: timedelta,
+    cap: timedelta,
+) -> timedelta:
+    """How long the next sign-in of an identity waits before it is checked:
+    nothing for the first `free` failures of a run, then `base`, doubling
+    with each failure after, never more than `cap`, counted from the last
+    failure. Zero once that has passed."""
+    if failures < free or last_failed_at is None:
+        return timedelta(0)
+    wait = min(base * (2 ** (failures - free)), cap)
+    return max(last_failed_at + wait - now, timedelta(0))
