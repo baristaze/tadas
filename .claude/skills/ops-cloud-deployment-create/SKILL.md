@@ -1,7 +1,8 @@
 ---
 name: ops-cloud-deployment-create
-description: "Create one cloud environment of the platform from nothing, in its own AWS account, as that account's administrator: the bootstrap root (state bucket, registry, OIDC trust, the deploy roles, the investigate role, the budget, the zones), the delegation of its public names at Cloudflare, the investigate profile, the GitHub environments and their variables, then the first deploy through the pipeline and the smoke test. Runs scripts/cloud_create.sh after checking the administrator profile, the account, and the GitHub login. Supports --dry-run. The one skill besides nuke that needs a credential that writes."
-allowed-tools: Read, Grep, Glob, Bash(aws:*), Bash(gh:*), Bash(scripts/cloud_create.sh:*)
+description: "Create one cloud environment of the platform from nothing, in its own AWS account, as that account's administrator: the bootstrap root (state bucket, registry, OIDC trust, the deploy roles, the investigate role, the budget, the zones), the delegation of its public names at Cloudflare, the investigate profile, the GitHub environments and their variables, then the first deploy through the pipeline and the grants that follow it. Runs scripts/cloud_create.sh after checking the administrator profile, the account, and the GitHub login. Supports --dry-run. The one skill besides nuke that needs a credential that writes, so a person invokes it by name and approves each run of the script."
+disable-model-invocation: true
+allowed-tools: Read, Grep, Glob, Bash(aws:*), Bash(gh:*), Bash(jq:*)
 ---
 
 # ops-cloud-deployment-create
@@ -38,8 +39,11 @@ The script also needs `OWNER_EMAIL` and `ALARM_EMAIL` (as environment
 variables or as `--owner-email`, `--alarm-email`), and
 `CLOUDFLARE_API_TOKEN` as an environment variable only: a token that
 can edit DNS in the domain's zone at Cloudflare, so it never lands in
-shell history. It refuses without them; ask for any that is missing.
-The dry run needs no token.
+shell history. That token is the run's one credential outside the
+account: scoped to the domain's zone, short-lived where Cloudflare
+allows it, and held only for the run. The script refuses without them;
+ask for any that is missing, and never for the token's value in the
+conversation. The dry run needs no token.
 
 ## Order
 
@@ -88,11 +92,17 @@ the repository's environments and their variables.
 
 No env file is read. The script writes one:
 `~/.config/tadas/ops/<env>.env`, owner-only, with `TADAS_API_URL` set
-and the operator, provisioner, and error tracker lines empty for the
-person to fill in. It appends the `tadas-<env>-investigate` profile to
-`~/.aws/config`, chained from the Identity Center profile. It writes no
-key anywhere. The skill prints the names of what was written and never
-a value.
+and the lines `TADAS_OPERATOR_TOKEN`, `TADAS_PROVISIONER_TOKEN`, and the
+tracker's left empty: no operator exists until `grant-operator.yml` has
+run and the operator has enrolled a second factor. The script prints
+the two tracker lines, `TADAS_ERROR_TRACKER_URL` and
+`TADAS_ERROR_TRACKER_TOKEN`, as the one part of the env file a person
+fills by hand, once they have made the environment's project in the
+error tracker. The file never holds a password or a TOTP secret, since
+an agent never signs in with a password. It appends the
+`tadas-<env>-investigate` profile to `~/.aws/config`, chained from the
+Identity Center profile. It writes no key anywhere. The skill prints
+the names of what was written and never a value.
 
 ## Procedure
 
@@ -100,7 +110,9 @@ a value.
    region, and the two public names. Verify the administrator profile
    as Role and credential states. Check the GitHub login.
 2. Run the script, in dry mode first when `--dry-run` was given, or
-   when it is the first time this environment is created:
+   when it is the first time this environment is created. The script
+   is not among this skill's tools, so every run asks the person
+   before it starts, and the person's approval is the go:
 
    ```bash
    scripts/cloud_create.sh <env> --dry-run
@@ -136,22 +148,32 @@ a value.
      GitHub, and the only one the token is for.
    - The investigate profile, `tadas-<env>-investigate`: the role's ARN
      with the Identity Center profile as its `source_profile`.
-   - The GitHub environments and their variables: `staging`, or
-     `production-plan` (no reviewer) and `production` (the owner as
-     required reviewer). Each deploys from one branch only, `main` for
-     staging and `release` for both production ones. Each holds
-     `AWS_ROLE_ARN`, `TF_STATE_BUCKET`, and `ARTIFACTS_BUCKET` for its
-     own account; the plan environment and
-     staging also hold `API_DOMAIN_NAME`, `APP_DOMAIN_NAME`, and
-     `ALARM_EMAIL`. No secret: the OIDC trust replaces keys.
+   - The GitHub environments and their variables: `staging-build` and
+     `staging`, or `production-plan` (no reviewer) and `production`
+     (the owner as required reviewer). Each deploys from one branch
+     only, `main` for staging and `release` for both production ones.
+     Each holds `AWS_ROLE_ARN`, `TF_STATE_BUCKET`, and `ARTIFACTS_BUCKET`
+     for its own account; the plan environment and staging also hold
+     `API_DOMAIN_NAME`, `APP_DOMAIN_NAME`, and `ALARM_EMAIL`. No secret:
+     the OIDC trust replaces keys. For staging, the ruleset on `main`:
+     a pull request whose checks passed.
    - The first deploy, through the pipeline: the script pushes
      nothing and applies no environment root itself. For staging it
      dispatches `deploy-staging.yml`. For production it prints the
      order above, because the first release waits for a replicated
      build.
-   - The smoke test, which the script prints for the person to run
-     once the deploy is green: one request through the edge, then
-     `tadas-ops signals check --request-id` reading its log lines, its
+   - The grants, printed for the person and never run by this skill:
+     the first operator, the provisioner, and the smoke identity, each
+     through `grant-operator.yml` on the environment's branch, which
+     production's reviewer approves like an apply.
+   - The smoke test, printed as the step after the grants and never
+     run by this skill. Every deploy runs its own after the rollout
+     (`scripts/cloud_smoke.sh`): the smoke identity's operator token,
+     minted by the grant task, reads the operator plane through the
+     edge. It is skipped until `grant-operator.yml` has granted the
+     smoke identity a `read` entry and the environment's `SMOKE_EMAIL`
+     variable names it. By hand, one request through the edge, then
+     `tadas-ops signals check --request-id` reads its log lines, its
      metric, its trace, and its error event back by that id.
 4. Check the result with the investigate profile the script wrote,
    because that is the profile every later skill holds. The person
@@ -172,10 +194,14 @@ a value.
 - No apply by hand: the script applies the bootstrap root, which has
   no pipeline, and dispatches the pipeline for the environment; it
   never runs `terraform apply` in an environment root.
-- No IAM user and no access key, created or read.
-- No secret value printed: the Cloudflare token, the operator
-  password, the tracker token stay in the environment or in
-  owner-only files, and appear in the report by name only.
+- No act outside the environment's account: every provider pins it,
+  and the script refuses a profile that resolves anywhere else.
+- No IAM user and no access key, created or read, for a person or an
+  agent.
+- No secret value read or printed: the Cloudflare token, the operator
+  tokens, and the tracker token stay in the environment, the secret
+  store, or owner-only files, and appear in the report as the names
+  that hold them.
 - No console clicks: what the script cannot do with the CLI is
   reported as a manual step with its exact command.
 - No tenant data; there is none yet.
@@ -205,8 +231,8 @@ dry run's smoke test is "not yet".
 - Replication into production: <on | off | n/a>
 - Profile written: tadas-<env>-investigate (~/.aws/config), source_profile <sso_profile>
 - Env file written: ~/.config/tadas/ops/<env>.env
-- First deploy: workflow run <url>, <status> (or: waits for the order above)
-- Smoke test: <passed | failed | not yet>, request id <id>
+- First deploy: workflow run <url>, <status> | production: waits for Order
+- Smoke test: not yet; it follows the smoke identity's grant and SMOKE_EMAIL
 
 ## Left for a person
 
@@ -214,6 +240,9 @@ dry run's smoke test is "not yet".
 
 ## Next
 
+- <the next run of Order, or nothing>
+- Dispatch `grant-operator.yml` for the first operator, who enrols the second factor at the console's first sign-in and runs `uv run tadas-ops token --env <env> --identity operator` in their own terminal; grant the smoke identity and set `SMOKE_EMAIL`, so the next deploy runs the smoke test
+- Manual steps left: <the tracker's lines in the env file, or none>
 - Hand the administrator permission set back; every later skill runs
   under tadas-<env>-investigate.
 ```

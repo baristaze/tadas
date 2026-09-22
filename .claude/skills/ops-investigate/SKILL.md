@@ -53,19 +53,39 @@ environment's `account_id` in `deployment/cloud/environments.json`
 a mismatch: the right role in the wrong account is the wrong credential.
 
 The env file `~/.config/tadas/ops/<env>.env` is owner-only and outside
-the repository. It holds `TADAS_API_URL`, `TADAS_OPERATOR_EMAIL`,
-`TADAS_OPERATOR_PASSWORD` (a `read` entry; the file's `write` entry,
-`TADAS_PROVISIONER_EMAIL` with `TADAS_PROVISIONER_PASSWORD`, belongs to
-the traffic generator alone), `TADAS_ERROR_TRACKER_URL`, and
-`TADAS_ERROR_TRACKER_TOKEN`. `local.env` points at the compose stack
-and adds the twins, `TADAS_PROMETHEUS_URL` and `TADAS_JAEGER_URL`, on
-the ports `.env` names. Read the file, use its values in commands, and
-never print the password or the token.
+the repository. It holds `TADAS_API_URL`, `TADAS_OPERATOR_TOKEN` (a
+`read` operator token; the file's `TADAS_PROVISIONER_TOKEN`, a `write`
+token, belongs to the traffic generator alone), `TADAS_ERROR_TRACKER_URL`,
+and `TADAS_ERROR_TRACKER_TOKEN`. `local.env`, when there is one,
+points at the compose stack and adds the twins, `TADAS_PROMETHEUS_URL`
+and `TADAS_JAEGER_URL`, on the ports `.env` names. It holds no password
+and no TOTP secret: an agent never signs in with a password.
+
+Never read the env file, with `Read`, `cat`, or anything else: its
+values stay out of this conversation. A command that needs one sources
+the file and makes the call in the same command, because shell state
+does not persist between calls. Every block below that names a
+`TADAS_` variable starts with that line and runs as one command:
+
+```bash
+set -a; . ~/.config/tadas/ops/<env>.env; set +a
+curl -s -H "Authorization: Bearer $TADAS_OPERATOR_TOKEN" "$TADAS_API_URL/v1/admin/me"
+```
+
+`tadas-ops` reads the file itself from `--env`. Never print a token.
+The operator token carries one permission and expires within the
+hour. When a call answers `401`, stop and ask the person to run
+`uv run tadas-ops token --env <env> --identity operator` in their own
+terminal, which asks there for the password and the TOTP code; never
+ask for either in the conversation.
 
 ## Procedure
 
-1. Verify the credential as Role and credential states. Read the env
-   file. Compute the window: `--since` back from now, as epoch seconds
+The processes are `api` and `maintenance`, as `deployment/README.md`
+lists them.
+
+1. Verify the credential as Role and credential states. Compute the
+   window: `--since` back from now, as epoch seconds
    for the cloud and as a Prometheus range for local.
 2. Read the platform's size first:
 
@@ -74,9 +94,11 @@ never print the password or the token.
    ```
 
    It prints tenants, users, and the entities written in the last day
-   (for a to-do product, the tasks and the events), through `GET /v1/admin/size` with the env file's
-   operator identity. A platform of one tenant and one user is the
-   developer. Every finding below is read against this number.
+   (for a to-do product, the tasks and the events), through `GET /v1/admin/size`
+   with the env file's operator token (`uv run tadas-ops size --env <env>`,
+   which leaves the traffic generator's own tenants out). A platform
+   of one tenant and one user is the developer. Every finding below is
+   read against this number and against whose traffic it was.
 3. Alarms. Cloud:
 
    ```bash
@@ -86,7 +108,8 @@ never print the password or the token.
 
    Local has no alarm topic: run the alarm conditions as Prometheus
    queries against `$TADAS_PROMETHEUS_URL/api/v1/query`, over the
-   window `[<since>]`:
+   window `[<since>]`, each `curl` sourcing the env file in the same
+   command:
 
    - 5xx ratio: `sum(rate(tadas_http_requests_total{status=~"5.."}[<since>])) / sum(rate(tadas_http_requests_total[<since>]))`, alarm above 0.01
    - targets up: `up{job!="prometheus"}`, alarm on any 0 (a host process
@@ -114,6 +137,7 @@ never print the password or the token.
    Local:
 
    ```bash
+   set -a; . ~/.config/tadas/ops/<env>.env; set +a
    curl -sG "$TADAS_PROMETHEUS_URL/api/v1/query" \
      --data-urlencode 'query=sum by (route, status) (rate(tadas_http_requests_total[5m]))'
    curl -sG "$TADAS_PROMETHEUS_URL/api/v1/query" \
@@ -142,6 +166,7 @@ never print the password or the token.
    GlitchTip:
 
    ```bash
+   set -a; . ~/.config/tadas/ops/<env>.env; set +a
    curl -s -H "Authorization: Bearer $TADAS_ERROR_TRACKER_TOKEN" \
      "$TADAS_ERROR_TRACKER_URL/api/0/organizations/<org>/issues/?statsPeriod=<since>"
    ```
@@ -150,6 +175,7 @@ never print the password or the token.
    `tadas`):
 
    ```bash
+   set -a; . ~/.config/tadas/ops/<env>.env; set +a
    curl -s -H "Authorization: Bearer $TADAS_ERROR_TRACKER_TOKEN" "$TADAS_ERROR_TRACKER_URL/api/0/organizations/"
    ```
 
@@ -185,6 +211,7 @@ never print the password or the token.
    the request id is the span attribute `tadas.request_id`):
 
    ```bash
+   set -a; . ~/.config/tadas/ops/<env>.env; set +a
    curl -sG "$TADAS_JAEGER_URL/api/v3/traces" \
      --data-urlencode query.service_name=api \
      --data-urlencode "query.start_time_min=<start, RFC 3339>" \
@@ -226,9 +253,10 @@ never print the password or the token.
 
 - No write to the cloud: no `aws` verb that is not `get`, `describe`,
   `list`, `start-query`, `get-query-results`, or `tail`.
-- No secret value printed: the password and the token stay in the env
-  file, `aws secretsmanager get-secret-value` is denied to the role
-  and never attempted.
+- No secret value read or printed: the tokens stay in the env file,
+  which is sourced and never read, and
+  `aws secretsmanager get-secret-value` is denied to the role and
+  never attempted.
 - No tenant data: the signals carry no tenant id, and this skill reads
   no tenant's rows. That is `ops-root-cause`, for one named tenant.
 - No `terraform apply`, no console clicks, no scaling by hand.

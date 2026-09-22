@@ -1,7 +1,8 @@
 ---
 name: ops-cloud-deployment-nuke
-description: "Destroy one cloud environment of the platform as its account's administrator: empty the buckets, destroy the environment root, and report what remains (the bootstrap root whole: the zones, the registry, the roles, the state). Runs scripts/cloud_nuke.sh after checking the administrator profile and the account. Refuses production unless --confirm production is typed and a released change on release, applied, sets the database's deletion protection off. Applies from a clean worktree of the deployed branch, never the working tree. Supports --dry-run. The one skill besides create that needs a credential that writes."
-allowed-tools: Read, Grep, Glob, Bash(aws:*), Bash(gh:*), Bash(git fetch:*), Bash(git show:*), Bash(scripts/cloud_nuke.sh:*)
+description: "Destroy one cloud environment of the platform as its account's administrator: empty the buckets, destroy the environment root, and report what remains (the bootstrap root whole: the zones, the registry, the roles, the state; and production's copies of what staging built). Runs scripts/cloud_nuke.sh after checking the administrator profile and the account against deployment/cloud/environments.json. Stops after the dry run until the person says go. Refuses production unless --confirm production is typed and a released change on release, applied, sets the database's deletion protection off. Applies from a clean worktree of the exact commit the environment runs, never the working tree. The one skill besides create that needs a credential that writes, so a person invokes it by name."
+disable-model-invocation: true
+allowed-tools: Read, Grep, Glob, Bash(aws:*), Bash(gh:*), Bash(jq:*), Bash(git fetch:*), Bash(git show:*)
 ---
 
 # ops-cloud-deployment-nuke
@@ -55,6 +56,9 @@ call.
 
 ## Procedure
 
+The processes are `api` and `maintenance`, the ECS services of the
+cluster `tadas-<env>`, as `deployment/README.md` lists them.
+
 1. Verify the administrator profile as Role and credential states.
 2. Production only, two checks, both before the script runs:
    - `--confirm production` is present and was typed by the person.
@@ -72,20 +76,34 @@ call.
      gh pr list --state merged --search "deletion protection" --limit 5
      ```
 
-     A working tree or a `main` that reads `false` while `release`
-     reads `true` is not enough: production applies `release`, so the
-     protection is still on. Stop and name the release to run first.
+     Production applies `release`, so a change merged to `main` and
+     not yet released has changed nothing there, and neither has a
+     working tree. The script also reads `deletion_protection` from
+     the database in the applied state and refuses while it is on.
+     Stop and name the release that is still to come. The script
+     applies from a clean worktree of `origin/release`, never from
+     the working tree it was started in, so nothing unreleased reaches
+     production on the way down. Staging's destroy applies the same
+     way from the commit of staging's last deploy whose apply
+     succeeded, read from its `deploy-staging` run, never from the tip
+     of `main`, which may hold a merge staging never ran; the script
+     refuses while a staging deploy is still going.
 3. Read what the environment holds, so the report can say what is
    gone and what stays:
 
    ```bash
    aws ecs describe-services --cluster tadas-<env> \
-     --services tadas-<env>-api tadas-<env>-maintenance --profile <admin_profile>
+     --services api maintenance --profile <admin_profile>
    aws s3api list-buckets --query 'Buckets[?starts_with(Name, `tadas-<env>-`)].Name' \
      --profile <admin_profile>
    ```
 
-4. Run the script, dry first:
+4. Run the script dry, show the person what it printed, and stop.
+   The real run waits for an explicit go the person types in this
+   session after reading the dry run, in staging as in production;
+   an unattended session ends at the dry run. The script is not
+   among this skill's tools, so each run also asks the person before
+   it starts:
 
    ```bash
    scripts/cloud_nuke.sh <env> --dry-run
@@ -93,9 +111,9 @@ call.
    ```
 
    Narrate each step as the script reaches it: the clean worktree of
-   `origin/main` (staging) or `origin/release` (production) the root is
-   applied from, so no unreleased change reaches the environment; the
-   `destroyable`
+   staging's last deployed commit (staging) or `origin/release`
+   (production) the root is applied from, so no unreleased change
+   reaches the environment; the `destroyable`
    switch applied (`force_destroy` on the buckets, no recovery window
    on the secrets, and for staging only `skip_final_snapshot` and the
    lifted protection on the database) through one apply of the
@@ -117,13 +135,16 @@ call.
 
 ## What it never does
 
-- No destroy without the preconditions: the profile, the typed
-  confirmation, the merged change.
+- No destroy without the preconditions: the profile, the person's
+  word after the dry run, and in production the typed confirmation
+  and the released change.
+- No production database destroyed without its final snapshot, and
+  no automated backup deleted with it.
 - No touch of the bootstrap root: the state bucket, the zones, the
   registry, the roles.
-- No destroy of the other environment: it is another account, the
-  profile is the one this environment names, and the script refuses a
-  session that resolves to any other account.
+- No destroy of the other environment: it lives in another account,
+  the profile is the one this environment names, and the script
+  refuses a session that resolves to any other account.
 - No secret value printed.
 - No console clicks: a resource the CLI cannot remove is reported,
   not clicked away.
@@ -133,10 +154,10 @@ call.
 ```markdown
 # Environment destroyed: <env>
 
-**Credential.** <admin_profile>, <Arn>, account <id>
-**Confirmation.** <typed | not needed (staging)>
+**Credential.** <admin_profile>, <Arn>, account <id> (expected <id>)
+**Confirmation.** <the person's word after the dry run; typed --confirm production (production)>
 **Deletion protection on release.** <false, PR <url>, applied | not needed (staging)>
-**Applied from.** origin/<main | release> at <sha>, in a clean worktree
+**Applied from.** <origin/release | staging's last deployed commit> at <sha>, in a clean worktree
 
 ## Gone
 
@@ -146,7 +167,7 @@ call.
 
 ## Remains
 
-- The bootstrap root: zones <names> (delegated at Cloudflare), the registry, <role names>, budget
+- The bootstrap root: zones <names> (delegated at Cloudflare), the registry and its images, <role names>, budget
 - State prefix environments/<staging | prod>/ in tadas-state-<id>, empty
 - Production only: the final snapshot tadas-production-final and the automated backups
 - Staging only: production's copies of what staging built, in production's account

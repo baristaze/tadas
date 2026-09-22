@@ -44,24 +44,44 @@ and refused under any other identity, the administrator profiles
 (`tadas-staging-admin`, `tadas-prod-admin`) above all, and the bare
 sign-in profiles (`tadas-staging`, `tadas-prod`), whose PowerUserAccess
 is wider than the role. The env file `~/.config/tadas/ops/<env>.env`,
-owner-only and outside the repository, gives the generator its
-provisioner identity (`TADAS_PROVISIONER_EMAIL`,
-`TADAS_PROVISIONER_PASSWORD` against `TADAS_API_URL`, the file's one
-`write` entry, which creates the run's own tenants), and the signals
-their URLs and token. Never print the password or the token.
+owner-only and outside the repository, gives the generator the
+provisioner's token (`TADAS_PROVISIONER_TOKEN` against `TADAS_API_URL`,
+the file's one `write` token, which creates the run's own tenants and
+removes them when the run ends), and the signals their URLs and token.
+The file holds no password and no TOTP secret: an agent never signs in
+with a password. In production the provisioner's entry is disabled
+between runs; the person enables it, with its token, and disables it
+again by dispatching `grant-operator.yml`, as `ops-simulate-traffic`
+states.
 
 Check the account too: `Account` in the same answer must equal the
 environment's `account_id` in `deployment/cloud/environments.json`
 (read the file; the value is `.environments.<env>.account_id`). Stop on
 a mismatch: the right role in the wrong account is the wrong credential.
 
+Never read the env file, with `Read`, `cat`, or anything else: its
+values stay out of this conversation. `tadas-ops` reads the file
+itself from `--env`, and a command that needs a value from it
+sources the file and makes the call in the same command, because
+shell state does not persist between calls. Never print a token.
+The provisioner's token carries one permission and expires within
+the hour. When the generator reports it refused or expired, stop and
+ask the person to refresh it: in the cloud by dispatching
+`grant-operator.yml` with `mint_token: provisioner`, then running
+`uv run tadas-ops token --env <env> --identity provisioner` in their
+own terminal, which copies the token the grant job wrote under their
+own sign-in (in production with `--profile tadas-prod-power`), never
+under an investigate profile, which reads no secret. Locally, a run
+without a provisioner token in `local.env` takes `--orgs 0`.
+
 ## Procedure
 
 1. Read the scenario. Refuse one without a target; that is
    `stress-test-create-or-update`'s job. `--scenario <name>` and a bare
    `<name>` mean the same file. Verify the credential as Role and
-   credential states. Check the env file exists, is owner-only, and
-   holds the keys; never print it.
+   credential states. Check the env file exists and is owner-only,
+   through `tadas-ops`, which refuses a file that is not; never read
+   or print it.
 2. Say what is about to happen and wait for the person: a real run
    is the platform developer's choice, because it costs money in the
    cloud, writes rows, and can trip the alarms it is meant to test.
@@ -123,8 +143,9 @@ a mismatch: the right role in the wrong account is the wrong credential.
 
 - No run without the person's word, and none against production
   without it in this session.
-- No write outside the generator's own tenants; no scaling, no apply,
-  no change to the scenario.
+- No write outside the generator's own tenants, and none left behind:
+  the generator removes them when the run ends, and the report names
+  any it could not; no scaling, no apply, no change to the scenario.
 - No secret value printed.
 - No verdict from the generator's numbers alone: the platform's own
   signals decide.

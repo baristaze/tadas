@@ -22,11 +22,14 @@ tenants, members, concurrency, and think time.
 600, or 900 from light to stress). `--report` writes the table as JSON
 beside printing it. `--orgs` is how many tenants the run provisions,
 the profile's number by default; `--orgs 0` drives the seeded people
-of `.env` instead and needs no provisioner. `local` drives the API at
-`http://127.0.0.1:8000`, started by `scripts/dev.sh` or `make up`, and
-needs no cloud; its file is `~/.config/tadas/ops/local.env`, and
-without a provisioner in it a local run takes `--orgs 0`. `stress` is the top profile; a run at it with a target
-is `stress-test-run`, not this skill.
+of `.env` instead and needs no provisioner, so it is for `local` only
+and refused against a cloud environment, which has no seeded people.
+`local` drives the API at `http://127.0.0.1:8000`, started by
+`scripts/dev.sh` or `make up`, and needs no cloud; its file is
+`~/.config/tadas/ops/local.env` when there is one, and without a
+provisioner token in it a local run takes `--orgs 0`. `stress` is the
+top profile; a run at it with a target is `stress-test-run`, not this
+skill.
 
 ## Role and credential
 
@@ -49,16 +52,44 @@ aws sts get-caller-identity --profile tadas-<env>-investigate
 and refused under any other identity, the administrator profiles
 (`tadas-staging-admin`, `tadas-prod-admin`) above all, and the bare
 sign-in profiles (`tadas-staging`, `tadas-prod`), whose permission
-sets (PowerUserAccess, ReadOnlyAccess) are wider than the role. And the env file
-`~/.config/tadas/ops/<env>.env`, owner-only and outside the repository,
-whose provisioner identity (`TADAS_PROVISIONER_EMAIL`,
-`TADAS_PROVISIONER_PASSWORD` against `TADAS_API_URL`) creates the
-tenants the sessions run in; that identity's allowlist entry is `write`,
-it is the one write entry the file holds, and only this generator uses
-it. The tenants it creates are the generator's own, named with the run
-id, so no real tenant is touched. With `--orgs 0` the run drives the
-seeded people and needs no provisioner. Never print the password or the
-token.
+sets (PowerUserAccess, ReadOnlyAccess) are wider than the role. And the
+env file `~/.config/tadas/ops/<env>.env`, owner-only and outside the
+repository, whose provisioner token (`TADAS_PROVISIONER_TOKEN` against
+`TADAS_API_URL`) creates the tenants the sessions run in; the
+provisioner's allowlist entry is `write`, its token is the one write
+token the file holds, and only this generator uses it. The tenants it
+creates are the generator's own, named `ops-<run id>-<n>`, so no real
+tenant is touched, and removed when the run ends. The file holds no
+password and no TOTP secret: an agent never signs in with a password.
+A cloud run always provisions its tenants, so it always needs the
+provisioner's token.
+
+Never read the env file, with `Read`, `cat`, or anything else: its
+values stay out of this conversation. `tadas-ops` reads the file
+itself from `--env`, and refuses a file its group or anyone else can
+read. A command that needs a value from it sources the file and makes
+the call in the same command, because shell state does not persist
+between calls. Never print a token. The provisioner's token carries
+one permission and expires within the hour. When the generator reports
+it refused or expired, stop and ask the person to refresh it: in the
+cloud by dispatching `grant-operator.yml` with `mint_token:
+provisioner`, then running `uv run tadas-ops token --env <env>
+--identity provisioner` in their own terminal, which copies the token
+the grant job wrote under their own sign-in (in production with
+`--profile tadas-prod-power`), never under an investigate profile,
+which reads no secret. Locally, a run without a provisioner token in
+`local.env` takes `--orgs 0`.
+
+In production the provisioner's allowlist entry is disabled between
+runs, so no standing writing credential waits there. A run with
+`--orgs` above `0` against production needs the person to enable it
+first, by dispatching `grant-operator.yml` on `release` with the
+provisioner's email, `write`, and `mint_token: provisioner`, then
+copying the token into the env file with `uv run tadas-ops token --env
+production --identity provisioner --profile tadas-prod-power` in their
+own terminal, and to disable it after, by dispatching it again with
+`disable`; this skill holds no role that does either, and says which
+dispatch is due.
 
 Check the account too: `Account` in the same answer must equal the
 environment's `account_id` in `deployment/cloud/environments.json`
@@ -67,10 +98,13 @@ a mismatch: the right role in the wrong account is the wrong credential.
 
 ## Procedure
 
-1. Verify the credential as Role and credential states. Read the env
-   file. Against `production`, ask before running anything above
+1. Verify the credential as Role and credential states. Against
+   `production`, ask before running anything above
    `light`; the generator's tenants are real rows in the real
-   database, and the choice is the platform developer's.
+   database, and the choice is the platform developer's. Against
+   `production` with `--orgs` above `0`, a generator whose
+   provisioner the operator plane refuses stops before its first
+   session; the skill then names the dispatch that enables it.
 2. Run the generator:
 
    ```bash
@@ -98,12 +132,19 @@ a mismatch: the right role in the wrong account is the wrong credential.
    the log leg needs the file the API was started with, and the trace
    leg needs `TADAS_OTEL_ENDPOINT` set on that process; report either as
    not read otherwise.
-5. Write the report.
+5. Check that the run removed its tenants: the generator deletes
+   each through `DELETE /v1/admin/orgs/{org_id}` when it ends, and
+   names any it could not remove, which the report lists. Against
+   `production`, name the dispatch that disables the provisioner
+   again.
+6. Write the report.
 
 ## What it never does
 
-- No write outside the generator's own tenants; it never signs in as
-  a real user.
+- No write outside the generator's own tenants, and no tenant of its
+  own left behind; it never signs in as a real user.
+- No provisioner left enabled in production after a run: the report
+  names the dispatch that disables it.
 - No write to the cloud's resources, no scaling, no apply.
 - No secret value printed.
 - No run above `light` against production without the person saying
@@ -126,6 +167,8 @@ a mismatch: the right role in the wrong account is the wrong credential.
 | <route> | <status> | <n> | <ms> | <ms> | <ms> |
 
 **Total.** <n> requests, error ratio <ratio>
+**Run tenants.** <n> created, <n> removed, <ids left behind, or none>
+**Provisioner.** <local | staging | production: disable dispatch due>
 
 ## Signal
 
