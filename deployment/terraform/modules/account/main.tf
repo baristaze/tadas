@@ -135,6 +135,121 @@ resource "aws_s3_bucket_public_access_block" "artifacts" {
   restrict_public_buckets = true
 }
 
+# A build is kept a year, long enough to redeploy any release a rollback
+# would reach for, and an overwritten or deleted version thirty days. The
+# registry's lifecycle is the images' counterpart.
+resource "aws_s3_bucket_lifecycle_configuration" "artifacts" {
+  bucket = aws_s3_bucket.artifacts.id
+
+  rule {
+    id     = "portal-builds"
+    status = "Enabled"
+
+    filter {
+      prefix = "builds/portal/"
+    }
+
+    expiration {
+      days = 365
+    }
+
+    noncurrent_version_expiration {
+      noncurrent_days = 30
+    }
+  }
+}
+
+# Audit.
+#
+# One trail per account, every region, management events, with log file
+# validation: who did what to the cloud itself, which no application signal
+# records. The first trail of management events is free; its bucket holds
+# nothing else, and no deploy role is granted any call on either.
+
+resource "aws_s3_bucket" "audit" {
+  bucket = "tadas-audit-${local.account}"
+}
+
+resource "aws_s3_bucket_public_access_block" "audit" {
+  bucket                  = aws_s3_bucket.audit.id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "audit" {
+  bucket = aws_s3_bucket.audit.id
+
+  rule {
+    id     = "trail"
+    status = "Enabled"
+
+    filter {}
+
+    expiration {
+      days = var.audit_retention_days
+    }
+  }
+}
+
+data "aws_iam_policy_document" "audit" {
+  statement {
+    sid       = "TheTrailChecksTheBucket"
+    actions   = ["s3:GetBucketAcl"]
+    resources = [aws_s3_bucket.audit.arn]
+
+    principals {
+      type        = "Service"
+      identifiers = ["cloudtrail.amazonaws.com"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceArn"
+      values   = ["arn:${local.partition}:cloudtrail:${local.region}:${local.account}:trail/tadas-${var.environment}"]
+    }
+  }
+
+  statement {
+    sid       = "TheTrailWritesItsLogs"
+    actions   = ["s3:PutObject"]
+    resources = ["${aws_s3_bucket.audit.arn}/AWSLogs/${local.account}/*"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["cloudtrail.amazonaws.com"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "s3:x-amz-acl"
+      values   = ["bucket-owner-full-control"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceArn"
+      values   = ["arn:${local.partition}:cloudtrail:${local.region}:${local.account}:trail/tadas-${var.environment}"]
+    }
+  }
+}
+
+resource "aws_s3_bucket_policy" "audit" {
+  bucket = aws_s3_bucket.audit.id
+  policy = data.aws_iam_policy_document.audit.json
+}
+
+resource "aws_cloudtrail" "this" {
+  name                          = "tadas-${var.environment}"
+  s3_bucket_name                = aws_s3_bucket.audit.id
+  is_multi_region_trail         = true
+  include_global_service_events = true
+  enable_log_file_validation    = true
+
+  depends_on = [aws_s3_bucket_policy.audit]
+}
+
 # Credentials.
 #
 # One GitHub OIDC provider per account. The roles behind it are the

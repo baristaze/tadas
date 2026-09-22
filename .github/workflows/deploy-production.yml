@@ -54,10 +54,20 @@ on:
   push:
     branches: [release]
   workflow_dispatch:
+    inputs:
+      commit:
+        description: >-
+          A redeploy: an earlier commit of release to deploy again, by its full
+          sha. It must carry staging's deployed digests, and it waits for the
+          same approval. Empty deploys release's tip.
+        required: false
+        default: ""
 
 permissions:
   id-token: write
   contents: read
+  # The digests staging recorded as commit statuses when it deployed.
+  statuses: read
   # The guard reads the production environment's protection rules.
   actions: read
 
@@ -78,6 +88,8 @@ jobs:
     # To read the plan environment's variables. No rule on it, and this job
     # assumes no role.
     environment: production-plan
+    outputs:
+      sha: ${{ steps.commit.outputs.sha }}
     steps:
       - name: this is the release branch
         if: github.ref != 'refs/heads/release'
@@ -89,9 +101,28 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+      # Release's tip, or on a redeploy an earlier commit of release. A
+      # rollback is a revert through main; this is the faster path for a
+      # release that is healthy but wrong, and it never moves release.
+      - name: the commit to deploy
+        id: commit
+        env:
+          TIP: ${{ github.sha }}
+          REQUESTED: ${{ inputs.commit }}
+        run: |
+          sha="${REQUESTED:-$TIP}"
+          if ! git cat-file -e "$sha^{commit}" 2>/dev/null || ! git merge-base --is-ancestor "$sha" "$TIP"; then
+            echo "::error::$sha is not a commit of release"
+            exit 1
+          fi
+          sha="$(git rev-parse "$sha")"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          if [ "$sha" != "$TIP" ]; then
+            echo "A redeploy of \`$sha\`, an earlier commit of release (release is at \`$TIP\`)." >> "$GITHUB_STEP_SUMMARY"
+          fi
       - name: release is an ancestor of main
         env:
-          SHA: ${{ github.sha }}
+          SHA: ${{ steps.commit.outputs.sha }}
         run: |
           git fetch --quiet origin main
           if git merge-base --is-ancestor "$SHA" origin/main; then
@@ -157,7 +188,9 @@ jobs:
         id: images
         env:
           REGISTRY: ${{ steps.ecr.outputs.registry }}
-          SHA: ${{ github.sha }}
+          SHA: ${{ needs.guard.outputs.sha }}
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
         run: |
           # Replication is asynchronous and usually done in seconds, so a copy
           # that is not here yet is waited for, a bounded ten minutes, before
@@ -182,35 +215,76 @@ jobs:
             fi
             echo "$REGISTRY/$1@$digest"
           }
+          # What staging recorded when it deployed this commit, on the
+          # repository host and outside either account. A copy that differs
+          # was changed after staging built it, and nothing is planned.
+          recorded() {
+            gh api "repos/$REPOSITORY/commits/$SHA/statuses" --paginate \
+              -q "[.[] | select(.context == \"deployed/$1\" and .state == \"success\")] | first | .description // empty"
+          }
+          verify() {
+            local image="$1" name="$2" want
+            want="$(recorded "$name")"
+            if [ -z "$want" ]; then
+              echo "::error::$SHA carries no deployed/$name status: staging never deployed this commit." >&2
+              exit 1
+            fi
+            if [ "${image##*@}" != "$want" ]; then
+              echo "::error::$name in production's registry is ${image##*@}, and staging recorded $want: the copy is not what staging built." >&2
+              exit 1
+            fi
+          }
           api_image="$(resolve tadas-api)"
           maintenance_image="$(resolve tadas-maintenance)"
+          verify "$api_image" tadas-api
+          verify "$maintenance_image" tadas-maintenance
           echo "api_image=$api_image" >> "$GITHUB_OUTPUT"
           echo "maintenance_image=$maintenance_image" >> "$GITHUB_OUTPUT"
           echo "Images staging built for \`$SHA\`: \`$api_image\`, \`$maintenance_image\`." >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.guard.outputs.sha }}
       - name: the portal build staging kept for this commit
         env:
           ARTIFACTS_BUCKET: ${{ vars.ARTIFACTS_BUCKET }}
-          SHA: ${{ github.sha }}
+          SHA: ${{ needs.guard.outputs.sha }}
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
         run: |
+          found=false
           for attempt in $(seq 1 20); do
             if aws s3api head-object --bucket "$ARTIFACTS_BUCKET" --key "builds/portal/$SHA/index.html" >/dev/null 2>&1; then
-              echo "Portal: \`s3://$ARTIFACTS_BUCKET/builds/portal/$SHA\`." >> "$GITHUB_STEP_SUMMARY"
-              exit 0
+              found=true
+              break
             fi
             [ "$attempt" = 20 ] || sleep 30
           done
-          echo "::error::production's artifacts bucket holds no portal build under builds/portal/$SHA after ten minutes: staging never built this commit, or built it before the replication into production was on."
-          exit 1
+          if ! $found; then
+            echo "::error::production's artifacts bucket holds no portal build under builds/portal/$SHA after ten minutes: staging never built this commit, or built it before the replication into production was on."
+            exit 1
+          fi
+          # The same comparison as the images', over the files themselves.
+          want="$(gh api "repos/$REPOSITORY/commits/$SHA/statuses" --paginate \
+            -q '[.[] | select(.context == "deployed/portal" and .state == "success")] | first | .description // empty')"
+          aws s3 sync --quiet "s3://$ARTIFACTS_BUCKET/builds/portal/$SHA" portal-check
+          have="$(scripts/portal_digest.sh portal-check)"
+          if [ -z "$want" ] || [ "$have" != "$want" ]; then
+            echo "::error::the portal build in production's artifacts bucket digests to $have, and staging recorded '${want}': the copy is not what staging deployed."
+            exit 1
+          fi
+          echo "Portal: \`s3://$ARTIFACTS_BUCKET/builds/portal/$SHA\`, $have, as staging recorded." >> "$GITHUB_STEP_SUMMARY"
 
   plan:
     name: plan production
-    needs: resolve
+    needs: [guard, resolve]
     runs-on: ubuntu-latest
     environment: production-plan
     outputs:
       plan_key: ${{ steps.plan.outputs.plan_key }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.guard.outputs.sha }}
       - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
@@ -230,7 +304,7 @@ jobs:
           PORTAL_SENTRY_DSN: ${{ vars.PORTAL_SENTRY_DSN }}
           API_IMAGE: ${{ needs.resolve.outputs.api_image }}
           MAINTENANCE_IMAGE: ${{ needs.resolve.outputs.maintenance_image }}
-          SHA: ${{ github.sha }}
+          SHA: ${{ needs.guard.outputs.sha }}
           RUN: ${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           terraform -chdir=deployment/terraform/environments/prod init -input=false \
@@ -273,7 +347,7 @@ jobs:
 
   apply:
     name: apply the approved plan, migrate, and publish
-    needs: [resolve, plan]
+    needs: [guard, resolve, plan]
     runs-on: ubuntu-latest
     environment: production
     steps:
@@ -294,6 +368,8 @@ jobs:
             exit 1
           fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.guard.outputs.sha }}
       - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
@@ -310,7 +386,7 @@ jobs:
         env:
           API_IMAGE: ${{ needs.resolve.outputs.api_image }}
           MAINTENANCE_IMAGE: ${{ needs.resolve.outputs.maintenance_image }}
-          SHA: ${{ github.sha }}
+          SHA: ${{ needs.guard.outputs.sha }}
         run: |
           keep() {
             local image="$1" repository digest manifest media out
@@ -350,8 +426,18 @@ jobs:
       - name: fetch the portal build staging kept for this commit
         env:
           ARTIFACTS_BUCKET: ${{ vars.ARTIFACTS_BUCKET }}
-          SHA: ${{ github.sha }}
-        run: aws s3 sync "s3://$ARTIFACTS_BUCKET/builds/portal/$SHA" portal-dist
+          SHA: ${{ needs.guard.outputs.sha }}
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          aws s3 sync "s3://$ARTIFACTS_BUCKET/builds/portal/$SHA" portal-dist
+          want="$(gh api "repos/$REPOSITORY/commits/$SHA/statuses" --paginate \
+            -q '[.[] | select(.context == "deployed/portal" and .state == "success")] | first | .description // empty')"
+          have="$(scripts/portal_digest.sh portal-dist)"
+          if [ -z "$want" ] || [ "$have" != "$want" ]; then
+            echo "::error::the portal build fetched for publishing digests to $have, and staging recorded '${want}'; nothing is published."
+            exit 1
+          fi
       - name: publish the same portal to production
         run: scripts/deploy_portal.sh deployment/terraform/environments/prod portal-dist
       # After the rollout, readiness is asked once more, through the edge: the

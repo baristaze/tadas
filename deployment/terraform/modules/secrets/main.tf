@@ -15,9 +15,10 @@ locals {
   tags               = { "tadas:environment" = var.environment }
   application_prefix = "${var.prefix}app/"
   # A deleted secret keeps its name for the recovery window, so a nuke
-  # followed by a create within it would be refused; the nuke's apply sets
-  # destroyable, and the delete that follows is immediate.
-  recovery_window_in_days = var.destroyable ? 0 : 30
+  # followed by a create within it would be refused. Outside production the
+  # window is none at all; production keeps thirty days, and the nuke's apply
+  # (destroyable) lifts it on the way down.
+  recovery_window_in_days = var.destroyable || var.environment != "production" ? 0 : 30
   secret_arn_prefix       = "arn:${data.aws_partition.current.partition}:secretsmanager:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:secret:"
 }
 
@@ -31,8 +32,10 @@ resource "aws_secretsmanager_secret" "database_url" {
 # may hold it. The version is the database module's password version, so a
 # rotation writes both.
 resource "aws_secretsmanager_secret_version" "database_url" {
-  secret_id                = aws_secretsmanager_secret.database_url.id
-  secret_string_wo         = "postgresql+asyncpg://${var.database_username}:${urlencode(var.database_password)}@${var.database_address}:${var.database_port}/${var.database_name}"
+  secret_id = aws_secretsmanager_secret.database_url.id
+  # `ssl=require`: the connection is encrypted, never left to what the
+  # driver and the server happen to agree on.
+  secret_string_wo         = "postgresql+asyncpg://${var.database_username}:${urlencode(var.database_password)}@${var.database_address}:${var.database_port}/${var.database_name}?ssl=require"
   secret_string_wo_version = var.database_password_version
 }
 

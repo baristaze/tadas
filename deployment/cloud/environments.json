@@ -2,6 +2,8 @@
   "region": "us-west-2",
   "domain": "tadas.fyi",
   "github_repository": "baristaze/tadas",
+  "github_repository_id": "1372606838",
+  "github_repository_owner_id": "2823076",
   "environments": {
     "staging": {
       "account_id": "792394000601",

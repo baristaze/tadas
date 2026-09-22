@@ -68,6 +68,8 @@ This is separate from the AWS root user, even if both use the same email address
 
 Do not encode roles or projects in the username.
 
+Require MFA for every Identity Center sign-in: **Settings / Authentication / Multi-factor authentication**, set to prompt on every sign-in, and register an authenticator for the user. The admin permission sets are only as strong as that sign-in.
+
 ## 6. Create organization admin access
 
 Create group:

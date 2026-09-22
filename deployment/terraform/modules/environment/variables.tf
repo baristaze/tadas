@@ -147,7 +147,7 @@ variable "destroyable" {
 }
 
 variable "database_password_version" {
-  description = "Raise it to rotate the database master password: a new one is generated and written, write-only, to the database and its URL secret."
+  description = "Raise it to rotate the database master password: a new one is generated and written, write-only, to the database and its URL secret, and every service rolls onto it. Between the database's change and the roll, running tasks fail their next new connection; rotate at a quiet hour."
   type        = number
   default     = 1
 }

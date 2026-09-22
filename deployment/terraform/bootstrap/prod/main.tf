@@ -50,18 +50,19 @@ module "deploy_role" {
   environment       = "production"
   other_environment = "staging"
 
-  github_repository  = local.config.github_repository
-  github_environment = "production"
-  github_ref         = "refs/heads/release"
-  oidc_provider_arn  = module.account.oidc_provider_arn
+  github_repository          = local.config.github_repository
+  github_repository_id       = local.config.github_repository_id
+  github_repository_owner_id = local.config.github_repository_owner_id
+  github_environment         = "production"
+  github_ref                 = "refs/heads/release"
+  oidc_provider_arn          = module.account.oidc_provider_arn
 
   state_bucket     = module.account.state_bucket
   artifacts_bucket = module.account.artifacts_bucket
   state_key_prefix = "environments/prod"
 
-  image_repositories  = module.account.repository_names
-  push_images         = false
-  write_portal_builds = false
+  image_repositories = module.account.repository_names
+  promote_images     = true
 
   dns_record_patterns = flatten([
     for name in [local.production.api_domain_name, local.production.app_domain_name] : [name, "*.${name}"]
@@ -104,6 +105,18 @@ data "aws_iam_policy_document" "plan_assume" {
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:ref"
       values   = ["refs/heads/release"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "token.actions.githubusercontent.com:repository_id"
+      values   = [local.config.github_repository_id]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "token.actions.githubusercontent.com:repository_owner_id"
+      values   = [local.config.github_repository_owner_id]
     }
   }
 }
@@ -185,6 +198,7 @@ data "aws_iam_policy_document" "plan_fences" {
       "arn:${local.partition}:iam::${local.account}:role/tadas-plan-*",
       "arn:${local.partition}:iam::${local.account}:role/tadas-investigate-*",
       "arn:${local.partition}:iam::${local.account}:role/tadas-replication-*",
+      "arn:${local.partition}:iam::${local.account}:role/tadas-build-*",
       "arn:${local.partition}:iam::${local.account}:policy/tadas-task-boundary-*",
     ]
   }

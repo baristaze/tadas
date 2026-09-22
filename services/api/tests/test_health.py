@@ -96,3 +96,13 @@ async def test_metrics_are_exposed_outside_the_versioned_api(client: httpx.Async
     response = await client.get("/metrics")
     assert response.status_code == 200
     assert "tadas_http_requests_total" in response.text
+
+
+async def test_a_deployed_environment_serves_no_interactive_docs(tmp_path: Path) -> None:
+    app = create_app(build_container(tmp_path, interactive_docs=False))
+    async with app.router.lifespan_context(app):
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            for path in ["/docs", "/redoc", "/openapi.json"]:
+                assert (await client.get(path)).status_code == 404, path
+            assert (await client.get("/healthz")).status_code == 200

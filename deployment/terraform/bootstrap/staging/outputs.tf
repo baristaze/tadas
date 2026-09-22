@@ -11,6 +11,11 @@ output "deploy_role_arn" {
   value       = module.deploy_role.arn
 }
 
+output "build_role_arn" {
+  description = "The AWS_ROLE_ARN variable of the staging-build GitHub environment."
+  value       = aws_iam_role.build.arn
+}
+
 output "state_bucket" {
   description = "The TF_STATE_BUCKET variable of the staging GitHub environment."
   value       = module.account.state_bucket

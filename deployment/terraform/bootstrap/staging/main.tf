@@ -38,26 +38,134 @@ module "deploy_role" {
   environment       = "staging"
   other_environment = "production"
 
-  github_repository  = local.config.github_repository
-  github_environment = "staging"
-  github_ref         = "refs/heads/main"
-  oidc_provider_arn  = module.account.oidc_provider_arn
+  github_repository          = local.config.github_repository
+  github_repository_id       = local.config.github_repository_id
+  github_repository_owner_id = local.config.github_repository_owner_id
+  github_environment         = "staging"
+  github_ref                 = "refs/heads/main"
+  oidc_provider_arn          = module.account.oidc_provider_arn
 
   state_bucket     = module.account.state_bucket
   artifacts_bucket = module.account.artifacts_bucket
   state_key_prefix = "environments/staging"
 
   image_repositories = module.account.repository_names
-  # Staging is the only environment that builds; it keeps the portal build by
-  # commit, and production reads the copy replicated into its own bucket.
-  push_images         = true
-  write_portal_builds = true
+  # Staging builds, but not under this role: the build role below pushes the
+  # images and keeps the portal build, and this one only reads them.
+  promote_images = false
 
   dns_record_patterns = flatten([
     for name in [local.staging.api_domain_name, local.staging.app_domain_name] : [name, "*.${name}"]
   ])
 
   task_boundary_policy_arn = module.account.task_boundary_policy_arn
+}
+
+# The build credential.
+#
+# The jobs that build install third-party packages and run their scripts, so
+# they hold a credential that can push what they built and nothing else: the
+# images into the registry and the portal build under builds/portal/. It
+# trusts one subject, the `staging-build` environment on `main`, which no job
+# that applies declares, so a build step never holds the role that applies.
+
+data "aws_iam_policy_document" "build_assume" {
+  statement {
+    sid     = "GitHubBuildJobsOnMain"
+    actions = ["sts:AssumeRoleWithWebIdentity"]
+
+    principals {
+      type        = "Federated"
+      identifiers = [module.account.oidc_provider_arn]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "token.actions.githubusercontent.com:aud"
+      values   = ["sts.amazonaws.com"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "token.actions.githubusercontent.com:sub"
+      values   = ["repo:${local.config.github_repository}:environment:staging-build"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "token.actions.githubusercontent.com:ref"
+      values   = ["refs/heads/main"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "token.actions.githubusercontent.com:repository_id"
+      values   = [local.config.github_repository_id]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "token.actions.githubusercontent.com:repository_owner_id"
+      values   = [local.config.github_repository_owner_id]
+    }
+  }
+}
+
+resource "aws_iam_role" "build" {
+  name                 = "tadas-build-staging"
+  description          = "Pushes the images and keeps the portal build. Applies nothing."
+  assume_role_policy   = data.aws_iam_policy_document.build_assume.json
+  max_session_duration = 3600
+}
+
+data "aws_iam_policy_document" "build" {
+  statement {
+    sid       = "RegistryLogin"
+    actions   = ["ecr:GetAuthorizationToken"]
+    resources = ["*"]
+  }
+
+  statement {
+    sid = "PushTheImages"
+    actions = [
+      "ecr:BatchCheckLayerAvailability",
+      "ecr:BatchGetImage",
+      "ecr:CompleteLayerUpload",
+      "ecr:DescribeImages",
+      "ecr:GetDownloadUrlForLayer",
+      "ecr:InitiateLayerUpload",
+      "ecr:PutImage",
+      "ecr:UploadLayerPart",
+    ]
+    resources = [
+      for name in module.account.repository_names :
+      "arn:${data.aws_partition.current.partition}:ecr:${local.config.region}:${local.staging.account_id}:repository/${name}"
+    ]
+  }
+
+  statement {
+    sid       = "ListThePortalBuilds"
+    actions   = ["s3:ListBucket"]
+    resources = [module.account.artifacts_bucket_arn]
+
+    condition {
+      test     = "StringLike"
+      variable = "s3:prefix"
+      values   = ["builds/portal/*"]
+    }
+  }
+
+  statement {
+    sid       = "KeepThePortalBuild"
+    actions   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
+    resources = ["${module.account.artifacts_bucket_arn}/builds/portal/*"]
+  }
+}
+
+resource "aws_iam_role_policy" "build" {
+  name   = "build"
+  role   = aws_iam_role.build.id
+  policy = data.aws_iam_policy_document.build.json
 }
 
 # Replication.

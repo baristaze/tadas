@@ -68,8 +68,11 @@ def test_create_staging_dry_run_prints_every_step_and_writes_nothing(tmp_path: P
     assert f"+ gh variable set TF_STATE_BUCKET --env staging --body tadas-state-{account}" in out
     assert "+ gh variable set ALARM_EMAIL --env staging --body alarms@tadas.example" in out
     assert "+ gh api -X PUT repos/{owner}/{repo}/environments/staging" in out
+    assert "+ gh api -X POST repos/{owner}/{repo}/rulesets --input <the main ruleset>" in out
     assert "deployment_branch_policy[custom_branch_policies]=true" in out
     assert "environments/staging/deployment-branch-policies -f name=main -f type=branch" in out
+    assert "+ gh variable set AWS_ROLE_ARN --env staging-build --body <build_role_arn>" in out
+    assert "environments/staging-build/deployment-branch-policies -f name=main" in out
     assert f"--env staging --body tadas-artifacts-{account}" in out
     assert "production-plan" not in out
     assert f"TADAS_API_URL=https://{STAGING['api_domain_name']}" in out
@@ -145,17 +148,22 @@ def test_create_takes_the_inputs_as_flags_too(tmp_path: Path) -> None:
     assert "-var owner_email=flag@tadas.example" in result.stdout
 
 
+STAGING_ROOT = "<a worktree of origin/main>/deployment/terraform/environments/staging"
+
+
 def test_nuke_staging_dry_run_lifts_the_protections_then_destroys(tmp_path: Path) -> None:
     result = _run(NUKE, "staging", "--dry-run", home=tmp_path)
     assert result.returncode == 0, result.stderr
     out = result.stdout
-    assert "+ terraform -chdir=deployment/terraform/environments/staging init" in out
-    apply = out.index("+ terraform -chdir=deployment/terraform/environments/staging apply")
-    destroy = out.index("+ terraform -chdir=deployment/terraform/environments/staging destroy")
+    assert f"+ terraform -chdir={STAGING_ROOT} init" in out
+    apply = out.index(f"+ terraform -chdir={STAGING_ROOT} apply")
+    destroy = out.index(f"+ terraform -chdir={STAGING_ROOT} destroy")
     assert apply < destroy
     assert out.count("-var destroyable=true") == 2
     assert f"-var api_domain_name={STAGING['api_domain_name']}" in out
     assert "dns_zone_name" not in out
+    # The apply is the code staging runs, never the working tree.
+    assert "+ git worktree add --detach <a worktree of origin/main> <origin/main>" in out
     assert out.count(f"(expect account {STAGING['account_id']})") == 3
     assert "== 5. What remains" in out
     assert "the bootstrap root, whole" in out

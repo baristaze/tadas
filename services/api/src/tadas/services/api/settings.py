@@ -32,6 +32,10 @@ class ApiSettings(StorageSettings, InfraSettings):
     # 404 as a route that does not exist would. Its budget is its own, per
     # client address, the way the login's is.
     signup_enabled: bool = True
+    # The interactive API docs and the OpenAPI document, served locally for
+    # a developer. A deployed environment turns them off: the document is in
+    # the repository, and a production edge has no use for a console.
+    interactive_docs: bool = True
     signup_rate_limit: int = 10
     signup_rate_window_seconds: int = 60
     # The socket's two send lanes, each bounded on its own. The stream lane
@@ -42,11 +46,10 @@ class ApiSettings(StorageSettings, InfraSettings):
     # them; a lane that fills is a fault of the process, not a burst.
     realtime_send_buffer_size: int = Field(default=256, gt=0)
     realtime_control_buffer_size: int = Field(default=16, gt=0)
-    # The readiness probe's own deadline, shorter than the interval it is
-    # polled on (the container probe asks every 10 seconds and gives up at 3,
-    # the load balancer every 15 and gives up at 5), so a hung database or an
-    # exhausted pool makes the probe answer "not ready" instead of making it
-    # stop answering. Seconds.
+    # The readiness probe's own deadline, shorter than its prober's timeout
+    # (the deploy's check after a rollout gives up at 10 seconds), so a hung
+    # database or an exhausted pool makes the probe answer "not ready"
+    # instead of making it stop answering. Seconds.
     readiness_timeout_seconds: float = 2.0
     # Admission: the requests this process keeps in flight at once, counted
     # in two budgets, and what a refusal past either tells the client to

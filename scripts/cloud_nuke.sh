@@ -125,7 +125,26 @@ say "== 1. Who am I"
 check_account
 
 say "== 2. The environment root, as it is deployed"
-root_dir="deployment/terraform/$root"
+# The apply below runs as the administrator, so it must be the code the
+# environment runs and nothing else: the commit its branch points at, in a
+# clean worktree of its own, never the person's working tree, where an
+# unreleased change would reach production without its approval.
+case "$environment" in
+  staging) branch=main ;;
+  production) branch=release ;;
+esac
+if $dry_run; then
+  commit="<origin/$branch>"
+  source_dir="<a worktree of origin/$branch>"
+else
+  git fetch --quiet origin "$branch" || refuse "cannot fetch origin/$branch"
+  commit="$(git rev-parse "origin/$branch")"
+  source_dir="$(mktemp -d)/tadas-$environment"
+  git worktree add --quiet --detach "$source_dir" "$commit"
+  trap 'git worktree remove --force "$source_dir" >/dev/null 2>&1 || true' EXIT
+fi
+say "+ git worktree add --detach $source_dir $commit  (origin/$branch, what $environment runs)"
+root_dir="$source_dir/deployment/terraform/$root"
 run terraform -chdir="$root_dir" init -input=false \
   -backend-config="bucket=$state_bucket" \
   -backend-config="key=$root/terraform.tfstate" \
