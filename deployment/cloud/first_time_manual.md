@@ -139,11 +139,32 @@ In AWS Organizations / IAM, enable:
 
 A delegated administrator is not necessary for this small setup.
 
-## 8a. Turn on Cost Explorer
+## 8a. Turn on Cost Explorer and Budgets for the member accounts
 
-From the management account, open **Billing and Cost Management** and launch **Cost Explorer**. Member accounts can read it only after this, and it can take up to a day to become available.
+A member account can make neither a budget nor an anomaly monitor until the management account turns cost management on for the organization. Do this before the first `scripts/cloud_create.sh`, signed in to the **management account** (not a Tadas account):
 
-The bootstrap's cost anomaly monitor needs it. Until it answers, `scripts/cloud_create.sh` leaves the monitor out and says so; the budget is created either way.
+0. Sign in to the management account as its **root user**, open **Account** (the account menu, top right), find **IAM user and role access to Billing information**, choose **Edit**, tick **Activate IAM Access**, and choose **Update**. Until the root user does this, every role in the account is refused the billing and cost pages, `AdministratorAccess` included, with `You don't have permission to perform the following operation on the AWS Cost Management console: ce:GetPreferences`. Sign out of root, and do the rest as the Identity Center administrator.
+1. Open **Billing and Cost Management** and choose **Cost Explorer**, then **Launch Cost Explorer** if it has not been launched. This turns on the cost data every member account reads.
+2. Open **Budgets** once, so the service is turned on for the organization.
+3. Open **Cost Management preferences** and, under **Linked account access**, allow the member accounts to see their own cost data. Save.
+
+It can take up to a day before a member account answers. Check each Tadas account with its administrator profile:
+
+```bash
+aws budgets describe-budgets --account-id 792394000601 --max-results 1 --profile tadas-staging-admin
+aws ce get-anomaly-monitors --region us-east-1 --max-results 1 --profile tadas-staging-admin
+aws budgets describe-budgets --account-id 557092275199 --max-results 1 --profile tadas-prod-admin
+aws ce get-anomaly-monitors --region us-east-1 --max-results 1 --profile tadas-prod-admin
+```
+
+Each answers without an error once it is on (Budgets prints nothing while the account has no budget). The errors before then:
+
+- `Account <id> is a linked account. To enable budgets for your account, ask the payer account to enable budgets first.`: Budgets is not on yet.
+- `User not enabled for cost explorer access`: Cost Explorer is not on yet.
+
+The budget is required: `scripts/cloud_create.sh` asks Budgets before it applies and refuses until it answers. The anomaly monitor is not: until Cost Explorer answers, the script leaves the monitor out and says so, and a later run adds it.
+
+A first apply that stopped part way leaves its state in `deployment/terraform/bootstrap/<staging|prod>/terraform.tfstate`. Keep that file: it is the only record of what that apply made, and the next run of the script applies against it and then moves it into the state bucket.
 
 ## 9. Create Tadas access groups
 
