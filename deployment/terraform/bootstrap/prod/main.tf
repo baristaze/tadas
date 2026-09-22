@@ -8,7 +8,7 @@
 #   environment:production-plan -> tadas-plan-production      reads and plans
 #   environment:production      -> tadas-deploy-production    applies
 #
-# A GitHub job presents `repo:<owner>/<name>:environment:<name>` only when it
+# A GitHub job presents `repo:<owner>@<owner id>/<name>@<repo id>:environment:<name>` only when it
 # declares that environment, so the subject condition on each role is what
 # binds it to the gate: the `production` environment holds a required
 # reviewer, and a job that has not passed the reviewer never produces the
@@ -17,7 +17,14 @@
 # lock and plan file, and can change nothing.
 
 locals {
-  config     = jsondecode(file("${path.module}/../../../cloud/environments.json"))
+  config = jsondecode(file("${path.module}/../../../cloud/environments.json"))
+  # The repository issues GitHub's immutable OIDC subject, which carries
+  # the owner's and the repository's ids beside their names.
+  github_subject_repository = format(
+    "%s@%s/%s@%s",
+    split("/", local.config.github_repository)[0], local.config.github_repository_owner_id,
+    split("/", local.config.github_repository)[1], local.config.github_repository_id,
+  )
   staging    = local.config.environments.staging
   production = local.config.environments.production
 }
@@ -100,7 +107,7 @@ data "aws_iam_policy_document" "plan_assume" {
     condition {
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${local.config.github_repository}:environment:production-plan"]
+      values   = ["repo:${local.github_subject_repository}:environment:production-plan"]
     }
 
     condition {
