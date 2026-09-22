@@ -105,8 +105,11 @@ async def test_a_closed_sign_up_answers_as_no_route_would(tmp_path: Path) -> Non
     assert await storage.read_identity_by_email_digest(email_digest(DEE["email"])) is None
 
 
-async def test_sign_up_is_rate_limited_per_client(client: httpx.AsyncClient) -> None:
-    for index in range(10):
+async def test_sign_up_is_rate_limited_per_client(
+    client: httpx.AsyncClient, container: AppContainer
+) -> None:
+    budget = container.rate_limits.of("signup").limit
+    for index in range(budget):
         body = DEE | {"email": f"d{index}@example.test", "org_slug": f"bakery-{index}"}
         assert (await client.post("/v1/auth/signup", json=body)).status_code == 200
     rejected = await client.post("/v1/auth/signup", json=DEE)

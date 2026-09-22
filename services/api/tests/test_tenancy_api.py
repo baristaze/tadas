@@ -71,9 +71,14 @@ async def test_not_found_flows_through_the_one_handler(
     assert response.json()["error"]["code"] == "not_found"
 
 
-async def test_login_is_rate_limited_per_client(client: httpx.AsyncClient) -> None:
+async def test_login_is_rate_limited_per_client(
+    client: httpx.AsyncClient, container: AppContainer
+) -> None:
+    # The budget is the container's, never a number repeated here: it is sized
+    # for a crowd behind one address and moves with the settings.
+    budget = container.rate_limits.of("login").limit
     # Another email each time, so the per-email delay never answers first.
-    for index in range(10):
+    for index in range(budget):
         body = {"email": f"nobody-{index}@example.test", "password": "x"}
         assert (await client.post("/v1/auth/login", json=body)).status_code == 401
     rejected = await client.post(
