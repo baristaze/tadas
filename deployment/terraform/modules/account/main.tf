@@ -443,3 +443,19 @@ resource "aws_route53_zone" "this" {
   name    = each.key
   comment = "Tadas ${var.environment}: ${each.key}, delegated from the domain's zone at Cloudflare"
 }
+
+# Service-linked roles. A fresh account has none, and ECS, RDS, ElastiCache,
+# the load balancer, and ECS autoscaling each need theirs before the first
+# resource of that kind. Creating one is an IAM write, which the deployer
+# never holds, so the bootstrap makes them, once per account.
+resource "aws_iam_service_linked_role" "this" {
+  for_each = toset([
+    "ecs.amazonaws.com",
+    "ecs.application-autoscaling.amazonaws.com",
+    "elasticache.amazonaws.com",
+    "elasticloadbalancing.amazonaws.com",
+    "rds.amazonaws.com",
+  ])
+
+  aws_service_name = each.key
+}
