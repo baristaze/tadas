@@ -18,7 +18,13 @@ of the six kinds of thing [Tadas is made of](../../../../README.md).
   yet, the one sign-in produces; exchanging it for an org gives a
   session in that org. A live session also proves who the person is,
   so it can list their orgs and be exchanged for a session in another
-  one. Only the hash of the token is kept.
+  one. A session ends at its absolute lifetime or after it sits idle,
+  whichever comes first. Only the hash of the token is kept.
+- **Second factor**: an operator's TOTP secret, sealed under a key the
+  process holds, enrolled once it is confirmed by a first code.
+- **Operator token**: an agent's credential for the operator plane.
+  One permission, an hour at most, kept as its hash, and good for the
+  operator plane alone.
 - **API key**: a named, expiring credential for a program, with a
   role. Only the hash is kept; the key is shown once.
 - **Socket ticket**: a single-use, short-lived pass for the live
@@ -37,7 +43,9 @@ of the six kinds of thing [Tadas is made of](../../../../README.md).
 - **Sign in.** Email and password give a login that lists the orgs the
   person belongs to. The login is exchanged for a session in one of
   them. An unknown email costs the same time as a wrong password, so
-  the answer does not say which emails exist.
+  the answer does not say which emails exist. A run of failed sign-ins
+  for one email makes the next one wait, whether or not anyone holds
+  the email. A person with a second factor sends the code too.
 - **List my orgs, and switch.** A login or a live session lists the
   orgs the person belongs to, a page at a time. Exchanging a live
   session for another org is a switch: the session presented ends in
@@ -48,11 +56,10 @@ of the six kinds of thing [Tadas is made of](../../../../README.md).
 - **Read and change the profile.** The org, the person's own identity,
   and their display name. The email belongs to the identity.
 - **Manage members.** List the members a page at a time, change a
-  member's role, or remove a member. Removing revokes their sessions
-  and API keys, one by one, then ends the membership and hides the user
-  from every list in one step; a failure part way through leaves the
-  member with fewer credentials and still a member, and a retry
-  finishes it.
+  member's role, or remove a member. Removing ends the membership,
+  hides the user from every list, and revokes their sessions and API
+  keys, all in one step, and announces each revocation so their
+  sockets close. A failure lands none of it.
 - **Manage API keys.** Create one with a name, a role, and a lifetime
   of at most ninety days; list them (a member manager sees the org's,
   everyone else their own); revoke one.
@@ -65,11 +72,21 @@ of the six kinds of thing [Tadas is made of](../../../../README.md).
   members, its tasks, and its events, read the platform's size, list
   every org, and delete an org. A deleted org keeps its row as the
   record; everything else of it is purged once the retention has
-  passed.
+  passed. A write operator also resets a person's password, which is
+  audited with the operator and the person.
+- **Grant an operator.** The grant job puts an identity on the
+  allowlist, takes it off, or mints the operator token of the
+  provisioner or the smoke identity. Each change of the allowlist is
+  audited. The platform's own identities live in a reserved domain,
+  which sign-up refuses, and the first grant makes them.
+- **Enrol a second factor.** An allowlisted person's first sign-in to
+  the operator plane reaches two calls and nothing else: mint the
+  secret, then confirm it with a first code. From then on the plane
+  admits them only on a sign-in that verified a code.
 - **Sweep.** Removed members, revoked or expired keys and sessions,
-  and spent tickets are deleted for good after the retention, thirty
-  days by default. Erasing a person is this purge: the events about a
-  user never carry their email or name.
+  spent tickets, and old runs of failed sign-ins are deleted for good
+  after the retention, thirty days by default. Erasing a person is this
+  purge: the events of this namespace carry ids and never a value.
 
 ## The rules
 
@@ -90,9 +107,14 @@ of the six kinds of thing [Tadas is made of](../../../../README.md).
 - **Secrets are fingerprints.** A session token, an API key, and a
   socket ticket are stored as hashes. The plain value is shown once.
 - **A ticket works once.** A second redemption is refused.
-- **The operator plane takes the sign-in alone.** A session proves the
-  person, but it is a tenant's credential, and the operator plane
-  refuses it; only the login admits an operator.
+- **The operator plane takes a second factor or a token.** A session
+  proves the person, but it is a tenant's credential, and the operator
+  plane refuses it. A person's sign-in admits only when it verified a
+  TOTP code; an agent presents an operator token, minted by an
+  operator signed in with a code or by the grant job. A token never
+  mints a token and never enters a tenant.
+- **A code works once.** A TOTP code accepted once is refused after,
+  even inside its thirty seconds.
 - **A gone org refuses its logins.** Exchanging a login for an org
   that is deleted, or a membership that has ended, is refused as not
   authorized; the login itself still stands.

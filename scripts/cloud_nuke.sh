@@ -13,7 +13,10 @@
 # release applied. The destruction of production is itself a pull request a
 # person read, released like any other.
 #
-# The run applies the environment root once with `destroyable=true`: buckets
+# The run applies from the exact commit the environment runs, in a clean
+# worktree of its own: `release` for production, and for staging the commit
+# of its last deploy whose apply succeeded, never the tip of `main`. It
+# applies the environment root once with `destroyable=true`: buckets
 # empty on destroy, and staging's database drops its protection and skips
 # its final snapshot. Production's database does neither: its protection is
 # off only because a release turned it off, and it keeps its final snapshot
@@ -126,24 +129,58 @@ check_account
 
 say "== 2. The environment root, as it is deployed"
 # The apply below runs as the administrator, so it must be the code the
-# environment runs and nothing else: the commit its branch points at, in a
-# clean worktree of its own, never the person's working tree, where an
-# unreleased change would reach production without its approval.
+# environment runs and nothing else, in a clean worktree of its own, never
+# the person's working tree, where an unreleased change would reach
+# production without its approval. Production runs `release`. Staging runs
+# the commit of its last deploy whose apply succeeded, which the deploy's
+# run names; the tip of `main` may still be deploying, or may have failed.
+# The job name is deploy-staging.yml's apply job, which release.yml reads
+# the same way.
+apply_job="plan and apply staging, migrate, and publish"
+
+last_staging_deploy() {
+  local run applied
+  for run in $(gh run list --workflow deploy-staging.yml --branch main --status completed \
+      --limit 50 --json databaseId -q '.[].databaseId'); do
+    applied="$(gh run view "$run" --json jobs \
+      -q "[.jobs[] | select(.name == \"$apply_job\") | .conclusion] | first // \"\"")"
+    [ "$applied" = "success" ] || continue
+    gh run view "$run" --json displayTitle -q '.displayTitle' | awk '{ print $NF }'
+    return 0
+  done
+  return 1
+}
+
 case "$environment" in
-  staging) branch=main ;;
+  staging)
+    branch=main
+    say "+ gh run list --workflow deploy-staging.yml --branch main  (the newest run whose apply succeeded names the commit staging runs)"
+    ;;
   production) branch=release ;;
 esac
 if $dry_run; then
-  commit="<origin/$branch>"
-  source_dir="<a worktree of origin/$branch>"
+  case "$environment" in
+    staging) commit="<the last commit staging deployed>" ;;
+    production) commit="<origin/release>" ;;
+  esac
+  source_dir="<a worktree of the deployed commit>"
 else
   git fetch --quiet origin "$branch" || refuse "cannot fetch origin/$branch"
-  commit="$(git rev-parse "origin/$branch")"
+  if [ "$environment" = "staging" ]; then
+    running="$(gh run list --workflow deploy-staging.yml --branch main --limit 20 --json status \
+      -q '[.[] | select(.status != "completed")] | length')"
+    [ "$running" = "0" ] || refuse "a deploy-staging run is still going; let it finish, then run again"
+    commit="$(last_staging_deploy)" || refuse "no deploy-staging run on main has applied staging; there is no deployed commit to destroy from"
+    git cat-file -e "$commit^{commit}" 2>/dev/null || refuse "the last commit staging deployed ($commit) is not in this checkout; fetch it, then run again"
+    git merge-base --is-ancestor "$commit" origin/main || refuse "the last commit staging deployed ($commit) is not on main"
+  else
+    commit="$(git rev-parse "origin/$branch")"
+  fi
   source_dir="$(mktemp -d)/tadas-$environment"
   git worktree add --quiet --detach "$source_dir" "$commit"
   trap 'git worktree remove --force "$source_dir" >/dev/null 2>&1 || true' EXIT
 fi
-say "+ git worktree add --detach $source_dir $commit  (origin/$branch, what $environment runs)"
+say "+ git worktree add --detach $source_dir $commit  (what $environment runs)"
 root_dir="$source_dir/deployment/terraform/$root"
 run terraform -chdir="$root_dir" init -input=false \
   -backend-config="bucket=$state_bucket" \

@@ -9,9 +9,16 @@ from tadas.om.opcontext import OperatorContext
 from tadas.om.tasks.types.task import TaskStatus
 from tadas.services.api.types.admin import (
     AddMemberRequest,
+    ConfirmTotpRequest,
     CreateOrgRequest,
+    IssuedOperatorTokenView,
+    IssuedTotpSecretView,
+    MintOperatorTokenRequest,
     OperatorView,
+    PasswordResetView,
     PlatformSizeView,
+    ResetPasswordRequest,
+    TotpConfirmedView,
 )
 from tadas.services.api.types.events import OperatorEventView
 from tadas.services.api.types.tasks import TaskPageView
@@ -26,6 +33,24 @@ class AdminServiceInterface(ABC):
 
     @abstractmethod
     async def me(self, admin: OperatorContext) -> OperatorView: ...
+
+    @abstractmethod
+    async def enrol_totp(self, admin: OperatorContext) -> IssuedTotpSecretView: ...
+
+    @abstractmethod
+    async def confirm_totp(
+        self, admin: OperatorContext, body: ConfirmTotpRequest
+    ) -> TotpConfirmedView: ...
+
+    @abstractmethod
+    async def mint_token(
+        self, admin: OperatorContext, body: MintOperatorTokenRequest
+    ) -> IssuedOperatorTokenView: ...
+
+    @abstractmethod
+    async def reset_password(
+        self, admin: OperatorContext, body: ResetPasswordRequest
+    ) -> PasswordResetView: ...
 
     @abstractmethod
     async def size(self, admin: OperatorContext) -> PlatformSizeView: ...

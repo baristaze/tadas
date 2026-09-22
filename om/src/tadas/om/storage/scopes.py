@@ -73,8 +73,10 @@ class TableScope:
 
 
 TABLE_SCOPES: dict[str, TableScope] = {
-    # The one global table: an identity is a person across tenants.
+    # The global tables: an identity is a person across tenants, and a
+    # sign-in delay is keyed on an email before any identity is known.
     "identities": TableScope(ScopeKind.SYSTEM),
+    "sign_in_delays": TableScope(ScopeKind.SYSTEM),
     # A tenant's own rows. An org's `org_id` is its own id.
     "orgs": TableScope(ScopeKind.ORG),
     "tasks": TableScope(ScopeKind.ORG),

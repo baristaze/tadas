@@ -10,7 +10,7 @@ from tadas.infra.buckets import (
     BlobNotFound,
     Buckets,
     BucketsInterface,
-    PresignedUpload,
+    PresignedPost,
     object_key,
 )
 
@@ -127,7 +127,7 @@ class BucketsS3Impl(BucketsInterface):
                 ExpiresIn=int(ttl.total_seconds()),
             )
 
-    async def presign_upload(
+    async def presign_post(
         self,
         org_id: UUID,
         bucket: Buckets,
@@ -135,13 +135,13 @@ class BucketsS3Impl(BucketsInterface):
         content_type: str,
         max_bytes: int,
         ttl: timedelta,
-    ) -> PresignedUpload | None:
+    ) -> PresignedPost | None:
         """A presigned POST, not a PUT: a signed PUT can fix a length but never
         bound one, and the policy of a POST carries both conditions, which
         the store enforces on the body it receives."""
         if max_bytes <= 0:
             raise ValueError(f"an upload is bounded by a positive size, not {max_bytes}")
-        with translated("s3", "presign_upload"):
+        with translated("s3", "presign_post"):
             s3 = self._client()
             post = await s3.generate_presigned_post(
                 Bucket=self._bucket(bucket),
@@ -149,11 +149,11 @@ class BucketsS3Impl(BucketsInterface):
                 Fields={"Content-Type": content_type},
                 Conditions=[
                     {"Content-Type": content_type},
-                    ["content-length-range", 1, max_bytes],
+                    ["content-length-range", 0, max_bytes],
                 ],
                 ExpiresIn=int(ttl.total_seconds()),
             )
-        return PresignedUpload(url=post["url"], fields=tuple(sorted(post["fields"].items())))
+        return PresignedPost(url=post["url"], fields=tuple(sorted(post["fields"].items())))
 
     def describe(self) -> str:
         return f"buckets=s3({self._endpoint_url or self._region})"

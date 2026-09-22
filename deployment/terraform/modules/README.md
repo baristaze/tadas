@@ -37,12 +37,13 @@ Three kinds of root live under this folder:
 | `cache`         | Valkey (cache scopes and the topic bus), encrypted in transit   |
 | `queue`         | One SQS queue and dead-letter queue per `Queues` member, IAM    |
 | `buckets`       | One private versioned bucket per `Buckets` member, IAM          |
-| `secrets`       | The injected database URL and Sentry DSN, the application secrets policy |
+| `secrets`       | The four database URLs (master, migration, runtime, system), the Sentry DSN, the TOTP encryption key, the two operator token secrets, the application secrets policy |
 | `load_balancer` | The load balancer at the API's domain name: HTTPS, HTTP redirects |
 | `portal`        | The portal's private bucket and the CloudFront distribution at the app's domain name |
 | `certificate`   | A DNS-validated ACM certificate for one name                    |
 | `domain_records`| The API's and the portal's alias records                        |
 | `service`       | One process: log groups, roles, task definition with an ADOT collector sidecar, service, and its autoscaling target and policy behind the switch |
+| `task`          | One one-off task (the migration, the operator grant): its log group, roles, and task definition, run by `aws ecs run-task` |
 | `alarms`        | The default alarm set to one SNS topic: the edge, the database, each service's task count |
 | `dashboard`     | The CloudWatch dashboard, from a JSON template carrying the local Grafana dashboard's panels by title |
 
@@ -69,14 +70,27 @@ protection and final snapshot.
 The `service` module is instantiated once per process. A worker passes
 `deployment_maximum_percent = 100` so a rollout never runs more workers
 than desired, because a worker holds leases. The API passes
-`pre_rollout_command`, the migration: on every new task definition the
-module runs it as a one-off task (`pre_rollout.sh`, from the machine
-that applies, with its credentials) and the service depends on it, so a
-migration that fails ends the apply with the old tasks still serving.
+`pre_rollout`, the migration: on every new task definition the module
+runs `tadas-api migrate ensure-logins`, then `tadas-api migrate --all`,
+each as a one-off task on the migrate task's definition
+(`pre_rollout.sh`, from the machine that applies, with its credentials),
+and the service depends on it, so a step that fails ends the apply with
+the old tasks still serving.
 The worker passes the API's `rollout_gate` as `rollout_after`, so it
 rolls after the migration ran. Every service waits for its new tasks to
 serve (`wait_for_steady_state`): a rollout ECS rolls back fails the
 apply instead of leaving it green over old tasks.
+
+The `task` module is instantiated twice, and nothing keeps either
+running. The migrate task is the one place the master's URL and the
+migration login's URL are injected. The grant task connects as the
+runtime and system logins, and its role holds the one secret write a
+task has: `PutSecretValue` on `tadas-<environment>-provisioner-token`
+and `tadas-<environment>-smoke-token`. Serving tasks connect as the
+runtime and system logins only. The environment root's outputs
+(`cluster_name`, `grant_task_definition_arn`, `grant_container_name`,
+`private_subnet_ids`, `app_security_group_id`) are what
+`aws ecs run-task` needs to start one.
 
 ## State and credentials
 
@@ -154,7 +168,8 @@ where an environment answers.
 
 Each task's collector sidecar scrapes the process's `/metrics` over
 localhost every 30 seconds into CloudWatch metrics (namespace `Tadas`,
-dimensions `service`, `environment`, and the metric's own labels) and
+dimensions `service`, `environment`, the metric's own labels, and the
+exporter's `OTelLib`) and
 forwards the traces the process sends to `127.0.0.1:4318` on to X-Ray. The
 load balancer answers `/metrics` with a 404, so the endpoint never leaves
 the task.
@@ -175,7 +190,7 @@ Terraform never overwrites the value; `off` turns reporting off again.
 
 CI runs `terraform fmt -check -recursive` over this folder,
 `terraform init -backend=false && terraform validate` in every root, and
-`terraform test` in `modules/portal` (the security headers) and in
-`modules/service` (the autoscaling switch), both offline under a mock
-provider. `infra/tests/test_dashboard_parity.py` holds the dashboard
+`terraform test` in `modules/portal` (the security headers), in
+`modules/service` (the autoscaling switch), and in `modules/dashboard`
+(the body's shape), all offline under a mock provider. `infra/tests/test_dashboard_parity.py` holds the dashboard
 template's panel titles equal to the local Grafana dashboard's.

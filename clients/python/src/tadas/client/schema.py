@@ -21,6 +21,16 @@ class AddTaskRequest(BaseModel):
     title: Annotated[str, Field(max_length=500, title='Title')]
 
 
+class ConfirmTotpRequest(BaseModel):
+    """
+    The first code from the authenticator, which confirms the secret.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    totp_code: Annotated[str, Field(max_length=6, min_length=6, title='Totp Code')]
+
+
 class CreateOrgRequest(BaseModel):
     """
     An org with its owner, as `bootstrap` seeds one. The owner's identity
@@ -42,6 +52,7 @@ class CredentialKind(StrEnum):
     session_token = 'session_token'
     login = 'login'
     socket_ticket = 'socket_ticket'
+    operator_token = 'operator_token'
     internal = 'internal'
 
 
@@ -80,24 +91,58 @@ class IssuedTicketView(BaseModel):
     ticket: Annotated[str, Field(title='Ticket')]
 
 
+class IssuedTotpSecretView(BaseModel):
+    """
+    A freshly minted TOTP secret, once, as the `otpauth://` URI an
+    authenticator app reads. A replay carries none.
+    """
+    otpauth_uri: Annotated[str | None, Field(title='Otpauth Uri')]
+
+
+class TotpCode(RootModel[str]):
+    root: Annotated[str, Field(max_length=6, min_length=6, title='Totp Code')]
+
+
 class LoginRequest(BaseModel):
+    """
+    An email and a password, and the code from an authenticator when the
+    identity has a second factor enrolled. A tenant's sign-in needs none; the
+    operator plane admits an enrolled operator only on a sign-in that
+    verified one. A code used once is refused.
+    """
     model_config = ConfigDict(
         extra='forbid',
     )
     email: Annotated[str, Field(title='Email')]
     password: Annotated[str, Field(title='Password')]
+    totp_code: Annotated[TotpCode | None, Field(title='Totp Code')] = None
+
+
+class ExpiresIn(RootModel[int]):
+    root: Annotated[int, Field(ge=1, le=3600, title='Expires In')]
+
+
+class ExpectedVersion(RootModel[int]):
+    root: Annotated[int, Field(ge=1, title='Expected Version')]
+
+
+class Version(RootModel[int]):
+    root: Annotated[int, Field(deprecated=True, description='Superseded by `expected_version`, and accepted in its place until every client sends it.', ge=1, title='Version')]
 
 
 class MoveTaskRequest(BaseModel):
     """
     Places an open task right after `after_id`; null puts it at the top.
-    `version` is the moved task's, as on `UpdateTaskRequest`.
+    `expected_version` is the moved task's as the caller read it: 412
+    `precondition_failed` when the task changed since, and 422
+    `validation_failed` when the request names no version.
     """
     model_config = ConfigDict(
         extra='forbid',
     )
     after_id: Annotated[UUID | None, Field(title='After Id')] = None
-    version: Annotated[int, Field(ge=1, title='Version')]
+    expected_version: Annotated[ExpectedVersion | None, Field(title='Expected Version')] = None
+    version: Annotated[Version | None, Field(deprecated=True, description='Superseded by `expected_version`, and accepted in its place until every client sends it.', title='Version')] = None
 
 
 class OperatorEventView(BaseModel):
@@ -144,6 +189,14 @@ class OrgView(BaseModel):
     slug: Annotated[str, Field(title='Slug')]
 
 
+class PasswordResetView(BaseModel):
+    """
+    Whose password was reset; the reset is audited with the operator.
+    """
+    email: Annotated[str, Field(title='Email')]
+    identity_id: Annotated[UUID, Field(title='Identity Id')]
+
+
 class Permission(StrEnum):
     read = 'read'
     write = 'write'
@@ -163,6 +216,17 @@ class PlatformSizeView(BaseModel):
     tasks_last_24h: Annotated[int, Field(title='Tasks Last 24H')]
     tenants: Annotated[int, Field(title='Tenants')]
     users: Annotated[int, Field(title='Users')]
+
+
+class ResetPasswordRequest(BaseModel):
+    """
+    The person, by email, and the password they sign in with from now on.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    email: Annotated[str, Field(min_length=1, title='Email')]
+    password: Annotated[str, Field(max_length=200, min_length=8, title='Password')]
 
 
 class Role(StrEnum):
@@ -229,6 +293,16 @@ class TaskView(BaseModel):
     version: Annotated[int, Field(title='Version')]
 
 
+class TotpConfirmedView(BaseModel):
+    """
+    The second factor is enrolled: from now on the operator plane admits
+    this identity only on a sign-in that verified a code, so the next
+    request signs in again with one.
+    """
+    confirmed_at: Annotated[AwareDatetime, Field(title='Confirmed At')]
+    identity_id: Annotated[UUID, Field(title='Identity Id')]
+
+
 class UpdateMeRequest(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -247,13 +321,19 @@ class Title(RootModel[str]):
     root: Annotated[str, Field(max_length=500, title='Title')]
 
 
+class Version1(RootModel[int]):
+    root: Annotated[int, Field(deprecated=True, description='Superseded by the `If-Match` header, and accepted in its place until every client sends the header.', ge=1, title='Version')]
+
+
 class UpdateTaskRequest(BaseModel):
     """
     A partial update: absent fields are kept. An explicit null
-    `assignee_id` unassigns the task. `version` is the task's version as the
-    caller read it: the update lands only when the task is still at it, and
-    is refused with 409 `version_mismatch` when another write landed since,
-    so the caller reads again and decides over the current task.
+    `assignee_id` unassigns the task. The version the update compares with is
+    the task's as the caller read it, in the `If-Match` header: the update
+    lands only when the task is still at it, and is refused with 412
+    `precondition_failed` when another write landed since, so the caller reads
+    again and decides over the current task. An update that names no version
+    is refused with 422 `validation_failed`, since it would overwrite blind.
     """
     model_config = ConfigDict(
         extra='forbid',
@@ -262,7 +342,7 @@ class UpdateTaskRequest(BaseModel):
     notes: Annotated[str | None, Field(title='Notes')] = None
     status: TaskStatus | None = None
     title: Annotated[Title | None, Field(title='Title')] = None
-    version: Annotated[int, Field(ge=1, title='Version')]
+    version: Annotated[Version1 | None, Field(deprecated=True, description='Superseded by the `If-Match` header, and accepted in its place until every client sends the header.', title='Version')] = None
 
 
 class UserView(BaseModel):
@@ -341,6 +421,17 @@ class IssuedApiKeyView(BaseModel):
     key: Annotated[str | None, Field(title='Key')]
 
 
+class IssuedOperatorTokenView(BaseModel):
+    """
+    The token in the clear on the first response only; a replay under the
+    same Idempotency-Key answers with `token` null. A client that lost the
+    first answer mints another; the lost one expires within the hour.
+    """
+    expires_at: Annotated[AwareDatetime, Field(title='Expires At')]
+    permission: OperatorRole
+    token: Annotated[str | None, Field(title='Token')]
+
+
 class IssuedSessionView(BaseModel):
     expires_at: Annotated[AwareDatetime, Field(title='Expires At')]
     org: OrgView
@@ -368,6 +459,18 @@ class MembershipView(BaseModel):
     role: Role
     teams: Annotated[list[UUID], Field(title='Teams')]
     user_id: Annotated[UUID, Field(title='User Id')]
+
+
+class MintOperatorTokenRequest(BaseModel):
+    """
+    One permission, never wider than the caller's entry (`write` implies
+    `read`), and a lifetime of at most an hour, an hour when absent.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    expires_in: Annotated[ExpiresIn | None, Field(title='Expires In')] = None
+    permission: OperatorRole
 
 
 class OrgPageView(BaseModel):

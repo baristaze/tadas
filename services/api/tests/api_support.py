@@ -1,20 +1,22 @@
 """Helpers the API tests share: the test container and the sign-in flow."""
 
 import asyncio
+import base64
 import secrets
 from collections.abc import Coroutine
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 from uuid import UUID
 
 import httpx
 
 from tadas.infra.impl.local import InfraLocalImpl
 from tadas.om.base import new_id, utcnow
-from tadas.om.opcontext import AppContext, AppType, RequestContext, Role
+from tadas.om.opcontext import AppContext, AppType, OperatorRole, RequestContext, Role
 from tadas.om.storage.impl.memory import StorageMemoryImpl
 from tadas.om.storage.root import StorageInterface
-from tadas.om.tenancy.rules import hash_password
+from tadas.om.tenancy.rules import hash_password, totp_code, totp_step
 from tadas.om.tenancy.types.identity import Identity
 from tadas.om.tenancy.types.membership import Membership
 from tadas.om.tenancy.types.user import User
@@ -22,6 +24,8 @@ from tadas.services.api.container import AppContainer
 from tadas.services.api.settings import ApiSettings
 
 OWNER = {"email": "ann@example.test", "password": "pw-1234", "name": "Ann"}
+TOTP_KEY = "dGFkYXMtdGVzdHMtdG90cC1rZXktdGhpcnR5LXR3byE="
+"""A Fernet-shaped key for the test container's TOTP secrets, tests only."""
 
 
 def seed_request() -> RequestContext:
@@ -37,7 +41,9 @@ def build_container(
     settings it overrides, and one that needs storage to behave a certain way
     passes its own root. The developer's `.env` is never read: its DSN would
     send every error a test raises on purpose to the local tracker."""
-    settings = ApiSettings.model_validate({"_env_file": None, "environment": "test", **overrides})
+    settings = ApiSettings.model_validate(
+        {"_env_file": None, "environment": "test", "totp_encryption_key": TOTP_KEY, **overrides}
+    )
     return AppContainer.for_tests(
         storage or StorageMemoryImpl(), InfraLocalImpl(tmp_path), settings
     )
@@ -112,6 +118,54 @@ async def add_member(
         ),
     )
     return user
+
+
+def secret_of(otpauth_uri: str) -> bytes:
+    """The secret an authenticator app reads out of an `otpauth://` URI."""
+    encoded = parse_qs(urlparse(otpauth_uri).query)["secret"][0]
+    return base64.b32decode(encoded + "=" * (-len(encoded) % 8))
+
+
+def code_at(secret: bytes, steps_ahead: int) -> str:
+    """The code an authenticator shows `steps_ahead` time steps from now. A
+    test draws each code at a later step than the one before, since the plane
+    accepts a step once; the window reaches one step ahead of the clock."""
+    return totp_code(secret, totp_step(utcnow()) + steps_ahead)
+
+
+def bearer(token: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {token}", "X-App": "cli", "X-App-Version": "cli@test"}
+
+
+async def enrol_operator(
+    client: httpx.AsyncClient, container: AppContainer, email: str, role: OperatorRole
+) -> tuple[dict[str, str], bytes]:
+    """An operator through their first sign-in to the plane, over the API: put
+    on the allowlist (seeded into an org of their own), admitted to enrol,
+    the secret minted and confirmed with this step's code, then signed in
+    again with the next step's. Returns that sign-in's headers and the
+    secret. The next sign-in of the same operator in one test is refused as
+    a reused step unless the clock has moved on, so a test signs in once."""
+    slug = email.split("@")[0]
+    await container.managers.tenancy.bootstrap(
+        seed_request(), slug.title(), slug, email, "pw-1234", "Op", operator_role=role
+    )
+    first = await client.post("/v1/auth/login", json={"email": email, "password": "pw-1234"})
+    assert first.status_code == 200, first.text
+    enrolling = bearer(first.json()["token"])
+    minted = await client.post("/v1/admin/me/totp", headers=enrolling)
+    assert minted.status_code == 200, minted.text
+    secret = secret_of(minted.json()["otpauth_uri"])
+    confirmed = await client.post(
+        "/v1/admin/me/totp/confirm", headers=enrolling, json={"totp_code": code_at(secret, 0)}
+    )
+    assert confirmed.status_code == 200, confirmed.text
+    login = await client.post(
+        "/v1/auth/login",
+        json={"email": email, "password": "pw-1234", "totp_code": code_at(secret, 1)},
+    )
+    assert login.status_code == 200, login.text
+    return bearer(login.json()["token"]), secret
 
 
 def run[T](coro: Coroutine[Any, Any, T]) -> T:

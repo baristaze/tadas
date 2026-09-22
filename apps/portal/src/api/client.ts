@@ -72,6 +72,8 @@ export interface ClientOptions {
 
 export interface RequestOptions {
   idempotencyKey?: string;
+  /** The version a write names as read, sent as the entity tag `If-Match` carries. */
+  ifMatch?: number;
   token?: string | null;
   signal?: AbortSignal;
 }
@@ -155,6 +157,7 @@ export function createClient(options: ClientOptions): ApiClient {
     if (token) headers.set("Authorization", `Bearer ${token}`);
     if (body !== undefined) headers.set("Content-Type", "application/json");
     if (requestOptions.idempotencyKey) headers.set("Idempotency-Key", requestOptions.idempotencyKey);
+    if (requestOptions.ifMatch !== undefined) headers.set("If-Match", `"${requestOptions.ifMatch}"`);
 
     // One signal for the whole call: the deadline, and the caller's own
     // signal when it hands one over. Reading the body counts against the

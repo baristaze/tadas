@@ -18,6 +18,11 @@ variable "database_identifier" {
   type        = string
 }
 
+variable "load_balancer_arn_suffix" {
+  description = "The load balancer's ARN suffix, the dimension its CloudWatch metrics carry; the latency widget reads it."
+  type        = string
+}
+
 variable "cache_node_ids" {
   description = "The cache cluster ids the replication group is made of, e.g. tadas-staging-001."
   type        = list(string)

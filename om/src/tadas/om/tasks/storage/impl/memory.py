@@ -2,7 +2,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from uuid import UUID
 
-from tadas.om.exceptions import TenantMismatch, VersionMismatch
+from tadas.om.exceptions import PreconditionFailed, TenantMismatch
 from tadas.om.outbox.storage import OutboxLandingInterface
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.storage.impl.memory_base import MemoryStorageBase, MemoryTable
@@ -94,11 +94,11 @@ class TasksStorageMemoryImpl(MemoryStorageBase, TasksStorageInterface):
             for task, expected_version, _ in updates:
                 found = self._tasks.get(task.id)
                 if found is None:
-                    raise VersionMismatch(f"task {task.id} is gone")
+                    raise PreconditionFailed(f"task {task.id} is gone")
                 if found[0] != org_id:
                     raise TenantMismatch(f"{task.id} is not in {org_id}")
                 if found[1].version != expected_version:
-                    raise VersionMismatch(
+                    raise PreconditionFailed(
                         f"task {task.id} is at version {found[1].version}, not {expected_version}"
                     )
             for task, _, outbox_rows in updates:

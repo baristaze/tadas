@@ -9,6 +9,7 @@ from uuid import UUID
 from pydantic import Field
 
 from tadas.om.opcontext import OperatorRole, Role
+from tadas.om.tenancy.rules import MAX_OPERATOR_TOKEN_TTL
 from tadas.services.api.types.common import RequestBody, View
 
 
@@ -56,3 +57,63 @@ class PlatformSizeView(View):
     tasks_last_24h: int
     events_last_24h: int
     since: datetime
+
+
+class IssuedTotpSecretView(View):
+    """A freshly minted TOTP secret, once, as the `otpauth://` URI an
+    authenticator app reads. A replay carries none."""
+
+    secret_fields = frozenset({"otpauth_uri"})
+
+    otpauth_uri: str | None
+
+
+class ConfirmTotpRequest(RequestBody):
+    """The first code from the authenticator, which confirms the secret."""
+
+    totp_code: str = Field(min_length=6, max_length=6)
+
+
+class TotpConfirmedView(View):
+    """The second factor is enrolled: from now on the operator plane admits
+    this identity only on a sign-in that verified a code, so the next
+    request signs in again with one."""
+
+    identity_id: UUID
+    confirmed_at: datetime
+
+
+class MintOperatorTokenRequest(RequestBody):
+    """One permission, never wider than the caller's entry (`write` implies
+    `read`), and a lifetime of at most an hour, an hour when absent."""
+
+    permission: OperatorRole
+    expires_in: int | None = Field(
+        default=None, ge=1, le=int(MAX_OPERATOR_TOKEN_TTL.total_seconds())
+    )
+
+
+class IssuedOperatorTokenView(View):
+    """The token in the clear on the first response only; a replay under the
+    same Idempotency-Key answers with `token` null. A client that lost the
+    first answer mints another; the lost one expires within the hour."""
+
+    secret_fields = frozenset({"token"})
+
+    token: str | None
+    expires_at: datetime
+    permission: OperatorRole
+
+
+class ResetPasswordRequest(RequestBody):
+    """The person, by email, and the password they sign in with from now on."""
+
+    email: str = Field(min_length=1)
+    password: str = Field(min_length=8, max_length=200)
+
+
+class PasswordResetView(View):
+    """Whose password was reset; the reset is audited with the operator."""
+
+    identity_id: UUID
+    email: str

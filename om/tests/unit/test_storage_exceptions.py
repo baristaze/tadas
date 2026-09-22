@@ -35,10 +35,15 @@ from tadas.om.opcontext import IdentityContext, OpContext, OperatorContext, Requ
 STORAGE_EXCEPTIONS: frozenset[tuple[str, str]] = frozenset(
     {
         ("TenancyStorageInterface", "read_identity"),
-        ("TenancyStorageInterface", "read_identity_by_email"),
+        ("TenancyStorageInterface", "read_identity_by_email_digest"),
         ("TenancyStorageInterface", "write_identity"),
+        ("TenancyStorageInterface", "write_totp_secret"),
+        ("TenancyStorageInterface", "confirm_totp"),
+        ("TenancyStorageInterface", "use_totp_step"),
+        ("TenancyStorageInterface", "read_sign_in_delay"),
         ("TenancyStorageInterface", "record_failed_sign_in"),
         ("TenancyStorageInterface", "clear_failed_sign_ins"),
+        ("TenancyStorageInterface", "purge_sign_in_delays"),
         ("TenancyStorageInterface", "read_org_by_slug"),
         ("TenancyStorageInterface", "read_orgs"),
         ("TenancyStorageInterface", "count_orgs"),
@@ -48,10 +53,11 @@ STORAGE_EXCEPTIONS: frozenset[tuple[str, str]] = frozenset(
         ("TenancyStorageInterface", "read_users_by_identity"),
         ("TenancyStorageInterface", "read_memberships_by_identity"),
         ("TenancyStorageInterface", "read_session_by_id"),
-        ("TenancyStorageInterface", "read_session_by_token_hash"),
-        ("TenancyStorageInterface", "read_api_key_by_hash"),
-        ("TenancyStorageInterface", "consume_socket_ticket"),
+        ("TenancyStorageInterface", "read_session_by_digest"),
+        ("TenancyStorageInterface", "read_api_key_by_digest"),
+        ("TenancyStorageInterface", "redeem_socket_ticket"),
         ("WorkStorageInterface", "claim_next"),
+        ("WorkStorageInterface", "purge_items"),
         ("OutboxStorageInterface", "claim_pending"),
         ("OutboxStorageInterface", "purge_done"),
     }
@@ -79,6 +85,8 @@ MANAGER_EXCEPTIONS: frozenset[tuple[str, str]] = frozenset(
         # And the enqueue the relay makes: it runs on the relay's side of the
         # handoff, under the tenant the row names, and stamps the actor from it.
         ("WorkManagerInterface", "enqueue_relayed"),
+        # The queue's purge, like the outbox's: one sweep step across tenants.
+        ("WorkManagerInterface", "purge_items"),
     }
 )
 
@@ -97,6 +105,9 @@ REQUEST_TRANSITIONS: frozenset[tuple[str, str]] = frozenset(
         ("TenancyManagerInterface", "redeem_ticket"),
         ("TenancyManagerInterface", "service_context"),
         ("TenancyManagerInterface", "service_contexts"),
+        ("TenancyManagerInterface", "grant_operator"),
+        ("TenancyManagerInterface", "disable_operator"),
+        ("TenancyManagerInterface", "grant_operator_token"),
         ("WorkManagerInterface", "claim"),
         ("WorkManagerInterface", "maintenance_contexts"),
     }

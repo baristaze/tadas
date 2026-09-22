@@ -14,7 +14,11 @@ The supporter holds a read credential and changes nothing.
    name.
 3. **Run `ops-root-cause`** with the environment, the org id, and the
    request id when there is one. It verifies its identity, refuses a
-   wider credential, and reads in this order:
+   wider credential, and reaches the operator plane with the `read`
+   operator token in the env file, never a password; when the plane
+   refuses it, the supporter mints a fresh one in their own terminal
+   (`uv run tadas-ops token --env <env> --identity operator`). It reads
+   in this order:
    - **The platform's size** (`tadas-ops size`): whether the problem
      is one org's or everyone's, before anything else.
    - **The alarms and the dashboard** for the window: the 5xx ratio,

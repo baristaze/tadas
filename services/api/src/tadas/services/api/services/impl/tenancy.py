@@ -70,7 +70,7 @@ class TenancyServiceImpl(TenancyServiceInterface):
         )
 
     async def login(self, rctx: RequestContext, body: LoginRequest) -> IssuedLoginView:
-        issued = await self._tenancy.login(rctx, body.email, body.password)
+        issued = await self._tenancy.login(rctx, body.email, body.password, body.totp_code)
         return IssuedLoginView(
             token=issued.token,
             expires_at=issued.expires_at,

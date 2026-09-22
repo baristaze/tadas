@@ -36,6 +36,7 @@ def build_managers(
     storage: StorageInterface,
     infra: InfraInterface,
     tenancy_options: TenancyOptions | None = None,
+    operator_options: TenancyOperatorOptions | None = None,
 ) -> Managers:
     # The relay every core-role manager hands its outbox rows to. It reaches
     # the work manager through the root below, because a row of kind
@@ -74,7 +75,7 @@ def build_managers(
         storage.get_tasks_storage(),
         storage.get_event_storage(),
         outbox,
-        TenancyOperatorOptions(),
+        operator_options or TenancyOperatorOptions(),
     )
     managers = Managers(
         tenancy=tenancy,

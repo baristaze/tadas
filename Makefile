@@ -26,7 +26,7 @@ DURATION ?= 30
 # follows, on the project's Python: the checker refuses a Python older than
 # .python-version. Offline, point it at a checkout:
 # `make arch-check ARCH_CHECK="python3 ../swe_guidelines/checkers/arch_check.py"`.
-ARCH_CHECK ?= uvx --python "$(shell cat .python-version)" --from "git+https://github.com/baristaze/swe_guidelines@v0.29.0\#subdirectory=checkers" arch-check
+ARCH_CHECK ?= uvx --python "$(shell cat .python-version)" --from "git+https://github.com/baristaze/swe_guidelines@v0.31.1\#subdirectory=checkers" arch-check
 
 .PHONY: help setup up down reset urls infra-up devx-up stack-up infra-down infra-reset migrate seed demo-gif demo-cli-gif migrate-check benchmark-boot check lint format-check typecheck arch-check test-unit test-integration test-telemetry traffic openapi
 
@@ -96,8 +96,11 @@ infra-reset: ## Recreate the dependencies with their volumes removed, and nothin
 
 # The local targets (migrate, migrate-check, seed, test-integration) refuse a
 # database whose host is not local, so a stray .env never points them at a
-# shared one; the cloud runs `tadas-api migrate` without --local.
-migrate: ## Apply every role's migration chain to the local database
+# shared one; the cloud runs `tadas-api migrate` without --local. The master
+# makes the three logins first, and every migration runs as the migration
+# login; both steps are safe to repeat.
+migrate: ## Make the database logins, then apply every role's migration chain to the local database
+	uv run --package tadas-om python -m tadas.om.storage.migrate ensure-logins --local
 	uv run --package tadas-om python -m tadas.om.storage.migrate upgrade --all --local
 
 # The SEED_* values come from .env (or .env.example); override any of them

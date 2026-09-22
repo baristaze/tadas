@@ -2,11 +2,13 @@ from collections.abc import Callable, Iterable
 from datetime import datetime
 from uuid import UUID
 
+from tadas.om.base import EMPTY_UUID
 from tadas.om.exceptions import Conflict, NotFound, UniqueKeyTaken
 from tadas.om.idempotency.storage import AttemptFenceInterface
 from tadas.om.outbox.storage import OutboxLandingInterface
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.storage.impl.memory_base import HasId, MemoryStorageBase, MemoryTable
+from tadas.om.tenancy.rules import email_digest as digest_of
 from tadas.om.tenancy.rules import is_after_in_id_order, is_after_newest_first
 from tadas.om.tenancy.storage import TenancyStorageInterface
 from tadas.om.tenancy.types.api_key import ApiKey
@@ -15,6 +17,7 @@ from tadas.om.tenancy.types.issued import OrgMembership
 from tadas.om.tenancy.types.membership import Membership
 from tadas.om.tenancy.types.org import Org
 from tadas.om.tenancy.types.session import Session
+from tadas.om.tenancy.types.sign_in_delay import SignInDelay
 from tadas.om.tenancy.types.socket_ticket import SocketTicket
 from tadas.om.tenancy.types.user import User
 
@@ -28,6 +31,7 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
         super().__init__(outbox)
         self._markers = markers
         self._identities: dict[UUID, Identity] = {}
+        self._sign_in_delays: dict[str, SignInDelay] = {}
         self._orgs: MemoryTable[Org] = {}
         self._users: MemoryTable[User] = {}
         self._memberships: MemoryTable[Membership] = {}
@@ -48,29 +52,79 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
     async def read_identity(self, identity_id: UUID) -> Identity | None:
         return self._identities.get(identity_id)
 
-    async def read_identity_by_email(self, email: str) -> Identity | None:
-        return next((i for i in self._identities.values() if i.email == email), None)
+    async def read_identity_by_email_digest(self, email_digest: str) -> Identity | None:
+        return next(
+            (i for i in self._identities.values() if digest_of(i.email) == email_digest),
+            None,
+        )
 
-    async def write_identity(self, identity: Identity) -> None:
-        self._require_email_free(identity)
-        self._identities[identity.id] = identity
+    async def write_identity(
+        self, identity: Identity, outbox_rows: tuple[OutboxRow, ...] = ()
+    ) -> None:
+        async with self._lock:
+            self._require_email_free(identity)
+            self._land(EMPTY_UUID, outbox_rows)
+            self._identities[identity.id] = identity
 
-    async def record_failed_sign_in(self, identity_id: UUID, at: datetime) -> None:
-        identity = self._identities.get(identity_id)
-        if identity is not None:
-            self._identities[identity_id] = identity.model_copy(
-                update={
-                    "failed_sign_ins": identity.failed_sign_ins + 1,
-                    "last_failed_sign_in_at": at,
-                }
+    async def _update_identity(
+        self, identity_id: UUID, when: Callable[[Identity], bool], **values: object
+    ) -> bool:
+        """The twin of one conditional UPDATE on an identity."""
+        async with self._lock:
+            identity = self._identities.get(identity_id)
+            if identity is None or not when(identity):
+                return False
+            self._identities[identity_id] = identity.model_copy(update=values)
+            return True
+
+    async def write_totp_secret(self, identity_id: UUID, sealed: str, at: datetime) -> bool:
+        return await self._update_identity(
+            identity_id,
+            lambda i: i.totp_confirmed_at is None,
+            totp_secret=sealed,
+            totp_last_step=None,
+            updated_at=at,
+        )
+
+    async def confirm_totp(self, identity_id: UUID, step: int, at: datetime) -> bool:
+        return await self._update_identity(
+            identity_id,
+            lambda i: i.totp_secret is not None and i.totp_confirmed_at is None,
+            totp_confirmed_at=at,
+            totp_last_step=step,
+            updated_at=at,
+        )
+
+    async def use_totp_step(self, identity_id: UUID, step: int) -> bool:
+        return await self._update_identity(
+            identity_id,
+            lambda i: (
+                i.totp_confirmed_at is not None
+                and (i.totp_last_step is None or i.totp_last_step < step)
+            ),
+            totp_last_step=step,
+        )
+
+    async def read_sign_in_delay(self, email_digest: str) -> SignInDelay | None:
+        return self._sign_in_delays.get(email_digest)
+
+    async def record_failed_sign_in(self, email_digest: str, at: datetime) -> None:
+        async with self._lock:
+            run = self._sign_in_delays.get(email_digest)
+            self._sign_in_delays[email_digest] = SignInDelay(
+                email_digest=email_digest,
+                failures=1 if run is None else run.failures + 1,
+                last_failed_at=at,
             )
 
-    async def clear_failed_sign_ins(self, identity_id: UUID) -> None:
-        identity = self._identities.get(identity_id)
-        if identity is not None:
-            self._identities[identity_id] = identity.model_copy(
-                update={"failed_sign_ins": 0, "last_failed_sign_in_at": None}
-            )
+    async def clear_failed_sign_ins(self, email_digest: str) -> None:
+        self._sign_in_delays.pop(email_digest, None)
+
+    async def purge_sign_in_delays(self, before: datetime) -> int:
+        gone = [key for key, run in self._sign_in_delays.items() if run.last_failed_at < before]
+        for key in gone:
+            del self._sign_in_delays[key]
+        return len(gone)
 
     def _require_email_free(self, identity: Identity) -> None:
         self._require_free(
@@ -164,15 +218,45 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
             self._put(self._memberships, org_id, membership)
 
     async def remove_member(
-        self, org_id: UUID, user: User, membership: Membership, outbox_rows: tuple[OutboxRow, ...]
-    ) -> None:
+        self,
+        org_id: UUID,
+        user: User,
+        membership: Membership,
+        outbox_rows: tuple[OutboxRow, ...],
+        revocation_row: Callable[[str, UUID], OutboxRow],
+    ) -> tuple[OutboxRow, ...]:
+        at, by = user.deleted_at, user.deleted_by
+        if at is None or by is None:
+            raise ValueError("remove_member lands a user that is deleted")
+        # Every check, then every write: the twin of one commit.
         async with self._lock:
             if self._get(self._users, org_id, user.id) is None:
                 raise NotFound(f"user {user.id} is not in {org_id}")
             if self._get(self._memberships, org_id, membership.id) is None:
                 raise NotFound(f"membership {membership.id} is not in {org_id}")
-            self._put(self._users, org_id, user, outbox_rows)
+            sessions = [
+                s.model_copy(update={"revoked_at": at, "updated_at": at, "updated_by": by})
+                for s in self._rows(self._sessions, org_id)
+                if s.user_id == user.id and s.revoked_at is None
+            ]
+            keys = [
+                k.model_copy(
+                    update={"deleted_at": at, "deleted_by": by, "updated_at": at, "updated_by": by}
+                )
+                for k in self._rows(self._api_keys, org_id)
+                if k.user_id == user.id and k.deleted_at is None
+            ]
+            revoked = tuple(
+                [revocation_row("tenancy.session.revoked", s.id) for s in sessions]
+                + [revocation_row("tenancy.api_key.deleted", k.id) for k in keys]
+            )
+            self._put(self._users, org_id, user, (*outbox_rows, *revoked))
             self._put(self._memberships, org_id, membership)
+            for session in sessions:
+                self._put(self._sessions, org_id, session)
+            for key in keys:
+                self._put(self._api_keys, org_id, key)
+            return revoked
 
     async def read_users(self, org_id: UUID, after: UUID | None, limit: int) -> list[User]:
         live = [u for u in self._rows(self._users, org_id) if u.deleted_at is None]
@@ -273,7 +357,7 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
     async def read_session(self, org_id: UUID, session_id: UUID) -> Session | None:
         return self._get(self._sessions, org_id, session_id)
 
-    async def read_session_by_token_hash(self, token_hash: str) -> tuple[UUID, Session] | None:
+    async def read_session_by_digest(self, token_hash: str) -> tuple[UUID, Session] | None:
         return next(
             (
                 (org_id, session)
@@ -285,6 +369,14 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
 
     async def read_session_by_id(self, session_id: UUID) -> tuple[UUID, Session] | None:
         return self._sessions.get(session_id)
+
+    async def touch_session(self, org_id: UUID, session_id: UUID, seen_at: datetime) -> None:
+        async with self._lock:
+            session = self._get(self._sessions, org_id, session_id)
+            if session is not None and session.revoked_at is None:
+                self._put(
+                    self._sessions, org_id, session.model_copy(update={"last_seen_at": seen_at})
+                )
 
     async def write_session(
         self, org_id: UUID, session: Session, outbox_rows: tuple[OutboxRow, ...] = ()
@@ -339,7 +431,7 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
     async def read_api_key(self, org_id: UUID, api_key_id: UUID) -> ApiKey | None:
         return self._get(self._api_keys, org_id, api_key_id)
 
-    async def read_api_key_by_hash(self, key_hash: str) -> tuple[UUID, ApiKey] | None:
+    async def read_api_key_by_digest(self, key_hash: str) -> tuple[UUID, ApiKey] | None:
         return next(
             ((org_id, key) for org_id, key in self._api_keys.values() if key.key_hash == key_hash),
             None,
@@ -466,7 +558,7 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
         )
         self._put(self._socket_tickets, org_id, ticket)
 
-    async def consume_socket_ticket(
+    async def redeem_socket_ticket(
         self, ticket_hash: str, redeemed_at: datetime
     ) -> tuple[UUID, SocketTicket] | None:
         async with self._lock:

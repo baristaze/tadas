@@ -38,21 +38,38 @@ class AddTaskRequest(RequestBody):
 
 class UpdateTaskRequest(RequestBody):
     """A partial update: absent fields are kept. An explicit null
-    `assignee_id` unassigns the task. `version` is the task's version as the
-    caller read it: the update lands only when the task is still at it, and
-    is refused with 409 `version_mismatch` when another write landed since,
-    so the caller reads again and decides over the current task."""
+    `assignee_id` unassigns the task. The version the update compares with is
+    the task's as the caller read it, in the `If-Match` header: the update
+    lands only when the task is still at it, and is refused with 412
+    `precondition_failed` when another write landed since, so the caller reads
+    again and decides over the current task. An update that names no version
+    is refused with 422 `validation_failed`, since it would overwrite blind."""
 
     title: str | None = Field(default=None, max_length=500)
     notes: str | None = None
     status: TaskStatus | None = None
     assignee_id: UUID | None = None
-    version: int = Field(ge=1)
+    version: int | None = Field(
+        default=None,
+        ge=1,
+        json_schema_extra={"deprecated": True},
+        description="Superseded by the `If-Match` header, and accepted in its place "
+        "until every client sends the header.",
+    )
 
 
 class MoveTaskRequest(RequestBody):
     """Places an open task right after `after_id`; null puts it at the top.
-    `version` is the moved task's, as on `UpdateTaskRequest`."""
+    `expected_version` is the moved task's as the caller read it: 412
+    `precondition_failed` when the task changed since, and 422
+    `validation_failed` when the request names no version."""
 
     after_id: UUID | None = None
-    version: int = Field(ge=1)
+    expected_version: int | None = Field(default=None, ge=1)
+    version: int | None = Field(
+        default=None,
+        ge=1,
+        json_schema_extra={"deprecated": True},
+        description="Superseded by `expected_version`, and accepted in its place "
+        "until every client sends it.",
+    )

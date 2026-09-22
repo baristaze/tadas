@@ -3,7 +3,7 @@ knobs that belong to this service, all under the TADAS_ prefix."""
 
 import ipaddress
 
-from pydantic import Field, field_validator
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import SettingsConfigDict
 
 from tadas.infra.impl.settings import InfraSettings
@@ -28,16 +28,30 @@ class ApiSettings(StorageSettings, InfraSettings):
     login_rate_limit: int = 10
     login_rate_window_seconds: int = 60
     # Past the per-address limit, which rides the cache and fails open: a run
-    # of failed sign-ins for one identity makes the next one wait, counted in
-    # the database. The first `sign_in_free_failures` cost nothing; then the
-    # wait starts at the base and doubles, up to the cap.
+    # of failed sign-ins for one email, held by an identity or not, makes the
+    # next one wait, counted in the database. The first
+    # `sign_in_free_failures` cost nothing; then the wait starts at the base
+    # and doubles, up to the cap.
     sign_in_free_failures: int = Field(default=3, ge=1)
     sign_in_delay_base_seconds: float = Field(default=1.0, gt=0)
     sign_in_delay_cap_seconds: float = Field(default=300.0, gt=0)
     # How long a sign-in lasts before it must be exchanged for a session, and
-    # how long a session lasts from its exchange, whatever it is used for.
+    # how long a session lasts: from its exchange, whatever it is used for
+    # (the absolute lifetime), and from its last use (the idle one). A
+    # session ends at whichever passes first.
     login_lifetime_seconds: int = Field(default=600, gt=0)
     session_lifetime_seconds: int = Field(default=43200, gt=0)
+    session_idle_lifetime_seconds: int = Field(default=14400, gt=0)
+    # The longest an operator token lives, and what a mint that names no
+    # lifetime gets. An hour at most, whoever mints it.
+    operator_token_max_lifetime_seconds: int = Field(default=3600, gt=0, le=3600)
+    # The key the operators' TOTP secrets are sealed under: a Fernet-shaped
+    # key (URL-safe base64 of 32 bytes), a process credential injected at
+    # start from the secret store like the database URL, and only into the
+    # API. No default: a process without it refuses every enrolment and every
+    # sign-in that presents a code, and says so; one of the wrong shape
+    # refuses to start.
+    totp_encryption_key: SecretStr | None = None
     # Sign-up is open by default: a deployed environment has no other door,
     # since the seeding is local. False closes it, and the route then answers
     # 404 as a route that does not exist would. Its budget is its own, per

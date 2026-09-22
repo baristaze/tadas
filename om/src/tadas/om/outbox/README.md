@@ -6,8 +6,8 @@ push come. This is one of the six kinds of thing
 
 ## The nouns
 
-- **Outbox row**: the org, the kind of change, the record that
-  changed and its snapshot, and the provenance of the write: the
+- **Outbox row**: the org, the kind of change, the id of the record
+  that changed, and the provenance of the write: the
   actor, the request, the request's trace context, and the app. It
   records when it was relayed, how many attempts the sweep has spent
   on it, when the next is due, its last error, and whether it failed
@@ -37,6 +37,10 @@ push come. This is one of the six kinds of thing
 
 - **Same commit or nothing.** The row lands with the change it
   announces, or neither lands.
+- **Ids, never values.** A row names the record that changed and
+  carries no field of it, so the relay and the stream hold nothing a
+  person's erasure has to find. A client that hears of a change reads
+  the record.
 - **Relaying twice is harmless.** The relay is idempotent on the row's
   id: the event is appended once and the work item is enqueued once.
 - **A failed relay never fails the request.** It is logged and

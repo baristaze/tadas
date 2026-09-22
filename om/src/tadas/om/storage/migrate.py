@@ -1,7 +1,12 @@
 """The migration runner: one Alembic chain and one version table per role,
 each migration a pair of hand-written SQL files behind a thin wrapper.
 
-Run as a module: `python -m tadas.om.storage.migrate upgrade --all`.
+Every migration runs under the migration login, which owns the schema. The
+master opens one command only, `ensure-logins`, which makes the three logins
+and hands the migration login what it owns (`tadas.om.storage.logins`).
+
+Run as a module: `python -m tadas.om.storage.migrate ensure-logins`, then
+`python -m tadas.om.storage.migrate upgrade --all`.
 """
 
 import argparse
@@ -21,8 +26,9 @@ from alembic.script import ScriptDirectory
 from sqlalchemy import Connection, MetaData
 from sqlalchemy.ext.asyncio import create_async_engine
 
+from tadas.om.storage.logins import ensure_logins
 from tadas.om.storage.roles import TABLE_ROLES, DatabaseRole, role_for
-from tadas.om.storage.settings import StorageSettings
+from tadas.om.storage.settings import MigrationSettings
 from tadas.om.storage.tables.base import Base
 
 MIGRATIONS_DIR = Path(__file__).resolve().parents[4] / "migrations"
@@ -78,6 +84,36 @@ def run_sql(role: DatabaseRole, filename: str) -> None:
     bind = op.get_bind()
     for statement in split_statements(sql):
         bind.exec_driver_sql(statement)
+
+
+def backfill(
+    connection: Connection, role: DatabaseRole, table: str, count_sql: str, update_sql: str
+) -> int:
+    """A data migration under the fence it runs beneath. The migration login
+    owns the table and FORCE binds the owner, and a migration names no tenant,
+    so a bare UPDATE would match no row and succeed. This lifts the fence for
+    its own statements and puts it back, in the caller's transaction.
+
+    A backfill that touched nothing looks like one that had nothing to do, so
+    the rows it means to touch are counted first (`count_sql`, one number) and
+    compared with the rows `update_sql` reports. A difference fails, and the
+    whole transaction rolls back, the fence included. Returns the count."""
+    if role_for(table) is not role:
+        raise RuntimeError(f"table {table} belongs to role {role_for(table).value}")
+    check_role_of_sql(role, f"{count_sql};{update_sql}")
+    qualified = f"{role.value}.{table}"
+    connection.exec_driver_sql(f"ALTER TABLE {qualified} NO FORCE ROW LEVEL SECURITY")
+    expected = connection.exec_driver_sql(count_sql).scalar_one()
+    touched = connection.exec_driver_sql(update_sql).rowcount
+    if touched != expected:
+        raise RuntimeError(f"backfill of {qualified} touched {touched} rows of {expected}")
+    connection.exec_driver_sql(f"ALTER TABLE {qualified} FORCE ROW LEVEL SECURITY")
+    return touched
+
+
+def run_backfill(role: DatabaseRole, table: str, count_sql: str, update_sql: str) -> int:
+    """Called by a wrapper under versions/<role>/ for a data migration; see `backfill`."""
+    return backfill(op.get_bind(), role, table, count_sql, update_sql)
 
 
 def load_tables() -> None:
@@ -163,6 +199,11 @@ async def upgrade_all(urls: dict[DatabaseRole, str]) -> None:
         await upgrade(role, urls[role])
 
 
+async def ensure_logins_at(master_url: str, passwords: dict[str, str]) -> None:
+    """`ensure_logins` in one transaction on the master's connection."""
+    await _with_connection(master_url, lambda connection: ensure_logins(connection, passwords))
+
+
 def _roles_from_args(args: argparse.Namespace) -> list[DatabaseRole]:
     if args.all and args.role:
         raise SystemExit("name --role or --all, not both")
@@ -176,6 +217,15 @@ def _roles_from_args(args: argparse.Namespace) -> list[DatabaseRole]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="tadas-migrate")
     sub = parser.add_subparsers(dest="command", required=True)
+    logins = sub.add_parser(
+        "ensure-logins",
+        help="as the master: the three logins, the migration login's ownership, the grants",
+    )
+    logins.add_argument(
+        "--local",
+        action="store_true",
+        help="refuse a database whose host is not local; every Makefile target passes it",
+    )
     for name in ("upgrade", "downgrade", "check"):
         p = sub.add_parser(name)
         p.add_argument("--role", choices=[r.value for r in DatabaseRole])
@@ -188,10 +238,14 @@ def main(argv: list[str] | None = None) -> int:
         if name == "downgrade":
             p.add_argument("--to", required=True, help="revision, or -1 for one step")
     args = parser.parse_args(argv)
-    settings = StorageSettings()
+    settings = MigrationSettings()
     if args.local:
         settings.refuse_remote()
-    urls = settings.role_urls()
+    if args.command == "ensure-logins":
+        asyncio.run(ensure_logins_at(settings.master_url(), settings.login_passwords()))
+        print("logins: the migration login owns every role schema; the serving logins hold DML")
+        return 0
+    urls = settings.migration_role_urls()
     roles = _roles_from_args(args)
 
     async def run() -> int:

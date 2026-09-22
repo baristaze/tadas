@@ -150,15 +150,21 @@ each run does:
    wrong ARN in one of them does not cross the boundary: the role
    refuses a subject it does not trust.
 6. `~/.config/tadas/ops/<environment>.env`, mode 600, with
-   `TADAS_API_URL` set and the operator identity and error tracker
-   lines empty; the skills read it.
+   `TADAS_API_URL` set and the two operator token lines
+   (`TADAS_OPERATOR_TOKEN`, `TADAS_PROVISIONER_TOKEN`) and the error
+   tracker lines empty; the skills read it. No operator exists until
+   the grants below, and the file never holds a password.
 7. The first deploy, through the pipeline like every other:
    `deploy-staging.yml` for staging. Production's first release waits:
    replication copies only what staging pushes after it is on, so the
    first release is a commit merged to `main` after the second staging
    run, released with `release.yml`.
-8. When the deploy is green, the smoke test: one request through the
-   edge, then every signal read back by the request id it answered with.
+8. The grants, printed for the person to dispatch: the first operator,
+   the provisioner, and the smoke identity, each through
+   `grant-operator.yml` (see Grant an operator below).
+9. When a deploy is green after that, the smoke test the deploy ran,
+   and one request by hand through the edge with every signal read
+   back by the request id it answered with.
 
    ```bash
    id=$(curl -s -o /dev/null -D - "https://<api host>/v1/me" \
@@ -166,7 +172,7 @@ each run does:
    uv run tadas-ops signals check --env <environment> --request-id "$id"
    ```
 
-9. The first person: the environment carries no seed (`make seed` is
+10. The first person: the environment carries no seed (`make seed` is
    local), so open the portal and sign up at `/sign-up`. That creates
    the identity, the first org, and its owner. Sign-up stays open unless
    `TADAS_SIGNUP_ENABLED=false`, which makes the route answer 404.
@@ -228,10 +234,69 @@ is on, so a pull request that flips it to `true` scales the whole
 environment; nothing else changes. [scale.md](scale.md) says what turns
 on and how to read that it happened.
 
+## Grant an operator
+
+The operator allowlist of a deployed environment changes through one
+workflow, `grant-operator.yml`, dispatched by a person on the
+environment's branch. It runs `tadas-api grant-operator` as a one-off
+task on the grant task definition (the root's
+`grant_task_definition_arn` output, which holds the runtime and the
+system logins' URLs and nothing wider) under the deploy role, through
+`scripts/cloud_grant.sh`. Production's run waits for the same required
+reviewer as its apply. The email is masked in the run's log.
+
+```bash
+# The identity signed up first, like any person.
+gh workflow run grant-operator.yml --ref main -f environment=staging \
+  -f email=<email> -f permission=read          # or write
+gh workflow run grant-operator.yml --ref main -f environment=staging \
+  -f email=<email> -f permission=none -f disable=true
+gh workflow run grant-operator.yml --ref main -f environment=staging \
+  -f email=<provisioner> -f permission=none -f mint_token=provisioner
+```
+
+Production's runs use `--ref release -f environment=production`.
+
+- **A person** is granted `read` or `write`, enrols the second factor
+  through the API (`POST /v1/admin/me/totp`, then `/confirm`; the
+  steps are in `deployment/cloud/first_time_manual.md`, section 20;
+  until then the plane admits the enrolment alone), and writes a `read` token into the env file in
+  their own terminal: `uv run tadas-ops token --env <env> --identity
+  operator`. It asks for the password and the TOTP code there; no agent
+  ever holds either.
+- **The provisioner** is granted `write` and has its token minted with
+  `mint_token=provisioner` right before a traffic run, since a token
+  lasts an hour; `uv run tadas-ops token --env <env> --identity
+  provisioner` copies it from `tadas-<env>-provisioner-token` into the
+  env file under the person's own sign-in (`--profile tadas-prod-power`
+  in production, whose everyday sign-in reads no secret), never under
+  an agent's investigate profile, which is denied every secret value.
+  In production the provisioner is disabled again after the run.
+- **The smoke identity** is granted `read`, and the environment's
+  `SMOKE_EMAIL` variable names it:
+  `gh variable set SMOKE_EMAIL --env <staging|production> --body <email>`.
+
+## The smoke test
+
+Every deploy runs it after the rollout: staging as the `smoke` job,
+production at the end of the apply job, since a job of its own would
+wait for a second approval. `scripts/cloud_smoke.sh` mints the smoke
+identity's token through the grant task into
+`tadas-<env>-smoke-token` (the root's
+`operator_token_secret_names.smoke`), reads it into the step's shell alone
+(masked), and calls `GET /v1/admin/me` with it through the edge. The
+summary names the request id. While `SMOKE_EMAIL` is empty the step is
+skipped with a notice, not failed. A staging run whose smoke failed is
+not a run `release.yml` takes.
+
 ### Nuke
 
 `scripts/cloud_nuke.sh <environment>` is the administrator's other run,
-narrated by `ops-cloud-deployment-nuke`. Staging goes on the word.
+narrated by `ops-cloud-deployment-nuke`. It applies from the exact
+commit the environment runs, in a clean worktree of its own: `release`
+for production, and for staging the commit of the newest
+`deploy-staging` run whose apply succeeded, never `main`'s tip, and it
+refuses while a staging deploy is still going. Staging goes on the word.
 Production refuses unless `--confirm production` is typed and
 `environments/prod/main.tf` on `origin/release` already reads
 `database_deletion_protection = false` and production's state shows it
@@ -250,8 +315,9 @@ runs none.
 ## Cut a release
 
 1. Pick the `main` commit: it has run on staging (the `deploy-staging`
-   run for it is green) and staging looks right. The release is
-   `main`'s tip; to release an older commit, see Roll back.
+   run for it is green, its smoke test included) and staging looks
+   right. The release is the last commit staging deployed; to go back,
+   see Roll back.
 2. Actions, `release`, Run workflow on `main`. The job lists the commits
    `release` gains in its summary and pushes the fast-forward. If it
    says `release` is not an ancestor of `main`, someone committed to
@@ -289,29 +355,38 @@ a new `main` commit and another release.
 
 Two paths, and neither moves `release` backwards.
 
-- **A redeploy of an earlier release**, for a release that is healthy but
-  wrong. Dispatch the production workflow on `release` with the earlier
-  commit:
+- **The fast rollback, to the previous release only**, for a release
+  that is healthy but wrong. The previous release is the newest commit
+  of `release` before its tip whose latest `released/production` status
+  is a success; the apply writes that status once the release answers
+  ready. Dispatch the production workflow on `release` with it:
 
   ```bash
-  gh workflow run deploy-production.yml --ref release -f commit=<earlier release commit>
+  gh workflow run deploy-production.yml --ref release -f rollback_to=<previous release commit>
   ```
 
-  The commit must be an earlier commit of `release` and carry the
-  `deployed/` statuses staging recorded for it. Its images and portal
-  build are verified against them, planned under its own Terraform, and
-  applied after the same approval. The registry keeps the last 30 images
-  per repository and, beyond those, the last 10 production ran (tagged
-  `prod-<sha>`); the artifacts bucket keeps each portal build a year.
-- **A revert through `main`**, the rollback of record: revert the change,
-  merge it, let staging deploy it, and release as always. A revert never
-  removes a migration that has run: the schema rolls forward with a new
-  one, because both environments' version tables name every revision
-  applied, and a missing revision file fails the next migrate.
+  Any other commit is refused, naming the previous one. After the same
+  approval the `rollback` job swaps each service's application image
+  back to the digest production ran for that release (its `prod-<sha>`
+  tag, compared with staging's `deployed/` statuses), publishes that
+  release's portal build, and reads `/readyz`. It runs no migration
+  and plans no Terraform, so nothing else the current release declared
+  moves; the next apply writes the declared shape again. It marks the
+  release it rolled back from with an error `released/production`
+  status, so a later rollback never returns to it. The registry keeps
+  the last 30 images per repository and, beyond those, the last 10
+  production ran; the artifacts bucket keeps each portal build a year.
+- **A revert through `main`**, the rollback of record and the only one
+  for anything older: revert the change, merge it, let staging deploy
+  it, and release as always. A revert never removes a migration that
+  has run: the schema rolls forward with a new one, because both
+  environments' version tables name every revision applied, and a
+  missing revision file fails the next migrate.
 
-The schema is not rolled back on a redeploy either: a migration is
-compatible with the release before it (expand and contract), so the
-earlier release runs against the newer schema.
+The schema is not rolled back by the fast rollback either: a migration
+is compatible with the release before it (expand and contract), so the
+previous release runs against the newer schema. A release older than
+that has no such promise, which is why the fast rollback stops at one.
 
 ## A failed migration stops the rollout
 

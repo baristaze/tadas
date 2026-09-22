@@ -34,10 +34,32 @@ locals {
     TADAS_DATABASE_PASSWORD_VERSION = tostring(var.database_password_version)
   }
 
+  # A serving process connects as the runtime login, and as the system login
+  # for the system scope, each with a pool of its own. The master's and the
+  # migration login's URLs reach the migrate task alone.
   process_secrets = {
-    TADAS_DATABASE_URL = module.secrets.database_url_secret_arn
-    TADAS_SENTRY_DSN   = module.secrets.sentry_dsn_secret_arn
+    TADAS_DATABASE_URL        = module.secrets.database_url_secret_arn
+    TADAS_DATABASE_SYSTEM_URL = module.secrets.database_system_url_secret_arn
+    TADAS_SENTRY_DSN          = module.secrets.sentry_dsn_secret_arn
   }
+
+  # The revision before this release injected the master's URL as
+  # TADAS_DATABASE_URL. A rollout the circuit breaker rolls back starts that
+  # revision again, so the serving tasks' execution roles keep reading it
+  # until the release that ends the transition.
+  rollback_secret_arns = [module.secrets.database_master_url_secret_arn]
+
+  # A one-off task opens small pools: it runs one command, not requests.
+  # deployment/cloud/README.md counts them in the connection budget.
+  one_off_environment = merge(local.process_environment, {
+    TADAS_DATABASE_POOL_SIZE = "2"
+  })
+
+  # The API's admission bounds follow its pool, as the settings' defaults
+  # do (48 and 16 over 12): four reads in flight per connection, and a
+  # third as many writes.
+  admission_limit_reads  = 4 * var.database_pool_size
+  admission_limit_writes = ceil(4 * var.database_pool_size / 3)
 
   process_policies = [
     module.queue.policy_arn,
@@ -188,8 +210,53 @@ module "domain_records" {
   distribution_zone_id     = module.portal.distribution_zone_id
 }
 
+# The two one-off tasks, both on the API image. The migrate task is the one
+# place the master's and the migration login's URLs are injected: it runs
+# `ensure-logins` as the master (the three logins, their passwords from their
+# URLs, the ownership moved to the migration login, the grants), then the
+# migrations as the migration login. It holds the runtime and system URLs as
+# well, since `ensure-logins` sets those logins' passwords from them.
+module "migrate" {
+  source = "../task"
+
+  name        = "migrate"
+  image       = var.api_image
+  environment = var.environment
+  command     = ["tadas-api", "migrate", "--all"]
+
+  environment_variables = merge(local.one_off_environment, {
+    TADAS_SERVICE_NAME = "migrate"
+  })
+
+  secrets = merge(local.process_secrets, {
+    TADAS_DATABASE_MIGRATION_URL = module.secrets.database_migration_url_secret_arn
+    TADAS_DATABASE_MASTER_URL    = module.secrets.database_master_url_secret_arn
+  })
+}
+
+# The grant task runs `tadas-api grant-operator`: a person's operator
+# permission, or a minted token written to its secret. It connects as the
+# runtime and system logins, and its role holds one write, PutSecretValue on
+# the two token secrets. The grant workflow starts it with its command as an
+# override; the definition's own command only prints the usage.
+module "grant" {
+  source = "../task"
+
+  name        = "grant"
+  image       = var.api_image
+  environment = var.environment
+  command     = ["tadas-api", "grant-operator", "--help"]
+  policy_arns = [module.secrets.operator_tokens_policy_arn]
+
+  environment_variables = merge(local.one_off_environment, {
+    TADAS_SERVICE_NAME = "grant"
+  })
+
+  secrets = local.process_secrets
+}
+
 # A stateless service rolls with one extra replica (the module's defaults).
-# Before it rolls, the migration runs on the new image as a one-off task; a
+# Before it rolls, the migrate task runs on the new image, once per step; a
 # migration is compatible with the release before it (expand and contract),
 # so the old tasks serve the new schema until the roll ends.
 module "api" {
@@ -208,13 +275,20 @@ module "api" {
   metrics_port       = 8000
   target_group_arn   = module.load_balancer.target_group_arn
   policy_arns        = local.process_policies
-  secrets            = local.process_secrets
+
+  rollback_secret_arns = local.rollback_secret_arns
+
+  secrets = merge(local.process_secrets, {
+    TADAS_TOTP_ENCRYPTION_KEY = module.secrets.totp_encryption_key_secret_arn
+  })
 
   environment_variables = merge(local.process_environment, {
-    TADAS_SERVICE_NAME = "api"
-    TADAS_HOST         = "0.0.0.0"
-    TADAS_PORT         = "8000"
-    TADAS_CORS_ORIGINS = jsonencode(concat(["https://${var.app_domain_name}"], var.cors_origins))
+    TADAS_SERVICE_NAME           = "api"
+    TADAS_ADMISSION_LIMIT_READS  = tostring(local.admission_limit_reads)
+    TADAS_ADMISSION_LIMIT_WRITES = tostring(local.admission_limit_writes)
+    TADAS_HOST                   = "0.0.0.0"
+    TADAS_PORT                   = "8000"
+    TADAS_CORS_ORIGINS           = jsonencode(concat(["https://${var.app_domain_name}"], var.cors_origins))
     # The edge serves the API and liveness; the interactive docs are local.
     TADAS_INTERACTIVE_DOCS = "false"
     # The load balancer lives in the VPC, so its X-Forwarded-For names the client.
@@ -226,7 +300,14 @@ module "api" {
     "python -c \"import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz').status == 200 else 1)\"",
   ]
 
-  pre_rollout_command = ["tadas-api", "migrate", "--all"]
+  pre_rollout = {
+    task_definition_arn = module.migrate.task_definition_arn
+    container           = module.migrate.container_name
+    commands = [
+      ["tadas-api", "migrate", "ensure-logins"],
+      ["tadas-api", "migrate", "--all"],
+    ]
+  }
 
   autoscaling = {
     enabled    = var.autoscaling_enabled && var.api_autoscaling.enabled
@@ -254,6 +335,8 @@ module "maintenance" {
   metrics_port       = 9464
   policy_arns        = local.process_policies
   secrets            = local.process_secrets
+
+  rollback_secret_arns = local.rollback_secret_arns
 
   environment_variables = merge(local.process_environment, {
     TADAS_SERVICE_NAME = "maintenance"
@@ -284,12 +367,13 @@ module "maintenance" {
 module "dashboard" {
   source = "../dashboard"
 
-  environment         = var.environment
-  cluster_name        = module.cluster.name
-  service_names       = [module.api.service_name, module.maintenance.service_name]
-  database_identifier = module.database.identifier
-  cache_node_ids      = module.cache.member_clusters
-  queue_names         = module.queue.queue_names
+  environment              = var.environment
+  cluster_name             = module.cluster.name
+  service_names            = [module.api.service_name, module.maintenance.service_name]
+  database_identifier      = module.database.identifier
+  load_balancer_arn_suffix = module.load_balancer.arn_suffix
+  cache_node_ids           = module.cache.member_clusters
+  queue_names              = module.queue.queue_names
 }
 
 module "alarms" {

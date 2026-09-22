@@ -18,8 +18,10 @@ output "portal_distribution_id" {
   value = module.portal.distribution_id
 }
 
-# What a by-hand migration needs to run as a one-off task on the API
-# image it just rolled out.
+# What `aws ecs run-task` needs to start a one-off task on the image the
+# apply just rolled out: the cluster, the task definition and its container
+# (the command override names it), and the network (the private subnets,
+# the app security group, no public address).
 
 output "cluster_name" {
   value = module.cluster.name
@@ -27,6 +29,29 @@ output "cluster_name" {
 
 output "api_task_definition_arn" {
   value = module.api.task_definition_arn
+}
+
+output "migrate_task_definition_arn" {
+  description = "The migrate task: `tadas-api migrate ensure-logins`, then `tadas-api migrate --all`."
+  value       = module.migrate.task_definition_arn
+}
+
+output "migrate_container_name" {
+  value = module.migrate.container_name
+}
+
+output "grant_task_definition_arn" {
+  description = "The grant task: `tadas-api grant-operator ...` as the command override."
+  value       = module.grant.task_definition_arn
+}
+
+output "grant_container_name" {
+  value = module.grant.container_name
+}
+
+output "operator_token_secret_names" {
+  description = "The secrets the grant task writes a minted token to, by kind (provisioner, smoke)."
+  value       = module.secrets.operator_token_secret_names
 }
 
 output "private_subnet_ids" {

@@ -1,6 +1,6 @@
 ---
 name: ops-root-cause
-description: "Find the root cause of one tenant's problem in one environment: read that tenant's rows through the operator plane's read routes with a read-only operator identity, correlate them with the logs, the trace, and the error event by request id, and report the cause and the fix. Takes the org id and optionally a user id. Never a database login, never a write, never another tenant's data."
+description: "Find the root cause of one tenant's problem in one environment: read that tenant's rows through the operator plane's read routes with a read-only operator token, correlate them with the logs, the trace, and the error event by request id, and report the cause and the fix. Takes the org id and optionally a user id. Never a database login, never a write, never another tenant's data."
 allowed-tools: Read, Grep, Glob, Bash(aws:*), Bash(curl:*), Bash(docker compose:*), Bash(uv run:*)
 ---
 
@@ -51,41 +51,64 @@ a mismatch: the right role in the wrong account is the wrong credential.
 
 The tenant's rows come through the operator plane, never through a
 database login: the role denies `rds-db:connect` and holds no database
-URL. The operator identity is the env file's,
+URL. The operator's credential is the env file's,
 `~/.config/tadas/ops/<env>.env`, owner-only and outside the
-repository: `TADAS_API_URL`, `TADAS_OPERATOR_EMAIL`,
-`TADAS_OPERATOR_PASSWORD` (a `read` entry; the file's `write` entry,
-`TADAS_PROVISIONER_EMAIL`, belongs to the traffic generator alone), `TADAS_ERROR_TRACKER_URL`,
-`TADAS_ERROR_TRACKER_TOKEN`, and for `local.env` the twins
-`TADAS_PROMETHEUS_URL` and `TADAS_JAEGER_URL`. The identity's allowlist
-entry is `READ`; a `WRITE` identity is refused by this skill even when
-the file holds one. Never print the password or the token.
+repository: `TADAS_API_URL`, `TADAS_OPERATOR_TOKEN` (a `read` operator
+token; the file's `TADAS_PROVISIONER_TOKEN`, a `write` token, belongs
+to the traffic generator alone), `TADAS_ERROR_TRACKER_URL`,
+`TADAS_ERROR_TRACKER_TOKEN`, and for `local.env`, when there is
+one, the twins `TADAS_PROMETHEUS_URL` and `TADAS_JAEGER_URL`. The
+token's permission is `read`; a `write` token is refused by this
+skill even when the file holds one. The file holds no password and no
+TOTP secret: an agent never signs in with a password.
+
+Never read the env file, with `Read`, `cat`, or anything else: its
+values stay out of this conversation. A command that needs one sources
+the file and makes the call in the same command, because shell state
+does not persist between calls. Every block below that names a
+`TADAS_` variable starts with that line and runs as one command:
+
+```bash
+set -a; . ~/.config/tadas/ops/<env>.env; set +a
+curl -s -H "Authorization: Bearer $TADAS_OPERATOR_TOKEN" "$TADAS_API_URL/v1/admin/me"
+```
+
+`tadas-ops` reads the file itself from `--env`. Never print a token.
+The operator token carries one permission and expires within the
+hour. When a call answers `401`, stop and ask the person to run
+`uv run tadas-ops token --env <env> --identity operator` in their own
+terminal, which asks there for the password and the TOTP code; never
+ask for either in the conversation.
 
 ## Procedure
 
-1. Verify the credential as Role and credential states. Read the env
-   file. Sign the operator in through `POST /v1/auth/login` at
-   `$TADAS_API_URL` with `curl` (the identity stage is what the operator
-   plane admits; no tenant session is exchanged), keep the bearer in a
-   shell variable (the login body is `{"email": ..., "password": ...}`
-   and the answer's `token` is the bearer), read `GET /v1/admin/me`,
-   and check the answer names `operator_role: read`; stop on `write`.
+The processes are `api` and `maintenance`, as `deployment/README.md`
+lists them.
+
+1. Verify the credential as Role and credential states. Read
+   `GET /v1/admin/me` with the operator token, sourcing the env file
+   in the same command as Role and credential shows, and check the
+   answer names `operator_role: read`; stop on `write`. No sign-in
+   runs: the operator plane admits the token, and no tenant session
+   is exchanged.
 2. Read the tenant, then its members, through the operator plane's
    read routes, every one under `/v1/admin/orgs/{org_id}/`:
 
    ```bash
-   curl -s -H "Authorization: Bearer $TOKEN" "$TADAS_API_URL/v1/admin/orgs/<org_id>"
-   curl -s -H "Authorization: Bearer $TOKEN" "$TADAS_API_URL/v1/admin/orgs/<org_id>/members"
+   set -a; . ~/.config/tadas/ops/<env>.env; set +a
+   curl -s -H "Authorization: Bearer $TADAS_OPERATOR_TOKEN" "$TADAS_API_URL/v1/admin/orgs/<org_id>"
+   curl -s -H "Authorization: Bearer $TADAS_OPERATOR_TOKEN" "$TADAS_API_URL/v1/admin/orgs/<org_id>/members"
    ```
 
    With `--user`, keep that member alone. A route that answers 403 or
-   404 ends the run: the identity is not allowed, or the tenant does
+   404 ends the run: the token is not allowed, or the tenant does
    not exist, and neither is guessed around.
 3. Read the tenant's activity of the window: the events feed and the
    entity rows the product exposes on the plane:
 
    ```bash
-   curl -s -H "Authorization: Bearer $TOKEN" "$TADAS_API_URL/v1/admin/orgs/<org_id>/events?after_seq=<seq>&limit=200"
+   set -a; . ~/.config/tadas/ops/<env>.env; set +a
+   curl -s -H "Authorization: Bearer $TADAS_OPERATOR_TOKEN" "$TADAS_API_URL/v1/admin/orgs/<org_id>/events?after_seq=<seq>&limit=200"
    ```
 
    The operator's feed carries `request_id` and `app` beside the
@@ -97,6 +120,7 @@ the file holds one. Never print the password or the token.
 4. The error tracker, by request id or by tenant window:
 
    ```bash
+   set -a; . ~/.config/tadas/ops/<env>.env; set +a
    curl -s -H "Authorization: Bearer $TADAS_ERROR_TRACKER_TOKEN" \
      "$TADAS_ERROR_TRACKER_URL/api/0/organizations/<org>/issues/?query=request_id%3A<id>"
    ```
@@ -105,6 +129,7 @@ the file holds one. Never print the password or the token.
    (locally `tadas`, the one the seed creates):
 
    ```bash
+   set -a; . ~/.config/tadas/ops/<env>.env; set +a
    curl -s -H "Authorization: Bearer $TADAS_ERROR_TRACKER_TOKEN" "$TADAS_ERROR_TRACKER_URL/api/0/organizations/"
    ```
 
@@ -142,6 +167,7 @@ the file holds one. Never print the password or the token.
    the request id is the span attribute `tadas.request_id`):
 
    ```bash
+   set -a; . ~/.config/tadas/ops/<env>.env; set +a
    curl -sG "$TADAS_JAEGER_URL/api/v3/traces" \
      --data-urlencode query.service_name=api \
      --data-urlencode "query.start_time_min=<start, RFC 3339>" \
@@ -174,11 +200,12 @@ the file holds one. Never print the password or the token.
 ## What it never does
 
 - No write to the cloud, no write to the tenant: only `GET` routes of
-  the operator plane, only a `READ` identity.
+  the operator plane, only a `read` token.
 - No database login: `rds-db:connect` is denied to the role; the
   compose Postgres is not opened either, so `local` proves the same
   path the cloud runs.
-- No secret value printed, no bearer written to the report.
+- No secret value read or printed: the env file is sourced and never
+  read, and no bearer is written to the report.
 - No data outside `--org`: no list of orgs, no cross-tenant query, no
   second org id "for comparison".
 - No `terraform apply`, no console clicks.

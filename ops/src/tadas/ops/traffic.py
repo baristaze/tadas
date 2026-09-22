@@ -9,7 +9,11 @@ stood at the start, see one of its own changes arrive on the socket, sign
 out. A person thinks between steps.
 
 The tenants a run needs come from the operator plane (`POST /v1/admin/orgs`
-and its members) with the provisioner identity of the environment, a write entry;
+and its members) under the provisioner's operator token, a `write` entry and
+never a password. They are named for the run, `ops-<run id>-<n>`, so no real
+tenant is touched and anything that counts tenants can leave them out, and
+the run removes them (`DELETE /v1/admin/orgs/{org_id}`) when it ends, a
+failure included; the ones it could not remove are named in the report.
 `orgs=0` drives the org and the two people `make seed` created instead, which
 is how the local stack is exercised with nothing provisioned."""
 
@@ -347,6 +351,27 @@ class Session:
 # Tenants
 
 
+RUN_TENANT_PREFIX = "ops-"
+"""Every tenant a run creates has a slug that starts with this, and no other
+tenant does: `size` leaves these out of what it reports."""
+
+
+def is_run_tenant(slug: str) -> bool:
+    return slug.startswith(RUN_TENANT_PREFIX)
+
+
+class TokenRefused(ValueError):
+    """The operator plane refused an operator token: it expired, or it was
+    never minted. The message names the command that writes a fresh one."""
+
+    def __init__(self, env: Environment, identity: str) -> None:
+        super().__init__(
+            f"the {identity} token of {env.name!r} was refused (expired, or never written); "
+            "write a fresh one with "
+            f"`uv run tadas-ops token --env {env.name} --identity {identity}`"
+        )
+
+
 @dataclass(frozen=True)
 class Tenants:
     people: list[Person]
@@ -365,50 +390,98 @@ async def seeded_people(env: Environment) -> Tenants:
     return Tenants(people, [], [f"orgs 0: the seeded org {seed.slug!r} and its two people"])
 
 
-async def provision(
-    env: Environment, profile: Profile, transport: httpx.AsyncBaseTransport | None = None
-) -> Tenants:
-    """Tenants for the run through the operator plane, as the read-write
-    operator of the environment. The orgs are left behind, named
-    `ops-<stamp>-<n>`, so a later run over the same environment can read what
-    this one wrote; the operator plane deletes them."""
-    if not env.provisioner_email or not env.provisioner_password:
+def provisioner_client(
+    env: Environment, transport: httpx.AsyncBaseTransport | None = None
+) -> ApiClient:
+    if not env.provisioner_token:
         raise ValueError(
-            f"environment {env.name!r} names no provisioner; "
-            "set TADAS_PROVISIONER_EMAIL and TADAS_PROVISIONER_PASSWORD"
+            f"environment {env.name!r} holds no provisioner token; "
+            f"write one with `uv run tadas-ops token --env {env.name} --identity provisioner`"
         )
-    stamp = datetime.now(UTC).strftime("%Y%m%d%H%M%S")
+    return ApiClient(
+        env.api_url,
+        app=OPERATOR_APP,
+        app_version=app_version(),
+        token=env.provisioner_token,
+        transport=transport,
+    )
+
+
+async def provision(
+    env: Environment,
+    profile: Profile,
+    transport: httpx.AsyncBaseTransport | None = None,
+    *,
+    run_id: str | None = None,
+) -> Tenants:
+    """Tenants for the run through the operator plane, under the
+    provisioner's token, named `ops-<run id>-<n>`. A creation that fails part
+    way removes what it made before it raises, so a failed start leaves
+    nothing behind."""
+    run = run_id or datetime.now(UTC).strftime("%Y%m%d%H%M%S")
     password = f"ops-{uuid4().hex}"
     people: list[Person] = []
     org_ids: list[UUID] = []
-    async with ApiClient(
-        env.api_url, app=OPERATOR_APP, app_version=app_version(), transport=transport
-    ) as client:
-        login = await client.login(env.provisioner_email, env.provisioner_password)
-        client.token = login.token
-        for n in range(profile.orgs):
-            slug = f"ops-{stamp}-{n + 1}"
-            owner = f"owner@{slug}.example.test"
-            org = await client.admin_create_org(
-                f"Ops {stamp} {n + 1}",
-                slug,
-                owner_email=owner,
-                owner_password=password,
-                owner_name="Ops Owner",
-            )
-            org_id = org.id
-            org_ids.append(org_id)
-            people.append(Person(owner, password, slug))
-            for m in range(max(profile.members_per_org - 1, 0)):
-                email = f"member{m + 1}@{slug}.example.test"
-                await client.admin_add_member(
-                    org_id,
-                    email,
-                    password=password,
-                    display_name=f"Member {m + 1}",
+    async with provisioner_client(env, transport) as client:
+        try:
+            for n in range(profile.orgs):
+                slug = f"{RUN_TENANT_PREFIX}{run}-{n + 1}"
+                owner = f"owner@{slug}.example.test"
+                org = await client.admin_create_org(
+                    f"Ops {run} {n + 1}",
+                    slug,
+                    owner_email=owner,
+                    owner_password=password,
+                    owner_name="Ops Owner",
                 )
-                people.append(Person(email, password, slug))
-    return Tenants(people, org_ids, [f"provisioned {profile.orgs} org(s), {len(people)} people"])
+                org_ids.append(org.id)
+                people.append(Person(owner, password, slug))
+                for m in range(max(profile.members_per_org - 1, 0)):
+                    email = f"member{m + 1}@{slug}.example.test"
+                    await client.admin_add_member(
+                        org.id,
+                        email,
+                        password=password,
+                        display_name=f"Member {m + 1}",
+                    )
+                    people.append(Person(email, password, slug))
+        except ApiError as error:
+            await remove_tenants(env, org_ids, transport)
+            if error.status == 401:
+                raise TokenRefused(env, "provisioner") from None
+            raise
+    return Tenants(
+        people,
+        org_ids,
+        [
+            f"provisioned {profile.orgs} org(s) named {RUN_TENANT_PREFIX}{run}-<n>, "
+            f"{len(people)} people"
+        ],
+    )
+
+
+async def remove_tenants(
+    env: Environment, org_ids: list[UUID], transport: httpx.AsyncBaseTransport | None = None
+) -> list[str]:
+    """Deletes every org the run created, each on its own, so one refusal
+    leaves the others removed. Answers a note per org it could not remove."""
+    if not org_ids:
+        return []
+    left: list[str] = []
+    async with provisioner_client(env, transport) as client:
+        for org_id in org_ids:
+            try:
+                await client.request("DELETE", f"/v1/admin/orgs/{org_id}")
+            except (ApiError, httpx.HTTPError) as error:
+                reason = (
+                    f"{error.status} {error.code}"
+                    if isinstance(error, ApiError)
+                    else type(error).__name__
+                )
+                left.append(
+                    f"not removed: org {org_id} ({reason}); delete it on the operator plane"
+                )
+    return left
 
 
 # The run
@@ -451,26 +524,38 @@ async def run_traffic(
     wanted_orgs = profile.orgs if orgs is None else orgs
     inner = transport or network_transport()
     notes: list[str] = []
+    created: list[UUID] = []
     if people is None:
-        tenants = (
-            await seeded_people(env)
-            if wanted_orgs == 0
-            else await provision(
-                env,
-                profile
-                if orgs is None
-                else Profile(
-                    profile.name,
-                    wanted_orgs,
-                    profile.members_per_org,
-                    profile.concurrency,
-                    profile.think_seconds,
-                    profile.duration_seconds,
-                ),
-                inner,
+        if wanted_orgs == 0 and env.is_cloud:
+            raise ValueError(
+                f"{env.name!r} has no seeded people; "
+                "a run there provisions its own (--orgs 1 or more)"
             )
-        )
+        try:
+            tenants = (
+                await seeded_people(env)
+                if wanted_orgs == 0
+                else await provision(
+                    env,
+                    profile
+                    if orgs is None
+                    else Profile(
+                        profile.name,
+                        wanted_orgs,
+                        profile.members_per_org,
+                        profile.concurrency,
+                        profile.think_seconds,
+                        profile.duration_seconds,
+                    ),
+                    inner,
+                )
+            )
+        except BaseException:
+            if transport is None:
+                await inner.aclose()
+            raise
         people = tenants.people
+        created = tenants.orgs_created
         notes.extend(tenants.notes)
 
     samples: list[Sample] = []
@@ -520,8 +605,17 @@ async def run_traffic(
         for task in workers:
             task.cancel()
     finally:
-        if transport is None:
-            await inner.aclose()
+        # The run's tenants go when the run ends, however it ended.
+        try:
+            left = await remove_tenants(env, created, inner)
+            if created:
+                notes.append(
+                    f"removed {len(created) - len(left)} of the run's {len(created)} org(s)"
+                )
+            notes.extend(left)
+        finally:
+            if transport is None:
+                await inner.aclose()
     notes.append(
         f"profile {profile.name}: {profile.concurrency} at once, think time "
         f"{profile.think_seconds[0]:.1f} to {profile.think_seconds[1]:.1f} s"

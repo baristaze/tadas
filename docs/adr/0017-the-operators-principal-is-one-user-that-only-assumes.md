@@ -4,6 +4,8 @@
 Each environment moved to an AWS account of its own, and people sign
 in through IAM Identity Center; the `tadas-operators` user and its key
 are gone. The record stays for the interval it covers.
+Amended (2026-09-22): only the grant job writes the operator
+allowlist; see the note at the end.
 
 ## Context
 
@@ -49,3 +51,12 @@ the tenant's rows are read through the operator plane (ADR 0018).
   new one, rewrite the profile, delete the old. That is the price of
   an agent that signs in with no browser, and it is bounded by the
   user holding nothing but `AssumeRole`.
+
+## Amended: only the grant job writes the allowlist
+
+The supporter's operator identity is no longer a password in a file.
+An operator's allowlist entry, in every deployed environment, is
+written by one path: `tadas-api grant-operator`, run as the grant task
+by `grant-operator.yml` (ADR 0022). No person's cloud profile and no
+operator-plane route writes it. What the supporter holds is a `read`
+operator token of at most an hour, as ADR 0018 now says.

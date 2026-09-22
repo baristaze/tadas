@@ -126,7 +126,8 @@ export function useTasksVm() {
       // change (`reopen` and `add` do the same).
       const completed = await update.mutateAsync({
         id: task.id,
-        body: { status: "done", version: task.version },
+        body: { status: "done" },
+        version: task.version,
       });
       editDone((data) => pagesWithTaskOnTop(data, completed));
     } catch (cause) {
@@ -141,7 +142,8 @@ export function useTasksVm() {
     try {
       const reopened = await update.mutateAsync({
         id: task.id,
-        body: { status: "open", version: task.version },
+        body: { status: "open" },
+        version: task.version,
       });
       editOpen((data) => pagesWithTaskOnTop(data, reopened));
     } catch (cause) {
@@ -167,8 +169,8 @@ export function useTasksVm() {
           title: edit.title.trim(),
           notes: edit.notes,
           assignee_id: edit.assigneeId,
-          version: edit.version,
         },
+        version: edit.version,
       });
       editOpen((data) => pagesWithTaskReplaced(data, saved));
       editDone((data) => pagesWithTaskReplaced(data, saved));

@@ -259,7 +259,7 @@ describe("the transport client's one retry", () => {
   });
 
   it("sends a refusal once: a decision does not change because it is asked again", async () => {
-    for (const status of [400, 403, 404, 409, 422, 429, 500]) {
+    for (const status of [400, 403, 404, 409, 412, 422, 429, 500]) {
       const fetchImpl = vi.fn<typeof fetch>(() =>
         Promise.resolve(jsonResponse(status, { error: { code: "no", message: "no", request_id: "r" } })),
       );
@@ -280,13 +280,23 @@ describe("the transport client's one retry", () => {
     }
   });
 
+  it("names the version a write read as the entity tag If-Match carries", async () => {
+    const fetchImpl = vi.fn<typeof fetch>(() => Promise.resolve(jsonResponse(200, { id: "t1" })));
+    const api = retrying(fetchImpl);
+    await api.patch("/v1/tasks/t1", { title: "t" }, { ifMatch: 3 });
+    await api.del("/v1/tasks/t1", { ifMatch: 4 });
+    await api.get("/v1/tasks/t1");
+    const sent = fetchImpl.mock.calls.map(([, init]) => new Headers(init?.headers).get("If-Match"));
+    expect(sent).toEqual(['"3"', '"4"', null]);
+  });
+
   it("sends a write with no key exactly once, whatever the failure", async () => {
     // Nothing records the outcome of these, so a second attempt could write
     // twice: the failure is told to the caller instead.
     const fetchImpl = vi.fn<typeof fetch>(() => Promise.resolve(jsonResponse(503, {})));
     const api = retrying(fetchImpl);
     await expect(api.post("/v1/auth/logout")).rejects.toBeInstanceOf(ApiError);
-    await expect(api.patch("/v1/tasks/t1", { version: 1 })).rejects.toBeInstanceOf(ApiError);
+    await expect(api.patch("/v1/tasks/t1", { title: "t" }, { ifMatch: 1 })).rejects.toBeInstanceOf(ApiError);
     await expect(api.del("/v1/tasks/t1")).rejects.toBeInstanceOf(ApiError);
     expect(fetchImpl).toHaveBeenCalledTimes(3);
   });

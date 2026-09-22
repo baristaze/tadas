@@ -20,8 +20,10 @@
 # the domain's zone at Cloudflare to the zones the root made; writes the
 # investigate profile, chained from the Identity Center profile; creates the
 # GitHub environments and sets their variables from the root's outputs;
-# writes the operator's env file; and starts the first deploy through the
-# pipeline, which is how every later commit reaches the cloud. It checks the
+# writes the operator's env file with its two token lines empty; starts the
+# first deploy through the pipeline, which is how every later commit reaches
+# the cloud; and prints the grants that come after it, the first operator's
+# among them, which the grant-operator workflow runs. It checks the
 # account again before every apply. It prints every command before it runs
 # it, and `--dry-run` prints them without running anything.
 #
@@ -431,6 +433,9 @@ if [ "$environment" = "staging" ]; then
 fi
 
 say "== 6. The operator's env file for $environment"
+# The two operator tokens are empty: no operator exists until the
+# grant-operator workflow has run, and a token is minted, never typed. The
+# file never holds a password or a TOTP secret.
 api_url="https://$api_domain_name"
 ops_dir="$HOME/.config/tadas/ops"
 ops_file="$ops_dir/$environment.env"
@@ -439,18 +444,17 @@ if [ -f "$ops_file" ]; then
 else
   say "+ write $ops_file (mode 600):"
   say "  TADAS_API_URL=$api_url"
-  say "  TADAS_OPERATOR_EMAIL=         # a read entry on the operator allowlist"
-  say "  TADAS_OPERATOR_PASSWORD="
-  say "  TADAS_PROVISIONER_EMAIL=      # a write entry; only the traffic generator uses it"
-  say "  TADAS_PROVISIONER_PASSWORD="
+  say "  TADAS_OPERATOR_TOKEN=         # read; uv run tadas-ops token --env $environment --identity operator"
+  say "  TADAS_PROVISIONER_TOKEN=      # write; uv run tadas-ops token --env $environment --identity provisioner"
   say "  TADAS_ERROR_TRACKER_URL="
   say "  TADAS_ERROR_TRACKER_TOKEN="
   if ! $dry_run; then
     mkdir -p "$ops_dir"
-    (umask 077; printf 'TADAS_API_URL=%s\nTADAS_OPERATOR_EMAIL=\nTADAS_OPERATOR_PASSWORD=\nTADAS_PROVISIONER_EMAIL=\nTADAS_PROVISIONER_PASSWORD=\nTADAS_ERROR_TRACKER_URL=\nTADAS_ERROR_TRACKER_TOKEN=\n' "$api_url" > "$ops_file")
+    (umask 077; printf 'TADAS_API_URL=%s\nTADAS_OPERATOR_TOKEN=\nTADAS_PROVISIONER_TOKEN=\nTADAS_ERROR_TRACKER_URL=\nTADAS_ERROR_TRACKER_TOKEN=\n' "$api_url" > "$ops_file")
     chmod 600 "$ops_file"
   fi
 fi
+say "Filled by hand, once the environment's project exists in the error tracker: TADAS_ERROR_TRACKER_URL and TADAS_ERROR_TRACKER_TOKEN in $ops_file."
 
 say "== 7. The first deploy, through the pipeline like every other"
 case "$environment" in
@@ -467,7 +471,27 @@ case "$environment" in
     ;;
 esac
 
-say "== 8. When the deploy is green, the smoke test: one request, then its signals by request id"
+case "$environment" in
+  staging) grant_branch=main ;;
+  production) grant_branch=release ;;
+esac
+say "== 8. The first operator, the provisioner, and the smoke identity, through the pipeline"
+say "Each identity signs up at https://$app_domain_name first, like any person. Then, on $grant_branch:"
+say "  gh workflow run grant-operator.yml --ref $grant_branch -f environment=$environment -f email=<operator> -f permission=read"
+say "    The operator enrols the second factor at the console's first sign-in, then runs, in their own terminal:"
+say "    uv run tadas-ops token --env $environment --identity operator"
+say "  gh workflow run grant-operator.yml ... -f email=<provisioner> -f permission=write -f mint_token=provisioner"
+case "$environment" in
+  staging) own_profile="" ;;
+  production) own_profile=" --profile tadas-prod-power" ;;
+esac
+say "    then, under your own sign-in and never an agent's: uv run tadas-ops token --env $environment --identity provisioner$own_profile"
+say "    (the token lasts an hour: mint it again, with mint_token alone, before each traffic run)"
+say "  gh workflow run grant-operator.yml ... -f email=<smoke identity> -f permission=read"
+say "    then: gh variable set SMOKE_EMAIL --env $environment --body <smoke identity>"
+say "Until SMOKE_EMAIL is set, every deploy's smoke step is skipped, and says so."
+
+say "== 9. When a deploy is green after that, the smoke test: the deploy ran it; one request by hand, then its signals by request id"
 say "id=\$(curl -s -o /dev/null -D - $api_url/v1/me | awk 'tolower(\$1) == \"x-request-id:\" { print \$2 }' | tr -d '\\r')"
 say "uv run tadas-ops signals check --env $environment --request-id \"\$id\""
 say "The environment root is $environment_root; the operator's file is $ops_file."

@@ -67,6 +67,13 @@ class InvalidBucketKey(InfraValidationFailed):
     code = "invalid_bucket_key"
 
 
+class UploadRefused(InfraValidationFailed):
+    """An upload outside the bounds it was presigned with: another content
+    type, or a body larger than `max_bytes`."""
+
+    code = "upload_refused"
+
+
 class InvalidSecretName(InfraValidationFailed):
     code = "invalid_secret_name"
 

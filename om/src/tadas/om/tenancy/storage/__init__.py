@@ -3,6 +3,7 @@ except the ones documented below, which are global by nature or cross
 tenants on purpose; the exceptions test enumerates them."""
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from datetime import datetime
 from uuid import UUID
 
@@ -13,6 +14,7 @@ from tadas.om.tenancy.types.issued import OrgMembership
 from tadas.om.tenancy.types.membership import Membership
 from tadas.om.tenancy.types.org import Org
 from tadas.om.tenancy.types.session import Session
+from tadas.om.tenancy.types.sign_in_delay import SignInDelay
 from tadas.om.tenancy.types.socket_ticket import SocketTicket
 from tadas.om.tenancy.types.user import User
 
@@ -25,26 +27,69 @@ class TenancyStorageInterface(ABC):
         ...
 
     @abstractmethod
-    async def read_identity_by_email(self, email: str) -> Identity | None:
-        """Global table: identities have no tenant."""
+    async def read_identity_by_email_digest(self, email_digest: str) -> Identity | None:
+        """Global table: identities have no tenant. The sign-in lookup: it runs
+        before any identity is known, so it takes the system scope, on the
+        system login."""
         ...
 
     @abstractmethod
-    async def write_identity(self, identity: Identity) -> None:
-        """Global table: identities have no tenant."""
+    async def write_identity(
+        self, identity: Identity, outbox_rows: tuple[OutboxRow, ...] = ()
+    ) -> None:
+        """Global table: identities have no tenant. The outbox rows, when
+        given, land in the same commit under the system scope: the audit of a
+        write no tenant holds, the operator's password reset."""
         ...
 
     @abstractmethod
-    async def record_failed_sign_in(self, identity_id: UUID, at: datetime) -> None:
-        """Global table: identities have no tenant. One more failed sign-in
-        in the identity's run, counted in the statement itself, so guesses
-        made at once are each counted."""
+    async def write_totp_secret(self, identity_id: UUID, sealed: str, at: datetime) -> bool:
+        """Global table: identities have no tenant. Puts a new sealed TOTP
+        secret on the identity, replacing one that was never confirmed, in one
+        conditional statement; False, and nothing written, once a secret is
+        confirmed."""
         ...
 
     @abstractmethod
-    async def clear_failed_sign_ins(self, identity_id: UUID) -> None:
-        """Global table: identities have no tenant. Ends the run on a
-        sign-in that succeeded."""
+    async def confirm_totp(self, identity_id: UUID, step: int, at: datetime) -> bool:
+        """Global table: identities have no tenant. Confirms the secret the
+        identity holds and records `step` as the last one used, in one
+        conditional statement; False when there is no secret or it is
+        confirmed already."""
+        ...
+
+    @abstractmethod
+    async def use_totp_step(self, identity_id: UUID, step: int) -> bool:
+        """Global table: identities have no tenant. Records `step` as the last
+        one a code was accepted for, only when it is later than the last one,
+        in one conditional statement; False for a step already used (or
+        older), so of two sign-ins presenting one code only one passes."""
+        ...
+
+    # The sign-in delay, keyed on the email's digest, is a system row.
+    @abstractmethod
+    async def read_sign_in_delay(self, email_digest: str) -> SignInDelay | None:
+        """Global table: a delay belongs to an email, known or not."""
+        ...
+
+    @abstractmethod
+    async def record_failed_sign_in(self, email_digest: str, at: datetime) -> None:
+        """Global table: a delay belongs to an email, known or not. One more
+        failed sign-in in the email's run, counted in the statement itself, so
+        guesses made at once are each counted."""
+        ...
+
+    @abstractmethod
+    async def clear_failed_sign_ins(self, email_digest: str) -> None:
+        """Global table: a delay belongs to an email, known or not. Ends the
+        run on a sign-in that succeeded."""
+        ...
+
+    @abstractmethod
+    async def purge_sign_in_delays(self, before: datetime) -> int:
+        """Global table: a delay belongs to an email, known or not. The sweep
+        deletes every run whose last failure is older than `before`; returns
+        how many went."""
         ...
 
     # Orgs are the tenants; their own id is their org_id.
@@ -121,12 +166,22 @@ class TenancyStorageInterface(ABC):
 
     @abstractmethod
     async def remove_member(
-        self, org_id: UUID, user: User, membership: Membership, outbox_rows: tuple[OutboxRow, ...]
-    ) -> None:
+        self,
+        org_id: UUID,
+        user: User,
+        membership: Membership,
+        outbox_rows: tuple[OutboxRow, ...],
+        revocation_row: Callable[[str, UUID], OutboxRow],
+    ) -> tuple[OutboxRow, ...]:
         """A named atomic write: the soft-deleted user, their ended membership,
-        and the outbox rows land in one commit or not at all, so a failure never
-        leaves a live user without a membership, which no list, purge, or
-        retry would reach. Both rows must exist in the tenant."""
+        the revocation of every live session and every unrevoked api key the
+        user holds in the tenant, and the outbox rows, in one commit or not at
+        all. So a failure never leaves a live user without a membership, and a
+        removed member never keeps a credential. Each revoked credential lands
+        with the row `revocation_row(kind, id)` builds, `tenancy.session.revoked`
+        or `tenancy.api_key.deleted`, stamped with the user's `deleted_at` and
+        `deleted_by`; those rows come back, for the caller to relay after the
+        ones it passed. Both rows must exist in the tenant."""
         ...
 
     @abstractmethod
@@ -202,8 +257,16 @@ class TenancyStorageInterface(ABC):
     async def read_session(self, org_id: UUID, session_id: UUID) -> Session | None: ...
 
     @abstractmethod
-    async def read_session_by_token_hash(self, token_hash: str) -> tuple[UUID, Session] | None:
-        """Cross-tenant lookup: the gateway holds a token, not a tenant; the tenant travels back."""
+    async def read_session_by_digest(self, token_hash: str) -> tuple[UUID, Session] | None:
+        """Cross-tenant lookup: the gateway holds a token, not a tenant; the
+        tenant travels back. A login credential and an operator token are
+        rows of the system scope; a session token is its tenant's."""
+        ...
+
+    @abstractmethod
+    async def touch_session(self, org_id: UUID, session_id: UUID, seen_at: datetime) -> None:
+        """Records that the session was presented at `seen_at`, for its idle
+        lifetime; a revoked session is left as it is."""
         ...
 
     @abstractmethod
@@ -252,7 +315,7 @@ class TenancyStorageInterface(ABC):
     async def read_api_key(self, org_id: UUID, api_key_id: UUID) -> ApiKey | None: ...
 
     @abstractmethod
-    async def read_api_key_by_hash(self, key_hash: str) -> tuple[UUID, ApiKey] | None:
+    async def read_api_key_by_digest(self, key_hash: str) -> tuple[UUID, ApiKey] | None:
         """Cross-tenant lookup: the gateway holds a key, not a tenant; the tenant travels back."""
         ...
 
@@ -321,7 +384,7 @@ class TenancyStorageInterface(ABC):
     async def write_socket_ticket(self, org_id: UUID, ticket: SocketTicket) -> None: ...
 
     @abstractmethod
-    async def consume_socket_ticket(
+    async def redeem_socket_ticket(
         self, ticket_hash: str, redeemed_at: datetime
     ) -> tuple[UUID, SocketTicket] | None:
         """Cross-tenant lookup: the gateway holds a ticket, not a tenant; the tenant

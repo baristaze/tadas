@@ -1,8 +1,7 @@
-# One Postgres instance holds every database role until a role moves to its
-# own URL (TADAS_DATABASE_URL_<ROLE>). The master password arrives as an
-# ephemeral value and is written write-only, so neither the state nor a
-# saved plan holds it; it reaches processes only through the secret the
-# secrets module writes the same way.
+# One Postgres instance holds every database role. The master password
+# arrives as an ephemeral value and is written write-only, so neither the
+# state nor a saved plan holds it; it reaches the migrate task alone, through
+# the secret the secrets module writes the same way.
 
 locals {
   tags = { "tadas:environment" = var.environment }
@@ -39,11 +38,12 @@ resource "aws_db_instance" "this" {
   storage_encrypted     = true
 
   db_name = "tadas"
-  # The application's login. On RDS the master user is not a superuser and
-  # carries no BYPASSRLS: it is `rds_superuser`, a role that owns the database
-  # and is held by every row-level security policy the migrations create, which
-  # is what the second tenant fence needs. Nothing here grants it either
-  # attribute, and RDS offers no way to.
+  # The master user. On RDS it is not a superuser and carries no BYPASSRLS:
+  # it is `rds_superuser`. The application does not connect as it: the
+  # migrate task's `ensure-logins` uses it to create the three logins
+  # (tadas_migration, tadas_runtime, tadas_system) and move the schema to the
+  # migration login, and every serving task connects as the runtime and
+  # system logins, each under row-level security.
   username            = "tadas"
   password_wo         = var.master_password
   password_wo_version = var.master_password_version
@@ -57,8 +57,9 @@ resource "aws_db_instance" "this" {
 
   backup_retention_period    = var.backup_retention_days
   auto_minor_version_upgrade = true
-  # Raising engine_version to a new major upgrades the instance in place.
-  allow_major_version_upgrade = true
+  # A major upgrade is a change of its own, never a side effect of an apply:
+  # the pull request that raises engine_version turns this on with it.
+  allow_major_version_upgrade = false
   # `destroyable` is the nuke's flag, false everywhere but on the apply
   # before the destroy. In staging it lifts the protection. Production's
   # protection comes off only through a released change, never through the

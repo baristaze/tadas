@@ -20,8 +20,8 @@ output "portal_distribution_id" {
   value = module.environment.portal_distribution_id
 }
 
-# What a by-hand migration needs to run as a one-off task on the API
-# image it just rolled out.
+# What `aws ecs run-task` needs to start a one-off task (the migration, an
+# operator grant) on the image the apply just rolled out.
 
 output "cluster_name" {
   value = module.environment.cluster_name
@@ -29,6 +29,26 @@ output "cluster_name" {
 
 output "api_task_definition_arn" {
   value = module.environment.api_task_definition_arn
+}
+
+output "migrate_task_definition_arn" {
+  value = module.environment.migrate_task_definition_arn
+}
+
+output "migrate_container_name" {
+  value = module.environment.migrate_container_name
+}
+
+output "grant_task_definition_arn" {
+  value = module.environment.grant_task_definition_arn
+}
+
+output "grant_container_name" {
+  value = module.environment.grant_container_name
+}
+
+output "operator_token_secret_names" {
+  value = module.environment.operator_token_secret_names
 }
 
 output "private_subnet_ids" {

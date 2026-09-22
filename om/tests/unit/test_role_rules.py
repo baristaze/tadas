@@ -53,4 +53,12 @@ def test_the_operator_table_holds_every_operator_role_and_write_includes_read() 
     assert set(OPERATOR_ROLE_PERMISSIONS) == set(OperatorRole)
     assert operator_permissions_of(OperatorRole.READ) == {OperatorPermission.READ}
     assert operator_permissions_of(OperatorRole.READ) < operator_permissions_of(OperatorRole.WRITE)
-    assert operator_permissions_of(OperatorRole.WRITE) == set(OperatorPermission)
+    assert operator_permissions_of(OperatorRole.WRITE) == {
+        OperatorPermission.READ,
+        OperatorPermission.WRITE,
+    }
+    # ENROL is no entry's: the gate grants it alone, to an operator whose
+    # second factor is not enrolled yet.
+    assert all(
+        OperatorPermission.ENROL not in operator_permissions_of(role) for role in OperatorRole
+    )

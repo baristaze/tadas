@@ -58,9 +58,9 @@ The fixed $75 is included in every total below.
 
 | Size | API tasks | Worker tasks | Postgres | Valkey | Pool | Ceilings | About a month |
 |------|-----------|--------------|----------|--------|------|----------|---------------|
-| **XS** | 1 × 0.25 vCPU, 0.5 GB | 1 × 0.25, 0.5 | `db.t4g.micro`, one zone | 1 × `cache.t4g.micro` | 3 | 2, 1 | **$115** |
-| **S** | 1 × 0.25, 0.5 | 1 × 0.25, 0.5 | `db.t4g.small`, one zone | 1 × `cache.t4g.micro` | 5 | 3, 1 | **$130** |
-| **M** | 2 × 0.5, 1 | 1 × 0.25, 0.5 | `db.t4g.medium`, two zones | 2 × `cache.t4g.small` | 8 | 4, 2 | **$260** |
+| **XS** | 1 × 0.25 vCPU, 0.5 GB | 1 × 0.25, 0.5 | `db.t4g.micro`, one zone | 1 × `cache.t4g.micro` | 6 | 2, 1 | **$115** |
+| **S** | 1 × 0.25, 0.5 | 1 × 0.25, 0.5 | `db.t4g.small`, one zone | 1 × `cache.t4g.micro` | 10 | 3, 1 | **$130** |
+| **M** | 2 × 0.5, 1 | 1 × 0.25, 0.5 | `db.t4g.medium`, two zones | 2 × `cache.t4g.small` | 12 | 4, 2 | **$260** |
 | **L** | 2 × 0.5, 1 | 2 × 0.5, 1 | `db.m6g.large`, two zones | 2 × `cache.m6g.large` | 12 | 6, 2 | **$560** |
 | **XL** | 4 × 1, 2 | 2 × 1, 2 | `db.m6g.xlarge`, two zones, 100 GB | 2 × `cache.m6g.xlarge` | 12 | 12, 4 | **$1,125** |
 
@@ -102,19 +102,24 @@ keep their module defaults until a change passes them through.
 
 ## The pool follows the database
 
-Four database roles share one instance, and in the cloud they share
-one URL and one set of bounds, so each process opens one pool of
-`database_pool_size` connections for all four (the storage root builds
-one engine per distinct URL and bounds). A role given a URL or a size
-of its own gets a pool of its own on top. A rollout may double the
-API's replicas for a moment, and the migration task opens a few more.
+A serving process connects as two logins, each with a pool of its own:
+`tadas_runtime` for every request, and `tadas_system` for the system
+scope. Each pool opens up to `database_pool_size` connections
+(`TADAS_DATABASE_POOL_SIZE`), so a process holds at most twice that.
+The API's admission bounds follow the pool: four reads in flight per
+connection, and a third as many writes. Two one-off tasks run beside
+the services: the migrate task before every rollout, and the grant task
+when an operator is granted or a token minted. Each opens two pools of
+two, so the two together hold at most 8.
 
-The rule each size keeps: twice the API's ceiling, plus the worker's
-ceiling, times the pool, stays under the instance's `max_connections`.
+The rule each size keeps: twice the API's ceiling (a rollout may double
+its replicas for a moment), plus the worker's ceiling, times two pools,
+times the pool, plus 8, stays under the instance's `max_connections`.
 Those limits are about 80 for `db.t4g.micro`, 180 for `db.t4g.small`,
 400 for `db.t4g.medium`, 850 for `db.m6g.large`, and 1,700 for
-`db.m6g.xlarge`. At XS that is 5 × 3 = 15, and at S it is 7 × 5 = 35;
-the rule would still hold if a role moved to a pool of its own.
+`db.m6g.xlarge`. At XS that is 5 × 2 × 6 + 8 = 68. At S it is
+7 × 2 × 10 + 8 = 148. At M it is 10 × 2 × 12 + 8 = 248. The rule leaves
+room below each limit for the few connections RDS keeps for itself.
 
 Because the rule holds at the ceilings and not only at the floor,
 autoscaling stays one line at every size. `autoscaling_enabled` in the

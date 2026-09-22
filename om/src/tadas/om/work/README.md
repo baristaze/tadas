@@ -31,7 +31,7 @@ six kinds of thing [Tadas is made of](../../../../README.md).
   later), **release** (hand it back now), **extend the lease**.
 - **Sweep.** Items whose lease has expired go back to the queue, or
   fail when their attempts are spent. Done and failed items are erased
-  after the retention, thirty days by default.
+  after the retention, thirty days by default, every org's in one step.
 
 ## The rules
 
@@ -51,7 +51,7 @@ six kinds of thing [Tadas is made of](../../../../README.md).
   and recorded as an event in the org's diary.
 - **Enqueueing twice leaves one item.** An enqueue that runs again
   under the same id or the same producer key returns the item as
-  stored, its claim intact.
+  stored, its claim intact. A producer key is unique within its org.
 - **At least once.** A job may run twice, so every handler is written
   to change nothing the second time.
 - **The person authorized the work once.** The job runs as long as the

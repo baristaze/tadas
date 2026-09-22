@@ -193,7 +193,11 @@ def broken_api(stores: None, tmp_path_factory: pytest.TempPathFactory) -> Iterat
         tmp_path_factory.mktemp("broken") / "api.log",
         {
             "TADAS_ENVIRONMENT": "local",
-            "TADAS_DATABASE_URL": "postgresql+asyncpg://tadas:tadas@127.0.0.1:1/tadas",
+            # Both logins point at the closed port: the session lookup runs on
+            # the system login, and a route that reached a live database there
+            # would answer 401 instead of raising.
+            "TADAS_DATABASE_URL": "postgresql+asyncpg://tadas_runtime:tadas_runtime@127.0.0.1:1/tadas",
+            "TADAS_DATABASE_SYSTEM_URL": "postgresql+asyncpg://tadas_system:tadas_system@127.0.0.1:1/tadas",
             "TADAS_CACHE_BACKEND": "memory",
             "TADAS_TOPICS_BACKEND": "memory",
             "TADAS_BUCKETS_BACKEND": "local",

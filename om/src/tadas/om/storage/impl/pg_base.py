@@ -3,7 +3,7 @@ routing, the funnel that names the scope of every transaction, and the write
 primitives: an upsert that checks the tenant and lands the core row's outbox
 rows in the same commit, and an insert that refuses an existing id."""
 
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Iterator, Mapping
 from contextlib import asynccontextmanager
 from typing import Any
 from uuid import UUID
@@ -27,6 +27,31 @@ from tadas.om.storage.scopes import IDENTITY_SETTING, ORG_SETTING, USER_SETTING
 from tadas.om.storage.utils.translation import apply_row, to_row, undeletes
 
 SessionFactory = async_sessionmaker[AsyncSession]
+
+
+class LoginSessions(Mapping[DatabaseRole, SessionFactory]):
+    """The session factories of every role under the two logins a process
+    holds: the runtime login's, which is what the mapping itself answers, and
+    the system login's beside them, which only the system scope opens. The
+    system login's URL names another login, so its pool is its own."""
+
+    def __init__(
+        self,
+        runtime: Mapping[DatabaseRole, SessionFactory],
+        system: Mapping[DatabaseRole, SessionFactory],
+    ) -> None:
+        self._runtime = dict(runtime)
+        self.system: Mapping[DatabaseRole, SessionFactory] = dict(system)
+
+    def __getitem__(self, role: DatabaseRole) -> SessionFactory:
+        return self._runtime[role]
+
+    def __iter__(self) -> Iterator[DatabaseRole]:
+        return iter(self._runtime)
+
+    def __len__(self) -> int:
+        return len(self._runtime)
+
 
 SCOPE_SETTINGS: tuple[tuple[str, str], ...] = (
     (ORG_SETTING, "org_id"),
@@ -95,15 +120,20 @@ async def set_scope(
 
 class PgStorageBase:
     def __init__(self, sessions: Mapping[DatabaseRole, SessionFactory]) -> None:
-        self._sessions = sessions
+        """`sessions` is a `LoginSessions`: a plain mapping names one login,
+        and the system scope has a login of its own, so it is refused rather
+        than read as both."""
+        if not isinstance(sessions, LoginSessions):
+            raise TypeError("PgStorageBase takes LoginSessions: the runtime and the system login")
+        self._sessions: LoginSessions = sessions
 
     @asynccontextmanager
     async def _session_for(
         self,
         target: Any,
+        *,
         org_id: UUID,
         user_id: UUID | None = None,
-        *,
         identity_id: UUID | None = None,
     ) -> AsyncIterator[AsyncSession]:
         """A short session on the pool of the one role `target` touches, opened
@@ -117,13 +147,20 @@ class PgStorageBase:
         reads across tenants, and it is never a default. `user_id` narrows a
         `both`-scoped table that names the user to one person, and
         `identity_id` narrows one whose person is the identity behind it
-        (`users`) and is the person of an `identity`-scoped table. The
-        settings go in before anything else, so they are the first statement
-        of the transaction the session opens;
-        a commit or a rollback ends that transaction and takes them with it,
-        which is why a method that runs a second transaction opens a second
-        session."""
-        factory = self._sessions[role_of(target)]
+        (`users`) and is the person of an `identity`-scoped table.
+
+        The system scope runs on the system login's pool and every other
+        scope on the runtime login's. The policies admit the system scope to
+        the system login alone, so a runtime connection that names
+        `EMPTY_UUID` reads nothing.
+
+        The settings go in before anything else, so they are the first
+        statement of the transaction the session opens. A commit or a rollback
+        ends that transaction and takes them with it, which is why a method
+        that runs a second transaction opens a second session."""
+        role = role_of(target)
+        logins = self._sessions.system if org_id == EMPTY_UUID else self._sessions
+        factory = logins[role]
         async with factory() as session:
             await set_scope(session, org_id, user_id, identity_id)
             yield session
@@ -164,7 +201,7 @@ class PgStorageBase:
             raise CrossRoleStatement(
                 f"{row_type.__tablename__} is not in the outbox's role; no outbox row"
             )
-        async with self._session_for(row_type, org_id) as session:
+        async with self._session_for(row_type, org_id=org_id) as session:
             row = await session.get(row_type, entity_id)
             if row is None:
                 session.add(to_row(entity, row_type, org_id=org_id))
@@ -207,7 +244,7 @@ class PgStorageBase:
             raise CrossRoleStatement(
                 f"{row_type.__tablename__} is not in the outbox's role; no outbox row"
             )
-        async with self._session_for(row_type, org_id) as session:
+        async with self._session_for(row_type, org_id=org_id) as session:
             session.add(to_row(entity, row_type, org_id=org_id))
             for outbox_row in outbox_rows:
                 session.add(to_row(outbox_row, OutboxRows, org_id=org_id))
@@ -231,7 +268,7 @@ class PgStorageBase:
         caller. Every caller of this primitive is in the enumerated
         exceptions, because a global row is written with no tenant in hand."""
         entity_id = entity.id
-        async with self._session_for(row_type, EMPTY_UUID) as session:
+        async with self._session_for(row_type, org_id=EMPTY_UUID) as session:
             row = await session.get(row_type, entity_id)
             if row is None:
                 session.add(to_row(entity, row_type))

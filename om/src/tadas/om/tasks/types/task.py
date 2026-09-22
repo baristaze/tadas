@@ -1,4 +1,5 @@
 from enum import StrEnum
+from typing import ClassVar
 from uuid import UUID
 
 from tadas.om.base import Identifiable, SoftDeletable, Trackable
@@ -17,6 +18,11 @@ class TaskScope(StrEnum):
 
 
 class Task(Identifiable, Trackable, SoftDeletable):
+    MANAGER_OWNED_FIELDS: ClassVar[tuple[str, ...]] = ("position", "version")
+    """A place in the open list is set by the create, the move, and the
+    reopen; the version by every write. An update the caller shaped keeps
+    both as stored."""
+
     title: str
     notes: str = ""
     status: TaskStatus = TaskStatus.OPEN
@@ -26,5 +32,5 @@ class Task(Identifiable, Trackable, SoftDeletable):
     position: float = 0.0
     # Optimistic concurrency: the manager's copy increments it on every write,
     # and the write lands only when the stored row still has the version the
-    # caller read. A snapshot that says another version is stale.
+    # caller names beside the entity. A caller that names another is stale.
     version: int = 1

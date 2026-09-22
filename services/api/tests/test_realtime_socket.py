@@ -183,7 +183,7 @@ def session_token(container: AppContainer) -> str:
 def expire_session_in(container: AppContainer, token: str, seconds: float) -> None:
     """Shortens the session behind the token in storage."""
     storage = container.storage.get_tenancy_storage()
-    found = run(storage.read_session_by_token_hash(hash_token(token)))
+    found = run(storage.read_session_by_digest(hash_token(token)))
     assert found is not None
     org_id, session = found
     shortened = session.model_copy(update={"expires_at": utcnow() + timedelta(seconds=seconds)})

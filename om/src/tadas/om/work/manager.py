@@ -18,11 +18,11 @@ class WorkManagerInterface(ABC):
         zero attempts, and clears every claim field, whatever the caller sent.
         The request that caused the work and its trace context are the item's,
         constructed by the caller from its own context, and the copy leaves
-        them alone. An
-        id already written returns the row as stored, so a retried enqueue never
-        resets a claim, and so does a reused idempotency key: the insert reports
-        it and the manager reads the row back. Raises ValidationFailed when the
-        payload is not the shape WORK_PAYLOADS fixes for the kind."""
+        them alone. An id already written returns the row as stored, so a
+        retried enqueue never resets a claim, and so does a reused idempotency
+        key: the insert reports which key collided and the manager reads the
+        row back by it. Raises ValidationFailed when the payload is not the
+        shape WORK_PAYLOADS fixes for the kind."""
         ...
 
     @abstractmethod
@@ -97,9 +97,11 @@ class WorkManagerInterface(ABC):
         ...
 
     @abstractmethod
-    async def purge_settled(self, ctx: OpContext) -> int:
-        """The sweep, for one tenant: deletes items done or failed past the
-        retention; returns how many. The one hard delete of the namespace."""
+    async def purge_items(self) -> int:
+        """Platform-internal: the sweep, across tenants, like the outbox's
+        purge: deletes items done or failed past the retention; returns how
+        many. The one hard delete of the namespace. It takes no context,
+        because it runs for no tenant and no principal."""
         ...
 
     @abstractmethod

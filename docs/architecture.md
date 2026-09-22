@@ -169,7 +169,10 @@ context on keeps the stage the callee needs.
   the caller sent; the insert reports an existing id and changes nothing,
   so a retried enqueue returns the row as stored, claim intact; a reused
   idempotency key is reported the same way and never raised as a driver
-  error, and the manager reads that row back by the key, which is what
+  error. The insert returns an `InsertOutcome` (`INSERTED`, `ID_EXISTS`,
+  `KEY_EXISTS`), and the manager reads the row back by the key that
+  collided, by `read_item_by_key` for a key; the key is unique per
+  tenant, `(org_id, idempotency_key)`. That is what
   lets an enqueue that runs twice under one key leave one item. A fresh
   row publishes `work_available`. An item carries the request that caused
   the work and that request's `traceparent`, both as constructed: the
@@ -211,8 +214,13 @@ context on keeps the stage the callee needs.
   copy increments it on update, move, and soft delete, and the storage
   write is a compare-and-set, `WHERE version = :expected` in one
   statement in Postgres and the same check and write under the lock in
-  the memory impl, which raises `VersionMismatch`, a `Conflict` (409
-  `version_mismatch`), when the row is at another version or is gone.
+  the memory impl, which raises `PreconditionFailed` (412
+  `precondition_failed`), when the row is at another version or is gone.
+  The version the write compares with is the caller's, never one the
+  update reads: `If-Match` on a `PATCH` and a `DELETE`, `expected_version`
+  on the move, and a write that names none is `ValidationFailed`. The
+  copy on update keeps `PROVENANCE_FIELDS` and the task's
+  `MANAGER_OWNED_FIELDS` (its position and its version) as stored.
   The update never inserts; the create primitive is the only way in. So
   a snapshot that missed a write is refused, never merged over it, and
   an edit that raced a delete finds the task gone and cannot bring it
@@ -308,7 +316,7 @@ context on keeps the stage the callee needs.
   pending lease, a marker no retry came back for.
 - `outbox`: the transactional outbox. A manager that writes a core row
   hands the storage the `OutboxRow`s that announce it (`org_id`, `kind`,
-  `target_id`, the record's snapshot as `payload`, the actor, the
+  `target_id`, a `payload` of ids only (a task's is empty), the actor, the
   request, and that request's `traceparent`, read off the tracer, since
   the context carries the trace id and a span links to the header) as one tuple, and the storage base inserts them all in one
   commit (`_insert(..., outbox_rows)` for a create, which
@@ -717,11 +725,13 @@ everything in-process for tests.
   members with their ended memberships, revoked api keys, dead sessions,
   and spent socket tickets past their retention (the one hard delete,
   30 days by default), its finished idempotency records and abandoned
-  markers, and its done or failed work items, then claim and relay the
+  markers, then claim and relay the
   pending outbox rows, one attempt each with a growing delay, and purge
   the done and failed ones after eight days, which outlives the
   seven-day database backup retention, so a role restored to an earlier
-  point than its siblings is reconciled by relaying the outbox again).
+  point than its siblings is reconciled by relaying the outbox again,
+  and purge every tenant's done or failed work items past their retention
+  in one statement, `purge_items`).
   Under a tenant whose org row is deleted longer ago than the retention
   it is every row that goes, its open and done tasks among them, since
   an open task carries no `deleted_at` of its own and the sweep that

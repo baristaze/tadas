@@ -2,10 +2,10 @@ from datetime import timedelta
 from uuid import UUID
 
 from tadas.om.base import PROVENANCE_FIELDS, Platform, utcnow
-from tadas.om.exceptions import NotFound, TenantMismatch, ValidationFailed, VersionMismatch
+from tadas.om.exceptions import NotFound, PreconditionFailed, TenantMismatch, ValidationFailed
 from tadas.om.opcontext import OpContext, Permission
 from tadas.om.outbox import OutboxRelayInterface
-from tadas.om.outbox.types.row import OutboxRow, outbox_row, snapshot
+from tadas.om.outbox.types.row import OutboxRow, outbox_row
 from tadas.om.tasks.manager import TasksManagerInterface
 from tadas.om.tasks.rules import is_between, position_after, renumbered, top_position
 from tadas.om.tasks.storage import TasksStorageInterface
@@ -83,7 +83,7 @@ class TasksManagerImpl(TasksManagerInterface):
                 "version": 1,
             }
         )
-        rows = (outbox_row(ctx, "tasks.task.created", created.id, snapshot(created)),)
+        rows = (outbox_row(ctx, "tasks.task.created", created.id, {}),)  # ids only
         if not await self._storage.create_task(ctx.org_id, created, rows):
             # Ids are minted above storage, so the only way to present one twice
             # is a retry, and a retry must not create twice: the insert reported
@@ -97,29 +97,32 @@ class TasksManagerImpl(TasksManagerInterface):
             await self._relay.relay(ctx.org_id, row)
         return created
 
-    async def update_task(self, ctx: OpContext, task: Task) -> Task:
+    async def update_task(self, ctx: OpContext, task: Task, expected_version: int) -> Task:
         ctx.require(Permission.WRITE)
         current = await self.get_task(ctx, task.id)  # existence and tenancy, or NotFound
         await self._verify(ctx, task, current)
         # The copy starts from the stored row: the caller's entity supplies the
-        # fields a caller may change, the provenance stays as stored, and the
-        # version is the caller's plus one: the write is conditioned on the
-        # caller's, so a snapshot that missed a write is refused, not merged.
-        # The copy carries a dump, so it is validated, never model_copy.
+        # fields a caller may change, and the provenance and the fields the
+        # manager owns stay as stored. The version is the caller's expected
+        # one plus one, and the write is conditioned on the caller's, never on
+        # the one read above, which would always match: a snapshot that missed
+        # a write is refused, not merged. The copy carries a dump, so it is
+        # validated, never model_copy.
+        caller_owned = {*PROVENANCE_FIELDS, *Task.MANAGER_OWNED_FIELDS}
         changes: dict[str, object] = {
-            **task.model_dump(exclude={*PROVENANCE_FIELDS, "version"}),
+            **task.model_dump(exclude=caller_owned),
             "updated_at": utcnow(),
             "updated_by": ctx.user_id,
-            "version": task.version + 1,
+            "version": expected_version + 1,
         }
         if current.status == TaskStatus.DONE and task.status == TaskStatus.OPEN:
             changes["position"] = await self._top_position(ctx, exclude=task.id)
         updated = Task.model_validate({**current.model_dump(), **changes})
-        await self._write(ctx, updated, task.version, "updated")
+        await self._write(ctx, updated, expected_version, "updated")
         return updated
 
     async def move_task(
-        self, ctx: OpContext, task_id: UUID, after_id: UUID | None, version: int
+        self, ctx: OpContext, task_id: UUID, after_id: UUID | None, expected_version: int
     ) -> Task:
         ctx.require(Permission.WRITE)
         task = await self.get_task(ctx, task_id)
@@ -140,19 +143,19 @@ class TasksManagerImpl(TasksManagerInterface):
             )
             position = position_after(at, places)
             if not is_between(at, position, places):
-                return await self._renumber(ctx, task, anchor, version)
+                return await self._renumber(ctx, task, anchor, expected_version)
         moved = task.model_copy(
             update={
                 "position": position,
                 "updated_at": utcnow(),
                 "updated_by": ctx.user_id,
-                "version": version + 1,
+                "version": expected_version + 1,
             }
         )
-        await self._write(ctx, moved, version, "updated")
+        await self._write(ctx, moved, expected_version, "updated")
         return moved
 
-    async def delete_task(self, ctx: OpContext, task_id: UUID, version: int) -> Task:
+    async def delete_task(self, ctx: OpContext, task_id: UUID, expected_version: int) -> Task:
         ctx.require(Permission.WRITE)
         task = await self.get_task(ctx, task_id)
         now = utcnow()
@@ -162,10 +165,10 @@ class TasksManagerImpl(TasksManagerInterface):
                 "deleted_by": ctx.user_id,
                 "updated_at": now,
                 "updated_by": ctx.user_id,
-                "version": version + 1,
+                "version": expected_version + 1,
             }
         )
-        await self._write(ctx, deleted, version, "deleted")
+        await self._write(ctx, deleted, expected_version, "deleted")
         return deleted
 
     async def purge_deleted(self, ctx: OpContext) -> int:
@@ -212,7 +215,7 @@ class TasksManagerImpl(TasksManagerInterface):
         # every other refused write here gives, not a crash inside the renumber.
         at = next((index for index, t in enumerate(ordered) if t.id == anchor.id), None)
         if at is None:
-            raise VersionMismatch(f"task {anchor.id} left the open list while {task.id} moved")
+            raise PreconditionFailed(f"task {anchor.id} left the open list while {task.id} moved")
         ordered.insert(at + 1, task.model_copy(update={"version": version}))
         now = utcnow()
         updates: list[tuple[Task, int, tuple[OutboxRow, ...]]] = []
@@ -228,7 +231,7 @@ class TasksManagerImpl(TasksManagerInterface):
                     "version": current.version + 1,
                 }
             )
-            rows = (outbox_row(ctx, "tasks.task.updated", placed.id, snapshot(placed)),)
+            rows = (outbox_row(ctx, "tasks.task.updated", placed.id, {}),)
             updates.append((placed, current.version, rows))
             if current.id == task.id:
                 moved = placed
@@ -273,8 +276,10 @@ class TasksManagerImpl(TasksManagerInterface):
         conditioned on the version the caller read; the relay then appends the
         event and pushes at once, and the sweep catches what a crash left
         behind. Every push is also a record, so a client that missed the push
-        replays by seq."""
-        rows = (outbox_row(ctx, f"tasks.task.{action}", task.id, snapshot(task)),)
+        replays by seq. A row carries ids and never a field's value, so the
+        relay and the stream hold nothing a person's erasure has to find; a
+        client that hears of a change reads the task."""
+        rows = (outbox_row(ctx, f"tasks.task.{action}", task.id, {}),)
         await self._storage.update_task(ctx.org_id, task, expected_version, rows)
         for row in rows:
             await self._relay.relay(ctx.org_id, row)

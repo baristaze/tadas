@@ -101,6 +101,10 @@ def _run[T](coroutine: Coroutine[Any, Any, T], *, signed_in: bool = False) -> T:
             _fail(
                 f"the credential was refused ({error.code}); run `tadas login`", EXIT_NOT_SIGNED_IN
             )
+        if error.status == 412:
+            # The task changed between the read this command made and its
+            # write; nothing was written, and the command reads afresh.
+            _fail("refused: the task changed while this ran; run it again", EXIT_REFUSED)
         _fail(f"refused: {error}", EXIT_REFUSED)
     except ChannelRefused as error:
         _fail(f"the channel was refused ({error}); run `tadas login`", EXIT_NOT_SIGNED_IN)

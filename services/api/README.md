@@ -7,7 +7,8 @@ the database, the cache, and the topic bus.
 
 ## Routes, by area
 
-- **Sign-in.** Sign in with email and password; exchange the login
+- **Sign-in.** Sign in with email and password, and the code from an
+  authenticator when a second factor is enrolled; exchange the login
   for a session in one org; sign out. (`/v1/auth/login`,
   `/v1/auth/sessions`, `/v1/auth/logout`)
 - **Me.** The current org, my user, my identity, and my display name.
@@ -33,6 +34,14 @@ the database, the cache, and the topic bus.
   `/v1/admin/orgs/{org_id}/members`, `/v1/admin/orgs/{org_id}/tasks`,
   `/v1/admin/orgs/{org_id}/events`, `/v1/admin/size`). A read route
   needs an operator who may read; a write route one who may write.
+  The plane admits two credentials: a person's sign-in that verified a
+  TOTP code, and an operator token. An operator enrols the second
+  factor once, at the first sign-in to the plane, and until then only
+  the two enrolment routes answer (`/v1/admin/me/totp`,
+  `/v1/admin/me/totp/confirm`). A signed-in operator mints an operator
+  token for an agent, one permission and an hour at most
+  (`/v1/admin/me/tokens`), and a write operator resets a person's
+  password, audited (`/v1/admin/password-resets`).
 - **Operational.** Liveness (`/healthz`, the process alone),
   readiness (`/readyz`, asks the database under a deadline shorter
   than the probe's interval), metrics (`/metrics`), and the OpenAPI
@@ -59,7 +68,7 @@ the database, the cache, and the topic bus.
   log under the request id; the admission 503 alone says which bound it
   hit, with a `Retry-After`.
 - **Bearer by prefix.** The credential's prefix says what it is: a
-  session token, an API key, a login, or a ticket. A missing or
+  session token, an API key, a login, a ticket, or an operator token. A missing or
   invalid one is a 401; a route asked with the wrong kind is refused.
 - **Admission.** The process bounds what it has in flight. Past the
   bound a request is refused at once with a 503 and a `Retry-After`,
@@ -89,8 +98,9 @@ container the server does.
 | Subcommand | Does |
 |------------|------|
 | `serve` | Runs the process. |
-| `migrate` | Applies every role's migration chain (`--all`) or one role's. Idempotent per revision. |
-| `bootstrap` | Seeds a fresh environment with one org and its owner; `--operator` puts the owner on the operator allowlist with write. |
+| `migrate` | Applies every role's migration chain (`--all`) or one role's. Idempotent per revision. `migrate ensure-logins` makes the database logins, as the master. |
+| `bootstrap` | Seeds a fresh local environment with one org and its owner; `--operator` puts the owner on the operator allowlist with write. Local only, like every seed. |
+| `grant-operator` | The grant job: `--email <e> --permission read\|write` puts an identity on the operator allowlist, `--email <e> --disable` takes it off, and `--email <e> --mint-token provisioner\|smoke [--expires-in N]` mints that identity's operator token into the secret store as `tadas-<env>-<holder>-token`, never printed in the cloud. An operator signs up first; the platform's own identities (`@platform.tadas.invalid`) are made by their first grant. |
 | `add-member` | Seeds a person into an existing org; a no-op for a member. |
 | `openapi` | Emits the OpenAPI document the clients are generated from. |
 

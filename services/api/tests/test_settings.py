@@ -60,6 +60,8 @@ LOCAL_DEFAULT_SERVES_THE_CLOUD = {
     "sign_in_delay_cap_seconds": "the local cap is the cap",
     "login_lifetime_seconds": "the local lifetime is the lifetime",
     "session_lifetime_seconds": "the local lifetime is the lifetime",
+    "session_idle_lifetime_seconds": "the local lifetime is the lifetime",
+    "operator_token_max_lifetime_seconds": "an hour, the guideline's bound, everywhere",
     "signup_enabled": "open everywhere: a deployed environment has no other door",
     "signup_rate_limit": "the local budget is the budget",
     "signup_rate_window_seconds": "the local window is the window",

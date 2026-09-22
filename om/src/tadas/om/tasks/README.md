@@ -36,6 +36,11 @@ six kinds of thing [Tadas is made of](../../../../README.md).
   caller saw. If the stored task has moved on, the write is refused
   and nothing is merged; the caller reads again. An edit that raced a
   delete finds the task gone and cannot bring it back.
+- **Some fields are never the caller's.** An edit changes the title,
+  the notes, the assignee, and the status. Who made the task, whether
+  it is deleted, its place in the open list, and its version stay as
+  stored, whatever the edit sends; a move places a task, and every
+  write sets the version.
 - **The fractional position.** Open tasks are ordered by a number. A
   new task takes one less than the smallest, so it lands on top. A
   task moved after another takes the midpoint between that task and

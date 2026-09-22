@@ -7,14 +7,15 @@ from enum import StrEnum
 from uuid import UUID
 
 from tadas.infra.base import InfraModel
-from tadas.infra.exceptions import BlobNotFound, InvalidBucketKey
+from tadas.infra.exceptions import BlobNotFound, InvalidBucketKey, UploadRefused
 
 __all__ = [
     "BlobNotFound",
     "Buckets",
     "BucketsInterface",
     "InvalidBucketKey",
-    "PresignedUpload",
+    "PresignedPost",
+    "UploadRefused",
     "object_key",
 ]
 
@@ -31,11 +32,13 @@ def object_key(org_id: UUID, key: str) -> str:
     return f"{org_id}/{key}"
 
 
-class PresignedUpload(InfraModel):
+class PresignedPost(InfraModel):
     """One bounded upload a browser makes straight to the store: a form POST
-    of `fields`, then the file, to `url`. The store refuses a body larger
-    than the bound it was signed with, or of another content type, so a URL
-    handed out cannot fill the bucket."""
+    of `fields`, in order, then the file, to `url`. The signed policy in the
+    fields carries the content type and a `content-length-range` from zero to
+    `max_bytes`; the store refuses a body larger than that, or of another
+    type, so a form handed to a browser cannot fill the bucket. A presigned
+    PUT cannot bound a body's size, which is why an upload is a POST."""
 
     url: str
     fields: tuple[tuple[str, str], ...]
@@ -71,7 +74,7 @@ class BucketsInterface(ABC):
     ) -> str | None: ...
 
     @abstractmethod
-    async def presign_upload(
+    async def presign_post(
         self,
         org_id: UUID,
         bucket: Buckets,
@@ -79,9 +82,10 @@ class BucketsInterface(ABC):
         content_type: str,
         max_bytes: int,
         ttl: timedelta,
-    ) -> PresignedUpload | None:
+    ) -> PresignedPost | None:
         """An upload bounded by `content_type` and `max_bytes`, or None where
-        the store cannot presign (the local impl)."""
+        the store cannot presign (the local impl). On None the caller moves
+        the bytes through `put` itself and holds them to the same bounds."""
         ...
 
     @abstractmethod

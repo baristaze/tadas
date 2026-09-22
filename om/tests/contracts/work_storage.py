@@ -11,7 +11,7 @@ import pytest
 from contracts.racing import race
 from tadas.om.base import EMPTY_UUID, new_id, utcnow
 from tadas.om.exceptions import TenantMismatch
-from tadas.om.work.storage import WorkStorageInterface
+from tadas.om.work.storage import InsertOutcome, WorkStorageInterface
 from tadas.om.work.types.work_item import WorkItem, WorkKind, WorkStatus
 
 LEASE = timedelta(seconds=30)
@@ -19,7 +19,6 @@ LEASE = timedelta(seconds=30)
 CROSS_TENANT_CASES: frozenset[str] = frozenset(
     {
         "create_item",
-        "purge_settled",
         "read_item",
         "read_item_by_key",
         "requeue_stale",
@@ -240,23 +239,25 @@ class WorkStorageContract:
         # a retry neither overwrites the row nor resets the claim on it.
         org = new_id()
         item = make_item(lane=lane)
-        assert await storage.create_item(org, item)
+        assert await storage.create_item(org, item) is InsertOutcome.INSERTED
         claimed = await storage.claim_next(lane, [WorkKind.NOOP], "w1", LEASE)
         assert claimed is not None
-        assert not await storage.create_item(org, item.model_copy(update={"last_error": "again"}))
+        again = item.model_copy(update={"last_error": "again"})
+        assert await storage.create_item(org, again) is InsertOutcome.ID_EXISTS
         assert await storage.read_item(org, item.id) == claimed[1]
 
     async def test_a_taken_idempotency_key_is_reported_and_changes_nothing(
         self, storage: WorkStorageInterface
     ) -> None:
         # The key is the producer's, so a second insert under it is a retry, not
-        # an error: the create reports it, nothing changes, and the row it names
-        # reads back by the key. That is what lets the relay run twice.
+        # an error: the create reports which key collided, nothing changes, and
+        # the row it names reads back by the key, under another id than the
+        # one presented. That is what lets the relay run twice.
         org = new_id()
         item = make_item()
-        assert await storage.create_item(org, item)
+        assert await storage.create_item(org, item) is InsertOutcome.INSERTED
         duplicate = make_item().model_copy(update={"idempotency_key": item.idempotency_key})
-        assert await storage.create_item(org, duplicate) is False
+        assert await storage.create_item(org, duplicate) is InsertOutcome.KEY_EXISTS
         assert await storage.read_item(org, duplicate.id) is None
         assert await storage.read_item(org, item.id) == item
         assert await storage.read_item_by_key(org, item.idempotency_key) == item
@@ -272,7 +273,7 @@ class WorkStorageContract:
             await storage.create_item(org_b, item)
         assert await storage.read_item(org_a, item.id) == item
 
-    async def test_purge_settled_counts_done_and_failed_past_the_cut(
+    async def test_purge_items_counts_done_and_failed_past_the_cut_in_every_tenant(
         self, storage: WorkStorageInterface, lane: str
     ) -> None:
         org, other_org = new_id(), new_id()
@@ -291,10 +292,12 @@ class WorkStorageContract:
         for item in (old_done, old_failed, old_queued, fresh_done):
             await storage.create_item(org, item)
         await storage.create_item(other_org, elsewhere)
-        assert await storage.purge_settled(org, utcnow() - timedelta(days=1)) == 2
+        # The purge is the sweep's, across tenants: another suite's settled
+        # items may be in the same table, so the count is at least these three.
+        assert await storage.purge_items(utcnow() - timedelta(days=1)) >= 3
         assert await storage.read_item(org, old_done.id) is None
         assert await storage.read_item(org, old_failed.id) is None
         assert await storage.read_item(org, old_queued.id) == old_queued
         assert await storage.read_item(org, fresh_done.id) == fresh_done
-        assert await storage.read_item(other_org, elsewhere.id) == elsewhere
-        assert await storage.purge_settled(org, utcnow() - timedelta(days=1)) == 0
+        assert await storage.read_item(other_org, elsewhere.id) is None
+        assert await storage.purge_items(utcnow() - timedelta(days=1)) == 0

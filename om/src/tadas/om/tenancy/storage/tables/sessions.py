@@ -16,3 +16,6 @@ class Sessions(IdentifiableMixin, TrackableMixin, Base):
     credential_kind: Mapped[str]
     expires_at: Mapped[datetime]
     revoked_at: Mapped[datetime | None]
+    last_seen_at: Mapped[datetime | None]
+    second_factor_at: Mapped[datetime | None]
+    operator_role: Mapped[str | None]

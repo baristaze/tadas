@@ -11,7 +11,7 @@ from tadas.infra.base import new_id
 from tadas.infra.buckets import BlobNotFound, Buckets, BucketsInterface
 from tadas.infra.buckets.local import BucketsLocalImpl
 from tadas.infra.buckets.s3 import BucketsS3Impl
-from tadas.infra.exceptions import InvalidBucketKey
+from tadas.infra.exceptions import InvalidBucketKey, UploadRefused
 from tadas.infra.impl.settings import InfraSettings
 
 
@@ -46,17 +46,56 @@ async def test_keys_stay_inside_the_tenant_prefix(tmp_path: Path) -> None:
         await buckets.put(new_id(), Buckets.EXPORTS, "../escape", b"", "text/plain")
     with pytest.raises(InvalidBucketKey):
         await buckets.get(new_id(), Buckets.EXPORTS, "/absolute")
+    with pytest.raises(InvalidBucketKey):
+        await buckets.put(new_id(), Buckets.EXPORTS, "a/../../b", b"", "text/plain")
+    with pytest.raises(InvalidBucketKey):
+        await buckets.presign_post(
+            new_id(), Buckets.EXPORTS, "../up", "text/plain", 10, timedelta(minutes=1)
+        )
+    # A link inside the tree that points out of it is refused too.
+    org = new_id()
+    (tmp_path / "outside").mkdir()
+    (tmp_path / Buckets.EXPORTS.value / str(org)).mkdir(parents=True)
+    (tmp_path / Buckets.EXPORTS.value / str(org) / "out").symlink_to(tmp_path / "outside")
+    with pytest.raises(InvalidBucketKey):
+        await buckets.put(org, Buckets.EXPORTS, "out/x", b"", "text/plain")
 
 
 async def test_local_impl_cannot_presign(tmp_path: Path) -> None:
     buckets = BucketsLocalImpl(tmp_path)
     assert await buckets.presign_get(new_id(), Buckets.EXPORTS, "k", timedelta(minutes=1)) is None
     assert (
-        await buckets.presign_upload(
+        await buckets.presign_post(
             new_id(), Buckets.EXPORTS, "k", "text/plain", 1024, timedelta(minutes=1)
         )
         is None
     )
+
+
+async def test_the_local_impl_holds_a_presigned_upload_to_its_bounds(tmp_path: Path) -> None:
+    """It cannot sign, so the caller puts the bytes itself; the put is held to
+    the type and the size the upload was presigned with, as the store holds a
+    posted body, and no longer once the form would have expired."""
+    buckets = BucketsLocalImpl(tmp_path)
+    org, other = new_id(), new_id()
+    ttl = timedelta(minutes=5)
+    await buckets.presign_post(org, Buckets.USER_FILE_UPLOADS, "a.png", "image/png", 4, ttl)
+    with pytest.raises(UploadRefused):
+        await buckets.put(org, Buckets.USER_FILE_UPLOADS, "a.png", b"12345", "image/png")
+    with pytest.raises(UploadRefused):
+        await buckets.put(org, Buckets.USER_FILE_UPLOADS, "a.png", b"1", "text/plain")
+    assert not await buckets.exists(org, Buckets.USER_FILE_UPLOADS, "a.png")
+    await buckets.put(org, Buckets.USER_FILE_UPLOADS, "a.png", b"", "image/png")
+    await buckets.put(org, Buckets.USER_FILE_UPLOADS, "a.png", b"1234", "image/png")
+    assert await buckets.get(org, Buckets.USER_FILE_UPLOADS, "a.png") == b"1234"
+    # The bound is the tenant's key, not another tenant's same path.
+    await buckets.put(other, Buckets.USER_FILE_UPLOADS, "a.png", b"12345", "text/plain")
+    await buckets.presign_post(
+        org, Buckets.USER_FILE_UPLOADS, "b.png", "image/png", 1, timedelta(0)
+    )
+    await buckets.put(org, Buckets.USER_FILE_UPLOADS, "b.png", b"123", "image/png")
+    with pytest.raises(ValueError, match="bounded"):
+        await buckets.presign_post(org, Buckets.EXPORTS, "k", "text/plain", 0, ttl)
 
 
 async def test_a_presigned_upload_is_bounded_by_size_and_type() -> None:
@@ -77,7 +116,7 @@ async def test_a_presigned_upload_is_bounded_by_size_and_type() -> None:
     )
     await buckets.start()
     org = new_id()
-    upload = await buckets.presign_upload(
+    upload = await buckets.presign_post(
         org, Buckets.USER_FILE_UPLOADS, "a.png", "image/png", 5_000_000, timedelta(minutes=5)
     )
     await buckets.close()
@@ -86,7 +125,7 @@ async def test_a_presigned_upload_is_bounded_by_size_and_type() -> None:
     assert fields["key"] == f"{org}/a.png"
     assert fields["Content-Type"] == "image/png"
     policy = json.loads(base64.b64decode(fields["policy"]))
-    assert ["content-length-range", 1, 5_000_000] in policy["conditions"]
+    assert ["content-length-range", 0, 5_000_000] in policy["conditions"]
     assert {"Content-Type": "image/png"} in policy["conditions"]
 
 
@@ -102,7 +141,7 @@ async def test_an_unbounded_upload_is_refused() -> None:
         timeout=timedelta(seconds=1),
     )
     with pytest.raises(ValueError, match="bounded"):
-        await buckets.presign_upload(
+        await buckets.presign_post(
             new_id(), Buckets.EXPORTS, "k", "text/plain", 0, timedelta(minutes=1)
         )
 

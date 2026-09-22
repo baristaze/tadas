@@ -7,12 +7,13 @@ from pathlib import Path
 
 import httpx
 import pytest
+import typer
 from api_support import OWNER, run, seed_request
 from cli_support import BOB, Stack
 from typer.testing import CliRunner
 
 from tadas.apps.cli import config, main
-from tadas.client.client import ApiClient
+from tadas.client.client import ApiClient, ApiError
 from tadas.om.base import new_id, utcnow
 from tadas.om.opcontext import Role
 from tadas.om.tasks.types.task import Task
@@ -174,6 +175,22 @@ def test_a_wrong_password_is_refused_with_exit_1(stack: Stack) -> None:
     result = stack.tadas("login", "--email", OWNER["email"], "--password", "nope", token=None)
     assert result.exit_code == 1
     assert "refused: not_authenticated: email or password is wrong" in result.output
+
+
+def test_a_task_that_changed_while_the_command_ran_is_refused_with_exit_1(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A verb reads the task, then writes naming the version it read; a write
+    that landed in between is refused with 412, and the command says so in
+    words a person acts on, not the code."""
+
+    async def stale() -> None:
+        raise ApiError(412, "precondition_failed", "task t is at version 3, not 2", "req_1")
+
+    with pytest.raises(typer.Exit) as exited:
+        main._run(stale(), signed_in=True)  # pyright: ignore[reportPrivateUsage]
+    assert exited.value.exit_code == 1
+    assert capsys.readouterr().err == "refused: the task changed while this ran; run it again\n"
 
 
 def test_not_signed_in_is_exit_3(stack: Stack) -> None:

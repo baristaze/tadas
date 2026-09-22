@@ -145,9 +145,9 @@ class FakeApi:
         if len(parts) >= 4 and parts[2] == "tasks" and parts[3] in self.tasks:
             task = self.tasks[parts[3]]
             if method == "PATCH":
-                if body.get("version") != task["version"]:
+                if request.headers.get("if-match") != f'"{task["version"]}"':
                     return httpx.Response(
-                        409, json={"error": {"code": "version_mismatch", "message": "stale"}}
+                        412, json={"error": {"code": "precondition_failed", "message": "stale"}}
                     )
                 for key in ("title", "notes", "status"):
                     if key in body:

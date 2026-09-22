@@ -25,6 +25,72 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/admin/me/tokens": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mint Token
+         * @description An operator token for an agent: one permission, never wider than the
+         *     caller's entry, an hour at most. Minted only from a sign-in that
+         *     verified a second factor, so a token never mints a token.
+         */
+        post: operations["mint_token_v1_admin_me_tokens_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/me/totp": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Enrol Totp
+         * @description Mints the operator's TOTP secret and answers it once, as the
+         *     `otpauth://` URI an authenticator app reads. It creates no row, and a
+         *     retry is safe: minting again replaces a secret that was never confirmed,
+         *     so it takes no Idempotency-Key. Refused once one is confirmed.
+         */
+        post: operations["enrol_totp_v1_admin_me_totp_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/me/totp/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Confirm Totp
+         * @description The first code confirms the secret. From then on the plane admits
+         *     this identity only on a sign-in that verified a code.
+         */
+        post: operations["confirm_totp_v1_admin_me_totp_confirm_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/orgs": {
         parameters: {
             query?: never;
@@ -107,6 +173,27 @@ export interface paths {
         get: operations["list_tasks_v1_admin_orgs__org_id__tasks_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/password-resets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reset Password
+         * @description Sets a person's password, the recovery a platform with no verified
+         *     mailbox has; a write operator signed in with a second factor, audited.
+         */
+        post: operations["reset_password_v1_admin_password_resets_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -555,6 +642,14 @@ export interface components {
             user_id: string;
         };
         /**
+         * ConfirmTotpRequest
+         * @description The first code from the authenticator, which confirms the secret.
+         */
+        ConfirmTotpRequest: {
+            /** Totp Code */
+            totp_code: string;
+        };
+        /**
          * CreateOrgRequest
          * @description An org with its owner, as `bootstrap` seeds one. The owner's identity
          *     is created with the password, or kept with its own when the email is
@@ -576,7 +671,7 @@ export interface components {
          * CredentialKind
          * @enum {string}
          */
-        CredentialKind: "api_key" | "session_token" | "login" | "socket_ticket" | "internal";
+        CredentialKind: "api_key" | "session_token" | "login" | "socket_ticket" | "operator_token" | "internal";
         /**
          * EventView
          * @description One record of the tenant's append-only stream, paged by `after_seq`.
@@ -671,6 +766,22 @@ export interface components {
             /** Token */
             token: string;
         };
+        /**
+         * IssuedOperatorTokenView
+         * @description The token in the clear on the first response only; a replay under the
+         *     same Idempotency-Key answers with `token` null. A client that lost the
+         *     first answer mints another; the lost one expires within the hour.
+         */
+        IssuedOperatorTokenView: {
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            permission: components["schemas"]["OperatorRole"];
+            /** Token */
+            token: string | null;
+        };
         /** IssuedSessionView */
         IssuedSessionView: {
             /**
@@ -695,12 +806,29 @@ export interface components {
             /** Ticket */
             ticket: string;
         };
-        /** LoginRequest */
+        /**
+         * IssuedTotpSecretView
+         * @description A freshly minted TOTP secret, once, as the `otpauth://` URI an
+         *     authenticator app reads. A replay carries none.
+         */
+        IssuedTotpSecretView: {
+            /** Otpauth Uri */
+            otpauth_uri: string | null;
+        };
+        /**
+         * LoginRequest
+         * @description An email and a password, and the code from an authenticator when the
+         *     identity has a second factor enrolled. A tenant's sign-in needs none; the
+         *     operator plane admits an enrolled operator only on a sign-in that
+         *     verified one. A code used once is refused.
+         */
         LoginRequest: {
             /** Email */
             email: string;
             /** Password */
             password: string;
+            /** Totp Code */
+            totp_code?: string | null;
         };
         /** MeView */
         MeView: {
@@ -759,15 +887,33 @@ export interface components {
             user_id: string;
         };
         /**
+         * MintOperatorTokenRequest
+         * @description One permission, never wider than the caller's entry (`write` implies
+         *     `read`), and a lifetime of at most an hour, an hour when absent.
+         */
+        MintOperatorTokenRequest: {
+            /** Expires In */
+            expires_in?: number | null;
+            permission: components["schemas"]["OperatorRole"];
+        };
+        /**
          * MoveTaskRequest
          * @description Places an open task right after `after_id`; null puts it at the top.
-         *     `version` is the moved task's, as on `UpdateTaskRequest`.
+         *     `expected_version` is the moved task's as the caller read it: 412
+         *     `precondition_failed` when the task changed since, and 422
+         *     `validation_failed` when the request names no version.
          */
         MoveTaskRequest: {
             /** After Id */
             after_id?: string | null;
-            /** Version */
-            version: number;
+            /** Expected Version */
+            expected_version?: number | null;
+            /**
+             * Version
+             * @deprecated
+             * @description Superseded by `expected_version`, and accepted in its place until every client sends it.
+             */
+            version?: number | null;
         };
         /**
          * OperatorEventView
@@ -858,6 +1004,19 @@ export interface components {
             slug: string;
         };
         /**
+         * PasswordResetView
+         * @description Whose password was reset; the reset is audited with the operator.
+         */
+        PasswordResetView: {
+            /** Email */
+            email: string;
+            /**
+             * Identity Id
+             * Format: uuid
+             */
+            identity_id: string;
+        };
+        /**
          * Permission
          * @enum {string}
          */
@@ -883,6 +1042,16 @@ export interface components {
             tenants: number;
             /** Users */
             users: number;
+        };
+        /**
+         * ResetPasswordRequest
+         * @description The person, by email, and the password they sign in with from now on.
+         */
+        ResetPasswordRequest: {
+            /** Email */
+            email: string;
+            /** Password */
+            password: string;
         };
         /**
          * Role
@@ -992,6 +1161,24 @@ export interface components {
             /** Version */
             version: number;
         };
+        /**
+         * TotpConfirmedView
+         * @description The second factor is enrolled: from now on the operator plane admits
+         *     this identity only on a sign-in that verified a code, so the next
+         *     request signs in again with one.
+         */
+        TotpConfirmedView: {
+            /**
+             * Confirmed At
+             * Format: date-time
+             */
+            confirmed_at: string;
+            /**
+             * Identity Id
+             * Format: uuid
+             */
+            identity_id: string;
+        };
         /** UpdateMeRequest */
         UpdateMeRequest: {
             /** Display Name */
@@ -1004,10 +1191,12 @@ export interface components {
         /**
          * UpdateTaskRequest
          * @description A partial update: absent fields are kept. An explicit null
-         *     `assignee_id` unassigns the task. `version` is the task's version as the
-         *     caller read it: the update lands only when the task is still at it, and
-         *     is refused with 409 `version_mismatch` when another write landed since,
-         *     so the caller reads again and decides over the current task.
+         *     `assignee_id` unassigns the task. The version the update compares with is
+         *     the task's as the caller read it, in the `If-Match` header: the update
+         *     lands only when the task is still at it, and is refused with 412
+         *     `precondition_failed` when another write landed since, so the caller reads
+         *     again and decides over the current task. An update that names no version
+         *     is refused with 422 `validation_failed`, since it would overwrite blind.
          */
         UpdateTaskRequest: {
             /** Assignee Id */
@@ -1017,8 +1206,12 @@ export interface components {
             status?: components["schemas"]["TaskStatus"] | null;
             /** Title */
             title?: string | null;
-            /** Version */
-            version: number;
+            /**
+             * Version
+             * @deprecated
+             * @description Superseded by the `If-Match` header, and accepted in its place until every client sends the header.
+             */
+            version?: number | null;
         };
         /**
          * UserPageView
@@ -1091,6 +1284,114 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OperatorView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    mint_token_v1_admin_me_tokens_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
+                "idempotency-key"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MintOperatorTokenRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssuedOperatorTokenView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    enrol_totp_v1_admin_me_totp_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssuedTotpSecretView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    confirm_totp_v1_admin_me_totp_confirm_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConfirmTotpRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TotpConfirmedView"];
                 };
             };
             /** @description Validation Error */
@@ -1390,6 +1691,43 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TaskPageView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reset_password_v1_admin_password_resets_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResetPasswordRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PasswordResetView"];
                 };
             };
             /** @description Validation Error */
@@ -2221,14 +2559,19 @@ export interface operations {
     };
     delete_task_v1_tasks__task_id__delete: {
         parameters: {
-            query: {
-                /** @description The task's version as the caller read it; 409 `version_mismatch` when the task changed since. */
-                version: number;
+            query?: {
+                /**
+                 * @deprecated
+                 * @description Superseded by the `If-Match` header, and accepted in its place until every client sends the header.
+                 */
+                version?: number | null;
             };
             header?: {
                 authorization?: string | null;
                 "x-app"?: string | null;
                 "x-app-version"?: string | null;
+                /** @description The version the caller read, as an entity tag: `"3"`. 412 `precondition_failed` when the record changed since. */
+                "If-Match"?: string | null;
             };
             path: {
                 task_id: string;
@@ -2264,6 +2607,8 @@ export interface operations {
                 authorization?: string | null;
                 "x-app"?: string | null;
                 "x-app-version"?: string | null;
+                /** @description The version the caller read, as an entity tag: `"3"`. 412 `precondition_failed` when the record changed since. */
+                "If-Match"?: string | null;
             };
             path: {
                 task_id: string;

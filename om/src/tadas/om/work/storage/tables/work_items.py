@@ -13,7 +13,13 @@ class WorkItems(IdentifiableMixin, TrackableMixin, Base):
     # org_id leads the sweep's compound index, so it gets no index of its own.
     __org_id_index__ = False
     __table_args__ = (
+        # The key collides within its tenant, so the index leads with it. The
+        # key alone stays unique beside it while a release that predates the
+        # tenant's index may still be serving; the release after drops it.
         Index("uq_work_items_idempotency_key", "idempotency_key", unique=True),
+        Index("uq_work_items_org_id_idempotency_key", "org_id", "idempotency_key", unique=True),
+        # The purge reads settled items across tenants by their last change.
+        Index("ix_work_items_status_updated_at", "status", "updated_at"),
         Index("ix_work_items_lane_status_available_at", "lane", "status", "available_at"),
         Index(
             "ix_work_items_org_id_status_lease_expires_at", "org_id", "status", "lease_expires_at"

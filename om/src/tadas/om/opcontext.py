@@ -75,6 +75,9 @@ class OperatorRole(StrEnum):
 class OperatorPermission(StrEnum):
     READ = "read"
     WRITE = "write"
+    ENROL = "enrol"
+    """What an allowlisted identity holds before its second factor is
+    enrolled: the two enrolment calls and nothing else."""
 
 
 class CredentialKind(StrEnum):
@@ -82,6 +85,7 @@ class CredentialKind(StrEnum):
     SESSION_TOKEN = "session_token"
     LOGIN = "login"
     SOCKET_TICKET = "socket_ticket"
+    OPERATOR_TOKEN = "operator_token"
     INTERNAL = "internal"
 
 
@@ -136,6 +140,12 @@ class IdentityContext(RequestContext):
     email: str
     credential_kind: CredentialKind
     credential_id: UUID
+    # What the credential behind the stage records, for the operator gate: a
+    # sign-in that verified a TOTP code, and the one permission an operator
+    # token carries. Both are read off the stored credential by the
+    # transition, never taken from the request.
+    second_factor: bool = False
+    operator_role: OperatorRole | None = None
 
 
 class OpContext(RequestContext):

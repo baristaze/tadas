@@ -10,6 +10,7 @@ from fastapi import APIRouter, Query, Response
 from tadas.om.tasks.types.task import TaskScope, TaskStatus
 from tadas.services.api.gateway.auth import Ctx
 from tadas.services.api.gateway.idempotency import Idem
+from tadas.services.api.gateway.precondition import IfMatch
 from tadas.services.api.gateway.resolve import TasksService
 from tadas.services.api.types.common import LIMIT_DEFAULT
 from tadas.services.api.types.tasks import (
@@ -47,9 +48,9 @@ async def create_task(ctx: Ctx, tasks: TasksService, body: AddTaskRequest, idem:
 
 @router.patch("/{task_id}", response_model=TaskView)
 async def update_task(
-    ctx: Ctx, tasks: TasksService, task_id: UUID, body: UpdateTaskRequest
+    ctx: Ctx, tasks: TasksService, task_id: UUID, body: UpdateTaskRequest, if_match: IfMatch
 ) -> TaskView:
-    return await tasks.update_task(ctx, task_id, body)
+    return await tasks.update_task(ctx, task_id, body, if_match)
 
 
 @router.post("/{task_id}/move", response_model=TaskView)
@@ -59,19 +60,25 @@ async def move_task(
     return await tasks.move_task(ctx, task_id, body)
 
 
-Version = Annotated[
-    int,
+LegacyVersion = Annotated[
+    int | None,
     Query(
         ge=1,
-        description="The task's version as the caller read it; 409 `version_mismatch` "
-        "when the task changed since.",
+        deprecated=True,
+        description="Superseded by the `If-Match` header, and accepted in its place "
+        "until every client sends the header.",
     ),
 ]
 
 
 @router.delete("/{task_id}", response_model=TaskView)
-async def delete_task(ctx: Ctx, tasks: TasksService, task_id: UUID, version: Version) -> TaskView:
-    # A DELETE has no body, so the version rides the query string: the same
-    # precondition the other writes carry in theirs, typed as a required
-    # parameter by every generated client, and refused with the same 409.
-    return await tasks.delete_task(ctx, task_id, version)
+async def delete_task(
+    ctx: Ctx,
+    tasks: TasksService,
+    task_id: UUID,
+    if_match: IfMatch,
+    version: LegacyVersion = None,
+) -> TaskView:
+    # A DELETE has no body, so the version rides the `If-Match` header, the
+    # same precondition the update carries, refused with the same 412.
+    return await tasks.delete_task(ctx, task_id, if_match, version)

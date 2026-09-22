@@ -1,7 +1,9 @@
 # ADR 0022: A deployed environment has no operator or smoke identity yet
 
-**Status**: accepted (2026-09-22). A deviation, closed by
-[TAZ-53](https://linear.app/taze/issue/TAZ-53).
+**Status**: closed (2026-09-22) by
+[TAZ-53](https://linear.app/taze/issue/TAZ-53). The grant job and the
+smoke identity exist; see Closed below. The record stays for the
+interval it covers.
 
 ## Context
 
@@ -41,3 +43,25 @@ the same way.
   environment, and they work against the local stack only.
 - The smoke test proves the edge, the logs, the metric, and the trace
   of one request. It does not prove a sign-in.
+
+## Closed
+
+Both rules hold now.
+
+- `tadas-api grant-operator` grants an operator `read` or `write`,
+  disables one, or mints a token for the provisioner or the smoke
+  identity into `tadas-<env>-provisioner-token` or
+  `tadas-<env>-smoke-token`, never printing it. It runs as a one-off
+  task on the grant task definition, which holds the runtime and system
+  logins' URLs and `PutSecretValue` on those two secrets alone.
+  `grant-operator.yml` starts it, dispatched by a person on the
+  environment's branch under the deploy role; production's run waits
+  for the same approval as its apply. `bootstrap --operator` is local
+  only.
+- The smoke test signs in. After each rollout `scripts/cloud_smoke.sh`
+  mints the smoke identity's read token through the grant task and
+  calls `GET /v1/admin/me` with it through the edge. It skips, with a
+  notice, until the environment's `SMOKE_EMAIL` names an identity a
+  grant made.
+
+`docs/runbooks/deploy.md` says how to grant each of the three.

@@ -1,6 +1,8 @@
 # ADR 0009: Tasks carry a version, and every write names the one it read
 
-**Status**: accepted (2026-09-19)
+**Status**: accepted (2026-09-19), amended (2026-09-22): a mismatch
+is 412 `precondition_failed`, and the version comes in `If-Match` or
+`expected_version`; see the note at the end.
 
 ## Context
 
@@ -62,3 +64,24 @@ other table stays at the guideline's default until its concurrent edits
 matter, and the next such table follows this shape: the column, the
 compare-and-set in both impls, the version on the view and on every
 write.
+
+## Amended: 412 and the caller's version
+
+Guideline 0.31.0 settles the wire shape this record argued about.
+
+- A mismatch is `PreconditionFailed`, 412 `precondition_failed`. It
+  replaces `VersionMismatch`, the 409 `version_mismatch`.
+- The expected version comes from the caller and never from a row read
+  inside the update. A PATCH and a DELETE name it in `If-Match`, as an
+  entity tag; a move names it in `expected_version`. The gateway parses
+  the header, and a write that names neither is 422
+  `validation_failed`.
+- `Task` declares `MANAGER_OWNED_FIELDS` (`position` and `version`),
+  and the copy on update excludes them beside `PROVENANCE_FIELDS`, so
+  an edit cannot place a task or set its version.
+- The body's and the query's `version` stay accepted, marked
+  deprecated, for one release, so a portal tab or a CLI of the release
+  before keeps writing while this one rolls out. Release B drops them.
+
+The portal reloads on 412, the Python client sends `If-Match` and
+`expected_version`, and the CLI says a 412 in words.
