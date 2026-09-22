@@ -49,13 +49,6 @@ class UpdateTaskRequest(RequestBody):
     notes: str | None = None
     status: TaskStatus | None = None
     assignee_id: UUID | None = None
-    version: int | None = Field(
-        default=None,
-        ge=1,
-        json_schema_extra={"deprecated": True},
-        description="Superseded by the `If-Match` header, and accepted in its place "
-        "until every client sends the header.",
-    )
 
 
 class MoveTaskRequest(RequestBody):
@@ -66,10 +59,3 @@ class MoveTaskRequest(RequestBody):
 
     after_id: UUID | None = None
     expected_version: int | None = Field(default=None, ge=1)
-    version: int | None = Field(
-        default=None,
-        ge=1,
-        json_schema_extra={"deprecated": True},
-        description="Superseded by `expected_version`, and accepted in its place "
-        "until every client sends it.",
-    )

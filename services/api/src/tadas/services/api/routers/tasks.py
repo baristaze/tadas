@@ -2,10 +2,9 @@
 and delete. Each function is one call into the tasks service; the creating
 one runs under the idempotency record."""
 
-from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Query, Response
+from fastapi import APIRouter, Response
 
 from tadas.om.tasks.types.task import TaskScope, TaskStatus
 from tadas.services.api.gateway.auth import Ctx
@@ -60,25 +59,8 @@ async def move_task(
     return await tasks.move_task(ctx, task_id, body)
 
 
-LegacyVersion = Annotated[
-    int | None,
-    Query(
-        ge=1,
-        deprecated=True,
-        description="Superseded by the `If-Match` header, and accepted in its place "
-        "until every client sends the header.",
-    ),
-]
-
-
 @router.delete("/{task_id}", response_model=TaskView)
-async def delete_task(
-    ctx: Ctx,
-    tasks: TasksService,
-    task_id: UUID,
-    if_match: IfMatch,
-    version: LegacyVersion = None,
-) -> TaskView:
+async def delete_task(ctx: Ctx, tasks: TasksService, task_id: UUID, if_match: IfMatch) -> TaskView:
     # A DELETE has no body, so the version rides the `If-Match` header, the
     # same precondition the update carries, refused with the same 412.
-    return await tasks.delete_task(ctx, task_id, if_match, version)
+    return await tasks.delete_task(ctx, task_id, if_match)

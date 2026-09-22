@@ -126,10 +126,6 @@ class ExpectedVersion(RootModel[int]):
     root: Annotated[int, Field(ge=1, title='Expected Version')]
 
 
-class Version(RootModel[int]):
-    root: Annotated[int, Field(deprecated=True, description='Superseded by `expected_version`, and accepted in its place until every client sends it.', ge=1, title='Version')]
-
-
 class MoveTaskRequest(BaseModel):
     """
     Places an open task right after `after_id`; null puts it at the top.
@@ -142,7 +138,6 @@ class MoveTaskRequest(BaseModel):
     )
     after_id: Annotated[UUID | None, Field(title='After Id')] = None
     expected_version: Annotated[ExpectedVersion | None, Field(title='Expected Version')] = None
-    version: Annotated[Version | None, Field(deprecated=True, description='Superseded by `expected_version`, and accepted in its place until every client sends it.', title='Version')] = None
 
 
 class OperatorEventView(BaseModel):
@@ -321,10 +316,6 @@ class Title(RootModel[str]):
     root: Annotated[str, Field(max_length=500, title='Title')]
 
 
-class Version1(RootModel[int]):
-    root: Annotated[int, Field(deprecated=True, description='Superseded by the `If-Match` header, and accepted in its place until every client sends the header.', ge=1, title='Version')]
-
-
 class UpdateTaskRequest(BaseModel):
     """
     A partial update: absent fields are kept. An explicit null
@@ -342,7 +333,6 @@ class UpdateTaskRequest(BaseModel):
     notes: Annotated[str | None, Field(title='Notes')] = None
     status: TaskStatus | None = None
     title: Annotated[Title | None, Field(title='Title')] = None
-    version: Annotated[Version1 | None, Field(deprecated=True, description='Superseded by the `If-Match` header, and accepted in its place until every client sends the header.', title='Version')] = None
 
 
 class UserView(BaseModel):

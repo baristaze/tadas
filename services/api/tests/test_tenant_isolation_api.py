@@ -99,7 +99,9 @@ async def seed_tenant(
     assert finished.status_code == 201, finished.text
     done_task_id = finished.json()["id"]
     carried = await client.patch(
-        f"/v1/tasks/{done_task_id}", headers=headers, json={"status": "done", "version": 1}
+        f"/v1/tasks/{done_task_id}",
+        headers={**headers, "If-Match": '"1"'},
+        json={"status": "done"},
     )
     assert carried.status_code == 200 and carried.json()["status"] == "done", carried.text
     me = await client.get("/v1/me", headers=headers)
@@ -151,12 +153,17 @@ async def test_no_by_id_route_reaches_another_tenants_row(
     rows are untouched afterwards."""
     caller, other = tenants
     task, second_task = other.task_ids
+    if_match = {"headers": {"If-Match": '"1"'}}
     swept: list[tuple[str, str, dict[str, Any]]] = [
         ("GET", f"/v1/tasks/{task}", {}),
-        ("PATCH", f"/v1/tasks/{task}", {"json": {"title": "taken", "version": 1}}),
-        ("POST", f"/v1/tasks/{task}/move", {"json": {"after_id": None, "version": 1}}),
-        ("POST", f"/v1/tasks/{second_task}/move", {"json": {"after_id": task, "version": 1}}),
-        ("DELETE", f"/v1/tasks/{task}", {"params": {"version": 1}}),
+        ("PATCH", f"/v1/tasks/{task}", {"json": {"title": "taken"}, **if_match}),
+        ("POST", f"/v1/tasks/{task}/move", {"json": {"after_id": None, "expected_version": 1}}),
+        (
+            "POST",
+            f"/v1/tasks/{second_task}/move",
+            {"json": {"after_id": task, "expected_version": 1}},
+        ),
+        ("DELETE", f"/v1/tasks/{task}", if_match),
         ("PATCH", f"/v1/memberships/{other.member_id}", {"json": {"role": "admin"}}),
         ("DELETE", f"/v1/memberships/{other.member_id}", {}),
         ("PATCH", f"/v1/memberships/{other.owner_id}", {"json": {"role": "member"}}),
@@ -165,7 +172,8 @@ async def test_no_by_id_route_reaches_another_tenants_row(
         ("DELETE", f"/v1/api-keys/{other.api_key_ids[0]}", {}),
     ]
     for method, path, extra in swept:
-        answered = await client.request(method, path, headers=caller.headers, **extra)
+        sent = {**extra, "headers": {**caller.headers, **extra.get("headers", {})}}
+        answered = await client.request(method, path, **sent)
         assert answered.status_code == 404, f"{method} {path}: {answered.status_code}"
         # The refusal names back the id the caller named and nothing else of B's.
         named = ids_in(path.split("/")) | ids_in(extra)
@@ -256,15 +264,15 @@ async def test_a_write_that_names_another_tenants_id_is_refused(
     mine = caller.task_ids[0]
     reassigned = await client.patch(
         f"/v1/tasks/{mine}",
-        headers=caller.headers,
-        json={"assignee_id": other.member_id, "version": 1},
+        headers={**caller.headers, "If-Match": '"1"'},
+        json={"assignee_id": other.member_id},
     )
     assert reassigned.status_code == 422, reassigned.text
 
     anchored = await client.post(
         f"/v1/tasks/{mine}/move",
         headers=caller.headers,
-        json={"after_id": other.task_ids[0], "version": 1},
+        json={"after_id": other.task_ids[0], "expected_version": 1},
     )
     assert anchored.status_code == 404, anchored.text
 

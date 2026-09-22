@@ -908,12 +908,6 @@ export interface components {
             after_id?: string | null;
             /** Expected Version */
             expected_version?: number | null;
-            /**
-             * Version
-             * @deprecated
-             * @description Superseded by `expected_version`, and accepted in its place until every client sends it.
-             */
-            version?: number | null;
         };
         /**
          * OperatorEventView
@@ -1206,12 +1200,6 @@ export interface components {
             status?: components["schemas"]["TaskStatus"] | null;
             /** Title */
             title?: string | null;
-            /**
-             * Version
-             * @deprecated
-             * @description Superseded by the `If-Match` header, and accepted in its place until every client sends the header.
-             */
-            version?: number | null;
         };
         /**
          * UserPageView
@@ -2559,13 +2547,7 @@ export interface operations {
     };
     delete_task_v1_tasks__task_id__delete: {
         parameters: {
-            query?: {
-                /**
-                 * @deprecated
-                 * @description Superseded by the `If-Match` header, and accepted in its place until every client sends the header.
-                 */
-                version?: number | null;
-            };
+            query?: never;
             header?: {
                 authorization?: string | null;
                 "x-app"?: string | null;

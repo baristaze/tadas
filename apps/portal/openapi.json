@@ -741,20 +741,6 @@
               }
             ],
             "title": "Expected Version"
-          },
-          "version": {
-            "anyOf": [
-              {
-                "minimum": 1.0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "deprecated": true,
-            "description": "Superseded by `expected_version`, and accepted in its place until every client sends it.",
-            "title": "Version"
           }
         },
         "title": "MoveTaskRequest",
@@ -1326,20 +1312,6 @@
               }
             ],
             "title": "Title"
-          },
-          "version": {
-            "anyOf": [
-              {
-                "minimum": 1.0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "deprecated": true,
-            "description": "Superseded by the `If-Match` header, and accepted in its place until every client sends the header.",
-            "title": "Version"
           }
         },
         "title": "UpdateTaskRequest",
@@ -4841,27 +4813,6 @@
               "format": "uuid",
               "title": "Task Id",
               "type": "string"
-            }
-          },
-          {
-            "deprecated": true,
-            "description": "Superseded by the `If-Match` header, and accepted in its place until every client sends the header.",
-            "in": "query",
-            "name": "version",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "minimum": 1,
-                  "type": "integer"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "deprecated": true,
-              "description": "Superseded by the `If-Match` header, and accepted in its place until every client sends the header.",
-              "title": "Version"
             }
           },
           {

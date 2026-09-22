@@ -46,8 +46,8 @@ async def org_id(client: httpx.AsyncClient, owner: dict[str, str]) -> str:
         if title == "third":
             done = await client.patch(
                 f"/v1/tasks/{created.json()['id']}",
-                headers=owner,
-                json={"status": "done", "version": 1},
+                headers={**owner, "If-Match": '"1"'},
+                json={"status": "done"},
             )
             assert done.status_code == 200, done.text
     return current.json()["id"]

@@ -14,10 +14,11 @@ async def test_events_are_paged_by_seq(client: httpx.AsyncClient, owner: dict[st
     created = await client.post("/v1/tasks", headers=owner, json={"title": "one"})
     task_id = created.json()["id"]
     done = await client.patch(
-        f"/v1/tasks/{task_id}", headers=owner, json={"status": "done", "version": 1}
+        f"/v1/tasks/{task_id}", headers={**owner, "If-Match": '"1"'}, json={"status": "done"}
     )
     await client.delete(
-        f"/v1/tasks/{task_id}", headers=owner, params={"version": done.json()["version"]}
+        f"/v1/tasks/{task_id}",
+        headers={**owner, "If-Match": f'"{done.json()["version"]}"'},
     )
 
     everything = await client.get("/v1/events", headers=owner, params={"after_seq": 0})
