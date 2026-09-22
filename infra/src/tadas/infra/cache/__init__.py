@@ -3,13 +3,13 @@ unrelated consumers do not step on each other's keys; fails open."""
 
 from abc import ABC, abstractmethod
 from datetime import timedelta
-from enum import Enum
+from enum import StrEnum
 from uuid import UUID
 
 from tadas.infra.base import SYSTEM_SCOPE
 
 
-class CacheScope(str, Enum):
+class CacheScope(StrEnum):
     NETWORK_RESPONSE = "network_response"
     RATE_LIMIT = "rate_limit"
     REALTIME_TICKET = "realtime_ticket"

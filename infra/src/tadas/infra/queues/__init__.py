@@ -3,12 +3,12 @@ wait. At-least-once, no deduplication; the consumer is idempotent."""
 
 from abc import ABC, abstractmethod
 from datetime import timedelta
-from enum import Enum
+from enum import StrEnum
 
 from tadas.infra.base import InfraModel
 
 
-class Queues(str, Enum):
+class Queues(StrEnum):
     WEBHOOKS = "webhooks"
 
 

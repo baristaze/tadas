@@ -1,10 +1,10 @@
 """Every table belongs to exactly one database role; this map is the single
 source of truth for the schema, the pool, and the migration chain."""
 
-from enum import Enum
+from enum import StrEnum
 
 
-class DatabaseRole(str, Enum):
+class DatabaseRole(StrEnum):
     CORE = "core"
     ACTIVITY = "activity"
     QUEUE = "queue"

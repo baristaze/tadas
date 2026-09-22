@@ -4,7 +4,7 @@ fixed per kind by `WORK_PAYLOADS`, as `TOPIC_PAYLOADS` fixes them per topic;
 the row stores the dump."""
 
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from uuid import UUID
 
 from pydantic import Field
@@ -12,7 +12,7 @@ from pydantic import Field
 from tadas.om.base import FrozenMapping, Identifiable, Platform, Trackable
 
 
-class WorkKind(str, Enum):
+class WorkKind(StrEnum):
     NOOP = "NOOP"  # the maintenance worker's kind: no work beyond the sweep
 
 
@@ -34,7 +34,7 @@ def asks_for_work(row_kind: str) -> bool:
     return row_kind.startswith(WORK_ROW_PREFIX)
 
 
-class WorkStatus(str, Enum):
+class WorkStatus(StrEnum):
     QUEUED = "queued"
     CLAIMED = "claimed"
     DONE = "done"

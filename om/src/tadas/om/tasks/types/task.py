@@ -1,15 +1,15 @@
-from enum import Enum
+from enum import StrEnum
 from uuid import UUID
 
 from tadas.om.base import Identifiable, SoftDeletable, Trackable
 
 
-class TaskStatus(str, Enum):
+class TaskStatus(StrEnum):
     OPEN = "open"
     DONE = "done"
 
 
-class TaskScope(str, Enum):
+class TaskScope(StrEnum):
     """Which tasks a list shows. The org is the team."""
 
     MINE = "mine"  # assigned to the caller, or unassigned and created by the caller
