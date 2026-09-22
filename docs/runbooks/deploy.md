@@ -41,13 +41,19 @@ bootstrap root (`deployment/terraform/bootstrap/staging`,
 | `tadas-plan-production` | production | `environment: production-plan` | `refs/heads/release` | read production, plan it |
 | `tadas-deploy-production` | production | `environment: production` | `refs/heads/release` | apply production |
 
-A GitHub job presents `repo:<owner>/<name>:environment:<name>` in its
+A GitHub job presents `repo:<owner>@<owner id>/<name>@<repo id>:environment:<name>` in its
 token only when it declares that environment, and presents its branch
 when it declares none. So the gate on the `production` environment is
 the gate on the credential: a job that has not waited for the reviewer
 never produces the subject the applying role trusts. A staging run,
 which waits for nobody by design, holds a credential in another account,
 and nothing in production's account trusts it.
+
+The repository issues GitHub's immutable OIDC subject
+(`use_immutable_subject` in the repository's OIDC settings), so the
+subject carries the owner's and the repository's ids beside their names,
+and a renamed or recreated repository never matches it. A role that
+expects the name-only form refuses every job with `AccessDenied`.
 
 Each role's permissions stop at what its environment owns: names
 beginning `tadas-<environment>`, secrets under `tadas/<environment>/`,

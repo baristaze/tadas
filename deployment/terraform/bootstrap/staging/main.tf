@@ -7,7 +7,14 @@
 # bucket to be there first, so the script turns it on only when it finds it.
 
 locals {
-  config     = jsondecode(file("${path.module}/../../../cloud/environments.json"))
+  config = jsondecode(file("${path.module}/../../../cloud/environments.json"))
+  # The repository issues GitHub's immutable OIDC subject, which carries
+  # the owner's and the repository's ids beside their names.
+  github_subject_repository = format(
+    "%s@%s/%s@%s",
+    split("/", local.config.github_repository)[0], local.config.github_repository_owner_id,
+    split("/", local.config.github_repository)[1], local.config.github_repository_id,
+  )
   staging    = local.config.environments.staging
   production = local.config.environments.production
 }
@@ -90,7 +97,7 @@ data "aws_iam_policy_document" "build_assume" {
     condition {
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${local.config.github_repository}:environment:staging-build"]
+      values   = ["repo:${local.github_subject_repository}:environment:staging-build"]
     }
 
     condition {

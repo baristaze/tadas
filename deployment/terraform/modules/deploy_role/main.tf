@@ -3,8 +3,8 @@
 #
 # Trust is the first boundary. The subject condition names a GitHub
 # environment, not a branch: a job that declares `environment: staging`
-# presents `repo:<owner>/<name>:environment:staging` and nothing else does,
-# so a job without the environment presents its ref instead and is refused.
+# presents `repo:<owner>@<owner id>/<name>@<repo id>:environment:staging`
+# and nothing else does, so a job without the environment presents its ref instead and is refused.
 # The ref condition is the second: staging runs on `main`, production on
 # `release`, and a token from any other ref is refused whatever environment
 # it declares.
@@ -67,11 +67,14 @@ data "aws_iam_policy_document" "assume" {
     }
 
     # Exactly one subject. A job of another repository, of a fork, or of this
-    # repository without the environment declared does not produce it.
+    # repository without the environment declared does not produce it. The
+    # repository issues GitHub's immutable subject, which carries the owner's
+    # and the repository's ids beside their names:
+    # repo:<owner>@<owner id>/<repo>@<repo id>:environment:<environment>.
     condition {
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${var.github_repository}:environment:${var.github_environment}"]
+      values   = ["repo:${local.github_subject_repository}:environment:${var.github_environment}"]
     }
 
     condition {
@@ -807,4 +810,13 @@ resource "aws_iam_role_policy_attachment" "promote" {
   count      = var.promote_images ? 1 : 0
   role       = aws_iam_role.this.name
   policy_arn = aws_iam_policy.promote[0].arn
+}
+
+locals {
+  # "owner/repo" as the immutable subject spells it: "owner@<id>/repo@<id>".
+  github_subject_repository = format(
+    "%s@%s/%s@%s",
+    split("/", var.github_repository)[0], var.github_repository_owner_id,
+    split("/", var.github_repository)[1], var.github_repository_id,
+  )
 }
