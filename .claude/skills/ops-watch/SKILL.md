@@ -1,6 +1,6 @@
 ---
 name: ops-watch
-description: "Watch one environment of the platform live from a sub-agent: a log tail, the alarms as they fire, and the error and latency signals, batched per interval and capped, with a read-only credential. Run it in a sub-agent the invoking session spawns, because it holds a tail open for the whole window and reports when the window ends or an alarm fires. It applies the first responder rule: an alarm on a platform of one tenant and one user is the developer and is suppressed, not escalated. Never writes."
+description: "Watch one environment of the platform live from a sub-agent: a log tail, the alarms as they fire, and the error and latency signals, batched per interval and capped, with a read-only credential. Run it in a sub-agent the invoking session spawns, because it holds a tail open for the whole window and reports when the window ends or an alarm fires. It applies the first responder rule: in production every alarm is escalated; outside it, an alarm on the team's own traffic is recorded as suppressed. Never writes."
 allowed-tools: Read, Grep, Bash(aws:*), Bash(curl:*), Bash(docker compose:*), Bash(uv run:*)
 ---
 
@@ -36,7 +36,11 @@ is needed.
 
 `--env staging` and `--env production` need the investigate profile
 of that environment, `tadas-<env>-investigate`, which assumes the role
-`tadas-investigate-<env>`. Before any other command, run
+`tadas-investigate-<env>`. A chained session lasts an hour at most, so
+the watch passes the profile to every command and never caches a
+credential: each batch gets a fresh session from the person's sign-in.
+When the sign-in itself has ended, the watch closes its batch, says the
+session ended, and returns; it never asks for a sign-in. Before any other command, run
 
 ```bash
 aws sts get-caller-identity --profile tadas-<env>-investigate
@@ -46,8 +50,8 @@ and check that `Arn` reads
 `arn:aws:sts::<account>:assumed-role/tadas-investigate-<env>/...`.
 Refuse any other identity, the administrator profiles
 (`tadas-staging-admin`, `tadas-prod-admin`) above all, and the bare
-sign-in profiles (`tadas-staging`, `tadas-prod`), whose PowerUserAccess
-is wider than the role. Every `aws` command below carries
+sign-in profiles (`tadas-staging`, `tadas-prod`), whose permission
+sets (PowerUserAccess, TadasReadOnly) are wider than the role. Every `aws` command below carries
 `--profile tadas-<env>-investigate`.
 
 Check the account too: `Account` in the same answer must equal the

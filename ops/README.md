@@ -22,7 +22,8 @@ change is a pull request.
 | Supporter | an agent, or a person | Investigator, plus the operator plane's read of one named org | the investigate profile, plus a read operator identity |
 
 There is no IAM user and no access key. A person signs in through IAM
-Identity Center (`tadas-staging`, `tadas-prod`, PowerUserAccess), and
+Identity Center (`tadas-staging` with PowerUserAccess, `tadas-prod`
+with the read-only TadasReadOnly), and
 the investigate profiles chain from that sign-in, so an agent works
 inside a session a person opened. No skill runs under the sign-in
 itself: it is wider than the investigate role. Everything the investigate roles are

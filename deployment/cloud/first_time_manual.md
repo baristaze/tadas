@@ -151,10 +151,11 @@ Create Identity Center groups:
 
 ```text
 TadasPowerUsers
+TadasReaders
 TadasBootstrapAdmins
 ```
 
-Add `baris.taze` to both during initial setup.
+Add `baris.taze` to all three during initial setup.
 
 ## 10. Create permission sets
 
@@ -165,6 +166,17 @@ Permission set: PowerUserAccess
 AWS managed policy: PowerUserAccess
 Session duration: 12 hours
 ```
+
+Normal production access, which writes nothing:
+
+```text
+Permission set: TadasReadOnly
+AWS managed policy: ReadOnlyAccess
+Inline policy: sts:AssumeRole on arn:aws:iam::*:role/tadas-investigate-*
+Session duration: 12 hours
+```
+
+A person reads production and hands an agent the investigate role; every change to production is a pull request and a release. The inline policy is what lets the `tadas-production-investigate` profile chain from this sign-in.
 
 Temporary bootstrap access:
 
@@ -178,7 +190,7 @@ Session duration: 1 hour
 
 ## 11. Assign access to Tadas accounts
 
-Assign to both `tadas-staging` and `tadas-prod`:
+Assign to `tadas-staging`:
 
 ```text
 TadasPowerUsers
@@ -187,6 +199,18 @@ TadasPowerUsers
 TadasBootstrapAdmins
   -> TadasBootstrapAdmin
 ```
+
+Assign to `tadas-prod`:
+
+```text
+TadasReaders
+  -> TadasReadOnly
+
+TadasBootstrapAdmins
+  -> TadasBootstrapAdmin
+```
+
+The investigate role in each account trusts the permission set `deployment/cloud/environments.json` names for it (`sso_role_name`): `PowerUserAccess` in staging, `TadasReadOnly` in production.
 
 The management account should only receive organization-level admin access:
 
@@ -210,7 +234,7 @@ tadas-staging
   TadasBootstrapAdmin
 
 tadas-prod
-  PowerUserAccess
+  TadasReadOnly
   TadasBootstrapAdmin
 ```
 
@@ -272,7 +296,8 @@ tadas-prod:    557092275199
 Normal profiles use:
 
 ```text
-PowerUserAccess
+tadas-staging -> PowerUserAccess
+tadas-prod    -> TadasReadOnly
 ```
 
 Admin profiles use:

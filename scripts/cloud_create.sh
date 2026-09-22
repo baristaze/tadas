@@ -94,7 +94,7 @@ artifacts_bucket="tadas-artifacts-$account_id"
 
 # The credential is the boundary. This script creates roles and trust, so it
 # runs under the environment's administrator profile and refuses any other:
-# a PowerUserAccess profile cannot write IAM, and another environment's
+# a sign-in profile cannot write IAM, and another environment's
 # administrator is the wrong account.
 profile="${profile:-$admin_profile}"
 [ "$profile" = "$admin_profile" ] || refuse "$environment is created under the $admin_profile profile only (AWS_PROFILE or --profile); it holds '$profile'"

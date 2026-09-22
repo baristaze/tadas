@@ -24,6 +24,11 @@ the platform's.
 
 ## Role and credential
 
+Two identities, both named here: the provisioner, the writing operator
+identity the traffic generator creates its run's tenants under, and the
+investigator's profile, under which the run reads its signals back in
+the cloud.
+
 `--env local` needs the compose stack with the `devx` profile up
 (`make devx-up`) and the env file below. No cloud credential.
 
