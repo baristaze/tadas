@@ -22,12 +22,7 @@ cluster="$(terraform -chdir="$root" output -raw cluster_name)"
 task_definition="$(terraform -chdir="$root" output -raw grant_task_definition_arn)"
 subnets="$(terraform -chdir="$root" output -json private_subnet_ids | jq -r 'join(",")')"
 security_group="$(terraform -chdir="$root" output -raw app_security_group_id)"
-
-# The application's container is the essential one; the telemetry sidecar
-# beside it is not. The backticks are JMESPath's literal, not the shell's.
-# shellcheck disable=SC2016
-container="$(aws ecs describe-task-definition --task-definition "$task_definition" \
-  --query 'taskDefinition.containerDefinitions[?essential==`true`] | [0].name' --output text)"
+container="$(terraform -chdir="$root" output -raw grant_container_name)"
 
 # Each argument as one string, whatever it holds: jq reads them NUL-split
 # from stdin, since an argument that starts with a dash is an option to it.

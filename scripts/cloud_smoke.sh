@@ -4,8 +4,9 @@
 # one authenticated route of the operator plane with it through the edge.
 # deploy-staging.yml and deploy-production.yml run it after the rollout,
 # from the repo root with the deploy role's session and the root
-# initialized. The deploy role reads `tadas-<env>-smoke-token` and no other
-# secret value.
+# initialized. The secret is the root's `operator_token_secret_names.smoke`,
+# `tadas-<env>-smoke-token`; the deploy role reads it and no other secret
+# value.
 #
 #   scripts/cloud_smoke.sh deployment/terraform/environments/staging staging api.staging.tadas.fyi
 #
@@ -29,11 +30,12 @@ echo "::add-mask::$SMOKE_EMAIL"
 
 scripts/cloud_grant.sh "$root" --email "$SMOKE_EMAIL" --mint-token smoke
 
-token="$(aws secretsmanager get-secret-value --secret-id "tadas-$environment-smoke-token" \
+secret="$(terraform -chdir="$root" output -json operator_token_secret_names | jq -er .smoke)"
+token="$(aws secretsmanager get-secret-value --secret-id "$secret" \
   --query SecretString --output text)"
 echo "::add-mask::$token"
 if [ -z "$token" ] || [ "$token" = "None" ]; then
-  echo "::error::tadas-$environment-smoke-token holds no token after the mint"
+  echo "::error::$secret holds no token after the mint"
   exit 1
 fi
 
