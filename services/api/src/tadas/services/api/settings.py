@@ -27,6 +27,17 @@ class ApiSettings(StorageSettings, InfraSettings):
 
     login_rate_limit: int = 10
     login_rate_window_seconds: int = 60
+    # Past the per-address limit, which rides the cache and fails open: a run
+    # of failed sign-ins for one identity makes the next one wait, counted in
+    # the database. The first `sign_in_free_failures` cost nothing; then the
+    # wait starts at the base and doubles, up to the cap.
+    sign_in_free_failures: int = Field(default=3, ge=1)
+    sign_in_delay_base_seconds: float = Field(default=1.0, gt=0)
+    sign_in_delay_cap_seconds: float = Field(default=300.0, gt=0)
+    # How long a sign-in lasts before it must be exchanged for a session, and
+    # how long a session lasts from its exchange, whatever it is used for.
+    login_lifetime_seconds: int = Field(default=600, gt=0)
+    session_lifetime_seconds: int = Field(default=43200, gt=0)
     # Sign-up is open by default: a deployed environment has no other door,
     # since the seeding is local. False closes it, and the route then answers
     # 404 as a route that does not exist would. Its budget is its own, per

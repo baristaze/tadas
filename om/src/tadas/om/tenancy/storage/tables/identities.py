@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from sqlalchemy import Index
 from sqlalchemy.orm import Mapped
 
@@ -10,3 +12,5 @@ class Identities(GlobalIdentifiableMixin, TrackableMixin, Base):
     email: Mapped[str]
     password_hash: Mapped[str]
     operator_role: Mapped[str | None]
+    failed_sign_ins: Mapped[int]
+    last_failed_sign_in_at: Mapped[datetime | None]

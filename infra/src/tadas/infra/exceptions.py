@@ -67,6 +67,10 @@ class InvalidBucketKey(InfraValidationFailed):
     code = "invalid_bucket_key"
 
 
+class InvalidSecretName(InfraValidationFailed):
+    code = "invalid_secret_name"
+
+
 class SecretNotFound(InfraNotFound):
     code = "secret_not_found"
 

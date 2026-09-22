@@ -6,7 +6,13 @@ import aioboto3
 
 from tadas.infra.aws_clients import AwsClientHolder, client_config
 from tadas.infra.aws_errors import ClientError, error_code, translated
-from tadas.infra.buckets import BlobNotFound, Buckets, BucketsInterface, object_key
+from tadas.infra.buckets import (
+    BlobNotFound,
+    Buckets,
+    BucketsInterface,
+    PresignedUpload,
+    object_key,
+)
 
 NOT_FOUND_CODES = frozenset({"404", "NoSuchKey", "NotFound"})
 MAX_KEYS_PER_CALL = 1000
@@ -121,20 +127,33 @@ class BucketsS3Impl(BucketsInterface):
                 ExpiresIn=int(ttl.total_seconds()),
             )
 
-    async def presign_put(
-        self, org_id: UUID, bucket: Buckets, key: str, content_type: str, ttl: timedelta
-    ) -> str | None:
-        with translated("s3", "presign_put"):
+    async def presign_upload(
+        self,
+        org_id: UUID,
+        bucket: Buckets,
+        key: str,
+        content_type: str,
+        max_bytes: int,
+        ttl: timedelta,
+    ) -> PresignedUpload | None:
+        """A presigned POST, not a PUT: a signed PUT can fix a length but never
+        bound one, and the policy of a POST carries both conditions, which
+        the store enforces on the body it receives."""
+        if max_bytes <= 0:
+            raise ValueError(f"an upload is bounded by a positive size, not {max_bytes}")
+        with translated("s3", "presign_upload"):
             s3 = self._client()
-            return await s3.generate_presigned_url(
-                "put_object",
-                Params={
-                    "Bucket": self._bucket(bucket),
-                    "Key": object_key(org_id, key),
-                    "ContentType": content_type,
-                },
+            post = await s3.generate_presigned_post(
+                Bucket=self._bucket(bucket),
+                Key=object_key(org_id, key),
+                Fields={"Content-Type": content_type},
+                Conditions=[
+                    {"Content-Type": content_type},
+                    ["content-length-range", 1, max_bytes],
+                ],
                 ExpiresIn=int(ttl.total_seconds()),
             )
+        return PresignedUpload(url=post["url"], fields=tuple(sorted(post["fields"].items())))
 
     def describe(self) -> str:
         return f"buckets=s3({self._endpoint_url or self._region})"

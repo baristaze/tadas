@@ -10,8 +10,11 @@ from typing import Any
 import pytest
 from botocore.exceptions import ClientError
 
+from tadas.infra.base import new_id
 from tadas.infra.exceptions import BackendFailed
 from tadas.infra.secrets.aws import SecretsAwsImpl
+
+ORG = new_id()
 
 
 def client_error(code: str) -> ClientError:
@@ -89,42 +92,42 @@ async def secrets(client: RecordingClient) -> SecretsAwsImpl:
 
 
 async def test_has_describes_and_never_fetches_the_value() -> None:
-    store = RecordingClient({"tadas/present"})
+    store = RecordingClient({f"tadas/org/{ORG}/present"})
     impl = await secrets(store)
-    assert await impl.has("present") is True
-    assert await impl.has("absent") is False
+    assert await impl.has(ORG, "present") is True
+    assert await impl.has(ORG, "absent") is False
     assert store.calls == [
-        ("describe_secret", "tadas/present"),
-        ("describe_secret", "tadas/absent"),
+        ("describe_secret", f"tadas/org/{ORG}/present"),
+        ("describe_secret", f"tadas/org/{ORG}/absent"),
     ]
 
 
 async def test_put_creates_and_falls_back_to_a_new_version() -> None:
-    store = RecordingClient({"tadas/present"})
+    store = RecordingClient({f"tadas/org/{ORG}/present"})
     impl = await secrets(store)
-    await impl.put("fresh", "v1")
-    await impl.put("present", "v2")
+    await impl.put(ORG, "fresh", "v1")
+    await impl.put(ORG, "present", "v2")
     assert store.calls == [
-        ("create_secret", "tadas/fresh"),
-        ("create_secret", "tadas/present"),
-        ("put_secret_value", "tadas/present"),
+        ("create_secret", f"tadas/org/{ORG}/fresh"),
+        ("create_secret", f"tadas/org/{ORG}/present"),
+        ("put_secret_value", f"tadas/org/{ORG}/present"),
     ]
 
 
 async def test_any_other_answer_to_has_is_a_backend_failure() -> None:
     impl = await secrets(RecordingClient(set(), describe_fails_with="AccessDeniedException"))
     with pytest.raises(BackendFailed) as raised:
-        await impl.has("x")
+        await impl.has(ORG, "x")
     assert raised.value.message == "secretsmanager has failed with AccessDeniedException"
 
 
 async def test_delete_is_idempotent_like_the_local_twin() -> None:
-    store = RecordingClient({"tadas/present"})
+    store = RecordingClient({f"tadas/org/{ORG}/present"})
     impl = await secrets(store)
-    await impl.delete("present")
-    await impl.delete("present")
+    await impl.delete(ORG, "present")
+    await impl.delete(ORG, "present")
     assert store.existing == set()
     assert store.calls == [
-        ("delete_secret", "tadas/present"),
-        ("delete_secret", "tadas/present"),
+        ("delete_secret", f"tadas/org/{ORG}/present"),
+        ("delete_secret", f"tadas/org/{ORG}/present"),
     ]

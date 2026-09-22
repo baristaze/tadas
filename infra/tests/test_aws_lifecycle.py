@@ -58,8 +58,8 @@ async def exercise(queues: QueueSqsImpl, buckets: BucketsS3Impl, secrets: Secret
     await queues.delete(Queues.WEBHOOKS, "receipt")
     await buckets.put(new_id(), Buckets.EXPORTS, "k", b"", "text/plain")
     await buckets.exists(new_id(), Buckets.EXPORTS, "k")
-    await secrets.get("token")
-    await secrets.delete("token")
+    await secrets.get(new_id(), "token")
+    await secrets.delete(new_id(), "token")
 
 
 async def test_one_client_per_impl_for_any_number_of_calls() -> None:

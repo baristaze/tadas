@@ -16,7 +16,7 @@ from tadas.services.api.settings import ApiSettings
 PREFIX = ApiSettings.model_config.get("env_prefix", "")
 
 NOT_A_KNOB = {
-    "secret_overrides": "the TADAS_SECRET_<NAME> family, documented by its example line",
+    "secret_overrides": "the TADAS_SECRET_<ORG>_<NAME> family, documented by its example line",
 }
 
 LOCAL_DEFAULT_SERVES_THE_CLOUD = {
@@ -55,6 +55,11 @@ LOCAL_DEFAULT_SERVES_THE_CLOUD = {
     "version": "the image carries it",
     "login_rate_limit": "the local budget is the budget",
     "login_rate_window_seconds": "the local window is the window",
+    "sign_in_free_failures": "the local run is the run",
+    "sign_in_delay_base_seconds": "the local delay is the delay",
+    "sign_in_delay_cap_seconds": "the local cap is the cap",
+    "login_lifetime_seconds": "the local lifetime is the lifetime",
+    "session_lifetime_seconds": "the local lifetime is the lifetime",
     "signup_enabled": "open everywhere: a deployed environment has no other door",
     "signup_rate_limit": "the local budget is the budget",
     "signup_rate_window_seconds": "the local window is the window",

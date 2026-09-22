@@ -52,11 +52,59 @@ async def test_local_impl_cannot_presign(tmp_path: Path) -> None:
     buckets = BucketsLocalImpl(tmp_path)
     assert await buckets.presign_get(new_id(), Buckets.EXPORTS, "k", timedelta(minutes=1)) is None
     assert (
-        await buckets.presign_put(
-            new_id(), Buckets.EXPORTS, "k", "text/plain", timedelta(minutes=1)
+        await buckets.presign_upload(
+            new_id(), Buckets.EXPORTS, "k", "text/plain", 1024, timedelta(minutes=1)
         )
         is None
     )
+
+
+async def test_a_presigned_upload_is_bounded_by_size_and_type() -> None:
+    """The policy the store enforces names the type and the largest body; it is
+    signed here, with no call to the store."""
+    import base64
+    import json
+
+    session = aioboto3.Session(
+        aws_access_key_id="k", aws_secret_access_key="s", region_name="us-west-2"
+    )
+    buckets = BucketsS3Impl(
+        session,
+        endpoint_url=None,
+        region="us-west-2",
+        bucket_prefix="t",
+        timeout=timedelta(seconds=1),
+    )
+    await buckets.start()
+    org = new_id()
+    upload = await buckets.presign_upload(
+        org, Buckets.USER_FILE_UPLOADS, "a.png", "image/png", 5_000_000, timedelta(minutes=5)
+    )
+    await buckets.close()
+    assert upload is not None
+    fields = dict(upload.fields)
+    assert fields["key"] == f"{org}/a.png"
+    assert fields["Content-Type"] == "image/png"
+    policy = json.loads(base64.b64decode(fields["policy"]))
+    assert ["content-length-range", 1, 5_000_000] in policy["conditions"]
+    assert {"Content-Type": "image/png"} in policy["conditions"]
+
+
+async def test_an_unbounded_upload_is_refused() -> None:
+    session = aioboto3.Session(
+        aws_access_key_id="k", aws_secret_access_key="s", region_name="us-west-2"
+    )
+    buckets = BucketsS3Impl(
+        session,
+        endpoint_url=None,
+        region="us-west-2",
+        bucket_prefix="t",
+        timeout=timedelta(seconds=1),
+    )
+    with pytest.raises(ValueError, match="bounded"):
+        await buckets.presign_upload(
+            new_id(), Buckets.EXPORTS, "k", "text/plain", 0, timedelta(minutes=1)
+        )
 
 
 async def listing_is_bounded_lexical_and_resumes_after(buckets: BucketsInterface) -> None:

@@ -1,11 +1,12 @@
 from datetime import timedelta
 from typing import Any
+from uuid import UUID
 
 import aioboto3
 
 from tadas.infra.aws_clients import AwsClientHolder, client_config
 from tadas.infra.aws_errors import ClientError, error_code, translated
-from tadas.infra.secrets import SecretNotFound, SecretsInterface
+from tadas.infra.secrets import SecretNotFound, SecretsInterface, scoped_name
 
 
 class SecretsAwsImpl(SecretsInterface):
@@ -28,51 +29,51 @@ class SecretsAwsImpl(SecretsInterface):
     def _client(self) -> Any:
         return self._holder.client()
 
-    def _name(self, name: str) -> str:
-        return f"{self._name_prefix}{name}"
+    def _name(self, org_id: UUID, name: str) -> str:
+        return f"{self._name_prefix}{scoped_name(org_id, name)}"
 
-    async def get(self, name: str) -> str:
+    async def get(self, org_id: UUID, name: str) -> str:
         with translated("secretsmanager", "get"):
             try:
-                response = await self._client().get_secret_value(SecretId=self._name(name))
+                response = await self._client().get_secret_value(SecretId=self._name(org_id, name))
             except ClientError as error:
                 if error_code(error) == "ResourceNotFoundException":
                     raise SecretNotFound(name, "aws secrets manager") from None
                 raise
         return response["SecretString"]
 
-    async def has(self, name: str) -> bool:
+    async def has(self, org_id: UUID, name: str) -> bool:
         """Existence is metadata: the value never leaves the store for a
         question that does not need it."""
         with translated("secretsmanager", "has"):
             try:
-                await self._client().describe_secret(SecretId=self._name(name))
+                await self._client().describe_secret(SecretId=self._name(org_id, name))
             except ClientError as error:
                 if error_code(error) == "ResourceNotFoundException":
                     return False
                 raise
         return True
 
-    async def put(self, name: str, value: str) -> None:
+    async def put(self, org_id: UUID, name: str, value: str) -> None:
         """Create, and on the store saying it exists, write a new version:
         one call in the common case and no window between a read and a
         write for another writer to slip into."""
         with translated("secretsmanager", "put"):
             client = self._client()
             try:
-                await client.create_secret(Name=self._name(name), SecretString=value)
+                await client.create_secret(Name=self._name(org_id, name), SecretString=value)
             except ClientError as error:
                 if error_code(error) != "ResourceExistsException":
                     raise
-                await client.put_secret_value(SecretId=self._name(name), SecretString=value)
+                await client.put_secret_value(SecretId=self._name(org_id, name), SecretString=value)
 
-    async def delete(self, name: str) -> None:
+    async def delete(self, org_id: UUID, name: str) -> None:
         """Idempotent, as the local twin is: a secret that is not there is
         already deleted."""
         with translated("secretsmanager", "delete"):
             try:
                 await self._client().delete_secret(
-                    SecretId=self._name(name), ForceDeleteWithoutRecovery=True
+                    SecretId=self._name(org_id, name), ForceDeleteWithoutRecovery=True
                 )
             except ClientError as error:
                 if error_code(error) != "ResourceNotFoundException":

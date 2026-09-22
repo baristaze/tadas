@@ -55,6 +55,23 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
         self._require_email_free(identity)
         self._identities[identity.id] = identity
 
+    async def record_failed_sign_in(self, identity_id: UUID, at: datetime) -> None:
+        identity = self._identities.get(identity_id)
+        if identity is not None:
+            self._identities[identity_id] = identity.model_copy(
+                update={
+                    "failed_sign_ins": identity.failed_sign_ins + 1,
+                    "last_failed_sign_in_at": at,
+                }
+            )
+
+    async def clear_failed_sign_ins(self, identity_id: UUID) -> None:
+        identity = self._identities.get(identity_id)
+        if identity is not None:
+            self._identities[identity_id] = identity.model_copy(
+                update={"failed_sign_ins": 0, "last_failed_sign_in_at": None}
+            )
+
     def _require_email_free(self, identity: Identity) -> None:
         self._require_free(
             self._identities.values(),

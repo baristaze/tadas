@@ -3,7 +3,7 @@ from datetime import timedelta
 from pathlib import Path
 from uuid import UUID
 
-from tadas.infra.buckets import BlobNotFound, Buckets, BucketsInterface, object_key
+from tadas.infra.buckets import BlobNotFound, Buckets, BucketsInterface, PresignedUpload, object_key
 
 
 class BucketsLocalImpl(BucketsInterface):
@@ -74,9 +74,15 @@ class BucketsLocalImpl(BucketsInterface):
     ) -> str | None:
         return None
 
-    async def presign_put(
-        self, org_id: UUID, bucket: Buckets, key: str, content_type: str, ttl: timedelta
-    ) -> str | None:
+    async def presign_upload(
+        self,
+        org_id: UUID,
+        bucket: Buckets,
+        key: str,
+        content_type: str,
+        max_bytes: int,
+        ttl: timedelta,
+    ) -> PresignedUpload | None:
         return None
 
     def describe(self) -> str:

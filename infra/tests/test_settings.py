@@ -12,7 +12,7 @@ from tadas.infra.impl.settings import SECRET_ENV_PREFIX, InfraSettings
 PREFIX = InfraSettings.model_config.get("env_prefix", "")
 
 NOT_A_KNOB = {
-    "secret_overrides": f"the {SECRET_ENV_PREFIX}<NAME> family, documented by its example line",
+    "secret_overrides": f"the {SECRET_ENV_PREFIX}<ORG>_<NAME> family, shown by its example line",
 }
 
 
@@ -34,7 +34,11 @@ def documented_knobs(env_example: str) -> set[str]:
 
 def test_every_infra_setting_is_in_env_example() -> None:
     documented = documented_knobs((repository_root() / ".env.example").read_text())
-    assert f"{SECRET_ENV_PREFIX}EXAMPLE_TOKEN" in documented
+    # The override family is a tenant's: its example names the org in hex.
+    assert any(
+        re.fullmatch(rf"{SECRET_ENV_PREFIX}[0-9A-F]{{32}}_EXAMPLE_TOKEN", knob)
+        for knob in documented
+    )
     missing = sorted(
         f"{PREFIX}{field.upper()}"
         for field in InfraSettings.model_fields

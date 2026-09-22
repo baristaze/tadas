@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from tadas.infra.exceptions import InfraException
-from tadas.om.exceptions import PlatformException
+from tadas.om.exceptions import PlatformException, SignInDelayed
 from tadas.services.api.gateway.envelope import INTERNAL_ERROR, error_response
 from tadas.services.api.gateway.observability import request_id_of
 from tadas.services.api.gateway.ratelimit import RateLimited
@@ -60,7 +60,7 @@ def register_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(PlatformException)
     async def platform_exception(request: Request, exc: PlatformException) -> JSONResponse:
         headers = None
-        if isinstance(exc, RateLimited):
+        if isinstance(exc, RateLimited | SignInDelayed):
             headers = {"Retry-After": str(max(1, int(exc.retry_after.total_seconds())))}
         return presented(request, exc, headers)
 
