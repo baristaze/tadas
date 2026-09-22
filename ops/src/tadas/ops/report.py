@@ -1,7 +1,13 @@
 """What an operator reads after a run: requests by route and status, the
-p50, p95, and p99 by route and over everything, the error ratio, the sessions
-completed, and how long it all took. A sample is one request as the transport
-saw it; the report is pure arithmetic over the samples."""
+p50, p95, and p99 by route and over two groups of requests, the error ratio,
+the sessions completed, and how long it all took. A sample is one request as
+the transport saw it; the report is pure arithmetic over the samples.
+
+The two groups are the working requests and the sign-in and sign-out that
+carry them. They are split because they measure different things: sign-in
+verifies a password on purpose and is the slowest route the generator calls,
+and a run makes one of each per person while it makes hundreds of the rest.
+A p95 over both is a p95 of the mix, and the mix moves with the profile."""
 
 import json
 import math
@@ -10,6 +16,10 @@ from collections.abc import Iterable, Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import Any
+
+AUTH_ROUTES = frozenset({"/v1/auth/login", "/v1/auth/sessions", "/v1/auth/logout"})
+"""Sign-in and sign-out. Every other route a run calls is a working request:
+the task routes, the event stream, and the socket's ticket."""
 
 
 @dataclass(frozen=True)
@@ -32,6 +42,12 @@ class Sample:
         the request and is reported by status, not as an error."""
         return self.status == 0 or self.status >= 500
 
+    @property
+    def is_auth(self) -> bool:
+        """A sign-in or a sign-out, which the report keeps beside the working
+        requests instead of in them."""
+        return self.route in AUTH_ROUTES
+
 
 def percentile(values: Sequence[float], p: float) -> float:
     """Nearest rank: the value at rank ceil(p/100 * n), so a percentile is
@@ -52,6 +68,42 @@ class RouteLine:
     p50_ms: float
     p95_ms: float
     p99_ms: float
+
+
+@dataclass(frozen=True)
+class Group:
+    """One set of requests totalled on its own: how many there were, how many
+    failed, and the percentiles over them."""
+
+    requests: int
+    errors: int
+    error_ratio: float
+    p50_ms: float
+    p95_ms: float
+    p99_ms: float
+
+    @classmethod
+    def of(cls, samples: Iterable[Sample]) -> Group:
+        times: list[float] = []
+        errors = 0
+        for sample in samples:
+            times.append(sample.elapsed_ms)
+            errors += sample.is_error
+        return cls(
+            requests=len(times),
+            errors=errors,
+            error_ratio=errors / len(times) if times else 0.0,
+            p50_ms=percentile(times, 50),
+            p95_ms=percentile(times, 95),
+            p99_ms=percentile(times, 99),
+        )
+
+    def line(self, name: str) -> str:
+        return (
+            f"{name}: {self.requests} requests, {self.errors} errors "
+            f"({self.error_ratio * 100:.2f}%), p50 {self.p50_ms:.1f} ms, "
+            f"p95 {self.p95_ms:.1f} ms, p99 {self.p99_ms:.1f} ms"
+        )
 
 
 @dataclass(frozen=True)
@@ -77,9 +129,12 @@ class Report:
     requests: int
     errors: int
     error_ratio: float
-    p50_ms: float
-    p95_ms: float
-    p99_ms: float
+    working: Group
+    """The task routes, the event stream, and the socket's ticket: the
+    requests a target's p95 judges."""
+    auth: Group
+    """The sign-ins and sign-outs, one of each per person for the whole run,
+    reported beside the working requests and never mixed into them."""
     notes: list[str] = field(default_factory=list)
 
     @classmethod
@@ -95,11 +150,14 @@ class Report:
         notes: Sequence[str] = (),
     ) -> Report:
         by_line: dict[tuple[str, str, int], list[float]] = defaultdict(list)
-        every: list[float] = []
+        every: list[Sample] = []
+        working: list[Sample] = []
+        auth: list[Sample] = []
         errors = 0
         for sample in samples:
             by_line[(sample.method, sample.route, sample.status)].append(sample.elapsed_ms)
-            every.append(sample.elapsed_ms)
+            every.append(sample)
+            (auth if sample.is_auth else working).append(sample)
             errors += sample.is_error
         routes = [
             RouteLine(
@@ -123,9 +181,8 @@ class Report:
             requests=len(every),
             errors=errors,
             error_ratio=errors / len(every) if every else 0.0,
-            p50_ms=percentile(every, 50),
-            p95_ms=percentile(every, 95),
-            p99_ms=percentile(every, 99),
+            working=Group.of(working),
+            auth=Group.of(auth),
             notes=list(notes),
         )
 
@@ -135,7 +192,9 @@ class Report:
         return json.dumps(data, indent=2) + "\n"
 
     def table(self) -> str:
-        """The stdout view: one line per route and status, then the totals."""
+        """The stdout view: one line per route and status, then the totals,
+        the working requests a target judges, and the sign-in and sign-out
+        beside them."""
         header = (
             f"{'method':<7} {'route':<34} {'status':>6} {'count':>6} "
             f"{'p50 ms':>8} {'p95 ms':>8} {'p99 ms':>8}"
@@ -155,8 +214,9 @@ class Report:
             )
         lines.append("-" * len(header))
         lines.append(
-            f"requests {self.requests}, errors {self.errors} ({self.error_ratio * 100:.2f}%), "
-            f"p50 {self.p50_ms:.1f} ms, p95 {self.p95_ms:.1f} ms, p99 {self.p99_ms:.1f} ms"
+            f"requests {self.requests}, errors {self.errors} ({self.error_ratio * 100:.2f}%)"
         )
+        lines.append(self.working.line("working, the requests a target judges"))
+        lines.append(self.auth.line("sign-in and sign-out, reported beside them"))
         lines.extend(f"note: {note}" for note in self.notes)
         return "\n".join(lines) + "\n"

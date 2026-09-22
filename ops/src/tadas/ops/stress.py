@@ -6,7 +6,7 @@ passes or fails against the target. The numbers a system is held to are the
 system's, and they live in the scenario file, not here."""
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -65,6 +65,18 @@ def parse_scenario(data: Mapping[str, Any]) -> Scenario:
     )
 
 
+def with_duration(scenario: Scenario, seconds: float) -> Scenario:
+    """The same scenario over another window, which is what a caller that
+    names a duration asks for: a shorter run of the shape the file states.
+    A ramp longer than the run is cut to it, since a ramp that never reaches
+    the concurrency is not a ramp. The target does not move."""
+    if seconds <= 0:
+        raise ValueError("the duration must be positive")
+    return replace(
+        scenario, duration_seconds=seconds, ramp_seconds=min(scenario.ramp_seconds, seconds)
+    )
+
+
 def load_scenario(path: Path) -> Scenario:
     data = yaml.safe_load(path.read_text())
     if not isinstance(data, Mapping):
@@ -102,10 +114,14 @@ class Verdict:
         lines = [
             f"stress {scenario.name}: profile {scenario.profile.name}, "
             f"{scenario.duration_seconds:.0f}s with a {scenario.ramp_seconds:.0f}s ramp",
-            f"target: p95 <= {scenario.target.p95_ms:.0f} ms, "
-            f"error ratio <= {scenario.target.error_ratio:.4f}",
-            f"measured: p95 {report.p95_ms:.1f} ms, error ratio {report.error_ratio:.4f} "
-            f"over {report.requests} requests, {report.sessions.completed} sessions completed",
+            f"target: p95 <= {scenario.target.p95_ms:.0f} ms over the working requests, "
+            f"error ratio <= {scenario.target.error_ratio:.4f} over every request",
+            f"measured: p95 {report.working.p95_ms:.1f} ms over {report.working.requests} "
+            f"working requests, error ratio {report.error_ratio:.4f} over {report.requests} "
+            f"requests, {report.sessions.completed} sessions completed",
+            f"beside it: {report.auth.requests} sign-ins and sign-outs, "
+            f"p50 {report.auth.p50_ms:.1f} ms, p95 {report.auth.p95_ms:.1f} ms, "
+            "reported and not judged",
             "signals: "
             + (
                 f"{readback.requests:.0f} requests counted, {readback.server_errors or 0:.0f} "
@@ -128,12 +144,20 @@ def verdict(scenario: Scenario, report: Report, readback: Readback) -> Verdict:
     platform counted the window, and its own 5xx ratio meets the target too.
     A run that made no requests fails: it proved nothing. The error tracker
     is not one of the signals the verdict holds to, so an environment that
-    names none still passes or fails on the counter it did read."""
+    names none still passes or fails on the counter it did read.
+
+    The p95 is the working requests': the task and event routes, and the
+    socket's ticket. A run makes one sign-in and one sign-out per person, and
+    sign-in verifies a password on purpose, so holding a target to a p95 over
+    both would judge how often the generator signs in. They are reported
+    beside the verdict, with their own p95. The error ratio is over every
+    request, sign-in and sign-out included: a refused sign-in is a refusal
+    whoever made it."""
     reasons: list[str] = []
     if report.requests == 0:
         reasons.append("no requests were made")
-    if report.p95_ms > scenario.target.p95_ms:
-        reasons.append(f"p95 {report.p95_ms:.1f} ms over {scenario.target.p95_ms:.0f} ms")
+    if report.working.p95_ms > scenario.target.p95_ms:
+        reasons.append(f"p95 {report.working.p95_ms:.1f} ms over {scenario.target.p95_ms:.0f} ms")
     if report.error_ratio > scenario.target.error_ratio:
         reasons.append(
             f"error ratio {report.error_ratio:.4f} over {scenario.target.error_ratio:.4f}"
