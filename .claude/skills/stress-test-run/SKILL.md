@@ -11,6 +11,9 @@ then the signals, then a verdict. The target is the scenario's unless
 the run states its own; either way it is stated before the run, and
 the verdict names it and where it came from.
 
+Read `.claude/skills/_shared/ops-preamble.md` before the first step:
+the profiles, the account check, and the env file are there.
+
 ## Input
 
 `<name> --env local|staging|production [--p95-ms <ms>] [--error-ratio <ratio>] [--report <path>]`
@@ -38,47 +41,22 @@ the cloud.
 `--env local` needs the compose stack with the `devx` profile up
 (`make devx-up`) and the env file below. No cloud credential.
 
-`--env staging` and `--env production` need the investigate profile
-of that environment, `tadas-<env>-investigate`, to read the signals
-back, verified before anything else with
+`--env staging` and `--env production` run under the investigate
+profile of that environment, `tadas-<env>-investigate`, to read the
+signals back, checked with `sts get-caller-identity` before anything
+else as the preamble states. Refuse any profile wider than the
+investigate role. The env file gives the generator the provisioner's
+token (`TADAS_PROVISIONER_TOKEN` against `TADAS_API_URL`, the file's
+one `write` token, which creates the run's own tenants and removes
+them when the run ends), and the signals their URLs and token. In
+production the provisioner's entry is disabled between runs; the
+person enables it, with its token, and disables it again by
+dispatching `grant-operator.yml`, as `ops-simulate-traffic` states.
 
-```bash
-aws sts get-caller-identity --profile tadas-<env>-investigate
-```
-
-and refused under any other identity, the administrator profiles
-(`tadas-staging-admin`, `tadas-prod-admin`) above all, and the bare
-sign-in profiles (`tadas-staging`, `tadas-prod`), whose PowerUserAccess
-is wider than the role. The env file `~/.config/tadas/ops/<env>.env`,
-owner-only and outside the repository, gives the generator the
-provisioner's token (`TADAS_PROVISIONER_TOKEN` against `TADAS_API_URL`,
-the file's one `write` token, which creates the run's own tenants and
-removes them when the run ends), and the signals their URLs and token.
-The file holds no password and no TOTP secret: an agent never signs in
-with a password. In production the provisioner's entry is disabled
-between runs; the person enables it, with its token, and disables it
-again by dispatching `grant-operator.yml`, as `ops-simulate-traffic`
-states.
-
-Check the account too: `Account` in the same answer must equal the
-environment's `account_id` in `deployment/cloud/environments.json`
-(read the file; the value is `.environments.<env>.account_id`). Stop on
-a mismatch: the right role in the wrong account is the wrong credential.
-
-Never read the env file, with `Read`, `cat`, or anything else: its
-values stay out of this conversation. `tadas-ops` reads the file
-itself from `--env`, and a command that needs a value from it
-sources the file and makes the call in the same command, because
-shell state does not persist between calls. Never print a token.
-The provisioner's token carries one permission and expires within
-the hour. When the generator reports it refused or expired, stop and
-ask the person to refresh it: in the cloud by dispatching
-`grant-operator.yml` with `mint_token: provisioner`, then running
-`uv run tadas-ops token --env <env> --identity provisioner` in their
-own terminal, which copies the token the grant job wrote under their
-own sign-in (in production with `--profile tadas-prod-power`), never
-under an investigate profile, which reads no secret. Locally, a run
-without a provisioner token in `local.env` takes `--orgs 0`.
+Never read the env file; a command that needs a value sources it in
+the same command, and `tadas-ops` reads it itself from `--env`. Never
+print a token. When the generator reports the provisioner's token
+refused or expired, stop, and name the refresh the preamble gives.
 
 ## Procedure
 

@@ -13,6 +13,9 @@ complete, reopen, move, list again, delete one, read the events, one
 socket that sees its own change, sign out. The profiles differ by
 tenants, members, concurrency, and think time.
 
+Read `.claude/skills/_shared/ops-preamble.md` before the first step:
+the profiles, the account check, and the env file are there.
+
 ## Input
 
 `--env local|staging|production --profile light|regular|heavy|stress [--duration <seconds>] [--orgs <n>] [--report <path>]`
@@ -42,43 +45,22 @@ any signal it reads back.
 below. No cloud credential.
 
 `--env staging` and `--env production` need two things. The
-investigate profile of that environment, `tadas-<env>-investigate`,
-to read the signals back, verified with
-
-```bash
-aws sts get-caller-identity --profile tadas-<env>-investigate
-```
-
-and refused under any other identity, the administrator profiles
-(`tadas-staging-admin`, `tadas-prod-admin`) above all, and the bare
-sign-in profiles (`tadas-staging`, `tadas-prod`), whose permission
-sets (PowerUserAccess, ReadOnlyAccess) are wider than the role. And the
-env file `~/.config/tadas/ops/<env>.env`, owner-only and outside the
-repository, whose provisioner token (`TADAS_PROVISIONER_TOKEN` against
-`TADAS_API_URL`) creates the tenants the sessions run in; the
-provisioner's allowlist entry is `write`, its token is the one write
-token the file holds, and only this generator uses it. The tenants it
-creates are the generator's own, named `ops-<run id>-<n>`, so no real
-tenant is touched, and removed when the run ends. The file holds no
-password and no TOTP secret: an agent never signs in with a password.
-A cloud run always provisions its tenants, so it always needs the
+investigate profile of that environment, `tadas-<env>-investigate`, to
+read the signals back, checked with `sts get-caller-identity` as the
+preamble states. Refuse any profile wider than the investigate role.
+And the env file's provisioner token (`TADAS_PROVISIONER_TOKEN`
+against `TADAS_API_URL`), which creates the tenants the sessions run
+in: the provisioner's allowlist entry is `write`, its token is the one
+write token the file holds, and only this generator uses it. The
+tenants it creates are the generator's own, named `ops-<run id>-<n>`,
+so no real tenant is touched, and removed when the run ends. A cloud
+run always provisions its tenants, so it always needs the
 provisioner's token.
 
-Never read the env file, with `Read`, `cat`, or anything else: its
-values stay out of this conversation. `tadas-ops` reads the file
-itself from `--env`, and refuses a file its group or anyone else can
-read. A command that needs a value from it sources the file and makes
-the call in the same command, because shell state does not persist
-between calls. Never print a token. The provisioner's token carries
-one permission and expires within the hour. When the generator reports
-it refused or expired, stop and ask the person to refresh it: in the
-cloud by dispatching `grant-operator.yml` with `mint_token:
-provisioner`, then running `uv run tadas-ops token --env <env>
---identity provisioner` in their own terminal, which copies the token
-the grant job wrote under their own sign-in (in production with
-`--profile tadas-prod-power`), never under an investigate profile,
-which reads no secret. Locally, a run without a provisioner token in
-`local.env` takes `--orgs 0`.
+Never read the env file; a command that needs a value sources it in
+the same command, and `tadas-ops` reads it itself from `--env`. Never
+print a token. When the generator reports the provisioner's token
+refused or expired, stop, and name the refresh the preamble gives.
 
 In production the provisioner's allowlist entry is disabled between
 runs, so no standing writing credential waits there. A run with
@@ -90,11 +72,6 @@ production --identity provisioner --profile tadas-prod-power` in their
 own terminal, and to disable it after, by dispatching it again with
 `disable`; this skill holds no role that does either, and says which
 dispatch is due.
-
-Check the account too: `Account` in the same answer must equal the
-environment's `account_id` in `deployment/cloud/environments.json`
-(read the file; the value is `.environments.<env>.account_id`). Stop on
-a mismatch: the right role in the wrong account is the wrong credential.
 
 ## Procedure
 
