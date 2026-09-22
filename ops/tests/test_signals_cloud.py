@@ -114,34 +114,59 @@ class FakeSession:
         return open()
 
 
-def sentry(request: httpx.Request) -> httpx.Response:
-    assert request.headers["authorization"] == "Bearer stok"
-    if request.url.path == "/api/0/organizations/acme/issues/":
-        return httpx.Response(200, json=[{"id": 99, "title": "boom"}])
-    if request.url.path == "/api/0/issues/99/events/":
-        return httpx.Response(200, json=[{"id": "e1", "tags": {"request_id": RID}}])
-    return httpx.Response(404)
+class FakeSentry:
+    """One project for the product, holding an event of staging and an event
+    of production under the same issue, which is what a shared project does.
+    The issue search honours `environment:<name>` the way the tracker does."""
+
+    def __init__(self) -> None:
+        self.requests: list[httpx.Request] = []
+        self.events = [
+            {"id": "e1", "tags": {"request_id": RID, "environment": "staging"}},
+            {"id": "e2", "tags": {"request_id": RID, "environment": "production"}},
+        ]
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        self.requests.append(request)
+        assert request.headers["authorization"] == "Bearer stok"
+        if request.url.path == "/api/0/projects/acme/tadas/issues/":
+            query = request.url.params["query"]
+            wanted = [e for e in self.events if f"environment:{e['tags']['environment']}" in query]
+            return httpx.Response(200, json=[{"id": 99, "title": "boom"}] if wanted else [])
+        if request.url.path == "/api/0/issues/99/events/":
+            return httpx.Response(200, json=self.events)
+        return httpx.Response(404)
+
+    def queries(self) -> list[str]:
+        return [
+            r.url.params["query"]
+            for r in self.requests
+            if r.url.path.endswith("/issues/") and "query" in r.url.params
+        ]
 
 
-def reader(session: FakeSession) -> SignalsCloudImpl:
+def reader(session: FakeSession, *, environment: str = "staging") -> SignalsCloudImpl:
     slept: list[float] = []
 
     async def sleep(seconds: float) -> None:
         slept.append(seconds)
 
+    sentry = FakeSentry()
     impl = SignalsCloudImpl(
-        environment="staging",
-        profile="tadas-staging-investigate",
+        environment=environment,
+        profile=f"tadas-{environment}-investigate",
         region="us-east-1",
         sentry_url="https://sentry.example.test",
         sentry_token="stok",
         sentry_org="acme",
+        sentry_project="tadas",
         session=session,
         transport=httpx.MockTransport(sentry),
         now=lambda: NOW,
         sleep=sleep,
     )
     impl.slept = slept  # type: ignore[attr-defined]
+    impl.sentry = sentry  # type: ignore[attr-defined]
     return impl
 
 
@@ -214,7 +239,7 @@ async def test_the_trace_is_filtered_on_the_annotation() -> None:
     assert "annotation tadas_request_id" in reader(session).describe()
 
 
-async def test_the_error_event_reads_sentry_under_the_token() -> None:
+async def test_the_error_event_reads_the_products_project_for_this_environment() -> None:
     impl = reader(FakeSession())
     assert impl.reads_error_events
     found = await impl.error_event(RID)
@@ -223,7 +248,38 @@ async def test_the_error_event_reads_sentry_under_the_token() -> None:
         "99",
         "boom",
     )
-    assert "errors: Sentry https://sentry.example.test org acme" in impl.describe()
+    assert impl.sentry.queries() == [f"environment:staging request_id:{RID}"]  # type: ignore[attr-defined]
+    assert (
+        "errors: Sentry https://sentry.example.test org acme project tadas "
+        "by environment staging and tag request_id"
+    ) in impl.describe()
+
+
+async def test_a_run_in_one_environment_never_reads_anothers_events() -> None:
+    """One project holds every environment's events, and an issue in it can
+    hold events of more than one, so the environment is asked for in the
+    search and proved on the event."""
+    impl = reader(FakeSession(), environment="production")
+    found = await impl.error_event(RID)
+    assert found is not None and found.event_id == "e2"
+    assert all("environment:production" in query for query in impl.sentry.queries())  # type: ignore[attr-defined]
+    assert all(
+        request.url.params["environment"] == "production"
+        for request in impl.sentry.requests  # type: ignore[attr-defined]
+        if request.url.path == "/api/0/issues/99/events/"
+    )
+
+
+async def test_an_event_of_another_environment_is_not_the_answer() -> None:
+    """The issue matches this environment because it also has events here, and
+    the tracker hands back every event of it; the one whose environment is not
+    this one is passed over even though its request id is the id asked for."""
+    impl = reader(FakeSession())
+    impl.sentry.events = [  # type: ignore[attr-defined]
+        {"id": "other", "tags": {"request_id": "another-id", "environment": "staging"}},
+        {"id": "e2", "tags": {"request_id": RID, "environment": "production"}},
+    ]
+    assert await impl.error_event(RID) is None
 
 
 async def test_an_environment_naming_no_tracker_reads_every_other_leg() -> None:

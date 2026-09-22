@@ -2,7 +2,9 @@
 (`/api/v1/query` at two instants), Jaeger (`/api/v3/traces` over a window,
 matched on the `tadas.request_id` span attribute, since the query API does
 not filter on attributes server side), GlitchTip (the Sentry-shaped issue and
-event routes, under the read-only token the seed creates), and the log lines
+event routes of the seeded project, under the read-only token the seed
+creates, filtered on the `local` environment the same way a deployed
+environment filters on its own), and the log lines
 of a stream the caller hands over, since a host process writes them to its
 own stderr and no store keeps them."""
 
@@ -55,6 +57,8 @@ class SignalsLocalImpl(SignalsInterface):
         error_tracker_token: str,
         logs: LogSource,
         error_tracker_org: str = "tadas",
+        error_tracker_project: str = "tadas",
+        environment: str = "local",
         service: str = "api",
         lookback: timedelta = DEFAULT_LOOKBACK,
         transport: httpx.AsyncBaseTransport | None = None,
@@ -65,6 +69,8 @@ class SignalsLocalImpl(SignalsInterface):
         self.error_tracker_url = error_tracker_url.rstrip("/")
         self.error_tracker_token = error_tracker_token
         self.error_tracker_org = error_tracker_org
+        self.error_tracker_project = error_tracker_project
+        self.environment = environment
         self.logs = logs
         self.service = service
         self.lookback = lookback
@@ -134,6 +140,8 @@ class SignalsLocalImpl(SignalsInterface):
                 self.error_tracker_url,
                 self.error_tracker_token,
                 self.error_tracker_org,
+                self.error_tracker_project,
+                self.environment,
                 request_id,
             )
 
@@ -142,7 +150,8 @@ class SignalsLocalImpl(SignalsInterface):
             f"logs: the handed stream; metrics: Prometheus {self.prometheus_url}; "
             f"traces: Jaeger {self.jaeger_url} by {REQUEST_ID_ATTRIBUTE}; "
             f"errors: GlitchTip {self.error_tracker_url} org {self.error_tracker_org} "
-            "by tag request_id"
+            f"project {self.error_tracker_project} by environment {self.environment} "
+            "and tag request_id"
         )
 
 

@@ -24,6 +24,7 @@ class Stores:
         self.requests: list[httpx.Request] = []
         self.counter_now = 42.0
         self.counter_then: float | None = 30.0
+        self.events = list(EVENTS)
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
@@ -38,19 +39,30 @@ class Stores:
         if host == "glitchtip":
             if request.headers.get("authorization") != "Bearer tok":
                 return httpx.Response(401, json={"detail": "no"})
-            if path == "/api/0/organizations/tadas/issues/":
+            if path == "/api/0/projects/tadas/tadas/issues/":
+                if "environment:local" not in request.url.params["query"]:
+                    return httpx.Response(200, json=[])
                 return httpx.Response(
                     200, json=[{"id": 7, "title": "unhandled error on GET /v1/tasks"}]
                 )
             if path == "/api/0/issues/7/events/":
-                return httpx.Response(
-                    200,
-                    json=[
-                        {"eventID": "aaa", "tags": [{"key": "request_id", "value": "other"}]},
-                        {"eventID": "bbb", "tags": [{"key": "request_id", "value": RID}]},
-                    ],
-                )
+                return httpx.Response(200, json=self.events)
         return httpx.Response(404)
+
+
+def event(event_id: str, request_id: str, environment: str) -> dict[str, object]:
+    return {
+        "eventID": event_id,
+        "tags": [
+            {"key": "request_id", "value": request_id},
+            {"key": "environment", "value": environment},
+        ],
+    }
+
+
+EVENTS = [event("aaa", "other", "local"), event("bbb", RID, "local")]
+"""The seeded project holds every environment's events; locally they are the
+`local` ones."""
 
 
 def span(trace_id: str, name: str, request_id: str | None) -> dict[str, object]:
@@ -141,12 +153,23 @@ async def test_the_trace_is_matched_on_the_request_id_attribute() -> None:
     assert find_trace(JAEGER_BODY, "missing") is None
 
 
-async def test_the_error_event_is_the_one_tagged_with_the_id() -> None:
+async def test_the_error_event_is_the_one_tagged_with_the_id_in_this_environment() -> None:
     stores = Stores()
     found = await reader(stores, []).error_event(RID)
     assert found is not None
     assert (found.event_id, found.issue_id) == ("bbb", "7")
     assert found.title == "unhandled error on GET /v1/tasks"
-    assert stores.requests[0].url.params["query"] == RID
+    assert stores.requests[0].url.params["query"] == f"environment:local request_id:{RID}"
     assert await reader(stores, []).error_event("missing") is None
     assert "Prometheus http://prom" in reader(stores, []).describe()
+    assert (
+        "GlitchTip http://glitchtip org tadas project tadas by environment local and tag request_id"
+    ) in reader(stores, []).describe()
+
+
+async def test_a_local_run_passes_over_an_event_of_another_environment() -> None:
+    """The seeded project is the product's one project, so a `staging` event
+    can sit in the same issue; `local` is what the read asks for."""
+    stores = Stores()
+    stores.events = [event("ccc", RID, "staging")]
+    assert await reader(stores, []).error_event(RID) is None
