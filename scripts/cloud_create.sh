@@ -180,6 +180,17 @@ else
   say "note: Cost Explorer is not on for account $account_id, so the anomaly monitor is left out; the budget is not. Turn Cost Explorer on from the organization's management account, then run this again."
 fi
 bootstrap_vars+=(-var "anomaly_monitor=$anomaly_monitor")
+
+# The budget is not optional, and a member account can make one only once
+# the management account has turned Budgets on for the organization. Asked
+# here, before the apply, so the root is never left half made over it.
+say "+ aws budgets describe-budgets --account-id $account_id  (answers once the management account turned Budgets on)"
+if ! $dry_run && ! probe="$(aws budgets describe-budgets --account-id "$account_id" --max-results 1 2>&1)"; then
+  case "$probe" in
+    *"linked account"*) refuse "Budgets is not on for account $account_id: the management account turns it on (deployment/cloud/first_time_manual.md, 8a), then run this again." ;;
+    *) refuse "cannot tell whether Budgets answers for account $account_id: $probe" ;;
+  esac
+fi
 if [ "$environment" = "staging" ]; then
   # The replication writes into production's artifacts bucket, named from
   # environments.json. A bucket name is global, so asking for it from
@@ -201,10 +212,16 @@ if [ "$environment" = "staging" ]; then
   say "Replication into production: $replicate."
 fi
 
-if $dry_run || ! aws s3api head-bucket --bucket "$state_bucket" >/dev/null 2>&1; then
+if $dry_run || [ -f "$bootstrap_root/terraform.tfstate" ] || ! aws s3api head-bucket --bucket "$state_bucket" >/dev/null 2>&1; then
   # The bucket the state lives in is made by this root, so the first apply
-  # holds its state locally, and the state moves into the bucket after.
-  say "The state bucket does not exist yet: the root applies with local state, then its state moves into the bucket."
+  # holds its state locally, and the state moves into the bucket after. A
+  # local state left behind is a first apply that stopped part way: the
+  # bucket may exist by then, and the rest still applies against that state.
+  if [ -f "$bootstrap_root/terraform.tfstate" ]; then
+    say "A local state is left from a first apply that stopped part way: the root applies against it, then its state moves into the bucket."
+  else
+    say "The state bucket does not exist yet: the root applies with local state, then its state moves into the bucket."
+  fi
   say "+ write $bootstrap_root/backend_override.tf (terraform { backend \"local\" {} })"
   if ! $dry_run; then
     printf 'terraform {\n  backend "local" {}\n}\n' > "$bootstrap_root/backend_override.tf"

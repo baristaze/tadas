@@ -50,7 +50,12 @@ def test_create_staging_dry_run_prints_every_step_and_writes_nothing(tmp_path: P
     # Once before anything, once more right before the apply.
     assert out.count(expect) == 2
     assert "+ gh auth status" in out
-    assert "+ terraform -chdir=deployment/terraform/bootstrap/staging apply -input=false" in out
+    # Budgets is asked before the apply, so the root is never left half made.
+    budgets = f"+ aws budgets describe-budgets --account-id {account}"
+    apply = "+ terraform -chdir=deployment/terraform/bootstrap/staging apply -input=false"
+    assert budgets in out
+    assert apply in out
+    assert out.index(budgets) < out.index(apply)
     assert "-var owner_email=owner@tadas.example" in out
     assert "-var replicate_to_production=" in out
     assert "init -input=false -migrate-state -force-copy" in out

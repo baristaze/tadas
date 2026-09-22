@@ -122,6 +122,11 @@ a value.
      account turns on; when the account's Cost Explorer does not
      answer, the script leaves the monitor out and says so, and the
      person decides whether to turn it on and run the script again.
+     The budget needs Budgets, turned on the same way; the script asks
+     it before the apply and refuses until it answers, pointing to the
+     manual's section 8a. A local `terraform.tfstate` in the bootstrap
+     root is a first apply that stopped part way: the script applies
+     against it, and it is never deleted by hand.
      For staging, whether the replication into production is on. For
      production, the two grants that let staging's replication write
      in.
