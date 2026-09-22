@@ -43,12 +43,12 @@ locals {
     ["AWS/ElastiCache", "EngineCPUUtilization", "CacheClusterId", id, { label = id }]
   ]
 
-  queue_depths = flatten([
-    for name in var.queue_names : [
-      ["AWS/SQS", "ApproximateNumberOfMessagesVisible", "QueueName", name, { label = "${name} visible" }],
-      ["AWS/SQS", "ApproximateNumberOfMessagesVisible", "QueueName", "${name}-dead", { label = "${name} dead" }],
-    ]
-  ])
+  # Each metric stays an array: flatten() is recursive in Terraform and
+  # would spread every row into loose strings, which CloudWatch refuses.
+  queue_depths = concat(
+    [for name in var.queue_names : ["AWS/SQS", "ApproximateNumberOfMessagesVisible", "QueueName", name, { label = "${name} visible" }]],
+    [for name in var.queue_names : ["AWS/SQS", "ApproximateNumberOfMessagesVisible", "QueueName", "${name}-dead", { label = "${name} dead" }]],
+  )
 }
 
 resource "aws_cloudwatch_dashboard" "this" {

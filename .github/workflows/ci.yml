@@ -145,3 +145,7 @@ jobs:
         run: terraform -chdir=deployment/terraform/modules/service init -backend=false -input=false
       - if: matrix.root == 'environments/staging'
         run: terraform -chdir=deployment/terraform/modules/service test
+      - if: matrix.root == 'environments/staging'
+        run: terraform -chdir=deployment/terraform/modules/dashboard init -backend=false -input=false
+      - if: matrix.root == 'environments/staging'
+        run: terraform -chdir=deployment/terraform/modules/dashboard test
