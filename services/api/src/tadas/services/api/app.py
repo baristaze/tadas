@@ -86,7 +86,8 @@ def create_app(container: AppContainer | None = None) -> FastAPI:
     @app.get("/readyz", include_in_schema=False)
     async def readyz() -> JSONResponse:
         """The storage healthcheck under a deadline of its own, shorter than
-        the interval the probe is polled on: a probe that waits on the
+        its prober's timeout (the deploy's check after a rollout waits ten
+        seconds; the deadline is two): a probe that waits on the
         dependency it reports on stops answering exactly when the answer
         matters, and an orchestrator reads a probe that hangs as a timeout
         rather than as the negative answer it is. So the deadline answers

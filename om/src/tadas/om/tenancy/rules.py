@@ -82,7 +82,10 @@ def check_sign_up(email: str, password: str, display_name: str, org_name: str, s
     """The shape of a sign-up, refused with ValueError naming the field. There
     is no email verification: an address with one `@` and a dot after it is
     the whole check, a choice and not an oversight (the sign-up is the door a
-    deployed environment has, and a demo needs no mailbox)."""
+    deployed environment has, and a demo needs no mailbox). It has two costs,
+    both accepted: a held address answers as a conflict, so anyone can tell
+    which addresses have an account, and anyone can sign up with an address
+    that is not theirs."""
     local, at, domain = email.partition("@")
     if not at or not local or "." not in domain or "@" in domain or email != email.strip():
         raise ValueError("enter an email address")

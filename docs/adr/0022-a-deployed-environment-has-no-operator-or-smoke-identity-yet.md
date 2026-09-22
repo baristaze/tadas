@@ -1,0 +1,43 @@
+# ADR 0022: A deployed environment has no operator or smoke identity yet
+
+**Status**: accepted (2026-09-22). A deviation, closed by
+[TAZ-53](https://linear.app/taze/issue/TAZ-53).
+
+## Context
+
+Guideline v0.28.0 adds two rules that need an identity inside a
+deployed environment's database.
+
+- "Migrating a Deployed Database" (`DEL-45`): the first operator of a
+  deployed environment is granted by a one-off task on the deployed
+  image, the same kind of task that runs the migration.
+- "The Telemetry Round Trip" (`OPS-22`): the deployed smoke test signs
+  in as an identity and a tenant named for it, and never as a real
+  tenant's user.
+
+Tadas runs the migration as that one-off task already (the service
+module's `pre_rollout.sh`). It has no command that grants an operator
+on a deployed database, and so no smoke identity either. The seed is
+local only, and a deployed environment is entered through sign-up.
+
+## Decision
+
+Neither rule is met yet. The deployed smoke test the create script
+prints is one unauthenticated request, `GET /v1/me`, answered `401`
+with a request id, followed by the investigator's read of that
+request's signals. It fails nothing on purpose and signs in as no one,
+so it touches no tenant. What it cannot exercise is an authenticated
+path.
+
+TAZ-53 closes both: a `grant-operator` subcommand beside `bootstrap`
+and `add-member`, run as a one-off task from a workflow under the
+environment's deploy role. The smoke identity and its tenant are made
+the same way.
+
+## Consequences
+
+- Until TAZ-53, the operator-plane skills (`ops-root-cause`, the
+  traffic generator's provisioner) have no identity in a deployed
+  environment, and they work against the local stack only.
+- The smoke test proves the edge, the logs, the metric, and the trace
+  of one request. It does not prove a sign-in.
