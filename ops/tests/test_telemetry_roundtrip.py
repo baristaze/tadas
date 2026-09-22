@@ -9,8 +9,11 @@ The error leg is a second process of the same binary on a free port whose
 database is unreachable: a route that raises past the gateway is answered
 500 with the request id and reported to the tracker, which is the one path
 that produces an ERROR without a code change and without harming the session
-the other legs read. Needs the devx profile and a migrated, seeded stack;
-skips, naming why, when it cannot run."""
+the other legs read.
+
+Needs the devx profile and a migrated, seeded stack. What is missing is a
+skip on a developer's machine, naming it, and a failure wherever
+`TADAS_TELEMETRY_REQUIRED` is set: a skipped check in CI is no check."""
 
 import asyncio
 import os
@@ -22,6 +25,7 @@ from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import NoReturn
 from uuid import uuid4
 
 import httpx
@@ -44,6 +48,11 @@ TRACE_WAIT_SECONDS = 30
 ERROR_WAIT_SECONDS = 60
 REQUESTS_COUNTER = "tadas_http_requests_total"
 DURATION_UNITS = {"ms": 0.001, "s": 1.0, "m": 60.0}
+
+REQUIRED = "TADAS_TELEMETRY_REQUIRED"
+"""Where the round trip must run: the CI job sets it, a developer's machine
+does not. A run that skips because the stack is not up is a kindness on a
+laptop and a lie in CI, where the job goes green having proved nothing."""
 
 
 def duration_seconds(text: str) -> float:
@@ -69,6 +78,15 @@ def scrape_wait_seconds() -> float:
 
 
 SCRAPE_WAIT_SECONDS = scrape_wait_seconds()
+
+
+def unmet(what: str) -> NoReturn:
+    """A piece the round trip needs and has not got: a skip where a developer
+    may not have the stack up, a failure where the run was required to prove
+    something. Either way it names what was missing."""
+    if os.environ.get(REQUIRED, "").strip().lower() in ("1", "true", "yes"):
+        pytest.fail(f"{what}; the round trip is required here ({REQUIRED} is set)")
+    pytest.skip(f"{what}; set {REQUIRED}=1 to make this a failure instead of a skip")
 
 
 def port_taken(port: int) -> bool:
@@ -159,13 +177,13 @@ def stores(env: Environment) -> None:
         ("GlitchTip", f"{env.error_tracker_url}/api/0/"),
     ):
         if not reachable(url):
-            pytest.skip(f"{name} is not reachable at {url}: needs the devx profile (make devx-up)")
+            unmet(f"{name} is not reachable at {url}: the round trip needs the devx profile")
 
 
 @pytest.fixture(scope="module")
 def api(stores: None, tmp_path_factory: pytest.TempPathFactory) -> Iterator[Served]:
     if port_taken(PORT):
-        pytest.skip(
+        unmet(
             f"port {PORT} is taken (the api container, or scripts/dev.sh); the collector scrapes "
             "only 8000 on the host, so the round trip needs it"
         )

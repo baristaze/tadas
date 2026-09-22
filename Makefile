@@ -165,7 +165,9 @@ test-integration: ## Integration tests over the compose stack
 # The round trip: a real API process on 8000 (the host target the devx
 # collector scrapes and writes into Prometheus) with the exporter and the DSN set, one session of traffic, then
 # every signal read back by request id through the devx stores. Needs
-# `make devx-up` and `make migrate seed`; skips, naming why, when it cannot.
+# `make devx-up` and `make migrate seed`; skips, naming what is missing, when
+# it cannot run. With TADAS_TELEMETRY_REQUIRED=1 the same miss is a failure,
+# which is how CI runs it.
 test-telemetry: ## The telemetry round trip over the devx profile
 	uv run pytest -q -m telemetry
 

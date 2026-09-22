@@ -87,7 +87,13 @@ jobs:
           docker logs tadas-glitchtip-seed-1 | tail -n 1
           test "$(docker inspect -f '{{.HostConfig.NetworkMode}}' tadas-otel-collector-1)" = host
       - run: make migrate seed
+      # The round trip skips, naming what is missing, on a machine that has
+      # no devx profile up. Here everything it needs is a step above, so a
+      # skip would be a green job that proved nothing: this says so, and the
+      # test fails instead.
       - run: make test-telemetry
+        env:
+          TADAS_TELEMETRY_REQUIRED: "1"
       - name: the API on 8000 for the traffic run
         run: |
           nohup uv run tadas-api serve > api.log 2>&1 &
