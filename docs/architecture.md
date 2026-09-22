@@ -1096,7 +1096,12 @@ page; this section says what exists.
   `telemetry`, starts the API as a real process, drives one session,
   and reads every signal back by request id; `make test-telemetry`
   runs it and CI's `telemetry` job runs it with thirty seconds of
-  light traffic (`make traffic PROFILE=light DURATION=30`).
+  light traffic (`make traffic PROFILE=light DURATION=30`). A run signs
+  each of its people in once and out once, and a scenario's target
+  judges the working requests, with the sign-in and the sign-out
+  reported beside the verdict. `.github/workflows/stress.yml` runs a
+  scenario against staging on a dispatch, from one small runner: the
+  shape of a stress run, and not a load test.
 - **Documents.** A README at every level (`om/README.md` for a reader
   with no code, one per namespace, `infra/`, `services/api/`,
   `workers/maintenance/`, `deployment/`, `ops/`), and `llms.txt` at the

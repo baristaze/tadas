@@ -36,8 +36,8 @@ def environment(token: str | None = "opt_write") -> Environment:
 
 class OperatorPlane:
     """The three operator routes a run's tenants go through, and a login that
-    refuses every password, so the run's sessions fail and the run still
-    removes what it made."""
+    refuses every password, so the run signs no one in and still removes what
+    it made."""
 
     def __init__(self, *, refuse_create_after: int | None = None, token: str = "opt_write") -> None:
         self.orgs: dict[str, str] = {}
@@ -117,7 +117,7 @@ async def test_a_refused_token_names_the_command_that_writes_a_fresh_one() -> No
         await provision(environment(), PROFILE, httpx.MockTransport(plane))
 
 
-async def test_a_run_removes_its_tenants_when_it_ends_even_when_every_session_failed() -> None:
+async def test_a_run_removes_its_tenants_when_it_ends_even_when_no_one_signed_in() -> None:
     plane = OperatorPlane()
     result = await run_traffic(
         environment(),
@@ -126,7 +126,8 @@ async def test_a_run_removes_its_tenants_when_it_ends_even_when_every_session_fa
         transport=httpx.MockTransport(plane),
         pause_after_failure=0.1,
     )
-    assert result.report.sessions.completed == 0 and result.report.sessions.failed >= 1
+    assert result.report.sessions.started == 0
+    assert any("was refused at sign-in: 401" in note for note in result.report.notes)
     assert sorted(plane.deleted) == sorted(plane.orgs)
     assert "removed 2 of the run's 2 org(s)" in result.report.notes
 

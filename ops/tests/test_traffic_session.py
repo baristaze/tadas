@@ -1,28 +1,39 @@
 """One session over the fake edge: the steps in order, an idempotency key
 on every creating call, the socket seeing its own change, the stream read
-from where it stood, and the report at the end. Think time is zero and the
-clock is the test's."""
+from where it stood, and the report at the end. A session runs under the
+token its seat holds and never signs in for itself; the run does that once
+per person. Think time is zero and the clock is the test's."""
 
 import asyncio
+from dataclasses import replace
+from datetime import UTC, datetime
+from pathlib import Path
 
 import httpx
 import pytest
-from fake_api import FakeApi, connect_to
+from fake_api import OWNER_ID, FakeApi, connect_to
 
 from tadas.client.client import ApiClient
 from tadas.ops.environments import Environment, SeedPeople
 from tadas.ops.profiles import LIGHT, Profile
-from tadas.ops.report import Sample
+from tadas.ops.report import AUTH_ROUTES, Report, Sample, Sessions
+from tadas.ops.stress import Readback, load_scenario, verdict
 from tadas.ops.traffic import (
     Clock,
     Person,
     RecordingTransport,
+    Seat,
     Session,
     route_template,
     run_traffic,
+    seat_order,
 )
 
 PERSON = Person("owner@example.test", "tadas-local", "acme")
+SEAT = Seat(PERSON, "ses_1", OWNER_ID)
+"""The seat the fake's sign-in hands out: `ses_1` is the token it accepts."""
+
+HERE = Path(__file__).parent
 
 
 def quick_clock(seconds: float = 30.0) -> Clock:
@@ -36,12 +47,41 @@ def client_over(api: FakeApi, samples: list[Sample]) -> tuple[ApiClient, Recordi
     return client, recording
 
 
+def local_env(password: str = "tadas-local") -> Environment:
+    return Environment(
+        name="local",
+        api_url="http://test",
+        operator_token=None,
+        provisioner_token=None,
+        error_tracker_url=None,
+        error_tracker_token=None,
+        error_tracker_org="tadas",
+        error_tracker_project="tadas",
+        prometheus_url=None,
+        jaeger_url=None,
+        aws_profile=None,
+        aws_region=None,
+        seed=SeedPeople("acme", "owner@example.test", "owner@example.test", password),
+    )
+
+
 def test_ids_in_a_path_read_as_a_template() -> None:
     assert (
         route_template("/v1/tasks/0199a4c0-0000-7000-8000-000000000001/move")
         == "/v1/tasks/{id}/move"
     )
     assert route_template("/v1/tasks") == "/v1/tasks"
+
+
+def test_the_people_to_sign_in_are_taken_one_org_at_a_time() -> None:
+    """A run signs in fewer people than a profile provisions, so it takes
+    them one from each org in turn and no org is left with no traffic."""
+    people = [
+        Person(f"{who}@{org}", "x", org)
+        for org in ("one", "two", "three")
+        for who in ("owner", "member")
+    ]
+    assert [p.org_slug for p in seat_order(people)[:4]] == ["one", "two", "three", "one"]
 
 
 async def test_a_session_walks_every_step_in_order() -> None:
@@ -51,7 +91,7 @@ async def test_a_session_walks_every_step_in_order() -> None:
     async with client:
         session = Session(
             client,
-            PERSON,
+            SEAT,
             quick_clock(),
             recording=recording,
             connect=connect_to(api),
@@ -62,8 +102,6 @@ async def test_a_session_walks_every_step_in_order() -> None:
     assert outcome.completed and outcome.saw_own_change and not outcome.cut
     steps = [f"{r.method} {route_template(r.url.path)}" for r in api.requests]
     assert steps == [
-        "POST /v1/auth/login",
-        "POST /v1/auth/sessions",
         "POST /v1/realtime/tickets",
         "GET /v1/tasks",
         *["POST /v1/tasks"] * 5,
@@ -75,12 +113,13 @@ async def test_a_session_walks_every_step_in_order() -> None:
         "GET /v1/tasks",  # the done list
         "DELETE /v1/tasks/{id}",
         "GET /v1/events",
-        "POST /v1/auth/logout",
     ]
+    assert not any(r.url.path in AUTH_ROUTES for r in api.requests)
     creates = [r for r in api.requests if r.method == "POST" and r.url.path == "/v1/tasks"]
     keys = {r.headers["idempotency-key"] for r in creates}
     assert len(keys) == 5
     assert all(r.headers["x-app"] == "portal" for r in api.requests)
+    assert all(r.headers["authorization"] == "Bearer ses_1" for r in api.requests)
     lists = [r for r in api.requests if r.url.path == "/v1/tasks" and r.method == "GET"]
     assert [r.url.params["status"] for r in lists] == ["open", "done"]
     events = next(r for r in api.requests if r.url.path == "/v1/events")
@@ -99,7 +138,7 @@ async def test_a_retried_refusal_is_two_samples_and_a_completed_session() -> Non
     async with client:
         outcome = await Session(
             client,
-            PERSON,
+            SEAT,
             quick_clock(),
             recording=recording,
             connect=connect_to(api),
@@ -112,15 +151,15 @@ async def test_a_retried_refusal_is_two_samples_and_a_completed_session() -> Non
 
 
 async def test_a_refusal_the_client_does_not_retry_fails_the_session() -> None:
-    api = FakeApi(fail_on="POST /v1/auth/logout")
+    api = FakeApi(fail_on="DELETE /v1/tasks/{id}")
     samples: list[Sample] = []
     client, recording = client_over(api, samples)
     async with client:
         outcome = await Session(
-            client, PERSON, quick_clock(), recording=recording, connect=connect_to(api)
+            client, SEAT, quick_clock(), recording=recording, connect=connect_to(api)
         ).run()
     assert outcome.failure == "503 unavailable on the API"
-    assert not outcome.completed and outcome.saw_own_change
+    assert not outcome.completed
     assert samples[-1].status == 503 and samples[-1].is_error
 
 
@@ -129,45 +168,81 @@ async def test_the_deadline_cuts_a_session_between_steps() -> None:
     samples: list[Sample] = []
     client, _ = client_over(api, samples)
     async with client:
-        outcome = await Session(client, PERSON, quick_clock(0.0), connect=connect_to(api)).run()
+        outcome = await Session(client, SEAT, quick_clock(0.0), connect=connect_to(api)).run()
     assert outcome.cut and not outcome.completed and outcome.failure is None
     assert api.requests == []
 
 
-async def test_a_wrong_password_is_a_failed_session_not_a_crash() -> None:
+async def test_a_wrong_password_signs_no_one_in_and_the_run_drives_nothing() -> None:
+    """The sign-in is the run's, once per person, so a refused password ends
+    the run there instead of failing session after session."""
     api = FakeApi()
-    samples: list[Sample] = []
-    client, _ = client_over(api, samples)
-    async with client:
-        outcome = await Session(
-            client,
-            Person("owner@example.test", "wrong", "acme"),
-            quick_clock(),
-            connect=connect_to(api),
-        ).run()
-    assert outcome.failure == "401 invalid_credential on the API"
+    result = await run_traffic(
+        local_env(password="wrong"),
+        Profile("light", 1, 2, 2, (0.0, 0.0), 60),
+        duration_seconds=5,
+        orgs=0,
+        transport=httpx.MockTransport(api),
+        connect=connect_to(api),
+    )
+    assert result.outcomes == [] and result.report.sessions.started == 0
+    assert [r.url.path for r in api.requests] == ["/v1/auth/login"] * 2
+    assert any("401 invalid_credential" in note for note in result.report.notes)
+    assert "no one signed in, so the run drove no session" in result.report.notes
+
+
+async def test_a_person_signs_in_once_for_the_run_and_the_target_judges_the_rest() -> None:
+    """One sign-in and one sign-out per person, however many sessions that
+    person drives, and the p95 the target holds is the working requests': a
+    slow sign-in is reported beside the verdict and does not decide it."""
+    api = FakeApi()
+    result = await run_traffic(
+        local_env(),
+        Profile("light", 1, 2, 2, (0.0, 0.0), 60),
+        duration_seconds=20,
+        orgs=0,
+        max_sessions=4,
+        transport=httpx.MockTransport(api),
+        connect=connect_to(api),
+    )
+    report = result.report
+    assert report.sessions.completed == 4
+    paths = [r.url.path for r in api.requests]
+    assert paths.count("/v1/auth/login") == 2  # the seeded org's two people, once each
+    assert paths.count("/v1/auth/sessions") == 2
+    assert paths.count("/v1/auth/logout") == 2
+    assert paths[:4] == ["/v1/auth/login", "/v1/auth/sessions"] * 2  # at the start
+    assert paths[-2:] == ["/v1/auth/logout"] * 2  # and at the end
+    assert report.auth.requests == 6
+    assert report.working.requests == report.requests - 6
+    assert any("signed in 2 of 2 people" in note for note in report.notes)
+
+    # The sign-ins are the slow ones, as they are on a deployed environment.
+    # The verdict's p95 is the working requests', so the run still passes.
+    slow = [
+        replace(s, elapsed_ms=5000.0) if s.is_auth else replace(s, elapsed_ms=10.0)
+        for s in result.samples
+    ]
+    judged = Report.of(
+        slow,
+        environment="local",
+        profile="light",
+        started_at=datetime(2026, 9, 20, tzinfo=UTC),
+        duration_seconds=20,
+        sessions=Sessions(completed=4),
+    )
+    assert judged.auth.p95_ms == 5000.0 and judged.working.p95_ms == 10.0
+    scenario = load_scenario(HERE / "smoke.yaml")  # target: p95 500 ms
+    outcome = verdict(scenario, judged, Readback(100, 0))
+    assert outcome.passed and outcome.reasons == ()
+    assert "6 sign-ins and sign-outs" in outcome.text(scenario, judged, Readback(100, 0))
 
 
 async def test_a_run_over_the_seeded_org_bounds_sessions_and_reports() -> None:
     api = FakeApi()
-    env = Environment(
-        name="local",
-        api_url="http://test",
-        operator_token=None,
-        provisioner_token=None,
-        error_tracker_url=None,
-        error_tracker_token=None,
-        error_tracker_org="tadas",
-        error_tracker_project="tadas",
-        prometheus_url=None,
-        jaeger_url=None,
-        aws_profile=None,
-        aws_region=None,
-        seed=SeedPeople("acme", "owner@example.test", "owner@example.test", "tadas-local"),
-    )
     profile = Profile("light", 1, 2, 2, (0.0, 0.0), 60)
     result = await run_traffic(
-        env,
+        local_env(),
         profile,
         duration_seconds=20,
         orgs=0,
@@ -186,35 +261,28 @@ async def test_a_run_over_the_seeded_org_bounds_sessions_and_reports() -> None:
     # The run says what the profile did and hands out one request id to read
     # the signals back by; the fake transport answers no x-request-id, so it
     # says so instead of inventing one.
-    assert report.notes[1].startswith("profile light: 2 at once, think time")
-    assert report.notes[2].startswith("sample request id: ")
+    assert report.notes[-2].startswith("profile light: 2 at once, think time")
+    assert report.notes[-1].startswith("sample request id: ")
     assert len(result.outcomes) == 3 and all(o.write_request_ids for o in result.outcomes)
 
 
-async def test_a_failed_session_pauses_the_worker_and_a_429_pauses_it_longer() -> None:
-    """A refusal at sign-in must not loop into a flood of sign-ins: a worker
-    whose session failed waits before the next one, and waits the rate
-    limit's window out after a 429."""
-    env = Environment(
-        name="local",
-        api_url="http://test",
-        operator_token=None,
-        provisioner_token=None,
-        error_tracker_url=None,
-        error_tracker_token=None,
-        error_tracker_org="tadas",
-        error_tracker_project="tadas",
-        prometheus_url=None,
-        jaeger_url=None,
-        aws_profile=None,
-        aws_region=None,
-        seed=SeedPeople("acme", "owner@example.test", "owner@example.test", "wrong"),
-    )
-    api = FakeApi()
-    profile = Profile("light", 1, 1, 1, (0.0, 0.0), 60)
+class RefusesTheWork(FakeApi):
+    """Signs a person in, opens their socket, and refuses every other route:
+    a session that fails as soon as it starts working."""
+
+    def answer(self, request: httpx.Request) -> httpx.Response:
+        if request.url.path in AUTH_ROUTES or request.url.path == "/v1/realtime/tickets":
+            return super().answer(request)
+        return httpx.Response(403, json={"error": {"code": "forbidden", "message": "no"}})
+
+
+async def test_a_failed_session_pauses_the_worker_before_the_next_one() -> None:
+    """A session that fails must not loop: the worker waits before starting
+    another, so a refusal is not a flood."""
+    api = RefusesTheWork()
     result = await run_traffic(
-        env,
-        profile,
+        local_env(),
+        Profile("light", 1, 1, 1, (0.0, 0.0), 60),
         duration_seconds=0.6,
         orgs=0,
         transport=httpx.MockTransport(api),
@@ -222,23 +290,7 @@ async def test_a_failed_session_pauses_the_worker_and_a_429_pauses_it_longer() -
         pause_after_failure=0.25,
     )
     assert result.report.sessions.failed in (2, 3)  # not hundreds
-    assert all(o.failure == "401 invalid_credential on the API" for o in result.outcomes)
-
-    refused = FakeApi()
-    refused.answer = lambda request: httpx.Response(  # type: ignore[method-assign]
-        429, json={"error": {"code": "rate_limited", "message": "slow down"}}
-    )
-    result = await run_traffic(
-        env,
-        profile,
-        duration_seconds=0.6,
-        orgs=0,
-        transport=httpx.MockTransport(refused),
-        connect=connect_to(refused),
-        pause_after_failure=0.0,
-    )
-    assert result.report.sessions.failed == 1  # the 429 pause outlasts the run
-    assert result.outcomes[0].rate_limited
+    assert all(o.failure == "403 forbidden on the API" for o in result.outcomes)
 
 
 async def test_a_run_needs_seeded_people_or_a_provisioner() -> None:

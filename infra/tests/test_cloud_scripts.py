@@ -11,6 +11,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 CREATE = ROOT / "scripts" / "cloud_create.sh"
@@ -207,11 +208,27 @@ def test_nuke_refuses_production_while_release_still_protects_the_database(
 
 
 @pytest.mark.parametrize(
-    "workflow", ["deploy-staging.yml", "deploy-production.yml", "grant-operator.yml"]
+    "workflow",
+    ["deploy-staging.yml", "deploy-production.yml", "grant-operator.yml", "stress.yml"],
 )
 def test_the_deploy_workflows_run_in_the_region_the_environments_name(workflow: str) -> None:
     text = (ROOT / ".github" / "workflows" / workflow).read_text()
     assert f"  AWS_REGION: {ENVIRONMENTS['region']}\n" in text
+
+
+def test_the_stress_workflow_knows_one_environment_and_runs_on_a_dispatch() -> None:
+    """A stress run drives real traffic at a deployed environment, so it
+    happens because a person asked for it, and staging is the only
+    environment it can be asked for: there is no environment to choose."""
+    workflow = yaml.safe_load((ROOT / ".github" / "workflows" / "stress.yml").read_text())
+    triggers = workflow[True]  # `on:` is YAML's true
+    assert list(triggers) == ["workflow_dispatch"]
+    assert sorted(triggers["workflow_dispatch"]["inputs"]) == ["duration_seconds", "scenario"]
+    job = workflow["jobs"]["stress"]
+    assert job["environment"] == "staging"
+    # The provisioner's write entry never stands between runs.
+    disable = job["steps"][-1]
+    assert disable["if"] == "always()" and "--disable" in disable["run"]
 
 
 @pytest.mark.parametrize("environment", ["staging", "production"])

@@ -25,7 +25,7 @@ LIGHT = Profile(
     "light", orgs=1, members_per_org=2, concurrency=2, think_seconds=(0.8, 1.6), duration_seconds=60
 )
 """The gate: proves the wiring, says nothing about capacity. Two sessions at
-once over the seeded org stay under the login rate limit of one address."""
+once over the seeded org, and two sign-ins for the whole run."""
 
 REGULAR = Profile(
     "regular",
@@ -35,7 +35,9 @@ REGULAR = Profile(
     think_seconds=(0.5, 1.2),
     duration_seconds=300,
 )
-"""A working day for a few teams."""
+"""A working day for a few teams. A run signs one person in per worker, so
+eight sign-ins from one address, under the login rate limit of ten a
+minute."""
 
 HEAVY = Profile(
     "heavy",
@@ -45,7 +47,8 @@ HEAVY = Profile(
     think_seconds=(0.2, 0.6),
     duration_seconds=600,
 )
-"""Every team busy at once."""
+"""Every team busy at once. Thirty-two sign-ins are past the login rate limit
+of one address, so a run of this profile wants more than one generator."""
 
 STRESS = Profile(
     "stress",

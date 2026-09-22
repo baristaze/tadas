@@ -7,7 +7,13 @@ from pathlib import Path
 import pytest
 
 from tadas.ops.report import Report, Sample, Sessions
-from tadas.ops.stress import Readback, load_scenario, parse_scenario, verdict
+from tadas.ops.stress import (
+    Readback,
+    load_scenario,
+    parse_scenario,
+    verdict,
+    with_duration,
+)
 
 HERE = Path(__file__).parent
 AT = datetime(2026, 9, 20, tzinfo=UTC)
@@ -78,6 +84,18 @@ def test_a_bad_scenario_is_refused_by_name(data: dict[str, object], message: str
         parse_scenario(data)
 
 
+def test_a_named_duration_shortens_the_run_and_its_ramp_and_moves_no_target() -> None:
+    """A caller may run a scenario's shape over a shorter window; the target
+    it is judged against is still the file's."""
+    scenario = load_scenario(HERE / "smoke.yaml")
+    shorter = with_duration(scenario, 10)
+    assert (shorter.duration_seconds, shorter.ramp_seconds) == (10.0, 5.0)
+    assert with_duration(scenario, 3).ramp_seconds == 3.0  # a ramp is never past the run
+    assert shorter.target == scenario.target and shorter.profile == scenario.profile
+    with pytest.raises(ValueError, match="duration must be positive"):
+        with_duration(scenario, 0)
+
+
 def report_with(p95: float, errors: int, total: int = 100) -> Report:
     samples = [Sample("/v1/tasks", "GET", 503 if i < errors else 200, p95) for i in range(total)]
     return Report.of(
@@ -88,6 +106,28 @@ def report_with(p95: float, errors: int, total: int = 100) -> Report:
         duration_seconds=30,
         sessions=Sessions(completed=4),
     )
+
+
+def test_the_target_judges_the_working_requests_and_not_the_sign_ins() -> None:
+    """Sign-in verifies a password on purpose and is the slowest route the
+    generator calls; the run reports it beside the verdict instead of mixing
+    it into the number the target holds."""
+    scenario = load_scenario(HERE / "smoke.yaml")  # target: p95 500 ms
+    samples = [Sample("/v1/tasks", "GET", 200, 10.0) for _ in range(100)]
+    samples += [Sample("/v1/auth/login", "POST", 200, 2500.0) for _ in range(4)]
+    report = Report.of(
+        samples,
+        environment="local",
+        profile="light",
+        started_at=AT,
+        duration_seconds=30,
+        sessions=Sessions(completed=4),
+    )
+    outcome = verdict(scenario, report, Readback(104, 0))
+    assert outcome.passed and outcome.reasons == ()
+    text = outcome.text(scenario, report, Readback(104, 0))
+    assert "p95 10.0 ms over 100 working requests" in text
+    assert "beside it: 4 sign-ins and sign-outs, p50 2500.0 ms, p95 2500.0 ms" in text
 
 
 def test_the_verdict_passes_only_within_the_target_on_both_sides() -> None:

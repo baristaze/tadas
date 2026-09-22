@@ -104,11 +104,17 @@ without a provisioner token in `local.env` takes `--orgs 0`.
 
    The generator ramps, soaks, and prints the table: requests by
    route and status, p50, p95, p99, and the error ratio, then two
-   notes: the profile's concurrency and think time, and one sample
-   request id of the run, which step 4 follows. A 4xx the session
-   shape explains (a rate-limited sign-in, a conflict on a retried
+   totals and the notes. The totals are the two groups the target
+   reads: the working requests, the task routes, the event stream,
+   and the socket's ticket, whose p95 the target judges, and the
+   sign-in and sign-out beside them, one of each per person for the
+   whole run, reported with their own p95 and judged by nothing. The
+   notes say how many people signed in, the profile's concurrency and
+   think time, and one sample request id of the run, which step 4
+   follows. A 4xx the session shape explains (a conflict on a retried
    create) is counted by status and not as an error; a session that
-   fails is counted under sessions.
+   fails is counted under sessions, and a person the API refused at
+   sign-in is a note.
 4. Read the signals back for the run's window, through the same
    interface every other skill reads: the request counter's delta,
    the p95 the platform measured (not the generator's), the worker
@@ -132,9 +138,11 @@ without a provisioner token in `local.env` takes `--orgs 0`.
 5. Decide. Pass when the platform's p95 is at or under the target and
    the error ratio is at or under the target, both over the run plus
    one scrape interval (the ramp cannot be cut out at a fifteen-second
-   scrape). Fail otherwise, naming the first route that broke
-   the target and the request id that shows it. An alarm that fired
-   is reported either way.
+   scrape). The p95 is the working requests'; the sign-in and the
+   sign-out are reported beside the verdict with their own p95 and
+   never held to the target. Fail otherwise, naming the first route
+   that broke the target and the request id that shows it. An alarm
+   that fired is reported either way.
 6. Write the report. A fail names the next skill: `ops-investigate`
    with the window, or `ops-infra-as-code` when the numbers say a
    lever.
@@ -157,7 +165,8 @@ without a provisioner token in `local.env` takes `--orgs 0`.
 # Stress test: <name>, <env>, <profile>, <duration>s
 
 **Credential.** <profile and Arn, or local>
-**Target.** p95 <ms> ms, error ratio <ratio>
+**Target.** p95 <ms> ms over the working requests, error ratio <ratio>
+over every request
 **Verdict.** <PASS | FAIL: <route>, <p95 or ratio>, request id <id>>
 
 ## Requests
@@ -165,6 +174,11 @@ without a provisioner token in `local.env` takes `--orgs 0`.
 | Route | Status | Count | p50 ms | p95 ms | p99 ms |
 |-------|--------|-------|--------|--------|--------|
 | <route> | <status> | <n> | <ms> | <ms> | <ms> |
+
+- Working, the requests the target judges: <n> requests, p50 <ms> ms,
+  p95 <ms> ms, p99 <ms> ms
+- Sign-in and sign-out, reported beside the verdict and judged by
+  nothing: <n> requests, p50 <ms> ms, p95 <ms> ms
 
 ## Signals over the soak
 
