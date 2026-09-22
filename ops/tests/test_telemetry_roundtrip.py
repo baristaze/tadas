@@ -128,7 +128,7 @@ def serve(port: int, log: Path, overrides: dict[str, str]) -> Served:
     env = {**os.environ, **compose_knobs(), **overrides}
     handle = log.open("wb")
     process = subprocess.Popen(
-        [sys.executable, "-m", "tadas.services.api.main", "serve", "--port", str(port)],
+        [sys.executable, "-m", "tadas.services.api.entry", "serve", "--port", str(port)],
         cwd=REPO,
         env=env,
         stdout=handle,

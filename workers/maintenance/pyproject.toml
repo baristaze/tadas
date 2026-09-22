@@ -10,7 +10,7 @@ dependencies = [
 ]
 
 [project.scripts]
-tadas-maintenance = "tadas.workers.maintenance.main:main"
+tadas-maintenance = "tadas.workers.maintenance.entry:main"
 
 [tool.uv.sources]
 tadas-om = { workspace = true }

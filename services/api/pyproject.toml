@@ -12,7 +12,7 @@ dependencies = [
 ]
 
 [project.scripts]
-tadas-api = "tadas.services.api.main:main"
+tadas-api = "tadas.services.api.entry:main"
 
 [tool.uv.sources]
 tadas-om = { workspace = true }
