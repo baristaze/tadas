@@ -264,6 +264,20 @@ class WorkStorageContract:
         assert await storage.read_item_by_key(new_id(), item.idempotency_key) is None
         assert await storage.read_item_by_key(org, new_id()) is None
 
+    async def test_a_key_is_taken_in_its_tenant_and_free_in_every_other(
+        self, storage: WorkStorageInterface
+    ) -> None:
+        # The key is unique within its tenant and nowhere else: one tenant's
+        # producer never takes a key out of another's, and each reads its own
+        # row back under it.
+        org, elsewhere = new_id(), new_id()
+        mine = make_item()
+        theirs = make_item().model_copy(update={"idempotency_key": mine.idempotency_key})
+        assert await storage.create_item(org, mine) is InsertOutcome.INSERTED
+        assert await storage.create_item(elsewhere, theirs) is InsertOutcome.INSERTED
+        assert await storage.read_item_by_key(org, mine.idempotency_key) == mine
+        assert await storage.read_item_by_key(elsewhere, mine.idempotency_key) == theirs
+
     async def test_reads_and_writes_are_tenant_scoped(self, storage: WorkStorageInterface) -> None:
         org_a, org_b = new_id(), new_id()
         item = make_item()

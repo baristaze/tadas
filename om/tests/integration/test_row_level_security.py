@@ -24,12 +24,7 @@ from tadas.om.events.storage.tables.events import Events
 from tadas.om.idempotency.storage.impl.postgres import IdempotencyStoragePostgresImpl
 from tadas.om.idempotency.storage.tables.idempotency_records import IdempotencyRecords
 from tadas.om.storage.impl.pg_base import LoginSessions, set_scope
-from tadas.om.storage.logins import (
-    MIGRATION_LOGIN,
-    RUNTIME_LOGIN,
-    SYSTEM_LOGIN,
-    TRANSITIONAL_SYSTEM_LOGIN,
-)
+from tadas.om.storage.logins import MIGRATION_LOGIN, RUNTIME_LOGIN, SYSTEM_LOGIN
 from tadas.om.storage.roles import DatabaseRole, role_for
 from tadas.om.storage.scopes import POLICY_NAME, TABLE_SCOPES, ScopeKind, scope_for
 from tadas.om.tenancy.storage.impl.postgres import TenancyStoragePostgresImpl
@@ -217,10 +212,12 @@ async def test_every_table_holds_the_policy_its_scope_declares(
         assert "'00000000-0000-0000-0000-000000000000'" in expression, (
             f"{table_name}: the system scope is not spelled in the policy"
         )
-        for login in (SYSTEM_LOGIN, TRANSITIONAL_SYSTEM_LOGIN):
-            assert f"'{login}'" in expression, (
-                f"{table_name}: the system scope does not name {login}"
-            )
+        assert f"'{SYSTEM_LOGIN}'" in expression, (
+            f"{table_name}: the system scope does not name {SYSTEM_LOGIN}"
+        )
+        assert "'tadas'" not in expression.replace(f"'{SYSTEM_LOGIN}'", ""), (
+            f"{table_name}: the system scope still admits a login beside {SYSTEM_LOGIN}"
+        )
         narrowed = scope.narrowing is not None and all(
             part in expression for part in scope.narrowing
         )

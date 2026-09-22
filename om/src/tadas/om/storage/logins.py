@@ -32,12 +32,6 @@ MIGRATION_LOGIN = "tadas_migration"
 RUNTIME_LOGIN = "tadas_runtime"
 SYSTEM_LOGIN = "tadas_system"
 
-TRANSITIONAL_SYSTEM_LOGIN = "tadas"
-"""The login every process used before the three existed. The system-scope
-clause of every policy still admits it, so the release that brings the three
-logins rolls out beside the tasks still connected as it. The release after
-drops it from every policy."""
-
 DML = "SELECT, INSERT, UPDATE, DELETE"
 VERSION_TABLE = "alembic_version"
 

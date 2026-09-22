@@ -246,33 +246,27 @@ async def test_every_write_names_the_version_it_read(
             f"/v1/tasks/{task['id']}", headers={**owner, "If-Match": tag}, json={"title": "x"}
         )
         assert bad.status_code == 422, (tag, bad.text)
-    two = await client.patch(
-        f"/v1/tasks/{task['id']}", headers={**owner, **if_match(task)}, json={"version": 2}
-    )
-    assert two.status_code == 422, two.text
     assert (await client.get(f"/v1/tasks/{task['id']}", headers=owner)).json() == task
 
 
-async def test_a_client_that_predates_if_match_still_names_its_version(
+async def test_the_body_and_the_query_carry_no_version(
     client: httpx.AsyncClient, owner: dict[str, str]
 ) -> None:
-    # Until every client sends If-Match and expected_version, the version in
-    # the body and in the query stands in for them, under the same refusal.
+    # The version travels in If-Match and in expected_version and nowhere
+    # else. A body that names one is an unknown field, and a query that names
+    # one names no version at all; each is refused and nothing changes.
     task = await add(client, owner, "older client")
     edited = await client.patch(
-        f"/v1/tasks/{task['id']}", headers=owner, json={"title": "edited", "version": 1}
+        f"/v1/tasks/{task['id']}", headers={**owner, **if_match(task)}, json={"version": 1}
     )
-    assert edited.status_code == 200 and edited.json()["version"] == 2, edited.text
-    stale = await client.patch(
-        f"/v1/tasks/{task['id']}", headers=owner, json={"title": "again", "version": 1}
-    )
-    assert stale.status_code == 412 and stale.json()["error"]["code"] == "precondition_failed"
+    assert edited.status_code == 422, edited.text
     moved = await client.post(
-        f"/v1/tasks/{task['id']}/move", headers=owner, json={"after_id": None, "version": 2}
+        f"/v1/tasks/{task['id']}/move", headers=owner, json={"after_id": None, "version": 1}
     )
-    assert moved.status_code == 200 and moved.json()["version"] == 3, moved.text
-    deleted = await client.delete(f"/v1/tasks/{task['id']}", headers=owner, params={"version": 3})
-    assert deleted.status_code == 200 and deleted.json()["deleted_at"] is not None, deleted.text
+    assert moved.status_code == 422, moved.text
+    deleted = await client.delete(f"/v1/tasks/{task['id']}", headers=owner, params={"version": 1})
+    assert deleted.status_code == 422, deleted.text
+    assert (await client.get(f"/v1/tasks/{task['id']}", headers=owner)).json() == task
 
 
 async def test_two_updates_from_one_snapshot_one_wins_and_the_other_is_412(
