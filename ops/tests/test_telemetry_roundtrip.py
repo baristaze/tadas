@@ -65,6 +65,12 @@ answers with, on the image's schedule and not on one this repository sets.
 The poll returns the moment the event lands, so the number only bounds a
 failure."""
 
+TRACKER_READY_SECONDS = 60.0
+"""How long the error tracker gets to become usable, which is longer than a
+restart and shorter than a wait anyone would sit through. GlitchTip runs its
+migrations at start, so a tracker whose database was recreated under it comes
+back only when its container is restarted; past this the fixture says so."""
+
 SPAN_BATCH_DELAY = timedelta(seconds=5)
 OTEL_TIMEOUT = timedelta(seconds=10)
 """The trace exporter's schedule, handed to the API process below
@@ -206,6 +212,32 @@ def scrape(port: int | None) -> None:
         pytest.fail(f"the collector would not scrape {where}:\n{done.stdout}\n{done.stderr}")
 
 
+def tracker_detail(env: Environment) -> str | None:
+    """None when the error tracker is usable, and what is wrong otherwise.
+
+    Usable is not the same as answering. GlitchTip runs its migrations when
+    it starts, so a tracker whose database was recreated under it — a
+    `make reset` while its container stayed up — still answers its root route
+    with nothing behind it, and the first thing to fail is a read or the
+    seed, on a missing table. So the check is a read of the seeded project's
+    issues under the read-only token: the one call that needs the schema, the
+    seed, and the token, all three."""
+    project = f"{env.error_tracker_org}/{env.error_tracker_project}"
+    url = f"{env.error_tracker_url}/api/0/projects/{project}/issues/"
+    try:
+        response = httpx.get(
+            url,
+            params={"limit": 1},
+            headers={"Authorization": f"Bearer {env.error_tracker_token or ''}"},
+            timeout=10.0,
+        )
+    except httpx.HTTPError as error:
+        return f"{url} does not answer ({error})"
+    if response.status_code != 200:
+        return f"{url} answered {response.status_code}: {response.text[:200]}"
+    return None
+
+
 @pytest.fixture(scope="module")
 def env() -> Environment:
     return load_environment("local", root=REPO)
@@ -216,10 +248,24 @@ def stores(env: Environment) -> None:
     for name, url in (
         ("Prometheus", f"{env.prometheus_url}/-/ready"),
         ("Jaeger", f"{env.jaeger_url}/api/v3/services"),
-        ("GlitchTip", f"{env.error_tracker_url}/api/0/"),
     ):
         if not reachable(url):
             unmet(f"{name} is not reachable at {url}: the round trip needs the devx profile")
+    # The tracker is waited for rather than probed once: it is the slowest of
+    # the three to become usable, and the state it can be in — up, answering,
+    # and holding no schema — is the one that broke a run.
+    detail = tracker_detail(env)
+    deadline = time.monotonic() + TRACKER_READY_SECONDS
+    while detail is not None and time.monotonic() < deadline:
+        time.sleep(2.0)
+        detail = tracker_detail(env)
+    if detail is not None:
+        unmet(
+            f"the error tracker's project does not read back after {TRACKER_READY_SECONDS:.0f}s: "
+            f"{detail}. It needs the devx profile, `make migrate seed`, and a tracker whose "
+            "database it migrated: one recreated under a running container answers with no "
+            "schema until `docker compose restart glitchtip` runs its migrations again"
+        )
 
 
 @pytest.fixture(scope="module")
