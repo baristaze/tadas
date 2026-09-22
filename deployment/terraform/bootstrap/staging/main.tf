@@ -24,6 +24,8 @@ module "account" {
   api_domain_name = local.staging.api_domain_name
   app_domain_name = local.staging.app_domain_name
 
+  sign_in_role_name = local.staging.sso_role_name
+
   owner_email        = var.owner_email
   monthly_budget_usd = var.monthly_budget_usd
   anomaly_monitor    = var.anomaly_monitor

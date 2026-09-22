@@ -62,7 +62,7 @@ replication copies from the moment it is on and nothing before.
 This skill needs the administrator profile the environment names
 (`tadas-staging-admin` or `tadas-prod-admin`) and refuses anything
 else. Another environment's administrator is the wrong account, and a
-PowerUserAccess profile cannot write IAM. Before any other command,
+sign-in profile (PowerUserAccess, TadasReadOnly) cannot write IAM. Before any other command,
 run
 
 ```bash

@@ -39,8 +39,8 @@ and check that `Arn` reads
 `arn:aws:sts::<account>:assumed-role/tadas-investigate-<env>/...`.
 Refuse any other identity: the administrator profiles
 (`tadas-staging-admin`, `tadas-prod-admin`) above all, and the bare
-sign-in profiles (`tadas-staging`, `tadas-prod`), whose PowerUserAccess
-is wider than the role. Each environment has an AWS account of its own
+sign-in profiles (`tadas-staging`, `tadas-prod`), whose permission
+sets (PowerUserAccess, TadasReadOnly) are wider than the role. Each environment has an AWS account of its own
 (`deployment/cloud/environments.json`). The role reads that account's
 state bucket, `tadas-state-<account>`, under `environments/staging/` or
 `environments/prod/`, and describes every resource, which is all a

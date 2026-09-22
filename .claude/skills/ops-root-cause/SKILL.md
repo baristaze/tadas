@@ -40,8 +40,8 @@ and check that `Arn` reads
 `arn:aws:sts::<account>:assumed-role/tadas-investigate-<env>/...`.
 Refuse any other identity, the administrator profiles
 (`tadas-staging-admin`, `tadas-prod-admin`) above all, and the bare
-sign-in profiles (`tadas-staging`, `tadas-prod`), whose PowerUserAccess
-is wider than the role. Every `aws` command below carries
+sign-in profiles (`tadas-staging`, `tadas-prod`), whose permission
+sets (PowerUserAccess, TadasReadOnly) are wider than the role. Every `aws` command below carries
 `--profile tadas-<env>-investigate`.
 
 Check the account too: `Account` in the same answer must equal the

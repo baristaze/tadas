@@ -34,8 +34,13 @@ variable "app_domain_name" {
   type        = string
 }
 
+variable "sign_in_role_name" {
+  description = "The Identity Center permission set a person signs in to this account with, and the investigate role trusts: PowerUserAccess in staging, a read-only set in production."
+  type        = string
+}
+
 variable "operator_principal_arn_patterns" {
-  description = "ARN patterns of the principals that may assume the investigate role. Empty means this account's Identity Center PowerUserAccess role."
+  description = "ARN patterns of the principals that may assume the investigate role. Empty means this account's Identity Center role for sign_in_role_name."
   type        = list(string)
   default     = []
 }

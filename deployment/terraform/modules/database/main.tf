@@ -14,6 +14,19 @@ resource "aws_db_subnet_group" "this" {
   tags       = local.tags
 }
 
+# The instance refuses a connection without TLS. Postgres 18 on RDS already
+# defaults to it; declared here, a default that moves cannot undo it.
+resource "aws_db_parameter_group" "this" {
+  name   = "tadas-${var.environment}"
+  family = "postgres${var.engine_version}"
+  tags   = local.tags
+
+  parameter {
+    name  = "rds.force_ssl"
+    value = "1"
+  }
+}
+
 resource "aws_db_instance" "this" {
   identifier     = "tadas-${var.environment}"
   engine         = "postgres"
@@ -37,6 +50,7 @@ resource "aws_db_instance" "this" {
   port                = 5432
 
   db_subnet_group_name   = aws_db_subnet_group.this.name
+  parameter_group_name   = aws_db_parameter_group.this.name
   vpc_security_group_ids = var.security_group_ids
   publicly_accessible    = false
   multi_az               = var.multi_az

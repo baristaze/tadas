@@ -177,12 +177,15 @@ access key.
 | Profile | Holds | Used by |
 |---------|-------|---------|
 | `tadas-staging-admin`, `tadas-prod-admin` | the account's administrator permission set, granted for the bootstrap | create and nuke, nothing else |
-| `tadas-staging`, `tadas-prod` | the account's PowerUserAccess permission set, a person's sign-in | the `source_profile` of the investigate profile, never a skill directly |
+| `tadas-staging`, `tadas-prod` | a person's sign-in: PowerUserAccess in staging, TadasReadOnly in production, which writes nothing | the `source_profile` of the investigate profile, never a skill directly |
 | `tadas-staging-investigate` | `role_arn` = `tadas-investigate-staging`, `source_profile` = `tadas-staging` | every read of staging |
 | `tadas-production-investigate` | `role_arn` = `tadas-investigate-production`, `source_profile` = `tadas-prod` | every read of production |
 
-The investigate role trusts the account's PowerUserAccess role, matched
-by pattern because its name carries a generated suffix. A person signs
+The investigate role trusts the sign-in role `environments.json` names
+for its account (`sso_role_name`), matched by pattern because its name
+carries a generated suffix. In production that is a read-only
+permission set: no person holds a credential that writes production,
+and every change there is a release. A person signs
 in once (`aws sso login --profile tadas-staging`), and an agent works
 under the investigate profile inside that session.
 

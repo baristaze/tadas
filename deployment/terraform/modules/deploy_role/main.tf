@@ -290,11 +290,14 @@ data "aws_iam_policy_document" "graph_data" {
     actions = [
       "rds:AddTagsToResource",
       "rds:CreateDBInstance",
+      "rds:CreateDBParameterGroup",
       "rds:CreateDBSnapshot",
       "rds:CreateDBSubnetGroup",
       "rds:DeleteDBInstance",
+      "rds:DeleteDBParameterGroup",
       "rds:DeleteDBSubnetGroup",
       "rds:ModifyDBInstance",
+      "rds:ModifyDBParameterGroup",
       "rds:ModifyDBSubnetGroup",
       "rds:RebootDBInstance",
       "rds:RemoveTagsFromResource",
@@ -303,7 +306,7 @@ data "aws_iam_policy_document" "graph_data" {
       "arn:${local.partition}:rds:${local.region}:${local.account}:db:${local.name_prefix}",
       "arn:${local.partition}:rds:${local.region}:${local.account}:subgrp:${local.name_prefix}",
       "arn:${local.partition}:rds:${local.region}:${local.account}:snapshot:${local.name_prefix}-*",
-      "arn:${local.partition}:rds:${local.region}:${local.account}:pg:*",
+      "arn:${local.partition}:rds:${local.region}:${local.account}:pg:${local.name_prefix}",
       "arn:${local.partition}:rds:${local.region}:${local.account}:og:*",
     ]
   }
@@ -564,6 +567,15 @@ data "aws_iam_policy_document" "fences" {
       "ecr:SetRepositoryPolicy",
     ]
     resources = ["*"]
+  }
+
+  # The bootstrap root's state holds the roles and trust this role runs
+  # under; a deploy run writes its own environment's state and never that.
+  statement {
+    sid       = "NotTheBootstrapState"
+    effect    = "Deny"
+    actions   = ["s3:PutObject", "s3:DeleteObject", "s3:DeleteObjectVersion"]
+    resources = ["${local.state_bucket_arn}/bootstrap/*"]
   }
 
   statement {

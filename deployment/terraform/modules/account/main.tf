@@ -26,7 +26,7 @@ locals {
   # sits under this path with a generated suffix, so it is matched by
   # pattern and never by a name someone copies in.
   operator_principal_arn_patterns = length(var.operator_principal_arn_patterns) > 0 ? var.operator_principal_arn_patterns : [
-    "arn:${local.partition}:iam::${local.account}:role/aws-reserved/sso.amazonaws.com/*AWSReservedSSO_PowerUserAccess_*",
+    "arn:${local.partition}:iam::${local.account}:role/aws-reserved/sso.amazonaws.com/*AWSReservedSSO_${var.sign_in_role_name}_*",
   ]
 }
 

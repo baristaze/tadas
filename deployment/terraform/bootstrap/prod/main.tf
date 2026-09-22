@@ -39,6 +39,8 @@ module "account" {
   api_domain_name = local.production.api_domain_name
   app_domain_name = local.production.app_domain_name
 
+  sign_in_role_name = local.production.sso_role_name
+
   owner_email        = var.owner_email
   monthly_budget_usd = var.monthly_budget_usd
   anomaly_monitor    = var.anomaly_monitor
@@ -276,6 +278,23 @@ data "aws_iam_policy_document" "artifacts_bucket" {
       test     = "ArnEquals"
       variable = "aws:PrincipalArn"
       values   = ["arn:${local.partition}:iam::${local.staging.account_id}:role/tadas-replication-staging"]
+    }
+  }
+
+  # Only replication writes a portal build here. A direct write or delete
+  # under the prefix is refused to every principal, the administrator
+  # included, so a released build is never replaced in place. A second
+  # version replicated from a changed source still lands; the digest staging
+  # recorded is what catches it, before any plan.
+  statement {
+    sid       = "NoDirectWriteToAKeptBuild"
+    effect    = "Deny"
+    actions   = ["s3:PutObject", "s3:DeleteObject", "s3:DeleteObjectVersion"]
+    resources = ["${module.account.artifacts_bucket_arn}/builds/portal/*"]
+
+    principals {
+      type        = "*"
+      identifiers = ["*"]
     }
   }
 }
