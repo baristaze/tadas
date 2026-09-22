@@ -1,8 +1,10 @@
 # ADR 0023: The row-level security bypass is a setting, for now
 
-**Status**: accepted (2026-09-22). A deviation, closed by
-[TAZ-56](https://linear.app/taze/issue/TAZ-56), beside
-[TAZ-54](https://linear.app/taze/issue/TAZ-54).
+**Status**: accepted (2026-09-22), amended (2026-09-22). A deviation
+for one more release. [TAZ-54](https://linear.app/taze/issue/TAZ-54)
+and [TAZ-56](https://linear.app/taze/issue/TAZ-56) split the logins
+(release A, below); release B removes the master from the clause and
+closes this record.
 
 ## Context
 
@@ -43,3 +45,41 @@ owner and DML split.
 - The negative-control test and the policy check test stay as they are.
   They prove the fence against a missing predicate, which is the case
   it covers today.
+
+## Amended: release A
+
+The logins are split. Three logins reach the database, and none is a
+superuser or carries BYPASSRLS:
+
+- `tadas_migration` owns every role schema, table, sequence, and
+  version table, and runs the migrations.
+- `tadas_runtime` is every request's connection. It owns nothing and
+  holds DML only.
+- `tadas_system` is its twin for the system scope, on a pool of its
+  own. The funnel opens the system scope on it and every other scope
+  on the runtime login.
+
+`tadas-api migrate ensure-logins` makes them, run as the master by the
+migrate task before `migrate --all`.
+
+The bypass is no longer a setting alone. The system-scope clause of
+every `tenant_fence` policy is now:
+
+```sql
+current_setting('app.org_id', true) = '00000000-0000-0000-0000-000000000000'
+AND current_user IN ('tadas_system', 'tadas')
+```
+
+The runtime login naming the system scope reads nothing, so an injected
+`SET` on a request's connection no longer lifts the second fence.
+
+`tadas`, the master, stays in the clause for release A only. It is the
+login every task of the release before connects as, and those tasks keep
+serving while release A rolls out beside them. Until release B, the
+master's password can still read across tenants through the setting.
+That login is held by the migrate task alone once release A is live.
+
+Release B drops `'tadas'` from the clause, in a migration of its own,
+after every task of the release before has stopped. This record closes
+with it. [ADR 0026](0026-what-0-31-0-leaves-as-a-choice.md) lists what
+else release B removes.
