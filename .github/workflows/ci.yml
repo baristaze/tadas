@@ -92,6 +92,11 @@ jobs:
         run: |
           nohup uv run tadas-api serve > api.log 2>&1 &
           for i in $(seq 1 30); do curl -sf http://127.0.0.1:8000/healthz && break; sleep 1; done
+      # The telemetry step signs people in from this runner's address too,
+      # and the login rate limit is per address over a minute-long window, so
+      # the two steps share one budget. A sign-in the limit turns away waits
+      # the window out and asks again, which is cheaper than ordering the job
+      # around a window no step can see.
       - run: make traffic PROFILE=light DURATION=30
       - name: the API's log, on a failure
         if: failure()
