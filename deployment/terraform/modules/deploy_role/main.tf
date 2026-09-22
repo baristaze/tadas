@@ -117,6 +117,7 @@ data "aws_iam_policy_document" "read" {
       "acm:Describe*",
       "acm:Get*",
       "acm:List*",
+      "cloudfront:Describe*",
       "cloudfront:Get*",
       "cloudfront:List*",
       "ec2:Describe*",
