@@ -14,13 +14,29 @@ run_one() {
   overrides="$(jq -cn --arg name "$CONTAINER" --argjson command "$command" \
     '{containerOverrides: [{name: $name, command: $command}]}')"
 
-  task_arn="$(aws ecs run-task \
-    --cluster "$CLUSTER" \
-    --task-definition "$TASK_DEFINITION" \
-    --launch-type FARGATE \
-    --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SECURITY_GROUPS],assignPublicIp=DISABLED}" \
-    --overrides "$overrides" \
-    --query 'tasks[0].taskArn' --output text)"
+  # A role created moments ago in the same apply is not everywhere yet, and
+  # ECS answers "unable to assume the role" until it is. That is the one
+  # failure worth waiting out; every other one fails the deploy at once.
+  local attempt=1 started
+  while true; do
+    if started="$(aws ecs run-task \
+      --cluster "$CLUSTER" \
+      --task-definition "$TASK_DEFINITION" \
+      --launch-type FARGATE \
+      --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SECURITY_GROUPS],assignPublicIp=DISABLED}" \
+      --overrides "$overrides" \
+      --query 'tasks[0].taskArn' --output text 2>&1)"; then
+      task_arn="$started"
+      break
+    fi
+    if [ "$attempt" -ge 10 ] || ! grep -q 'unable to assume the role' <<<"$started"; then
+      echo "pre-rollout task did not start: $started" >&2
+      exit 1
+    fi
+    echo "pre-rollout waits for the task role to reach ECS (attempt $attempt)"
+    attempt=$((attempt + 1))
+    sleep 6
+  done
 
   echo "pre-rollout task $task_arn ($command) started on $CLUSTER"
   aws ecs wait tasks-stopped --cluster "$CLUSTER" --tasks "$task_arn"
