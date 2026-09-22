@@ -41,6 +41,7 @@ from tadas.ops.stress import (
     with_duration,
 )
 from tadas.ops.traffic import (
+    NO_ONE_SIGNED_IN,
     OPERATOR_APP,
     TokenRefused,
     app_version,
@@ -133,6 +134,17 @@ def readback_text(readback: Readback, metric: str) -> str:
 # Commands
 
 
+def traffic_exit_code(report: Report) -> int:
+    """What a traffic run exits with: 0 when it drove a session through, 1
+    when it did not. A run that started no session at all drove nothing for a
+    reason of its own, and an exit status alone reads like any other failure,
+    so it says the reason on stderr too."""
+    if report.sessions.started == 0:
+        print(NO_ONE_SIGNED_IN, file=sys.stderr)
+        return FAILED
+    return OK if report.sessions.completed > 0 else FAILED
+
+
 async def traffic_command(args: argparse.Namespace) -> tuple[int, Report]:
     env = load_environment(args.env)
     profile = profile_named(args.profile)
@@ -140,7 +152,7 @@ async def traffic_command(args: argparse.Namespace) -> tuple[int, Report]:
         env, profile, duration_seconds=args.duration, orgs=args.orgs, ramp_seconds=args.ramp
     )
     sys.stdout.write(result.report.table())
-    return (OK if result.report.sessions.completed > 0 else FAILED), result.report
+    return traffic_exit_code(result.report), result.report
 
 
 async def stress_command(args: argparse.Namespace) -> tuple[int, Report]:
