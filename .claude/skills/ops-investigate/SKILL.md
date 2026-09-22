@@ -42,7 +42,7 @@ and check that `Arn` reads
 Refuse to run under any other identity, the administrator profiles
 (`tadas-staging-admin`, `tadas-prod-admin`) above all, and the bare
 sign-in profiles (`tadas-staging`, `tadas-prod`), whose permission
-sets (PowerUserAccess, TadasReadOnly) are wider than the role. A wider credential is not a convenience; it is
+sets (PowerUserAccess, ReadOnlyAccess) are wider than the role. A wider credential is not a convenience; it is
 the boundary gone. Every `aws` command below carries
 `--profile tadas-<env>-investigate`. Never read `AWS_PROFILE` as a
 substitute.

@@ -23,8 +23,8 @@ change is a pull request.
 
 There is no IAM user and no access key. A person signs in through IAM
 Identity Center (`tadas-staging` with PowerUserAccess, `tadas-prod`
-with the read-only TadasReadOnly), and
-the investigate profiles chain from that sign-in, so an agent works
+with ReadOnlyAccess, which writes nothing), and the investigate
+profiles chain from that sign-in, so an agent works
 inside a session a person opened. No skill runs under the sign-in
 itself: it is wider than the investigate role. Everything the investigate roles are
 denied is a fence in the role itself, not a rule in a skill.

@@ -19,7 +19,7 @@
       "account_id": "557092275199",
       "admin_profile": "tadas-prod-admin",
       "sso_profile": "tadas-prod",
-      "sso_role_name": "TadasReadOnly",
+      "sso_role_name": "ReadOnlyAccess",
       "bootstrap_root": "bootstrap/prod",
       "environment_root": "environments/prod",
       "api_domain_name": "api.tadas.fyi",

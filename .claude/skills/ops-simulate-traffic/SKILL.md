@@ -49,7 +49,7 @@ aws sts get-caller-identity --profile tadas-<env>-investigate
 and refused under any other identity, the administrator profiles
 (`tadas-staging-admin`, `tadas-prod-admin`) above all, and the bare
 sign-in profiles (`tadas-staging`, `tadas-prod`), whose permission
-sets (PowerUserAccess, TadasReadOnly) are wider than the role. And the env file
+sets (PowerUserAccess, ReadOnlyAccess) are wider than the role. And the env file
 `~/.config/tadas/ops/<env>.env`, owner-only and outside the repository,
 whose provisioner identity (`TADAS_PROVISIONER_EMAIL`,
 `TADAS_PROVISIONER_PASSWORD` against `TADAS_API_URL`) creates the

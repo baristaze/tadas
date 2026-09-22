@@ -167,16 +167,16 @@ AWS managed policy: PowerUserAccess
 Session duration: 12 hours
 ```
 
-Normal production access, which writes nothing:
+Read-only access, the default in production and for inspection in staging:
 
 ```text
-Permission set: TadasReadOnly
+Permission set: ReadOnlyAccess
 AWS managed policy: ReadOnlyAccess
 Inline policy: sts:AssumeRole on arn:aws:iam::*:role/tadas-investigate-*
 Session duration: 12 hours
 ```
 
-A person reads production and hands an agent the investigate role; every change to production is a pull request and a release. The inline policy is what lets the `tadas-production-investigate` profile chain from this sign-in.
+A person reads production and hands an agent the investigate role; every change to production is a pull request and a release. The investigate role trusts the account, narrowed by a condition to this permission set's role, so the sign-in itself must be allowed to call `sts:AssumeRole`. The managed `ReadOnlyAccess` policy does not allow it. The inline policy is what lets the `tadas-production-investigate` profile chain from this sign-in; without it the chain answers `AccessDenied`.
 
 Temporary bootstrap access:
 
@@ -196,6 +196,9 @@ Assign to `tadas-staging`:
 TadasPowerUsers
   -> PowerUserAccess
 
+TadasReaders
+  -> ReadOnlyAccess
+
 TadasBootstrapAdmins
   -> TadasBootstrapAdmin
 ```
@@ -204,13 +207,18 @@ Assign to `tadas-prod`:
 
 ```text
 TadasReaders
-  -> TadasReadOnly
+  -> ReadOnlyAccess
+
+TadasPowerUsers
+  -> PowerUserAccess
 
 TadasBootstrapAdmins
   -> TadasBootstrapAdmin
 ```
 
-The investigate role in each account trusts the permission set `deployment/cloud/environments.json` names for it (`sso_role_name`): `PowerUserAccess` in staging, `TadasReadOnly` in production.
+`PowerUserAccess` in production is for a change that is explicitly authorized, never for everyday work.
+
+The investigate role in each account trusts the permission set `deployment/cloud/environments.json` names for it (`sso_role_name`): `PowerUserAccess` in staging, `ReadOnlyAccess` in production.
 
 The management account should only receive organization-level admin access:
 
@@ -231,10 +239,12 @@ Management account
 
 tadas-staging
   PowerUserAccess
+  ReadOnlyAccess
   TadasBootstrapAdmin
 
 tadas-prod
-  TadasReadOnly
+  ReadOnlyAccess
+  PowerUserAccess
   TadasBootstrapAdmin
 ```
 
@@ -277,12 +287,14 @@ Profile: tadas-staging-admin
 
 ## 15. Recommended local profiles
 
-Create these four profiles, all sharing the same `tadas` SSO session:
+Create these six profiles, all sharing the same `tadas` SSO session:
 
 ```text
 tadas-staging
+tadas-staging-ro
 tadas-staging-admin
 tadas-prod
+tadas-prod-power
 tadas-prod-admin
 ```
 
@@ -293,18 +305,18 @@ tadas-staging: 792394000601
 tadas-prod:    557092275199
 ```
 
-Normal profiles use:
+Each profile's role, and what it is for:
 
 ```text
-tadas-staging -> PowerUserAccess
-tadas-prod    -> TadasReadOnly
+tadas-staging     -> PowerUserAccess      normal staging work
+tadas-staging-ro  -> ReadOnlyAccess       inspection only
+tadas-staging-admin -> TadasBootstrapAdmin  temporary bootstrap and IAM-heavy setup only
+tadas-prod        -> ReadOnlyAccess       the default production profile, inspection only
+tadas-prod-power  -> PowerUserAccess      only when explicitly authorized
+tadas-prod-admin  -> TadasBootstrapAdmin  emergency or bootstrap only, never unless explicitly authorized
 ```
 
-Admin profiles use:
-
-```text
-TadasBootstrapAdmin
-```
+`tadas-prod` is read-only on purpose: the profile a command reaches production with by default can change nothing.
 
 Default workload region:
 
@@ -316,17 +328,30 @@ us-west-2
 
 ```bash
 aws sts get-caller-identity --profile tadas-staging
-aws sts get-caller-identity --profile tadas-prod
+aws sts get-caller-identity --profile tadas-staging-ro
 aws sts get-caller-identity --profile tadas-staging-admin
+aws sts get-caller-identity --profile tadas-prod
+aws sts get-caller-identity --profile tadas-prod-power
 aws sts get-caller-identity --profile tadas-prod-admin
 ```
 
 Expected account IDs:
 
 ```text
-tadas-staging -> 792394000601
-tadas-prod    -> 557092275199
+tadas-staging*  -> 792394000601
+tadas-prod*     -> 557092275199
 ```
+
+Check that the read-only sign-in may chain to the investigate role. The role name in the output carries the permission set's name, `AWSReservedSSO_ReadOnlyAccess_<suffix>`:
+
+```bash
+aws iam list-roles --profile tadas-prod \
+  --path-prefix /aws-reserved/sso.amazonaws.com/ \
+  --query 'Roles[?contains(RoleName, `ReadOnlyAccess`)].RoleName' --output text
+aws iam list-role-policies --profile tadas-prod --role-name <that role>
+```
+
+The second command lists `AwsSSOInlinePolicy` once the inline policy of section 10 is on the permission set. An empty list means the investigate profile cannot chain yet.
 
 ## 17. Rules for agents and automation
 
