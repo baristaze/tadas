@@ -1,6 +1,7 @@
 # ADR 0019: An api key's hash stays unique after the key is revoked
 
-**Status**: accepted (2026-09-21)
+**Status**: accepted (2026-09-21), amended (2026-09-22): the lookup
+is `read_api_key_by_digest`.
 
 ## Context
 
@@ -21,7 +22,8 @@ random secret the platform mints, so the same hash is never created a
 second time. Freeing it on revocation buys nothing.
 
 Keeping the revoked row in the index does buy something. The lookup,
-`read_api_key_by_hash`, reads by hash over living and revoked rows on
+`read_api_key_by_digest` (named `read_api_key_by_hash` until
+0.31.0's names for the pre-identity lookups), reads by hash over living and revoked rows on
 purpose. The manager then refuses a revoked key as revoked
 (`CredentialExpired`), not as unknown (`InvalidCredential`), so a
 caller holding a revoked key learns why it stopped working. The lookup
