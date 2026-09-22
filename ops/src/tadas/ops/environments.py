@@ -1,14 +1,18 @@
-"""One named environment: where the API is, who the operator is (a read
-entry on the allowlist, what every read runs as) and who the provisioner is
-(a write entry, used only to create the tenants a traffic run needs), and
-where its signals are read back from. `staging` and `production` are read from an
-owner-only file outside the repository, `~/.config/tadas/ops/<env>.env`;
-`local` reads the same file when it exists and otherwise the compose stack's
-own knobs (`.env.example`, then `.env`) from the repository root, so the local
-stack is an environment with nothing to set up. The process environment
-overrides either file, key by key."""
+"""One named environment: where the API is, the two operator tokens it is
+reached with, and where its signals are read back from. The operator's token
+carries `read` and is what every read runs as; the provisioner's carries
+`write` and is used only to create and remove the tenants a traffic run
+needs. Neither is a password: an agent never signs in to the operator plane,
+it presents a token that expires within the hour (`tadas-ops token` writes
+one). `staging` and `production` are read from an owner-only file outside
+the repository, `~/.config/tadas/ops/<env>.env`; `local` reads the same file
+when it exists and otherwise the compose stack's own knobs (`.env.example`,
+then `.env`) from the repository root, so the local stack is an environment
+with nothing to set up. The process environment overrides either file, key
+by key. A file that anyone but its owner can read is refused."""
 
 import os
+import stat
 import subprocess
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -24,10 +28,8 @@ the way the project key is, so the local reader needs no click through the UI.""
 
 KEYS = (
     "TADAS_API_URL",
-    "TADAS_OPERATOR_EMAIL",
-    "TADAS_OPERATOR_PASSWORD",
-    "TADAS_PROVISIONER_EMAIL",
-    "TADAS_PROVISIONER_PASSWORD",
+    "TADAS_OPERATOR_TOKEN",
+    "TADAS_PROVISIONER_TOKEN",
     "TADAS_ERROR_TRACKER_URL",
     "TADAS_ERROR_TRACKER_TOKEN",
     "TADAS_ERROR_TRACKER_ORG",
@@ -64,10 +66,8 @@ class SeedPeople:
 class Environment:
     name: str
     api_url: str
-    operator_email: str | None
-    operator_password: str | None
-    provisioner_email: str | None
-    provisioner_password: str | None
+    operator_token: str | None
+    provisioner_token: str | None
     error_tracker_url: str | None
     error_tracker_token: str | None
     error_tracker_org: str
@@ -109,6 +109,17 @@ def ops_file(name: str, home: Path | None = None) -> Path:
     return (home or Path.home()) / ".config" / "tadas" / "ops" / f"{name}.env"
 
 
+def refuse_unless_owner_only(file: Path) -> None:
+    """The file holds operator tokens: one that its group or anyone else may
+    read is refused, never read, whatever it holds right now."""
+    mode = stat.S_IMODE(file.stat().st_mode)
+    if mode & 0o077:
+        raise ValueError(
+            f"{file} is mode {mode:o}; it holds operator tokens and must be owner-only: "
+            f"chmod 600 {file}"
+        )
+
+
 def repository_root(start: Path | None = None) -> Path | None:
     """The checkout `local` reads the compose knobs from: the nearest ancestor
     of the working directory with an `.env.example`, or git's answer."""
@@ -148,10 +159,8 @@ def environment_of(name: str, values: Mapping[str, str]) -> Environment:
     return Environment(
         name=name,
         api_url=api_url.rstrip("/"),
-        operator_email=get("TADAS_OPERATOR_EMAIL"),
-        operator_password=get("TADAS_OPERATOR_PASSWORD"),
-        provisioner_email=get("TADAS_PROVISIONER_EMAIL"),
-        provisioner_password=get("TADAS_PROVISIONER_PASSWORD"),
+        operator_token=get("TADAS_OPERATOR_TOKEN"),
+        provisioner_token=get("TADAS_PROVISIONER_TOKEN"),
         error_tracker_url=get(
             "TADAS_ERROR_TRACKER_URL", LOCAL_ERROR_TRACKER_URL if local else None
         ),
@@ -195,6 +204,7 @@ def load_environment(
                     values.update(parse_env_file(candidate.read_text()))
     file = path or ops_file(name, home)
     if file.is_file():
+        refuse_unless_owner_only(file)
         values.update(parse_env_file(file.read_text()))
     elif not local:
         raise FileNotFoundError(f"no environment file for {name!r} at {file}")
@@ -203,3 +213,29 @@ def load_environment(
         if env.get(key):
             values[key] = env[key]
     return environment_of(name, {k: v for k, v in values.items() if k in KEYS})
+
+
+def write_value(file: Path, key: str, value: str) -> None:
+    """Sets `key` in the env file, replacing its line or appending one, and
+    leaves every other line as it was. The file is created owner-only when
+    missing and refused when it is not; the value is never echoed."""
+    if key not in KEYS:
+        raise ValueError(f"{key} is not a key an environment file holds")
+    if file.is_file():
+        refuse_unless_owner_only(file)
+        lines = file.read_text().splitlines()
+    else:
+        file.parent.mkdir(parents=True, exist_ok=True)
+        lines = []
+    line = f"{key}={value}"
+    for index, raw in enumerate(lines):
+        stripped = raw.strip().removeprefix("export ").lstrip()
+        if stripped.partition("=")[0].strip() == key:
+            lines[index] = line
+            break
+    else:
+        lines.append(line)
+    descriptor = os.open(file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(descriptor, "w") as out:
+        out.write("\n".join(lines) + "\n")
+    os.chmod(file, 0o600)

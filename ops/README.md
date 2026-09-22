@@ -19,7 +19,7 @@ change is a pull request.
 | Administrator | a person | create and destroy an environment; nothing else | `tadas-staging-admin`, `tadas-prod-admin` |
 | Deployer | the pipeline, through OIDC | apply staging; plan and apply production | none: the workflow's own |
 | Investigator | an agent, or a person | read every signal and every resource description, plan Terraform; never a secret's value, a data bucket's object, or a database login | `tadas-staging-investigate`, `tadas-production-investigate` |
-| Supporter | an agent, or a person | Investigator, plus the operator plane's read of one named org | the investigate profile, plus a read operator identity |
+| Supporter | an agent, or a person | Investigator, plus the operator plane's read of one named org | the investigate profile, plus a `read` operator token |
 
 There is no IAM user and no access key. A person signs in through IAM
 Identity Center (`tadas-staging` with PowerUserAccess, `tadas-prod`
@@ -39,11 +39,21 @@ cloud.
   never in the repository.
 - The application credentials live in one owner-only file per
   environment outside the repository, `~/.config/tadas/ops/<env>.env`:
-  the API URL, the operator's email and password (a read entry on the
-  allowlist, what every read runs as), the provisioner's email and
-  password (a write entry, used by the traffic generator alone to
-  create the tenants a run needs), and the error tracker's URL and
-  token.
+  the API URL, two operator tokens, and the error tracker's URL and
+  token. `TADAS_OPERATOR_TOKEN` carries `read`, and every read runs as
+  it. `TADAS_PROVISIONER_TOKEN` carries `write`, and the traffic
+  generator alone uses it, to create and remove the tenants a run
+  needs. Each expires within the hour. The file never holds a password
+  or a TOTP secret: an agent never signs in to the operator plane. A
+  command refuses a file its group or anyone else can read.
+- `tadas-ops token --env <env> --identity operator` is run by a person
+  in their own terminal. It asks there for the email, the password, and
+  the TOTP code, signs in, mints a `read` token through
+  `POST /v1/admin/me/tokens`, and writes it into the file without
+  printing it. `--identity provisioner` copies the token the
+  `grant-operator.yml` workflow wrote into the secret
+  `tadas-<env>-provisioner-token`, under the person's own sign-in
+  profile. A command whose token was refused names this one.
 - A skill names the profile it needs, verifies which identity it holds
   before it runs, and refuses to run under a wider one.
 - The platform's own secrets live in the secret store. No secret is in
@@ -95,14 +105,16 @@ owner.
 ## The binary
 
 `tadas-ops` is the operators' one command. It rides the Python client
-and the operator plane, and it holds a read credential.
+and the operator plane, and it presents an operator token, never a
+password.
 
 | Subcommand | Does |
 |------------|------|
-| `traffic --env <e> --profile light\|regular\|heavy\|stress [--duration S] [--report path]` | Drives realistic sessions at the edge and reports requests by route and status, p50, p95, p99, and the error ratio. |
+| `traffic --env <e> --profile light\|regular\|heavy\|stress [--duration S] [--orgs N] [--report path]` | Drives realistic sessions at the edge and reports requests by route and status, p50, p95, p99, and the error ratio. Its tenants are made under the provisioner's token, named `ops-<run id>-<n>`, and removed when the run ends, a failure included; the report names any it could not remove. `--orgs 0` drives the seeded people, locally only. |
 | `stress --scenario ops/stress/<name>.yaml` | The same generator at a profile with a duration, a ramp, and a target; reads the signals back after the run. |
 | `signals check --env <e> --request-id <id>` | Reads the log lines, the metric, the trace, and the error event for one request id. |
-| `size --env <e>` | The platform's size: orgs, users, and the tasks of the last twenty-four hours. |
+| `size --env <e>` | The platform's size: orgs, users, and the tasks of the last twenty-four hours, with the traffic generator's own tenants left out. |
+| `token --env <e> --identity operator\|provisioner` | Writes an operator token into the env file, never printing it. |
 
 ## The skills
 
@@ -120,9 +132,9 @@ and its report.
 | `ops-infra-as-code` | Investigator | What would this Terraform change do: a plan, read-only, against the live environment. |
 | `ops-cloud-deployment-create` | Administrator | Bring up an environment's account: the state backend, the bootstrap root, the delegation of its names, the GitHub environments' variables, then the first deploy through the pipeline. |
 | `ops-cloud-deployment-nuke` | Administrator | Tear an environment down. Refuses production unless deletion protection was lifted in a prior pull request and the name is typed; reports what is left. |
-| `ops-simulate-traffic` | Supporter | What does the platform look like under realistic traffic at a profile. |
+| `ops-simulate-traffic` | Provisioner | What does the platform look like under realistic traffic at a profile. |
 | `stress-test-create-or-update` | none | Write or change a scenario file, with a target stated before any run. |
-| `stress-test-run` | Supporter | Run a scenario, read the signals back, and say whether the target held. |
+| `stress-test-run` | Provisioner, Investigator | Run a scenario, read the signals back, and say whether the target held. |
 
 ## The first responder
 

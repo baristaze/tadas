@@ -1,22 +1,36 @@
-"""`tadas-ops`: traffic, stress, signals check, and size, each against one
-named environment. Exit 0 when the run did what was asked, 1 when a stress
-target was missed or a reader found nothing, 2 for a bad invocation."""
+"""`tadas-ops`: traffic, stress, signals check, size, and token, each against
+one named environment. Exit 0 when the run did what was asked, 1 when a
+stress target was missed or a reader found nothing, 2 for a bad invocation
+or a credential the operator plane refused."""
 
 import argparse
 import asyncio
+import getpass
+import json
 import sys
 from collections.abc import Callable, Iterable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import cast
+from uuid import uuid4
 
+import aioboto3
 import httpx
 
-from tadas.client.client import ApiClient
-from tadas.ops.environments import Environment, load_environment
+from tadas.client.client import ApiClient, ApiError
+from tadas.client.schema import OrgPageView, UserPageView
+from tadas.ops.environments import (
+    CLOUD_ENVIRONMENTS,
+    Environment,
+    load_environment,
+    ops_file,
+    repository_root,
+    write_value,
+)
 from tadas.ops.profiles import PROFILES, profile_named
 from tadas.ops.report import Report
 from tadas.ops.signals import Readback, SignalsInterface
-from tadas.ops.signals.cloud import SignalsCloudImpl
+from tadas.ops.signals.cloud import SessionLike, SignalsCloudImpl
 from tadas.ops.signals.local import SignalsLocalImpl
 from tadas.ops.stress import (
     READBACK_WAIT_SECONDS,
@@ -25,7 +39,13 @@ from tadas.ops.stress import (
     verdict,
     window_start,
 )
-from tadas.ops.traffic import OPERATOR_APP, app_version, run_traffic
+from tadas.ops.traffic import (
+    OPERATOR_APP,
+    TokenRefused,
+    app_version,
+    is_run_tenant,
+    run_traffic,
+)
 
 OK, FAILED, USAGE = 0, 1, 2
 
@@ -163,21 +183,164 @@ async def signals_command(args: argparse.Namespace) -> int:
     return OK if found else FAILED
 
 
+async def run_tenants(client: ApiClient) -> tuple[int, int]:
+    """The tenants traffic runs created that are still live, and their
+    people: every page of the orgs, the ones named for a run, and every page
+    of each one's members."""
+    orgs = users = 0
+    cursor: str | None = None
+    while True:
+        params: dict[str, object] = {"limit": 100}
+        if cursor:
+            params["cursor"] = cursor
+        page = OrgPageView.model_validate(
+            await client.request("GET", "/v1/admin/orgs", params=params)
+        )
+        for org in page.items:
+            if not is_run_tenant(org.slug) or org.deleted_at is not None:
+                continue
+            orgs += 1
+            members: str | None = None
+            while True:
+                people: UserPageView = await client.admin_members(org.id, cursor=members)
+                users += len(people.items)
+                members = people.next_cursor
+                if not members:
+                    break
+        cursor = page.next_cursor
+        if not cursor:
+            return orgs, users
+
+
 async def size_command(
     args: argparse.Namespace, transport: httpx.AsyncBaseTransport | None = None
 ) -> int:
+    """The platform's size as the first responder reads it before an
+    escalation: the tenants and users the traffic generator created for its
+    runs are left out, since they are the team's own traffic."""
     env = load_environment(args.env)
-    if not env.operator_email or not env.operator_password:
-        print(f"environment {env.name!r} names no operator", file=sys.stderr)
+    if not env.operator_token:
+        print(
+            f"environment {env.name!r} holds no operator token; write one with "
+            f"`uv run tadas-ops token --env {env.name} --identity operator`",
+            file=sys.stderr,
+        )
         return USAGE
+    async with ApiClient(
+        env.api_url,
+        app=OPERATOR_APP,
+        app_version=app_version(),
+        token=env.operator_token,
+        transport=transport,
+    ) as client:
+        try:
+            size = await client.admin_size()
+            run_orgs, run_users = await run_tenants(client)
+        except ApiError as error:
+            if error.status == 401:
+                raise TokenRefused(env, "operator") from None
+            raise
+    values = size.model_dump()
+    values["tenants"] = max(size.tenants - run_orgs, 0)
+    values["users"] = max(size.users - run_users, 0)
+    for key, value in values.items():
+        print(f"{key:<24} {value}")
+    print(
+        f"{'traffic run tenants':<24} {run_orgs} left out ({run_users} users); "
+        "their tasks and events stay in the day's counts"
+    )
+    return OK
+
+
+def sso_profile_of(env_name: str) -> str:
+    """The person's own Identity Center profile for the environment, from
+    deployment/cloud/environments.json: the provisioner's token is read under
+    it, never under an agent's investigate profile, which is denied every
+    secret value."""
+    root = repository_root()
+    if root is None:
+        raise ValueError(
+            "run this from the tadas checkout; it reads deployment/cloud/environments.json"
+        )
+    layout = json.loads((root / "deployment" / "cloud" / "environments.json").read_text())
+    return str(layout["environments"][env_name]["sso_profile"])
+
+
+async def read_provisioner_token(env: Environment) -> str:
+    """The token the grant job wrote into `tadas-<env>-provisioner-token`."""
+    session = cast(
+        SessionLike,
+        aioboto3.Session(profile_name=sso_profile_of(env.name), region_name=env.aws_region),
+    )
+    async with session.client("secretsmanager") as secrets:
+        answer = await secrets.get_secret_value(SecretId=f"tadas-{env.name}-provisioner-token")
+    token = str(answer.get("SecretString") or "")
+    if not token:
+        raise ValueError(
+            f"tadas-{env.name}-provisioner-token holds no token yet; dispatch grant-operator.yml "
+            "with mint_token: provisioner first"
+        )
+    return token
+
+
+async def mint_operator_token(
+    env: Environment, transport: httpx.AsyncBaseTransport | None = None
+) -> str:
+    """A person's `read` operator token: the email, the password, and the
+    TOTP code are asked for here, in the person's own terminal, and go only
+    to the sign-in; what is kept is the token the mint route answers."""
+    email = (await asyncio.to_thread(input, "operator email: ")).strip()
+    password = await asyncio.to_thread(getpass.getpass, "password: ")
+    code = (await asyncio.to_thread(getpass.getpass, "TOTP code: ")).strip()
     async with ApiClient(
         env.api_url, app=OPERATOR_APP, app_version=app_version(), transport=transport
     ) as client:
-        login = await client.login(env.operator_email, env.operator_password)
-        client.token = login.token
-        size = await client.admin_size()
-    for key, value in size.model_dump().items():
-        print(f"{key:<24} {value}")
+        login = await client.request(
+            "POST",
+            "/v1/auth/login",
+            json={"email": email, "password": password, "totp_code": code},
+            token=None,
+        )
+        minted = await client.request(
+            "POST",
+            "/v1/admin/me/tokens",
+            json={"permission": "read"},
+            token=str(login["token"]),
+            idempotency_key=str(uuid4()),
+        )
+    return str(minted["token"])
+
+
+async def token_command(
+    args: argparse.Namespace, transport: httpx.AsyncBaseTransport | None = None
+) -> int:
+    """Writes an operator token into the environment's file without printing
+    it: the operator's, minted after a sign-in with the second factor, or the
+    provisioner's, copied from the secret the grant job wrote."""
+    env = load_environment(args.env)
+    file = ops_file(env.name)
+    if args.identity == "operator":
+        if not sys.stdin.isatty():
+            print(
+                "the operator's token is minted in a person's own terminal: it asks for the "
+                "password and the TOTP code there, and no agent holds either",
+                file=sys.stderr,
+            )
+            return USAGE
+        token = await mint_operator_token(env, transport)
+        key = "TADAS_OPERATOR_TOKEN"
+    else:
+        if env.name not in CLOUD_ENVIRONMENTS:
+            print(
+                "the local provisioner token is set in the local env file or the process "
+                "environment as TADAS_PROVISIONER_TOKEN",
+                file=sys.stderr,
+            )
+            return USAGE
+        token = await read_provisioner_token(env)
+        key = "TADAS_PROVISIONER_TOKEN"
+    write_value(file, key, token)
+    print(f"wrote {key} into {file}; it expires within the hour")
     return OK
 
 
@@ -214,6 +377,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_size = sub.add_parser("size", help="the platform's size as the operator plane reports it")
     p_size.add_argument("--env", required=True)
+
+    p_token = sub.add_parser("token", help="write an operator token into the env file")
+    p_token.add_argument("--env", required=True)
+    p_token.add_argument("--identity", required=True, choices=["operator", "provisioner"])
     return parser
 
 
@@ -226,6 +393,8 @@ def main(argv: list[str] | None = None) -> int:
             return write_report(args, asyncio.run(stress_command(args)))
         if args.command == "signals":
             return asyncio.run(signals_command(args))
+        if args.command == "token":
+            return asyncio.run(token_command(args))
         return asyncio.run(size_command(args))
     except (ValueError, FileNotFoundError) as error:
         print(f"tadas-ops: {error}", file=sys.stderr)

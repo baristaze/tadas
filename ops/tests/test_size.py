@@ -1,7 +1,7 @@
-"""`tadas-ops size`: the operator signs in and reads `/v1/admin/size`."""
+"""`tadas-ops size`: the operator's token reads `/v1/admin/size`, and the
+tenants the traffic generator created are left out of it."""
 
 import argparse
-import json
 from pathlib import Path
 
 import httpx
@@ -9,17 +9,19 @@ import pytest
 
 from tadas.ops.main import size_command
 
+NOW = "2026-09-20T12:00:00Z"
+RUN_ORG = "0199a4c0-0000-7000-8000-00000000000b"
+
+
+def org(org_id: str, slug: str) -> dict[str, object]:
+    return {"id": org_id, "name": slug, "slug": slug, "created_at": NOW, "deleted_at": None}
+
 
 def operator_api(request: httpx.Request) -> httpx.Response:
-    if request.url.path == "/v1/auth/login":
-        body = json.loads(request.content)
-        assert body == {"email": "ops@example.test", "password": "secret"}
-        return httpx.Response(
-            200, json={"token": "lgn_op", "expires_at": "2026-09-20T12:00:00Z", "memberships": []}
-        )
+    assert request.url.path != "/v1/auth/login", "an agent never signs in with a password"
+    assert request.headers["authorization"] == "Bearer opt_read"
+    assert request.headers["x-app"] == "admin"
     if request.url.path == "/v1/admin/size":
-        assert request.headers["authorization"] == "Bearer lgn_op"
-        assert request.headers["x-app"] == "admin"
         return httpx.Response(
             200,
             json={
@@ -30,22 +32,48 @@ def operator_api(request: httpx.Request) -> httpx.Response:
                 "since": "2026-09-19T12:00:00Z",
             },
         )
-    return httpx.Response(404)
+    if request.url.path == "/v1/admin/orgs":
+        if request.url.params.get("cursor") is None:
+            items = [org("0199a4c0-0000-7000-8000-00000000000a", "acme")]
+            return httpx.Response(200, json={"items": items, "next_cursor": "c2"})
+        return httpx.Response(200, json={"items": [org(RUN_ORG, "ops-r1-1")], "next_cursor": None})
+    if request.url.path == f"/v1/admin/orgs/{RUN_ORG}/members":
+        person = {"email": "m@x.test", "display_name": "M", "created_at": NOW}
+        items = [{**person, "id": f"0199a4c0-0000-7000-8000-00000000010{n}"} for n in range(2)]
+        return httpx.Response(200, json={"items": items, "next_cursor": None})
+    return httpx.Response(404, json={"error": {"code": "not_found", "message": "no"}})
 
 
-async def test_size_reads_the_operator_plane_as_the_operator(
+def env_file(home: Path, text: str) -> None:
+    file = home / ".config" / "tadas" / "ops" / "staging.env"
+    file.parent.mkdir(parents=True)
+    file.write_text(text)
+    file.chmod(0o600)
+
+
+async def test_size_reads_the_operator_plane_with_the_token_and_leaves_run_tenants_out(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    file = tmp_path / ".config" / "tadas" / "ops" / "staging.env"
-    file.parent.mkdir(parents=True)
-    file.write_text(
-        "TADAS_API_URL=http://test\nTADAS_OPERATOR_EMAIL=ops@example.test\nTADAS_OPERATOR_PASSWORD=secret\n"
-    )
+    env_file(tmp_path, "TADAS_API_URL=http://test\nTADAS_OPERATOR_TOKEN=opt_read\n")
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.delenv("TADAS_API_URL", raising=False)
+    monkeypatch.delenv("TADAS_OPERATOR_TOKEN", raising=False)
     code = await size_command(
         argparse.Namespace(env="staging"), transport=httpx.MockTransport(operator_api)
     )
     assert code == 0
     out = capsys.readouterr().out
-    assert "tenants                  3" in out and "tasks_last_24h           40" in out
+    assert "tenants                  2" in out and "users                    10" in out
+    assert "tasks_last_24h           40" in out
+    assert "traffic run tenants      1 left out (2 users)" in out
+
+
+async def test_size_without_a_token_names_the_command_that_writes_one(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env_file(tmp_path, "TADAS_API_URL=http://test\nTADAS_OPERATOR_TOKEN=\n")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("TADAS_OPERATOR_TOKEN", raising=False)
+    code = await size_command(argparse.Namespace(env="staging"))
+    assert code == 2
+    assert "tadas-ops token --env staging --identity operator" in capsys.readouterr().err
