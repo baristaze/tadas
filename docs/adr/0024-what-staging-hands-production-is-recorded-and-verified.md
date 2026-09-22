@@ -1,6 +1,7 @@
 # ADR 0024: What staging hands production is recorded outside the cloud and verified
 
-**Status**: accepted (2026-09-22).
+**Status**: accepted (2026-09-22), amended (2026-09-22): the fast
+rollback is the previous release only, as `DEL-50` says.
 
 ## Context
 
@@ -31,11 +32,15 @@ immutable in both registries, but three things were missing:
   (`scripts/portal_digest.sh`), with the recorded digests. It refuses a
   missing record or a mismatch. `apply` compares again before it
   publishes.
-- **A redeploy of an earlier release.** `deploy-production.yml` takes an
-  optional `commit`: an earlier commit of `release`, verified the same way
-  and behind the same approval. A revert through `main` is the rollback.
-  This is the faster path for a release that is healthy but wrong, and it
-  never moves `release`.
+- **The fast rollback is `DEL-50`'s: the previous release, and only
+  that one.** `deploy-production.yml` takes an optional `rollback_to`:
+  the newest commit of `release` before its tip whose
+  `released/production` status is a success. Behind the same approval,
+  it swaps each service's image back to the digest production ran for
+  that release and publishes that release's portal build. It runs no
+  migration, plans no Terraform, and never moves `release`. Anything
+  older rolls forward through a revert on `main`. Every release's apply
+  writes `released/production` once the release answers ready.
 - **Every trust matches the repository by id.** Each deploy, plan, and
   build role matches `repository_id` and `repository_owner_id` beside the
   subject and the ref, so a renamed repository's name cannot be claimed.
