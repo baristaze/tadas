@@ -271,7 +271,11 @@ Production's runs use `--ref release -f environment=production`.
   env file under the person's own sign-in (`--profile tadas-prod-power`
   in production, whose everyday sign-in reads no secret), never under
   an agent's investigate profile, which is denied every secret value.
-  In production the provisioner is disabled again after the run.
+  In production the provisioner is disabled again after the run. On
+  staging, `stress.yml` grants it, mints its token, and disables it
+  again itself; the `staging` environment's `PROVISIONER_EMAIL`
+  variable names it for that run:
+  `gh variable set PROVISIONER_EMAIL --env staging --body <email>`.
 - **The smoke identity** is granted `read`, and the environment's
   `SMOKE_EMAIL` variable names it:
   `gh variable set SMOKE_EMAIL --env <staging|production> --body <email>`.
@@ -288,6 +292,40 @@ identity's token through the grant task into
 summary names the request id. While `SMOKE_EMAIL` is empty the step is
 skipped with a notice, not failed. A staging run whose smoke failed is
 not a run `release.yml` takes.
+
+## The stress run on staging
+
+`stress.yml` is dispatched by a person, never run on a push, and it
+knows one environment: staging. It takes no environment input, so
+production cannot be picked from a dropdown by mistake; a production
+run is a person's own, under `stress-test-run`.
+
+```bash
+gh workflow run stress.yml --ref main -f scenario=staging
+gh workflow run stress.yml --ref main -f scenario=staging -f duration_seconds=60
+```
+
+`scenario` names a file under `ops/stress/`, and `duration_seconds`
+overrides that scenario's duration and nothing else: the target it is
+judged against is still the file's. The run grants the provisioner
+`write`, mints its operator token through the grant task the way the
+smoke step does, drives the scenario, reads the signals back, and
+keeps the report and the run's text as an artifact. A missed target
+fails the run. Whatever the outcome, the last step disables the
+provisioner's entry again: a write credential that stands between runs
+is what the guideline refuses. The `staging` environment's
+`PROVISIONER_EMAIL` names the identity, the way `SMOKE_EMAIL` names
+the smoke one, and while it is empty the run fails and names the
+dispatch to make.
+
+This is a reference shape for a stress test on staging, not a load
+test. One small GitHub runner drives it, so what it measures is what
+one generator can ask for from one address, bounded by that runner's
+CPU, its one network path, and the API's per-address rate limit on
+sign-in. A load test needs many generators, from many addresses. What
+this workflow is worth is the wiring: a credential that does not
+stand, tenants made and removed, a scenario, the signals, and a
+verdict.
 
 ### Nuke
 

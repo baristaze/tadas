@@ -86,3 +86,23 @@ would fail every run for a reason that is not a defect.
 ```bash
 uv run tadas-ops stress --scenario ops/stress/staging.yaml --env staging
 ```
+
+## The run on staging from CI
+
+`.github/workflows/stress.yml` runs a scenario against staging on a
+dispatch, never on a push. It takes a scenario name and, optionally, a
+duration that overrides the scenario's; it knows no environment input,
+so production cannot be chosen there at all. It grants the provisioner
+`write` for the run, mints its token through the grant task, drives the
+scenario, keeps the report as an artifact, fails on a missed target,
+and disables the provisioner's entry again whatever the outcome.
+`docs/runbooks/deploy.md` says how to dispatch it.
+
+It is a reference shape for a stress test on staging, not a load test.
+One small GitHub runner drives it, so the numbers are what one
+generator can ask for from one address, bounded by that runner's CPU,
+its one network path, and the per-address rate limit on sign-in. A
+load test needs many generators, from many addresses, and that is not
+what this is. What it is worth is the wiring: a credential that does
+not stand, tenants made and removed, a target stated first, the
+signals read back, and a verdict.
