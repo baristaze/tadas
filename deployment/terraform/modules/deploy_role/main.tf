@@ -333,6 +333,9 @@ data "aws_iam_policy_document" "graph_data" {
       "arn:${local.partition}:elasticache:${local.region}:${local.account}:replicationgroup:${local.name_prefix}",
       "arn:${local.partition}:elasticache:${local.region}:${local.account}:cluster:${local.name_prefix}-*",
       "arn:${local.partition}:elasticache:${local.region}:${local.account}:subnetgroup:${local.name_prefix}",
+      # The replication group names AWS's own default parameter group, and
+      # creating or modifying the group is authorized against it too.
+      "arn:${local.partition}:elasticache:${local.region}:${local.account}:parametergroup:default.*",
     ]
   }
 
