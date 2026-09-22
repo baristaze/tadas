@@ -1,6 +1,12 @@
 """The Sentry-shaped read both impls share: GlitchTip locally and Sentry in
-the cloud answer the same issue and event routes, under a token. An error
-event is found by the `request_id` tag the platform puts on every event."""
+the cloud answer the same issue and event routes, under a token. There is one
+project for the product, and every environment reports into it, so a read
+names the project and filters on the environment: `environment:<name>` in the
+issue search, and the event's own `environment` tag as the proof. An issue in
+a shared project can hold events from more than one environment, which is why
+the environment is checked on the event and not only on the issue. The event
+that answers is the one whose `request_id` tag is the id the platform put on
+every event of that request."""
 
 from typing import Any
 
@@ -12,31 +18,44 @@ RECENT_ISSUES = 25
 
 
 async def find_error_event(
-    http: httpx.AsyncClient, base_url: str, token: str, org: str, request_id: str
+    http: httpx.AsyncClient,
+    base_url: str,
+    token: str,
+    org: str,
+    project: str,
+    environment: str,
+    request_id: str,
 ) -> ErrorEventFound | None:
-    """The issues the search names for the id, then the recent ones, and in
-    each the event whose `request_id` tag is the id. The search is a
-    convenience; the tag is the proof."""
+    """The issues of the product's project in this environment: first the ones
+    the id names, then the recent ones, and in each the event that carries both
+    the id and the environment. The search is a convenience; the two tags are
+    the proof."""
     headers = {"Authorization": f"Bearer {token}"}
     base = base_url.rstrip("/")
+    issues_url = f"{base}/api/0/projects/{org}/{project}/issues/"
     seen: set[str] = set()
     for params in (
-        {"query": request_id, "limit": RECENT_ISSUES},
-        {"limit": RECENT_ISSUES, "sort": "-last_seen"},
+        {"query": f"environment:{environment} request_id:{request_id}", "limit": RECENT_ISSUES},
+        {"query": f"environment:{environment}", "limit": RECENT_ISSUES, "sort": "-last_seen"},
     ):
-        response = await http.get(
-            f"{base}/api/0/organizations/{org}/issues/", params=params, headers=headers
-        )
+        response = await http.get(issues_url, params=params, headers=headers)
         response.raise_for_status()
         for issue in response.json():
             issue_id = str(issue["id"])
             if issue_id in seen:
                 continue
             seen.add(issue_id)
-            events = await http.get(f"{base}/api/0/issues/{issue_id}/events/", headers=headers)
+            events = await http.get(
+                f"{base}/api/0/issues/{issue_id}/events/",
+                params={"environment": environment},
+                headers=headers,
+            )
             events.raise_for_status()
             for event in events.json():
-                if tag_value(event, "request_id") == request_id:
+                if (
+                    tag_value(event, "request_id") == request_id
+                    and tag_value(event, "environment") == environment
+                ):
                     return ErrorEventFound(
                         event_id=str(event.get("eventID") or event.get("id")),
                         issue_id=issue_id,

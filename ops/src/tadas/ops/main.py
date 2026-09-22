@@ -65,7 +65,9 @@ def signals_for(env: Environment, *, log_file: Path | None = None) -> SignalsInt
     metrics, and traces out of its own account and needs no error tracker; one
     that names none reports the error event as not read. Locally the tracker
     is part of the stack, so an environment missing it is a broken stack and
-    is refused."""
+    is refused. Either way the tracker project is the product's one project,
+    and the reader is handed the environment, which is what separates the
+    events inside it."""
     if env.is_cloud:
         return SignalsCloudImpl(
             environment=env.name,
@@ -74,6 +76,7 @@ def signals_for(env: Environment, *, log_file: Path | None = None) -> SignalsInt
             sentry_url=env.error_tracker_url,
             sentry_token=env.error_tracker_token,
             sentry_org=env.error_tracker_org,
+            sentry_project=env.error_tracker_project,
         )
     if not (env.prometheus_url and env.jaeger_url and env.error_tracker_url):
         raise ValueError(f"environment {env.name!r} names no Prometheus, Jaeger, and error tracker")
@@ -83,6 +86,8 @@ def signals_for(env: Environment, *, log_file: Path | None = None) -> SignalsInt
         error_tracker_url=env.error_tracker_url,
         error_tracker_token=env.error_tracker_token or "",
         error_tracker_org=env.error_tracker_org,
+        error_tracker_project=env.error_tracker_project,
+        environment=env.name,
         logs=file_lines(log_file),
     )
 

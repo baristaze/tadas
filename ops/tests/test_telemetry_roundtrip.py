@@ -219,6 +219,8 @@ def reader(env: Environment, served: Served) -> SignalsLocalImpl:
         error_tracker_url=env.error_tracker_url,
         error_tracker_token=env.error_tracker_token or "",
         error_tracker_org=env.error_tracker_org,
+        error_tracker_project=env.error_tracker_project,
+        environment=env.name,
         logs=served.lines,
     )
 

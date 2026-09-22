@@ -97,8 +97,12 @@ tracker's left empty: no operator exists until `grant-operator.yml` has
 run and the operator has enrolled a second factor. The script prints
 the two tracker lines, `TADAS_ERROR_TRACKER_URL` and
 `TADAS_ERROR_TRACKER_TOKEN`, as the one part of the env file a person
-fills by hand, once they have made the environment's project in the
-error tracker. The file never holds a password or a TOTP secret, since
+fills by hand, once the product's project exists in the error tracker.
+It also writes `TADAS_ERROR_TRACKER_ORG` and
+`TADAS_ERROR_TRACKER_PROJECT`, which name that one project and hold the
+same value in every environment: a second environment points at the
+same project, and a read of it filters on `environment:<env>`.
+The file never holds a password or a TOTP secret, since
 an agent never signs in with a password. It appends the
 `tadas-<env>-investigate` profile to `~/.aws/config`, chained from the
 Identity Center profile. It writes no key anywhere. The skill prints

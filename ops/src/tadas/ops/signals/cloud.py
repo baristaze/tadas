@@ -7,7 +7,9 @@ which can read every signal and write nothing.
 The tracker is the one store the account does not provide: an environment
 names it in its env file or names none. Without one the reader still reads
 the logs, the metrics, and the traces, and reports the error event as not
-read.
+read. There is one tracker project for the product and every environment
+reports into it, so the reader names that project and filters the read on
+this environment; nothing here is named per environment.
 
 X-Ray is filtered on the annotation `tadas_request_id`: the collector turns
 the span attribute `tadas.request_id` into it only when its X-Ray exporter
@@ -78,6 +80,7 @@ class SignalsCloudImpl(SignalsInterface):
         sentry_url: str | None = None,
         sentry_token: str | None = None,
         sentry_org: str = "tadas",
+        sentry_project: str = "tadas",
         session: SessionLike | None = None,
         transport: httpx.AsyncBaseTransport | None = None,
         lookback: timedelta = DEFAULT_LOOKBACK,
@@ -90,6 +93,7 @@ class SignalsCloudImpl(SignalsInterface):
         self.sentry_url = sentry_url.rstrip("/") if sentry_url else None
         self.sentry_token = sentry_token
         self.sentry_org = sentry_org
+        self.sentry_project = sentry_project
         self.lookback = lookback
         self._session: SessionLike = session or cast(
             SessionLike, aioboto3.Session(profile_name=profile, region_name=region)
@@ -216,17 +220,26 @@ class SignalsCloudImpl(SignalsInterface):
 
     async def error_event(self, request_id: str) -> ErrorEventFound | None:
         """None when the environment names no tracker: nothing was read, and
-        the caller says that rather than calling the leg empty."""
+        the caller says that rather than calling the leg empty. The read is
+        scoped to this environment, so another environment's events in the
+        same project are never answered with."""
         if not (self.sentry_url and self.sentry_token):
             return None
         async with httpx.AsyncClient(transport=self._transport, timeout=10.0) as http:
             return await find_error_event(
-                http, self.sentry_url, self.sentry_token, self.sentry_org, request_id
+                http,
+                self.sentry_url,
+                self.sentry_token,
+                self.sentry_org,
+                self.sentry_project,
+                self.environment,
+                request_id,
             )
 
     def describe(self) -> str:
         errors = (
-            f"errors: Sentry {self.sentry_url} org {self.sentry_org} by tag request_id"
+            f"errors: Sentry {self.sentry_url} org {self.sentry_org} "
+            f"project {self.sentry_project} by environment {self.environment} and tag request_id"
             if self.reads_error_events
             else "errors: not read, the environment names no error tracker"
         )

@@ -176,8 +176,13 @@ Everything below needs the `devx` profile (`make up` or `make devx-up`).
   in the app containers, and the same key at `localhost:58000` or
   `127.0.0.1:58000` for the portal and host processes (`TADAS_SENTRY_DSN`
   and `VITE_SENTRY_DSN` in `.env.example`). Unhandled exceptions and ERROR
-  log lines become issues, tagged with `service`, `release`, and
-  `request_id`. An empty or `off` DSN turns reporting off.
+  log lines become issues, tagged with `service`, `release`,
+  `request_id`, and `environment`. An empty or `off` DSN turns reporting
+  off. The one project is the local stand-in for the product's one
+  project in the cloud: there too every environment reports into one
+  project and the `environment` tag separates them, which locally is
+  `local`, so `tadas-ops signals check --env local` reads exactly the
+  way it reads staging.
 
 ## When something is off
 

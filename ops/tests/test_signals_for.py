@@ -34,7 +34,21 @@ def environment(name: str, *, tracker: bool) -> Environment:
 def test_a_deployed_environment_with_a_tracker_reads_error_events() -> None:
     signals = signals_for(environment("staging", tracker=True))
     assert isinstance(signals, SignalsCloudImpl) and signals.reads_error_events
-    assert "errors: Sentry https://sentry.example.test org acme" in signals.describe()
+    assert (
+        "errors: Sentry https://sentry.example.test org acme project tadas "
+        "by environment staging and tag request_id"
+    ) in signals.describe()
+
+
+def test_every_environment_reads_the_same_project_under_its_own_name() -> None:
+    """One project for the product; the environment is what separates the
+    events in it, so the reader carries the environment's name and no part of
+    the read is named per environment."""
+    staging = signals_for(environment("staging", tracker=True))
+    production = signals_for(environment("production", tracker=True))
+    assert isinstance(staging, SignalsCloudImpl) and isinstance(production, SignalsCloudImpl)
+    assert staging.sentry_project == production.sentry_project == "tadas"
+    assert (staging.environment, production.environment) == ("staging", "production")
 
 
 def test_a_deployed_environment_without_a_tracker_still_gets_a_reader() -> None:

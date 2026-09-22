@@ -448,13 +448,15 @@ else
   say "  TADAS_PROVISIONER_TOKEN=      # write; uv run tadas-ops token --env $environment --identity provisioner"
   say "  TADAS_ERROR_TRACKER_URL="
   say "  TADAS_ERROR_TRACKER_TOKEN="
+  say "  TADAS_ERROR_TRACKER_ORG=tadas          # the product's one project, the same"
+  say "  TADAS_ERROR_TRACKER_PROJECT=tadas      # in every environment; the read filters on environment:$environment"
   if ! $dry_run; then
     mkdir -p "$ops_dir"
-    (umask 077; printf 'TADAS_API_URL=%s\nTADAS_OPERATOR_TOKEN=\nTADAS_PROVISIONER_TOKEN=\nTADAS_ERROR_TRACKER_URL=\nTADAS_ERROR_TRACKER_TOKEN=\n' "$api_url" > "$ops_file")
+    (umask 077; printf 'TADAS_API_URL=%s\nTADAS_OPERATOR_TOKEN=\nTADAS_PROVISIONER_TOKEN=\nTADAS_ERROR_TRACKER_URL=\nTADAS_ERROR_TRACKER_TOKEN=\nTADAS_ERROR_TRACKER_ORG=tadas\nTADAS_ERROR_TRACKER_PROJECT=tadas\n' "$api_url" > "$ops_file")
     chmod 600 "$ops_file"
   fi
 fi
-say "Filled by hand, once the environment's project exists in the error tracker: TADAS_ERROR_TRACKER_URL and TADAS_ERROR_TRACKER_TOKEN in $ops_file."
+say "Filled by hand, once the product's project exists in the error tracker (one project for every environment): TADAS_ERROR_TRACKER_URL and TADAS_ERROR_TRACKER_TOKEN in $ops_file."
 
 say "== 7. The first deploy, through the pipeline like every other"
 case "$environment" in

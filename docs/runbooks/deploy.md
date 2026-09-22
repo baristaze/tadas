@@ -71,7 +71,7 @@ declared:
 
 | GitHub environment | Variables |
 |--------------------|-----------|
-| `staging` | `AWS_ROLE_ARN` (the staging deploy role), `TF_STATE_BUCKET`, `API_DOMAIN_NAME`, `APP_DOMAIN_NAME`, `ALARM_EMAIL`, and optionally `PORTAL_SENTRY_DSN` |
+| `staging` | `AWS_ROLE_ARN` (the staging deploy role), `TF_STATE_BUCKET`, `API_DOMAIN_NAME`, `APP_DOMAIN_NAME`, `ALARM_EMAIL`, and optionally `PORTAL_SENTRY_DSN` (the product's one tracker project, the same DSN production's environment carries) |
 | `production-plan` | the same names: `AWS_ROLE_ARN` is the plan role |
 | `production` | `AWS_ROLE_ARN` (the production deploy role), `TF_STATE_BUCKET` |
 
@@ -152,7 +152,10 @@ each run does:
 6. `~/.config/tadas/ops/<environment>.env`, mode 600, with
    `TADAS_API_URL` set and the two operator token lines
    (`TADAS_OPERATOR_TOKEN`, `TADAS_PROVISIONER_TOKEN`) and the error
-   tracker lines empty; the skills read it. No operator exists until
+   tracker's URL and token empty, and with
+   `TADAS_ERROR_TRACKER_ORG` and `TADAS_ERROR_TRACKER_PROJECT` naming
+   the product's one project, the same in every environment; the skills
+   read it. No operator exists until
    the grants below, and the file never holds a password.
 7. The first deploy, through the pipeline like every other:
    `deploy-staging.yml` for staging. Production's first release waits:

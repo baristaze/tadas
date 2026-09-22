@@ -31,7 +31,11 @@ The supporter holds a read credential and changes nothing.
      diary is numbered without gaps, so a change that did not reach a
      screen is either in the diary and not pushed, or not in the diary
      and never made.
-   - **The errors** for the window, by service and request id.
+   - **The errors** for the window, by service and request id, out of
+     the product's one tracker project filtered on this environment
+     (`environment:<env>`): the project holds every environment's
+     errors, so a read that leaves the filter out answers with
+     another environment's.
 4. **The finding** names the cause in one line, the evidence for it,
    what changed, and whether it is the platform's to fix (a pull
    request) or the tenant's (a refused write that was right to

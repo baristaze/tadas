@@ -44,7 +44,7 @@ variable "cors_origins" {
 }
 
 variable "portal_sentry_dsn" {
-  description = "The portal's error-reporting DSN (public by design); empty turns browser reporting off."
+  description = "The portal's error-reporting DSN (public by design), of the product's one tracker project and the same in every environment; the page tags its events with the environment. Empty turns browser reporting off."
   type        = string
   default     = ""
 }

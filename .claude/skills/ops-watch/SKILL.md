@@ -70,7 +70,11 @@ The env file `~/.config/tadas/ops/<env>.env` is owner-only and outside
 the repository. It holds `TADAS_API_URL`, `TADAS_OPERATOR_TOKEN` (a
 `read` operator token; the file's `TADAS_PROVISIONER_TOKEN`, a `write`
 token, belongs to the traffic generator alone), `TADAS_ERROR_TRACKER_URL`,
-and `TADAS_ERROR_TRACKER_TOKEN`. `local.env`, when there is one,
+`TADAS_ERROR_TRACKER_TOKEN`, and the tracker's `TADAS_ERROR_TRACKER_ORG`
+and `TADAS_ERROR_TRACKER_PROJECT`, which name the product's one project
+and hold the same value in every environment: one project takes every
+environment's errors, and a read of it filters on `environment:<env>`.
+`local.env`, when there is one,
 points at the compose stack and adds the twins, `TADAS_PROMETHEUS_URL`
 and `TADAS_JAEGER_URL`, on the ports `.env` names. It holds no password
 and no TOTP secret: an agent never signs in with a password.

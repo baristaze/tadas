@@ -33,6 +33,7 @@ KEYS = (
     "TADAS_ERROR_TRACKER_URL",
     "TADAS_ERROR_TRACKER_TOKEN",
     "TADAS_ERROR_TRACKER_ORG",
+    # The product's project, not the environment's: the same value everywhere.
     "TADAS_ERROR_TRACKER_PROJECT",
     "TADAS_PROMETHEUS_URL",
     "TADAS_JAEGER_URL",
@@ -72,6 +73,11 @@ class Environment:
     error_tracker_token: str | None
     error_tracker_org: str
     error_tracker_project: str
+    """The product's one project in the tracker, the same in every
+    environment: every process of every environment reports into it, and the
+    environment is a property of each event, so a read names this project and
+    filters on `name`. A project named per environment is the shape this is
+    not."""
     prometheus_url: str | None
     jaeger_url: str | None
     aws_profile: str | None

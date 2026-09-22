@@ -56,7 +56,9 @@ URL. The operator's credential is the env file's,
 repository: `TADAS_API_URL`, `TADAS_OPERATOR_TOKEN` (a `read` operator
 token; the file's `TADAS_PROVISIONER_TOKEN`, a `write` token, belongs
 to the traffic generator alone), `TADAS_ERROR_TRACKER_URL`,
-`TADAS_ERROR_TRACKER_TOKEN`, and for `local.env`, when there is
+`TADAS_ERROR_TRACKER_TOKEN`, the tracker's `TADAS_ERROR_TRACKER_ORG`
+and `TADAS_ERROR_TRACKER_PROJECT` (the product's one project, the same
+in every environment), and for `local.env`, when there is
 one, the twins `TADAS_PROMETHEUS_URL` and `TADAS_JAEGER_URL`. The
 token's permission is `read`; a `write` token is refused by this
 skill even when the file holds one. The file holds no password and no
@@ -117,16 +119,26 @@ lists them.
    are `/v1/admin/orgs/<org_id>/tasks?status=open|done` and
    `.../members`. Without `--request-id`, pick the request ids of the
    window's failed or missing writes here and in step 4.
-4. The error tracker, by request id or by tenant window:
+4. The error tracker, by request id or by tenant window. One project
+   holds the product's errors for every environment, so the read names
+   it and asks for this environment:
 
    ```bash
    set -a; . ~/.config/tadas/ops/<env>.env; set +a
-   curl -s -H "Authorization: Bearer $TADAS_ERROR_TRACKER_TOKEN" \
-     "$TADAS_ERROR_TRACKER_URL/api/0/organizations/<org>/issues/?query=request_id%3A<id>"
+   curl -s -H "Authorization: Bearer $TADAS_ERROR_TRACKER_TOKEN" --get \
+     --data-urlencode "query=environment:<env> request_id:<id>" \
+     "$TADAS_ERROR_TRACKER_URL/api/0/projects/$TADAS_ERROR_TRACKER_ORG/$TADAS_ERROR_TRACKER_PROJECT/issues/"
    ```
 
-   `<org>` is the organization slug `GET /api/0/organizations/` lists
-   (locally `tadas`, the one the seed creates):
+   An issue the query returns can hold events of another environment
+   too, so the event that answers is the one whose `request_id` tag is
+   the id **and** whose `environment` tag is `<env>`
+   (`/api/0/issues/<issue id>/events/`). An event of another
+   environment is never this environment's evidence.
+
+   The org and the project are the same in every environment; the
+   org's slug is what `GET /api/0/organizations/` lists (locally
+   `tadas`, the one the seed creates):
 
    ```bash
    set -a; . ~/.config/tadas/ops/<env>.env; set +a

@@ -174,8 +174,18 @@ forwards the traces the process sends to `127.0.0.1:4318` on to X-Ray. The
 load balancer answers `/metrics` with a 404, so the endpoint never leaves
 the task.
 
-Error reporting stays off until the DSN secret holds a real value. Create a
-project in sentry.io or a hosted GlitchTip, then, once per environment:
+There is one tracker project for the product, and every environment reports
+into it. The environment is a property of each event: every process sends
+`environment` on everything it reports (`configure_error_reporting`), and the
+portal sends the `environment` of its runtime config, so the events separate
+themselves and a read filters on `environment:<name>`. No project is named
+after an environment.
+
+Error reporting stays off until the DSN secret holds a real value. Create the
+one project in sentry.io or a hosted GlitchTip, then write its DSN into each
+environment's secret. The secret is per environment because a secret is per
+account and production's account cannot read staging's; the value written
+into each is the same:
 
 ```bash
 aws secretsmanager put-secret-value \
