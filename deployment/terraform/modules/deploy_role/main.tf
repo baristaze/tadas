@@ -277,13 +277,18 @@ data "aws_iam_policy_document" "graph_platform" {
   }
 
   # Registering a revision names no resource: there is no ARN until the call
-  # returns one, and AWS offers no condition on the family, so this is the one
-  # write in the graph that cannot be fenced to the environment. A revision in
-  # another family is inert until something runs it, and running one is fenced
-  # above.
+  # returns one, and AWS offers no condition on the family. Deregistering one
+  # takes no resource either, and a new image replaces the revision, so every
+  # rollout deregisters the one before. These are the two writes in the graph
+  # that cannot be fenced to the environment. A revision in another family is
+  # inert until something runs it, and running one is fenced above; a
+  # deregistered revision keeps running wherever it already runs.
   statement {
-    sid       = "TaskDefinitionRevisions"
-    actions   = ["ecs:RegisterTaskDefinition"]
+    sid = "TaskDefinitionRevisions"
+    actions = [
+      "ecs:DeregisterTaskDefinition",
+      "ecs:RegisterTaskDefinition",
+    ]
     resources = ["*"]
   }
 }
