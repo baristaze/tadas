@@ -12,6 +12,9 @@ writes the change, proves it with a plan that cannot write, and opens
 the pull request. The apply is the deployer role's, through the
 workflow, after review.
 
+Read `.claude/skills/_shared/ops-preamble.md` before the first step:
+the profiles, the account check, and the env file are there.
+
 ## Input
 
 `--env local|staging|production <change>`
@@ -27,31 +30,15 @@ so the shape is testable with no cloud.
 
 `--env local` needs no credential.
 
-`--env staging` and `--env production` need the investigate profile
-of that environment, `tadas-<env>-investigate`, which assumes the role
-`tadas-investigate-<env>`. Before the plan, run
-
-```bash
-aws sts get-caller-identity --profile tadas-<env>-investigate
-```
-
-and check that `Arn` reads
-`arn:aws:sts::<account>:assumed-role/tadas-investigate-<env>/...`.
-Refuse any other identity: the administrator profiles
-(`tadas-staging-admin`, `tadas-prod-admin`) above all, and the bare
-sign-in profiles (`tadas-staging`, `tadas-prod`), whose permission
-sets (PowerUserAccess, ReadOnlyAccess) are wider than the role. Each
-environment has an AWS account of its own
-(`deployment/cloud/environments.json`). The role reads that account's
-state bucket, `tadas-state-<account>`, under `environments/staging/` or
-`environments/prod/`, and describes every resource, which is all a
-plan needs. It cannot lock the state and cannot write it, so the plan
-runs with `-lock=false`, and an apply under it fails by construction.
-
-Check the account too: `Account` in the same answer must equal the
-environment's `account_id` in `deployment/cloud/environments.json`
-(read the file; the value is `.environments.<env>.account_id`). Stop on
-a mismatch: the right role in the wrong account is the wrong credential.
+`--env staging` and `--env production` run under the investigate
+profile of that environment, `tadas-<env>-investigate`, checked with
+`sts get-caller-identity` before the plan as the preamble states.
+Refuse any profile wider than the investigate role. The role reads its
+account's state bucket, `tadas-state-<account>`, under
+`environments/staging/` or `environments/prod/`, and describes every
+resource, which is all a plan needs. It cannot lock the state and
+cannot write it, so the plan runs with `-lock=false`, and an apply
+under it fails by construction.
 
 The pull request needs `gh auth status` to name a login. No env file
 is read; this skill touches no application credential.
