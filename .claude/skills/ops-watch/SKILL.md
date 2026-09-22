@@ -75,6 +75,13 @@ points at the compose stack and adds the twins, `TADAS_PROMETHEUS_URL`
 and `TADAS_JAEGER_URL`, on the ports `.env` names. It holds no password
 and no TOTP secret: an agent never signs in with a password.
 
+A deployed environment may leave `TADAS_ERROR_TRACKER_URL` and
+`TADAS_ERROR_TRACKER_TOKEN` empty: nothing provisions a tracker for
+one. The batches below count requests, 5xx, the p95, and the worker
+failures out of the account's own metrics and are unaffected; anything
+that would have come from the tracker is reported as "not read", never
+as "no errors".
+
 Never read the env file, with `Read`, `cat`, or anything else: its
 values stay out of this conversation. A command that needs one sources
 the file and makes the call in the same command, because shell state

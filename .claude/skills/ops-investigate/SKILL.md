@@ -179,6 +179,12 @@ lists them.
    curl -s -H "Authorization: Bearer $TADAS_ERROR_TRACKER_TOKEN" "$TADAS_ERROR_TRACKER_URL/api/0/organizations/"
    ```
 
+   A deployed environment may name no tracker: nothing provisions one,
+   and its env file leaves `TADAS_ERROR_TRACKER_URL` and
+   `TADAS_ERROR_TRACKER_TOKEN` empty. Then this step reads nothing and
+   the report says "not read", never "no errors". The other steps stand
+   on their own; an investigation is not stopped by it.
+
 7. Logs. Cloud, one log group per process, `/tadas/<env>/<process>`:
 
    ```bash
@@ -280,7 +286,8 @@ lists them.
 - Requests: <rate>, error ratio <ratio>, p95 <ms> by route
 - Workers: <outcomes per kind>, queue depth <n>, oldest <age>
 - Pool and cache: <checkouts, timeouts, hits, misses>
-- Errors: <count>, top issue <title> (<request id, or none>)
+- Errors: <count>, top issue <title> (<request id, or none>), or "not
+  read: the environment names no error tracker"
 - Cost: <month to date> of <budget> USD (cloud only)
 
 ## Findings
