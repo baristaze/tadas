@@ -25,7 +25,17 @@ class ApiSettings(StorageSettings, InfraSettings):
     # load balancer lives in.
     trusted_proxies: list[str] = []
 
-    login_rate_limit: int = 10
+    # Every number in this file is illustrative, and deliberately generous:
+    # this system is here to show the shape, and a limit that trips during a
+    # demo teaches the wrong lesson. A team adopting it sets its own from
+    # what its traffic does. What is not illustrative is where each bound
+    # sits and what it protects.
+    #
+    # This budget is per address, and one address is a crowd: a company
+    # behind one gateway, a school, a shared runner. So it is sized for a
+    # crowd signing in, not for one person, and the defence against guessing
+    # a password is the per-email delay below, which no crowd dilutes.
+    login_rate_limit: int = 200
     login_rate_window_seconds: int = 60
     # Past the per-address limit, which rides the cache and fails open: a run
     # of failed sign-ins for one email, held by an identity or not, makes the
@@ -61,7 +71,8 @@ class ApiSettings(StorageSettings, InfraSettings):
     # a developer. A deployed environment turns them off: the document is in
     # the repository, and a production edge has no use for a console.
     interactive_docs: bool = True
-    signup_rate_limit: int = 10
+    # Per address, like the login budget and for the same reason.
+    signup_rate_limit: int = 200
     signup_rate_window_seconds: int = 60
     # The socket's two send lanes, each bounded on its own. The stream lane
     # holds the event hints, and a full one drops its oldest: the client that
