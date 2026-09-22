@@ -2,16 +2,6 @@
 bootstrap, add-member, and openapi are subcommands of one entry point. Each one boots
 the same way before it does anything else."""
 
-# ruff: noqa: E402
-# The trust store goes in before anything else is imported. It replaces
-# ssl.SSLContext, and a module that bound the old class first (urllib3, and
-# botocore through it) builds a context whose options setter then calls
-# itself until the process dies. So the injection is the first statement of
-# every process, and nothing above it imports urllib3.
-from tadas.infra.trust import install_trust_store
-
-install_trust_store()
-
 import argparse
 import asyncio
 import json
