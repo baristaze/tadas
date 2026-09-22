@@ -13,6 +13,9 @@ administrator profile with an agent narrating. After this skill the
 environment moves only by pull request, and the administrator's
 permission set goes back to the organization.
 
+Read `.claude/skills/_shared/ops-preamble.md` before the first step:
+the profiles, the account check, and the env file are there.
+
 ## Input
 
 `--env staging|production [--dry-run]`
@@ -63,22 +66,11 @@ replication copies from the moment it is on and nothing before.
 
 ## Role and credential
 
-This skill needs the administrator profile the environment names
-(`tadas-staging-admin` or `tadas-prod-admin`) and refuses anything
-else. Another environment's administrator is the wrong account, and a
-sign-in profile (PowerUserAccess, ReadOnlyAccess) cannot write IAM. Before any other command,
-run
-
-```bash
-aws sts get-caller-identity --profile <admin_profile>
-```
-
-and check that `Account` is the environment's `account_id` and that
-`Arn` is an Identity Center administrator role
-(`assumed-role/AWSReservedSSO_...`), never
-`assumed-role/tadas-investigate-*`. When the session has expired, the
-person signs in again with `aws sso login --profile <admin_profile>`;
-the agent never does it for them. The script checks the account again
+Refuse any profile but the environment's administrator
+(`tadas-staging-admin` or `tadas-prod-admin`), checked with `sts
+get-caller-identity` before any other command as the preamble states.
+Another environment's administrator is the wrong account, and a
+sign-in profile cannot write IAM. The script checks the account again
 before every apply, and the Terraform providers pin it as well.
 
 The script clears any `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, or
@@ -90,20 +82,16 @@ key is a long-lived one, and this platform uses none.
 The GitHub login is `gh auth status`; it names a user who can write
 the repository's environments and their variables.
 
-No env file is read. The script writes one:
-`~/.config/tadas/ops/<env>.env`, owner-only, with `TADAS_API_URL` set
-and the lines `TADAS_OPERATOR_TOKEN`, `TADAS_PROVISIONER_TOKEN`, and the
-tracker's left empty: no operator exists until `grant-operator.yml` has
-run and the operator has enrolled a second factor. The script prints
-the two tracker lines, `TADAS_ERROR_TRACKER_URL` and
-`TADAS_ERROR_TRACKER_TOKEN`, as the one part of the env file a person
-fills by hand, once the product's project exists in the error tracker.
-It also writes `TADAS_ERROR_TRACKER_ORG` and
-`TADAS_ERROR_TRACKER_PROJECT`, which name that one project and hold the
-same value in every environment: a second environment points at the
-same project, and a read of it filters on `environment:<env>`.
-The file never holds a password or a TOTP secret, since
-an agent never signs in with a password. It appends the
+No env file is read. The script writes one, the file the preamble
+describes: `~/.config/tadas/ops/<env>.env`, owner-only, with
+`TADAS_API_URL` set and the lines `TADAS_OPERATOR_TOKEN`,
+`TADAS_PROVISIONER_TOKEN`, and the tracker's left empty, because no
+operator exists until `grant-operator.yml` has run and the operator
+has enrolled a second factor. The script prints the two tracker lines,
+`TADAS_ERROR_TRACKER_URL` and `TADAS_ERROR_TRACKER_TOKEN`, as the one
+part of the file a person fills by hand, once the product's project
+exists in the error tracker; it writes `TADAS_ERROR_TRACKER_ORG` and
+`TADAS_ERROR_TRACKER_PROJECT` itself. It appends the
 `tadas-<env>-investigate` profile to `~/.aws/config`, chained from the
 Identity Center profile. It writes no key anywhere. The skill prints
 the names of what was written and never a value.

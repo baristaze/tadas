@@ -141,6 +141,13 @@ take `staging` or `production`; the scenario writer takes none), and
 every one names the role it needs, what it reads, what it never does,
 and its report.
 
+The eight that hold a credential open by naming
+`.claude/skills/_shared/ops-preamble.md`, which they read first: the
+profiles, the account check, the env file's fields, and the way back
+when a token expires, written once. What a skill must never miss stays
+in the skill itself, one line each, because a referenced file is a
+promise and an inlined line is a guarantee.
+
 | Skill | Needs | Answers |
 |-------|-------|---------|
 | `ops-investigate` | Investigator | What is the state of this environment right now: the dashboard's panels, the alarms, the recent errors. |

@@ -11,6 +11,9 @@ skill opens tenant X, and only tenant X, through the operator plane,
 and follows one request id across every signal until the cause is a
 line of code, a row, or a resource.
 
+Read `.claude/skills/_shared/ops-preamble.md` before the first step:
+the profiles, the account check, and the env file are there.
+
 ## Input
 
 `--env local|staging|production --org <org_id> [--user <user_id>] [--request-id <id>] [--since 24h]`
@@ -28,59 +31,20 @@ window, a day by default.
 `--env local` needs the compose stack with the `devx` profile up
 (`make devx-up`) and the env file below. No cloud credential.
 
-`--env staging` and `--env production` need the investigate profile
-of that environment, `tadas-<env>-investigate`, which assumes the role
-`tadas-investigate-<env>`. Before any other command, run
-
-```bash
-aws sts get-caller-identity --profile tadas-<env>-investigate
-```
-
-and check that `Arn` reads
-`arn:aws:sts::<account>:assumed-role/tadas-investigate-<env>/...`.
-Refuse any other identity, the administrator profiles
-(`tadas-staging-admin`, `tadas-prod-admin`) above all, and the bare
-sign-in profiles (`tadas-staging`, `tadas-prod`), whose permission
-sets (PowerUserAccess, ReadOnlyAccess) are wider than the role. Every `aws` command below carries
-`--profile tadas-<env>-investigate`.
-
-Check the account too: `Account` in the same answer must equal the
-environment's `account_id` in `deployment/cloud/environments.json`
-(read the file; the value is `.environments.<env>.account_id`). Stop on
-a mismatch: the right role in the wrong account is the wrong credential.
+`--env staging` and `--env production` run under the investigate
+profile of that environment, `tadas-<env>-investigate`, checked with
+`sts get-caller-identity` before any other command as the preamble
+states. Refuse any profile wider than the investigate role. Every
+`aws` command below carries `--profile tadas-<env>-investigate`.
 
 The tenant's rows come through the operator plane, never through a
 database login: the role denies `rds-db:connect` and holds no database
-URL. The operator's credential is the env file's,
-`~/.config/tadas/ops/<env>.env`, owner-only and outside the
-repository: `TADAS_API_URL`, `TADAS_OPERATOR_TOKEN` (a `read` operator
-token; the file's `TADAS_PROVISIONER_TOKEN`, a `write` token, belongs
-to the traffic generator alone), `TADAS_ERROR_TRACKER_URL`,
-`TADAS_ERROR_TRACKER_TOKEN`, the tracker's `TADAS_ERROR_TRACKER_ORG`
-and `TADAS_ERROR_TRACKER_PROJECT` (the product's one project, the same
-in every environment), and for `local.env`, when there is
-one, the twins `TADAS_PROMETHEUS_URL` and `TADAS_JAEGER_URL`. The
-token's permission is `read`; a `write` token is refused by this
-skill even when the file holds one. The file holds no password and no
-TOTP secret: an agent never signs in with a password.
-
-Never read the env file, with `Read`, `cat`, or anything else: its
-values stay out of this conversation. A command that needs one sources
-the file and makes the call in the same command, because shell state
-does not persist between calls. Every block below that names a
-`TADAS_` variable starts with that line and runs as one command:
-
-```bash
-set -a; . ~/.config/tadas/ops/<env>.env; set +a
-curl -s -H "Authorization: Bearer $TADAS_OPERATOR_TOKEN" "$TADAS_API_URL/v1/admin/me"
-```
-
-`tadas-ops` reads the file itself from `--env`. Never print a token.
-The operator token carries one permission and expires within the
-hour. When a call answers `401`, stop and ask the person to run
-`uv run tadas-ops token --env <env> --identity operator` in their own
-terminal, which asks there for the password and the TOTP code; never
-ask for either in the conversation.
+URL. The credential for the plane is the env file's operator token,
+whose permission is `read`; a `write` token is refused by this skill
+even when the file holds one. Never read the env file; a command that
+needs a value sources it in the same command, as every block below
+does. Never print a token. On a `401` the token has expired: stop, and
+name the refresh the preamble gives.
 
 ## Procedure
 
@@ -136,8 +100,7 @@ lists them.
    (`/api/0/issues/<issue id>/events/`). An event of another
    environment is never this environment's evidence.
 
-   The org and the project are the same in every environment; the
-   org's slug is what `GET /api/0/organizations/` lists (locally
+   The org's slug is what `GET /api/0/organizations/` lists (locally
    `tadas`, the one the seed creates):
 
    ```bash
@@ -148,10 +111,8 @@ lists them.
    Local runs the same call against GlitchTip. An event names the
    exception, the file, the line, the release.
 
-   A deployed environment may name no tracker: nothing provisions one,
-   and its env file leaves `TADAS_ERROR_TRACKER_URL` and
-   `TADAS_ERROR_TRACKER_TOKEN` empty. Then this step reads nothing and
-   the report says "not read", never "no error event". The tenant's
+   When the env file names no tracker, this step reads nothing and the
+   report says "not read", never "no error event". The tenant's
    events, the logs, and the trace still carry the request id, and the
    cause is found in them.
 5. The logs, by request id. Cloud:

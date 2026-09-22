@@ -11,6 +11,9 @@ skill looks at every signal the platform emits and says what is wrong,
 how big the platform is, and which skill runs next. It changes
 nothing.
 
+Read `.claude/skills/_shared/ops-preamble.md` before the first step:
+the profiles, the account check, and the env file are there.
+
 ## Input
 
 `--env local|staging|production [--since 1h] [--request-id <id>] [--alarm <name>]`
@@ -29,58 +32,19 @@ no account.
 `--env local` needs the compose stack with the `devx` profile up
 (`make devx-up`) and the env file below. No cloud credential.
 
-`--env staging` and `--env production` need the investigate profile
-of that environment, `tadas-<env>-investigate`, which assumes the role
-`tadas-investigate-<env>`. Before any other command, run
+`--env staging` and `--env production` run under the investigate
+profile of that environment, `tadas-<env>-investigate`, checked with
+`sts get-caller-identity` before any other command as the preamble
+states. Refuse any profile wider than the investigate role. Every
+`aws` command below carries `--profile tadas-<env>-investigate`.
 
-```bash
-aws sts get-caller-identity --profile tadas-<env>-investigate
-```
-
-and check that `Arn` reads
-`arn:aws:sts::<account>:assumed-role/tadas-investigate-<env>/...`.
-Refuse to run under any other identity, the administrator profiles
-(`tadas-staging-admin`, `tadas-prod-admin`) above all, and the bare
-sign-in profiles (`tadas-staging`, `tadas-prod`), whose permission
-sets (PowerUserAccess, ReadOnlyAccess) are wider than the role. A wider credential is not a convenience; it is
-the boundary gone. Every `aws` command below carries
-`--profile tadas-<env>-investigate`. Never read `AWS_PROFILE` as a
-substitute.
-
-Check the account too: `Account` in the same answer must equal the
-environment's `account_id` in `deployment/cloud/environments.json`
-(read the file; the value is `.environments.<env>.account_id`). Stop on
-a mismatch: the right role in the wrong account is the wrong credential.
-
-The env file `~/.config/tadas/ops/<env>.env` is owner-only and outside
-the repository. It holds `TADAS_API_URL`, `TADAS_OPERATOR_TOKEN` (a
-`read` operator token; the file's `TADAS_PROVISIONER_TOKEN`, a `write`
-token, belongs to the traffic generator alone), `TADAS_ERROR_TRACKER_URL`,
-`TADAS_ERROR_TRACKER_TOKEN`, and the tracker's org and project,
-`TADAS_ERROR_TRACKER_ORG` and `TADAS_ERROR_TRACKER_PROJECT`, which name
-the product's one project and are the same in every environment.
-`local.env`, when there is one,
-points at the compose stack and adds the twins, `TADAS_PROMETHEUS_URL`
-and `TADAS_JAEGER_URL`, on the ports `.env` names. It holds no password
-and no TOTP secret: an agent never signs in with a password.
-
-Never read the env file, with `Read`, `cat`, or anything else: its
-values stay out of this conversation. A command that needs one sources
-the file and makes the call in the same command, because shell state
-does not persist between calls. Every block below that names a
-`TADAS_` variable starts with that line and runs as one command:
-
-```bash
-set -a; . ~/.config/tadas/ops/<env>.env; set +a
-curl -s -H "Authorization: Bearer $TADAS_OPERATOR_TOKEN" "$TADAS_API_URL/v1/admin/me"
-```
-
-`tadas-ops` reads the file itself from `--env`. Never print a token.
-The operator token carries one permission and expires within the
-hour. When a call answers `401`, stop and ask the person to run
-`uv run tadas-ops token --env <env> --identity operator` in their own
-terminal, which asks there for the password and the TOTP code; never
-ask for either in the conversation.
+The env file `~/.config/tadas/ops/<env>.env` gives the API's URL, the
+`read` operator token, and the error tracker's URL, token, org, and
+project; the file's `TADAS_PROVISIONER_TOKEN`, a `write` token,
+belongs to the traffic generator alone and is not used here. Never
+read the env file; a command that needs a value sources it in the same
+command, as every block below does. Never print a token. On a `401`
+the token has expired: stop, and name the refresh the preamble gives.
 
 ## Procedure
 
@@ -184,8 +148,7 @@ lists them.
    `environment` tag is `<env>`. Dropping the filter reports every
    environment's errors as this one's, which is wrong, not wider.
 
-   The org and the project are the same in every environment; the
-   org's slug is what `GET /api/0/organizations/` lists (locally
+   The org's slug is what `GET /api/0/organizations/` lists (locally
    `tadas`):
 
    ```bash
@@ -193,11 +156,9 @@ lists them.
    curl -s -H "Authorization: Bearer $TADAS_ERROR_TRACKER_TOKEN" "$TADAS_ERROR_TRACKER_URL/api/0/organizations/"
    ```
 
-   A deployed environment may name no tracker: nothing provisions one,
-   and its env file leaves `TADAS_ERROR_TRACKER_URL` and
-   `TADAS_ERROR_TRACKER_TOKEN` empty. Then this step reads nothing and
-   the report says "not read", never "no errors". The other steps stand
-   on their own; an investigation is not stopped by it.
+   When the env file names no tracker, this step reads nothing and the
+   report says "not read", never "no errors"; the other steps stand on
+   their own, and an investigation is not stopped by it.
 
 7. Logs. Cloud, one log group per process, `/tadas/<env>/<process>`:
 

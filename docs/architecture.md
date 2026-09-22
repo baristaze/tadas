@@ -1049,7 +1049,13 @@ page; this section says what exists.
   takes `--env local|staging|production`, and `local` reads the
   compose stack's twins, so each is exercised with no cloud; create
   and nuke take `staging` or `production` only, and
-  `stress-test-create-or-update` writes a file and touches none. The first responder is an agent: `ops-investigate` and
+  `stress-test-create-or-update` writes a file and touches none. The
+  eight that hold a credential read
+  `.claude/skills/_shared/ops-preamble.md` first, where the profiles,
+  the account check, and the env file's fields are written once; the
+  rules that stop a secret leaking stay inline in each of them, and
+  `infra/tests/test_ops_skills.py` holds both halves.
+  The first responder is an agent: `ops-investigate` and
   `ops-watch` read the platform's size (`tadas-ops size`) before they
   escalate an alarm, and a platform of one tenant and one user is the
   developer at work.

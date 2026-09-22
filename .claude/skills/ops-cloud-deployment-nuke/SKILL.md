@@ -13,6 +13,9 @@ the preconditions and narrating. Production is protected twice: by a
 pull request that lifts deletion protection, merged before this skill
 runs, and by the name typed into the command.
 
+Read `.claude/skills/_shared/ops-preamble.md` before the first step:
+the profiles, the account check, and the env file are there.
+
 ## Input
 
 `--env staging|production [--confirm <env>] [--dry-run]`
@@ -32,22 +35,14 @@ without it.
 
 ## Role and credential
 
-This skill needs the administrator profile the environment names
-(`tadas-staging-admin` or `tadas-prod-admin`) and refuses anything
-else. The administrator's permission set is assigned for the run; when
-it has been handed back, the person asks for it again first. Before
-any other command, run
-
-```bash
-aws sts get-caller-identity --profile <admin_profile>
-```
-
-and check that `Account` is the environment's `account_id` and that
-`Arn` is an Identity Center administrator role, never
-`assumed-role/tadas-investigate-*`. Every `aws` command below carries
-`--profile <admin_profile>`; the script refuses any other profile,
-clears keys exported in the shell, and checks the account again before
-the apply and before the destroy.
+Refuse any profile but the environment's administrator
+(`tadas-staging-admin` or `tadas-prod-admin`), checked with `sts
+get-caller-identity` before any other command as the preamble states.
+The administrator's permission set is assigned for the run; when it
+has been handed back, the person asks for it again first. Every `aws`
+command below carries `--profile <admin_profile>`; the script refuses
+any other profile, clears keys exported in the shell, and checks the
+account again before the apply and before the destroy.
 
 No env file is read. The script leaves the environment's
 `~/.config/tadas/ops/<env>.env` and its profile in `~/.aws/config` in place
