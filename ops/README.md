@@ -39,8 +39,12 @@ cloud.
   never in the repository.
 - The application credentials live in one owner-only file per
   environment outside the repository, `~/.config/tadas/ops/<env>.env`:
-  the API URL, two operator tokens, and the error tracker's URL and
-  token. `TADAS_OPERATOR_TOKEN` carries `read`, and every read runs as
+  the API URL, two operator tokens, and the error tracker's URL, token,
+  org, and project. The org and the project name the product's one
+  project and hold the same value in every environment, because there
+  is one project for the product and the environment is a property of
+  each event; a read names the project and filters on
+  `environment:<env>`. `TADAS_OPERATOR_TOKEN` carries `read`, and every read runs as
   it. `TADAS_PROVISIONER_TOKEN` carries `write`, and the traffic
   generator alone uses it, to create and remove the tenants a run
   needs. Each expires within the hour. The file never holds a password
@@ -77,6 +81,12 @@ skill reads either.
 | Metrics | Prometheus | CloudWatch metrics, namespace `Tadas` |
 | Traces | Jaeger | X-Ray |
 | Errors | GlitchTip | Sentry |
+
+Errors are the one signal whose store is not per environment: there is
+one project for the product, every environment reports into it, and the
+environment each process sends on every event is what separates them.
+A read asks for `environment:<env>`, and an issue that also holds
+another environment's events answers with this environment's only.
 
 What the local twin shows after thirty seconds of light traffic, the
 wiring check CI runs. The five panels of the Grafana dashboard are the

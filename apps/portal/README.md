@@ -88,7 +88,9 @@ create an account at `/sign-up`; see the root README for every local URL.
 cloud that file exists, written per environment by Terraform (`apiUrl` is the
 environment's API, e.g. `https://api.tadas.fyi`), so one build serves every
 environment. Locally there is none, and `VITE_API_URL`,
-`VITE_SENTRY_DSN`, and `VITE_SENTRY_ENVIRONMENT` apply instead. The file may
+`VITE_SENTRY_DSN`, and `VITE_SENTRY_ENVIRONMENT` apply instead. The DSN is
+the product's one tracker project in every environment; the environment the
+page sends on each event is what separates them. The file may
 also name `requestTimeoutMs`, the deadline the transport client puts on every
 call; without it, and locally, the deadline is 30 seconds. It may name
 `retryAttempts` and `retryBaseDelayMs` the same way, the extra attempts a

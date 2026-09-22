@@ -753,7 +753,9 @@ everything in-process for tests.
   root is refused.
 - Every Python process boots error reporting (the Sentry SDK, on only when
   `TADAS_SENTRY_DSN` is set: unhandled exceptions and ERROR log lines,
-  tagged with `service` and `request_id`), tracing (OpenTelemetry, on only
+  tagged with `service` and `request_id`, and carrying the environment
+  the process runs in, which is what separates the environments inside
+  the product's one tracker project), tracing (OpenTelemetry, on only
   when `TADAS_OTEL_ENDPOINT` is set), and Prometheus metrics, all from
   `tadas.infra.observability`. Naming the process is a boot step of its
   own, right after logging and before all three, so every line a process
@@ -803,7 +805,9 @@ everything in-process for tests.
   or pong retries from where it stands.
   Errors go to the Sentry-compatible backend named by `sentryDsn` in
   the runtime `config.json` (locally, by `VITE_SENTRY_DSN`), through
-  every route's `errorElement` and React's root error hooks. A write
+  every route's `errorElement` and React's root error hooks; the DSN is
+  the product's one project in every environment, and the config's
+  `environment` rides on each event, which is what separates them. A write
   that fails is said, never swallowed: a view-model turns what it caught
   into one line (`src/app/errorMessage.ts`, the request id of an API
   refusal quoted) and leaves it in the notices store, which `Notices`
@@ -920,7 +924,11 @@ everything in-process for tests.
   task runs an ADOT collector sidecar that scrapes the process's
   `/metrics` into CloudWatch (namespace `Tadas`) and forwards its traces to
   X-Ray; the load balancer answers `/metrics` with a 404. Errors report to
-  the DSN in the `<prefix>sentry_dsn` secret, which starts as `off`. The
+  the DSN in the `<prefix>sentry_dsn` secret, which starts as `off`. That
+  secret is per environment because a secret is per account, but the DSN
+  in it is one project's: there is one tracker project for the product,
+  and the environment on each event is what separates them, so a read of
+  it filters on `environment:<env>`. The
   module README explains state and credentials.
 - `.github/workflows/ci.yml`: the fast gate, the integration job (which
   runs `make migrate-check` right after `make migrate`), an image build
