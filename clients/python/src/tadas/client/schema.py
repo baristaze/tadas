@@ -21,6 +21,16 @@ class AddTaskRequest(BaseModel):
     title: Annotated[str, Field(max_length=500, title='Title')]
 
 
+class ConfirmTotpRequest(BaseModel):
+    """
+    The first code from the authenticator, which confirms the secret.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    totp_code: Annotated[str, Field(max_length=6, min_length=6, title='Totp Code')]
+
+
 class CreateOrgRequest(BaseModel):
     """
     An org with its owner, as `bootstrap` seeds one. The owner's identity
@@ -42,6 +52,7 @@ class CredentialKind(StrEnum):
     session_token = 'session_token'
     login = 'login'
     socket_ticket = 'socket_ticket'
+    operator_token = 'operator_token'
     internal = 'internal'
 
 
@@ -80,12 +91,35 @@ class IssuedTicketView(BaseModel):
     ticket: Annotated[str, Field(title='Ticket')]
 
 
+class IssuedTotpSecretView(BaseModel):
+    """
+    A freshly minted TOTP secret, once, as the `otpauth://` URI an
+    authenticator app reads. A replay carries none.
+    """
+    otpauth_uri: Annotated[str | None, Field(title='Otpauth Uri')]
+
+
+class TotpCode(RootModel[str]):
+    root: Annotated[str, Field(max_length=6, min_length=6, title='Totp Code')]
+
+
 class LoginRequest(BaseModel):
+    """
+    An email and a password, and the code from an authenticator when the
+    identity has a second factor enrolled. A tenant's sign-in needs none; the
+    operator plane admits an enrolled operator only on a sign-in that
+    verified one. A code used once is refused.
+    """
     model_config = ConfigDict(
         extra='forbid',
     )
     email: Annotated[str, Field(title='Email')]
     password: Annotated[str, Field(title='Password')]
+    totp_code: Annotated[TotpCode | None, Field(title='Totp Code')] = None
+
+
+class ExpiresIn(RootModel[int]):
+    root: Annotated[int, Field(ge=1, le=3600, title='Expires In')]
 
 
 class ExpectedVersion(RootModel[int]):
@@ -155,6 +189,14 @@ class OrgView(BaseModel):
     slug: Annotated[str, Field(title='Slug')]
 
 
+class PasswordResetView(BaseModel):
+    """
+    Whose password was reset; the reset is audited with the operator.
+    """
+    email: Annotated[str, Field(title='Email')]
+    identity_id: Annotated[UUID, Field(title='Identity Id')]
+
+
 class Permission(StrEnum):
     read = 'read'
     write = 'write'
@@ -174,6 +216,17 @@ class PlatformSizeView(BaseModel):
     tasks_last_24h: Annotated[int, Field(title='Tasks Last 24H')]
     tenants: Annotated[int, Field(title='Tenants')]
     users: Annotated[int, Field(title='Users')]
+
+
+class ResetPasswordRequest(BaseModel):
+    """
+    The person, by email, and the password they sign in with from now on.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    email: Annotated[str, Field(min_length=1, title='Email')]
+    password: Annotated[str, Field(max_length=200, min_length=8, title='Password')]
 
 
 class Role(StrEnum):
@@ -238,6 +291,16 @@ class TaskView(BaseModel):
     title: Annotated[str, Field(title='Title')]
     updated_at: Annotated[AwareDatetime, Field(title='Updated At')]
     version: Annotated[int, Field(title='Version')]
+
+
+class TotpConfirmedView(BaseModel):
+    """
+    The second factor is enrolled: from now on the operator plane admits
+    this identity only on a sign-in that verified a code, so the next
+    request signs in again with one.
+    """
+    confirmed_at: Annotated[AwareDatetime, Field(title='Confirmed At')]
+    identity_id: Annotated[UUID, Field(title='Identity Id')]
 
 
 class UpdateMeRequest(BaseModel):
@@ -358,6 +421,17 @@ class IssuedApiKeyView(BaseModel):
     key: Annotated[str | None, Field(title='Key')]
 
 
+class IssuedOperatorTokenView(BaseModel):
+    """
+    The token in the clear on the first response only; a replay under the
+    same Idempotency-Key answers with `token` null. A client that lost the
+    first answer mints another; the lost one expires within the hour.
+    """
+    expires_at: Annotated[AwareDatetime, Field(title='Expires At')]
+    permission: OperatorRole
+    token: Annotated[str | None, Field(title='Token')]
+
+
 class IssuedSessionView(BaseModel):
     expires_at: Annotated[AwareDatetime, Field(title='Expires At')]
     org: OrgView
@@ -385,6 +459,18 @@ class MembershipView(BaseModel):
     role: Role
     teams: Annotated[list[UUID], Field(title='Teams')]
     user_id: Annotated[UUID, Field(title='User Id')]
+
+
+class MintOperatorTokenRequest(BaseModel):
+    """
+    One permission, never wider than the caller's entry (`write` implies
+    `read`), and a lifetime of at most an hour, an hour when absent.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    expires_in: Annotated[ExpiresIn | None, Field(title='Expires In')] = None
+    permission: OperatorRole
 
 
 class OrgPageView(BaseModel):
