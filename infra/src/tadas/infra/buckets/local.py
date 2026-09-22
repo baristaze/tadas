@@ -1,25 +1,57 @@
 import asyncio
+import time
 from datetime import timedelta
 from pathlib import Path
 from uuid import UUID
 
-from tadas.infra.buckets import BlobNotFound, Buckets, BucketsInterface, PresignedUpload, object_key
+from tadas.infra.buckets import (
+    BlobNotFound,
+    Buckets,
+    BucketsInterface,
+    InvalidBucketKey,
+    PresignedPost,
+    UploadRefused,
+    object_key,
+)
 
 
 class BucketsLocalImpl(BucketsInterface):
     """A filesystem impl with the same layout as the object store. It cannot
-    presign, so both presign calls return None and the caller proxies."""
+    presign, so both presign calls return None and the caller proxies. It
+    still holds a presigned upload to its bounds: until the form would have
+    expired, a `put` of that key must carry the content type it was presigned
+    with and at most `max_bytes`, as the store would refuse otherwise. And it
+    refuses a key that is absolute or climbs out of its root, as the cloud's
+    keys cannot."""
 
     def __init__(self, root: Path) -> None:
         self._root = root
+        self._bounds: dict[tuple[Buckets, str], tuple[str, int, float]] = {}
 
     def _path(self, org_id: UUID, bucket: Buckets, key: str) -> Path:
-        return self._root / bucket.value / object_key(org_id, key)
+        path = self._root / bucket.value / object_key(org_id, key)
+        if not path.resolve().is_relative_to((self._root / bucket.value).resolve()):
+            raise InvalidBucketKey(f"bucket key {key!r} leaves the bucket")
+        return path
+
+    def _hold_to_bounds(self, bucket: Buckets, key: str, data: bytes, content_type: str) -> None:
+        bound = self._bounds.get((bucket, key))
+        if bound is None:
+            return
+        expected_type, max_bytes, expires = bound
+        if time.monotonic() >= expires:
+            del self._bounds[(bucket, key)]
+            return
+        if content_type != expected_type:
+            raise UploadRefused(f"upload of {key!r} is {content_type}, not {expected_type}")
+        if len(data) > max_bytes:
+            raise UploadRefused(f"upload of {key!r} is {len(data)} bytes, over {max_bytes}")
 
     async def put(
         self, org_id: UUID, bucket: Buckets, key: str, data: bytes, content_type: str
     ) -> None:
         path = self._path(org_id, bucket, key)
+        self._hold_to_bounds(bucket, object_key(org_id, key), data, content_type)
 
         def write() -> None:
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -74,7 +106,7 @@ class BucketsLocalImpl(BucketsInterface):
     ) -> str | None:
         return None
 
-    async def presign_upload(
+    async def presign_post(
         self,
         org_id: UUID,
         bucket: Buckets,
@@ -82,7 +114,18 @@ class BucketsLocalImpl(BucketsInterface):
         content_type: str,
         max_bytes: int,
         ttl: timedelta,
-    ) -> PresignedUpload | None:
+    ) -> PresignedPost | None:
+        if max_bytes <= 0:
+            raise ValueError(f"an upload is bounded by a positive size, not {max_bytes}")
+        self._path(org_id, bucket, key)  # the key is refused here, as the store would
+        now = time.monotonic()
+        # A form expires, so its bound does too; the expired ones go as new ones come.
+        self._bounds = {k: b for k, b in self._bounds.items() if b[2] > now}
+        self._bounds[(bucket, object_key(org_id, key))] = (
+            content_type,
+            max_bytes,
+            now + ttl.total_seconds(),
+        )
         return None
 
     def describe(self) -> str:
