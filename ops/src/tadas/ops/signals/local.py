@@ -71,6 +71,12 @@ class SignalsLocalImpl(SignalsInterface):
         self._transport = transport
         self._now = now
 
+    @property
+    def reads_error_events(self) -> bool:
+        """Always: GlitchTip is part of the local stack, and a stack without
+        it is refused before a reader is built."""
+        return True
+
     def _http(self) -> httpx.AsyncClient:
         return httpx.AsyncClient(transport=self._transport, timeout=10.0)
 

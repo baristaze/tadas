@@ -4,6 +4,11 @@ Sentry's REST API under a token. The AWS clients come from an aioboto3
 session under a named profile: the investigate role of the environment,
 which can read every signal and write nothing.
 
+The tracker is the one store the account does not provide: an environment
+names it in its env file or names none. Without one the reader still reads
+the logs, the metrics, and the traces, and reports the error event as not
+read.
+
 X-Ray is filtered on the annotation `tadas_request_id`: the collector turns
 the span attribute `tadas.request_id` into it only when its X-Ray exporter
 lists the attribute under `indexed_attributes`. Without that, no filter by
@@ -70,9 +75,9 @@ class SignalsCloudImpl(SignalsInterface):
         environment: str,
         profile: str | None,
         region: str | None,
-        sentry_url: str,
-        sentry_token: str,
-        sentry_org: str,
+        sentry_url: str | None = None,
+        sentry_token: str | None = None,
+        sentry_org: str = "tadas",
         session: SessionLike | None = None,
         transport: httpx.AsyncBaseTransport | None = None,
         lookback: timedelta = DEFAULT_LOOKBACK,
@@ -82,7 +87,7 @@ class SignalsCloudImpl(SignalsInterface):
         self.environment = environment
         self.profile = profile
         self.region = region
-        self.sentry_url = sentry_url.rstrip("/")
+        self.sentry_url = sentry_url.rstrip("/") if sentry_url else None
         self.sentry_token = sentry_token
         self.sentry_org = sentry_org
         self.lookback = lookback
@@ -92,6 +97,13 @@ class SignalsCloudImpl(SignalsInterface):
         self._transport = transport
         self._now = now
         self._sleep = sleep
+
+    @property
+    def reads_error_events(self) -> bool:
+        """A deployed environment gets an error tracker from its env file, and
+        nothing provisions one, so it may name none. Logs, metrics, and traces
+        come from the account itself and are read either way."""
+        return bool(self.sentry_url and self.sentry_token)
 
     async def log_lines(self, request_id: str) -> list[str]:
         now = self._now()
@@ -203,17 +215,26 @@ class SignalsCloudImpl(SignalsInterface):
         return None
 
     async def error_event(self, request_id: str) -> ErrorEventFound | None:
+        """None when the environment names no tracker: nothing was read, and
+        the caller says that rather than calling the leg empty."""
+        if not (self.sentry_url and self.sentry_token):
+            return None
         async with httpx.AsyncClient(transport=self._transport, timeout=10.0) as http:
             return await find_error_event(
                 http, self.sentry_url, self.sentry_token, self.sentry_org, request_id
             )
 
     def describe(self) -> str:
+        errors = (
+            f"errors: Sentry {self.sentry_url} org {self.sentry_org} by tag request_id"
+            if self.reads_error_events
+            else "errors: not read, the environment names no error tracker"
+        )
         return (
             f"logs: CloudWatch Logs Insights on {log_group(self.environment)} by request_id; "
             f"metrics: CloudWatch namespace {NAMESPACE}; "
             f"traces: X-Ray by annotation {REQUEST_ID_ANNOTATION} "
             "(the collector must index tadas.request_id; otherwise no trace is found by id); "
-            f"errors: Sentry {self.sentry_url} org {self.sentry_org} by tag request_id; "
+            f"{errors}; "
             f"profile {self.profile or 'default'}, region {self.region or 'default'}"
         )

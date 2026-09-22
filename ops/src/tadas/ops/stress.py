@@ -80,6 +80,11 @@ class Readback:
 
     requests: float | None
     server_errors: float | None
+    error_events_read: bool = True
+    """False when the environment names no error tracker. The verdict holds
+    the run to the request counter and the 5xx count and never to the
+    tracker, so the run still passes or fails; the text says the leg was
+    not read rather than leaving it out."""
 
     @property
     def error_ratio(self) -> float | None:
@@ -108,16 +113,22 @@ class Verdict:
                 if readback.requests
                 else "nothing counted for the window"
             ),
-            ("PASS" if self.passed else "FAIL")
-            + (": " + "; ".join(self.reasons) if self.reasons else ""),
         ]
+        if not readback.error_events_read:
+            lines.append("error events: not read, the environment names no error tracker")
+        lines.append(
+            ("PASS" if self.passed else "FAIL")
+            + (": " + "; ".join(self.reasons) if self.reasons else "")
+        )
         return "\n".join(lines) + "\n"
 
 
 def verdict(scenario: Scenario, report: Report, readback: Readback) -> Verdict:
     """Pass when the generator's p95 and error ratio meet the target, the
     platform counted the window, and its own 5xx ratio meets the target too.
-    A run that made no requests fails: it proved nothing."""
+    A run that made no requests fails: it proved nothing. The error tracker
+    is not one of the signals the verdict holds to, so an environment that
+    names none still passes or fails on the counter it did read."""
     reasons: list[str] = []
     if report.requests == 0:
         reasons.append("no requests were made")
@@ -140,7 +151,11 @@ def verdict(scenario: Scenario, report: Report, readback: Readback) -> Verdict:
 async def read_back(signals: SignalsInterface, since: datetime) -> Readback:
     requests = await signals.metric_delta(REQUESTS_COUNTER, {}, since)
     errors = await signals.metric_delta(REQUESTS_COUNTER, {"status": "~5.."}, since)
-    return Readback(requests=requests, server_errors=errors)
+    return Readback(
+        requests=requests,
+        server_errors=errors,
+        error_events_read=signals.reads_error_events,
+    )
 
 
 def window_start(report: Report) -> datetime:

@@ -1,6 +1,7 @@
 """The cloud readers over a fake aioboto3 session and a fake Sentry: the
 calls they make and what they make of the answers."""
 
+import asyncio
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -214,9 +215,35 @@ async def test_the_trace_is_filtered_on_the_annotation() -> None:
 
 
 async def test_the_error_event_reads_sentry_under_the_token() -> None:
-    found = await reader(FakeSession()).error_event(RID)
+    impl = reader(FakeSession())
+    assert impl.reads_error_events
+    found = await impl.error_event(RID)
     assert found is not None and (found.event_id, found.issue_id, found.title) == (
         "e1",
         "99",
         "boom",
     )
+    assert "errors: Sentry https://sentry.example.test org acme" in impl.describe()
+
+
+async def test_an_environment_naming_no_tracker_reads_every_other_leg() -> None:
+    """A deployed environment gets no error tracker from the account, so the
+    reader is built without one: the error event is not read, and the logs,
+    the metrics, and the traces still are."""
+    session = FakeSession()
+    impl = SignalsCloudImpl(
+        environment="staging",
+        profile="tadas-staging-investigate",
+        region="us-east-1",
+        session=session,
+        now=lambda: NOW,
+        sleep=lambda _: asyncio.sleep(0),
+    )
+    assert not impl.reads_error_events
+    assert await impl.error_event(RID) is None
+    assert await impl.log_lines(RID) == ["line one", "line two"]
+    assert await impl.metric_delta("tadas_http_requests_total", {}, NOW - timedelta(minutes=3)) == (
+        15.0
+    )
+    assert (await impl.trace(RID)) is not None
+    assert "errors: not read, the environment names no error tracker" in impl.describe()

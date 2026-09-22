@@ -91,3 +91,18 @@ def test_the_verdict_passes_only_within_the_target_on_both_sides() -> None:
     assert "no requests were made" in empty.reasons
     text = failing.text(scenario, report_with(10.0, 5), Readback(100, 5))
     assert text.startswith("stress smoke:") and "FAIL: " in text and "100 requests counted" in text
+
+
+def test_a_run_without_an_error_tracker_still_passes_on_what_it_read() -> None:
+    """The verdict holds a run to the request counter and the 5xx count, so
+    an environment that names no tracker still passes; the text says the leg
+    was not read rather than leaving it out."""
+    scenario = load_scenario(HERE / "smoke.yaml")
+    report = report_with(120.0, 0)
+    untracked = Readback(100, 0, error_events_read=False)
+    outcome = verdict(scenario, report, untracked)
+    assert outcome.passed and outcome.reasons == ()
+    text = outcome.text(scenario, report, untracked)
+    assert "error events: not read, the environment names no error tracker" in text
+    assert text.rstrip().endswith("PASS")
+    assert "not read" not in outcome.text(scenario, report, Readback(100, 0))
