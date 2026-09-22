@@ -8,6 +8,9 @@ token, and the sign-out comes once, at the end. Sign-in verifies a password
 on purpose, so it is the slowest route the generator calls, and the API
 counts it against a per-address rate limit; a session that signed in for
 itself measured password hashing and that limit instead of the application.
+One sign-in per person leaves little room for a refusal, so a sign-in the
+rate limit turns away waits the window out and asks again, a bounded number
+of times, and a run that still signs nobody in fails and says why.
 
 A session: open the socket, list the open tasks, add five or six with an
 idempotency key each, edit one, complete two, reopen one, move one, list the
@@ -62,6 +65,24 @@ FAILED_SESSION_PAUSE_SECONDS = 5.0
 """A person whose session failed does not start another at once. Without the
 pause a refusal is a tight loop of sessions, which is a flood and not
 traffic."""
+LOGIN_WINDOW_SECONDS = 60.0
+"""The login limiter's window, a minute, and so how long a sign-in refused
+with a 429 waits before it asks again when the answer names no `Retry-After`.
+Waiting the whole window is the one wait that is certain to clear it."""
+LOGIN_WAIT_CAP_SECONDS = 120.0
+"""However long an answer asks a sign-in to wait, no single wait is longer.
+Past this the environment is closed to the run, and hanging is worse than
+failing."""
+MAX_LOGIN_WAITS = 2
+"""How many times one run waits out a closed login window. Two covers the
+window the step before the run filled; a run that needs more is not waiting
+out a window, it is waiting on an environment that will not have it."""
+NO_ONE_SIGNED_IN = (
+    "no one signed in, so the run drove no session; the likeliest cause is the "
+    "per-address rate limit on POST /v1/auth/login, and every refusal is named above"
+)
+"""What a run that signed nobody in says, in its notes and on stderr. It is
+the one outcome where the report is empty for a reason worth naming."""
 
 _UUID = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
 
@@ -368,45 +389,85 @@ def seat_order(people: list[Person]) -> list[Person]:
     return ordered
 
 
+@dataclass(frozen=True)
+class SignIns:
+    """What a run's sign-ins came to: the seats, a note per refusal and per
+    wait, and how long the run spent waiting out a closed login window. The
+    wait is reported because it is time the run was not driving traffic."""
+
+    seats: list[Seat]
+    notes: list[str]
+    waited_seconds: float = 0.0
+
+
 async def sign_in(
     env: Environment,
     people: list[Person],
     *,
     transport: httpx.AsyncBaseTransport,
     samples: list[Sample],
-) -> tuple[list[Seat], list[str]]:
+    wait: Callable[[float], Any] = asyncio.sleep,
+    window_seconds: float = LOGIN_WINDOW_SECONDS,
+    max_waits: int = MAX_LOGIN_WAITS,
+) -> SignIns:
     """Signs each person in once, one after another: a login, then the
     exchange for a session token in their org. The requests are the run's
     like any other and land in `samples`.
 
-    A person the API refuses is named in a note and left out; a 429 stops the
-    sign-ins there, since the address's login window is closed and asking
-    again would only add to the count that closed it."""
+    A person the API refuses is named in a note and left out. A 429 is the
+    one refusal the run does not take as final: the address's login window is
+    closed, and a window opens again on its own. The run waits it out and
+    asks for the same person again, for as long as the answer's `Retry-After`
+    asks and otherwise the whole window, at most `max_waits` times in a run.
+    After the last wait a 429 stands like any other refusal and stops the
+    sign-ins there, since asking again would only add to the count that
+    closed the window. `wait` is the pause, injected by tests."""
     recording = RecordingTransport(transport, also=samples)
     seats: list[Seat] = []
     notes: list[str] = []
+    waits_left = max_waits
+    waited = 0.0
     async with ApiClient(
         env.api_url, app=SESSION_APP, app_version=app_version(), transport=recording
     ) as client:
-        for person in people:
+        queue = list(people)
+        while queue:
+            person = queue[0]
             try:
                 login = await client.login(person.email, person.password)
                 choices = [m for m in login.memberships if m.org.slug == person.org_slug]
                 if not choices:
                     notes.append(f"{person.email} is not a member of {person.org_slug}")
+                    queue.pop(0)
                     continue
                 session = await client.exchange_session(login.token, choices[0].org.id)
             except ApiError as error:
+                if error.status == 429 and waits_left > 0:
+                    waits_left -= 1
+                    pause = min(error.retry_after or window_seconds, LOGIN_WAIT_CAP_SECONDS)
+                    notes.append(
+                        f"{person.email} was refused at sign-in: 429 {error.code}; "
+                        f"the run waited {pause:.0f} s for the login window and asked again"
+                    )
+                    waited += pause
+                    await wait(pause)
+                    continue
                 notes.append(f"{person.email} was refused at sign-in: {error.status} {error.code}")
                 if error.status == 429:
-                    notes.append("the address's login window is closed; no one else signed in")
+                    notes.append(
+                        f"the address's login window is still closed after {max_waits} wait(s); "
+                        "no one else signed in"
+                    )
                     break
+                queue.pop(0)
                 continue
             except httpx.HTTPError as failure:
                 notes.append(f"{person.email} was refused at sign-in: {type(failure).__name__}")
+                queue.pop(0)
                 continue
             seats.append(Seat(person, session.token, session.user.id))
-    return seats, notes
+            queue.pop(0)
+    return SignIns(seats, notes, waited)
 
 
 async def sign_out(
@@ -601,6 +662,7 @@ async def run_traffic(
     connect: Connect | None = None,
     people: list[Person] | None = None,
     pause_after_failure: float = FAILED_SESSION_PAUSE_SECONDS,
+    login_wait: Callable[[float], Any] = asyncio.sleep,
 ) -> RunResult:
     """The run signs its people in, drives sessions at `profile.concurrency`
     at once over their seats in turn until the duration is up, and signs them
@@ -615,7 +677,10 @@ async def run_traffic(
 
     The run signs in one person per worker at most, since that is as many as
     can drive at once, and one sign-in per person from one address is what a
-    per-address rate limit has room for."""
+    per-address rate limit has room for. A sign-in the limit refuses waits
+    the window out and asks again, a bounded number of times; the deadline
+    moves by what was waited, so the wait comes out of nobody's driving
+    time. `login_wait` is that pause, injected by tests."""
     duration = profile.duration_seconds if duration_seconds is None else duration_seconds
     wanted_orgs = profile.orgs if orgs is None else orgs
     inner = transport or network_transport()
@@ -692,13 +757,23 @@ async def run_traffic(
 
     try:
         wanted = seat_order(people)[: profile.concurrency]
-        seats, refused = await sign_in(env, wanted, transport=inner, samples=samples)
+        signed = await sign_in(env, wanted, transport=inner, samples=samples, wait=login_wait)
+        seats = signed.seats
+        if signed.waited_seconds:
+            # A wait for the login window is not traffic, so the duration
+            # does not spend itself on it: the deadline moves by what was
+            # waited and the run still drives for as long as it was asked to.
+            clock.deadline += signed.waited_seconds
+            notes.append(
+                f"the run waited {signed.waited_seconds:.0f} s in all for the login window; "
+                "the duration does not count it"
+            )
         notes.append(
             f"signed in {len(seats)} of {len(wanted)} people, one sign-in each for the whole run"
         )
-        notes.extend(refused)
+        notes.extend(signed.notes)
         if not seats:
-            notes.append("no one signed in, so the run drove no session")
+            notes.append(NO_ONE_SIGNED_IN)
         queue = _cycle(seats)
         workers = [
             asyncio.create_task(worker(i, queue), name=f"traffic-{i}")

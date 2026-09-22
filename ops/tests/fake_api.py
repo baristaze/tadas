@@ -31,7 +31,13 @@ class FakeApi:
     carries an `x-request-id`; a write appends an event and pushes it to any
     open socket."""
 
-    def __init__(self, *, fail_on: str | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        fail_on: str | None = None,
+        refuse_logins: int = 0,
+        retry_after: str | None = None,
+    ) -> None:
         self.tasks: dict[str, dict[str, Any]] = {}
         self.events: list[dict[str, Any]] = []
         self.seq = 10
@@ -40,6 +46,13 @@ class FakeApi:
         self.fail_on = fail_on
         """"METHOD path" answered 503 once; the path may be a route template
         (`DELETE /v1/tasks/{id}`), since a test knows no id in advance."""
+        self.refuse_logins = refuse_logins
+        """How many of the next logins answer 429, as the per-address rate
+        limit does while its window is full. A large count is a window that
+        never opens."""
+        self.retry_after = retry_after
+        """The `Retry-After`, in seconds, those refusals carry; none when the
+        answer asks for no particular wait."""
 
     def _event(self, kind: str, target_id: str) -> None:
         self.seq += 1
@@ -88,6 +101,13 @@ class FakeApi:
             )
         body = json.loads(request.content) if request.content else {}
         if (method, path) == ("POST", "/v1/auth/login"):
+            if self.refuse_logins > 0:
+                self.refuse_logins -= 1
+                return httpx.Response(
+                    429,
+                    json={"error": {"code": "rate_limited", "message": "rate limit exceeded"}},
+                    headers={"retry-after": self.retry_after} if self.retry_after else None,
+                )
             if body.get("password") != "tadas-local":
                 return httpx.Response(
                     401, json={"error": {"code": "invalid_credential", "message": "no"}}
