@@ -12,18 +12,27 @@
 # at, from the copies replicated into its own account. The portal build holds
 # no environment; each environment's /config.json, written by Terraform, does.
 #
-# Staging has an AWS account of its own (deployment/cloud/environments.json).
-# Credentials come from the staging deploy role that
-# deployment/terraform/bootstrap/staging declares there, through GitHub's
-# OIDC provider. That role trusts one subject, a job of this repository that
-# declares `environment: staging` and runs on `main`. Production is another
-# account, which is what lets a merge deploy with no approval. Every job here
-# therefore declares the environment; a job without it presents its branch
-# instead and is refused by the role's trust.
+# Staging has an AWS account of its own (deployment/cloud/environments.json),
+# and two credentials in it, both through GitHub's OIDC provider and both
+# declared by deployment/terraform/bootstrap/staging. The jobs that build
+# declare `staging-build` and hold `tadas-build-staging`, which pushes the
+# images and keeps the portal build and applies nothing: they install
+# third-party packages, and a build step must never hold the role that
+# applies. The job that applies declares `staging` and holds
+# `tadas-deploy-staging`. Each role trusts one environment, `main`, and this
+# repository by its id. Production is another account, which is what lets a
+# merge deploy with no approval. A job without an environment presents its
+# branch instead and is refused by both roles' trust.
 #
-# The variables are the `staging` environment's own: the role (AWS_ROLE_ARN),
-# the state bucket (TF_STATE_BUCKET), the artifacts bucket the portal build
-# is kept in (ARTIFACTS_BUCKET), the two public names (API_DOMAIN_NAME,
+# After the apply, `record` writes what staging deployed as commit statuses
+# (`deployed/<image>` and `deployed/portal`, each a digest), on the
+# repository host and outside either account. Production compares its
+# replicated copies with them before it plans.
+#
+# The variables are the environments' own. `staging-build` holds its role
+# (AWS_ROLE_ARN) and the artifacts bucket (ARTIFACTS_BUCKET). `staging` holds
+# its role (AWS_ROLE_ARN), the state bucket (TF_STATE_BUCKET), the artifacts
+# bucket (ARTIFACTS_BUCKET), the two public names (API_DOMAIN_NAME,
 # APP_DOMAIN_NAME), and the address the alarm topic subscribes (ALARM_EMAIL).
 # scripts/cloud_create.sh sets them. Production's environments hold the same
 # names with production's values, and a job here never sees those.
@@ -47,6 +56,10 @@ permissions:
   id-token: write
   contents: read
 
+# One deploy at a time, and a running one is never cancelled. GitHub keeps
+# one pending run per group, so of three quick merges the middle one may
+# never deploy: the newest pending run replaces it. That is safe, because a
+# release takes only a commit staging deployed.
 concurrency:
   group: deploy-staging
   cancel-in-progress: false
@@ -115,7 +128,9 @@ jobs:
     needs: cloud
     if: needs.cloud.outputs.configured == 'true'
     runs-on: ubuntu-latest
-    environment: staging
+    # The build installs third-party packages, so it holds the push-only
+    # build role of `staging-build`, never the role that applies.
+    environment: staging-build
     outputs:
       api_image: ${{ steps.images.outputs.api_image }}
       maintenance_image: ${{ steps.images.outputs.maintenance_image }}
@@ -187,7 +202,9 @@ jobs:
     name: build the portal once
     needs: cloud
     runs-on: ubuntu-latest
-    environment: staging
+    environment: staging-build
+    outputs:
+      digest: ${{ steps.digest.outputs.digest }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -206,6 +223,9 @@ jobs:
           path: apps/portal/dist
           if-no-files-found: error
           retention-days: 30
+      - name: the build's digest
+        id: digest
+        run: echo "digest=$(scripts/portal_digest.sh apps/portal/dist)" >> "$GITHUB_OUTPUT"
       # The build is kept by the commit in the artifacts bucket, which
       # replicates it into production's: a workflow artifact expires and is one run's,
       # the bucket outlives both and is reachable by the commit alone.
@@ -310,3 +330,34 @@ jobs:
           done
           echo "::error::https://$API_DOMAIN_NAME/readyz did not answer ready within the rollout's grace; the release is serving but not ready."
           exit 1
+
+  record:
+    name: record what staging deployed, outside the cloud
+    needs: [cloud, images, portal, staging]
+    if: needs.cloud.outputs.configured == 'true'
+    runs-on: ubuntu-latest
+    # The one job that writes commit statuses, and it installs nothing. The
+    # statuses are the digests staging built and then deployed, written on
+    # the repository host rather than in either account: production compares
+    # its replicated copies with them before it plans, and a commit that has
+    # them is a commit staging deployed.
+    permissions:
+      statuses: write
+    steps:
+      - name: the digests, as commit statuses
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          SHA: ${{ needs.cloud.outputs.sha }}
+          API_IMAGE: ${{ needs.images.outputs.api_image }}
+          MAINTENANCE_IMAGE: ${{ needs.images.outputs.maintenance_image }}
+          PORTAL_DIGEST: ${{ needs.portal.outputs.digest }}
+        run: |
+          record() {
+            gh api -X POST "repos/$REPOSITORY/statuses/$SHA" \
+              -f state=success -f context="deployed/$1" -f description="$2" >/dev/null
+            echo "\`deployed/$1\`: \`$2\`" >> "$GITHUB_STEP_SUMMARY"
+          }
+          record tadas-api "${API_IMAGE##*@}"
+          record tadas-maintenance "${MAINTENANCE_IMAGE##*@}"
+          record portal "$PORTAL_DIGEST"

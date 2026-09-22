@@ -79,6 +79,20 @@ data "aws_iam_policy_document" "assume" {
       variable = "token.actions.githubusercontent.com:ref"
       values   = [var.github_ref]
     }
+
+    # The name in `sub` can be renamed and then claimed by someone else; the
+    # ids cannot.
+    condition {
+      test     = "StringEquals"
+      variable = "token.actions.githubusercontent.com:repository_id"
+      values   = [var.github_repository_id]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "token.actions.githubusercontent.com:repository_owner_id"
+      values   = [var.github_repository_owner_id]
+    }
   }
 }
 
@@ -468,12 +482,11 @@ data "aws_iam_policy_document" "pipeline" {
     resources = ["${local.state_bucket_arn}/plans/${var.state_key_prefix}/*"]
   }
 
+  # Read only: the build role of the environment that builds writes them,
+  # so the credential that applies never holds the one that pushes.
   statement {
-    sid = "PortalBuildsByCommit"
-    actions = concat(
-      ["s3:GetObject"],
-      var.write_portal_builds ? ["s3:PutObject", "s3:DeleteObject"] : [],
-    )
+    sid       = "PortalBuildsByCommit"
+    actions   = ["s3:GetObject"]
     resources = ["${local.artifacts_bucket_arn}/builds/portal/*"]
   }
 
@@ -483,25 +496,17 @@ data "aws_iam_policy_document" "pipeline" {
     resources = ["*"]
   }
 
-  # Production promotes what staging already built, so it reads digests and
-  # never pushes one; the one registry write it makes, the tag that keeps a
-  # promoted digest, is the `promote` policy at the end of this file.
+  # A deploy role reads digests and never pushes one: the build role pushes.
+  # Production's one registry write, the tag that keeps a promoted digest, is
+  # the `promote` policy at the end of this file.
   statement {
     sid = "Images"
-    actions = concat(
-      [
-        "ecr:BatchCheckLayerAvailability",
-        "ecr:BatchGetImage",
-        "ecr:DescribeImages",
-        "ecr:GetDownloadUrlForLayer",
-      ],
-      var.push_images ? [
-        "ecr:CompleteLayerUpload",
-        "ecr:InitiateLayerUpload",
-        "ecr:PutImage",
-        "ecr:UploadLayerPart",
-      ] : [],
-    )
+    actions = [
+      "ecr:BatchCheckLayerAvailability",
+      "ecr:BatchGetImage",
+      "ecr:DescribeImages",
+      "ecr:GetDownloadUrlForLayer",
+    ]
     resources = local.image_repository_arns
   }
 }
@@ -588,6 +593,7 @@ data "aws_iam_policy_document" "fences" {
       "arn:${local.partition}:iam::${local.account}:role/tadas-plan-*",
       "arn:${local.partition}:iam::${local.account}:role/tadas-investigate-*",
       "arn:${local.partition}:iam::${local.account}:role/tadas-replication-*",
+      "arn:${local.partition}:iam::${local.account}:role/tadas-build-*",
       "arn:${local.partition}:iam::${local.account}:policy/tadas-task-boundary-*",
     ]
   }
@@ -770,7 +776,7 @@ resource "aws_iam_role_policy_attachment" "object_fence" {
 # Production tags the digest it promotes `prod-<sha>` so the registry's
 # lifecycle never expires an image production runs (modules/account). The tag
 # is a manifest put on a digest that exists; with no layer upload granted,
-# nothing new can be pushed. Only an environment that does not build gets it.
+# nothing new can be pushed. Only the environment that promotes gets it.
 data "aws_iam_policy_document" "promote" {
   statement {
     sid       = "TagThePromotedDigest"
@@ -780,13 +786,13 @@ data "aws_iam_policy_document" "promote" {
 }
 
 resource "aws_iam_policy" "promote" {
-  count  = var.push_images ? 0 : 1
+  count  = var.promote_images ? 1 : 0
   name   = "tadas-deploy-${var.environment}-promote"
   policy = data.aws_iam_policy_document.promote.json
 }
 
 resource "aws_iam_role_policy_attachment" "promote" {
-  count      = var.push_images ? 0 : 1
+  count      = var.promote_images ? 1 : 0
   role       = aws_iam_role.this.name
   policy_arn = aws_iam_policy.promote[0].arn
 }

@@ -276,24 +276,31 @@ a new `main` commit and another release.
 
 ## Roll back
 
-A rollback is a release of an earlier `main` commit. `release` is a
-prefix of `main`, so moving it backwards is a reset, not a fast-forward;
-the workflow refuses to do it, so it is done by hand, once, by someone
-the ruleset lets push:
+Two paths, and neither moves `release` backwards.
 
-```bash
-git fetch origin
-git push --force origin <earlier main commit>:release
-```
+- **A redeploy of an earlier release**, for a release that is healthy but
+  wrong. Dispatch the production workflow on `release` with the earlier
+  commit:
 
-The push runs `deploy-production` on that commit; approve its plan as
-above. It redeploys the digests and the portal build staging made for
-that commit, which the registry and the bucket still hold (the registry
-keeps the last 30 images per repository and, beyond those, the last 10
-production ran, which the production deploy tags `prod-<sha>`). The schema is not rolled
-back: a migration is compatible with the release before it (expand and
-contract), so the earlier release runs against the newer schema. The
-next `release` dispatch fast-forwards `release` to `main` again.
+  ```bash
+  gh workflow run deploy-production.yml --ref release -f commit=<earlier release commit>
+  ```
+
+  The commit must be an earlier commit of `release` and carry the
+  `deployed/` statuses staging recorded for it. Its images and portal
+  build are verified against them, planned under its own Terraform, and
+  applied after the same approval. The registry keeps the last 30 images
+  per repository and, beyond those, the last 10 production ran (tagged
+  `prod-<sha>`); the artifacts bucket keeps each portal build a year.
+- **A revert through `main`**, the rollback of record: revert the change,
+  merge it, let staging deploy it, and release as always. A revert never
+  removes a migration that has run: the schema rolls forward with a new
+  one, because both environments' version tables name every revision
+  applied, and a missing revision file fails the next migrate.
+
+The schema is not rolled back on a redeploy either: a migration is
+compatible with the release before it (expand and contract), so the
+earlier release runs against the newer schema.
 
 ## A failed migration stops the rollout
 
@@ -359,6 +366,18 @@ each role trusts the name of the one it belongs to.
   staging apply that fails on it is the same signal one commit earlier.
 
 ## When it fails
+
+- An apply fails with "Error acquiring the state lock" after a run was
+  killed: once that run is certainly gone, dispatch
+  `state-unlock.yml` on the environment's branch (`main` for staging,
+  `release` for production, where the reviewer approves it) with the
+  lock's id from the log. It prints the lock, refuses a different id, and
+  removes it; it touches no state.
+- `resolve` refuses because a `deployed/` status is missing or differs:
+  either staging never deployed that commit, or the copy in production's
+  account is not what staging built. The second is an incident: the
+  copy changed after staging deployed it. Do not release until the
+  cause is known.
 
 - `deploy-staging` skipped every cloud job although the account exists:
   the `staging` environment's variables are empty. Run

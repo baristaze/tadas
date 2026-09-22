@@ -61,3 +61,9 @@ variable "anomaly_impact_usd" {
   type        = number
   default     = 20
 }
+
+variable "audit_retention_days" {
+  description = "How long the account's CloudTrail logs are kept."
+  type        = number
+  default     = 365
+}

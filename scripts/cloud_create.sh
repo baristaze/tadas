@@ -150,7 +150,7 @@ output_of() {
 }
 
 case "$environment" in
-  staging) github_environments="staging" ;;
+  staging) github_environments="staging-build and staging" ;;
   production) github_environments="production-plan and production" ;;
 esac
 
@@ -329,6 +329,13 @@ set_variables() {
 case "$environment" in
   staging)
     deploy_role="$(output_of deploy_role_arn)"
+    build_role="$(output_of build_role_arn)"
+    # The build jobs declare staging-build and hold a push-only role; the
+    # jobs that apply declare staging. Both run on main only.
+    create_environment staging-build main
+    set_variables staging-build \
+      "AWS_ROLE_ARN=$build_role" \
+      "ARTIFACTS_BUCKET=$artifacts_bucket"
     create_environment staging main
     set_variables staging \
       "AWS_ROLE_ARN=$deploy_role" \
@@ -364,6 +371,47 @@ case "$environment" in
       "ARTIFACTS_BUCKET=$artifacts_bucket"
     ;;
 esac
+
+if [ "$environment" = "staging" ]; then
+  say "== 5b. The ruleset on main: a merge is a staging deploy, so it lands only through a pull request whose checks passed"
+  # The checks are ci.yml's job names; a job renamed there is renamed here.
+  ruleset="$(jq -n '{
+    name: "main: a pull request whose checks passed",
+    target: "branch",
+    enforcement: "active",
+    conditions: {ref_name: {include: ["refs/heads/main"], exclude: []}},
+    bypass_actors: [],
+    rules: [
+      {type: "pull_request", parameters: {
+        required_approving_review_count: 0, dismiss_stale_reviews_on_push: false,
+        require_code_owner_review: false, require_last_push_approval: false,
+        required_review_thread_resolution: false}},
+      {type: "required_status_checks", parameters: {
+        strict_required_status_checks_policy: false,
+        required_status_checks: [
+          "fast gate",
+          "integration over the compose stack",
+          "the telemetry round trip over the devx profile",
+          "images build (api)", "images build (maintenance)", "images build (portal)",
+          "terraform format and validate (bootstrap/staging)",
+          "terraform format and validate (bootstrap/prod)",
+          "terraform format and validate (environments/staging)",
+          "terraform format and validate (environments/prod)"
+        ] | map({context: .})}}
+    ]}')"
+  if $dry_run; then
+    existing=""
+  else
+    existing="$(gh api 'repos/{owner}/{repo}/rulesets' -q '.[] | select(.name == "main: a pull request whose checks passed") | .id')"
+  fi
+  if [ -n "$existing" ]; then
+    say "+ gh api -X PUT repos/{owner}/{repo}/rulesets/$existing --input <the main ruleset>"
+    if ! $dry_run; then printf '%s' "$ruleset" | gh api -X PUT "repos/{owner}/{repo}/rulesets/$existing" --input - >/dev/null; fi
+  else
+    say "+ gh api -X POST repos/{owner}/{repo}/rulesets --input <the main ruleset>"
+    if ! $dry_run; then printf '%s' "$ruleset" | gh api -X POST 'repos/{owner}/{repo}/rulesets' --input - >/dev/null; fi
+  fi
+fi
 
 say "== 6. The operator's env file for $environment"
 api_url="https://$api_domain_name"

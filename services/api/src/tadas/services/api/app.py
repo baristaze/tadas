@@ -35,7 +35,15 @@ def create_app(container: AppContainer | None = None) -> FastAPI:
         finally:
             await container.close()
 
-    app = FastAPI(title="Tadas API", version=settings.version, lifespan=lifespan)
+    docs = settings.interactive_docs
+    app = FastAPI(
+        title="Tadas API",
+        version=settings.version,
+        lifespan=lifespan,
+        docs_url="/docs" if docs else None,
+        redoc_url="/redoc" if docs else None,
+        openapi_url="/openapi.json" if docs else None,
+    )
     app.state.container = container
 
     # Middleware, innermost first. CORS is outermost, so every answer a

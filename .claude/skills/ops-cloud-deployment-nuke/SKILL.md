@@ -1,6 +1,6 @@
 ---
 name: ops-cloud-deployment-nuke
-description: "Destroy one cloud environment of the platform as its account's administrator: empty the buckets, destroy the environment root, and report what remains (the bootstrap root whole: the zones, the registry, the roles, the state). Runs scripts/cloud_nuke.sh after checking the administrator profile and the account. Refuses production unless --confirm production is typed and a merged change on main sets the database's deletion protection off. Supports --dry-run. The one skill besides create that needs a credential that writes."
+description: "Destroy one cloud environment of the platform as its account's administrator: empty the buckets, destroy the environment root, and report what remains (the bootstrap root whole: the zones, the registry, the roles, the state). Runs scripts/cloud_nuke.sh after checking the administrator profile and the account. Refuses production unless --confirm production is typed and a released change on release, applied, sets the database's deletion protection off. Applies from a clean worktree of the deployed branch, never the working tree. Supports --dry-run. The one skill besides create that needs a credential that writes."
 allowed-tools: Read, Grep, Glob, Bash(aws:*), Bash(gh:*), Bash(git fetch:*), Bash(git show:*), Bash(scripts/cloud_nuke.sh:*)
 ---
 
@@ -92,7 +92,10 @@ call.
    scripts/cloud_nuke.sh <env> [--confirm production]
    ```
 
-   Narrate each step as the script reaches it: the `destroyable`
+   Narrate each step as the script reaches it: the clean worktree of
+   `origin/main` (staging) or `origin/release` (production) the root is
+   applied from, so no unreleased change reaches the environment; the
+   `destroyable`
    switch applied (`force_destroy` on the buckets, no recovery window
    on the secrets, and for staging only `skip_final_snapshot` and the
    lifted protection on the database) through one apply of the
@@ -132,7 +135,8 @@ call.
 
 **Credential.** <admin_profile>, <Arn>, account <id>
 **Confirmation.** <typed | not needed (staging)>
-**Deletion protection on main.** <false, PR <url> | not needed (staging)>
+**Deletion protection on release.** <false, PR <url>, applied | not needed (staging)>
+**Applied from.** origin/<main | release> at <sha>, in a clean worktree
 
 ## Gone
 

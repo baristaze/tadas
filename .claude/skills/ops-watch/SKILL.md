@@ -111,11 +111,13 @@ the repository. It holds `TADAS_API_URL`, `TADAS_OPERATOR_EMAIL`,
    to the interval, or the same as a Prometheus range query. A burst
    is a count in the batch, never a line per event: the tail's lines
    over `--cap` are counted by level and dropped.
-6. The first responder rule. An alarm transition is read against the
-   size of step 2. One tenant and one user is the developer: the
+6. The first responder rule. In production every alarm transition is
+   an escalation. Outside production it is read against the size of
+   step 2, and it is suppressed only when the traffic is the team's
+   own: one tenant and one user, and that user is the team's. Then the
    alarm is written into the batch as suppressed, with the reason and
-   the size, and the watch goes on. More than that, and the alarm is
-   an escalation: the batch is closed early, the report is written
+   the size, and the watch goes on. Anything else, and the alarm is an
+   escalation: the batch is closed early, the report is written
    with the alarm at the top, and the sub-agent returns so the
    invoker can act.
 7. When the window passes, close the tails and write the report with

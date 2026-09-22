@@ -27,6 +27,11 @@ locals {
     TADAS_AWS_REGION          = var.region
     TADAS_LOG_JSON            = "true"
     TADAS_DATABASE_POOL_SIZE  = tostring(var.database_pool_size)
+    # Read by no code. A rotation (database_password_version raised) changes
+    # the task definition through this line, so every service rolls and its
+    # new tasks start with the new URL; without it the old tasks would keep
+    # the old password until their next reconnect failed.
+    TADAS_DATABASE_PASSWORD_VERSION = tostring(var.database_password_version)
   }
 
   process_secrets = {
@@ -210,6 +215,8 @@ module "api" {
     TADAS_HOST         = "0.0.0.0"
     TADAS_PORT         = "8000"
     TADAS_CORS_ORIGINS = jsonencode(concat(["https://${var.app_domain_name}"], var.cors_origins))
+    # The edge serves the API and liveness; the interactive docs are local.
+    TADAS_INTERACTIVE_DOCS = "false"
     # The load balancer lives in the VPC, so its X-Forwarded-For names the client.
     TADAS_TRUSTED_PROXIES = jsonencode([var.vpc_cidr])
   })

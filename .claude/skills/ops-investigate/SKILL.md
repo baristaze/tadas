@@ -208,12 +208,15 @@ never print the password or the token.
      --profile tadas-<env>-investigate
    ```
 
-10. The first responder rule. An alarm or a finding is read against
-    the size of step 2. When the platform holds one tenant and one
-    user, the person behind the signal is the developer: the finding
-    is reported as suppressed, with the reason and the size, and not
-    escalated. A platform with tenants who are not the team gets the
-    finding as a finding, with the request ids that prove it.
+10. The first responder rule. In production nothing is suppressed:
+    a new production's one tenant is its first customer, so every
+    alarm and finding there is reported as a finding, with the request
+    ids that prove it. Outside production, an alarm or a finding is
+    read against the size of step 2, and it is suppressed only when
+    the traffic behind it is the team's own: one tenant and one user,
+    and that user is the team's. A suppression is never silent: it is
+    reported as suppressed, with the reason, the size, and the request
+    ids it rests on.
 11. Write the report. Name the next skill: `ops-root-cause` with an
     org id when one tenant's rows explain it, `ops-watch` when the
     signal is still moving, `ops-infra-as-code` when the fix is a

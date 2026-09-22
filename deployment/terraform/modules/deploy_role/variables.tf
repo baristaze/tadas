@@ -18,6 +18,16 @@ variable "github_repository" {
   type        = string
 }
 
+variable "github_repository_id" {
+  description = "The repository's immutable id; the trust matches it beside the name in the subject."
+  type        = string
+}
+
+variable "github_repository_owner_id" {
+  description = "The repository owner's immutable id."
+  type        = string
+}
+
 variable "github_environment" {
   description = "The GitHub environment a job must declare to assume this role. The subject condition names it, so a job without it presents its branch instead and is refused."
   type        = string
@@ -49,17 +59,12 @@ variable "state_key_prefix" {
 }
 
 variable "image_repositories" {
-  description = "The registry repositories this role may read, and push to when push_images is true."
+  description = "The registry repositories this role may read."
   type        = list(string)
 }
 
-variable "push_images" {
-  description = "True for the environment that builds. Production promotes digests, so it only reads."
-  type        = bool
-}
-
-variable "write_portal_builds" {
-  description = "True for the environment that keeps the portal build by commit; the other one reads it."
+variable "promote_images" {
+  description = "True for production, which tags each digest it promotes `prod-<sha>` so the registry's lifecycle keeps it."
   type        = bool
 }
 
