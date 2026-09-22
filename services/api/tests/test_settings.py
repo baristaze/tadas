@@ -20,9 +20,6 @@ NOT_A_KNOB = {
 }
 
 LOCAL_DEFAULT_SERVES_THE_CLOUD = {
-    # Until the Terraform environments inject the system login's URL secret;
-    # the entry goes when they do.
-    "database_system_url": "not yet wired: the system login's URL secret",
     "database_url_core": "one URL for every role until a role moves out",
     "database_url_activity": "one URL for every role until a role moves out",
     "database_url_queue": "one URL for every role until a role moves out",
@@ -65,7 +62,6 @@ LOCAL_DEFAULT_SERVES_THE_CLOUD = {
     "session_lifetime_seconds": "the local lifetime is the lifetime",
     "session_idle_lifetime_seconds": "the local lifetime is the lifetime",
     "operator_token_max_lifetime_seconds": "an hour, the guideline's bound, everywhere",
-    "totp_encryption_key": "the cloud package's secrets module injects it into the API alone",
     "signup_enabled": "open everywhere: a deployed environment has no other door",
     "signup_rate_limit": "the local budget is the budget",
     "signup_rate_window_seconds": "the local window is the window",
