@@ -9,22 +9,22 @@ from tadas.om.base import EMPTY_UUID, new_id, utcnow
 from tadas.om.exceptions import TenantMismatch, UniqueKeyTaken
 from tadas.om.storage.impl.pg_base import PgStorageBase
 from tadas.om.storage.utils.translation import to_model, to_values
-from tadas.om.work.storage import WorkStorageInterface
+from tadas.om.work.storage import InsertOutcome, WorkStorageInterface
 from tadas.om.work.storage.tables.work_items import WorkItems
 from tadas.om.work.types.work_item import WorkItem, WorkKind, WorkStatus
 
 
 class WorkStoragePostgresImpl(PgStorageBase, WorkStorageInterface):
-    async def create_item(self, org_id: UUID, item: WorkItem) -> bool:
+    async def create_item(self, org_id: UUID, item: WorkItem) -> InsertOutcome:
         # The base reports a taken id as False (a retry) and names any other
-        # unique key it hit; the only other one here is the idempotency key,
+        # unique key it hit; the only other ones here hold the idempotency key,
         # which a retrying caller and a relay that runs twice both meet, so it
-        # is reported the same way and the manager reads the row back.
+        # is reported and the manager reads the row back by that key.
         try:
             if await self._insert(WorkItems, org_id, item):
-                return True
+                return InsertOutcome.INSERTED
         except UniqueKeyTaken:
-            return False
+            return InsertOutcome.KEY_EXISTS
         async with self._session_for(WorkItems, org_id) as session:
             row = await session.get(WorkItems, item.id)
         if row is None or row.org_id != org_id:
@@ -32,7 +32,7 @@ class WorkStoragePostgresImpl(PgStorageBase, WorkStorageInterface):
             # holds it. The read says so when it returns the row, and the
             # policy says so by returning none.
             raise TenantMismatch(f"work item {item.id} is not in {org_id}")
-        return False
+        return InsertOutcome.ID_EXISTS
 
     async def write_item_if_held(
         self, org_id: UUID, claim_token: UUID, item: WorkItem
@@ -140,17 +140,17 @@ class WorkStoragePostgresImpl(PgStorageBase, WorkStorageInterface):
             await session.commit()
             return changed
 
-    async def purge_settled(self, org_id: UUID, before: datetime) -> int:
+    async def purge_items(self, before: datetime) -> int:
         stmt = (
             delete(WorkItems)
             .where(
-                WorkItems.org_id == org_id,
                 WorkItems.status.in_([WorkStatus.DONE.value, WorkStatus.FAILED.value]),
                 WorkItems.updated_at < before,
             )
             .returning(WorkItems.id)
         )
-        async with self._session_for(stmt, org_id) as session:
+        # Every tenant's settled items, so the system scope, spelled here.
+        async with self._session_for(stmt, EMPTY_UUID) as session:
             purged = len((await session.execute(stmt)).scalars().all())
             await session.commit()
             return purged

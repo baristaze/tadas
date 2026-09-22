@@ -372,8 +372,9 @@ class WorkerLoop:
     async def _sweep_once(self) -> None:
         """One service context per tenant, the system scope first and deleted
         tenants included (their purges run there), then every step under each;
-        then the cross-tenant steps of the outbox. Every step is idempotent and
-        wrapped, so a failing tenant or step never stops the rest."""
+        then the cross-tenant steps of the outbox and the queue. Every step is
+        idempotent and wrapped, so a failing tenant or step never stops the
+        rest."""
         try:
             contexts = await self._work.maintenance_contexts(self._request())
         except Exception:
@@ -400,6 +401,12 @@ class WorkerLoop:
             await self._outbox.purge_done(self._options.outbox_retention)
         except Exception:
             log.exception("sweep: outbox purge failed")
+        try:
+            purged = await self._work.purge_items()
+            if purged:
+                log.info("sweep: purged %d settled work items", purged)
+        except Exception:
+            log.exception("sweep: work item purge failed")
         self.sweeps += 1
 
     # Shutdown.

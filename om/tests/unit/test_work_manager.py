@@ -410,7 +410,7 @@ async def test_a_retry_that_still_has_attempts_is_not_a_dead_letter(
     assert await managers.events.get_events(ctx, after_seq=0, limit=10) == []
 
 
-async def test_purge_settled_takes_done_and_failed_items_past_the_retention(
+async def test_purge_items_takes_done_and_failed_items_past_the_retention(
     managers: Managers, storage: StorageMemoryImpl, ctx: OpContext, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     for _ in range(2):
@@ -426,10 +426,10 @@ async def test_purge_settled_takes_done_and_failed_items_past_the_retention(
     assert failed.status is WorkStatus.FAILED
     # Under the default retention nothing is old enough; with none, the done
     # and the failed items go and the one still claimed stays.
-    assert await managers.work.purge_settled(ctx) == 0
+    assert await managers.work.purge_items() == 0
     monkeypatch.setattr(managers.work, "_options", WorkOptions(retention=timedelta(0)))
     await asyncio.sleep(0.001)
-    assert await managers.work.purge_settled(ctx) == 2
+    assert await managers.work.purge_items() == 2
     storage_ = storage.get_work_storage()
     assert await storage_.read_item(ctx.org_id, done.id) is None
     assert await storage_.read_item(ctx.org_id, failed.id) is None
@@ -488,14 +488,11 @@ async def test_a_claim_in_a_deleted_org_fails_the_item_and_moves_on(
     assert stored.claim_token is None and stored.last_error == "the org is gone"
     assert stored.updated_by == EMPTY_UUID
     assert await managers.work.claim(request(), "default", [WorkKind.NOOP], "w1", LEASE) is None
-    # The sweep visits the deleted tenant and purges the dead letter past the retention.
-    sweep = next(
-        c for c in await managers.work.maintenance_contexts(request()) if c.org_id == ctx.org_id
-    )
-    assert await managers.work.purge_settled(sweep) == 0
+    # The sweep's purge reaches the deleted tenant's dead letter past the retention.
+    assert await managers.work.purge_items() == 0
     monkeypatch.setattr(managers.work, "_options", WorkOptions(retention=timedelta(0)))
     await asyncio.sleep(0.001)
-    assert await managers.work.purge_settled(sweep) == 1
+    assert await managers.work.purge_items() == 1
 
 
 async def test_every_write_after_the_enqueue_is_the_platforms(

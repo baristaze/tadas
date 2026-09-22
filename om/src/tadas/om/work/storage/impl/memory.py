@@ -6,7 +6,7 @@ from tadas.om.base import EMPTY_UUID, new_id, utcnow
 from tadas.om.exceptions import TenantMismatch
 from tadas.om.storage.impl.memory_base import MemoryStorageBase, MemoryTable
 from tadas.om.work.rules import attempts_after_claim, is_exhausted, stagger_delay
-from tadas.om.work.storage import WorkStorageInterface
+from tadas.om.work.storage import InsertOutcome, WorkStorageInterface
 from tadas.om.work.types.work_item import WorkItem, WorkKind, WorkStatus
 
 
@@ -15,17 +15,18 @@ class WorkStorageMemoryImpl(MemoryStorageBase, WorkStorageInterface):
         super().__init__()
         self._items: MemoryTable[WorkItem] = {}
 
-    async def create_item(self, org_id: UUID, item: WorkItem) -> bool:
+    async def create_item(self, org_id: UUID, item: WorkItem) -> InsertOutcome:
         async with self._lock:
             found = self._items.get(item.id)
             if found is not None:
                 if found[0] != org_id:
                     raise TenantMismatch(f"work item {item.id} is not in {org_id}")
-                return False
-            for _, existing in self._items.values():
+                return InsertOutcome.ID_EXISTS
+            for existing in self._rows(self._items, org_id):
                 if existing.idempotency_key == item.idempotency_key:
-                    return False  # the key is taken: reported, like a taken id
-            return self._insert(self._items, org_id, item)
+                    return InsertOutcome.KEY_EXISTS  # the key is taken in this tenant
+            self._insert(self._items, org_id, item)
+            return InsertOutcome.INSERTED
 
     async def write_item_if_held(
         self, org_id: UUID, claim_token: UUID, item: WorkItem
@@ -103,11 +104,11 @@ class WorkStorageMemoryImpl(MemoryStorageBase, WorkStorageInterface):
                 changed.append(requeued)
         return changed
 
-    async def purge_settled(self, org_id: UUID, before: datetime) -> int:
+    async def purge_items(self, before: datetime) -> int:
         async with self._lock:
             gone = [
                 item.id
-                for item in self._rows(self._items, org_id)
+                for _, item in self._rows_across_tenants(self._items)
                 if item.status in (WorkStatus.DONE, WorkStatus.FAILED) and item.updated_at < before
             ]
             for item_id in gone:

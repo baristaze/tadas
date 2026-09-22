@@ -117,8 +117,8 @@ class LeaseLosingWork(WorkManagerInterface):
     async def requeue_stale(self, ctx: OpContext, limit: int) -> int:
         return await self._inner.requeue_stale(ctx, limit)
 
-    async def purge_settled(self, ctx: OpContext) -> int:
-        return await self._inner.purge_settled(ctx)
+    async def purge_items(self) -> int:
+        return await self._inner.purge_items()
 
     async def maintenance_contexts(self, rctx: RequestContext) -> list[OpContext]:
         return await self._inner.maintenance_contexts(rctx)
@@ -292,7 +292,6 @@ def start_loop(
             "tasks": container.managers.tasks.purge_deleted,
             "tenancy": container.managers.tenancy.purge_deleted,
             "idempotency": container.managers.idempotency.purge,
-            "work": container.managers.work.purge_settled,
         },
         handlers={WorkKind.NOOP: handler},
         topics=container.infra.get_topics(),

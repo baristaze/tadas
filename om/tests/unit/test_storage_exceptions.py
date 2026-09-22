@@ -52,6 +52,7 @@ STORAGE_EXCEPTIONS: frozenset[tuple[str, str]] = frozenset(
         ("TenancyStorageInterface", "read_api_key_by_hash"),
         ("TenancyStorageInterface", "consume_socket_ticket"),
         ("WorkStorageInterface", "claim_next"),
+        ("WorkStorageInterface", "purge_items"),
         ("OutboxStorageInterface", "claim_pending"),
         ("OutboxStorageInterface", "purge_done"),
     }
@@ -79,6 +80,8 @@ MANAGER_EXCEPTIONS: frozenset[tuple[str, str]] = frozenset(
         # And the enqueue the relay makes: it runs on the relay's side of the
         # handoff, under the tenant the row names, and stamps the actor from it.
         ("WorkManagerInterface", "enqueue_relayed"),
+        # The queue's purge, like the outbox's: one sweep step across tenants.
+        ("WorkManagerInterface", "purge_items"),
     }
 )
 

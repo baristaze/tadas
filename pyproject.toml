@@ -104,6 +104,7 @@ tenantless = [
     "TenancyStorageInterface.record_failed_sign_in",
     "TenancyStorageInterface.write_identity",
     "WorkStorageInterface.claim_next",
+    "WorkStorageInterface.purge_items",
 ]
 
 # The sites that build a stage above the request stage, the same list

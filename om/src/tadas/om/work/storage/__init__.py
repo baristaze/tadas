@@ -7,28 +7,39 @@ over, not even by the worker that held the item before and holds it again."""
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from datetime import datetime, timedelta
+from enum import StrEnum
 from uuid import UUID
 
 from tadas.om.work.types.work_item import WorkItem, WorkKind
 
 
+class InsertOutcome(StrEnum):
+    """What a create whose row can collide on more than one key did: the
+    caller reads the existing row back by the key that collided."""
+
+    INSERTED = "inserted"
+    ID_EXISTS = "id_exists"  # the id is already written; nothing changes
+    KEY_EXISTS = "key_exists"  # another unique key is held, under another id
+
+
 class WorkStorageInterface(ABC):
     @abstractmethod
-    async def create_item(self, org_id: UUID, item: WorkItem) -> bool:
-        """The create primitive: inserts the row and commits; False when the id is
-        already written, in which case nothing changes, the claim on the row
-        included. A taken idempotency key is reported the same way and never
-        raised as a driver error, which is what makes the relayed enqueue safe
-        to run twice: the relay presents the outbox row's id as the key on
-        every run and meets the row already there. Raises TenantMismatch when
-        the id is another tenant's row."""
+    async def create_item(self, org_id: UUID, item: WorkItem) -> InsertOutcome:
+        """The create primitive: inserts the row and commits. `ID_EXISTS` when
+        the id is already written, and `KEY_EXISTS` when the idempotency key is
+        held under another id; nothing changes either way, the claim on the
+        row included, and neither is raised as a driver error. That is what
+        makes the relayed enqueue safe to run twice: the relay presents the
+        outbox row's id as the key on every run and meets the row already
+        there. Raises TenantMismatch when the id is another tenant's row."""
         ...
 
     @abstractmethod
     async def read_item_by_key(self, org_id: UUID, idempotency_key: UUID) -> WorkItem | None:
-        """The row the tenant already holds under this key, for the create that
-        reported one; None when the key is unknown here. The key is unique
-        across tenants, so a key another tenant holds reads back as None."""
+        """The row the tenant holds under this key, for the create that
+        reported `KEY_EXISTS`; None when the key is unknown here. The key is
+        unique per tenant, `(org_id, idempotency_key)`, so a key another tenant
+        holds reads back as None."""
         ...
 
     @abstractmethod
@@ -64,10 +75,11 @@ class WorkStorageInterface(ABC):
         ...
 
     @abstractmethod
-    async def purge_settled(self, org_id: UUID, before: datetime) -> int:
-        """For the sweep, per tenant: deletes items done or failed whose last
-        change was before `before`; returns how many. The one hard delete of the
-        namespace."""
+    async def purge_items(self, before: datetime) -> int:
+        """Cross-tenant, for the sweep, in the system scope: deletes items done
+        or failed whose last change was before `before`; returns how many. The
+        one hard delete of the namespace. It takes no tenant: one statement
+        reaches every tenant's settled items."""
         ...
 
     @abstractmethod

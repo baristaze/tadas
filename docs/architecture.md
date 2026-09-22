@@ -169,7 +169,10 @@ context on keeps the stage the callee needs.
   the caller sent; the insert reports an existing id and changes nothing,
   so a retried enqueue returns the row as stored, claim intact; a reused
   idempotency key is reported the same way and never raised as a driver
-  error, and the manager reads that row back by the key, which is what
+  error. The insert returns an `InsertOutcome` (`INSERTED`, `ID_EXISTS`,
+  `KEY_EXISTS`), and the manager reads the row back by the key that
+  collided, by `read_item_by_key` for a key; the key is unique per
+  tenant, `(org_id, idempotency_key)`. That is what
   lets an enqueue that runs twice under one key leave one item. A fresh
   row publishes `work_available`. An item carries the request that caused
   the work and that request's `traceparent`, both as constructed: the
@@ -717,11 +720,13 @@ everything in-process for tests.
   members with their ended memberships, revoked api keys, dead sessions,
   and spent socket tickets past their retention (the one hard delete,
   30 days by default), its finished idempotency records and abandoned
-  markers, and its done or failed work items, then claim and relay the
+  markers, then claim and relay the
   pending outbox rows, one attempt each with a growing delay, and purge
   the done and failed ones after eight days, which outlives the
   seven-day database backup retention, so a role restored to an earlier
-  point than its siblings is reconciled by relaying the outbox again).
+  point than its siblings is reconciled by relaying the outbox again,
+  and purge every tenant's done or failed work items past their retention
+  in one statement, `purge_items`).
   Under a tenant whose org row is deleted longer ago than the retention
   it is every row that goes, its open and done tasks among them, since
   an open task carries no `deleted_at` of its own and the sweep that

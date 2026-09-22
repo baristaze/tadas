@@ -23,7 +23,7 @@ from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.tenancy import TenancyManagerInterface
 from tadas.om.work.manager import WorkManagerInterface
 from tadas.om.work.rules import attempts_after_hand_back, is_exhausted, retry_delay
-from tadas.om.work.storage import WorkStorageInterface
+from tadas.om.work.storage import InsertOutcome, WorkStorageInterface
 from tadas.om.work.types.work_item import (
     WORK_PAYLOADS,
     WORK_ROW_PREFIX,
@@ -137,8 +137,9 @@ class WorkManagerImpl(WorkManagerInterface):
             WORK_PAYLOADS[queued.kind].model_validate(queued.payload)
         except ValidationError as error:
             raise ValidationFailed(f"payload of {queued.kind.value} work: {error}"[:500]) from None
-        if not await self._storage.create_item(org_id, queued):
-            return await self._stored(org_id, queued)
+        outcome = await self._storage.create_item(org_id, queued)
+        if outcome is not InsertOutcome.INSERTED:
+            return await self._stored(org_id, queued, outcome)
         await self._topics.publish(
             Topics.WORK_AVAILABLE,
             WorkAvailablePayload(
@@ -239,20 +240,23 @@ class WorkManagerImpl(WorkManagerInterface):
                 await self._dead_letter(ctx, item)
         return len(requeued)
 
-    async def purge_settled(self, ctx: OpContext) -> int:
-        ctx.require(Permission.WRITE)
-        return await self._storage.purge_settled(ctx.org_id, utcnow() - self._options.retention)
+    async def purge_items(self) -> int:
+        return await self._storage.purge_items(utcnow() - self._options.retention)
 
     async def maintenance_contexts(self, rctx: RequestContext) -> list[OpContext]:
         return await self._tenancy.service_contexts(rctx)
 
-    async def _stored(self, org_id: UUID, queued: WorkItem) -> WorkItem:
-        """The row a reported create met: the one under this id, or the one the
-        key belongs to. A key that reads back nowhere is another tenant's, the
-        one case the unique index refuses that is not a retry."""
-        existing = await self._storage.read_item(org_id, queued.id) or (
-            await self._storage.read_item_by_key(org_id, queued.idempotency_key)
-        )
+    async def _stored(self, org_id: UUID, queued: WorkItem, outcome: InsertOutcome) -> WorkItem:
+        """The row a reported create met, read back by the key that collided:
+        by id on `ID_EXISTS`, and by idempotency key on `KEY_EXISTS`, since the
+        row that holds the key carries another id. A key that reads back
+        nowhere is held by another tenant, which only the index on the key
+        alone refuses; it stays beside the tenant's index for one release, and
+        that is the one refusal here that is not a retry."""
+        if outcome is InsertOutcome.ID_EXISTS:
+            existing = await self._storage.read_item(org_id, queued.id)
+        else:
+            existing = await self._storage.read_item_by_key(org_id, queued.idempotency_key)
         if existing is None:
             raise UniqueKeyTaken(f"idempotency key {queued.idempotency_key} is another tenant's")
         return existing
