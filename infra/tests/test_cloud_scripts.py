@@ -153,7 +153,7 @@ def test_create_takes_the_inputs_as_flags_too(tmp_path: Path) -> None:
     assert "-var owner_email=flag@tadas.example" in result.stdout
 
 
-STAGING_ROOT = "<a worktree of origin/main>/deployment/terraform/environments/staging"
+STAGING_ROOT = "<a worktree of the deployed commit>/deployment/terraform/environments/staging"
 
 
 def test_nuke_staging_dry_run_lifts_the_protections_then_destroys(tmp_path: Path) -> None:
@@ -167,8 +167,12 @@ def test_nuke_staging_dry_run_lifts_the_protections_then_destroys(tmp_path: Path
     assert out.count("-var destroyable=true") == 2
     assert f"-var api_domain_name={STAGING['api_domain_name']}" in out
     assert "dns_zone_name" not in out
-    # The apply is the code staging runs, never the working tree.
-    assert "+ git worktree add --detach <a worktree of origin/main> <origin/main>" in out
+    # The apply is the code staging runs: the commit of its last deploy whose
+    # apply succeeded, never the tip of main and never the working tree.
+    assert "+ gh run list --workflow deploy-staging.yml --branch main" in out
+    worktree = "<a worktree of the deployed commit> <the last commit staging deployed>"
+    assert f"+ git worktree add --detach {worktree}" in out
+    assert "origin/main" not in out
     assert out.count(f"(expect account {STAGING['account_id']})") == 3
     assert "== 5. What remains" in out
     assert "the bootstrap root, whole" in out
