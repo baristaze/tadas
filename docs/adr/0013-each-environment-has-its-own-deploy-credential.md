@@ -1,6 +1,11 @@
 # ADR 0013: Each environment has its own deploy credential, and production has two
 
-**Status**: accepted (2026-09-20)
+**Status**: accepted (2026-09-20), amended by [ADR 0021](0021-each-environment-has-an-aws-account-of-its-own.md)
+(2026-09-21): the three roles and their subjects stand. Staging's role
+lives in staging's account and production's two in production's, each
+declared by that account's bootstrap root instead of `shared`. The
+three repository variables became one `AWS_ROLE_ARN` per GitHub
+environment.
 
 ## Context
 

@@ -38,9 +38,16 @@ aws sts get-caller-identity --profile tadas-<env>-investigate
 
 and check that `Arn` reads
 `arn:aws:sts::<account>:assumed-role/tadas-investigate-<env>/...`.
-Refuse any other identity, the administrator profile `tadas-admin`
-above all. Every `aws` command below carries
+Refuse any other identity, the administrator profiles
+(`tadas-staging-admin`, `tadas-prod-admin`) above all, and the bare
+sign-in profiles (`tadas-staging`, `tadas-prod`), whose PowerUserAccess
+is wider than the role. Every `aws` command below carries
 `--profile tadas-<env>-investigate`.
+
+Check the account too: `Account` in the same answer must equal the
+environment's `account_id` in `deployment/cloud/environments.json`
+(read the file; the value is `.environments.<env>.account_id`). Stop on
+a mismatch: the right role in the wrong account is the wrong credential.
 
 The tenant's rows come through the operator plane, never through a
 database login: the role denies `rds-db:connect` and holds no database

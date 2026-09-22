@@ -5,6 +5,7 @@ and a refusal happens before any command. HOME is a temporary directory so a
 dry run that wrote a profile or an env file by mistake would be caught.
 """
 
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -16,12 +17,12 @@ CREATE = ROOT / "scripts" / "cloud_create.sh"
 NUKE = ROOT / "scripts" / "cloud_nuke.sh"
 
 INPUTS = {
-    "AWS_PROFILE": "tadas-admin",
-    "DNS_ZONE_NAME": "tadas.example",
     "OWNER_EMAIL": "owner@tadas.example",
     "ALARM_EMAIL": "alarms@tadas.example",
-    "TF_STATE_BUCKET": "tadas-state-test",
 }
+ENVIRONMENTS = json.loads((ROOT / "deployment" / "cloud" / "environments.json").read_text())
+STAGING = ENVIRONMENTS["environments"]["staging"]
+PRODUCTION = ENVIRONMENTS["environments"]["production"]
 
 
 def _run(
@@ -42,45 +43,85 @@ def test_create_staging_dry_run_prints_every_step_and_writes_nothing(tmp_path: P
     result = _run(CREATE, "staging", "--dry-run", home=tmp_path)
     assert result.returncode == 0, result.stderr
     out = result.stdout
-    assert "+ aws sts get-caller-identity --profile tadas-admin" in out
+    account = STAGING["account_id"]
+    expect = (
+        f"+ aws sts get-caller-identity --profile tadas-staging-admin  (expect account {account})"
+    )
+    # Once before anything, once more right before the apply.
+    assert out.count(expect) == 2
     assert "+ gh auth status" in out
-    assert "+ terraform -chdir=deployment/terraform/shared apply -input=false" in out
+    assert "+ terraform -chdir=deployment/terraform/bootstrap/staging apply -input=false" in out
     assert "-var owner_email=owner@tadas.example" in out
+    assert "-var replicate_to_production=" in out
     assert "init -input=false -migrate-state -force-copy" in out
-    assert "-backend-config=bucket=tadas-state-test" in out
-    assert "+ aws iam create-access-key --user-name <operators_user_name>" in out
-    assert "aws_secret_access_key = ****" in out
-    assert "<secret access key>" not in out
+    assert f"-backend-config=bucket=tadas-state-{account}" in out
+    assert "-backend-config=key=bootstrap/terraform.tfstate" in out
+    assert f"-backend-config=region={ENVIRONMENTS['region']}" in out
+    assert f"cloudflare GET /zones?name={ENVIRONMENTS['domain']}" in out
+    assert f"NS {STAGING['api_domain_name']} -> " in out
+    assert f"NS {STAGING['app_domain_name']} -> " in out
     assert "[profile tadas-staging-investigate]" in out
-    assert "role_arn = <staging_investigate_role_arn>" in out
-    assert "[profile tadas-production-investigate]" in out
-    assert "source_profile = tadas-operators" in out
-    assert "+ gh variable set AWS_STAGING_ROLE_ARN --body <staging_deploy_role_arn>" in out
-    assert "+ gh variable set ALARM_EMAIL --body alarms@tadas.example" in out
-    assert "+ gh api -X PUT repos/{owner}/{repo}/environments/production-plan" in out
-    assert "environments/production -f reviewers[][type]=User -F reviewers[][id]=<owner id>" in out
-    assert "TADAS_API_URL=https://api.staging.tadas.example" in out
+    assert "role_arn = <investigate_role_arn>" in out
+    assert "source_profile = tadas-staging" in out
+    assert "create-access-key" not in out
+    assert "+ gh variable set AWS_ROLE_ARN --env staging --body <deploy_role_arn>" in out
+    assert f"+ gh variable set TF_STATE_BUCKET --env staging --body tadas-state-{account}" in out
+    assert "+ gh variable set ALARM_EMAIL --env staging --body alarms@tadas.example" in out
+    assert "+ gh api -X PUT repos/{owner}/{repo}/environments/staging" in out
+    assert "deployment_branch_policy[custom_branch_policies]=true" in out
+    assert "environments/staging/deployment-branch-policies -f name=main -f type=branch" in out
+    assert f"--env staging --body tadas-artifacts-{account}" in out
+    assert "production-plan" not in out
+    assert f"TADAS_API_URL=https://{STAGING['api_domain_name']}" in out
     assert "+ gh workflow run deploy-staging.yml --ref main" in out
     assert "uv run tadas-ops signals check --env staging" in out
     assert not (tmp_path / ".aws").exists()
     assert not (tmp_path / ".config").exists()
-    assert not (ROOT / "deployment/terraform/shared/backend_override.tf").exists()
+    assert not (ROOT / "deployment/terraform/bootstrap/staging/backend_override.tf").exists()
 
 
-def test_create_production_dry_run_releases_instead_of_deploying(tmp_path: Path) -> None:
+def test_create_production_dry_run_sets_two_environments_and_waits_for_replication(
+    tmp_path: Path,
+) -> None:
     result = _run(CREATE, "production", "--dry-run", home=tmp_path)
     assert result.returncode == 0, result.stderr
-    assert "+ gh workflow run release.yml --ref main" in result.stdout
-    assert "TADAS_API_URL=https://api.tadas.example" in result.stdout
-    assert "uv run tadas-ops signals check --env production" in result.stdout
+    out = result.stdout
+    assert f"(expect account {PRODUCTION['account_id']})" in out
+    assert "+ terraform -chdir=deployment/terraform/bootstrap/prod apply -input=false" in out
+    assert "replicate_to_production" not in out
+    assert "+ gh variable set AWS_ROLE_ARN --env production-plan --body <plan_role_arn>" in out
+    assert "+ gh variable set AWS_ROLE_ARN --env production --body <deploy_role_arn>" in out
+    for github_environment in ["production-plan", "production"]:
+        policy = f"environments/{github_environment}/deployment-branch-policies -f name=release"
+        assert policy in out
+    assert "tadas-artifacts-" in out
+    assert "-f reviewers[][type]=User -F reviewers[][id]=<owner id>" in out
+    assert "source_profile = tadas-prod" in out
+    # The first release waits for a commit staging built after replication.
+    assert "+ gh workflow run" not in out
+    assert "scripts/cloud_create.sh staging, again" in out
+    assert f"TADAS_API_URL=https://{PRODUCTION['api_domain_name']}" in out
+    assert "uv run tadas-ops signals check --env production" in out
+
+
+def test_create_refuses_to_run_for_real_without_the_cloudflare_token(tmp_path: Path) -> None:
+    result = _run(CREATE, "staging", home=tmp_path, CLOUDFLARE_API_TOKEN=None)
+    assert result.returncode == 2
+    assert "refused: missing: CLOUDFLARE_API_TOKEN" in result.stderr
+    assert result.stdout == ""
 
 
 @pytest.mark.parametrize("script", [CREATE, NUKE], ids=["create", "nuke"])
-def test_refuses_any_profile_but_the_administrator(script: Path, tmp_path: Path) -> None:
-    result = _run(script, "staging", "--dry-run", home=tmp_path, AWS_PROFILE="default")
+def test_refuses_any_profile_but_the_environments_administrator(
+    script: Path, tmp_path: Path
+) -> None:
+    # Production's administrator is the wrong account for staging.
+    result = _run(
+        script, "staging", "--dry-run", home=tmp_path, AWS_PROFILE=PRODUCTION["admin_profile"]
+    )
     assert result.returncode == 2
     assert "refused" in result.stderr
-    assert "tadas-admin" in result.stderr
+    assert STAGING["admin_profile"] in result.stderr
     assert result.stdout == ""
 
 
@@ -113,9 +154,11 @@ def test_nuke_staging_dry_run_lifts_the_protections_then_destroys(tmp_path: Path
     destroy = out.index("+ terraform -chdir=deployment/terraform/environments/staging destroy")
     assert apply < destroy
     assert out.count("-var destroyable=true") == 2
-    assert "-var api_domain_name=api.staging.tadas.example" in out
+    assert f"-var api_domain_name={STAGING['api_domain_name']}" in out
+    assert "dns_zone_name" not in out
+    assert out.count(f"(expect account {STAGING['account_id']})") == 3
     assert "== 5. What remains" in out
-    assert "the hosted zone tadas.example" in out
+    assert "the bootstrap root, whole" in out
     assert "the state prefix environments/staging/" in out
 
 
@@ -126,12 +169,29 @@ def test_nuke_refuses_production_without_its_typed_name(tmp_path: Path) -> None:
     assert result.stdout == ""
 
 
-def test_nuke_refuses_production_while_main_still_protects_the_database(tmp_path: Path) -> None:
-    # On origin/main the production root reads database_deletion_protection =
-    # true, so the typed name alone is not enough. A checkout without
-    # origin/main refuses too, on the reading.
+def test_nuke_refuses_production_while_release_still_protects_the_database(
+    tmp_path: Path,
+) -> None:
+    # Production applies release, and there the root reads
+    # database_deletion_protection = true, so the typed name alone is not
+    # enough. A checkout without origin/release refuses too, on the reading.
     result = _run(NUKE, "production", "--confirm", "production", "--dry-run", home=tmp_path)
     assert result.returncode == 2
     assert "refused" in result.stderr
-    assert "origin/main" in result.stderr
+    assert "origin/release" in result.stderr
     assert result.stdout == ""
+
+
+@pytest.mark.parametrize("workflow", ["deploy-staging.yml", "deploy-production.yml"])
+def test_the_deploy_workflows_run_in_the_region_the_environments_name(workflow: str) -> None:
+    text = (ROOT / ".github" / "workflows" / workflow).read_text()
+    assert f"  AWS_REGION: {ENVIRONMENTS['region']}\n" in text
+
+
+@pytest.mark.parametrize("environment", ["staging", "production"])
+def test_the_environment_roots_default_to_the_region_the_environments_name(
+    environment: str,
+) -> None:
+    root = ENVIRONMENTS["environments"][environment]["environment_root"]
+    text = (ROOT / "deployment" / "terraform" / root / "variables.tf").read_text()
+    assert f'default     = "{ENVIRONMENTS["region"]}"' in text

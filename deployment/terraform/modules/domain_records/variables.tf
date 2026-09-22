@@ -1,5 +1,11 @@
-variable "zone_id" {
-  type = string
+variable "api_zone_id" {
+  description = "The zone whose apex is api_domain_name."
+  type        = string
+}
+
+variable "app_zone_id" {
+  description = "The zone whose apex is app_domain_name."
+  type        = string
 }
 
 variable "api_domain_name" {

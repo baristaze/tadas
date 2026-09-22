@@ -1,5 +1,9 @@
-# The only way `release` moves: a fast-forward to `main`'s current commit,
-# dispatched by a person. The push is refused when `release` is not an
+# The only way `release` moves: a fast-forward to the last commit staging
+# deployed, dispatched by a person. That is `main`'s tip only when its
+# staging deploy has finished and passed; a commit still deploying, or one
+# whose deploy failed, is never released. Each deploy-staging run is named
+# by the commit it deploys, and the newest run whose apply succeeded names
+# the target. The push is refused when `release` is not an
 # ancestor of `main` (someone committed to it), and git itself refuses a push
 # that is not a fast-forward. A pull request into `release` fails the
 # `no pull request into release` check, so nobody merges into it either.
@@ -52,12 +56,34 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - name: release is an ancestor of main
+      - name: release is an ancestor of the last commit staging deployed
         id: refs
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           git fetch --quiet origin main
           git fetch --quiet origin release || true
-          main="$(git rev-parse origin/main)"
+          # The newest deploy-staging run on main whose apply job succeeded. A
+          # run where the cloud was not configured succeeds with that job
+          # skipped, and does not count.
+          main=""
+          for run in $(gh run list --workflow deploy-staging.yml --branch main --status success \
+              --limit 30 --json databaseId -q '.[].databaseId'); do
+            applied="$(gh run view "$run" --json jobs \
+              -q '[.jobs[] | select(.name == "plan and apply staging, migrate, and publish") | .conclusion] | first // ""')"
+            [ "$applied" = "success" ] || continue
+            main="$(gh run view "$run" --json displayTitle -q '.displayTitle' | awk '{ print $NF }')"
+            break
+          done
+          if [ -z "$main" ] || ! git cat-file -e "$main^{commit}" 2>/dev/null; then
+            echo "::error::no deploy-staging run on main has applied staging yet; there is nothing a release may take."
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$main" origin/main; then
+            echo "::error::the last commit staging deployed ($main) is not on main."
+            exit 1
+          fi
+          echo "The last commit staging deployed is \`$main\` (main is at \`$(git rev-parse origin/main)\`)." >> "$GITHUB_STEP_SUMMARY"
           echo "main=$main" >> "$GITHUB_OUTPUT"
           if ! git rev-parse --verify --quiet origin/release >/dev/null; then
             echo "moved=true" >> "$GITHUB_OUTPUT"

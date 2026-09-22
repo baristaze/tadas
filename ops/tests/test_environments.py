@@ -1,16 +1,20 @@
 """An environment from its file, the compose knobs under it for local, and
 the process environment over both."""
 
+import json
 from pathlib import Path
 
 import pytest
 
 from tadas.ops.environments import (
+    CLOUD_REGION,
     LOCAL_API_URL,
     LOCAL_ERROR_TRACKER_TOKEN,
     load_environment,
     parse_env_file,
 )
+
+REPOSITORY = Path(__file__).resolve().parents[2]
 
 
 def test_env_lines_are_parsed_like_a_dotenv() -> None:
@@ -62,6 +66,11 @@ def test_a_cloud_file_names_everything_and_the_process_env_overrides(tmp_path: P
     assert env.aws_profile == "tadas-staging-investigate" and env.aws_region == "eu-west-1"
     assert env.error_tracker_org == "acme" and env.seed is None
     assert env.prometheus_url is None and env.jaeger_url is None
+
+
+def test_the_cloud_region_is_the_one_the_environments_name() -> None:
+    layout = json.loads((REPOSITORY / "deployment" / "cloud" / "environments.json").read_text())
+    assert CLOUD_REGION == layout["region"]
 
 
 @pytest.mark.parametrize("name", ["prod", "dev", "Staging"])

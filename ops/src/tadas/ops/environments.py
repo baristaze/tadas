@@ -45,6 +45,9 @@ KEYS = (
 
 CLOUD_ENVIRONMENTS = frozenset({"staging", "production"})
 
+CLOUD_REGION = "us-west-2"
+"""The region deployment/cloud/environments.json names; a test holds them equal."""
+
 
 @dataclass(frozen=True)
 class SeedPeople:
@@ -160,7 +163,7 @@ def environment_of(name: str, values: Mapping[str, str]) -> Environment:
         prometheus_url=get("TADAS_PROMETHEUS_URL", LOCAL_PROMETHEUS_URL if local else None),
         jaeger_url=get("TADAS_JAEGER_URL", LOCAL_JAEGER_URL if local else None),
         aws_profile=get("TADAS_AWS_PROFILE", None if local else f"tadas-{name}-investigate"),
-        aws_region=get("TADAS_AWS_REGION", None if local else "us-east-1"),
+        aws_region=get("TADAS_AWS_REGION", None if local else CLOUD_REGION),
         seed=seed,
     )
 

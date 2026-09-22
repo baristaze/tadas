@@ -1,0 +1,30 @@
+terraform {
+  required_version = ">= 1.10" # the S3 backend's use_lockfile
+
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 6.0"
+    }
+  }
+
+  # Partial configuration: bucket, key, and region arrive as -backend-config
+  # arguments from scripts/cloud_create.sh. CI validates with -backend=false.
+  backend "s3" {}
+}
+
+provider "aws" {
+  region = local.config.region
+
+  # Every call is refused outside staging's account, whatever profile the
+  # person holds: the script checks the identity first, and this checks it
+  # again at the provider.
+  allowed_account_ids = [local.staging.account_id]
+
+  default_tags {
+    tags = {
+      "tadas:managed-by"  = "terraform"
+      "tadas:environment" = "staging"
+    }
+  }
+}

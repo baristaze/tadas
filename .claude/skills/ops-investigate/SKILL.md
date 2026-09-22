@@ -39,11 +39,18 @@ aws sts get-caller-identity --profile tadas-<env>-investigate
 
 and check that `Arn` reads
 `arn:aws:sts::<account>:assumed-role/tadas-investigate-<env>/...`.
-Refuse to run under any other identity, the administrator profile
-`tadas-admin` above all. A wider credential is not a convenience; it is
+Refuse to run under any other identity, the administrator profiles
+(`tadas-staging-admin`, `tadas-prod-admin`) above all, and the bare
+sign-in profiles (`tadas-staging`, `tadas-prod`), whose PowerUserAccess
+is wider than the role. A wider credential is not a convenience; it is
 the boundary gone. Every `aws` command below carries
 `--profile tadas-<env>-investigate`. Never read `AWS_PROFILE` as a
 substitute.
+
+Check the account too: `Account` in the same answer must equal the
+environment's `account_id` in `deployment/cloud/environments.json`
+(read the file; the value is `.environments.<env>.account_id`). Stop on
+a mismatch: the right role in the wrong account is the wrong credential.
 
 The env file `~/.config/tadas/ops/<env>.env` is owner-only and outside
 the repository. It holds `TADAS_API_URL`, `TADAS_OPERATOR_EMAIL`,

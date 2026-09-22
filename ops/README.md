@@ -9,20 +9,23 @@ by a pipeline, or by a person for one named step.
 
 ## Roles and profiles
 
-One cloud role per role per environment, and one named profile for
-each. No role a person or an agent holds can write to the cloud; a
+Each environment has an AWS account of its own
+([environments.json](../deployment/cloud/environments.json)). One cloud
+role per role per environment, and one named profile for each. No role a person or an agent holds can write to the cloud; a
 change is a pull request.
 
 | Role | Held by | May | Profile |
 |------|---------|-----|---------|
-| Administrator | a person | create and destroy an environment; nothing else | `tadas-admin` |
+| Administrator | a person | create and destroy an environment; nothing else | `tadas-staging-admin`, `tadas-prod-admin` |
 | Deployer | the pipeline, through OIDC | apply staging; plan and apply production | none: the workflow's own |
 | Investigator | an agent, or a person | read every signal and every resource description, plan Terraform; never a secret's value, a data bucket's object, or a database login | `tadas-staging-investigate`, `tadas-production-investigate` |
 | Supporter | an agent, or a person | Investigator, plus the operator plane's read of one named org | the investigate profile, plus a read operator identity |
 
-The agents' principal is one user, `tadas-operators`, whose only
-permission is to assume the investigate roles; the two investigate
-profiles chain from its profile. Everything the investigate roles are
+There is no IAM user and no access key. A person signs in through IAM
+Identity Center (`tadas-staging`, `tadas-prod`, PowerUserAccess), and
+the investigate profiles chain from that sign-in, so an agent works
+inside a session a person opened. No skill runs under the sign-in
+itself: it is wider than the investigate role. Everything the investigate roles are
 denied is a fence in the role itself, not a rule in a skill.
 
 `local` is an environment too. Its signals are the compose stack's
@@ -114,7 +117,7 @@ and its report.
 | `ops-watch` | Investigator | Has anything changed since the last look; a periodic read of the same signals. |
 | `ops-root-cause` | Supporter | Why did this request, or this org's problem, happen: the request id followed through every signal, and the org's records on the operator plane. |
 | `ops-infra-as-code` | Investigator | What would this Terraform change do: a plan, read-only, against the live environment. |
-| `ops-cloud-deployment-create` | Administrator | Bring up an environment: the state backend, the shared account resources, the pipeline's variables, then the first deploy through the pipeline. |
+| `ops-cloud-deployment-create` | Administrator | Bring up an environment's account: the state backend, the bootstrap root, the delegation of its names, the GitHub environments' variables, then the first deploy through the pipeline. |
 | `ops-cloud-deployment-nuke` | Administrator | Tear an environment down. Refuses production unless deletion protection was lifted in a prior pull request and the name is typed; reports what is left. |
 | `ops-simulate-traffic` | Supporter | What does the platform look like under realistic traffic at a profile. |
 | `stress-test-create-or-update` | none | Write or change a scenario file, with a target stated before any run. |

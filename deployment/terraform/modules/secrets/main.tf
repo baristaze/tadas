@@ -1,10 +1,10 @@
 # Two kinds of secret live under one environment prefix. The platform's own
-# credentials (the database URL) are written here and injected into tasks by
-# the execution role. Application-managed secrets, the ones SecretsInterface
+# credentials (the database URL) are written here, write-only, and injected
+# into tasks by the execution role. Application-managed secrets, the ones SecretsInterface
 # reads at runtime, live under "<prefix>app/", which is the value of
 # TADAS_SECRETS_NAME_PREFIX, so a process can never reach its own bootstrap
 # credentials through the capability. The grant is read-only, as the task
-# boundary in `shared` is: no code writes a secret at runtime yet, and the
+# boundary in the account module is: no code writes a secret at runtime yet, and the
 # change that makes one does widen both, together.
 
 data "aws_partition" "current" {}
@@ -27,9 +27,13 @@ resource "aws_secretsmanager_secret" "database_url" {
   tags                    = local.tags
 }
 
+# Write-only: the URL carries the password, and neither the state nor a plan
+# may hold it. The version is the database module's password version, so a
+# rotation writes both.
 resource "aws_secretsmanager_secret_version" "database_url" {
-  secret_id     = aws_secretsmanager_secret.database_url.id
-  secret_string = var.database_url
+  secret_id                = aws_secretsmanager_secret.database_url.id
+  secret_string_wo         = "postgresql+asyncpg://${var.database_username}:${urlencode(var.database_password)}@${var.database_address}:${var.database_port}/${var.database_name}"
+  secret_string_wo_version = var.database_password_version
 }
 
 # The Sentry-compatible DSN errors report to (sentry.io or a hosted GlitchTip).

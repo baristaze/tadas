@@ -27,29 +27,14 @@ variable "maintenance_image" {
   type        = string
 }
 
-variable "dns_zone_name" {
-  description = "The Route 53 hosted zone both public names live in, e.g. tadas.fyi. Terraform validates the certificates and writes the records there."
-  type        = string
-}
-
 variable "api_domain_name" {
-  description = "The API's public name, e.g. api.tadas.fyi, or api.staging.tadas.fyi for staging."
+  description = "The API's public name, e.g. api.tadas.fyi, or api.staging.tadas.fyi for staging. A hosted zone of that name must exist in the account."
   type        = string
-
-  validation {
-    condition     = endswith(var.api_domain_name, ".${var.dns_zone_name}")
-    error_message = "api_domain_name must be a name inside dns_zone_name."
-  }
 }
 
 variable "app_domain_name" {
-  description = "The portal's public name, e.g. app.tadas.fyi, or app.staging.tadas.fyi for staging."
+  description = "The portal's public name, e.g. app.tadas.fyi, or app.staging.tadas.fyi for staging. A hosted zone of that name must exist in the account."
   type        = string
-
-  validation {
-    condition     = endswith(var.app_domain_name, ".${var.dns_zone_name}")
-    error_message = "app_domain_name must be a name inside dns_zone_name."
-  }
 }
 
 variable "cors_origins" {
@@ -159,4 +144,10 @@ variable "maintenance_autoscaling" {
 variable "destroyable" {
   description = "True on the nuke's way down only: buckets empty on destroy, the database skips its final snapshot and drops its deletion protection, and the secrets skip their recovery window."
   type        = bool
+}
+
+variable "database_password_version" {
+  description = "Raise it to rotate the database master password: a new one is generated and written, write-only, to the database and its URL secret."
+  type        = number
+  default     = 1
 }

@@ -14,7 +14,6 @@ module "environment" {
   # What the deploy workflow passes per run.
   api_image         = var.api_image
   maintenance_image = var.maintenance_image
-  dns_zone_name     = var.dns_zone_name
   api_domain_name   = var.api_domain_name
   app_domain_name   = var.app_domain_name
   cors_origins      = var.cors_origins

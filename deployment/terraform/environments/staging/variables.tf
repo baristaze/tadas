@@ -3,9 +3,9 @@
 # makes this environment itself is in the module call in main.tf.
 
 variable "region" {
-  description = "AWS region."
+  description = "AWS region, the one deployment/cloud/environments.json names."
   type        = string
-  default     = "us-east-1"
+  default     = "us-west-2"
 }
 
 variable "environment" {
@@ -24,18 +24,13 @@ variable "maintenance_image" {
   type        = string
 }
 
-variable "dns_zone_name" {
-  description = "The Route 53 hosted zone both public names live in, e.g. tadas.fyi."
-  type        = string
-}
-
 variable "api_domain_name" {
-  description = "The API's public name, a name inside dns_zone_name."
+  description = "The API's public name, from deployment/cloud/environments.json; its hosted zone is the bootstrap root's."
   type        = string
 }
 
 variable "app_domain_name" {
-  description = "The portal's public name, a name inside dns_zone_name."
+  description = "The portal's public name, from deployment/cloud/environments.json; its hosted zone is the bootstrap root's."
   type        = string
 }
 
@@ -52,7 +47,7 @@ variable "portal_sentry_dsn" {
 }
 
 variable "alarm_email" {
-  description = "The address the environment's alarm topic delivers to; the deploy workflows pass the ALARM_EMAIL repository variable."
+  description = "The address the environment's alarm topic delivers to; the deploy workflows pass the ALARM_EMAIL variable of the environment's GitHub environment."
   type        = string
 }
 

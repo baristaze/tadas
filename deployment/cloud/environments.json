@@ -1,0 +1,25 @@
+{
+  "region": "us-west-2",
+  "domain": "tadas.fyi",
+  "github_repository": "baristaze/tadas",
+  "environments": {
+    "staging": {
+      "account_id": "792394000601",
+      "admin_profile": "tadas-staging-admin",
+      "sso_profile": "tadas-staging",
+      "bootstrap_root": "bootstrap/staging",
+      "environment_root": "environments/staging",
+      "api_domain_name": "api.staging.tadas.fyi",
+      "app_domain_name": "app.staging.tadas.fyi"
+    },
+    "production": {
+      "account_id": "557092275199",
+      "admin_profile": "tadas-prod-admin",
+      "sso_profile": "tadas-prod",
+      "bootstrap_root": "bootstrap/prod",
+      "environment_root": "environments/prod",
+      "api_domain_name": "api.tadas.fyi",
+      "app_domain_name": "app.tadas.fyi"
+    }
+  }
+}

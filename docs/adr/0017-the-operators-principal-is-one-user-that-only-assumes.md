@@ -1,6 +1,9 @@
 # ADR 0017: The operators' principal is one IAM user that can only assume the read-only roles
 
-**Status**: accepted (2026-09-20)
+**Status**: superseded (2026-09-21) by [ADR 0021](0021-each-environment-has-an-aws-account-of-its-own.md).
+Each environment moved to an AWS account of its own, and people sign
+in through IAM Identity Center; the `tadas-operators` user and its key
+are gone. The record stays for the interval it covers.
 
 ## Context
 

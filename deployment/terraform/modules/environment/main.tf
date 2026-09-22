@@ -54,8 +54,19 @@ module "cluster" {
   environment = var.environment
 }
 
+# The master password exists for the run and nowhere else: the database and
+# the secret both take it write-only. Raising database_password_version
+# writes a new one to both.
+ephemeral "random_password" "database" {
+  length  = 32
+  special = false
+}
+
 module "database" {
   source = "../database"
+
+  master_password         = ephemeral.random_password.database.result
+  master_password_version = var.database_password_version
 
   environment         = var.environment
   subnet_ids          = module.network.private_subnet_ids
@@ -96,17 +107,28 @@ module "buckets" {
 module "secrets" {
   source = "../secrets"
 
-  environment  = var.environment
-  prefix       = "tadas/${var.environment}/"
-  database_url = module.database.url
-  destroyable  = var.destroyable
+  environment               = var.environment
+  prefix                    = "tadas/${var.environment}/"
+  database_password         = ephemeral.random_password.database.result
+  database_password_version = var.database_password_version
+  database_username         = module.database.username
+  database_address          = module.database.address
+  database_port             = module.database.port
+  database_name             = module.database.db_name
+  destroyable               = var.destroyable
 }
 
-# Two public names in one Route 53 zone: the API at the load balancer, the
-# portal at CloudFront. Each gets a DNS-validated certificate; the portal's is
-# in us-east-1, the only region CloudFront reads certificates from.
-data "aws_route53_zone" "this" {
-  name = var.dns_zone_name
+# Two public names, each at the apex of a Route 53 zone of its own that the
+# account's bootstrap root made and delegated from Cloudflare: the API at the
+# load balancer, the portal at CloudFront. Each gets a DNS-validated
+# certificate; the portal's is in us-east-1, the only region CloudFront reads
+# certificates from.
+data "aws_route53_zone" "api" {
+  name = var.api_domain_name
+}
+
+data "aws_route53_zone" "app" {
+  name = var.app_domain_name
 }
 
 module "api_certificate" {
@@ -114,7 +136,7 @@ module "api_certificate" {
 
   environment = var.environment
   domain_name = var.api_domain_name
-  zone_id     = data.aws_route53_zone.this.zone_id
+  zone_id     = data.aws_route53_zone.api.zone_id
 }
 
 module "app_certificate" {
@@ -123,7 +145,7 @@ module "app_certificate" {
 
   environment = var.environment
   domain_name = var.app_domain_name
-  zone_id     = data.aws_route53_zone.this.zone_id
+  zone_id     = data.aws_route53_zone.app.zone_id
 }
 
 module "load_balancer" {
@@ -151,7 +173,8 @@ module "portal" {
 module "domain_records" {
   source = "../domain_records"
 
-  zone_id                  = data.aws_route53_zone.this.zone_id
+  api_zone_id              = data.aws_route53_zone.api.zone_id
+  app_zone_id              = data.aws_route53_zone.app.zone_id
   api_domain_name          = var.api_domain_name
   app_domain_name          = var.app_domain_name
   load_balancer_dns_name   = module.load_balancer.dns_name

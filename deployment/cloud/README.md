@@ -2,15 +2,20 @@
 
 Tadas runs in AWS as two environments built from one graph: staging
 from `main` and production from `release`
-([../README.md](../README.md)). The graph is fixed. What an environment
+([../README.md](../README.md)). Each environment has an AWS account of
+its own, named in [environments.json](environments.json), and both run
+in us-west-2. The organization, the accounts, Identity Center, and the
+profiles are set up once by hand, as
+[first_time_manual.md](first_time_manual.md) says. The graph is fixed. What an environment
 costs comes from its numbers: the instance classes, the replica counts,
 and whether the database and the cache keep a second zone. This page
 names five sizes for those numbers, prices each one, and says which
 size each environment runs today and why.
 
-Every price here is an estimate: us-east-1, on demand, list price,
-read in September 2026, and rounded. They are good enough to choose a
-size, not to forecast a bill. Re-price in the AWS Pricing Calculator
+Every price here is an estimate: on demand, list price, read in
+September 2026 for us-east-1, and rounded. The environments run in
+us-west-2, where these services list at about the same prices. They
+are good enough to choose a size, not to forecast a bill. Re-price in the AWS Pricing Calculator
 before a change of size, and correct this page when a price moves.
 
 ## Where each environment stands
@@ -20,8 +25,8 @@ before a change of size, and correct this page when a price moves.
 | dev | none | the laptop, from `deployment/local` | $0 |
 | staging | XS | AWS, `environments/staging/main.tf` | $115 |
 | production | S | AWS, `environments/prod/main.tf` | $130 |
-| shared | n/a | AWS, `shared/`: registry, state, DNS zone, budget | $2 |
-| **Total** | | | **$245** |
+| bootstrap, per account | n/a | AWS, `bootstrap/<staging \| prod>/`: registry, state, two DNS zones, budget | $2 each |
+| **Total** | | | **$249** |
 
 This is the demo posture. There are no customers yet, only demos, so
 production is sized to be shown and not to be leaned on. Dev has no
@@ -121,15 +126,17 @@ the line to check in the same pull request.
 ## Postures
 
 A posture is one choice of size per environment, with the budget that
-goes with it. The budget is `monthly_budget_usd` in `shared/`.
+goes with it. Each account has its own budget, `monthly_budget_usd` in
+its bootstrap root, and the Budget column below is the two added
+together: $200 each today.
 
 | Posture | Staging | Production | About a month | Budget |
 |---------|---------|------------|---------------|--------|
 | **Demo, production off** | XS | not applied | $117 | $400 |
-| **Demo** (today) | XS | S | $245 | $400 |
-| **First customers** | S | M | $390 | $600 |
-| **Real production** | S | L | $690 | $1,000 |
-| **Growth** | M | XL | $1,385 | re-plan |
+| **Demo** (today) | XS | S | $249 | $400 |
+| **First customers** | S | M | $392 | $600 |
+| **Real production** | S | L | $692 | $1,000 |
+| **Growth** | M | XL | $1,387 | re-plan |
 
 Staging stays small in every posture. It proves the deploy and the
 migration, not the capacity. A load test that needs production's size
@@ -142,7 +149,8 @@ the month was ordinary.
 
 ## The budget is an alarm, not a cap
 
-`shared/` declares the budget and a cost anomaly monitor. The budget
+Each bootstrap root declares its account's budget and a cost anomaly
+monitor. The budget
 mails `owner_email` at 50, 80, and 100 percent of actual spend, and
 when the forecast crosses 100. The monitor reports a jump of $20 or
 more in one service, daily. Neither one stops anything. Spending past

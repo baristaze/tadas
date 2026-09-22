@@ -47,3 +47,15 @@ variable "backup_retention_days" {
   type    = number
   default = 7
 }
+
+variable "master_password" {
+  description = "The master user's password, generated for the run and never stored. Written write-only."
+  type        = string
+  sensitive   = true
+  ephemeral   = true
+}
+
+variable "master_password_version" {
+  description = "Bump to write a new master password; the secret module takes the same number."
+  type        = number
+}

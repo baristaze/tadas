@@ -6,7 +6,10 @@ nothing that writes runs under it. `tadas-staging-investigate` and
 a role with `ReadOnlyAccess` plus the signal reads that policy leaves
 out, fenced off secret values, data bucket objects, database
 connections, the other environment, and every IAM write. An agent
-holding it may look at everything it reaches. [deploy.md](deploy.md)
+holding it may look at everything it reaches. Each environment has an
+AWS account of its own, so the profile also decides the account. The
+investigate profile chains from a person's Identity Center sign-in
+(`tadas-staging`, `tadas-prod`), so sign in first. [deploy.md](deploy.md)
 says how the profiles are made; this runbook says what to run under
 them. The `ops-investigate`, `ops-watch`, and `ops-root-cause` skills
 run these same commands.
@@ -14,12 +17,14 @@ run these same commands.
 First, every time:
 
 ```bash
+aws sso login --profile tadas-staging            # or tadas-prod; once per session
 export AWS_PROFILE=tadas-staging-investigate   # or tadas-production-investigate
 aws sts get-caller-identity --query Arn --output text
 # arn:aws:sts::<account>:assumed-role/tadas-investigate-staging/<session>
 ```
 
-A skill that sees any other role in that answer stops. The commands
+A skill that sees any other role in that answer stops, the sign-in's
+PowerUserAccess role included. The commands
 below are staging's; production's replace `staging` with `production`
 in every name.
 
@@ -119,23 +124,27 @@ preview and nothing more (`ops-infra-as-code`):
 
 ```bash
 terraform -chdir=deployment/terraform/environments/staging init -input=false \
-  -backend-config="bucket=$TF_STATE_BUCKET" \
+  -backend-config="bucket=tadas-state-<account>" \
   -backend-config="key=environments/staging/terraform.tfstate" \
-  -backend-config="region=us-east-1"
+  -backend-config="region=us-west-2"
 terraform -chdir=deployment/terraform/environments/staging plan -lock=false -refresh=false \
   -var "api_image=<the digest deployed>" -var "maintenance_image=<the digest deployed>" \
-  -var "dns_zone_name=$DNS_ZONE_NAME" -var "api_domain_name=api.staging.$DNS_ZONE_NAME" \
-  -var "app_domain_name=app.staging.$DNS_ZONE_NAME" -var "alarm_email=$ALARM_EMAIL"
+  -var "api_domain_name=api.staging.tadas.fyi" -var "app_domain_name=app.staging.tadas.fyi" \
+  -var "alarm_email=$ALARM_EMAIL"
 ```
+
+The account and the two names are staging's entry in
+`deployment/cloud/environments.json`.
 
 ## The costs
 
-The budget and the anomaly monitor are account-wide, in `shared`; the
-`tadas:environment` tag on every resource is what splits a report.
+Each account has its own budget and anomaly monitor, declared by its
+bootstrap root, so the account's bill is the environment's. The
+`tadas:environment` tag on every resource splits a report the same way.
 
 ```bash
 account=$(aws sts get-caller-identity --query Account --output text)
-aws budgets describe-budget --account-id "$account" --budget-name tadas-monthly \
+aws budgets describe-budget --account-id "$account" --budget-name tadas-staging-monthly \
   --query 'Budget.{limit:BudgetLimit.Amount,spent:CalculatedSpend.ActualSpend.Amount,forecast:CalculatedSpend.ForecastedSpend.Amount}'
 
 first=$(date +%Y-%m-01); today=$(date +%F)
@@ -159,9 +168,9 @@ third (why: traffic, a scale-out, a retention that lapsed).
 Change anything. A threshold, a subscription, a scale-out, a retention:
 each is a pull request to `deployment/terraform`, applied by the
 deployer. A subscription of another address to the alarm topic is the
-one write the runbook names, and it is the administrator's:
+one write the runbook names, and it is the account's administrator's:
 
 ```bash
-AWS_PROFILE=tadas-admin aws sns subscribe --topic-arn "$(terraform -chdir=deployment/terraform/environments/staging output -raw alarm_topic_arn)" \
+AWS_PROFILE=tadas-staging-admin aws sns subscribe --topic-arn "$(terraform -chdir=deployment/terraform/environments/staging output -raw alarm_topic_arn)" \
   --protocol email --notification-endpoint someone@example.com
 ```
