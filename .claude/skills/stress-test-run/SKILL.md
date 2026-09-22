@@ -1,23 +1,29 @@
 ---
 name: stress-test-run
-description: "Run one stress test scenario of the platform against one environment with the platform's own generator, read the signals back through their own APIs, and report pass or fail against the target the scenario states (p95 and error ratio). A real run is the platform developer's choice; the CI sanity run is thirty seconds at the light profile and is never a stress test. Needs the read-only investigate profile to read the signals back."
+description: "Run one stress test scenario of the platform against one environment with the platform's own generator, read the signals back through their own APIs, and report pass or fail against a target stated before the run: the scenario's p95 and error ratio, or the one the run states instead. A real run is the platform developer's choice; the CI sanity run is thirty seconds at the light profile and is never a stress test. Needs the read-only investigate profile to read the signals back."
 allowed-tools: Read, Bash(aws:*), Bash(uv run:*)
 ---
 
 # stress-test-run
 
 The generator at the scenario's profile, for the scenario's duration,
-then the signals, then a verdict. The scenario holds the target; this
-skill holds it to it.
+then the signals, then a verdict. The target is the scenario's unless
+the run states its own; either way it is stated before the run, and
+the verdict names it and where it came from.
 
 ## Input
 
-`<name> --env local|staging|production [--report <path>]`
+`<name> --env local|staging|production [--p95-ms <ms>] [--error-ratio <ratio>] [--report <path>]`
 
 `<name>` names `ops/stress/<name>.yaml` and is required; `--env` is
-required; ask for either when missing. `--report` writes the run's
-table as JSON beside printing it; the verdict is printed, not written
-to the file. `local` runs
+required; ask for either when missing. `--p95-ms` and `--error-ratio`
+state the pass mark for this one run, one number or both; without them
+the scenario's own is judged. They are given before the run, never
+after it: a target picked once the numbers are in is not a target. A
+generous one with a short `--duration` is a wiring check; a strict one
+on the same scenario is the run worth reading. `--report` writes the
+run's table as JSON beside printing it; the verdict is printed, not
+written to the file. `local` runs
 against the compose stack and needs no cloud; it proves the scenario
 and the wiring, and its numbers are the developer's machine's, not
 the platform's.
@@ -78,7 +84,9 @@ without a provisioner token in `local.env` takes `--orgs 0`.
 
 1. Read the scenario. Refuse one without a target; that is
    `stress-test-create-or-update`'s job. `--scenario <name>` and a bare
-   `<name>` mean the same file. Verify the credential as Role and
+   `<name>` mean the same file. Say which target this run will judge,
+   the scenario's or the one the invocation gave, before running.
+   Verify the credential as Role and
    credential states. Check the env file exists and is owner-only,
    through `tadas-ops`, which refuses a file that is not; never read
    or print it.
@@ -96,11 +104,14 @@ without a provisioner token in `local.env` takes `--orgs 0`.
 
    ```bash
    uv run tadas-ops stress --scenario ops/stress/<name>.yaml \
-     --env <env> [--orgs 0] [--report <path>]
+     --env <env> [--orgs 0] [--p95-ms <ms>] [--error-ratio <ratio>] \
+     [--report <path>]
    ```
 
    `--orgs 0` drives the seeded org; without it the run provisions the
-   profile's tenants and needs a provisioner in the env file.
+   profile's tenants and needs a provisioner in the env file. The
+   target flags go in only when the invocation gave them; the run
+   prints the target it judged and where each half of it came from.
 
    The generator ramps, soaks, and prints the table: requests by
    route and status, p50, p95, p99, and the error ratio, then two
@@ -157,7 +168,9 @@ without a provisioner token in `local.env` takes `--orgs 0`.
 - No secret value printed.
 - No verdict from the generator's numbers alone: the platform's own
   signals decide.
-- No target moved to fit the result.
+- No target moved to fit the result: a target stated before the run is
+  the run's; one rewritten after the numbers are in is not a target,
+  in the scenario file or in a rerun.
 
 ## Output
 
@@ -165,8 +178,8 @@ without a provisioner token in `local.env` takes `--orgs 0`.
 # Stress test: <name>, <env>, <profile>, <duration>s
 
 **Credential.** <profile and Arn, or local>
-**Target.** p95 <ms> ms over the working requests, error ratio <ratio>
-over every request
+**Target.** p95 <ms> ms over the working requests (<from the scenario |
+set for this run>), error ratio <ratio> over every request (<source>)
 **Verdict.** <PASS | FAIL: <route>, <p95 or ratio>, request id <id>>
 
 ## Requests

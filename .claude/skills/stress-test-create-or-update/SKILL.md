@@ -47,7 +47,11 @@ no profile and no env file.
      once per person are reported beside the verdict and judged by
      nothing), and the error ratio over every request, both numbers
      the team chose, and the scenario says who and when in
-     `target.note`;
+     `target.note`. The file's target is the default: a run judges it
+     unless it states its own. `stress-test-run` takes `--p95-ms` and
+     `--error-ratio`, and `.github/workflows/stress.yml` takes the
+     same two as dispatch inputs, so a one-off harder question is an
+     input and never an edit to this file;
    - the signals read back after: the run reads the request counter,
      the p95, the worker outcomes, and the error count through the
      signals API, and the pass or fail is against those, never
@@ -102,4 +106,6 @@ no profile and no env file.
 
 - `stress-test-run <name> --env local` proves the wiring; a run against
   a cloud environment is the platform developer's choice.
+- `stress-test-run <name> --env <env> --p95-ms <stricter ms>` asks the
+  same scenario a harder question without touching the file.
 ```

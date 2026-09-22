@@ -26,9 +26,13 @@ and it reads the signals back when it ends.
   a knee and not as a wall.
 - **It soaks.** The duration is long enough for leases to expire,
   sweeps to run, and the cache to fill.
-- **The target is stated first.** A p95 and an error ratio, written
-  in the scenario before the run. A run without a target is a
-  demonstration, not a test.
+- **The target is stated first, and it is an input.** A p95 and an
+  error ratio, before the run, never after it. The scenario states
+  one; a run may state its own instead, one number or both, and then
+  the scenario's is a default. Either way the run prints the target it
+  judged and where each half of it came from. A run without a target
+  is a demonstration, not a test, and a target chosen once the numbers
+  are in is not a target.
 - **The target judges the working requests.** The p95 it holds is over
   the task routes, the event stream, and the socket's ticket: the
   requests a run makes hundreds of. The sign-in and the sign-out, one
@@ -59,8 +63,8 @@ One YAML file per scenario under this folder.
 | `profile` | `light`, `regular`, `heavy`, or `stress`. |
 | `duration_seconds` | How long the run lasts, ramp included. |
 | `ramp_seconds` | How long concurrency takes to climb to the profile's. |
-| `target.p95_ms` | The p95 latency, in milliseconds, the run's working requests must stay under. |
-| `target.error_ratio` | The share of requests that may fail, as a fraction. |
+| `target.p95_ms` | The p95 latency, in milliseconds, the run's working requests must stay under, unless the run states its own with `--p95-ms`. |
+| `target.error_ratio` | The share of requests that may fail, as a fraction, unless the run states its own with `--error-ratio`. |
 | `weights` | The relative weight of each route in a session, by route name. Parsed, not applied yet: the generator's session shape is fixed. |
 
 ## The two scenarios
@@ -87,12 +91,50 @@ would fail every run for a reason that is not a defect.
 uv run tadas-ops stress --scenario ops/stress/staging.yaml --env staging
 ```
 
+Both targets are illustrative. They say what these two environments
+measured, at the size they were, with a little headroom. They do not
+say what good performance is. A team adopting this sets its own, from
+its own traffic and its own size.
+
+## Asking a harder question of the same scenario
+
+The scenario's target is a default. `--p95-ms` and `--error-ratio`
+state one for a single run, and the run says where each half of the
+pass mark came from, so a passing run can never be read as a claim it
+did not make.
+
+A wiring check is a small run with a generous target: does the
+credential hold, do the tenants come and go, do the signals answer.
+
+```bash
+uv run tadas-ops stress --scenario ops/stress/staging.yaml --env staging \
+  --duration 60 --p95-ms 5000
+```
+
+A challenging run is the same scenario with a strict one. This is the
+interesting run, and the one worth dispatching after a change.
+
+```bash
+uv run tadas-ops stress --scenario ops/stress/staging.yaml --env staging \
+  --p95-ms 1200
+```
+
 ## The run on staging from CI
 
 `.github/workflows/stress.yml` runs a scenario against staging on a
 dispatch, never on a push. It takes a scenario name and, optionally, a
-duration that overrides the scenario's; it knows no environment input,
-so production cannot be chosen there at all. It grants the provisioner
+duration, a `p95_ms`, and an `error_ratio` that override the
+scenario's; it knows no environment input, so production cannot be
+chosen there at all. The two target inputs are the same two flags, so
+the wiring check and the challenging run above are both a dispatch:
+
+```bash
+gh workflow run stress.yml --ref main -f scenario=staging \
+  -f duration_seconds=60 -f p95_ms=5000
+gh workflow run stress.yml --ref main -f scenario=staging -f p95_ms=1200
+```
+
+It grants the provisioner
 `write` for the run, mints its token through the grant task, drives the
 scenario, keeps the report as an artifact, fails on a missed target,
 and disables the provisioner's entry again whatever the outcome.
@@ -105,4 +147,4 @@ its one network path, and the per-address rate limit on sign-in. A
 load test needs many generators, from many addresses, and that is not
 what this is. What it is worth is the wiring: a credential that does
 not stand, tenants made and removed, a target stated first, the
-signals read back, and a verdict.
+signals read back, and a verdict that names the target it held to.

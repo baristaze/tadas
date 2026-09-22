@@ -39,6 +39,7 @@ from tadas.ops.stress import (
     verdict,
     window_start,
     with_duration,
+    with_target,
 )
 from tadas.ops.traffic import (
     NO_ONE_SIGNED_IN,
@@ -165,6 +166,7 @@ async def stress_command(args: argparse.Namespace) -> tuple[int, Report]:
     scenario = load_scenario(Path(args.scenario))
     if args.duration is not None:
         scenario = with_duration(scenario, args.duration)
+    scenario = with_target(scenario, p95_ms=args.p95_ms, error_ratio=args.error_ratio)
     result = await run_traffic(
         env,
         scenario.profile,
@@ -401,6 +403,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--duration",
         type=float,
         help="seconds; the scenario's when absent. The target does not move with it.",
+    )
+    p_stress.add_argument(
+        "--p95-ms",
+        type=float,
+        help="the pass mark for the working requests' p95, in milliseconds; "
+        "the scenario's when absent",
+    )
+    p_stress.add_argument(
+        "--error-ratio",
+        type=float,
+        help="the share of requests that may fail, as a fraction; the scenario's when absent",
     )
     p_stress.add_argument("--report")
 
