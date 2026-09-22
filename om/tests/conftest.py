@@ -1,5 +1,10 @@
 """Fixtures shared by the OM test suites. The integration fixtures refuse
-any database that is not a local address."""
+any database that is not a local address.
+
+The suites connect the way a deployed process does: the storage impls under
+the runtime login, with the system login's pool beside it, and the migrations
+and the truncation between cases under the migration login, which owns the
+tables. The master opens one connection, `ensure-logins`, once per run."""
 
 import asyncio
 from collections.abc import AsyncIterator
@@ -9,38 +14,52 @@ from sqlalchemy import text
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 
-from tadas.om.storage.impl.pg_base import SessionFactory
-from tadas.om.storage.migrate import VERSION_TABLE, upgrade_all
+from tadas.om.storage.impl.pg_base import LoginSessions, SessionFactory
+from tadas.om.storage.migrate import VERSION_TABLE, ensure_logins_at, upgrade_all
 from tadas.om.storage.roles import DatabaseRole
-from tadas.om.storage.settings import LOCAL_HOSTS, StorageSettings
+from tadas.om.storage.settings import LOCAL_HOSTS, MigrationSettings
 
 
 @pytest.fixture(scope="session")
-def role_urls() -> dict[DatabaseRole, str]:
-    urls = StorageSettings().role_urls()
-    for url in urls.values():
+def migration_settings() -> MigrationSettings:
+    settings = MigrationSettings()
+    for _, url in settings.local_urls():
         host = make_url(url).host
         assert host in LOCAL_HOSTS, f"refusing to run integration tests against {host}"
-    return urls
+    return settings
 
 
 @pytest.fixture(scope="session")
-def migrated(role_urls: dict[DatabaseRole, str]) -> dict[DatabaseRole, str]:
-    asyncio.run(upgrade_all(role_urls))
-    return role_urls
+def migrated(migration_settings: MigrationSettings) -> dict[DatabaseRole, str]:
+    """Every role migrated to its head, under the migration login, after the
+    logins are in place; the URLs are the migration login's."""
+    settings = migration_settings
+    asyncio.run(ensure_logins_at(settings.master_url(), settings.login_passwords()))
+    urls = settings.migration_role_urls()
+    asyncio.run(upgrade_all(urls))
+    return urls
 
 
 @pytest.fixture
 async def pg_sessions(
-    migrated: dict[DatabaseRole, str],
-) -> AsyncIterator[dict[DatabaseRole, SessionFactory]]:
+    migration_settings: MigrationSettings, migrated: dict[DatabaseRole, str]
+) -> AsyncIterator[LoginSessions]:
+    """The session factories a storage root builds: every role under the
+    runtime login, and under the system login beside it."""
     engines: dict[str, AsyncEngine] = {}
-    sessions: dict[DatabaseRole, SessionFactory] = {}
-    for role in DatabaseRole:
-        url = migrated[role]
-        engines.setdefault(url, create_async_engine(url))
-        sessions[role] = async_sessionmaker(engines[url], expire_on_commit=False)
-    yield sessions
+
+    def factories(urls: dict[DatabaseRole, str]) -> dict[DatabaseRole, SessionFactory]:
+        found: dict[DatabaseRole, SessionFactory] = {}
+        for role in DatabaseRole:
+            if urls[role] not in engines:
+                engines[urls[role]] = create_async_engine(urls[role])
+            found[role] = async_sessionmaker(engines[urls[role]], expire_on_commit=False)
+        return found
+
+    yield LoginSessions(
+        factories(migration_settings.role_urls()),
+        factories(migration_settings.system_role_urls()),
+    )
     for engine in engines.values():
         await engine.dispose()
 

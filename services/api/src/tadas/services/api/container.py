@@ -95,7 +95,11 @@ class AppContainer:
 
     @classmethod
     def build(cls, settings: ApiSettings) -> AppContainer:
-        storage = StoragePostgresImpl(settings.role_urls(), settings.role_pools())
+        storage = StoragePostgresImpl(
+            settings.role_urls(),
+            settings.role_pools(),
+            system_urls=settings.system_role_urls(),
+        )
         infra = InfraConfiguredImpl(settings)
         return cls.over(settings, storage, infra)
 

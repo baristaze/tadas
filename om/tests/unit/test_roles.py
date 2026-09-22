@@ -60,7 +60,7 @@ async def test_an_outbox_row_outside_the_core_role_is_refused() -> None:
     # or the session would hold two roles in one transaction.
     from tadas.om.base import new_id, utcnow
     from tadas.om.outbox.types.row import OutboxRow
-    from tadas.om.storage.impl.pg_base import PgStorageBase
+    from tadas.om.storage.impl.pg_base import LoginSessions, PgStorageBase
     from tadas.om.work.storage.tables.work_items import WorkItems
 
     row = OutboxRow(
@@ -74,7 +74,8 @@ async def test_an_outbox_row_outside_the_core_role_is_refused() -> None:
         app="worker",
     )
 
-    base = PgStorageBase({})  # no sessions: the role check fires before one is opened
+    # No sessions: the role check fires before one is opened.
+    base = PgStorageBase(LoginSessions({}, {}))
     with pytest.raises(CrossRoleStatement):
         await base._upsert(WorkItems, new_id(), row, (row,))
 

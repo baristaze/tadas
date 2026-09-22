@@ -1,5 +1,6 @@
 """The relational storage root: one engine and pool per distinct role URL and
-its bounds, every namespace impl constructed here."""
+its bounds, under the runtime login and under the system login, every
+namespace impl constructed here."""
 
 import asyncio
 from collections.abc import Mapping
@@ -14,7 +15,7 @@ from tadas.om.idempotency.storage import IdempotencyStorageInterface
 from tadas.om.idempotency.storage.impl.postgres import IdempotencyStoragePostgresImpl
 from tadas.om.outbox.storage import OutboxStorageInterface
 from tadas.om.outbox.storage.impl.postgres import OutboxStoragePostgresImpl
-from tadas.om.storage.impl.pg_base import SessionFactory
+from tadas.om.storage.impl.pg_base import LoginSessions, SessionFactory
 from tadas.om.storage.roles import DatabaseRole
 from tadas.om.storage.root import StorageInterface
 from tadas.om.storage.settings import RolePool
@@ -61,20 +62,31 @@ class StoragePostgresImpl(StorageInterface):
         self,
         urls: Mapping[DatabaseRole, str],
         pools: Mapping[DatabaseRole, RolePool],
+        *,
+        system_urls: Mapping[DatabaseRole, str],
     ) -> None:
         """One engine per distinct URL and bounds: roles that share both share a
         pool, and a role given a size, a checkout bound, or a statement deadline
         of its own gets a pool of its own, which is what makes the role the
         bulkhead between two load profiles on one database. Both arguments come
         from the settings object the composition root read at boot: the impl
-        reads no environment variable of its own."""
+        reads no environment variable of its own.
+
+        `system_urls` are the same roles under the system login. They name
+        another login, so they open pools of their own under the same bounds,
+        and only the system scope draws on them."""
         engines: dict[tuple[str, RolePool], AsyncEngine] = {}
-        sessions: dict[DatabaseRole, SessionFactory] = {}
-        for role in DatabaseRole:
-            key = (urls[role], pools[role])
-            if key not in engines:
-                engines[key] = engine_for(*key)
-            sessions[role] = async_sessionmaker(engines[key], expire_on_commit=False)
+
+        def factories(by_role: Mapping[DatabaseRole, str]) -> dict[DatabaseRole, SessionFactory]:
+            found: dict[DatabaseRole, SessionFactory] = {}
+            for role in DatabaseRole:
+                key = (by_role[role], pools[role])
+                if key not in engines:
+                    engines[key] = engine_for(*key)
+                found[role] = async_sessionmaker(engines[key], expire_on_commit=False)
+            return found
+
+        sessions = LoginSessions(factories(urls), factories(system_urls))
         self._engines = engines
         self._sessions = sessions
         self._tenancy = TenancyStoragePostgresImpl(sessions)

@@ -20,6 +20,9 @@ NOT_A_KNOB = {
 }
 
 LOCAL_DEFAULT_SERVES_THE_CLOUD = {
+    # Until the Terraform environments inject the system login's URL secret;
+    # the entry goes when they do.
+    "database_system_url": "not yet wired: the system login's URL secret",
     "database_url_core": "one URL for every role until a role moves out",
     "database_url_activity": "one URL for every role until a role moves out",
     "database_url_queue": "one URL for every role until a role moves out",

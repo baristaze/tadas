@@ -96,8 +96,11 @@ infra-reset: ## Recreate the dependencies with their volumes removed, and nothin
 
 # The local targets (migrate, migrate-check, seed, test-integration) refuse a
 # database whose host is not local, so a stray .env never points them at a
-# shared one; the cloud runs `tadas-api migrate` without --local.
-migrate: ## Apply every role's migration chain to the local database
+# shared one; the cloud runs `tadas-api migrate` without --local. The master
+# makes the three logins first, and every migration runs as the migration
+# login; both steps are safe to repeat.
+migrate: ## Make the database logins, then apply every role's migration chain to the local database
+	uv run --package tadas-om python -m tadas.om.storage.migrate ensure-logins --local
 	uv run --package tadas-om python -m tadas.om.storage.migrate upgrade --all --local
 
 # The SEED_* values come from .env (or .env.example); override any of them

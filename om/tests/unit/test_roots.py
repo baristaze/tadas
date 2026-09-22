@@ -29,20 +29,26 @@ async def test_memory_root_serves_every_storage() -> None:
     await root.close()
 
 
-async def test_postgres_root_opens_one_engine_per_distinct_url() -> None:
-    shared = "postgresql+asyncpg://tadas:tadas@127.0.0.1:55432/tadas"
-    # Both arguments come from a settings object, the way a composition root
+async def test_postgres_root_opens_one_engine_per_distinct_url_and_login() -> None:
+    shared = "postgresql+asyncpg://tadas_runtime:r@127.0.0.1:55432/tadas"
+    system = "postgresql+asyncpg://tadas_system:s@127.0.0.1:55432/tadas"
+    # Every argument comes from a settings object, the way a composition root
     # hands them over; the impl reads nothing itself.
-    pools = StorageSettings(database_url=shared).role_pools()
-    root = StoragePostgresImpl(dict.fromkeys(DatabaseRole, shared), pools)
+    settings = StorageSettings(database_url=shared, database_system_url=system)
+    pools = settings.role_pools()
+    root = StoragePostgresImpl(settings.role_urls(), pools, system_urls=settings.system_role_urls())
     assert isinstance(root.get_tenancy_storage(), TenancyStorageInterface)
-    assert len(root._engines) == 1
+    # One pool under the runtime login and one under the system login.
+    assert len(root._engines) == 2
     await root.close()
 
-    split = dict.fromkeys(DatabaseRole, shared)
-    split[DatabaseRole.QUEUE] = "postgresql+asyncpg://tadas:tadas@127.0.0.1:55432/tadas_queue"
-    root = StoragePostgresImpl(split, pools)
-    assert len(root._engines) == 2
+    split = StorageSettings(
+        database_url=shared,
+        database_system_url=system,
+        database_url_queue="postgresql+asyncpg://tadas_runtime:r@127.0.0.1:55432/tadas_queue",
+    )
+    root = StoragePostgresImpl(split.role_urls(), pools, system_urls=split.system_role_urls())
+    assert len(root._engines) == 4
     await root.close()
 
 
@@ -54,6 +60,17 @@ def test_role_urls_default_to_the_shared_one() -> None:
     urls = settings.role_urls()
     assert urls[DatabaseRole.CORE].endswith("/a")
     assert urls[DatabaseRole.QUEUE].endswith("/q")
+
+
+def test_the_system_login_follows_a_role_to_its_own_database() -> None:
+    settings = StorageSettings(
+        database_url="postgresql+asyncpg://tadas_runtime:r@db-a:5432/a",
+        database_url_queue="postgresql+asyncpg://tadas_runtime:r@db-q:5432/q",
+        database_system_url="postgresql+asyncpg://tadas_system:s@db-a:5432/a",
+    )
+    system = settings.system_role_urls()
+    assert system[DatabaseRole.CORE] == "postgresql+asyncpg://tadas_system:s@db-a:5432/a"
+    assert system[DatabaseRole.QUEUE] == "postgresql+asyncpg://tadas_system:s@db-q:5432/q"
 
 
 def test_business_root_has_a_field_per_manager(tmp_path: Path) -> None:

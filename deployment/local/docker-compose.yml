@@ -10,11 +10,13 @@
 name: tadas
 
 services:
-  # The superuser is `postgres` and the application's login is `tadas`, which
-  # the init script creates as LOGIN NOSUPERUSER NOBYPASSRLS and makes the
-  # owner of the database. A superuser walks past every row-level security
-  # policy, so the second fence only exists for a login that is not one. The
-  # init script runs on an empty data directory: `make reset` after a pull.
+  # The superuser is `postgres` and the local master is `tadas`, which the
+  # init script creates as LOGIN NOSUPERUSER NOBYPASSRLS CREATEROLE and makes
+  # the owner of the database. `make migrate` has it make the three logins
+  # the processes connect as, none of them a superuser or BYPASSRLS. A
+  # superuser walks past every row-level security policy, so the second fence
+  # only exists for a login that is not one. The init script runs on an empty
+  # data directory: `make reset` after a pull.
   postgres:
     image: postgres:18-alpine
     environment:

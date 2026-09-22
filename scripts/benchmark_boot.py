@@ -40,6 +40,7 @@ def main() -> int:
     # The urls and the bounds come from settings, the way a composition root
     # hands them to the storage root; reading them is not what is timed.
     urls = dict.fromkeys(DatabaseRole, "postgresql+asyncpg://t:t@127.0.0.1:1/x")
+    system_urls = dict.fromkeys(DatabaseRole, "postgresql+asyncpg://s:s@127.0.0.1:1/x")
     pools = StorageSettings().role_pools()
 
     tmp = Path(tempfile.mkdtemp())
@@ -53,7 +54,7 @@ def main() -> int:
     build_managers(memory, infra)
     rows.append(("build_managers() over memory", ms(t)))
     t = time.perf_counter()
-    postgres = StoragePostgresImpl(urls, pools)
+    postgres = StoragePostgresImpl(urls, pools, system_urls=system_urls)
     rows.append(("StoragePostgresImpl() (engines built, nothing connects)", ms(t)))
     t = time.perf_counter()
     build_managers(postgres, infra)

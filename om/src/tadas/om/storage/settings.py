@@ -7,6 +7,13 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import make_url
 
+from tadas.om.storage.logins import (
+    MIGRATION_LOGIN,
+    RUNTIME_LOGIN,
+    SYSTEM_LOGIN,
+    login_of,
+    with_login,
+)
 from tadas.om.storage.roles import DatabaseRole
 
 LOCAL_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", "postgres"})
@@ -27,7 +34,14 @@ class RolePool:
 class StorageSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="TADAS_", env_file=".env", extra="ignore")
 
-    database_url: str = "postgresql+asyncpg://tadas:tadas@127.0.0.1:55432/tadas"
+    # The runtime login's URL, which every request's connection uses, and the
+    # system login's beside it, which only the listed system-scope methods
+    # use, on a pool of their own. A role that moves to its own database names
+    # its own URL below, and the system login follows it there.
+    database_url: str = "postgresql+asyncpg://tadas_runtime:tadas_runtime@127.0.0.1:55432/tadas"
+    database_system_url: str = (
+        "postgresql+asyncpg://tadas_system:tadas_system@127.0.0.1:55432/tadas"
+    )
     database_url_core: str | None = None
     database_url_activity: str | None = None
     database_url_queue: str | None = None
@@ -63,21 +77,46 @@ class StorageSettings(BaseSettings):
         """For a development command (the seed, `make migrate`, the integration
         tests): refuses a role URL whose host is not local, so a stray `.env`
         never points a local command at a shared database."""
-        for role, url in self.role_urls().items():
+        for role, url in self.local_urls():
             host = make_url(url).host
             if host not in LOCAL_HOSTS:
                 raise SystemExit(
-                    f"refusing to touch {role.value} at {host}: TADAS_DATABASE_URL must be local"
+                    f"refusing to touch {role} at {host}: TADAS_DATABASE_URL must be local"
                 )
 
-    def role_urls(self) -> dict[DatabaseRole, str]:
-        overrides = {
+    def local_urls(self) -> list[tuple[str, str]]:
+        """Every URL a local command may open, named for the refusal."""
+        return [
+            *((role.value, url) for role, url in self.role_urls().items()),
+            *((f"{role.value} (system)", url) for role, url in self.system_role_urls().items()),
+        ]
+
+    def system_role_urls(self) -> dict[DatabaseRole, str]:
+        """Every role's URL under the system login (see `under_login`)."""
+        return self.under_login(self.database_system_url)
+
+    def role_overrides(self) -> dict[DatabaseRole, str | None]:
+        """The URL each role names of its own, or None for the shared one."""
+        return {
             DatabaseRole.CORE: self.database_url_core,
             DatabaseRole.ACTIVITY: self.database_url_activity,
             DatabaseRole.QUEUE: self.database_url_queue,
             DatabaseRole.ADMIN: self.database_url_admin,
         }
-        return {role: overrides[role] or self.database_url for role in DatabaseRole}
+
+    def role_urls(self) -> dict[DatabaseRole, str]:
+        return {
+            role: override or self.database_url for role, override in self.role_overrides().items()
+        }
+
+    def under_login(self, login_url: str) -> dict[DatabaseRole, str]:
+        """Every role's URL under another login: the login's own URL for a role
+        on the shared database, and the role's database under the login's user
+        and password for a role that moved to its own."""
+        return {
+            role: with_login(override, login_url) if override else login_url
+            for role, override in self.role_overrides().items()
+        }
 
     def role_pools(self) -> dict[DatabaseRole, RolePool]:
         """The bounds of every role's pool, each knob defaulting to its shared
@@ -114,3 +153,47 @@ class StorageSettings(BaseSettings):
             )
             for role in DatabaseRole
         }
+
+
+class MigrationSettings(StorageSettings):
+    """What the migrate command reads beyond a process's settings: the
+    migration login's URL, which runs every migration, and the master's, which
+    only `ensure-logins` opens. No serving process holds either; the deploy's
+    one-off migrate task is the one place both are set."""
+
+    database_migration_url: str = (
+        "postgresql+asyncpg://tadas_migration:tadas_migration@127.0.0.1:55432/tadas"
+    )
+    database_master_url: str | None = None
+
+    def migration_role_urls(self) -> dict[DatabaseRole, str]:
+        """Every role's URL under the migration login."""
+        return self.under_login(self.database_migration_url)
+
+    def master_url(self) -> str:
+        if not self.database_master_url:
+            raise SystemExit("ensure-logins runs as the master: set TADAS_DATABASE_MASTER_URL")
+        return self.database_master_url
+
+    def login_passwords(self) -> dict[str, str]:
+        """Each login's password, from the URL that names it; a URL that names
+        another login is refused, since the policies name these three."""
+        return dict(
+            (
+                login_of(self.database_migration_url, MIGRATION_LOGIN),
+                login_of(self.database_url, RUNTIME_LOGIN),
+                login_of(self.database_system_url, SYSTEM_LOGIN),
+            )
+        )
+
+    def local_urls(self) -> list[tuple[str, str]]:
+        found = [
+            *super().local_urls(),
+            *(
+                (f"{role.value} (migration)", url)
+                for role, url in self.migration_role_urls().items()
+            ),
+        ]
+        if self.database_master_url:
+            found.append(("the master", self.database_master_url))
+        return found

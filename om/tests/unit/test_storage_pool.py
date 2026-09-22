@@ -73,7 +73,7 @@ async def test_roles_share_a_pool_only_when_url_and_bounds_agree() -> None:
     shared = RolePool(size=4, checkout_timeout_seconds=1.0, statement_timeout_seconds=2.0)
     urls = dict.fromkeys(DatabaseRole, URL)
 
-    root = StoragePostgresImpl(urls, dict.fromkeys(DatabaseRole, shared))
+    root = StoragePostgresImpl(urls, dict.fromkeys(DatabaseRole, shared), system_urls=urls)
     assert len(root._engines) == 1
     await root.close()
 
@@ -81,7 +81,7 @@ async def test_roles_share_a_pool_only_when_url_and_bounds_agree() -> None:
     split[DatabaseRole.QUEUE] = RolePool(
         size=8, checkout_timeout_seconds=1.0, statement_timeout_seconds=2.0
     )
-    root = StoragePostgresImpl(urls, split)
+    root = StoragePostgresImpl(urls, split, system_urls=urls)
     assert len(root._engines) == 2
     await root.close()
 
@@ -100,7 +100,8 @@ class HangingEngine:
 
 async def test_the_healthcheck_answers_false_within_its_role_bounds() -> None:
     pool = RolePool(size=1, checkout_timeout_seconds=0.05, statement_timeout_seconds=0.05)
-    root = StoragePostgresImpl(dict.fromkeys(DatabaseRole, URL), dict.fromkeys(DatabaseRole, pool))
+    urls = dict.fromkeys(DatabaseRole, URL)
+    root = StoragePostgresImpl(urls, dict.fromkeys(DatabaseRole, pool), system_urls=urls)
     await root.close()
     root._engines = {(URL, pool): cast(AsyncEngine, HangingEngine())}
 

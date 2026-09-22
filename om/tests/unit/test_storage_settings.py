@@ -4,7 +4,8 @@ host is not local, and the migration runner refuses before it connects."""
 import pytest
 
 from tadas.om.storage import migrate
-from tadas.om.storage.settings import StorageSettings
+from tadas.om.storage.roles import DatabaseRole
+from tadas.om.storage.settings import MigrationSettings, StorageSettings
 
 REMOTE = "postgresql+asyncpg://tadas:secret@db.example.internal:5432/tadas"
 
@@ -46,3 +47,58 @@ def test_a_zero_bound_is_refused_rather_than_read_as_unset(field: str) -> None:
     deadline of zero means none to Postgres; neither is what was asked for."""
     with pytest.raises(ValueError):
         StorageSettings.model_validate({"_env_file": None, field: 0})
+
+
+LOCAL = "postgresql+asyncpg://{login}:{login}-pw@127.0.0.1:55432/tadas"
+
+
+def logins(**overrides: str) -> MigrationSettings:
+    values = {
+        "database_url": LOCAL.format(login="tadas_runtime"),
+        "database_system_url": LOCAL.format(login="tadas_system"),
+        "database_migration_url": LOCAL.format(login="tadas_migration"),
+        "database_master_url": LOCAL.format(login="tadas"),
+        **overrides,
+    }
+    return MigrationSettings.model_validate({"_env_file": None, **values})
+
+
+def test_each_login_password_comes_from_its_url() -> None:
+    assert logins().login_passwords() == {
+        "tadas_migration": "tadas_migration-pw",
+        "tadas_runtime": "tadas_runtime-pw",
+        "tadas_system": "tadas_system-pw",
+    }
+
+
+def test_a_url_naming_another_login_is_refused() -> None:
+    # The policies name the system login, so a URL that names another one
+    # would make logins the fence does not know.
+    wrong = logins(database_system_url=LOCAL.format(login="someone"))
+    with pytest.raises(SystemExit, match="names the login 'someone'"):
+        wrong.login_passwords()
+
+
+def test_the_migrations_run_under_the_migration_login() -> None:
+    urls = logins().migration_role_urls()
+    assert set(urls.values()) == {LOCAL.format(login="tadas_migration")}
+
+
+def test_a_role_on_its_own_database_keeps_its_database_under_every_login() -> None:
+    moved = logins(database_url_queue="postgresql+asyncpg://tadas_runtime:r@db-q:5432/q")
+    assert moved.migration_role_urls()[DatabaseRole.QUEUE] == (
+        "postgresql+asyncpg://tadas_migration:tadas_migration-pw@db-q:5432/q"
+    )
+    assert moved.system_role_urls()[DatabaseRole.QUEUE] == (
+        "postgresql+asyncpg://tadas_system:tadas_system-pw@db-q:5432/q"
+    )
+
+
+def test_ensure_logins_needs_the_master() -> None:
+    with pytest.raises(SystemExit, match="TADAS_DATABASE_MASTER_URL"):
+        MigrationSettings.model_validate({"_env_file": None}).master_url()
+
+
+def test_a_remote_master_is_refused_with_local() -> None:
+    with pytest.raises(SystemExit, match="refusing to touch the master"):
+        logins(database_master_url=REMOTE).refuse_remote()

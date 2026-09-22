@@ -24,7 +24,7 @@ The data services' ports are fixed, since the `TADAS_*_URL` knobs name them.
 |---------|---------------|----------------------------|---------|
 | portal | http://localhost:55173 | `portal:8080` | `owner@example.test` (owner) or `bob@example.test` (member) of Acme, or `admin@admin.test` (owner of Fabrikam, admin of Acme, so two orgs to switch between), all `tadas-local` (after `make seed`), or an account made at `/sign-up` |
 | api | http://127.0.0.1:8000 (`/docs`, `/metrics`, `/healthz`) | `api:8000` | |
-| postgres | `127.0.0.1:55432` | `postgres:5432` | `tadas` / `tadas`, database `tadas`; the superuser is `postgres` / `postgres` |
+| postgres | `127.0.0.1:55432` | `postgres:5432` | database `tadas`; `tadas_runtime`, `tadas_system`, and `tadas_migration`, each with its name as its password; the master `tadas` / `tadas`; the superuser `postgres` / `postgres` |
 | valkey | `127.0.0.1:56379` | `valkey:6379` | none: user `default`, no password |
 | elasticmq (SQS) | http://127.0.0.1:59324 | `elasticmq:9324` | any key |
 | minio (S3) | http://127.0.0.1:59000 | `minio:9000` | `tadas` / `tadastadas` |
@@ -44,16 +44,33 @@ which answers from the loop's last beat in memory, and Prometheus scrapes
 its `/metrics` inside the network. The `otel-collector` service publishes
 no port either and listens on nothing.
 
-Postgres has two logins. `tadas` is the application's: every process, every
-migration and every test connects as it, and the init script in
-`postgres/initdb/` creates it `LOGIN NOSUPERUSER NOBYPASSRLS` and makes it the
-owner of the database. Either attribute would walk past every row-level
-security policy, and those policies are the second tenant fence, so a login
-that carries one turns the fence into a drawing. `postgres` is the superuser,
-for the things a fenced login may not do: creating GlitchTip's database, and
-pgweb, which is there to show every row. The init script runs once, on an
-empty data directory, so a stack that was up before it existed needs
-`make reset`.
+Postgres has five logins, and only `postgres` is a superuser.
+
+- `tadas_runtime` is what every request's connection uses. It owns nothing
+  and holds DML only, so no statement that reaches it can drop a policy,
+  turn `FORCE` off, or alter a table.
+- `tadas_system` is its twin for the system scope, on a pool of its own. The
+  policies admit the system scope to it alone, so the runtime login naming
+  the system scope reads nothing.
+- `tadas_migration` owns every role schema and table, and runs the
+  migrations and the integration suite's truncation between cases.
+- `tadas` is the local master, as the master user is in the cloud. The init
+  script in `postgres/initdb/` creates it `LOGIN NOSUPERUSER NOBYPASSRLS
+  CREATEROLE` and makes it the owner of the database. It opens one command,
+  `migrate ensure-logins`, which `make migrate` runs first: it makes the
+  three logins above with the passwords their URLs carry, hands the
+  migration login the schemas, and grants the other two their DML. It is
+  safe to run again.
+- `postgres` is the superuser, for the things a fenced login may not do:
+  creating GlitchTip's database, and pgweb, which is there to show every
+  row.
+
+None of the first four is a superuser or carries `BYPASSRLS`. Either
+attribute would walk past every row-level security policy, and those
+policies are the second tenant fence, so a login that carries one turns the
+fence into a drawing. The init script runs once, on an empty data directory,
+so a stack that was up before `tadas` could create roles needs `make reset`,
+or `ALTER ROLE tadas CREATEROLE` as `postgres`.
 
 The local Valkey has no authentication: every client is the built-in
 `default` user, with no password and full access. Valkey Admin still asks

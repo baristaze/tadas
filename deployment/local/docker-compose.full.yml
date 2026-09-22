@@ -5,7 +5,10 @@ name: tadas
 
 x-app-env: &app-env
   TADAS_ENVIRONMENT: local
-  TADAS_DATABASE_URL: postgresql+asyncpg://tadas:tadas@postgres:5432/tadas
+  # The runtime login and the system login, as a deployed task holds them;
+  # neither the migration login nor the master is ever a container's.
+  TADAS_DATABASE_URL: postgresql+asyncpg://tadas_runtime:tadas_runtime@postgres:5432/tadas
+  TADAS_DATABASE_SYSTEM_URL: postgresql+asyncpg://tadas_system:tadas_system@postgres:5432/tadas
   TADAS_CACHE_BACKEND: valkey
   TADAS_TOPICS_BACKEND: valkey
   TADAS_VALKEY_URL: valkey://valkey:6379/0
