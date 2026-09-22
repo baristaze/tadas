@@ -604,9 +604,10 @@ async def run_traffic(
 ) -> RunResult:
     """The run signs its people in, drives sessions at `profile.concurrency`
     at once over their seats in turn until the duration is up, and signs them
-    out. The duration is a hard bound over the whole of it: a session past it
-    is cut at its next step, and a request in flight is given a short grace
-    and then abandoned. The concurrency is a semaphore. A linear ramp starts
+    out. The duration is a hard bound on the sessions: it starts before the
+    sign-ins, so they come out of it, and the sign-outs follow it. A session
+    past the bound is cut at its next step, and a request in flight is given
+    a short grace and then abandoned. The concurrency is a semaphore. A linear ramp starts
     the workers one after another across `ramp_seconds`. `max_sessions`
     bounds the run by count instead, which is how one session is driven for a
     test. A worker whose session failed pauses before the next one, so a
