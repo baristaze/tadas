@@ -39,7 +39,9 @@ the account is.
   and production's plan and apply pair. `shared` is gone.
 - **Build once, replicate forward.** Staging builds. Its registry
   replicates every image into production's registry, digest for digest,
-  and its state bucket replicates every portal build into production's.
+  and its artifacts bucket replicates every portal build into
+  production's. The state bucket holds state and nothing else, so the
+  one bucket staging may write in production's account holds no state.
   Production resolves and releases the copies in its own account, and
   reads nothing from staging's. Production's registry and bucket grant
   staging exactly these writes and nothing else.
@@ -58,6 +60,15 @@ the account is.
   hosted zone of its own in its environment's account, delegated by NS
   records. The create script writes them with a token that is held only
   while it runs.
+- **No secret value in state.** The database password is generated
+  for the run (an ephemeral value) and written write-only, to the
+  database and to its URL secret. Neither the state nor a saved plan
+  holds it, so the investigate role's read of the state reads no
+  secret.
+- **One branch per GitHub environment.** `staging` deploys from `main`,
+  `production-plan` and `production` from `release`, set by the create
+  script as deployment-branch policies. The roles' trust names the
+  branch too.
 - **The account is checked, twice.** Every provider pins
   `allowed_account_ids`. The create and nuke scripts clear any keys
   exported in the shell, run as the environment's administrator profile

@@ -27,8 +27,8 @@
 #
 # Staging runs first, then production, then staging again: staging's images
 # and portal builds replicate into production's account, and the replication
-# needs production's bucket to exist. The second staging run finds it and
-# turns the replication on.
+# needs production's artifacts bucket to exist. The second staging run finds
+# it and turns the replication on.
 #
 # Inputs, as flags or as environment variables:
 #   --owner-email    OWNER_EMAIL           where the budget and anomaly mail goes
@@ -90,6 +90,7 @@ environment_root="deployment/terraform/$(config ".environments.$environment.envi
 api_domain_name="$(config ".environments.$environment.api_domain_name")"
 app_domain_name="$(config ".environments.$environment.app_domain_name")"
 state_bucket="tadas-state-$account_id"
+artifacts_bucket="tadas-artifacts-$account_id"
 
 # The credential is the boundary. This script creates roles and trust, so it
 # runs under the environment's administrator profile and refuses any other:
@@ -180,9 +181,10 @@ else
 fi
 bootstrap_vars+=(-var "anomaly_monitor=$anomaly_monitor")
 if [ "$environment" = "staging" ]; then
-  # A bucket name is global, so asking for production's from staging's
-  # account answers 403 when it exists and 404 when it does not.
-  production_bucket="tadas-state-$(config .environments.production.account_id)"
+  # The replication writes into production's artifacts bucket, named from
+  # environments.json. A bucket name is global, so asking for it from
+  # staging's account answers 403 when it exists and 404 when it does not.
+  production_bucket="tadas-artifacts-$(config .environments.production.account_id)"
   say "+ aws s3api head-bucket --bucket $production_bucket  (403 or 200: production exists, replicate into it)"
   if $dry_run; then
     replicate="<true once production's bucket exists>"
@@ -298,6 +300,23 @@ say "== 5. The GitHub environments ($github_environments) of $(config .github_re
 # Each environment holds its own variables under the same names, so a job
 # reads AWS_ROLE_ARN and gets the role of the environment it declared, and a
 # staging job never holds a production value.
+#
+# Each environment also deploys from one branch only. The roles' trust names
+# the branch too, so this is the second of two fences: a job on any other
+# branch is refused a deployment here before it reaches AWS.
+create_environment() {
+  local github_environment="$1" branch="$2"
+  shift 2
+  run gh api -X PUT "repos/{owner}/{repo}/environments/$github_environment" \
+    -F 'deployment_branch_policy[protected_branches]=false' \
+    -F 'deployment_branch_policy[custom_branch_policies]=true' "$@"
+  if $dry_run || ! gh api "repos/{owner}/{repo}/environments/$github_environment/deployment-branch-policies" \
+      -q '.branch_policies[].name' | grep -qxF "$branch"; then
+    run gh api -X POST "repos/{owner}/{repo}/environments/$github_environment/deployment-branch-policies" \
+      -f "name=$branch" -f type=branch
+  fi
+}
+
 set_variables() {
   local github_environment="$1"
   shift
@@ -310,10 +329,11 @@ set_variables() {
 case "$environment" in
   staging)
     deploy_role="$(output_of deploy_role_arn)"
-    run gh api -X PUT 'repos/{owner}/{repo}/environments/staging'
+    create_environment staging main
     set_variables staging \
       "AWS_ROLE_ARN=$deploy_role" \
       "TF_STATE_BUCKET=$state_bucket" \
+      "ARTIFACTS_BUCKET=$artifacts_bucket" \
       "API_DOMAIN_NAME=$api_domain_name" \
       "APP_DOMAIN_NAME=$app_domain_name" \
       "ALARM_EMAIL=$alarm_email"
@@ -324,22 +344,24 @@ case "$environment" in
     # `production-plan` carries no rule: a reviewer on the plan would hold
     # the plan the reviewer is meant to read. `production` requires the
     # owner, and that reviewer is what gates the deploy credential.
-    run gh api -X PUT 'repos/{owner}/{repo}/environments/production-plan'
+    create_environment production-plan release
     if $dry_run; then
       owner_id="<owner id>"
     else
       owner_id="$(gh api 'repos/{owner}/{repo}' -q .owner.id)"
     fi
-    run gh api -X PUT 'repos/{owner}/{repo}/environments/production' -f 'reviewers[][type]=User' -F "reviewers[][id]=$owner_id"
+    create_environment production release -f 'reviewers[][type]=User' -F "reviewers[][id]=$owner_id"
     set_variables production-plan \
       "AWS_ROLE_ARN=$plan_role" \
       "TF_STATE_BUCKET=$state_bucket" \
+      "ARTIFACTS_BUCKET=$artifacts_bucket" \
       "API_DOMAIN_NAME=$api_domain_name" \
       "APP_DOMAIN_NAME=$app_domain_name" \
       "ALARM_EMAIL=$alarm_email"
     set_variables production \
       "AWS_ROLE_ARN=$deploy_role" \
-      "TF_STATE_BUCKET=$state_bucket"
+      "TF_STATE_BUCKET=$state_bucket" \
+      "ARTIFACTS_BUCKET=$artifacts_bucket"
     ;;
 esac
 

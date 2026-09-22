@@ -16,6 +16,11 @@ output "state_bucket" {
   value       = module.account.state_bucket
 }
 
+output "artifacts_bucket" {
+  description = "The ARTIFACTS_BUCKET variable of this account's GitHub environments."
+  value       = module.account.artifacts_bucket
+}
+
 output "investigate_role_arn" {
   description = "The role_arn of the tadas-staging-investigate profile."
   value       = module.account.investigate_role_arn

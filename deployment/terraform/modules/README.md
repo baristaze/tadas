@@ -139,8 +139,10 @@ connects there directly.
 The build carries no environment. Terraform writes `/config.json` per
 environment (`apiUrl`, `sentryDsn`, `environment`). `deploy-staging.yml`
 builds the portal once, publishes it with `scripts/deploy_portal.sh` after
-the apply, and keeps the build by the commit in staging's state bucket
-(`builds/portal/<sha>/`). The bucket replicates it into production's, and
+the apply, and keeps the build by the commit in staging's artifacts bucket
+(`tadas-artifacts-<account>`, under `builds/portal/<sha>/`). The state
+bucket holds state and nothing else. The artifacts bucket replicates the
+build into production's, and
 `deploy-production.yml` publishes those same files to production from
 there. `portal_sentry_dsn`, the root's variable, turns browser error
 reporting on; the deploy workflows pass it from the `PORTAL_SENTRY_DSN`

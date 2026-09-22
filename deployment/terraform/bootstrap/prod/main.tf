@@ -56,6 +56,7 @@ module "deploy_role" {
   oidc_provider_arn  = module.account.oidc_provider_arn
 
   state_bucket     = module.account.state_bucket
+  artifacts_bucket = module.account.artifacts_bucket
   state_key_prefix = "environments/prod"
 
   image_repositories  = module.account.repository_names
@@ -71,10 +72,11 @@ module "deploy_role" {
 
 # The credential the jobs before the approval run under. It reads production
 # and writes three things: the state lock Terraform takes while it plans, the
-# plan file the reviewer approves, and nothing else. A plan reads the state,
-# and the state holds the database password in clear, so this role sees
-# production's secrets; what it cannot do is change production. That is the
-# line the approval is there to hold.
+# plan file the reviewer approves, and nothing else. The state holds no
+# secret value, because the database password is written write-only; a
+# refresh still reads production's secrets through the secret store, which
+# this role is granted for that. What it cannot do is change production.
+# That is the line the approval is there to hold.
 
 data "aws_iam_policy_document" "plan_assume" {
   statement {
@@ -127,7 +129,7 @@ data "aws_iam_policy_document" "plan" {
     condition {
       test     = "StringLike"
       variable = "s3:prefix"
-      values   = ["environments/prod/*", "builds/portal/*", "plans/environments/prod/*"]
+      values   = ["environments/prod/*", "plans/environments/prod/*"]
     }
   }
 
@@ -195,7 +197,8 @@ resource "aws_iam_role_policy" "plan_fences" {
 }
 
 # The two writes staging's account may make here, and only these: an image
-# into a repository this root made, and a portal build under builds/portal/.
+# into a repository this root made, and a portal build under builds/portal/
+# of the artifacts bucket, which holds no state.
 # Neither lets staging read anything in production, and replication never
 # creates a repository, so every one keeps the settings declared above.
 
@@ -222,7 +225,7 @@ resource "aws_ecr_registry_policy" "this" {
 # The principal is staging's account and the condition names its replication
 # role: a bucket policy that names a role directly is refused until the role
 # exists, and staging's root makes it only after this bucket does.
-data "aws_iam_policy_document" "state_bucket" {
+data "aws_iam_policy_document" "artifacts_bucket" {
   statement {
     sid = "StagingReplicatesItsPortalBuildsIn"
     actions = [
@@ -231,7 +234,7 @@ data "aws_iam_policy_document" "state_bucket" {
       "s3:ReplicateObject",
       "s3:ReplicateTags",
     ]
-    resources = ["${module.account.state_bucket_arn}/builds/portal/*"]
+    resources = ["${module.account.artifacts_bucket_arn}/builds/portal/*"]
 
     principals {
       type        = "AWS"
@@ -248,7 +251,7 @@ data "aws_iam_policy_document" "state_bucket" {
   statement {
     sid       = "StagingReadsTheVersioningItReplicatesInto"
     actions   = ["s3:GetBucketVersioning", "s3:PutBucketVersioning"]
-    resources = [module.account.state_bucket_arn]
+    resources = [module.account.artifacts_bucket_arn]
 
     principals {
       type        = "AWS"
@@ -263,7 +266,7 @@ data "aws_iam_policy_document" "state_bucket" {
   }
 }
 
-resource "aws_s3_bucket_policy" "state" {
-  bucket = module.account.state_bucket
-  policy = data.aws_iam_policy_document.state_bucket.json
+resource "aws_s3_bucket_policy" "artifacts" {
+  bucket = module.account.artifacts_bucket
+  policy = data.aws_iam_policy_document.artifacts_bucket.json
 }

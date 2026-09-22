@@ -6,14 +6,19 @@
 #   scripts/cloud_nuke.sh staging [--dry-run]
 #   scripts/cloud_nuke.sh production --confirm production [--dry-run]
 #
-# Staging goes on the word. Production refuses unless two things hold: its
-# name is typed after `--confirm`, and `environments/prod/main.tf` on
-# `origin/main` already reads `database_deletion_protection = false`, so the
-# destruction of production is itself a pull request a person read.
+# Staging goes on the word. Production refuses unless three things hold: its
+# name is typed after `--confirm`; `environments/prod/main.tf` on
+# `origin/release`, the branch production applies, reads
+# `database_deletion_protection = false`; and production's state shows that
+# release applied. The destruction of production is itself a pull request a
+# person read, released like any other.
 #
-# The run applies the environment root once with `destroyable=true` (buckets
-# empty on destroy, the database skips its final snapshot and drops its
-# protection), destroys it, and prints what remains. It prints every command
+# The run applies the environment root once with `destroyable=true`: buckets
+# empty on destroy, and staging's database drops its protection and skips
+# its final snapshot. Production's database does neither: its protection is
+# off only because a release turned it off, and it keeps its final snapshot
+# and its automated backups. Then it destroys the root and prints what
+# remains. It prints every command
 # before it runs it, and `--dry-run` prints them without running anything.
 # The account, the administrator profile, the region, and the public names
 # come from deployment/cloud/environments.json, and the account is checked
@@ -73,6 +78,7 @@ root="$(config ".environments.$environment.environment_root")"
 api_domain_name="$(config ".environments.$environment.api_domain_name")"
 app_domain_name="$(config ".environments.$environment.app_domain_name")"
 state_bucket="tadas-state-$account_id"
+artifacts_bucket="tadas-artifacts-$account_id"
 
 profile="${profile:-$admin_profile}"
 [ "$profile" = "$admin_profile" ] || refuse "$environment is destroyed under the $admin_profile profile only (AWS_PROFILE or --profile); it holds '$profile'"
@@ -86,15 +92,16 @@ export AWS_PROFILE="$profile"
 export AWS_REGION="$region"
 
 if [ "$environment" = "production" ]; then
-  # Two things, and both are read here rather than trusted: the typed name,
-  # and the merged change. `origin/main` is what merged; the working tree is
-  # what someone might have edited a minute ago.
+  # Read here rather than trusted: the typed name, and the released change.
+  # `origin/release` is what production applies; `main` may hold a change
+  # that was merged and never released, and the working tree is what someone
+  # might have edited a minute ago. The applied state is checked below.
   [ "$confirm" = "production" ] || refuse "production is destroyed only behind its typed name: pass --confirm production"
-  if ! $dry_run; then git fetch --quiet origin main || true; fi
-  main_root="$(git show origin/main:deployment/terraform/environments/prod/main.tf 2>/dev/null)" \
-    || refuse "cannot read environments/prod/main.tf on origin/main; fetch it, then run again"
-  printf '%s\n' "$main_root" | grep -Eq '^\s*database_deletion_protection\s*=\s*false\s*$' \
-    || refuse "environments/prod/main.tf on origin/main does not read database_deletion_protection = false; lift it in a pull request, merge it, then run again"
+  if ! $dry_run; then git fetch --quiet origin release || true; fi
+  release_root="$(git show origin/release:deployment/terraform/environments/prod/main.tf 2>/dev/null)" \
+    || refuse "cannot read environments/prod/main.tf on origin/release; fetch it, then run again"
+  printf '%s\n' "$release_root" | grep -Eq '^\s*database_deletion_protection\s*=\s*false\s*$' \
+    || refuse "environments/prod/main.tf on origin/release does not read database_deletion_protection = false; lift it in a pull request, merge it, release it, then run again"
 fi
 
 run() {
@@ -141,6 +148,17 @@ else
   [ -n "$api_image" ] && [ -n "$maintenance_image" ] || refuse "the state holds no task definitions; nothing to destroy, or the backend is wrong"
 fi
 
+# The released change, as applied: the database in state carries no
+# deletion protection. A release that has not deployed yet is refused here.
+if [ "$environment" = "production" ]; then
+  say "+ terraform -chdir=$root_dir show -json  (expect the database's deletion_protection false)"
+  if ! $dry_run; then
+    protected="$(terraform -chdir="$root_dir" show -json | jq -r '
+      [.. | objects | select(.type? == "aws_db_instance") | .values.deletion_protection] | first // "missing"')"
+    [ "$protected" = "false" ] || refuse "production's database in state reads deletion_protection = $protected; the release that lifts it has not applied yet"
+  fi
+fi
+
 root_vars=(
   -var "api_image=$api_image"
   -var "maintenance_image=$maintenance_image"
@@ -161,7 +179,10 @@ run terraform -chdir="$root_dir" destroy -input=false -auto-approve "${root_vars
 say "== 5. What remains"
 say "- the bootstrap root, whole: the zones $api_domain_name and $app_domain_name and their delegation at Cloudflare, the registry and its images, the roles, the budget, and the anomaly monitor"
 say "- the state prefix $root/ and plans/$root/ in s3://$state_bucket (empty the prefix by hand if the environment is not coming back)"
-say "- the portal builds under builds/portal/ in s3://$state_bucket"
+say "- the portal builds under builds/portal/ in s3://$artifacts_bucket"
+if [ "$environment" = "production" ]; then
+  say "- the database's final snapshot tadas-production-final, and its automated backups"
+fi
 if [ "$environment" = "staging" ]; then
   say "- production's copies of what staging built: its images and portal builds, in production's account"
 fi

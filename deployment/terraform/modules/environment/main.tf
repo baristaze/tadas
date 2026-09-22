@@ -54,8 +54,19 @@ module "cluster" {
   environment = var.environment
 }
 
+# The master password exists for the run and nowhere else: the database and
+# the secret both take it write-only. Raising database_password_version
+# writes a new one to both.
+ephemeral "random_password" "database" {
+  length  = 32
+  special = false
+}
+
 module "database" {
   source = "../database"
+
+  master_password         = ephemeral.random_password.database.result
+  master_password_version = var.database_password_version
 
   environment         = var.environment
   subnet_ids          = module.network.private_subnet_ids
@@ -96,10 +107,15 @@ module "buckets" {
 module "secrets" {
   source = "../secrets"
 
-  environment  = var.environment
-  prefix       = "tadas/${var.environment}/"
-  database_url = module.database.url
-  destroyable  = var.destroyable
+  environment               = var.environment
+  prefix                    = "tadas/${var.environment}/"
+  database_password         = ephemeral.random_password.database.result
+  database_password_version = var.database_password_version
+  database_username         = module.database.username
+  database_address          = module.database.address
+  database_port             = module.database.port
+  database_name             = module.database.db_name
+  destroyable               = var.destroyable
 }
 
 # Two public names, each at the apex of a Route 53 zone of its own that the

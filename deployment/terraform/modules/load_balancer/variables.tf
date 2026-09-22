@@ -24,14 +24,15 @@ variable "target_port" {
 
 variable "health_check_path" {
   description = <<-EOT
-    What the target group polls to decide whether to send a target traffic,
-    which is readiness and not liveness: /readyz answers whether this process
-    can serve a request right now, under a deadline of its own, and a timeout
-    is a negative answer. The container healthcheck keeps /healthz, which
-    decides whether the process is alive and should be restarted.
+    What the target group polls, which is liveness: /healthz answers
+    whether the process is up, and reads no dependency. ECS replaces a task
+    its target group calls unhealthy, so a readiness probe here would turn
+    one database blip into every task replaced at once. /readyz stays the
+    process's own answer on whether it can serve right now; the task
+    definition's health check probes /healthz as well.
   EOT
   type        = string
-  default     = "/readyz"
+  default     = "/healthz"
 }
 
 variable "certificate_arn" {

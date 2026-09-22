@@ -107,7 +107,8 @@ a value.
    - The bootstrap root, `deployment/terraform/bootstrap/<staging|prod>`:
      the state bucket `tadas-state-<account>` with versioning, made on
      the first apply with local state and then adopted as the backend;
-     the registry; the GitHub OIDC provider; the deploy role (staging)
+     the artifacts bucket `tadas-artifacts-<account>`, which keeps the
+     portal builds and never the state; the registry; the GitHub OIDC provider; the deploy role (staging)
      or the plan and deploy roles (production); the task boundary; the
      investigate role `tadas-investigate-<env>`; the budget and the
      anomaly monitor; one hosted zone per public name. The monitor
@@ -125,9 +126,11 @@ a value.
    - The investigate profile, `tadas-<env>-investigate`: the role's ARN
      with the Identity Center profile as its `source_profile`.
    - The GitHub environments and their variables: `staging`, or
-     `production-plan` (no rule) and `production` (the owner as
-     required reviewer). Each holds `AWS_ROLE_ARN` and
-     `TF_STATE_BUCKET` for its own role; the plan environment and
+     `production-plan` (no reviewer) and `production` (the owner as
+     required reviewer). Each deploys from one branch only, `main` for
+     staging and `release` for both production ones. Each holds
+     `AWS_ROLE_ARN`, `TF_STATE_BUCKET`, and `ARTIFACTS_BUCKET` for its
+     own account; the plan environment and
      staging also hold `API_DOMAIN_NAME`, `APP_DOMAIN_NAME`, and
      `ALARM_EMAIL`. No secret: the OIDC trust replaces keys.
    - The first deploy, through the pipeline: the script pushes

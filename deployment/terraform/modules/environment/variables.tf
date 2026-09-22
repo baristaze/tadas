@@ -145,3 +145,9 @@ variable "destroyable" {
   description = "True on the nuke's way down only: buckets empty on destroy, the database skips its final snapshot and drops its deletion protection, and the secrets skip their recovery window."
   type        = bool
 }
+
+variable "database_password_version" {
+  description = "Raise it to rotate the database master password: a new one is generated and written, write-only, to the database and its URL secret."
+  type        = number
+  default     = 1
+}

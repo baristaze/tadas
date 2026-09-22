@@ -38,6 +38,11 @@ variable "state_bucket" {
   type        = string
 }
 
+variable "artifacts_bucket" {
+  description = "This account's artifacts bucket: the portal build kept by commit."
+  type        = string
+}
+
 variable "state_key_prefix" {
   description = "This environment's prefix inside the state bucket, without a trailing slash, e.g. environments/staging."
   type        = string

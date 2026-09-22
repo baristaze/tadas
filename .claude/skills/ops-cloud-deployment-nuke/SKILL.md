@@ -61,19 +61,20 @@ call.
      Without it, stop and say what is missing; never suggest the
      flag as a paste.
    - The root's `database_deletion_protection` reads `false` on
-     `main`, set by a merged pull request (the script reads the same
-     line and refuses otherwise):
+     `release`, set by a merged pull request and released (the script
+     reads the same line, then the applied state, and refuses
+     otherwise):
 
      ```bash
-     git fetch origin main
-     git show origin/main:deployment/terraform/environments/prod/main.tf \
+     git fetch origin release
+     git show origin/release:deployment/terraform/environments/prod/main.tf \
        | grep database_deletion_protection
      gh pr list --state merged --search "deletion protection" --limit 5
      ```
 
-     A working tree that reads `false` while `main` reads `true` is
-     not enough: the pipeline applies `main`, so the protection is
-     still on. Stop and name the pull request to merge first.
+     A working tree or a `main` that reads `false` while `release`
+     reads `true` is not enough: production applies `release`, so the
+     protection is still on. Stop and name the release to run first.
 3. Read what the environment holds, so the report can say what is
    gone and what stays:
 
@@ -92,9 +93,11 @@ call.
    ```
 
    Narrate each step as the script reaches it: the `destroyable`
-   switch applied (`force_destroy` on the buckets,
-   `skip_final_snapshot` on the database, no recovery window on the
-   secrets) through one apply of the environment root; `terraform
+   switch applied (`force_destroy` on the buckets, no recovery window
+   on the secrets, and for staging only `skip_final_snapshot` and the
+   lifted protection on the database) through one apply of the
+   environment root; production's database keeps its final snapshot
+   `tadas-production-final` and its automated backups; `terraform
    destroy` of the environment root, which empties every
    `tadas-<env>-*` bucket it owns, versions included, and never the
    state bucket; then the list of what remains.
@@ -134,13 +137,15 @@ call.
 ## Gone
 
 - Services: <names>
-- Database: <identifier>, final snapshot <skipped>
+- Database: <identifier>, final snapshot <skipped (staging) | tadas-production-final>
 - Buckets emptied and removed: <names>
 
 ## Remains
 
 - The bootstrap root: zones <names> (delegated at Cloudflare), the registry, <role names>, budget
 - State prefix environments/<staging | prod>/ in tadas-state-<id>, empty
+- Production only: the final snapshot tadas-production-final and the automated backups
+- Staging only: production's copies of what staging built, in production's account
 - GitHub environment and variables; ~/.config/tadas/ops/<env>.env; the tadas-<env>-investigate profile
 - <resource the destroy could not remove>: <reason>
 ```

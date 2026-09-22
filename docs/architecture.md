@@ -867,11 +867,13 @@ everything in-process for tests.
 - `docker/`: one two-stage image per process, non-root, with a
   healthcheck (`/healthz` for the API and, on its metrics port, the
   worker; `/` for the portal's nginx). That probe decides whether the
-  process is alive and should be restarted, which is liveness. Whether
-  to send it traffic is readiness, a question the API's target group
-  asks `/readyz` instead, so a replica that is up but cannot reach its
-  database leaves the rotation without being killed and comes back when
-  it can serve again.
+  process is alive and should be restarted, which is liveness. ECS reads
+  the task definition's own health check rather than this one, and it
+  probes `/healthz` too. The API's target group probes `/healthz` as
+  well: ECS replaces a task its target group calls unhealthy, so a
+  readiness probe there would turn one database blip into every replica
+  replaced at once. `/readyz` stays the process's answer on whether it
+  can serve right now.
 - `terraform/`: every cloud resource. `modules/` holds one module per
   resource family (`network`, `cluster`, `database`, `cache`, `queue`,
   `buckets`, `secrets`, `load_balancer`, `certificate`, `domain_records`,
@@ -894,10 +896,8 @@ everything in-process for tests.
   production never reads staging's. The load balancer's idle timeout is read from
   `deployment/realtime-timeouts.json`, the file the api pins its
   protocol ping against and the api and the portal pin the client's
-  ping interval against. The API's target group polls `/readyz`, and
-  the readiness deadline is shorter than the poll's own timeout, so the
-  answer always arrives inside a poll and a database that hangs reads as
-  a replica that is not ready rather than as one that stopped answering.
+  ping interval against. The API's target group polls `/healthz`,
+  which reads no dependency.
   The worker's service instance
   caps a rollout at 100% of desired because a worker holds leases. Every
   task runs an ADOT collector sidecar that scrapes the process's
@@ -912,7 +912,7 @@ everything in-process for tests.
   ([ADR 0008](adr/0008-main-is-staging-release-is-production.md)).
   `main` is staging: `deploy-staging.yml` follows every green `ci` run
   on `main`, builds and pushes both images tagged by the commit `ci`
-  ran, keeps the portal build by the commit in its state bucket, and
+  ran, keeps the portal build by the commit in its artifacts bucket, and
   plans and applies staging with no approval (the plan text goes to the
   job summary and the `staging-plan` artifact). `release` is production,
   moved only by a fast-forward from `main` that `release.yml` makes when
@@ -1061,9 +1061,11 @@ page; this section says what exists.
   any AWS key exported in the shell and checks the account before every
   apply.
   `scripts/cloud_nuke.sh <env>` refuses `production` unless
-  `--confirm production` is typed and `environments/prod/main.tf` on
-  `origin/main` reads `database_deletion_protection = false`; it
-  applies `destroyable=true`, destroys, and names what remains. Both
+  `--confirm production` is typed, `environments/prod/main.tf` on
+  `origin/release` reads `database_deletion_protection = false`, and
+  production's state shows that release applied; it applies
+  `destroyable=true`, destroys, and names what remains. Production keeps
+  its final snapshot and its automated backups either way. Both
   take `--dry-run`, and `infra/tests/test_cloud_scripts.py` runs the
   dry runs and the refusals. Neither has run against an account yet.
 - **Traffic, stress, and the round trip.** `ops/` is the `tadas-ops`

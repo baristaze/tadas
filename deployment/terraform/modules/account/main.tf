@@ -1,5 +1,5 @@
 # What every environment's account holds before its first deploy: the image
-# registry, the state bucket, GitHub's OIDC provider, the ceiling on every
+# registry, the state bucket, the artifacts bucket, GitHub's OIDC provider, the ceiling on every
 # task role, the role an operator reads the environment under, the budget,
 # and the two hosted zones its public names live in.
 #
@@ -102,6 +102,33 @@ resource "aws_s3_bucket_versioning" "state" {
 
 resource "aws_s3_bucket_public_access_block" "state" {
   bucket                  = aws_s3_bucket.state.id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+# Artifacts.
+#
+# What a build keeps by commit, the portal build under builds/portal/<sha>/,
+# lives here and never beside the state. Staging's copy replicates into
+# production's, so the one write staging's account may make in production's
+# lands in a bucket that holds no state.
+
+resource "aws_s3_bucket" "artifacts" {
+  bucket = "tadas-artifacts-${local.account}"
+}
+
+resource "aws_s3_bucket_versioning" "artifacts" {
+  bucket = aws_s3_bucket.artifacts.id
+
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+resource "aws_s3_bucket_public_access_block" "artifacts" {
+  bucket                  = aws_s3_bucket.artifacts.id
   block_public_acls       = true
   block_public_policy     = true
   ignore_public_acls      = true

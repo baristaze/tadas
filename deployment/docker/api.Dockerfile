@@ -1,7 +1,8 @@
 # Two stages, a locked install of one workspace package, a non-root user,
-# and a healthcheck on /healthz. This probe decides whether the process is
-# alive and should be restarted, which is liveness; whether to send it traffic
-# is readiness, and the load balancer's target group asks /readyz for that.
+# and a healthcheck on /healthz for the local stack. ECS reads the task
+# definition's own health check, not this one; both probe liveness, and so
+# does the load balancer's target group, because ECS replaces a task its
+# target group calls unhealthy.
 FROM python:3.14-slim AS build
 COPY --from=ghcr.io/astral-sh/uv:0.12 /uv /usr/local/bin/uv
 ENV UV_LINK_MODE=copy UV_COMPILE_BYTECODE=1

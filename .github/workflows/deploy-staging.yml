@@ -22,7 +22,8 @@
 # instead and is refused by the role's trust.
 #
 # The variables are the `staging` environment's own: the role (AWS_ROLE_ARN),
-# the state bucket (TF_STATE_BUCKET), the two public names (API_DOMAIN_NAME,
+# the state bucket (TF_STATE_BUCKET), the artifacts bucket the portal build
+# is kept in (ARTIFACTS_BUCKET), the two public names (API_DOMAIN_NAME,
 # APP_DOMAIN_NAME), and the address the alarm topic subscribes (ALARM_EMAIL).
 # scripts/cloud_create.sh sets them. Production's environments hold the same
 # names with production's values, and a job here never sees those.
@@ -31,6 +32,9 @@
 # job says so in its summary and every job that touches the cloud is
 # skipped, so the run stays green and the portal still builds.
 name: deploy-staging
+# The run is named by the commit it deploys: release.yml reads the name to
+# find the last commit staging deployed, which is what a release may take.
+run-name: deploy-staging ${{ github.event.workflow_run.head_sha || github.sha }}
 
 on:
   workflow_run:
@@ -89,12 +93,13 @@ jobs:
         env:
           AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
           TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+          ARTIFACTS_BUCKET: ${{ vars.ARTIFACTS_BUCKET }}
           API_DOMAIN_NAME: ${{ vars.API_DOMAIN_NAME }}
           APP_DOMAIN_NAME: ${{ vars.APP_DOMAIN_NAME }}
           ALARM_EMAIL: ${{ vars.ALARM_EMAIL }}
         run: |
           missing=""
-          for name in AWS_ROLE_ARN TF_STATE_BUCKET API_DOMAIN_NAME APP_DOMAIN_NAME ALARM_EMAIL; do
+          for name in AWS_ROLE_ARN TF_STATE_BUCKET ARTIFACTS_BUCKET API_DOMAIN_NAME APP_DOMAIN_NAME ALARM_EMAIL; do
             [ -n "${!name}" ] || missing="${missing:+$missing, }$name"
           done
           if [ -z "$missing" ]; then
@@ -201,8 +206,8 @@ jobs:
           path: apps/portal/dist
           if-no-files-found: error
           retention-days: 30
-      # The build is kept by the commit in the state bucket, which replicates
-      # it into production's: a workflow artifact expires and is one run's,
+      # The build is kept by the commit in the artifacts bucket, which
+      # replicates it into production's: a workflow artifact expires and is one run's,
       # the bucket outlives both and is reachable by the commit alone.
       - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         if: needs.cloud.outputs.configured == 'true'
@@ -212,9 +217,9 @@ jobs:
       - name: keep the build by the commit
         if: needs.cloud.outputs.configured == 'true'
         env:
-          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+          ARTIFACTS_BUCKET: ${{ vars.ARTIFACTS_BUCKET }}
           SHA: ${{ needs.cloud.outputs.sha }}
-        run: aws s3 sync apps/portal/dist "s3://$TF_STATE_BUCKET/builds/portal/$SHA" --delete
+        run: aws s3 sync apps/portal/dist "s3://$ARTIFACTS_BUCKET/builds/portal/$SHA" --delete
 
   staging:
     name: plan and apply staging, migrate, and publish

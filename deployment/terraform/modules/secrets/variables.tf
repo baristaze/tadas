@@ -8,10 +8,32 @@ variable "prefix" {
   type        = string
 }
 
-variable "database_url" {
-  description = "The database URL the database module produced; injected into every task."
+variable "database_password" {
+  description = "The master password, generated for the run and never stored; the URL is written write-only."
   type        = string
   sensitive   = true
+  ephemeral   = true
+}
+
+variable "database_password_version" {
+  description = "The database module's password version; a bump writes the URL again."
+  type        = number
+}
+
+variable "database_username" {
+  type = string
+}
+
+variable "database_address" {
+  type = string
+}
+
+variable "database_port" {
+  type = number
+}
+
+variable "database_name" {
+  type = string
 }
 
 variable "destroyable" {

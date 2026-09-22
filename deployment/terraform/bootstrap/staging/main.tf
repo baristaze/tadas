@@ -3,8 +3,8 @@
 # that carries what staging builds into production's account.
 #
 # scripts/cloud_create.sh applies this root, once and then again after
-# production's root exists: the replication needs production's bucket to be
-# there first, so the script turns it on only when it finds it.
+# production's root exists: the replication needs production's artifacts
+# bucket to be there first, so the script turns it on only when it finds it.
 
 locals {
   config     = jsondecode(file("${path.module}/../../../cloud/environments.json"))
@@ -44,6 +44,7 @@ module "deploy_role" {
   oidc_provider_arn  = module.account.oidc_provider_arn
 
   state_bucket     = module.account.state_bucket
+  artifacts_bucket = module.account.artifacts_bucket
   state_key_prefix = "environments/staging"
 
   image_repositories = module.account.repository_names
@@ -64,12 +65,12 @@ module "deploy_role" {
 # Production never reads staging's account. What it releases is a copy in its
 # own: ECR copies every image staging pushes into production's registry,
 # digest for digest, and S3 copies every portal build staging keeps into
-# production's state bucket. Production's bootstrap root grants the two
+# production's artifacts bucket, which holds no state. Production's bootstrap root grants the two
 # writes; nothing in production trusts anything else from here, and
 # tearing staging down leaves production's copies where they are.
 
 locals {
-  production_state_bucket_arn = "arn:${data.aws_partition.current.partition}:s3:::tadas-state-${local.production.account_id}"
+  production_artifacts_bucket_arn = "arn:${data.aws_partition.current.partition}:s3:::tadas-artifacts-${local.production.account_id}"
 }
 
 resource "aws_ecr_replication_configuration" "to_production" {
@@ -107,7 +108,7 @@ resource "aws_iam_role" "replication" {
   count = var.replicate_to_production ? 1 : 0
 
   name                 = "tadas-replication-staging"
-  description          = "Copies staging's portal builds into production's state bucket."
+  description          = "Copies staging's portal builds into production's artifacts bucket."
   assume_role_policy   = data.aws_iam_policy_document.replication_assume.json
   max_session_duration = 3600
 }
@@ -116,7 +117,7 @@ data "aws_iam_policy_document" "replication" {
   statement {
     sid       = "ReadTheReplicationRule"
     actions   = ["s3:GetReplicationConfiguration", "s3:ListBucket"]
-    resources = [module.account.state_bucket_arn]
+    resources = [module.account.artifacts_bucket_arn]
   }
 
   statement {
@@ -126,7 +127,7 @@ data "aws_iam_policy_document" "replication" {
       "s3:GetObjectVersionForReplication",
       "s3:GetObjectVersionTagging",
     ]
-    resources = ["${module.account.state_bucket_arn}/builds/portal/*"]
+    resources = ["${module.account.artifacts_bucket_arn}/builds/portal/*"]
   }
 
   statement {
@@ -137,7 +138,7 @@ data "aws_iam_policy_document" "replication" {
       "s3:ReplicateObject",
       "s3:ReplicateTags",
     ]
-    resources = ["${local.production_state_bucket_arn}/builds/portal/*"]
+    resources = ["${local.production_artifacts_bucket_arn}/builds/portal/*"]
   }
 }
 
@@ -152,7 +153,7 @@ resource "aws_iam_role_policy" "replication" {
 resource "aws_s3_bucket_replication_configuration" "to_production" {
   count = var.replicate_to_production ? 1 : 0
 
-  bucket = module.account.state_bucket
+  bucket = module.account.artifacts_bucket
   role   = aws_iam_role.replication[0].arn
 
   rule {
@@ -168,7 +169,7 @@ resource "aws_s3_bucket_replication_configuration" "to_production" {
     }
 
     destination {
-      bucket  = local.production_state_bucket_arn
+      bucket  = local.production_artifacts_bucket_arn
       account = local.production.account_id
 
       access_control_translation {

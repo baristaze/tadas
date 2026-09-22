@@ -68,6 +68,9 @@ def test_create_staging_dry_run_prints_every_step_and_writes_nothing(tmp_path: P
     assert f"+ gh variable set TF_STATE_BUCKET --env staging --body tadas-state-{account}" in out
     assert "+ gh variable set ALARM_EMAIL --env staging --body alarms@tadas.example" in out
     assert "+ gh api -X PUT repos/{owner}/{repo}/environments/staging" in out
+    assert "deployment_branch_policy[custom_branch_policies]=true" in out
+    assert "environments/staging/deployment-branch-policies -f name=main -f type=branch" in out
+    assert f"--env staging --body tadas-artifacts-{account}" in out
     assert "production-plan" not in out
     assert f"TADAS_API_URL=https://{STAGING['api_domain_name']}" in out
     assert "+ gh workflow run deploy-staging.yml --ref main" in out
@@ -88,7 +91,11 @@ def test_create_production_dry_run_sets_two_environments_and_waits_for_replicati
     assert "replicate_to_production" not in out
     assert "+ gh variable set AWS_ROLE_ARN --env production-plan --body <plan_role_arn>" in out
     assert "+ gh variable set AWS_ROLE_ARN --env production --body <deploy_role_arn>" in out
-    assert "environments/production -f reviewers[][type]=User -F reviewers[][id]=<owner id>" in out
+    for github_environment in ["production-plan", "production"]:
+        policy = f"environments/{github_environment}/deployment-branch-policies -f name=release"
+        assert policy in out
+    assert "tadas-artifacts-" in out
+    assert "-f reviewers[][type]=User -F reviewers[][id]=<owner id>" in out
     assert "source_profile = tadas-prod" in out
     # The first release waits for a commit staging built after replication.
     assert "+ gh workflow run" not in out
@@ -162,14 +169,16 @@ def test_nuke_refuses_production_without_its_typed_name(tmp_path: Path) -> None:
     assert result.stdout == ""
 
 
-def test_nuke_refuses_production_while_main_still_protects_the_database(tmp_path: Path) -> None:
-    # On origin/main the production root reads database_deletion_protection =
-    # true, so the typed name alone is not enough. A checkout without
-    # origin/main refuses too, on the reading.
+def test_nuke_refuses_production_while_release_still_protects_the_database(
+    tmp_path: Path,
+) -> None:
+    # Production applies release, and there the root reads
+    # database_deletion_protection = true, so the typed name alone is not
+    # enough. A checkout without origin/release refuses too, on the reading.
     result = _run(NUKE, "production", "--confirm", "production", "--dry-run", home=tmp_path)
     assert result.returncode == 2
     assert "refused" in result.stderr
-    assert "origin/main" in result.stderr
+    assert "origin/release" in result.stderr
     assert result.stdout == ""
 
 

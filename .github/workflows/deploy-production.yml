@@ -9,7 +9,7 @@
 # Production has an AWS account of its own (deployment/cloud/environments.json)
 # and reads nothing from staging's. What it releases are the copies staging's
 # account replicates into it: every image, digest for digest, into
-# production's registry, and every portal build into production's state
+# production's registry, and every portal build into production's artifacts
 # bucket. A commit staging built before the replication was on has no copy
 # here and is refused the same way.
 #
@@ -32,9 +32,11 @@
 # names: AWS_ROLE_ARN is the plan role in `production-plan` and the deploy
 # role in `production`. scripts/cloud_create.sh production sets them.
 #
-# A plan reads the state, and the state holds the database password in clear,
-# so the pre-approval credential sees production's secrets. What it cannot do
-# is change production, and that is the line the approval holds.
+# The state holds no secret value: the database password is written
+# write-only, to the database and to its secret, and never lands in the state
+# or a saved plan. A refresh still reads production's secrets through the
+# secret store, which the plan role is granted for that. What it cannot do is
+# change production, and that is the line the approval holds.
 #
 # Inside the apply the migration runs as a one-off task on the new API image
 # before the services roll (the service module orders it); a migration that
@@ -120,12 +122,13 @@ jobs:
         env:
           AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
           TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+          ARTIFACTS_BUCKET: ${{ vars.ARTIFACTS_BUCKET }}
           API_DOMAIN_NAME: ${{ vars.API_DOMAIN_NAME }}
           APP_DOMAIN_NAME: ${{ vars.APP_DOMAIN_NAME }}
           ALARM_EMAIL: ${{ vars.ALARM_EMAIL }}
         run: |
           missing=""
-          for name in AWS_ROLE_ARN TF_STATE_BUCKET API_DOMAIN_NAME APP_DOMAIN_NAME ALARM_EMAIL; do
+          for name in AWS_ROLE_ARN TF_STATE_BUCKET ARTIFACTS_BUCKET API_DOMAIN_NAME APP_DOMAIN_NAME ALARM_EMAIL; do
             [ -n "${!name}" ] || missing="${missing:+$missing, }$name"
           done
           if [ -n "$missing" ]; then
@@ -156,11 +159,20 @@ jobs:
           REGISTRY: ${{ steps.ecr.outputs.registry }}
           SHA: ${{ github.sha }}
         run: |
+          # Replication is asynchronous and usually done in seconds, so a copy
+          # that is not here yet is waited for, a bounded ten minutes, before
+          # it is refused.
           resolve() {
-            local digest
-            if ! digest="$(aws ecr describe-images --repository-name "$1" \
+            local digest="" attempt
+            for attempt in $(seq 1 20); do
+              digest="$(aws ecr describe-images --repository-name "$1" \
                 --image-ids "imageTag=$SHA" \
-                --query 'imageDetails[0].imageDigest' --output text 2>/dev/null)" || [ -z "$digest" ] || [ "$digest" = "None" ]; then
+                --query 'imageDetails[0].imageDigest' --output text 2>/dev/null || true)"
+              if [ -n "$digest" ] && [ "$digest" != "None" ]; then break; fi
+              digest=""
+              [ "$attempt" = 20 ] || sleep 30
+            done
+            if [ -z "$digest" ]; then
               # To stderr: the function is called in a command substitution,
               # so anything on stdout is captured into the image variable and
               # the annotation the runbook tells operators to look for never
@@ -177,14 +189,18 @@ jobs:
           echo "Images staging built for \`$SHA\`: \`$api_image\`, \`$maintenance_image\`." >> "$GITHUB_STEP_SUMMARY"
       - name: the portal build staging kept for this commit
         env:
-          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+          ARTIFACTS_BUCKET: ${{ vars.ARTIFACTS_BUCKET }}
           SHA: ${{ github.sha }}
         run: |
-          if ! aws s3api head-object --bucket "$TF_STATE_BUCKET" --key "builds/portal/$SHA/index.html" >/dev/null 2>&1; then
-            echo "::error::production's state bucket holds no portal build under builds/portal/$SHA: staging never built this commit, or built it before the replication into production was on."
-            exit 1
-          fi
-          echo "Portal: \`s3://$TF_STATE_BUCKET/builds/portal/$SHA\`." >> "$GITHUB_STEP_SUMMARY"
+          for attempt in $(seq 1 20); do
+            if aws s3api head-object --bucket "$ARTIFACTS_BUCKET" --key "builds/portal/$SHA/index.html" >/dev/null 2>&1; then
+              echo "Portal: \`s3://$ARTIFACTS_BUCKET/builds/portal/$SHA\`." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            [ "$attempt" = 20 ] || sleep 30
+          done
+          echo "::error::production's artifacts bucket holds no portal build under builds/portal/$SHA after ten minutes: staging never built this commit, or built it before the replication into production was on."
+          exit 1
 
   plan:
     name: plan production
@@ -267,9 +283,10 @@ jobs:
         env:
           AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
           TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+          ARTIFACTS_BUCKET: ${{ vars.ARTIFACTS_BUCKET }}
         run: |
           missing=""
-          for name in AWS_ROLE_ARN TF_STATE_BUCKET; do
+          for name in AWS_ROLE_ARN TF_STATE_BUCKET ARTIFACTS_BUCKET; do
             [ -n "${!name}" ] || missing="${missing:+$missing, }$name"
           done
           if [ -n "$missing" ]; then
@@ -332,8 +349,8 @@ jobs:
           terraform -chdir=deployment/terraform/environments/prod apply -input=false tfplan
       - name: fetch the portal build staging kept for this commit
         env:
-          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+          ARTIFACTS_BUCKET: ${{ vars.ARTIFACTS_BUCKET }}
           SHA: ${{ github.sha }}
-        run: aws s3 sync "s3://$TF_STATE_BUCKET/builds/portal/$SHA" portal-dist
+        run: aws s3 sync "s3://$ARTIFACTS_BUCKET/builds/portal/$SHA" portal-dist
       - name: publish the same portal to production
         run: scripts/deploy_portal.sh deployment/terraform/environments/prod portal-dist

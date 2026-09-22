@@ -86,10 +86,10 @@ data "aws_iam_policy_document" "read" {
   }
 
   # `terraform plan -lock=false -refresh=false` reads the state and writes
-  # nothing: no lock, no plan file. The state holds the database master
-  # password in clear, which this role therefore sees; the fences below deny
-  # the one call that could use it (rds-db:connect), and the instance has no
-  # public address.
+  # nothing: no lock, no plan file. The state holds no secret value: the
+  # database password is written write-only and never lands in it. The
+  # fences below deny every secret's value and the database login, and the
+  # instance has no public address.
   statement {
     sid       = "ListOnlyThisEnvironmentsKeys"
     actions   = ["s3:ListBucket"]

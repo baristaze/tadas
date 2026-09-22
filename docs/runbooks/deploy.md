@@ -73,15 +73,27 @@ No AWS secret is stored in GitHub: the roles are assumed through OIDC.
 
 Production reads nothing from staging's account. Staging's registry
 replicates every image into production's, digest for digest, and
-staging's state bucket replicates every portal build under
-`builds/portal/` into production's. Production's registry and bucket
-grant staging those two writes and nothing else.
+staging's artifacts bucket replicates every portal build under
+`builds/portal/` into production's. The state buckets hold state and
+nothing else. Production's registry and artifacts bucket grant staging
+those two writes and nothing else.
+
+Each GitHub environment deploys from one branch: `staging` from
+`main`, `production-plan` and `production` from `release`. The roles'
+trust names the branch as well, so a job on any other branch is
+refused twice.
+
+`release.yml` fast-forwards `release` to the last commit staging
+deployed: the newest `deploy-staging` run whose apply succeeded. That
+is `main`'s tip only once its staging deploy has passed.
 
 `tadas-plan-production` runs the jobs before the approval. It changes
 nothing: it reads production, takes the state lock while it plans, and
-writes the plan file the reviewer approves. It does read production's
-secrets, because a plan reads the state and the state holds the
-database password in clear. The approval holds the write, not the read.
+writes the plan file the reviewer approves. The state holds no secret
+value: the database password is generated for the run and written
+write-only, to the database and to its secret. A refresh still reads
+production's secrets through the secret store, so the approval holds
+the write, not the read.
 
 The roles a person or an agent reads an environment under, and the
 profiles that hold them, are in [operate.md](operate.md).
@@ -204,9 +216,11 @@ on and how to read that it happened.
 `scripts/cloud_nuke.sh <environment>` is the administrator's other run,
 narrated by `ops-cloud-deployment-nuke`. Staging goes on the word.
 Production refuses unless `--confirm production` is typed and
-`environments/prod/main.tf` on `origin/main` already reads
-`database_deletion_protection = false`, so destroying production is a
-pull request a person read. The run applies the root once with
+`environments/prod/main.tf` on `origin/release` already reads
+`database_deletion_protection = false` and production's state shows it
+applied, so destroying production is a pull request a person read and
+released. Production's database keeps its final snapshot and its
+automated backups. The run applies the root once with
 `destroyable=true` (buckets empty on destroy, the database skips its
 final snapshot and drops its protection), destroys it, and prints what
 remains: the account's bootstrap root whole (its zones and their

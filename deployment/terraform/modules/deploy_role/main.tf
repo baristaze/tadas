@@ -39,7 +39,8 @@ locals {
     "arn:${local.partition}:ecr:${local.region}:${local.account}:repository/${name}"
   ]
 
-  state_bucket_arn = "arn:${local.partition}:s3:::${var.state_bucket}"
+  state_bucket_arn     = "arn:${local.partition}:s3:::${var.state_bucket}"
+  artifacts_bucket_arn = "arn:${local.partition}:s3:::${var.artifacts_bucket}"
 
   # The two managed policies the graph is allowed to attach: its own, and the
   # one AWS publishes for pulling an image and writing a log stream.
@@ -438,7 +439,19 @@ data "aws_iam_policy_document" "pipeline" {
     condition {
       test     = "StringLike"
       variable = "s3:prefix"
-      values   = ["${var.state_key_prefix}/*", "builds/portal/*", "plans/${var.state_key_prefix}/*"]
+      values   = ["${var.state_key_prefix}/*", "plans/${var.state_key_prefix}/*"]
+    }
+  }
+
+  statement {
+    sid       = "ListThePortalBuilds"
+    actions   = ["s3:ListBucket"]
+    resources = [local.artifacts_bucket_arn]
+
+    condition {
+      test     = "StringLike"
+      variable = "s3:prefix"
+      values   = ["builds/portal/*"]
     }
   }
 
@@ -461,7 +474,7 @@ data "aws_iam_policy_document" "pipeline" {
       ["s3:GetObject"],
       var.write_portal_builds ? ["s3:PutObject", "s3:DeleteObject"] : [],
     )
-    resources = ["${local.state_bucket_arn}/builds/portal/*"]
+    resources = ["${local.artifacts_bucket_arn}/builds/portal/*"]
   }
 
   statement {
@@ -493,10 +506,17 @@ data "aws_iam_policy_document" "pipeline" {
   }
 }
 
-resource "aws_iam_role_policy" "pipeline" {
-  name   = "pipeline"
-  role   = aws_iam_role.this.id
+# Managed rather than inline, for the room: the inline documents sit near
+# IAM's cap on one role. The name is outside the prefix this role may edit,
+# as the other managed ones below are.
+resource "aws_iam_policy" "pipeline" {
+  name   = "tadas-deploy-${var.environment}-pipeline"
   policy = data.aws_iam_policy_document.pipeline.json
+}
+
+resource "aws_iam_role_policy_attachment" "pipeline" {
+  role       = aws_iam_role.this.name
+  policy_arn = aws_iam_policy.pipeline.arn
 }
 
 # The fences. A deny beats every allow, here and in any policy added later.
@@ -553,7 +573,7 @@ data "aws_iam_policy_document" "fences" {
       "s3:PutEncryptionConfiguration",
       "s3:PutReplicationConfiguration",
     ]
-    resources = [local.state_bucket_arn]
+    resources = [local.state_bucket_arn, local.artifacts_bucket_arn]
   }
 
   # The role cannot widen itself, nor reach the roles of the other jobs, nor
@@ -633,8 +653,8 @@ resource "aws_iam_role_policy" "fences" {
 }
 
 # The rest of the graph's reach, as managed policies: IAM caps a role's inline
-# policies at 10,240 characters together, and the five documents above fill
-# nearly all of it. Attached, not inline, they count against no such total;
+# policies at 10,240 characters together, and the four inline documents above
+# fill most of it. Attached, not inline, they count against no such total;
 # their names sit outside `policy/tadas-<environment>-*`, the prefix this role
 # may edit, and the fences deny it every IAM call on its own role, so it can
 # neither change them nor detach them.

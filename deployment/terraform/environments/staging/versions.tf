@@ -1,5 +1,5 @@
 terraform {
-  required_version = ">= 1.10" # the S3 backend's use_lockfile
+  required_version = ">= 1.11" # the S3 backend's use_lockfile; ephemeral values and write-only attributes
 
   required_providers {
     aws = {
