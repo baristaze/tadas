@@ -258,8 +258,9 @@ gh workflow run grant-operator.yml --ref main -f environment=staging \
 Production's runs use `--ref release -f environment=production`.
 
 - **A person** is granted `read` or `write`, enrols the second factor
-  at the console's first sign-in (until then the plane admits the
-  enrolment alone), and writes a `read` token into the env file in
+  through the API (`POST /v1/admin/me/totp`, then `/confirm`; the
+  steps are in `deployment/cloud/first_time_manual.md`, section 20;
+  until then the plane admits the enrolment alone), and writes a `read` token into the env file in
   their own terminal: `uv run tadas-ops token --env <env> --identity
   operator`. It asks for the password and the TOTP code there; no agent
   ever holds either.

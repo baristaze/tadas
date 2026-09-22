@@ -489,3 +489,50 @@ The bootstrap is the `ops-cloud-deployment-create` skill, which runs `scripts/cl
 The first release is a commit merged to `main` after step 3.
 
 After the deploy roles work, remove `baris.taze` from `TadasBootstrapAdmins`, so no one holds `TadasBootstrapAdmin` day to day. Add it back for a run that needs it, such as a destroy or a change to a bootstrap root, and remove it again after.
+
+A bootstrap root is applied by a person before the change that needs it merges. When a pull request changes `deployment/terraform/bootstrap/`, for example to let the deployer read a new secret, apply that root from the pull request's branch under `tadas-<env>-admin` (for production, `tadas-prod-admin`), then merge. A merge whose deploy needs a permission the bootstrap has not granted stops half applied.
+
+## 20. The first operator
+
+A deployed environment starts with no operator. Everything below runs after the environment's first green deploy, and `docs/runbooks/deploy.md` (Grant an operator) is the reference.
+
+1. **Sign up** at `https://app.staging.tadas.fyi` with the email you will operate with, like any person.
+2. **Grant it** through the workflow, on the environment's branch (production: `--ref release -f environment=production`, which waits for its reviewer):
+
+   ```bash
+   gh workflow run grant-operator.yml --ref main -f environment=staging \
+     -f email=<your email> -f permission=write
+   ```
+
+3. **Enrol the second factor.** Until you do, the operator plane admits the enrolment and nothing else. There is no console screen for it yet, so enrol through the API, in your own terminal:
+
+   ```bash
+   API=https://api.staging.tadas.fyi
+   read -r -p 'email: ' EMAIL; read -r -s -p 'password: ' PASSWORD; echo
+   TOKEN=$(curl -s "$API/v1/auth/login" -H 'Content-Type: application/json' \
+     -d "{\"email\":\"$EMAIL\",\"password\":\"$PASSWORD\"}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')
+   curl -s -X POST "$API/v1/admin/me/totp" -H "Authorization: Bearer $TOKEN"
+   ```
+
+   The answer carries `otpauth_uri` once. Add it to an authenticator app (most take the URI pasted, or a QR code made from it), then confirm with the first code:
+
+   ```bash
+   read -r -p 'code: ' CODE
+   curl -s -X POST "$API/v1/admin/me/totp/confirm" -H "Authorization: Bearer $TOKEN" \
+     -H 'Content-Type: application/json' -d "{\"totp_code\":\"$CODE\"}"
+   unset PASSWORD TOKEN
+   ```
+
+   From now on the operator plane admits you only on a sign-in that carries a code (`"totp_code"` beside the password).
+4. **Write your read token into the env file**, in your own terminal: `uv run tadas-ops token --env staging --identity operator`. It asks for the password and the code, writes `TADAS_OPERATOR_TOKEN` into `~/.config/tadas/ops/staging.env` (mode 600), and never prints it. A token lasts an hour; run it again when it runs out. An agent works from that file and never holds your password or your code.
+5. **The smoke identity**, once: sign up a second address you control, grant it `read`, and name it for the deploy's smoke job:
+
+   ```bash
+   gh workflow run grant-operator.yml --ref main -f environment=staging \
+     -f email=<smoke email> -f permission=read
+   gh variable set SMOKE_EMAIL --env staging --body <smoke email>
+   ```
+
+   The next deploy mints the smoke token and runs the smoke test; until `SMOKE_EMAIL` is set the smoke job is skipped.
+6. **The provisioner**, only when a traffic or stress run needs it: grant a third address `write`, mint its token with `-f mint_token=provisioner` right before the run, and copy it with `uv run tadas-ops token --env staging --identity provisioner` under your own sign-in profile. In production, disable it again after the run.
+
