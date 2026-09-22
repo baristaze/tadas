@@ -135,6 +135,13 @@ lists them.
 
    Local runs the same call against GlitchTip. An event names the
    exception, the file, the line, the release.
+
+   A deployed environment may name no tracker: nothing provisions one,
+   and its env file leaves `TADAS_ERROR_TRACKER_URL` and
+   `TADAS_ERROR_TRACKER_TOKEN` empty. Then this step reads nothing and
+   the report says "not read", never "no error event". The tenant's
+   events, the logs, and the trace still carry the request id, and the
+   cause is found in them.
 5. The logs, by request id. Cloud:
 
    ```bash
@@ -224,7 +231,8 @@ lists them.
 - <time> event: <kind> by <actor id>
 - <time> log: <line>
 - <time> trace: <span>, <ms>
-- <time> error: <exception> at <file>:<line>
+- <time> error: <exception> at <file>:<line>, or "error event: not read,
+  the environment names no error tracker"
 
 ## Cause
 

@@ -1,0 +1,29 @@
+# The deployed scenario: three minutes at the regular profile against a
+# cloud environment. Smoke's numbers are a laptop's, and a deployed
+# environment does not make them: the edge is a load balancer, the
+# database is across a network, and a request costs more.
+#
+# The target is what the environment does, not what it should do. The
+# first run's numbers set it: a light run of 45 requests measured a p95
+# of 593 ms and a p99 of 881 ms with no errors, and its slowest step,
+# sign-in, had a p95 of 881 ms. 900 ms is that p95 with headroom, and
+# sits above the slowest step, so the extra sign-ins a regular profile
+# makes do not decide the run on their own. A later run with more
+# requests behind it replaces this number, downward.
+name: staging
+profile: regular
+duration_seconds: 180
+ramp_seconds: 30
+target:
+  p95_ms: 900
+  error_ratio: 0.01
+weights:
+  list_open_tasks: 5
+  list_done_tasks: 2
+  create_task: 3
+  update_task: 2
+  complete_task: 2
+  reopen_task: 1
+  move_task: 1
+  delete_task: 1
+  list_events: 2

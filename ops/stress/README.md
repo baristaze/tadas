@@ -27,7 +27,10 @@ and it reads the signals back when it ends.
   the run fails when the platform counted no requests or more errors
   than the target allows. The p95 the verdict holds to the target is
   still the generator's; the platform's p95, the queue, and the worker
-  outcomes are not read back yet.
+  outcomes are not read back yet. The error tracker is not one of these
+  signals, and a deployed environment names none today: the run reads
+  the counter out of the account either way, and says the error event
+  leg was not read rather than calling it empty.
 
 The numbers a system is held to are the team's. The shape is not.
 
@@ -45,12 +48,26 @@ One YAML file per scenario under this folder.
 | `target.error_ratio` | The share of requests that may fail, as a fraction. |
 | `weights` | The relative weight of each route in a session, by route name. Parsed, not applied yet: the generator's session shape is fixed. |
 
-`smoke.yaml` is the smallest scenario: thirty seconds at the light
-profile against the local stack. CI's sanity run is `make traffic`, the
-same profile and duration with no target. Locally, `--orgs 0` drives
-the seeded org; without it the run provisions tenants through the
-operator plane and needs a provisioner configured.
+## The two scenarios
+
+`smoke.yaml` is the local sanity run: thirty seconds at the light
+profile against the compose stack, the smallest scenario there is. CI's
+sanity run is `make traffic`, the same profile and duration with no
+target. Locally, `--orgs 0` drives the seeded org; without it the run
+provisions tenants through the operator plane and needs a provisioner
+configured.
 
 ```bash
 uv run tadas-ops stress --scenario ops/stress/smoke.yaml --orgs 0
+```
+
+`staging.yaml` is the deployed one: three minutes at the regular
+profile against a cloud environment, which provisions its own tenants,
+so it takes a provisioner token and no `--orgs 0`. Its target is the
+measured one and smoke's is not: a deployed environment misses smoke's
+500 ms on a handful of requests, and holding it to a laptop's number
+would fail every run for a reason that is not a defect.
+
+```bash
+uv run tadas-ops stress --scenario ops/stress/staging.yaml --env staging
 ```

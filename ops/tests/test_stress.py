@@ -21,6 +21,18 @@ def test_the_smoke_scenario_parses() -> None:
     assert scenario.weights == {"full": 1.0}
 
 
+def test_every_scenario_a_run_can_name_parses() -> None:
+    """The files under ops/stress, not the fixture beside these tests: a
+    scenario that does not parse is found here and not on the environment."""
+    folder = HERE.parent / "stress"
+    scenarios = {load_scenario(path).name: path.name for path in sorted(folder.glob("*.yaml"))}
+    assert scenarios == {"smoke": "smoke.yaml", "staging": "staging.yaml"}
+    staging = load_scenario(folder / "staging.yaml")
+    assert staging.profile.name == "regular"
+    assert (staging.duration_seconds, staging.ramp_seconds) == (180.0, 30.0)
+    assert (staging.target.p95_ms, staging.target.error_ratio) == (900.0, 0.01)
+
+
 @pytest.mark.parametrize(
     ("data", "message"),
     [
@@ -91,3 +103,18 @@ def test_the_verdict_passes_only_within_the_target_on_both_sides() -> None:
     assert "no requests were made" in empty.reasons
     text = failing.text(scenario, report_with(10.0, 5), Readback(100, 5))
     assert text.startswith("stress smoke:") and "FAIL: " in text and "100 requests counted" in text
+
+
+def test_a_run_without_an_error_tracker_still_passes_on_what_it_read() -> None:
+    """The verdict holds a run to the request counter and the 5xx count, so
+    an environment that names no tracker still passes; the text says the leg
+    was not read rather than leaving it out."""
+    scenario = load_scenario(HERE / "smoke.yaml")
+    report = report_with(120.0, 0)
+    untracked = Readback(100, 0, error_events_read=False)
+    outcome = verdict(scenario, report, untracked)
+    assert outcome.passed and outcome.reasons == ()
+    text = outcome.text(scenario, report, untracked)
+    assert "error events: not read, the environment names no error tracker" in text
+    assert text.rstrip().endswith("PASS")
+    assert "not read" not in outcome.text(scenario, report, Readback(100, 0))

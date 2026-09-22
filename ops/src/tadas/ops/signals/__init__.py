@@ -33,9 +33,20 @@ class Readback:
     metric_delta: float | None = None
     trace: TraceFound | None = None
     error_event: ErrorEventFound | None = None
+    error_events_read: bool = True
+    """False when the environment names no error tracker. Not reading a leg
+    is a different thing from reading it and finding nothing, and the report
+    says which of the two happened."""
 
 
 class SignalsInterface(ABC):
+    @property
+    @abstractmethod
+    def reads_error_events(self) -> bool:
+        """Whether there is an error tracker to read at all. An environment
+        that names none reads the other legs and reports this one as not
+        read."""
+
     @abstractmethod
     async def log_lines(self, request_id: str) -> list[str]:
         """The log lines that carry the request id, oldest first."""
@@ -55,7 +66,8 @@ class SignalsInterface(ABC):
 
     @abstractmethod
     async def error_event(self, request_id: str) -> ErrorEventFound | None:
-        """The error event tagged with the request id."""
+        """The error event tagged with the request id; None when there is
+        none, and also None when `reads_error_events` is false."""
 
     @abstractmethod
     def describe(self) -> str:

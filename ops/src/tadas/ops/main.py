@@ -59,10 +59,12 @@ def file_lines(path: Path | None) -> Callable[[], Iterable[str]]:
 
 def signals_for(env: Environment, *, log_file: Path | None = None) -> SignalsInterface:
     """The reader an environment gets: the cloud impl for the deployed names,
-    the local impl for everything else."""
+    the local impl for everything else. A deployed environment reads its logs,
+    metrics, and traces out of its own account and needs no error tracker; one
+    that names none reports the error event as not read. Locally the tracker
+    is part of the stack, so an environment missing it is a broken stack and
+    is refused."""
     if env.is_cloud:
-        if not env.error_tracker_url or not env.error_tracker_token:
-            raise ValueError(f"environment {env.name!r} names no error tracker url and token")
         return SignalsCloudImpl(
             environment=env.name,
             profile=env.aws_profile,
@@ -92,6 +94,7 @@ async def check_signals(
         metric_delta=await signals.metric_delta(metric, {}, since),
         trace=await signals.trace(request_id),
         error_event=await signals.error_event(request_id),
+        error_events_read=signals.reads_error_events,
     )
 
 
@@ -113,15 +116,16 @@ def readback_text(readback: Readback, metric: str) -> str:
             else "not found"
         )
     )
-    lines.append(
-        "  error event: "
-        + (
+    if readback.error_event:
+        event = (
             f"{readback.error_event.event_id} in issue {readback.error_event.issue_id} "
             f"({readback.error_event.title})"
-            if readback.error_event
-            else "not found"
         )
-    )
+    elif not readback.error_events_read:
+        event = "not read, the environment names no error tracker"
+    else:
+        event = "not found"
+    lines.append(f"  error event: {event}")
     return "\n".join(lines) + "\n"
 
 
