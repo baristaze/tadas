@@ -219,11 +219,15 @@ def test_the_deploy_workflows_run_in_the_region_the_environments_name(workflow: 
 def test_the_stress_workflow_knows_one_environment_and_runs_on_a_dispatch() -> None:
     """A stress run drives real traffic at a deployed environment, so it
     happens because a person asked for it, and staging is the only
-    environment it can be asked for: there is no environment to choose."""
+    environment it can be asked for: there is no environment to choose. The
+    pass mark is a dispatch's to state, so one scenario answers both the
+    wiring check and a harder question."""
     workflow = yaml.safe_load((ROOT / ".github" / "workflows" / "stress.yml").read_text())
     triggers = workflow[True]  # `on:` is YAML's true
     assert list(triggers) == ["workflow_dispatch"]
-    assert sorted(triggers["workflow_dispatch"]["inputs"]) == ["duration_seconds", "scenario"]
+    inputs = triggers["workflow_dispatch"]["inputs"]
+    assert sorted(inputs) == ["duration_seconds", "error_ratio", "p95_ms", "scenario"]
+    assert [name for name, spec in inputs.items() if spec.get("required")] == ["scenario"]
     job = workflow["jobs"]["stress"]
     assert job["environment"] == "staging"
     # The provisioner's write entry never stands between runs.

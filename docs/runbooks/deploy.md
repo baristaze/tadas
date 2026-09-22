@@ -306,11 +306,17 @@ run is a person's own, under `stress-test-run`.
 ```bash
 gh workflow run stress.yml --ref main -f scenario=staging
 gh workflow run stress.yml --ref main -f scenario=staging -f duration_seconds=60
+gh workflow run stress.yml --ref main -f scenario=staging -f p95_ms=1200
 ```
 
 `scenario` names a file under `ops/stress/`, and `duration_seconds`
-overrides that scenario's duration and nothing else: the target it is
-judged against is still the file's. The run grants the provisioner
+overrides that scenario's duration and nothing else. `p95_ms` and
+`error_ratio` are the pass mark: each one given overrides the
+scenario's half of the target, each one left empty keeps it, and the
+run's text says which target it judged and where each half came from.
+A generous target with a short duration is a wiring check; the same
+scenario with a strict one is the run worth reading. The run grants
+the provisioner
 `write`, mints its operator token through the grant task the way the
 smoke step does, drives the scenario, reads the signals back, and
 keeps the report and the run's text as an artifact. A missed target
