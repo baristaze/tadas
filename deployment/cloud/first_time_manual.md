@@ -178,6 +178,29 @@ Session duration: 12 hours
 
 A person reads production and hands an agent the investigate role; every change to production is a pull request and a release. The investigate role trusts the account, narrowed by a condition to this permission set's role, so the sign-in itself must be allowed to call `sts:AssumeRole`. The managed `ReadOnlyAccess` policy does not allow it. The inline policy is what lets the `tadas-production-investigate` profile chain from this sign-in; without it the chain answers `AccessDenied`.
 
+Create it as a predefined permission set, then add the inline policy:
+
+1. In the management account, open **IAM Identity Center** (not IAM), then **Permission sets** → **Create permission set** → **Predefined permission set** → `ReadOnlyAccess`. The name of the set is `ReadOnlyAccess`, the name `environments.json` reads.
+2. Open the set, then **Inline policy** → **Create** (or **Edit**). The editor opens on an empty template with `"Action": []` and `"Resource": []`; replace all of it with:
+
+   ```json
+   {
+       "Version": "2012-10-17",
+       "Statement": [
+           {
+               "Sid": "ChainToTheInvestigateRole",
+               "Effect": "Allow",
+               "Action": "sts:AssumeRole",
+               "Resource": "arn:aws:iam::*:role/tadas-investigate-*"
+           }
+       ]
+   }
+   ```
+
+3. Save, and accept the prompt to re-provision the accounts the set is assigned to.
+
+The page under **IAM** → **Policies** → `ReadOnlyAccess` is the AWS managed policy the set attaches. It is not editable and is not where the inline policy goes. The inline policy grants one thing: assuming the investigate roles, which themselves change nothing. Section 16 checks that it arrived.
+
 Temporary bootstrap access:
 
 ```text
