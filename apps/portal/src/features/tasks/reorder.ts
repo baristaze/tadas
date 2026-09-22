@@ -24,7 +24,7 @@ export type ReorderOutcome = "unchanged" | "moved" | "refused";
 
 /** A write refused because the task changed since it was read. */
 export function isStale(cause: unknown): boolean {
-  return cause instanceof ApiError && cause.status === 409 && cause.code === "version_mismatch";
+  return cause instanceof ApiError && cause.status === 412 && cause.code === "precondition_failed";
 }
 
 export async function reorder(

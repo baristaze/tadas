@@ -214,8 +214,13 @@ context on keeps the stage the callee needs.
   copy increments it on update, move, and soft delete, and the storage
   write is a compare-and-set, `WHERE version = :expected` in one
   statement in Postgres and the same check and write under the lock in
-  the memory impl, which raises `VersionMismatch`, a `Conflict` (409
-  `version_mismatch`), when the row is at another version or is gone.
+  the memory impl, which raises `PreconditionFailed` (412
+  `precondition_failed`), when the row is at another version or is gone.
+  The version the write compares with is the caller's, never one the
+  update reads: `If-Match` on a `PATCH` and a `DELETE`, `expected_version`
+  on the move, and a write that names none is `ValidationFailed`. The
+  copy on update keeps `PROVENANCE_FIELDS` and the task's
+  `MANAGER_OWNED_FIELDS` (its position and its version) as stored.
   The update never inserts; the create primitive is the only way in. So
   a snapshot that missed a write is refused, never merged over it, and
   an edit that raced a delete finds the task gone and cannot bring it

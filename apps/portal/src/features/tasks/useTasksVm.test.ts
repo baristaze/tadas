@@ -14,6 +14,8 @@ interface Held {
   method: string;
   path: string;
   body: unknown;
+  /** The version the write names in If-Match, if it names one there. */
+  ifMatch: number | undefined;
   resolve: (value: unknown) => void;
   reject: (cause: unknown) => void;
 }
@@ -25,8 +27,16 @@ const net = vi.hoisted(() => {
     for (const [prefix, value] of reads) if (path.startsWith(prefix)) return Promise.resolve(value);
     return Promise.reject(new Error(`no read stubbed for ${path}`));
   };
-  const hold = (method: string) => (path: string, body?: unknown) =>
-    new Promise((resolve, reject) => writes.push({ method, path, body, resolve, reject }));
+  // A DELETE has no body, so its options come second; every other write's third.
+  const hold =
+    (method: string) =>
+    (path: string, ...rest: unknown[]) => {
+      const body = method === "DELETE" ? undefined : rest[0];
+      const options = (method === "DELETE" ? rest[0] : rest[1]) as { ifMatch?: number } | undefined;
+      return new Promise((resolve, reject) =>
+        writes.push({ method, path, body, ifMatch: options?.ifMatch, resolve, reject }),
+      );
+    };
   return { reads, writes, read, hold };
 });
 
@@ -106,16 +116,17 @@ afterEach(async () => {
   await act(async () => root.render(null));
 });
 
-const refused = () => new ApiError(409, "version_mismatch", "the task changed since it was read", "req-1");
+const refused = () => new ApiError(412, "precondition_failed", "the task changed since it was read", "req-1");
 
 it("says the first tick was refused even after a second tick started", async () => {
   await mount();
   await act(async () => void vm().complete(alpha));
   await act(async () => void vm().complete(beta));
-  expect(net.writes.map((w) => `${w.method} ${w.path}`)).toEqual([
-    "PATCH /v1/tasks/t1",
-    "PATCH /v1/tasks/t2",
+  expect(net.writes.map((w) => `${w.method} ${w.path} ${w.ifMatch}`)).toEqual([
+    "PATCH /v1/tasks/t1 1",
+    "PATCH /v1/tasks/t2 1",
   ]);
+  expect(net.writes[0]!.body).toEqual({ status: "done" });
   await act(async () => {
     net.writes[0]!.reject(refused());
     net.writes[1]!.resolve({ ...beta, status: "done", version: 2 });
@@ -141,9 +152,9 @@ it("says the first delete was refused even after a second delete started", async
   await mount();
   await act(async () => void vm().destroy(alpha));
   await act(async () => void vm().destroy(beta));
-  expect(net.writes.map((w) => `${w.method} ${w.path}`)).toEqual([
-    "DELETE /v1/tasks/t1?version=1",
-    "DELETE /v1/tasks/t2?version=1",
+  expect(net.writes.map((w) => `${w.method} ${w.path} ${w.ifMatch}`)).toEqual([
+    "DELETE /v1/tasks/t1 1",
+    "DELETE /v1/tasks/t2 1",
   ]);
   await act(async () => {
     net.writes[0]!.reject(refused());

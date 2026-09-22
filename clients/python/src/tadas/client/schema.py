@@ -88,16 +88,27 @@ class LoginRequest(BaseModel):
     password: Annotated[str, Field(title='Password')]
 
 
+class ExpectedVersion(RootModel[int]):
+    root: Annotated[int, Field(ge=1, title='Expected Version')]
+
+
+class Version(RootModel[int]):
+    root: Annotated[int, Field(deprecated=True, description='Superseded by `expected_version`, and accepted in its place until every client sends it.', ge=1, title='Version')]
+
+
 class MoveTaskRequest(BaseModel):
     """
     Places an open task right after `after_id`; null puts it at the top.
-    `version` is the moved task's, as on `UpdateTaskRequest`.
+    `expected_version` is the moved task's as the caller read it: 412
+    `precondition_failed` when the task changed since, and 422
+    `validation_failed` when the request names no version.
     """
     model_config = ConfigDict(
         extra='forbid',
     )
     after_id: Annotated[UUID | None, Field(title='After Id')] = None
-    version: Annotated[int, Field(ge=1, title='Version')]
+    expected_version: Annotated[ExpectedVersion | None, Field(title='Expected Version')] = None
+    version: Annotated[Version | None, Field(deprecated=True, description='Superseded by `expected_version`, and accepted in its place until every client sends it.', title='Version')] = None
 
 
 class OperatorEventView(BaseModel):
@@ -247,13 +258,19 @@ class Title(RootModel[str]):
     root: Annotated[str, Field(max_length=500, title='Title')]
 
 
+class Version1(RootModel[int]):
+    root: Annotated[int, Field(deprecated=True, description='Superseded by the `If-Match` header, and accepted in its place until every client sends the header.', ge=1, title='Version')]
+
+
 class UpdateTaskRequest(BaseModel):
     """
     A partial update: absent fields are kept. An explicit null
-    `assignee_id` unassigns the task. `version` is the task's version as the
-    caller read it: the update lands only when the task is still at it, and
-    is refused with 409 `version_mismatch` when another write landed since,
-    so the caller reads again and decides over the current task.
+    `assignee_id` unassigns the task. The version the update compares with is
+    the task's as the caller read it, in the `If-Match` header: the update
+    lands only when the task is still at it, and is refused with 412
+    `precondition_failed` when another write landed since, so the caller reads
+    again and decides over the current task. An update that names no version
+    is refused with 422 `validation_failed`, since it would overwrite blind.
     """
     model_config = ConfigDict(
         extra='forbid',
@@ -262,7 +279,7 @@ class UpdateTaskRequest(BaseModel):
     notes: Annotated[str | None, Field(title='Notes')] = None
     status: TaskStatus | None = None
     title: Annotated[Title | None, Field(title='Title')] = None
-    version: Annotated[int, Field(ge=1, title='Version')]
+    version: Annotated[Version1 | None, Field(deprecated=True, description='Superseded by the `If-Match` header, and accepted in its place until every client sends the header.', title='Version')] = None
 
 
 class UserView(BaseModel):

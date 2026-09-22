@@ -46,11 +46,11 @@ describe("reorder", () => {
 
   it("refuses a stale reorder, says so, and reloads the list", async () => {
     // Another window moved or edited task a after this one listed it: the
-    // server answers 409 version_mismatch, and the order shown was never
+    // server answers 412 precondition_failed, and the order shown was never
     // the server's, so the list is fetched again.
     const open = [task("a", 1), task("b"), task("c")];
     const fx = effects(async () => {
-      throw new ApiError(409, "version_mismatch", "task a is at version 2, not 1", "req_1");
+      throw new ApiError(412, "precondition_failed", "task a is at version 2, not 1", "req_1");
     });
     expect(await reorder(open, "a", "c", "after", fx, describeCause)).toBe("refused");
     expect(fx.move).toHaveBeenCalledWith("a", "c", 1);
@@ -78,7 +78,8 @@ describe("reorder", () => {
   });
 
   it("knows a stale write from any other error", () => {
-    expect(isStale(new ApiError(409, "version_mismatch", "moved", null))).toBe(true);
+    expect(isStale(new ApiError(412, "precondition_failed", "moved", null))).toBe(true);
+    expect(isStale(new ApiError(409, "version_mismatch", "moved", null))).toBe(false);
     expect(isStale(new ApiError(409, "conflict", "other", null))).toBe(false);
     expect(isStale(new Error("offline"))).toBe(false);
   });

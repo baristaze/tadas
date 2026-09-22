@@ -25,12 +25,18 @@ async def titles(
     return [t["title"] for t in listed.json()["items"]]
 
 
+def if_match(task: dict) -> dict[str, str]:
+    """The precondition a write carries: the version as read, as an entity tag."""
+    return {"If-Match": f'"{task["version"]}"'}
+
+
 async def patch(
     client: httpx.AsyncClient, headers: dict[str, str], task: dict, **changes: object
 ) -> dict:
     """An update from the task as held: it names the version it carries."""
-    body = {**changes, "version": task["version"]}
-    patched = await client.patch(f"/v1/tasks/{task['id']}", headers=headers, json=body)
+    patched = await client.patch(
+        f"/v1/tasks/{task['id']}", headers={**headers, **if_match(task)}, json=changes
+    )
     assert patched.status_code == 200, patched.text
     return patched.json()
 
@@ -38,7 +44,7 @@ async def patch(
 async def move(
     client: httpx.AsyncClient, headers: dict[str, str], task: dict, after_id: str | None
 ) -> httpx.Response:
-    body = {"after_id": after_id, "version": task["version"]}
+    body = {"after_id": after_id, "expected_version": task["version"]}
     return await client.post(f"/v1/tasks/{task['id']}/move", headers=headers, json=body)
 
 
@@ -68,7 +74,7 @@ async def test_task_round_trip(client: httpx.AsyncClient, owner: dict[str, str])
     assert fetched.status_code == 200 and fetched.json()["title"] == "Write the scaffold"
 
     done = await client.patch(
-        f"/v1/tasks/{task['id']}", headers=owner, json={"status": "done", "version": 1}
+        f"/v1/tasks/{task['id']}", headers={**owner, "If-Match": '"1"'}, json={"status": "done"}
     )
     assert done.status_code == 200, done.text
     assert done.json()["status"] == "done" and done.json()["notes"] == "and test it"
@@ -76,7 +82,7 @@ async def test_task_round_trip(client: httpx.AsyncClient, owner: dict[str, str])
     assert await titles(client, owner) == []
     assert await titles(client, owner, status="done") == ["Write the scaffold"]
 
-    deleted = await client.delete(f"/v1/tasks/{task['id']}", headers=owner, params={"version": 2})
+    deleted = await client.delete(f"/v1/tasks/{task['id']}", headers={**owner, "If-Match": '"2"'})
     assert deleted.status_code == 200, deleted.text
     assert deleted.json()["deleted_at"] is not None and deleted.json()["version"] == 3
     assert (await client.get(f"/v1/tasks/{task['id']}", headers=owner)).status_code == 404
@@ -212,7 +218,9 @@ async def test_a_patch_naming_provenance_is_refused(
     task_id = created.json()["id"]
     for field in ("created_by", "created_at", "deleted_at", "deleted_by"):
         patched = await client.patch(
-            f"/v1/tasks/{task_id}", headers=owner, json={"title": "x", "version": 1, field: None}
+            f"/v1/tasks/{task_id}",
+            headers={**owner, "If-Match": '"1"'},
+            json={"title": "x", field: None},
         )
         assert patched.status_code == 422, (field, patched.text)
     unchanged = await client.get(f"/v1/tasks/{task_id}", headers=owner)
@@ -233,10 +241,41 @@ async def test_every_write_names_the_version_it_read(
     assert no_move.status_code == 422, no_move.text
     no_delete = await client.delete(f"/v1/tasks/{task['id']}", headers=owner)
     assert no_delete.status_code == 422, no_delete.text
+    for tag in ('"x"', '"0"', 'W/"1"', ""):
+        bad = await client.patch(
+            f"/v1/tasks/{task['id']}", headers={**owner, "If-Match": tag}, json={"title": "x"}
+        )
+        assert bad.status_code == 422, (tag, bad.text)
+    two = await client.patch(
+        f"/v1/tasks/{task['id']}", headers={**owner, **if_match(task)}, json={"version": 2}
+    )
+    assert two.status_code == 422, two.text
     assert (await client.get(f"/v1/tasks/{task['id']}", headers=owner)).json() == task
 
 
-async def test_two_updates_from_one_snapshot_one_wins_and_the_other_is_409(
+async def test_a_client_that_predates_if_match_still_names_its_version(
+    client: httpx.AsyncClient, owner: dict[str, str]
+) -> None:
+    # Until every client sends If-Match and expected_version, the version in
+    # the body and in the query stands in for them, under the same refusal.
+    task = await add(client, owner, "older client")
+    edited = await client.patch(
+        f"/v1/tasks/{task['id']}", headers=owner, json={"title": "edited", "version": 1}
+    )
+    assert edited.status_code == 200 and edited.json()["version"] == 2, edited.text
+    stale = await client.patch(
+        f"/v1/tasks/{task['id']}", headers=owner, json={"title": "again", "version": 1}
+    )
+    assert stale.status_code == 412 and stale.json()["error"]["code"] == "precondition_failed"
+    moved = await client.post(
+        f"/v1/tasks/{task['id']}/move", headers=owner, json={"after_id": None, "version": 2}
+    )
+    assert moved.status_code == 200 and moved.json()["version"] == 3, moved.text
+    deleted = await client.delete(f"/v1/tasks/{task['id']}", headers=owner, params={"version": 3})
+    assert deleted.status_code == 200 and deleted.json()["deleted_at"] is not None, deleted.text
+
+
+async def test_two_updates_from_one_snapshot_one_wins_and_the_other_is_412(
     client: httpx.AsyncClient, container: AppContainer, owner: dict[str, str]
 ) -> None:
     org_id = UUID((await client.get("/v1/orgs/current", headers=owner)).json()["id"])
@@ -248,23 +287,23 @@ async def test_two_updates_from_one_snapshot_one_wins_and_the_other_is_409(
     task = await add(client, owner, "as read")
     anns = await patch(client, owner, task, title="ann's")
     bobs = await client.patch(
-        f"/v1/tasks/{task['id']}", headers=as_bob, json={"title": "bob's", "version": 1}
+        f"/v1/tasks/{task['id']}", headers={**as_bob, **if_match(task)}, json={"title": "bob's"}
     )
-    assert bobs.status_code == 409, bobs.text
-    assert bobs.json()["error"]["code"] == "version_mismatch"
+    assert bobs.status_code == 412, bobs.text
+    assert bobs.json()["error"]["code"] == "precondition_failed"
     assert (await client.get(f"/v1/tasks/{task['id']}", headers=as_bob)).json() == anns
     again = await patch(client, as_bob, anns, title="bob's")
     assert again["title"] == "bob's" and again["version"] == 3
 
     # The same for a move and a delete from the stale snapshot.
     stale_move = await move(client, as_bob, task, None)
-    assert stale_move.status_code == 409, stale_move.text
-    assert stale_move.json()["error"]["code"] == "version_mismatch"
+    assert stale_move.status_code == 412, stale_move.text
+    assert stale_move.json()["error"]["code"] == "precondition_failed"
     stale_delete = await client.delete(
-        f"/v1/tasks/{task['id']}", headers=as_bob, params={"version": 1}
+        f"/v1/tasks/{task['id']}", headers={**as_bob, **if_match(task)}
     )
-    assert stale_delete.status_code == 409
-    assert stale_delete.json()["error"]["code"] == "version_mismatch"
+    assert stale_delete.status_code == 412
+    assert stale_delete.json()["error"]["code"] == "precondition_failed"
     assert await titles(client, owner) == ["bob's"]
 
 
@@ -272,14 +311,12 @@ async def test_a_delete_racing_an_edit_cannot_be_undone_by_the_edit(
     client: httpx.AsyncClient, owner: dict[str, str]
 ) -> None:
     task = await add(client, owner, "going")
-    deleted = await client.delete(
-        f"/v1/tasks/{task['id']}", headers=owner, params={"version": task["version"]}
-    )
+    deleted = await client.delete(f"/v1/tasks/{task['id']}", headers={**owner, **if_match(task)})
     assert deleted.status_code == 200, deleted.text
     # The edit holds the snapshot from before the delete: the task is gone
     # for it, and its "not deleted" never lands.
     edit = await client.patch(
-        f"/v1/tasks/{task['id']}", headers=owner, json={"title": "back?", "version": 1}
+        f"/v1/tasks/{task['id']}", headers={**owner, **if_match(task)}, json={"title": "back?"}
     )
     assert edit.status_code == 404, edit.text
     assert await titles(client, owner) == [] and await titles(client, owner, status="done") == []

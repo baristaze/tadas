@@ -45,8 +45,9 @@ export function useDoneTasks(scope: TaskScope) {
 
 // Mutations only talk to the server; the list's view model owns the cache edits
 // and the motion around them. Every write names the version of the task the
-// view model holds: the server refuses a write over a task that changed since
-// (409 `version_mismatch`), and the view model reloads the list.
+// view model holds, in `If-Match` or, on the move, `expected_version`: the
+// server refuses a write over a task that changed since (412
+// `precondition_failed`), and the view model reloads the list.
 
 export function useCreateTask() {
   return useMutation({
@@ -57,22 +58,24 @@ export function useCreateTask() {
 
 export function useUpdateTask() {
   return useMutation({
-    mutationFn: ({ id, body }: { id: string; body: UpdateTaskRequest }) =>
-      api.patch<TaskView>(`/v1/tasks/${id}`, body),
+    mutationFn: ({ id, body, version }: { id: string; body: UpdateTaskRequest; version: number }) =>
+      api.patch<TaskView>(`/v1/tasks/${id}`, body, { ifMatch: version }),
   });
 }
 
 export function useMoveTask() {
   return useMutation({
     mutationFn: ({ id, afterId, version }: { id: string; afterId: string | null; version: number }) =>
-      api.post<TaskView>(`/v1/tasks/${id}/move`, { after_id: afterId, version } satisfies MoveTaskRequest),
+      api.post<TaskView>(`/v1/tasks/${id}/move`, {
+        after_id: afterId,
+        expected_version: version,
+      } satisfies MoveTaskRequest),
   });
 }
 
 export function useDeleteTask() {
   return useMutation({
-    // A DELETE has no body, so the version rides the query string.
     mutationFn: ({ id, version }: { id: string; version: number }) =>
-      api.del<TaskView>(`/v1/tasks/${id}?version=${version}`),
+      api.del<TaskView>(`/v1/tasks/${id}`, { ifMatch: version }),
   });
 }

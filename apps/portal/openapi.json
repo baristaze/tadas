@@ -605,7 +605,7 @@
       },
       "MoveTaskRequest": {
         "additionalProperties": false,
-        "description": "Places an open task right after `after_id`; null puts it at the top.\n`version` is the moved task's, as on `UpdateTaskRequest`.",
+        "description": "Places an open task right after `after_id`; null puts it at the top.\n`expected_version` is the moved task's as the caller read it: 412\n`precondition_failed` when the task changed since, and 422\n`validation_failed` when the request names no version.",
         "properties": {
           "after_id": {
             "anyOf": [
@@ -619,15 +619,33 @@
             ],
             "title": "After Id"
           },
+          "expected_version": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Version"
+          },
           "version": {
-            "minimum": 1.0,
-            "title": "Version",
-            "type": "integer"
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "deprecated": true,
+            "description": "Superseded by `expected_version`, and accepted in its place until every client sends it.",
+            "title": "Version"
           }
         },
-        "required": [
-          "version"
-        ],
         "title": "MoveTaskRequest",
         "type": "object"
       },
@@ -1087,7 +1105,7 @@
       },
       "UpdateTaskRequest": {
         "additionalProperties": false,
-        "description": "A partial update: absent fields are kept. An explicit null\n`assignee_id` unassigns the task. `version` is the task's version as the\ncaller read it: the update lands only when the task is still at it, and\nis refused with 409 `version_mismatch` when another write landed since,\nso the caller reads again and decides over the current task.",
+        "description": "A partial update: absent fields are kept. An explicit null\n`assignee_id` unassigns the task. The version the update compares with is\nthe task's as the caller read it, in the `If-Match` header: the update\nlands only when the task is still at it, and is refused with 412\n`precondition_failed` when another write landed since, so the caller reads\nagain and decides over the current task. An update that names no version\nis refused with 422 `validation_failed`, since it would overwrite blind.",
         "properties": {
           "assignee_id": {
             "anyOf": [
@@ -1135,14 +1153,20 @@
             "title": "Title"
           },
           "version": {
-            "minimum": 1.0,
-            "title": "Version",
-            "type": "integer"
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "deprecated": true,
+            "description": "Superseded by the `If-Match` header, and accepted in its place until every client sends the header.",
+            "title": "Version"
           }
         },
-        "required": [
-          "version"
-        ],
         "title": "UpdateTaskRequest",
         "type": "object"
       },
@@ -4269,15 +4293,24 @@
             }
           },
           {
-            "description": "The task's version as the caller read it; 409 `version_mismatch` when the task changed since.",
+            "deprecated": true,
+            "description": "Superseded by the `If-Match` header, and accepted in its place until every client sends the header.",
             "in": "query",
             "name": "version",
-            "required": true,
+            "required": false,
             "schema": {
-              "description": "The task's version as the caller read it; 409 `version_mismatch` when the task changed since.",
-              "minimum": 1,
-              "title": "Version",
-              "type": "integer"
+              "anyOf": [
+                {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "deprecated": true,
+              "description": "Superseded by the `If-Match` header, and accepted in its place until every client sends the header.",
+              "title": "Version"
             }
           },
           {
@@ -4326,6 +4359,24 @@
                 }
               ],
               "title": "X-App-Version"
+            }
+          },
+          {
+            "description": "The version the caller read, as an entity tag: `\"3\"`. 412 `precondition_failed` when the record changed since.",
+            "in": "header",
+            "name": "If-Match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The version the caller read, as an entity tag: `\"3\"`. 412 `precondition_failed` when the record changed since.",
+              "title": "If-Match"
             }
           }
         ],
@@ -4504,6 +4555,24 @@
                 }
               ],
               "title": "X-App-Version"
+            }
+          },
+          {
+            "description": "The version the caller read, as an entity tag: `\"3\"`. 412 `precondition_failed` when the record changed since.",
+            "in": "header",
+            "name": "If-Match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The version the caller read, as an entity tag: `\"3\"`. 412 `precondition_failed` when the record changed since.",
+              "title": "If-Match"
             }
           }
         ],

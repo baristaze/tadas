@@ -243,6 +243,7 @@ class ApiClient:
         params: dict[str, Any] | None = None,
         token: str | Unset | None = UNSET,
         idempotency_key: str | None = None,
+        if_match: int | None = None,
     ) -> Any:
         """The one call every operation goes through, and the one place a
         request is sent again. Raises `ApiError` on any non-2xx; a 401 clears
@@ -264,6 +265,7 @@ class ApiClient:
                     params=params,
                     token=token,
                     idempotency_key=idempotency_key,
+                    if_match=if_match,
                 )
             except ApiError as error:
                 if attempt == bound or error.status not in RETRYABLE_STATUSES:
@@ -285,15 +287,19 @@ class ApiClient:
         params: dict[str, Any] | None = None,
         token: str | Unset | None = UNSET,
         idempotency_key: str | None = None,
+        if_match: int | None = None,
     ) -> Any:
         """One attempt: the headers this client puts on every call, the send,
-        and the answer turned into a view or a typed error."""
+        and the answer turned into a view or a typed error. `if_match` is the
+        version a write names, sent as the entity tag `If-Match` carries."""
         headers: dict[str, str] = {}
         bearer = self.token if isinstance(token, Unset) else token
         if bearer:
             headers["Authorization"] = f"Bearer {bearer}"
         if idempotency_key:
             headers[IDEMPOTENCY_HEADER] = idempotency_key
+        if if_match is not None:
+            headers["If-Match"] = f'"{if_match}"'
         response = await self._http.request(method, path, json=json, params=params, headers=headers)
         # A delayed refusal belongs to the bearer sent, never a newer sign-in.
         if response.status_code == 401 and isinstance(token, Unset) and self.token == bearer:
@@ -456,9 +462,10 @@ class ApiClient:
     ) -> TaskView:
         """A partial update: only what the caller passes is sent. `assignee_id=None`
         unassigns; leaving it out keeps the assignee. `version` is the task's as
-        the caller read it; the API refuses the update with 409 `version_mismatch`
-        when the task changed since, and the caller reads again."""
-        body: dict[str, Any] = {"version": version}
+        the caller read it, sent in `If-Match`; the API refuses the update with
+        412 `precondition_failed` when the task changed since, and the caller
+        reads again."""
+        body: dict[str, Any] = {}
         if title is not None:
             body["title"] = title
         if notes is not None:
@@ -468,21 +475,24 @@ class ApiClient:
         if not isinstance(assignee_id, Unset):
             body["assignee_id"] = None if assignee_id is None else str(assignee_id)
         return TaskView.model_validate(
-            await self.request("PATCH", f"/v1/tasks/{task_id}", json=body)
+            await self.request("PATCH", f"/v1/tasks/{task_id}", json=body, if_match=version)
         )
 
     async def move_task(self, task_id: UUID, after_id: UUID | None, version: int) -> TaskView:
-        """`version` is the moved task's, as on `update_task`."""
-        body = {"after_id": None if after_id is None else str(after_id), "version": version}
+        """`version` is the moved task's, as on `update_task`; a move is a POST,
+        so it rides the body as `expected_version`."""
+        body = {
+            "after_id": None if after_id is None else str(after_id),
+            "expected_version": version,
+        }
         return TaskView.model_validate(
             await self.request("POST", f"/v1/tasks/{task_id}/move", json=body)
         )
 
     async def delete_task(self, task_id: UUID, version: int) -> TaskView:
-        """`version` is the task's, as on `update_task`; a DELETE has no body,
-        so it rides the query string."""
+        """`version` is the task's, as on `update_task`, in `If-Match`."""
         return TaskView.model_validate(
-            await self.request("DELETE", f"/v1/tasks/{task_id}", params={"version": version})
+            await self.request("DELETE", f"/v1/tasks/{task_id}", if_match=version)
         )
 
     # Events and the channel

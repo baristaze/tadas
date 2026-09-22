@@ -35,20 +35,22 @@ class UniqueKeyTaken(Conflict):
     code = "unique_key_taken"
 
 
-class VersionMismatch(Conflict):
-    """A compare-and-set found the row at another version, or gone: another
-    writer landed between the caller's read and this write, so the caller's
-    snapshot is stale and must be read again."""
-
-    code = "version_mismatch"
-
-
 class MembershipLimitReached(Conflict):
     """One identity is a member of as many orgs as a person may join. A create
     that would add one more is refused, and a read that finds more than the
     bound (two adds that raced) is refused rather than cut short."""
 
     code = "membership_limit_reached"
+
+
+class PreconditionFailed(PlatformException):
+    """The caller's expected version no longer matches: a compare-and-set
+    found the row at another version, or gone. Another writer landed between
+    the caller's read and this write, so the caller's snapshot is stale and
+    must be read again."""
+
+    http_status = 412
+    code = "precondition_failed"
 
 
 class ValidationFailed(PlatformException):

@@ -114,14 +114,15 @@ async def test_update_sends_only_what_was_passed_and_null_unassigns() -> None:
         assignee = uuid4()
         await client.update_task(task_id, version=3, title="t", assignee_id=assignee)
     bodies = [r.read() for r in recorder.requests]
-    assert bodies[0] == b'{"version":1,"status":"done"}'
-    assert bodies[1] == b'{"version":2,"assignee_id":null}'
-    assert bodies[2] == f'{{"version":3,"title":"t","assignee_id":"{assignee}"}}'.encode()
+    assert bodies[0] == b'{"status":"done"}'
+    assert bodies[1] == b'{"assignee_id":null}'
+    assert bodies[2] == f'{{"title":"t","assignee_id":"{assignee}"}}'.encode()
+    assert [r.headers["if-match"] for r in recorder.requests] == ['"1"', '"2"', '"3"']
     assert repr(UNSET) == "UNSET"
 
 
 async def test_every_write_carries_the_version_it_was_given() -> None:
-    # The move says it in its body; the delete, which has none, in the query.
+    # The move says it in its body; the delete, which has none, in If-Match.
     recorder = Recorder()
     async with client_over(recorder) as client:
         task_id, anchor = UUID(TASK["id"]), uuid4()
@@ -129,9 +130,10 @@ async def test_every_write_carries_the_version_it_was_given() -> None:
         await client.move_task(task_id, None, version=5)
         await client.delete_task(task_id, version=6)
     moved, topped, deleted = recorder.requests
-    assert moved.read() == f'{{"after_id":"{anchor}","version":4}}'.encode()
-    assert topped.read() == b'{"after_id":null,"version":5}'
-    assert deleted.method == "DELETE" and deleted.url.params["version"] == "6"
+    assert moved.read() == f'{{"after_id":"{anchor}","expected_version":4}}'.encode()
+    assert topped.read() == b'{"after_id":null,"expected_version":5}'
+    assert deleted.method == "DELETE" and deleted.headers["if-match"] == '"6"'
+    assert "version" not in deleted.url.params
 
 
 async def test_the_sign_in_flow_uses_the_credential_it_is_given() -> None:

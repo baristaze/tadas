@@ -761,13 +761,21 @@ export interface components {
         /**
          * MoveTaskRequest
          * @description Places an open task right after `after_id`; null puts it at the top.
-         *     `version` is the moved task's, as on `UpdateTaskRequest`.
+         *     `expected_version` is the moved task's as the caller read it: 412
+         *     `precondition_failed` when the task changed since, and 422
+         *     `validation_failed` when the request names no version.
          */
         MoveTaskRequest: {
             /** After Id */
             after_id?: string | null;
-            /** Version */
-            version: number;
+            /** Expected Version */
+            expected_version?: number | null;
+            /**
+             * Version
+             * @deprecated
+             * @description Superseded by `expected_version`, and accepted in its place until every client sends it.
+             */
+            version?: number | null;
         };
         /**
          * OperatorEventView
@@ -1004,10 +1012,12 @@ export interface components {
         /**
          * UpdateTaskRequest
          * @description A partial update: absent fields are kept. An explicit null
-         *     `assignee_id` unassigns the task. `version` is the task's version as the
-         *     caller read it: the update lands only when the task is still at it, and
-         *     is refused with 409 `version_mismatch` when another write landed since,
-         *     so the caller reads again and decides over the current task.
+         *     `assignee_id` unassigns the task. The version the update compares with is
+         *     the task's as the caller read it, in the `If-Match` header: the update
+         *     lands only when the task is still at it, and is refused with 412
+         *     `precondition_failed` when another write landed since, so the caller reads
+         *     again and decides over the current task. An update that names no version
+         *     is refused with 422 `validation_failed`, since it would overwrite blind.
          */
         UpdateTaskRequest: {
             /** Assignee Id */
@@ -1017,8 +1027,12 @@ export interface components {
             status?: components["schemas"]["TaskStatus"] | null;
             /** Title */
             title?: string | null;
-            /** Version */
-            version: number;
+            /**
+             * Version
+             * @deprecated
+             * @description Superseded by the `If-Match` header, and accepted in its place until every client sends the header.
+             */
+            version?: number | null;
         };
         /**
          * UserPageView
@@ -2221,14 +2235,19 @@ export interface operations {
     };
     delete_task_v1_tasks__task_id__delete: {
         parameters: {
-            query: {
-                /** @description The task's version as the caller read it; 409 `version_mismatch` when the task changed since. */
-                version: number;
+            query?: {
+                /**
+                 * @deprecated
+                 * @description Superseded by the `If-Match` header, and accepted in its place until every client sends the header.
+                 */
+                version?: number | null;
             };
             header?: {
                 authorization?: string | null;
                 "x-app"?: string | null;
                 "x-app-version"?: string | null;
+                /** @description The version the caller read, as an entity tag: `"3"`. 412 `precondition_failed` when the record changed since. */
+                "If-Match"?: string | null;
             };
             path: {
                 task_id: string;
@@ -2264,6 +2283,8 @@ export interface operations {
                 authorization?: string | null;
                 "x-app"?: string | null;
                 "x-app-version"?: string | null;
+                /** @description The version the caller read, as an entity tag: `"3"`. 412 `precondition_failed` when the record changed since. */
+                "If-Match"?: string | null;
             };
             path: {
                 task_id: string;

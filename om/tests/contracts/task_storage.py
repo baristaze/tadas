@@ -9,7 +9,7 @@ from uuid import UUID
 import pytest
 
 from tadas.om.base import new_id, utcnow
-from tadas.om.exceptions import TenantMismatch, VersionMismatch
+from tadas.om.exceptions import PreconditionFailed, TenantMismatch
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.tasks.rules import follows
 from tadas.om.tasks.storage import TasksStorageInterface
@@ -271,7 +271,7 @@ class TaskStorageContract:
         task = make_task("as read")
         await seed(storage, org, task)
         first = await bump(storage, org, task, title="first writer")
-        with pytest.raises(VersionMismatch):
+        with pytest.raises(PreconditionFailed):
             await bump(storage, org, task, title="second writer")
         assert await storage.read_task(org, task.id) == first
         assert first.version == 2
@@ -284,7 +284,7 @@ class TaskStorageContract:
         # too: the update reports it and leaves nothing behind.
         org = new_id()
         task = make_task("never stored")
-        with pytest.raises(VersionMismatch):
+        with pytest.raises(PreconditionFailed):
             await bump(storage, org, task, title="conjured")
         assert await storage.read_task(org, task.id) is None
 
@@ -452,7 +452,7 @@ class TaskStorageContract:
         def placed(task: Task, position: float) -> Task:
             return task.model_copy(update={"position": position, "version": task.version + 1})
 
-        with pytest.raises(VersionMismatch):
+        with pytest.raises(PreconditionFailed):
             await storage.update_tasks(
                 org,
                 [

@@ -19,7 +19,7 @@ from sqlalchemy import (
 )
 
 from tadas.om.base import EMPTY_UUID
-from tadas.om.exceptions import TenantMismatch, VersionMismatch
+from tadas.om.exceptions import PreconditionFailed, TenantMismatch
 from tadas.om.outbox.storage.tables.outbox_rows import OutboxRows
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.storage.impl.pg_base import PgStorageBase
@@ -173,7 +173,7 @@ class TasksStoragePostgresImpl(PgStorageBase, TasksStorageInterface):
 
     async def _why_not(
         self, org_id: UUID, task_id: UUID, expected_version: int
-    ) -> TenantMismatch | VersionMismatch:
+    ) -> TenantMismatch | PreconditionFailed:
         """Which of the three conditions the compare-and-set missed: the row is
         gone, it is another tenant's, or it has moved. The row is read after
         the failed statement, so the version it names is a report, never a
@@ -191,9 +191,9 @@ class TasksStoragePostgresImpl(PgStorageBase, TasksStorageInterface):
         async with self._session_for(stmt, EMPTY_UUID) as session:
             found = (await session.execute(stmt)).one_or_none()
         if found is None:
-            return VersionMismatch(f"task {task_id} is gone")
+            return PreconditionFailed(f"task {task_id} is gone")
         if found.org_id != org_id:
             return TenantMismatch(f"tasks {task_id} is not in {org_id}")
-        return VersionMismatch(
+        return PreconditionFailed(
             f"task {task_id} is at version {found.version}, not {expected_version}"
         )

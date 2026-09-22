@@ -44,6 +44,19 @@ def decode_cursor(status: TaskStatus, cursor: str) -> OpenTaskCursor | TaskCurso
         raise ValidationFailed("the cursor is not one this list issued") from None
 
 
+def expected_version(named: int | None, legacy: int | None) -> int:
+    """The version a write compares with: the one the request names, in
+    `If-Match` or `expected_version`, or the `version` a client that predates
+    them sends. A request that names none would overwrite blind, and one that
+    names two that differ is ambiguous; both are refused."""
+    if named is not None and legacy is not None and named != legacy:
+        raise ValidationFailed(f"the request names two versions, {named} and {legacy}")
+    version = named if named is not None else legacy
+    if version is None:
+        raise ValidationFailed("a write names the version it read, in If-Match or expected_version")
+    return version
+
+
 class TasksServiceImpl(TasksServiceInterface):
     def __init__(self, tasks: TasksManagerInterface) -> None:
         self._tasks = tasks
@@ -91,23 +104,30 @@ class TasksServiceImpl(TasksServiceInterface):
         )
         return TaskView.model_validate(await self._tasks.create_task(ctx, task))
 
-    async def update_task(self, ctx: OpContext, task_id: UUID, body: UpdateTaskRequest) -> TaskView:
+    async def update_task(
+        self, ctx: OpContext, task_id: UUID, body: UpdateTaskRequest, if_match: int | None
+    ) -> TaskView:
+        expected = expected_version(if_match, body.version)
         current = await self._tasks.get_task(ctx, task_id)
         # Only the assignee can be cleared; a null title, notes, or status is
-        # ignored. The version is the caller's, never the stored one: the
-        # manager conditions the write on it.
+        # ignored. The version is the caller's, never the stored one, and it
+        # travels beside the entity: the manager conditions the write on it.
         changes = {
             name: value
-            for name, value in body.model_dump(exclude_unset=True).items()
+            for name, value in body.model_dump(exclude_unset=True, exclude={"version"}).items()
             if value is not None or name == "assignee_id"
         }
         # model_copy does not validate; a copy that carries caller input does.
         changed = Task.model_validate({**current.model_dump(), **changes})
-        return TaskView.model_validate(await self._tasks.update_task(ctx, changed))
+        return TaskView.model_validate(await self._tasks.update_task(ctx, changed, expected))
 
     async def move_task(self, ctx: OpContext, task_id: UUID, body: MoveTaskRequest) -> TaskView:
-        moved = await self._tasks.move_task(ctx, task_id, body.after_id, body.version)
+        expected = expected_version(body.expected_version, body.version)
+        moved = await self._tasks.move_task(ctx, task_id, body.after_id, expected)
         return TaskView.model_validate(moved)
 
-    async def delete_task(self, ctx: OpContext, task_id: UUID, version: int) -> TaskView:
-        return TaskView.model_validate(await self._tasks.delete_task(ctx, task_id, version))
+    async def delete_task(
+        self, ctx: OpContext, task_id: UUID, if_match: int | None, version: int | None
+    ) -> TaskView:
+        expected = expected_version(if_match, version)
+        return TaskView.model_validate(await self._tasks.delete_task(ctx, task_id, expected))

@@ -97,7 +97,12 @@ class SoftDeletable(Platform):
 PROVENANCE_FIELDS = frozenset({"created_at", "created_by", "deleted_at", "deleted_by"})
 """Who made a row and who deleted it. The copy on update starts from the
 stored row and takes the caller's fields with these excluded, so no caller
-rewrites who made a row or brings a deleted one back by sending an entity."""
+rewrites who made a row or brings a deleted one back by sending an entity.
+
+Beside it, each entity that a caller updates by sending it declares
+`MANAGER_OWNED_FIELDS`, a `ClassVar[tuple[str, ...]]`: the fields its manager
+sets through the operations that own them and a caller never writes. The copy
+on update excludes both sets."""
 
 
 EMPTY_UUID = UUID(int=0)

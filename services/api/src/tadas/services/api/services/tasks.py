@@ -36,13 +36,20 @@ class TasksServiceInterface(ABC):
 
     @abstractmethod
     async def update_task(
-        self, ctx: OpContext, task_id: UUID, body: UpdateTaskRequest
-    ) -> TaskView: ...
+        self, ctx: OpContext, task_id: UUID, body: UpdateTaskRequest, if_match: int | None
+    ) -> TaskView:
+        """`if_match` is the version the `If-Match` header names, the task's
+        as the caller read it; the body's `version` stands in for it from a
+        client that predates the header. Neither is `ValidationFailed`."""
+        ...
 
     @abstractmethod
     async def move_task(self, ctx: OpContext, task_id: UUID, body: MoveTaskRequest) -> TaskView: ...
 
     @abstractmethod
-    async def delete_task(self, ctx: OpContext, task_id: UUID, version: int) -> TaskView:
-        """`version` is the task's as the caller read it, as on the update."""
+    async def delete_task(
+        self, ctx: OpContext, task_id: UUID, if_match: int | None, version: int | None
+    ) -> TaskView:
+        """The version as on the update: the `If-Match` header, or the query's
+        `version` from a client that predates the header."""
         ...

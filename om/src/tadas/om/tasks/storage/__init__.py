@@ -84,7 +84,7 @@ class TasksStorageInterface(ABC):
     ) -> None:
         """The update, a compare-and-set: lands the task and its outbox rows
         together (the named atomic write) when the stored row is at
-        `expected_version`, and raises `VersionMismatch` when it is at another
+        `expected_version`, and raises `PreconditionFailed` when it is at another
         version or is gone, landing nothing. It never inserts: a missing row is
         a row that moved."""
         ...
@@ -95,6 +95,6 @@ class TasksStorageInterface(ABC):
     ) -> None:
         """The same compare-and-set over many tasks: every task lands with its
         outbox rows, each against its own expected version, in one commit, or
-        none does and `VersionMismatch` is raised. The renumbering of an open
+        none does and `PreconditionFailed` is raised. The renumbering of an open
         list is this write: a list renumbered halfway is out of order."""
         ...
