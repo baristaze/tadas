@@ -21,7 +21,8 @@ import socket
 import subprocess
 import sys
 import time
-from collections.abc import Awaitable, Callable, Iterator
+from collections.abc import Awaitable, Callable, Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -151,12 +152,15 @@ class Served:
         return self.log.read_text().splitlines() if self.log.is_file() else []
 
     def stop(self) -> None:
-        self.process.terminate()
-        try:
-            self.process.wait(10)
-        except subprocess.TimeoutExpired:
-            self.process.kill()
-            self.process.wait(5)
+        """Ends the process, whatever state it is in, and can be called
+        twice: a teardown that has to be conditional is a port left held."""
+        if self.process.poll() is None:
+            self.process.terminate()
+            try:
+                self.process.wait(10)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+                self.process.wait(5)
 
 
 def compose_knobs() -> dict[str, str]:
@@ -168,28 +172,46 @@ def compose_knobs() -> dict[str, str]:
     return knobs
 
 
-def serve(port: int, log: Path, overrides: dict[str, str]) -> Served:
+def serve(port: int, log: Path, overrides: Mapping[str, str]) -> Served:
     """The API binary as a process, over the compose knobs and the overrides,
-    its stderr (the log) to a file the reader is handed."""
+    its stderr (the log) to a file the reader is handed. A process that never
+    answers is stopped before this raises, so no path out of here leaves one
+    running."""
     env = {**os.environ, **compose_knobs(), **overrides}
-    handle = log.open("wb")
-    process = subprocess.Popen(
-        [sys.executable, "-m", "tadas.services.api.entry", "serve", "--port", str(port)],
-        cwd=REPO,
-        env=env,
-        stdout=handle,
-        stderr=subprocess.STDOUT,
-    )
+    with log.open("wb") as handle:
+        process = subprocess.Popen(
+            [sys.executable, "-m", "tadas.services.api.entry", "serve", "--port", str(port)],
+            cwd=REPO,
+            env=env,
+            stdout=handle,
+            stderr=subprocess.STDOUT,
+        )
     served = Served(port, log, process)
-    deadline = time.monotonic() + BOOT_SECONDS
-    while time.monotonic() < deadline:
-        if process.poll() is not None:
-            break
-        if reachable(f"{served.base_url}/healthz"):
-            return served
-        time.sleep(0.5)
+    try:
+        deadline = time.monotonic() + BOOT_SECONDS
+        while time.monotonic() < deadline:
+            if process.poll() is not None:
+                break
+            if reachable(f"{served.base_url}/healthz"):
+                return served
+            time.sleep(0.5)
+    except BaseException:
+        served.stop()
+        raise
     served.stop()
     pytest.fail(f"the API did not come up on {port}:\n" + "\n".join(served.lines()[-20:]))
+
+
+@contextmanager
+def serving(port: int, log: Path, overrides: Mapping[str, str]) -> Iterator[Served]:
+    """A served process for the length of a `with`, stopped on every way out
+    of it: a failing test, a fixture that raises after the yield, an
+    interrupt. Two of these run at once, and a leaked one holds a port."""
+    served = serve(port, log, overrides)
+    try:
+        yield served
+    finally:
+        served.stop()
 
 
 def scrape(port: int | None) -> None:
@@ -276,7 +298,7 @@ def api(stores: None, tmp_path_factory: pytest.TempPathFactory) -> Iterator[Serv
     process, so the round trip runs beside whatever already holds 8000 and
     puts the collector back when it is done."""
     knobs = compose_knobs()
-    served = serve(
+    with serving(
         free_port(),
         tmp_path_factory.mktemp("api") / "api.log",
         {
@@ -287,11 +309,12 @@ def api(stores: None, tmp_path_factory: pytest.TempPathFactory) -> Iterator[Serv
             "TADAS_SENTRY_DSN": knobs["TADAS_SENTRY_DSN"],
             "TADAS_LOG_JSON": "true",
         },
-    )
-    scrape(served.port)
-    yield served
-    scrape(None)
-    served.stop()
+    ) as served:
+        scrape(served.port)
+        try:
+            yield served
+        finally:
+            scrape(None)
 
 
 @pytest.fixture(scope="module")
@@ -305,7 +328,7 @@ def api_env(env: Environment, api: Served) -> Environment:
 def broken_api(stores: None, tmp_path_factory: pytest.TempPathFactory) -> Iterator[Served]:
     """The same binary with no database behind it: every tenant route raises."""
     knobs = compose_knobs()
-    served = serve(
+    with serving(
         free_port(),
         tmp_path_factory.mktemp("broken") / "api.log",
         {
@@ -323,9 +346,8 @@ def broken_api(stores: None, tmp_path_factory: pytest.TempPathFactory) -> Iterat
             "TADAS_SENTRY_DSN": knobs["TADAS_SENTRY_DSN"],
             "TADAS_LOG_JSON": "true",
         },
-    )
-    yield served
-    served.stop()
+    ) as served:
+        yield served
 
 
 def reader(env: Environment, served: Served) -> SignalsLocalImpl:
