@@ -15,7 +15,7 @@ from tadas.infra.observability import (
 )
 from tadas.infra.root import InfraInterface
 from tadas.infra.trust import install_trust_store
-from tadas.om.root import Managers, TenancyOptions, build_managers
+from tadas.om.root import Managers, TenancyOperatorOptions, TenancyOptions, build_managers
 from tadas.om.storage.impl.postgres import StoragePostgresImpl
 from tadas.om.storage.root import StorageInterface
 from tadas.services.api.gateway.ratelimit import RateLimit, RateLimitOptions
@@ -53,13 +53,28 @@ def boot(settings: ApiSettings) -> None:
     _booted = True
 
 
+def totp_key(settings: ApiSettings) -> str | None:
+    key = settings.totp_encryption_key
+    return None if key is None else key.get_secret_value()
+
+
 def tenancy_options(settings: ApiSettings) -> TenancyOptions:
     return TenancyOptions(
         login_ttl=timedelta(seconds=settings.login_lifetime_seconds),
         session_ttl=timedelta(seconds=settings.session_lifetime_seconds),
+        session_idle_ttl=timedelta(seconds=settings.session_idle_lifetime_seconds),
         sign_in_free_failures=settings.sign_in_free_failures,
         sign_in_delay_base=timedelta(seconds=settings.sign_in_delay_base_seconds),
         sign_in_delay_cap=timedelta(seconds=settings.sign_in_delay_cap_seconds),
+        operator_token_ttl=timedelta(seconds=settings.operator_token_max_lifetime_seconds),
+        totp_encryption_key=totp_key(settings),
+    )
+
+
+def operator_options(settings: ApiSettings) -> TenancyOperatorOptions:
+    return TenancyOperatorOptions(
+        operator_token_ttl=timedelta(seconds=settings.operator_token_max_lifetime_seconds),
+        totp_encryption_key=totp_key(settings),
     )
 
 
@@ -73,6 +88,16 @@ def rate_limit_options(settings: ApiSettings) -> RateLimitOptions:
             limit=settings.signup_rate_limit,
             window=timedelta(seconds=settings.signup_rate_window_seconds),
         ),
+    )
+
+
+def postgres_storage(settings: ApiSettings) -> StorageInterface:
+    """The storage root over the database the settings name: the one place a
+    process of this service opens its pools."""
+    return StoragePostgresImpl(
+        settings.role_urls(),
+        settings.role_pools(),
+        system_urls=settings.system_role_urls(),
     )
 
 
@@ -95,13 +120,7 @@ class AppContainer:
 
     @classmethod
     def build(cls, settings: ApiSettings) -> AppContainer:
-        storage = StoragePostgresImpl(
-            settings.role_urls(),
-            settings.role_pools(),
-            system_urls=settings.system_role_urls(),
-        )
-        infra = InfraConfiguredImpl(settings)
-        return cls.over(settings, storage, infra)
+        return cls.over(settings, postgres_storage(settings), InfraConfiguredImpl(settings))
 
     @classmethod
     def for_tests(
@@ -120,13 +139,20 @@ class AppContainer:
         cls, settings: ApiSettings, storage: StorageInterface, infra: InfraInterface
     ) -> AppContainer:
         """Managers, then services, over whichever roots the caller chose."""
-        managers = build_managers(storage, infra, tenancy_options(settings))
+        managers = build_managers(
+            storage, infra, tenancy_options(settings), operator_options(settings)
+        )
         services = build_services(managers, infra)
         return cls(settings, storage, infra, managers, services, rate_limit_options(settings))
 
     async def start(self) -> None:
         await self.infra.start()
         log.info("%s started with %s", self.settings.service_name, ", ".join(self.infra.describe()))
+        if self.settings.totp_encryption_key is None:
+            log.warning(
+                "no TOTP encryption key: the operator plane refuses every enrolment "
+                "and every sign-in that presents a code"
+            )
 
     async def close(self) -> None:
         await self.infra.close()

@@ -1,6 +1,8 @@
 """The service binary is also its own operations CLI: serve, migrate,
-bootstrap, add-member, and openapi are subcommands of one entry point. Each one boots
-the same way before it does anything else."""
+bootstrap, add-member, grant-operator, and openapi are subcommands of one
+entry point. Each one boots the same way before it does anything else, and
+logs to standard error, so standard output carries only what a command
+prints (the OpenAPI document, a local token)."""
 
 import argparse
 import asyncio
@@ -8,6 +10,7 @@ import json
 import logging
 import sys
 import tempfile
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -20,13 +23,16 @@ from tadas.om.opcontext import AppContext, AppType, OperatorRole, RequestContext
 from tadas.om.storage import migrate
 from tadas.om.storage.impl.memory import StorageMemoryImpl
 from tadas.services.api.app import create_app
-from tadas.services.api.container import AppContainer, boot
+from tadas.services.api.container import AppContainer, boot, postgres_storage
 from tadas.services.api.gateway.observability import QueryStringRedactor
 from tadas.services.api.realtime.timeouts import (
     SERVER_PING_INTERVAL_SECONDS,
     SERVER_PING_TIMEOUT_SECONDS,
 )
 from tadas.services.api.settings import ApiSettings
+from tadas.services.api.token_secrets import TOKEN_HOLDERS, put_token, token_secret_name
+
+log = logging.getLogger(__name__)
 
 
 def server_options(settings: ApiSettings) -> dict[str, Any]:
@@ -81,6 +87,9 @@ def command_request(settings: ApiSettings) -> RequestContext:
 
 def migrate_roles(args: argparse.Namespace) -> int:
     boot(ApiSettings())
+    if args.action == "ensure-logins":
+        # The migrate task's first step, the one command run as the master.
+        return migrate.main(["ensure-logins"])
     forwarded = (
         ["upgrade"] + (["--all"] if args.all else []) + (["--role", args.role] if args.role else [])
     )
@@ -116,6 +125,60 @@ def bootstrap(args: argparse.Namespace) -> int:
         return 0
 
     return asyncio.run(run())
+
+
+def grant_operator(args: argparse.Namespace) -> int:
+    """The grant job's command, run as a one-off task on the deployed image,
+    and locally the same way. It puts an identity on the operator allowlist
+    or disables its entry, or mints the operator token of the provisioner or
+    the smoke identity. The task holds the database URLs and nothing else:
+    no queue, bucket, or application secret. So its managers run over the
+    database and over the local twins of the rest, which a grant reaches
+    only to publish its audit row on an in-process bus nobody listens to."""
+
+    async def run() -> int:
+        settings = ApiSettings()
+        boot(settings)
+        with tempfile.TemporaryDirectory() as tmp:
+            container = AppContainer.over(
+                settings, postgres_storage(settings), InfraLocalImpl(Path(tmp))
+            )
+            await container.start()
+            try:
+                return await granted(container, settings, args)
+            finally:
+                await container.close()
+
+    return asyncio.run(run())
+
+
+async def granted(container: AppContainer, settings: ApiSettings, args: argparse.Namespace) -> int:
+    tenancy = container.managers.tenancy
+    rctx = command_request(settings)
+    if args.mint_token:
+        # The smoke test reads and never writes, whatever the entry grants;
+        # the provisioner's token carries the entry's permission.
+        holder: str = args.mint_token
+        role = OperatorRole.READ if holder == "smoke" else None
+        expires_in = None if args.expires_in is None else timedelta(seconds=args.expires_in)
+        issued = await tenancy.grant_operator_token(rctx, args.email, expires_in, role)
+        if settings.is_cloud_environment:
+            # Handed over through the secret store and never printed.
+            name = token_secret_name(settings.environment, holder)
+            await put_token(settings, name, issued.token)
+            log.info("wrote the %s token to %s, expiring %s", holder, name, issued.expires_at)
+            return 0
+        # A developer's own database is the one place a token is printed.
+        settings.refuse_remote()
+        print(issued.token)
+        return 0
+    if args.disable:
+        identity = await tenancy.disable_operator(rctx, args.email)
+        log.info("identity %s is off the operator allowlist", identity.id)
+        return 0
+    identity = await tenancy.grant_operator(rctx, args.email, OperatorRole(args.permission))
+    log.info("identity %s is on the operator allowlist with %s", identity.id, args.permission)
+    return 0
 
 
 def add_member(args: argparse.Namespace) -> int:
@@ -170,7 +233,13 @@ def main(argv: list[str] | None = None) -> int:
     p_serve.add_argument("--host")
     p_serve.add_argument("--port", type=int)
 
-    p_migrate = sub.add_parser("migrate", help="apply migrations (--all, or --role <role>)")
+    p_migrate = sub.add_parser(
+        "migrate",
+        help="apply migrations (--all, or --role <role>), or ensure-logins as the master",
+    )
+    p_migrate.add_argument(
+        "action", nargs="?", default="upgrade", choices=["upgrade", "ensure-logins"]
+    )
     p_migrate.add_argument("--role")
     p_migrate.add_argument("--all", action="store_true")
 
@@ -181,7 +250,9 @@ def main(argv: list[str] | None = None) -> int:
     p_boot.add_argument("--password", required=True)
     p_boot.add_argument("--name", required=True)
     p_boot.add_argument(
-        "--operator", action="store_true", help="put the owner on the operator allowlist"
+        "--operator",
+        action="store_true",
+        help="put the owner on the operator allowlist; local only, like every seed",
     )
     p_boot.add_argument(
         "--operator-role",
@@ -208,6 +279,34 @@ def main(argv: list[str] | None = None) -> int:
         choices=[r.value for r in Role if r not in (Role.OWNER, Role.SERVICE)],
     )
 
+    p_grant = sub.add_parser(
+        "grant-operator",
+        help="put an identity on the operator allowlist, disable its entry, or mint the "
+        "provisioner's or the smoke identity's operator token",
+    )
+    what = p_grant.add_mutually_exclusive_group(required=True)
+    what.add_argument(
+        "--permission",
+        choices=[r.value for r in OperatorRole],
+        help="with --email: the entry to grant; write includes read",
+    )
+    what.add_argument("--disable", action="store_true", help="with --email: disable the entry")
+    what.add_argument(
+        "--mint-token",
+        choices=TOKEN_HOLDERS,
+        help="mint the identity's operator token into the secret store "
+        "(tadas-<env>-<holder>-token); printed only on a local database",
+    )
+    p_grant.add_argument(
+        "--email",
+        required=True,
+        help="the identity: a person who signed up first, or one of the platform's own "
+        "(@platform.tadas.invalid), which the first grant makes",
+    )
+    p_grant.add_argument(
+        "--expires-in", type=int, help="with --mint-token: seconds, 3600 when absent and at most"
+    )
+
     p_openapi = sub.add_parser("openapi", help="emit the OpenAPI document")
     p_openapi.add_argument("--out", default="-")
 
@@ -220,6 +319,10 @@ def main(argv: list[str] | None = None) -> int:
         return bootstrap(args)
     if args.command == "add-member":
         return add_member(args)
+    if args.command == "grant-operator":
+        if args.expires_in is not None and not args.mint_token:
+            parser.error("--expires-in goes with --mint-token")
+        return grant_operator(args)
     return openapi(args)
 
 

@@ -8,7 +8,7 @@ from uuid import UUID
 
 import httpx
 import pytest
-from api_support import OWNER, seed_request, sign_in_as
+from api_support import OWNER, enrol_operator, sign_in_as
 
 from tadas.om.opcontext import OperatorRole
 from tadas.services.api.container import AppContainer
@@ -20,14 +20,10 @@ OPERATOR_LOG = "tadas.om.tenancy.impl.operator"
 async def admit(
     client: httpx.AsyncClient, container: AppContainer, role: OperatorRole, email: str
 ) -> dict[str, str]:
-    """An operator's headers: the person's own sign-in, on the allowlist with `role`."""
-    slug = email.split("@")[0]
-    await container.managers.tenancy.bootstrap(
-        seed_request(), slug.title(), slug, email, PASSWORD, "Op", operator_role=role
-    )
-    login = await client.post("/v1/auth/login", json={"email": email, "password": PASSWORD})
-    assert login.status_code == 200, login.text
-    return {"Authorization": f"Bearer {login.json()['token']}", "X-App": "cli"}
+    """An operator's headers: the person's own sign-in, with a second factor,
+    on the allowlist with `role`."""
+    headers, _ = await enrol_operator(client, container, email, role)
+    return headers
 
 
 @pytest.fixture

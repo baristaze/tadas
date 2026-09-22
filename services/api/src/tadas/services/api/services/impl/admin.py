@@ -1,3 +1,4 @@
+from datetime import timedelta
 from uuid import UUID
 
 from tadas.om.idempotency.types.attempt import Attempt
@@ -10,9 +11,16 @@ from tadas.services.api.services.impl.tasks import encode_cursor as encode_task_
 from tadas.services.api.services.impl.tenancy import decode_cursor, encode_cursor
 from tadas.services.api.types.admin import (
     AddMemberRequest,
+    ConfirmTotpRequest,
     CreateOrgRequest,
+    IssuedOperatorTokenView,
+    IssuedTotpSecretView,
+    MintOperatorTokenRequest,
     OperatorView,
+    PasswordResetView,
     PlatformSizeView,
+    ResetPasswordRequest,
+    TotpConfirmedView,
 )
 from tadas.services.api.types.common import clamp_limit
 from tadas.services.api.types.events import OperatorEventView
@@ -40,6 +48,32 @@ class AdminServiceImpl(AdminServiceInterface):
     async def me(self, admin: OperatorContext) -> OperatorView:
         role = OperatorRole.WRITE if admin.has(OperatorPermission.WRITE) else OperatorRole.READ
         return OperatorView(identity_id=admin.identity_id, email=admin.email, operator_role=role)
+
+    async def enrol_totp(self, admin: OperatorContext) -> IssuedTotpSecretView:
+        issued = await self._tenancy.enrol_totp(admin)
+        return IssuedTotpSecretView(otpauth_uri=issued.otpauth_uri)
+
+    async def confirm_totp(
+        self, admin: OperatorContext, body: ConfirmTotpRequest
+    ) -> TotpConfirmedView:
+        identity = await self._tenancy.confirm_totp(admin, body.totp_code)
+        assert identity.totp_confirmed_at is not None, "a confirmed secret has its instant"
+        return TotpConfirmedView(identity_id=identity.id, confirmed_at=identity.totp_confirmed_at)
+
+    async def mint_token(
+        self, admin: OperatorContext, body: MintOperatorTokenRequest
+    ) -> IssuedOperatorTokenView:
+        expires_in = None if body.expires_in is None else timedelta(seconds=body.expires_in)
+        issued = await self._tenancy.issue_operator_token(admin, body.permission, expires_in)
+        return IssuedOperatorTokenView(
+            token=issued.token, expires_at=issued.expires_at, permission=issued.operator_role
+        )
+
+    async def reset_password(
+        self, admin: OperatorContext, body: ResetPasswordRequest
+    ) -> PasswordResetView:
+        identity = await self._tenancy.reset_password(admin, body.email, body.password)
+        return PasswordResetView(identity_id=identity.id, email=identity.email)
 
     async def size(self, admin: OperatorContext) -> PlatformSizeView:
         return PlatformSizeView.model_validate(await self._tenancy.size(admin))

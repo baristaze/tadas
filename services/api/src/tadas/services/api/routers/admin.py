@@ -3,7 +3,11 @@ reach a tenant manager because no OpContext exists on this path. A read
 requires the read permission of the allowlist entry and a write the write
 one; the manager decides, and a refusal is the same `not_authorized` a
 viewer's write gets. The creating routes run under the operator's
-idempotency record, keyed like every other creating route."""
+idempotency record, keyed like every other creating route.
+
+The two enrolment routes take `EnrollingOperatorCtx`, the one gate an
+operator with no second factor yet passes; every other route takes
+`OperatorCtx`, which refuses that operator `second_factor_not_enrolled`."""
 
 from typing import Annotated
 from uuid import UUID
@@ -11,14 +15,21 @@ from uuid import UUID
 from fastapi import APIRouter, Query, Response
 
 from tadas.om.tasks.types.task import TaskStatus
-from tadas.services.api.gateway.admin import OperatorCtx
+from tadas.services.api.gateway.admin import EnrollingOperatorCtx, OperatorCtx
 from tadas.services.api.gateway.idempotency import OperatorIdem
 from tadas.services.api.gateway.resolve import AdminService
 from tadas.services.api.types.admin import (
     AddMemberRequest,
+    ConfirmTotpRequest,
     CreateOrgRequest,
+    IssuedOperatorTokenView,
+    IssuedTotpSecretView,
+    MintOperatorTokenRequest,
     OperatorView,
+    PasswordResetView,
     PlatformSizeView,
+    ResetPasswordRequest,
+    TotpConfirmedView,
 )
 from tadas.services.api.types.common import LIMIT_DEFAULT
 from tadas.services.api.types.events import OperatorEventView
@@ -33,6 +44,46 @@ async def operator_me(admin: OperatorCtx, service: AdminService) -> OperatorView
     """Who the plane admitted and what the entry grants; the check a skill
     makes before its first read."""
     return await service.me(admin)
+
+
+@router.post("/me/totp", response_model=IssuedTotpSecretView)
+async def enrol_totp(admin: EnrollingOperatorCtx, service: AdminService) -> IssuedTotpSecretView:
+    """Mints the operator's TOTP secret and answers it once, as the
+    `otpauth://` URI an authenticator app reads. It creates no row, and a
+    retry is safe: minting again replaces a secret that was never confirmed,
+    so it takes no Idempotency-Key. Refused once one is confirmed."""
+    return await service.enrol_totp(admin)
+
+
+@router.post("/me/totp/confirm", response_model=TotpConfirmedView)
+async def confirm_totp(
+    admin: EnrollingOperatorCtx, service: AdminService, body: ConfirmTotpRequest
+) -> TotpConfirmedView:
+    """The first code confirms the secret. From then on the plane admits
+    this identity only on a sign-in that verified a code."""
+    return await service.confirm_totp(admin, body)
+
+
+@router.post("/me/tokens", response_model=IssuedOperatorTokenView, status_code=201)
+async def mint_token(
+    admin: OperatorCtx,
+    service: AdminService,
+    body: MintOperatorTokenRequest,
+    idem: OperatorIdem,
+) -> Response:
+    """An operator token for an agent: one permission, never wider than the
+    caller's entry, an hour at most. Minted only from a sign-in that
+    verified a second factor, so a token never mints a token."""
+    return await idem.run(201, lambda attempt: service.mint_token(admin, body))
+
+
+@router.post("/password-resets", response_model=PasswordResetView)
+async def reset_password(
+    admin: OperatorCtx, service: AdminService, body: ResetPasswordRequest
+) -> PasswordResetView:
+    """Sets a person's password, the recovery a platform with no verified
+    mailbox has; a write operator signed in with a second factor, audited."""
+    return await service.reset_password(admin, body)
 
 
 @router.get("/size", response_model=PlatformSizeView)

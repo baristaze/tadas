@@ -97,8 +97,10 @@ async def current_identity(
     """The identity stage: the person's own sign-in, accepted where a tenant is
     chosen, the person's places are listed, or an operator is admitted. The
     tenant-less sign-in credential proves it, and so does a live session,
-    which proves its user's identity as well as its tenant; the operator gate
-    then takes the sign-in credential alone."""
+    which proves its user's identity as well as its tenant, and an operator
+    token, which reaches the operator gate and nothing else. The operator
+    gate then takes the sign-in credential, with its second factor, or the
+    operator token."""
     tenancy = container_of(request).managers.tenancy
     return await tenancy.authenticate_login(rctx, bearer_of(authorization))
 

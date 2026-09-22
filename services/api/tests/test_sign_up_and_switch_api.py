@@ -6,10 +6,11 @@ from uuid import UUID
 
 import httpx
 import pytest
-from api_support import OWNER, build_container, seed_request, sign_in_as
+from api_support import OWNER, build_container, enrol_operator, seed_request, sign_in_as
 from httpx import ASGITransport
 
 from tadas.om.opcontext import OperatorRole, Role
+from tadas.om.tenancy.rules import email_digest
 from tadas.services.api.app import create_app
 from tadas.services.api.container import AppContainer
 
@@ -101,7 +102,7 @@ async def test_a_closed_sign_up_answers_as_no_route_would(tmp_path: Path) -> Non
                 error = answer.json()["error"]
                 assert (error["code"], error["message"]) == ("not_found", "Not Found")
     storage = container.storage.get_tenancy_storage()
-    assert await storage.read_identity_by_email(DEE["email"]) is None
+    assert await storage.read_identity_by_email_digest(email_digest(DEE["email"])) is None
 
 
 async def test_sign_up_is_rate_limited_per_client(client: httpx.AsyncClient) -> None:
@@ -190,22 +191,14 @@ async def test_a_session_never_admits_an_operator(
     client: httpx.AsyncClient, container: AppContainer
 ) -> None:
     """A portal session proves the identity, and the identity is on the
-    operator allowlist; the operator plane still takes the sign-in credential
-    alone, so the session is refused there."""
-    _, ops = await container.managers.tenancy.bootstrap(
-        seed_request(),
-        "Ops",
-        "ops",
-        "root@example.test",
-        "pw-1234",
-        "Root",
-        operator_role=OperatorRole.WRITE,
-    )
-    portal = await sign_in_as(client, "root@example.test", "pw-1234", ops.id)
-    refused = await client.get("/v1/admin/orgs", headers=portal)
+    operator allowlist; the operator plane still refuses a tenant's
+    credential, even one exchanged from a sign-in with a second factor."""
+    admin, _ = await enrol_operator(client, container, "root@example.test", OperatorRole.WRITE)
+    orgs = await client.get("/v1/auth/memberships", headers=admin)
+    ops = orgs.json()["items"][0]["org"]["id"]
+    session = await client.post("/v1/auth/sessions", headers=admin, json={"org_id": ops})
+    assert session.status_code == 200, session.text
+    refused = await client.get("/v1/admin/orgs", headers=bearer(session.json()["token"]))
     assert refused.status_code == 401, refused.text
-    login = await client.post(
-        "/v1/auth/login", json={"email": "root@example.test", "password": "pw-1234"}
-    )
-    admitted = await client.get("/v1/admin/orgs", headers=bearer(login.json()["token"]))
+    admitted = await client.get("/v1/admin/orgs", headers=admin)
     assert admitted.status_code == 200, admitted.text

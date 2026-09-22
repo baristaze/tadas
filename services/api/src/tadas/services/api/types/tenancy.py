@@ -56,8 +56,14 @@ class MembershipChoiceView(View):
 
 
 class LoginRequest(RequestBody):
+    """An email and a password, and the code from an authenticator when the
+    identity has a second factor enrolled. A tenant's sign-in needs none; the
+    operator plane admits an enrolled operator only on a sign-in that
+    verified one. A code used once is refused."""
+
     email: str
     password: str
+    totp_code: str | None = Field(default=None, min_length=6, max_length=6)
 
 
 class SignUpRequest(RequestBody):

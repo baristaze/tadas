@@ -6,7 +6,15 @@ from uuid import UUID, uuid4
 
 import httpx
 import pytest
-from api_support import OWNER, add_member, build_container, run, seed_request, sign_in_as
+from api_support import (
+    OWNER,
+    add_member,
+    build_container,
+    enrol_operator,
+    run,
+    seed_request,
+    sign_in_as,
+)
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
@@ -64,10 +72,13 @@ async def test_not_found_flows_through_the_one_handler(
 
 
 async def test_login_is_rate_limited_per_client(client: httpx.AsyncClient) -> None:
-    body = {"email": "nobody@example.test", "password": "x"}
-    for _ in range(10):
+    # Another email each time, so the per-email delay never answers first.
+    for index in range(10):
+        body = {"email": f"nobody-{index}@example.test", "password": "x"}
         assert (await client.post("/v1/auth/login", json=body)).status_code == 401
-    rejected = await client.post("/v1/auth/login", json=body)
+    rejected = await client.post(
+        "/v1/auth/login", json={"email": "nobody@example.test", "password": "x"}
+    )
     assert rejected.status_code == 429
     assert rejected.json()["error"]["code"] == "rate_limited"
     assert int(rejected.headers["Retry-After"]) >= 1
@@ -76,9 +87,9 @@ async def test_login_is_rate_limited_per_client(client: httpx.AsyncClient) -> No
 async def test_a_guessed_identity_waits_before_its_next_sign_in(
     client: httpx.AsyncClient, container: AppContainer
 ) -> None:
-    """Per identity and in the database, beside the per-address limit: after
+    """Per email and in the database, beside the per-address limit: after
     three wrong passwords even the right one is answered 429 with the wait,
-    and the refusal names no other identity."""
+    and an email nobody holds waits the same way."""
     await container.managers.tenancy.bootstrap(
         seed_request(), "Acme", "acme", OWNER["email"], OWNER["password"], OWNER["name"]
     )
@@ -90,6 +101,10 @@ async def test_a_guessed_identity_waits_before_its_next_sign_in(
     assert delayed.status_code == 429
     assert delayed.json()["error"]["code"] == "sign_in_delayed"
     assert int(delayed.headers["Retry-After"]) >= 1
+    unknown = {"email": "nobody@example.test", "password": "nope"}
+    for _ in range(3):
+        assert (await client.post("/v1/auth/login", json=unknown)).status_code == 401
+    assert (await client.post("/v1/auth/login", json=unknown)).status_code == 429
 
 
 async def test_api_key_creation_replays_on_the_same_idempotency_key(
@@ -381,42 +396,17 @@ async def test_operator_routes_need_an_operator_sign_in(
 ) -> None:
     refused = await client.get("/v1/admin/orgs", headers=owner)
     assert refused.status_code == 401
-    await container.managers.tenancy.bootstrap(
-        seed_request(),
-        "Ops",
-        "ops",
-        "root@example.test",
-        "pw-1234",
-        "Root",
-        operator_role=OperatorRole.WRITE,
-    )
-    login = await client.post(
-        "/v1/auth/login", json={"email": "root@example.test", "password": "pw-1234"}
-    )
-    admitted = await client.get(
-        "/v1/admin/orgs", headers={"Authorization": f"Bearer {login.json()['token']}"}
-    )
+    admin, _ = await enrol_operator(client, container, "root@example.test", OperatorRole.WRITE)
+    admitted = await client.get("/v1/admin/orgs", headers=admin)
     assert admitted.status_code == 200
-    assert sorted(o["slug"] for o in admitted.json()["items"]) == ["acme", "ops"]
+    assert sorted(o["slug"] for o in admitted.json()["items"]) == ["acme", "root"]
 
 
 async def test_operators_delete_an_org(
     client: httpx.AsyncClient, container: AppContainer, owner: dict[str, str]
 ) -> None:
     org_id = (await client.get("/v1/orgs/current", headers=owner)).json()["id"]
-    await container.managers.tenancy.bootstrap(
-        seed_request(),
-        "Ops",
-        "ops",
-        "root@example.test",
-        "pw-1234",
-        "Root",
-        operator_role=OperatorRole.WRITE,
-    )
-    login = await client.post(
-        "/v1/auth/login", json={"email": "root@example.test", "password": "pw-1234"}
-    )
-    admin = {"Authorization": f"Bearer {login.json()['token']}"}
+    admin, _ = await enrol_operator(client, container, "root@example.test", OperatorRole.WRITE)
 
     assert (await client.delete(f"/v1/admin/orgs/{org_id}", headers=owner)).status_code == 401
     deleted = await client.delete(f"/v1/admin/orgs/{org_id}", headers=admin)
