@@ -81,7 +81,13 @@ def test_create_staging_dry_run_prints_every_step_and_writes_nothing(tmp_path: P
     assert f"--env staging --body tadas-artifacts-{account}" in out
     assert "production-plan" not in out
     assert f"TADAS_API_URL=https://{STAGING['api_domain_name']}" in out
+    # Two operator tokens, empty until the grant; never a password.
+    assert "TADAS_OPERATOR_TOKEN=" in out and "TADAS_PROVISIONER_TOKEN=" in out
+    assert "PASSWORD" not in out
     assert "+ gh workflow run deploy-staging.yml --ref main" in out
+    grant = "gh workflow run grant-operator.yml --ref main -f environment=staging"
+    assert f"{grant} -f email=<operator> -f permission=read" in out
+    assert "gh variable set SMOKE_EMAIL --env staging" in out
     assert "uv run tadas-ops signals check --env staging" in out
     assert not (tmp_path / ".aws").exists()
     assert not (tmp_path / ".config").exists()
@@ -109,6 +115,7 @@ def test_create_production_dry_run_sets_two_environments_and_waits_for_replicati
     assert "+ gh workflow run" not in out
     assert "scripts/cloud_create.sh staging, again" in out
     assert f"TADAS_API_URL=https://{PRODUCTION['api_domain_name']}" in out
+    assert "gh workflow run grant-operator.yml --ref release -f environment=production" in out
     assert "uv run tadas-ops signals check --env production" in out
 
 
@@ -199,7 +206,9 @@ def test_nuke_refuses_production_while_release_still_protects_the_database(
     assert result.stdout == ""
 
 
-@pytest.mark.parametrize("workflow", ["deploy-staging.yml", "deploy-production.yml"])
+@pytest.mark.parametrize(
+    "workflow", ["deploy-staging.yml", "deploy-production.yml", "grant-operator.yml"]
+)
 def test_the_deploy_workflows_run_in_the_region_the_environments_name(workflow: str) -> None:
     text = (ROOT / ".github" / "workflows" / workflow).read_text()
     assert f"  AWS_REGION: {ENVIRONMENTS['region']}\n" in text
@@ -212,3 +221,13 @@ def test_the_environment_roots_default_to_the_region_the_environments_name(
     root = ENVIRONMENTS["environments"][environment]["environment_root"]
     text = (ROOT / "deployment" / "terraform" / root / "variables.tf").read_text()
     assert f'default     = "{ENVIRONMENTS["region"]}"' in text
+
+
+def test_the_grant_runner_refuses_to_run_without_arguments(tmp_path: Path) -> None:
+    result = _run(
+        ROOT / "scripts" / "cloud_grant.sh",
+        "deployment/terraform/environments/staging",
+        home=tmp_path,
+    )
+    assert result.returncode == 2
+    assert "usage: cloud_grant.sh" in result.stderr

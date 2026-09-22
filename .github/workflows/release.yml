@@ -63,9 +63,10 @@ jobs:
         run: |
           git fetch --quiet origin main
           git fetch --quiet origin release || true
-          # The newest deploy-staging run on main whose apply job succeeded. A
-          # run where the cloud was not configured succeeds with that job
-          # skipped, and does not count.
+          # The newest deploy-staging run on main that succeeded whole, its
+          # smoke test included, and whose apply job succeeded. A run where the
+          # cloud was not configured succeeds with that job skipped, and does
+          # not count.
           main=""
           for run in $(gh run list --workflow deploy-staging.yml --branch main --status success \
               --limit 30 --json databaseId -q '.[].databaseId'); do
