@@ -167,12 +167,15 @@ resource "aws_iam_role_policy_attachment" "execution" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 }
 
+# The execution role serves every revision of the task definition, so it
+# also reads what the revision before this one injects: a rollout the
+# circuit breaker rolls back starts that revision's tasks again.
 data "aws_iam_policy_document" "execution_secrets" {
   count = length(var.secrets) > 0 ? 1 : 0
 
   statement {
     actions   = ["secretsmanager:GetSecretValue"]
-    resources = values(var.secrets)
+    resources = distinct(concat(values(var.secrets), var.rollback_secret_arns))
   }
 }
 
@@ -245,27 +248,29 @@ resource "aws_ecs_task_definition" "this" {
   }
 }
 
-# What runs before the service rolls, on the new task definition: for the
-# API, the migration. It is one task per new task definition, run from the
-# machine that applies with the same credentials, and the service depends on
-# it, so a migration that fails ends the apply with the old tasks still
-# serving. A service that waits for another's pre-rollout run passes its
+# What runs before the service rolls, on every new task definition: for the
+# API, the migration. Each command is one one-off task, in order, on the task
+# definition `pre_rollout` names (the migrate task's, whose credentials no
+# serving task holds), run from the machine that applies with the same
+# credentials. The service depends on it, so a step that fails ends the apply
+# with the old tasks still serving. A new revision of either definition runs
+# it again. A service that waits for another's pre-rollout run passes its
 # `rollout_gate` output as `rollout_after`.
 resource "terraform_data" "pre_rollout" {
-  count = var.pre_rollout_command == null ? 0 : 1
+  count = var.pre_rollout == null ? 0 : 1
 
-  triggers_replace = [aws_ecs_task_definition.this.arn]
+  triggers_replace = [aws_ecs_task_definition.this.arn, var.pre_rollout.task_definition_arn]
 
   provisioner "local-exec" {
     command = "${path.module}/pre_rollout.sh"
     environment = {
       AWS_REGION      = data.aws_region.current.region
       CLUSTER         = var.cluster_arn
-      TASK_DEFINITION = aws_ecs_task_definition.this.arn
+      TASK_DEFINITION = var.pre_rollout.task_definition_arn
       SUBNETS         = join(",", var.subnet_ids)
       SECURITY_GROUPS = join(",", var.security_group_ids)
-      CONTAINER       = var.name
-      COMMAND         = jsonencode(var.pre_rollout_command)
+      CONTAINER       = var.pre_rollout.container
+      COMMANDS        = jsonencode(var.pre_rollout.commands)
     }
   }
 }

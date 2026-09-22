@@ -68,6 +68,12 @@ variable "secrets" {
   default     = {}
 }
 
+variable "rollback_secret_arns" {
+  description = "Secrets the previous revision injects and this one does not. The execution role keeps reading them, so a rolled-back rollout starts; the process never sees them."
+  type        = list(string)
+  default     = []
+}
+
 variable "policy_arns" {
   description = "Policies the task role gets: the queues, buckets, and secrets the process uses."
   type        = list(string)
@@ -120,10 +126,14 @@ variable "collector_image" {
   default     = "public.ecr.aws/aws-observability/aws-otel-collector:v0.50.0"
 }
 
-variable "pre_rollout_command" {
-  description = "A command run as a one-off task on every new task definition before the service rolls, e.g. the migration; null runs nothing."
-  type        = list(string)
-  default     = null
+variable "pre_rollout" {
+  description = "Commands run in order, each as a one-off task on the named task definition and container, whenever this service's task definition or that one changes, before the service rolls: the migration. Null runs nothing."
+  type = object({
+    task_definition_arn = string
+    container           = string
+    commands            = list(list(string))
+  })
+  default = null
 }
 
 variable "rollout_after" {

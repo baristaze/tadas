@@ -9,19 +9,20 @@ variable "prefix" {
 }
 
 variable "database_password" {
-  description = "The master password, generated for the run and never stored; the URL is written write-only."
+  description = "The master password, generated for the run and never stored; the master URL is written write-only."
   type        = string
   sensitive   = true
   ephemeral   = true
 }
 
 variable "database_password_version" {
-  description = "The database module's password version; a bump writes the URL again."
+  description = "The database module's password version; a bump writes the four URLs again, each login's with a new password."
   type        = number
 }
 
 variable "database_username" {
-  type = string
+  description = "The master user's name."
+  type        = string
 }
 
 variable "database_address" {

@@ -4,7 +4,7 @@ output "log_group_name" {
 }
 
 output "task_definition_arn" {
-  description = "The revision the service runs; a one-off run (a migration) uses the same one."
+  description = "The revision the service runs."
   value       = aws_ecs_task_definition.this.arn
 }
 
@@ -18,5 +18,5 @@ output "task_role_arn" {
 
 output "rollout_gate" {
   description = "Known once this instance's pre-rollout task ran; another instance passes it as rollout_after."
-  value       = var.pre_rollout_command == null ? "" : terraform_data.pre_rollout[0].id
+  value       = var.pre_rollout == null ? "" : terraform_data.pre_rollout[0].id
 }
