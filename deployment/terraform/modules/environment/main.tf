@@ -367,12 +367,13 @@ module "maintenance" {
 module "dashboard" {
   source = "../dashboard"
 
-  environment         = var.environment
-  cluster_name        = module.cluster.name
-  service_names       = [module.api.service_name, module.maintenance.service_name]
-  database_identifier = module.database.identifier
-  cache_node_ids      = module.cache.member_clusters
-  queue_names         = module.queue.queue_names
+  environment              = var.environment
+  cluster_name             = module.cluster.name
+  service_names            = [module.api.service_name, module.maintenance.service_name]
+  database_identifier      = module.database.identifier
+  load_balancer_arn_suffix = module.load_balancer.arn_suffix
+  cache_node_ids           = module.cache.member_clusters
+  queue_names              = module.queue.queue_names
 }
 
 module "alarms" {

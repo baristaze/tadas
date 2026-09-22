@@ -168,7 +168,8 @@ where an environment answers.
 
 Each task's collector sidecar scrapes the process's `/metrics` over
 localhost every 30 seconds into CloudWatch metrics (namespace `Tadas`,
-dimensions `service`, `environment`, and the metric's own labels) and
+dimensions `service`, `environment`, the metric's own labels, and the
+exporter's `OTelLib`) and
 forwards the traces the process sends to `127.0.0.1:4318` on to X-Ray. The
 load balancer answers `/metrics` with a 404, so the endpoint never leaves
 the task.
@@ -189,7 +190,7 @@ Terraform never overwrites the value; `off` turns reporting off again.
 
 CI runs `terraform fmt -check -recursive` over this folder,
 `terraform init -backend=false && terraform validate` in every root, and
-`terraform test` in `modules/portal` (the security headers) and in
-`modules/service` (the autoscaling switch), both offline under a mock
-provider. `infra/tests/test_dashboard_parity.py` holds the dashboard
+`terraform test` in `modules/portal` (the security headers), in
+`modules/service` (the autoscaling switch), and in `modules/dashboard`
+(the body's shape), all offline under a mock provider. `infra/tests/test_dashboard_parity.py` holds the dashboard
 template's panel titles equal to the local Grafana dashboard's.

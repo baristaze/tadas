@@ -1,9 +1,9 @@
 # One environment's operator dashboard, the cloud twin of the Grafana
 # dashboard the local profile provisions (deployment/local/grafana/dashboards/
-# tadas-overview.json). The first five widgets carry that dashboard's panel
-# titles, one for one, and a unit test holds the two lists equal; the last
-# row is what only the cloud has: the database, the cache, the queue, and
-# the tasks.
+# tadas-overview.json). The first five widgets carry that dashboard's panels,
+# one for one, and a unit test holds the two lists of titles equal but for
+# latency; the last row is what only the cloud has: the database, the cache,
+# the queue, and the tasks.
 #
 # The body is dashboard.json.tftpl, a JSON document with interpolations and
 # nothing else (no template loops), so the test can read it as JSON. The
@@ -13,10 +13,18 @@
 # The application metrics come from the `Tadas` namespace the collector
 # sidecar exports to, with every Prometheus label as a dimension and no
 # rollups (the service module's `NoDimensionRollup`): a rollup would drop the
-# environment dimension and merge the two environments' series, since both
-# live in one account. So CloudWatch has one series per label combination and
-# no group-by. "By route" is therefore every combination, labelled by its
-# values; "by status" is one sum per status code, listed below.
+# environment dimension and merge the two environments' series. So CloudWatch
+# has one series per label combination and no group-by. "By route" is
+# therefore every combination, labelled by its values; "by status" is one sum
+# per status code, listed below. The exporter adds one dimension of its own,
+# `OTelLib` (the receiver's name), and a SEARCH schema names every dimension
+# a series has or matches nothing, so each schema carries it.
+#
+# Latency is the one panel that differs. The exporter writes a histogram as
+# a statistic set (count, sum, minimum, maximum), from which CloudWatch
+# computes no percentile, so a per-route p95 would draw a flat zero. The
+# widget reads the load balancer's TargetResponseTime p95 instead: every
+# route together, and titled so.
 
 data "aws_region" "current" {}
 
@@ -32,7 +40,7 @@ locals {
   responses_by_status = [
     for status in var.http_statuses :
     [{
-      expression = "SUM(SEARCH('{Tadas,environment,method,route,service,status} MetricName=\"tadas_http_requests_total\" environment=\"${var.environment}\" status=\"${status}\"', 'Sum', 60)) / 60"
+      expression = "SUM(SEARCH('{Tadas,OTelLib,environment,method,route,service,status} MetricName=\"tadas_http_requests_total\" environment=\"${var.environment}\" status=\"${status}\"', 'Sum', 60)) / 60"
       label      = tostring(status)
       id         = "s${status}"
     }]
@@ -55,12 +63,13 @@ resource "aws_cloudwatch_dashboard" "this" {
   dashboard_name = "tadas-${var.environment}"
 
   dashboard_body = templatefile("${path.module}/dashboard.json.tftpl", {
-    environment         = var.environment
-    region              = data.aws_region.current.region
-    database_identifier = var.database_identifier
-    running_tasks       = jsonencode(local.running_tasks)
-    responses_by_status = jsonencode(local.responses_by_status)
-    cache_cpu           = jsonencode(local.cache_cpu)
-    queue_depths        = jsonencode(local.queue_depths)
+    environment              = var.environment
+    region                   = data.aws_region.current.region
+    database_identifier      = var.database_identifier
+    load_balancer_arn_suffix = var.load_balancer_arn_suffix
+    running_tasks            = jsonencode(local.running_tasks)
+    responses_by_status      = jsonencode(local.responses_by_status)
+    cache_cpu                = jsonencode(local.cache_cpu)
+    queue_depths             = jsonencode(local.queue_depths)
   })
 }

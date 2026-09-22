@@ -29,7 +29,7 @@
         "period": 60,
         "yAxis": { "left": { "min": 0 } },
         "metrics": [
-          [ { "expression": "SEARCH('{Tadas,environment,method,route,service,status} MetricName=\"tadas_http_requests_total\" environment=\"${environment}\"', 'Sum', 60) / 60", "id": "rps" } ]
+          [ { "expression": "SEARCH('{Tadas,OTelLib,environment,method,route,service,status} MetricName=\"tadas_http_requests_total\" environment=\"${environment}\"', 'Sum', 60) / 60", "id": "rps" } ]
         ]
       }
     },
@@ -56,14 +56,15 @@
       "width": 12,
       "height": 6,
       "properties": {
-        "title": "HTTP latency p95 by route",
+        "title": "HTTP latency p95, all routes, at the load balancer",
         "view": "timeSeries",
         "stacked": false,
         "region": "${region}",
         "period": 60,
+        "stat": "p95",
         "yAxis": { "left": { "min": 0, "label": "seconds" } },
         "metrics": [
-          [ { "expression": "SEARCH('{Tadas,environment,method,route,service} MetricName=\"tadas_http_request_seconds\" environment=\"${environment}\"', 'p95', 60)", "id": "p95" } ]
+          [ "AWS/ApplicationELB", "TargetResponseTime", "LoadBalancer", "${load_balancer_arn_suffix}", { "label": "p95" } ]
         ]
       }
     },
@@ -81,7 +82,7 @@
         "period": 60,
         "yAxis": { "left": { "min": 0 } },
         "metrics": [
-          [ { "expression": "SEARCH('{Tadas,environment,outcome,service,subsystem} MetricName=\"tadas_outcomes_total\" environment=\"${environment}\"', 'Sum', 60) / 60", "id": "outcomes" } ]
+          [ { "expression": "SEARCH('{Tadas,OTelLib,environment,outcome,service,subsystem} MetricName=\"tadas_outcomes_total\" environment=\"${environment}\"', 'Sum', 60) / 60", "id": "outcomes" } ]
         ]
       }
     },

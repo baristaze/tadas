@@ -11,12 +11,13 @@ mock_provider "aws" {
 }
 
 variables {
-  environment         = "test"
-  cluster_name        = "tadas-test"
-  service_names       = ["api", "maintenance"]
-  database_identifier = "tadas-test"
-  cache_node_ids      = ["tadas-test-001", "tadas-test-002"]
-  queue_names         = ["tadas-test-work", "tadas-test-events"]
+  environment              = "test"
+  cluster_name             = "tadas-test"
+  service_names            = ["api", "maintenance"]
+  database_identifier      = "tadas-test"
+  load_balancer_arn_suffix = "app/tadas-test/0123456789abcdef"
+  cache_node_ids           = ["tadas-test-001", "tadas-test-002"]
+  queue_names              = ["tadas-test-work", "tadas-test-events"]
 }
 
 run "every_metric_row_is_an_array" {
@@ -36,5 +37,15 @@ run "every_metric_row_is_an_array" {
       widget if length(try(widget.properties.metrics, [])) == 4 && can(regex("SQS", jsonencode(widget.properties.metrics)))
     ]) == 1
     error_message = "The queue widget shows each queue and its dead-letter queue, one row each."
+  }
+
+  # The exporter adds `OTelLib` to every series, and a SEARCH schema that
+  # leaves out a dimension the series has matches nothing.
+  assert {
+    condition = alltrue([
+      for schema in regexall("SEARCH\\('\\{Tadas,[^}]*\\}", aws_cloudwatch_dashboard.this.dashboard_body) :
+      startswith(schema, "SEARCH('{Tadas,OTelLib,")
+    ]) && length(regexall("SEARCH\\('\\{Tadas,", aws_cloudwatch_dashboard.this.dashboard_body)) > 0
+    error_message = "Every SEARCH over the Tadas namespace names the OTelLib dimension."
   }
 }
