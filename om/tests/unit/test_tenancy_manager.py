@@ -1,6 +1,7 @@
 import asyncio
 import secrets
 import threading
+from collections.abc import Callable
 from datetime import timedelta
 from pathlib import Path
 from uuid import UUID
@@ -8,6 +9,7 @@ from uuid import UUID
 import pytest
 from contracts.factories import make_user
 from contracts.outbox_storage import claim_all
+from contracts.second_factor import TOTP_KEY, SteppingClock, enrolled_operator, secret_of
 
 from tadas.infra.cache import CacheInterface, CacheScope
 from tadas.infra.impl.local import InfraLocalImpl
@@ -22,7 +24,9 @@ from tadas.om.exceptions import (
     NotAnOperator,
     NotAuthorized,
     NotFound,
+    SecondFactorRequired,
     SignInDelayed,
+    Unavailable,
     UniqueKeyTaken,
     ValidationFailed,
 )
@@ -34,6 +38,8 @@ from tadas.om.opcontext import (
     AppType,
     CredentialKind,
     OpContext,
+    OperatorContext,
+    OperatorPermission,
     OperatorRole,
     Permission,
     RequestContext,
@@ -46,11 +52,18 @@ from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.tasks.storage.impl.memory import TasksStorageMemoryImpl
 from tadas.om.tenancy.impl.manager import TenancyManagerImpl, TenancyOptions
 from tadas.om.tenancy.impl.operator import TenancyOperatorManagerImpl, TenancyOperatorOptions
-from tadas.om.tenancy.rules import DUMMY_PASSWORD_HASH, hash_password, hash_token, verify_password
+from tadas.om.tenancy.rules import (
+    DUMMY_PASSWORD_HASH,
+    email_digest,
+    hash_password,
+    hash_token,
+    verify_password,
+)
 from tadas.om.tenancy.storage.impl.memory import TenancyStorageMemoryImpl
 from tadas.om.tenancy.types.identity import Identity
 from tadas.om.tenancy.types.membership import Membership
 from tadas.om.tenancy.types.org import Org
+from tadas.om.tenancy.types.role import operator_permissions_of
 from tadas.om.tenancy.types.socket_ticket import SocketPrincipal
 from tadas.om.tenancy.types.user import PERSONAL_FIELDS, User
 
@@ -137,6 +150,7 @@ def make_manager(
     options: TenancyOptions | None = None,
     cache: CacheInterface | None = None,
     outbox: OutboxStorageMemoryImpl | None = None,
+    clock: SteppingClock | None = None,
 ) -> TenancyManagerImpl:
     # A relay over its own outbox is enough where the sweep never runs; the
     # fixture below shares the one the storage lands rows in.
@@ -147,26 +161,50 @@ def make_manager(
         storage,
         relay,
         cache or infra.get_cache(CacheScope.REALTIME_TICKET),
-        options or TenancyOptions(),
+        options or TenancyOptions(totp_encryption_key=TOTP_KEY),
+        clock or SteppingClock(),
     )
+
+
+@pytest.fixture
+def clock() -> SteppingClock:
+    return SteppingClock()
 
 
 @pytest.fixture
 def manager(
-    storage: TenancyStorageMemoryImpl, infra: InfraLocalImpl, outbox: OutboxStorageMemoryImpl
+    storage: TenancyStorageMemoryImpl,
+    infra: InfraLocalImpl,
+    outbox: OutboxStorageMemoryImpl,
+    clock: SteppingClock,
 ) -> TenancyManagerImpl:
-    return make_manager(storage, infra, outbox=outbox)
+    return make_manager(storage, infra, outbox=outbox, clock=clock)
 
 
 @pytest.fixture
 def operator(
-    storage: TenancyStorageMemoryImpl, infra: InfraLocalImpl, outbox: OutboxStorageMemoryImpl
+    storage: TenancyStorageMemoryImpl,
+    infra: InfraLocalImpl,
+    outbox: OutboxStorageMemoryImpl,
+    clock: SteppingClock,
 ) -> TenancyOperatorManagerImpl:
     events = EventStorageMemoryImpl()
     relay = OutboxRelayImpl(outbox, events, infra.get_topics())
     return TenancyOperatorManagerImpl(
-        storage, TasksStorageMemoryImpl(outbox), events, relay, TenancyOperatorOptions()
+        storage,
+        TasksStorageMemoryImpl(outbox),
+        events,
+        relay,
+        TenancyOperatorOptions(totp_encryption_key=TOTP_KEY),
+        clock,
     )
+
+
+async def token_operator(manager: TenancyManagerImpl, email: str) -> OperatorContext:
+    """An operator admitted on the token the grant job mints, for a test about
+    what an operator does; the tests of the gate sign in with a code."""
+    issued = await manager.grant_operator_token(request(), email)
+    return await manager.admit_operator(await manager.authenticate_login(request(), issued.token))
 
 
 async def sign_in(manager: TenancyManagerImpl, email: str, org_id: UUID) -> OpContext:
@@ -276,11 +314,7 @@ async def test_a_deleted_org_frees_its_slug(
         "Root",
         operator_role=OperatorRole.WRITE,
     )
-    admin = await manager.admit_operator(
-        await manager.authenticate_login(
-            request(), (await manager.login(request(), "root@example.test", "pw-1234")).token
-        )
-    )
+    admin = await token_operator(manager, "root@example.test")
     await operator.delete_org(admin, org.id)
     _, again = await manager.bootstrap(
         request(), "Acme", "acme", "bob@example.test", "pw-1234", "Bob"
@@ -301,7 +335,7 @@ async def test_login_rejects_a_wrong_password(manager: TenancyManagerImpl) -> No
 async def test_a_run_of_failed_sign_ins_makes_the_next_one_wait(
     manager: TenancyManagerImpl, storage: TenancyStorageMemoryImpl
 ) -> None:
-    """Counted per identity, in the tenancy role's own storage: the wait holds
+    """Counted per email, in the tenancy role's own storage: the wait holds
     whatever address the guesses come from, and even the right password is
     not checked before it has passed."""
     await manager.bootstrap(request(), "Acme", "acme", "ann@example.test", "pw-1234", "Ann")
@@ -311,24 +345,27 @@ async def test_a_run_of_failed_sign_ins_makes_the_next_one_wait(
     with pytest.raises(SignInDelayed) as delayed:
         await manager.login(request(), "ann@example.test", "pw-1234")
     assert timedelta(0) < delayed.value.retry_after <= timedelta(seconds=1)
-    identity = await storage.read_identity_by_email("ann@example.test")
-    assert identity is not None and identity.failed_sign_ins == 3
+    digest = email_digest("ann@example.test")
+    run = await storage.read_sign_in_delay(digest)
+    assert run is not None and run.failures == 3
     # Once the wait has passed, the right password signs in and ends the run.
-    await storage.write_identity(
-        identity.model_copy(update={"last_failed_sign_in_at": utcnow() - timedelta(minutes=1)})
-    )
+    await storage.record_failed_sign_in(digest, utcnow() - timedelta(minutes=1))
     await manager.login(request(), "ann@example.test", "pw-1234")
-    identity = await storage.read_identity_by_email("ann@example.test")
-    assert identity is not None and identity.failed_sign_ins == 0
-    assert identity.last_failed_sign_in_at is None
+    assert await storage.read_sign_in_delay(digest) is None
 
 
-async def test_an_unknown_email_is_never_delayed_and_counts_nothing(
-    manager: TenancyManagerImpl,
+async def test_an_unknown_email_is_delayed_like_a_known_one(
+    manager: TenancyManagerImpl, storage: TenancyStorageMemoryImpl
 ) -> None:
-    for _ in range(6):
+    """The key is the email, not the identity: the delay says nothing about
+    which addresses hold one."""
+    for _ in range(3):
         with pytest.raises(InvalidCredential):
             await manager.login(request(), "nobody@example.test", "nope")
+    with pytest.raises(SignInDelayed):
+        await manager.login(request(), "nobody@example.test", "nope")
+    run = await storage.read_sign_in_delay(email_digest("nobody@example.test"))
+    assert run is not None and run.failures == 3
 
 
 async def test_an_unknown_email_costs_a_password_check_off_the_event_loop(
@@ -407,11 +444,7 @@ async def test_exchange_refuses_a_gone_org_or_membership_as_not_authorized(
         "Root",
         operator_role=OperatorRole.WRITE,
     )
-    admin = await manager.admit_operator(
-        await manager.authenticate_login(
-            request(), (await manager.login(request(), "root@example.test", "pw-1234")).token
-        )
-    )
+    admin = await token_operator(manager, "root@example.test")
     await operator.delete_org(admin, org.id)
     login = await manager.login(request(), "ann@example.test", "pw-1234")
     identity = await manager.authenticate_login(request(), login.token)
@@ -436,6 +469,34 @@ async def test_expired_sessions_are_refused(
     )
     with pytest.raises(CredentialExpired):
         await manager.authenticate(request(), issued.token)
+
+
+async def test_a_session_idle_past_its_idle_lifetime_has_ended(
+    manager: TenancyManagerImpl, storage: TenancyStorageMemoryImpl
+) -> None:
+    """A session ends at whichever passes first, its absolute lifetime or its
+    idle one. Each use records itself, at most once a minute, and a session
+    no request has touched yet starts its idle clock at its first use."""
+    _, org = await manager.bootstrap(
+        request(), "Acme", "acme", "ann@example.test", "pw-1234", "Ann"
+    )
+    login = await manager.login(request(), "ann@example.test", "pw-1234")
+    issued = await manager.exchange_login(
+        await manager.authenticate_login(request(), login.token), org.id
+    )
+    ctx = await manager.authenticate(request(), issued.token)
+    seen = await storage.read_session(org.id, ctx.credential_id)
+    assert seen is not None and seen.last_seen_at is not None
+    await manager.authenticate(request(), issued.token)
+    again = await storage.read_session(org.id, ctx.credential_id)
+    assert again is not None and again.last_seen_at == seen.last_seen_at, "once a minute"
+    # Four hours without a request, well inside the twelve-hour absolute one.
+    idle = seen.model_copy(update={"last_seen_at": utcnow() - timedelta(hours=4, seconds=1)})
+    await storage.write_session(org.id, idle)
+    with pytest.raises(CredentialExpired, match="idle"):
+        await manager.authenticate(request(), issued.token)
+    with pytest.raises(CredentialExpired, match="idle"):
+        await manager.authenticate_login(request(), issued.token)
 
 
 async def test_api_keys_are_role_capped_and_revocable(
@@ -693,7 +754,7 @@ async def test_no_event_about_a_user_carries_who_they_are(
     assert [r.kind for r in about_users] == ["tenancy.user.created", "tenancy.user.deleted"]
     for row in about_users:
         assert not PERSONAL_FIELDS & set(row.payload), row.kind
-        assert row.payload["identity_id"] == str(bob.identity_id)
+        assert row.payload == {"identity_id": str(bob.identity_id)}, "ids only"
 
 
 class DownOnRemoveStorage(TenancyStorageMemoryImpl):
@@ -710,19 +771,24 @@ class DownOnRemoveStorage(TenancyStorageMemoryImpl):
         await super().write_user(org_id, user, outbox_rows)
 
     async def remove_member(
-        self, org_id: UUID, user: User, membership: Membership, outbox_rows: tuple[OutboxRow, ...]
-    ) -> None:
+        self,
+        org_id: UUID,
+        user: User,
+        membership: Membership,
+        outbox_rows: tuple[OutboxRow, ...],
+        revocation_row: Callable[[str, UUID], OutboxRow],
+    ) -> tuple[OutboxRow, ...]:
         if self.down:
             raise RuntimeError("storage is down")
-        await super().remove_member(org_id, user, membership, outbox_rows)
+        return await super().remove_member(org_id, user, membership, outbox_rows, revocation_row)
 
 
 async def test_a_removal_that_fails_leaves_the_member_whole(
     infra: InfraLocalImpl, outbox: OutboxStorageMemoryImpl
 ) -> None:
-    # The user and the membership go in one write: a failure leaves both, so
-    # the member is still listed, still a member, and the next remove finishes
-    # the job. Their credentials may already be revoked; that is recoverable.
+    # The user, the membership, and their credentials go in one write: a
+    # failure leaves all of them, so the member is still listed, still a
+    # member, still signed in, and the next remove finishes the job.
     storage = DownOnRemoveStorage(outbox)
     manager = make_manager(storage, infra, outbox=outbox)
     _, org = await manager.bootstrap(
@@ -730,8 +796,11 @@ async def test_a_removal_that_fails_leaves_the_member_whole(
     )
     owner = await sign_in(manager, "ann@example.test", org.id)
     cid = await add_member(storage, org.id, "cid@example.test", Role.MEMBER)
+    cids = await sign_in(manager, "cid@example.test", org.id)
     with pytest.raises(RuntimeError):
         await manager.remove_member(owner, cid.id)
+    session = await storage.read_session(org.id, cids.credential_id)
+    assert session is not None and session.revoked_at is None, "still signed in"
     assert cid.id in [u.id for u in (await manager.get_users(owner, None, limit=10)).items]
     assert cid.id in [
         m.user_id for m in (await manager.get_memberships(owner, None, limit=10)).items
@@ -884,7 +953,7 @@ async def test_revoking_a_session_announces_it_on_the_bus_without_its_token(
     row = next(r for _, r in relay.rows if r.kind == "tenancy.session.revoked")
     assert row.target_id == revoked.id and row.actor_id == ctx.user_id
     assert "token_hash" not in row.payload
-    assert row.payload["revoked_at"] is not None and row.payload["user_id"] == str(ctx.user_id)
+    assert row.payload == {"user_id": str(ctx.user_id)}, "ids only"
     frames = [p for p in published if isinstance(p, EntityChangedPayload)]
     assert [(f.kind, f.target_id, f.org_id) for f in frames if f.kind.startswith("tenancy.se")] == [
         ("tenancy.session.revoked", revoked.id, org.id)
@@ -957,27 +1026,33 @@ async def test_the_identity_behind_the_caller(manager: TenancyManagerImpl) -> No
     assert identity.email == "ann@example.test" and identity.operator_role is None
 
 
+async def seed_operator(
+    manager: TenancyManagerImpl, email: str, role: OperatorRole = OperatorRole.WRITE
+) -> None:
+    await manager.bootstrap(
+        request(), email, email.split("@")[0], email, "pw-1234", "Op", operator_role=role
+    )
+
+
+async def admitted_on_login(
+    manager: TenancyManagerImpl, email: str, code: str | None = None
+) -> OperatorContext:
+    login = await manager.login(request(), email, "pw-1234", code)
+    return await manager.admit_operator(await manager.authenticate_login(request(), login.token))
+
+
 async def test_operator_gate_admits_only_operators_signing_in(
-    manager: TenancyManagerImpl, operator: TenancyOperatorManagerImpl
+    manager: TenancyManagerImpl, operator: TenancyOperatorManagerImpl, clock: SteppingClock
 ) -> None:
     await manager.bootstrap(request(), "Acme", "acme", "ann@example.test", "pw-1234", "Ann")
-    await manager.bootstrap(
-        request(),
-        "Ops",
-        "ops",
-        "root@example.test",
-        "pw-1234",
-        "Root",
-        operator_role=OperatorRole.WRITE,
-    )
-    login = await manager.login(request(), "ann@example.test", "pw-1234")
+    await seed_operator(manager, "root@example.test")
     with pytest.raises(NotAnOperator):
-        await manager.admit_operator(await manager.authenticate_login(request(), login.token))
+        await admitted_on_login(manager, "ann@example.test")
 
-    operator_login = await manager.login(request(), "root@example.test", "pw-1234")
-    identity = await manager.authenticate_login(request(), operator_login.token)
-    admin = await manager.admit_operator(identity)
-    assert admin.email == "root@example.test"
+    admin, secret = await enrolled_operator(
+        manager, operator, clock, "root@example.test", "pw-1234"
+    )
+    assert admin.email == "root@example.test" and admin.second_factor
     every = await operator.get_orgs(admin, None, limit=10)
     assert len(every.items) == 2 and not every.has_more
     first = await operator.get_orgs(admin, None, limit=1)
@@ -985,13 +1060,219 @@ async def test_operator_gate_admits_only_operators_signing_in(
     rest = await operator.get_orgs(admin, first.items[0].id, limit=1)
     assert rest.items == every.items[1:] and not rest.has_more
 
-    # A tenant session proves the identity, but the operator plane takes the
-    # sign-in credential alone: a tenant's credential never reaches it.
-    ops_org = next(m.org for m in operator_login.memberships if m.org.slug == "ops")
+    # A tenant session proves the identity, but the operator plane never takes
+    # a tenant's credential, even from a sign-in that verified a code.
+    login = await manager.login(request(), "root@example.test", "pw-1234", clock.code(secret))
+    identity = await manager.authenticate_login(request(), login.token)
+    ops_org = next(m.org for m in login.memberships if m.org.slug == "root")
     session = await manager.exchange_login(identity, ops_org.id)
     by_session = await manager.authenticate_login(request(), session.token)
     with pytest.raises(InvalidCredential):
         await manager.admit_operator(by_session)
+
+
+async def test_an_operator_enrols_a_second_factor_before_the_plane_admits_them(
+    manager: TenancyManagerImpl,
+    operator: TenancyOperatorManagerImpl,
+    storage: TenancyStorageMemoryImpl,
+    clock: SteppingClock,
+) -> None:
+    await seed_operator(manager, "root@example.test")
+    enrolling = await admitted_on_login(manager, "root@example.test")
+    # Allowlisted with no second factor: the two enrolment calls and nothing else.
+    assert enrolling.permissions == {OperatorPermission.ENROL}
+    with pytest.raises(NotAuthorized):
+        await operator.get_orgs(enrolling, None, limit=10)
+    with pytest.raises(NotAuthorized):
+        await operator.issue_operator_token(enrolling, OperatorRole.READ)
+    first = secret_of((await operator.enrol_totp(enrolling)).otpauth_uri)
+    # Minting again replaces a secret nobody confirmed.
+    issued = await operator.enrol_totp(enrolling)
+    assert issued.otpauth_uri.startswith("otpauth://totp/Tadas%3Aroot%40example.test?secret=")
+    secret = secret_of(issued.otpauth_uri)
+    assert secret != first
+    stored = await storage.read_identity(enrolling.identity_id)
+    assert stored is not None and stored.totp_secret is not None
+    assert secret.hex() not in stored.totp_secret, "sealed, never in the clear"
+    with pytest.raises(ValidationFailed):
+        await operator.confirm_totp(enrolling, clock.code(first))
+    await operator.confirm_totp(enrolling, clock.code(secret))
+    with pytest.raises(Conflict):
+        await operator.enrol_totp(enrolling)
+
+    # Enrolled: a password alone is refused, a wrong code and a reused one too.
+    with pytest.raises(SecondFactorRequired):
+        await admitted_on_login(manager, "root@example.test")
+    with pytest.raises(InvalidCredential):
+        await manager.login(request(), "root@example.test", "pw-1234", "000000")
+    code = clock.code(secret)
+    admin = await admitted_on_login(manager, "root@example.test", code)
+    assert admin.permissions == operator_permissions_of(OperatorRole.WRITE)
+    with pytest.raises(InvalidCredential):
+        await manager.login(request(), "root@example.test", "pw-1234", code)
+    # A tenant's sign-in needs no code, and one who has no factor may not send one.
+    await manager.bootstrap(request(), "Acme", "acme", "ann@example.test", "pw-1234", "Ann")
+    await manager.login(request(), "ann@example.test", "pw-1234")
+    with pytest.raises(ValidationFailed):
+        await manager.login(request(), "ann@example.test", "pw-1234", "123456")
+
+
+async def test_a_process_without_the_totp_key_refuses_to_enrol(
+    storage: TenancyStorageMemoryImpl, infra: InfraLocalImpl, outbox: OutboxStorageMemoryImpl
+) -> None:
+    manager = make_manager(storage, infra, TenancyOptions(), outbox=outbox)
+    operator = TenancyOperatorManagerImpl(
+        storage,
+        TasksStorageMemoryImpl(outbox),
+        EventStorageMemoryImpl(),
+        OutboxRelayImpl(outbox, EventStorageMemoryImpl(), infra.get_topics()),
+        TenancyOperatorOptions(),
+    )
+    await seed_operator(manager, "root@example.test")
+    with pytest.raises(Unavailable):
+        await operator.enrol_totp(await admitted_on_login(manager, "root@example.test"))
+
+
+async def test_an_operator_token_carries_one_permission_and_reaches_the_plane_only(
+    manager: TenancyManagerImpl,
+    operator: TenancyOperatorManagerImpl,
+    storage: TenancyStorageMemoryImpl,
+    clock: SteppingClock,
+) -> None:
+    await seed_operator(manager, "root@example.test")
+    admin, _ = await enrolled_operator(manager, operator, clock, "root@example.test", "pw-1234")
+    issued = await operator.issue_operator_token(admin, OperatorRole.READ)
+    assert issued.token.startswith("opr_")
+    assert timedelta(minutes=59) < issued.expires_at - utcnow() <= timedelta(hours=1)
+    found = await storage.read_session_by_digest(hash_token(issued.token))
+    assert found is not None and found[0] == EMPTY_UUID, "a row of the system scope"
+    assert found[1].credential_kind is CredentialKind.OPERATOR_TOKEN
+    assert found[1].token_hash != issued.token, "stored as its digest"
+    ictx = await manager.authenticate_login(request(), issued.token)
+    reader = await manager.admit_operator(ictx)
+    assert reader.permissions == {OperatorPermission.READ}
+    await operator.get_orgs(reader, None, limit=10)
+    with pytest.raises(NotAuthorized):
+        await operator.delete_org(reader, new_id())
+    # A token never mints a token, and reaches no tenant.
+    with pytest.raises(NotAuthorized):
+        await operator.issue_operator_token(reader, OperatorRole.READ)
+    with pytest.raises(InvalidCredential):
+        await manager.get_identity_memberships(ictx, None, limit=10)
+    with pytest.raises(InvalidCredential):
+        await manager.exchange_login(ictx, new_id())
+    with pytest.raises(InvalidCredential):
+        await manager.authenticate(request(), issued.token)
+    # An hour at most, never wider than the entry.
+    with pytest.raises(ValidationFailed):
+        await operator.issue_operator_token(admin, OperatorRole.READ, timedelta(seconds=3601))
+    await seed_operator(manager, "sup@example.test", OperatorRole.READ)
+    sup, _ = await enrolled_operator(manager, operator, clock, "sup@example.test", "pw-1234")
+    with pytest.raises(NotAuthorized):
+        await operator.issue_operator_token(sup, OperatorRole.WRITE)
+    # A token past its expiry is refused; one whose entry narrowed is narrowed.
+    writer = await operator.issue_operator_token(admin, OperatorRole.WRITE)
+    await manager.grant_operator(request(), "root@example.test", OperatorRole.READ)
+    narrowed = await manager.admit_operator(
+        await manager.authenticate_login(request(), writer.token)
+    )
+    assert narrowed.permissions == {OperatorPermission.READ}
+    await manager.disable_operator(request(), "root@example.test")
+    with pytest.raises(NotAnOperator):
+        await manager.admit_operator(await manager.authenticate_login(request(), writer.token))
+    short = await manager.grant_operator_token(request(), "sup@example.test", timedelta(seconds=1))
+    row = await storage.read_session_by_digest(hash_token(short.token))
+    assert row is not None
+    await storage.write_session(
+        EMPTY_UUID, row[1].model_copy(update={"expires_at": utcnow() - timedelta(seconds=1)})
+    )
+    with pytest.raises(CredentialExpired):
+        await manager.authenticate_login(request(), short.token)
+
+
+async def test_the_grant_job_puts_an_identity_on_the_allowlist_and_audits_it(
+    storage: TenancyStorageMemoryImpl, infra: InfraLocalImpl, outbox: OutboxStorageMemoryImpl
+) -> None:
+    relay = SpyRelay(OutboxRelayImpl(outbox, EventStorageMemoryImpl(), infra.get_topics()))
+    manager = TenancyManagerImpl(
+        storage, relay, infra.get_cache(CacheScope.REALTIME_TICKET), TenancyOptions()
+    )
+    with pytest.raises(NotFound):
+        await manager.grant_operator(request(), "ann@example.test", OperatorRole.READ)
+    await manager.bootstrap(request(), "Acme", "acme", "ann@example.test", "pw-1234", "Ann")
+    granted = await manager.grant_operator(request(), "ann@example.test", OperatorRole.READ)
+    assert granted.operator_role is OperatorRole.READ
+    again = await manager.grant_operator(request(), "ann@example.test", OperatorRole.READ)
+    assert again == granted, "a rerun changes nothing"
+    disabled = await manager.disable_operator(request(), "ann@example.test")
+    assert disabled.operator_role is None
+    audit = [
+        (org_id, r.kind, r.target_id, r.actor_id)
+        for org_id, r in relay.rows
+        if r.kind.startswith("tenancy.operator.")
+    ]
+    assert audit == [
+        (EMPTY_UUID, "tenancy.operator.granted", granted.id, EMPTY_UUID),
+        (EMPTY_UUID, "tenancy.operator.disabled", granted.id, EMPTY_UUID),
+    ]
+    # The platform's own identities are made by the first grant, with no org
+    # and a password nobody is told; nobody signs up as one.
+    provisioner = await manager.grant_operator(
+        request(), "provisioner@platform.tadas.invalid", OperatorRole.WRITE
+    )
+    assert provisioner.operator_role is OperatorRole.WRITE
+    with pytest.raises(ValidationFailed):
+        await manager.sign_up(
+            request(), "smoke@platform.tadas.invalid", "pw-12345678", "S", "Smoke", "smoke"
+        )
+    token = await manager.grant_operator_token(request(), "provisioner@platform.tadas.invalid")
+    assert token.operator_role is OperatorRole.WRITE
+    read_only = await manager.grant_operator_token(
+        request(), "provisioner@platform.tadas.invalid", operator_role=OperatorRole.READ
+    )
+    assert read_only.operator_role is OperatorRole.READ
+    with pytest.raises(NotAnOperator):
+        await manager.grant_operator_token(request(), "ann@example.test")
+
+
+async def test_an_operator_resets_a_password_and_the_reset_is_audited(
+    storage: TenancyStorageMemoryImpl,
+    infra: InfraLocalImpl,
+    outbox: OutboxStorageMemoryImpl,
+    clock: SteppingClock,
+) -> None:
+    events = EventStorageMemoryImpl()
+    relay = SpyRelay(OutboxRelayImpl(outbox, events, infra.get_topics()))
+    manager = make_manager(storage, infra, outbox=outbox, clock=clock)
+    operator = TenancyOperatorManagerImpl(
+        storage,
+        TasksStorageMemoryImpl(outbox),
+        events,
+        relay,
+        TenancyOperatorOptions(totp_encryption_key=TOTP_KEY),
+        clock,
+    )
+    await manager.bootstrap(request(), "Acme", "acme", "ann@example.test", "pw-1234", "Ann")
+    await seed_operator(manager, "root@example.test")
+    admin, _ = await enrolled_operator(manager, operator, clock, "root@example.test", "pw-1234")
+    reset = await operator.reset_password(admin, "ann@example.test", "a-new-password")
+    with pytest.raises(InvalidCredential):
+        await manager.login(request(), "ann@example.test", "pw-1234")
+    await manager.login(request(), "ann@example.test", "a-new-password")
+    audit = [r for _, r in relay.rows if r.kind == "tenancy.identity.password_reset"]
+    assert [(r.org_id, r.target_id, r.actor_id) for r in audit] == [
+        (EMPTY_UUID, reset.id, admin.identity_id)
+    ]
+    assert audit[0].payload == {"operator_id": str(admin.identity_id)}
+    # An agent's token resets nothing; nor does a reader.
+    token = await operator.issue_operator_token(admin, OperatorRole.WRITE)
+    by_token = await manager.admit_operator(
+        await manager.authenticate_login(request(), token.token)
+    )
+    with pytest.raises(NotAuthorized):
+        await operator.reset_password(by_token, "ann@example.test", "another-password")
+    with pytest.raises(NotFound):
+        await operator.reset_password(admin, "nobody@example.test", "another-password")
 
 
 async def test_operators_soft_delete_an_org_and_its_principals_stop_resolving(
@@ -1019,11 +1300,7 @@ async def test_operators_soft_delete_an_org_and_its_principals_stop_resolving(
     issued = await manager.exchange_login(
         await manager.authenticate_login(request(), login.token), org.id
     )
-    admin = await manager.admit_operator(
-        await manager.authenticate_login(
-            request(), (await manager.login(request(), "root@example.test", "pw-1234")).token
-        )
-    )
+    admin = await token_operator(manager, "root@example.test")
 
     deleted = await operator.delete_org(admin, org.id)
     assert deleted.deleted_at is not None and deleted.deleted_by == admin.identity_id
@@ -1067,11 +1344,7 @@ async def test_a_deleted_orgs_rows_are_purged_once_the_retention_has_passed(
         "Root",
         operator_role=OperatorRole.WRITE,
     )
-    admin = await manager.admit_operator(
-        await manager.authenticate_login(
-            request(), (await manager.login(request(), "root@example.test", "pw-1234")).token
-        )
-    )
+    admin = await token_operator(manager, "root@example.test")
     await operator.delete_org(admin, org.id)
     sweep = next(c for c in await manager.service_contexts(request()) if c.org_id == org.id)
     assert sweep.role is Role.SERVICE and sweep.user_id == EMPTY_UUID
@@ -1139,11 +1412,7 @@ async def test_a_claim_for_a_departed_members_item_still_runs_under_their_name(
         "Root",
         operator_role=OperatorRole.WRITE,
     )
-    admin = await manager.admit_operator(
-        await manager.authenticate_login(
-            request(), (await manager.login(request(), "root@example.test", "pw-1234")).token
-        )
-    )
+    admin = await token_operator(manager, "root@example.test")
     await operator.delete_org(admin, org.id)
     with pytest.raises(InvalidCredential):
         await manager.service_context(request(), org.id, ann.id)
@@ -1181,14 +1450,14 @@ async def test_the_sweep_visits_the_system_scope_and_purges_expired_logins(
     manager = make_manager(storage, infra, TenancyOptions(login_ttl=timedelta(seconds=-1)))
     await manager.bootstrap(request(), "Acme", "acme", "ann@example.test", "pw-1234", "Ann")
     login = await manager.login(request(), "ann@example.test", "pw-1234")
-    found = await storage.read_session_by_token_hash(hash_token(login.token))
+    found = await storage.read_session_by_digest(hash_token(login.token))
     assert found is not None and found[0] == EMPTY_UUID
     system = next(c for c in await manager.service_contexts(request()) if c.org_id == EMPTY_UUID)
     assert system.user_id == EMPTY_UUID and system.role is Role.SERVICE
     assert await manager.purge_deleted(system) == 0, "retention has not passed"
     no_retention = make_manager(storage, infra, TenancyOptions(retention=timedelta(0)))
     assert await no_retention.purge_deleted(system) == 1
-    assert await storage.read_session_by_token_hash(hash_token(login.token)) is None
+    assert await storage.read_session_by_digest(hash_token(login.token)) is None
 
 
 async def test_expired_api_keys_are_purged_like_revoked_ones(
@@ -1273,7 +1542,7 @@ async def test_the_ticket_row_decides_while_the_cache_is_down(
     with pytest.raises(InvalidCredential):
         await manager.redeem_ticket(request(), issued.ticket)
     # The row is spent: the one admitted redeemer consumed it.
-    assert await storage.consume_socket_ticket(hash_token(issued.ticket), utcnow()) is None
+    assert await storage.redeem_socket_ticket(hash_token(issued.ticket), utcnow()) is None
 
 
 async def test_redeeming_a_ticket_rechecks_the_credential_behind_it(
@@ -1394,7 +1663,7 @@ class RacedIdentityStorage(TenancyStorageMemoryImpl):
     """The read by email misses: another request wrote that identity between
     our read and our write, which is what the unique key is for."""
 
-    async def read_identity_by_email(self, email: str) -> Identity | None:
+    async def read_identity_by_email_digest(self, email_digest: str) -> Identity | None:
         return None
 
 
@@ -1435,7 +1704,7 @@ async def test_a_slug_taken_meanwhile_leaves_no_identity_behind(
     # attempt's password, so a retry with another password is not kept out.
     with pytest.raises(UniqueKeyTaken):
         await manager.bootstrap(request(), "Acme 2", "acme", "bob@example.test", "pw-1", "Bob")
-    assert await storage.read_identity_by_email("bob@example.test") is None
+    assert await storage.read_identity_by_email_digest(email_digest("bob@example.test")) is None
     _, again = await manager.bootstrap(
         request(), "Bobs", "bobs", "bob@example.test", "pw-1234", "Bob"
     )
@@ -1452,7 +1721,7 @@ async def test_a_slug_taken_meanwhile_leaves_no_identity_behind(
             "Ann",
             operator_role=OperatorRole.WRITE,
         )
-    ann = await storage.read_identity_by_email("ann@example.test")
+    ann = await storage.read_identity_by_email_digest(email_digest("ann@example.test"))
     assert ann is not None and ann.operator_role is None
 
 
@@ -1479,7 +1748,7 @@ async def test_an_add_member_that_fails_leaves_no_identity_behind(
     await manager.bootstrap(request(), "Acme", "acme", "ann@example.test", "pw-1234", "Ann")
     with pytest.raises(UniqueKeyTaken):
         await manager.add_member(request(), "acme", "bob@example.test", "pw-1", "Bob", Role.MEMBER)
-    assert await storage.read_identity_by_email("bob@example.test") is None
+    assert await storage.read_identity_by_email_digest(email_digest("bob@example.test")) is None
 
 
 class RacedUserStorage(TenancyStorageMemoryImpl):
@@ -1617,7 +1886,7 @@ async def test_one_person_joins_at_most_the_bound_of_orgs(
     assert {m.org.id for m in login.memberships} == {first.id, second.id}
 
     # A third user lands past the refusal, the way two racing adds would.
-    identity = await storage.read_identity_by_email("ann@example.test")
+    identity = await storage.read_identity_by_email_digest(email_digest("ann@example.test"))
     assert identity is not None
     third = await storage.read_org_by_slug("c")
     assert third is not None
@@ -1644,7 +1913,7 @@ async def test_sign_up_creates_the_person_the_org_and_the_owner_and_signs_them_i
     assert owner.role is Role.OWNER and owner.org.name == "Dee's Bakery"
     assert owner.org.slug == "dees-bakery"
     assert owner.user.email == "dee@example.test" and owner.user.display_name == "Dee"
-    identity = await storage.read_identity_by_email("dee@example.test")
+    identity = await storage.read_identity_by_email_digest(email_digest("dee@example.test"))
     assert identity is not None and identity.id == owner.user.identity_id
     assert identity.operator_role is None
     # The client goes on through the same exchange a sign-in does.
@@ -1672,7 +1941,7 @@ async def test_sign_up_refuses_a_held_email_or_a_taken_slug_and_lands_nothing(
     await manager.login(request(), "ann@example.test", "pw-1234")
     with pytest.raises(Conflict):
         await manager.sign_up(request(), "dee@example.test", "long-enough", "Dee", "Acme", "acme")
-    assert await storage.read_identity_by_email("dee@example.test") is None
+    assert await storage.read_identity_by_email_digest(email_digest("dee@example.test")) is None
     assert await storage.count_orgs() == 1
 
 
@@ -1724,7 +1993,7 @@ async def test_a_sign_up_that_raced_another_for_the_slug_leaves_no_identity(
     await manager.sign_up(request(), "dee@example.test", "long-enough", "Dee", "Bakery", "bakery")
     with pytest.raises(Conflict):
         await manager.sign_up(request(), "eve@example.test", "long-enough", "Eve", "B", "bakery")
-    assert await storage.read_identity_by_email("eve@example.test") is None
+    assert await storage.read_identity_by_email_digest(email_digest("eve@example.test")) is None
 
 
 async def test_a_live_session_proves_the_identity_and_a_dead_one_does_not(
@@ -1812,11 +2081,7 @@ async def test_the_memberships_of_an_identity_page_and_skip_the_gone(
         "Root",
         operator_role=OperatorRole.WRITE,
     )
-    admin = await manager.admit_operator(
-        await manager.authenticate_login(
-            request(), (await manager.login(request(), "root@example.test", "pw-1234")).token
-        )
-    )
+    admin = await token_operator(manager, "root@example.test")
     await operator.delete_org(admin, orgs[1].id)
     left = await manager.get_identity_memberships(ictx, None, limit=10)
     assert {m.org.id for m in left.items} == {orgs[0].id, orgs[2].id}
@@ -1854,7 +2119,7 @@ async def test_a_switch_ends_the_session_it_was_presented_with_in_the_same_write
     assert len(revoked) == 1
     org_id, row = revoked[0]
     assert org_id == acme.id and row.org_id == acme.id
-    assert "token_hash" not in row.payload and row.payload["revoked_at"] is not None
+    assert row.target_id == ictx.credential_id or row.payload.keys() == {"user_id"}, "ids only"
     # Another tab's session is its own and is not touched.
     assert (await manager.authenticate(request(), other_tab.token)).org_id == acme.id
     # A switch within the same org is a fresh session, and ends the old one too.

@@ -14,6 +14,7 @@ class DatabaseRole(StrEnum):
 TABLE_ROLES: dict[str, DatabaseRole] = {
     "orgs": DatabaseRole.CORE,
     "identities": DatabaseRole.CORE,
+    "sign_in_delays": DatabaseRole.CORE,
     "users": DatabaseRole.CORE,
     "memberships": DatabaseRole.CORE,
     "sessions": DatabaseRole.CORE,

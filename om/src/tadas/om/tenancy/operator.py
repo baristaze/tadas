@@ -20,16 +20,62 @@ from tadas.om.idempotency.types.attempt import Attempt
 from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor
 from tadas.om.tasks.types.page import TaskPage
 from tadas.om.tasks.types.task import TaskStatus
+from tadas.om.tenancy.types.identity import Identity
+from tadas.om.tenancy.types.issued import IssuedOperatorToken, IssuedTotpSecret
 from tadas.om.tenancy.types.org import Org
 from tadas.om.tenancy.types.page import OrgPage, UserPage
 from tadas.om.tenancy.types.size import PlatformSize
 from tadas.om.tenancy.types.user import User
 
 if TYPE_CHECKING:
-    from tadas.om.opcontext import OperatorContext, Role
+    from datetime import timedelta
+
+    from tadas.om.opcontext import OperatorContext, OperatorRole, Role
 
 
 class TenancyOperatorManagerInterface(ABC):
+    # The operator's own credentials.
+
+    @abstractmethod
+    async def enrol_totp(self, admin: OperatorContext) -> IssuedTotpSecret:
+        """Mints the operator's TOTP secret, replacing one that was minted and
+        never confirmed, stores it sealed under the TOTP key, and answers it
+        once as an `otpauth://` URI. Requires `OperatorPermission.ENROL`, what
+        an operator holds until a secret is confirmed; once one is, Conflict."""
+        ...
+
+    @abstractmethod
+    async def confirm_totp(self, admin: OperatorContext, totp_code: str) -> Identity:
+        """The first code confirms the secret, and from then on the operator
+        gate admits the identity only on a sign-in that verified a code. The
+        sign-in that confirmed it carried none, so the next request signs in
+        again with one. A code that does not match is ValidationFailed."""
+        ...
+
+    @abstractmethod
+    async def issue_operator_token(
+        self,
+        admin: OperatorContext,
+        operator_role: OperatorRole,
+        expires_in: timedelta | None = None,
+    ) -> IssuedOperatorToken:
+        """An operator token for the operator's own identity, for an agent:
+        one permission, never wider than the operator's entry (`write` implies
+        `read`), expiring within the hour (3600 seconds when `expires_in` is
+        None). Refused (NotAuthorized) unless the operator stage came from a
+        sign-in that verified a second factor, so a token never mints a
+        token. Shown once, stored as its digest."""
+        ...
+
+    @abstractmethod
+    async def reset_password(self, admin: OperatorContext, email: str, password: str) -> Identity:
+        """The recovery a platform with no verified mailbox has: a write
+        operator, signed in with a second factor, sets a person's password.
+        Audited under the system scope with the operator and the identity it
+        reset, and logged. The platform's own identities are refused, and so
+        is an operator token, which is an agent's."""
+        ...
+
     # Across every tenant.
 
     @abstractmethod

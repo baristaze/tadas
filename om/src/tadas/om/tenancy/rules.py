@@ -1,12 +1,14 @@
 """Pure rules of the tenancy namespace: credential parsing, hashing, the
-role cap, and where a list cursor cuts. Values in, values out; no clock, no
-storage, no settings. Both storage impls call the cursor rules; the
-relational one spells them in SQL and names the rule it mirrors."""
+role cap, the TOTP code, and where a list cursor cuts. Values in, values out;
+no clock, no storage, no settings. Both storage impls call the cursor rules;
+the relational one spells them in SQL and names the rule it mirrors."""
 
+import base64
 import hashlib
 import hmac
 import re
 from datetime import datetime, timedelta
+from urllib.parse import quote
 from uuid import UUID
 
 from tadas.om.opcontext import CredentialKind, Role
@@ -21,6 +23,7 @@ CREDENTIAL_PREFIXES: dict[str, CredentialKind] = {
     "key_": CredentialKind.API_KEY,
     "lgn_": CredentialKind.LOGIN,
     "tkt_": CredentialKind.SOCKET_TICKET,
+    "opr_": CredentialKind.OPERATOR_TOKEN,
 }
 
 PREFIX_FOR_KIND: dict[CredentialKind, str] = {
@@ -38,6 +41,88 @@ def credential_kind_of(credential: str) -> CredentialKind | None:
 
 def hash_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
+
+
+def email_digest(email: str) -> str:
+    """What a sign-in looks an identity up by, and what the sign-in delay is
+    keyed on: the SHA-256 of the address as it was given, in hex. The
+    database computes the same digest of the stored address in a generated
+    column, so the two never disagree."""
+    return hashlib.sha256(email.encode()).hexdigest()
+
+
+def check_email(email: str) -> None:
+    """The shape every stored address has, refused with ValueError: one `@`
+    with something before it and a dot after it, no surrounding space, and no
+    backslash, which the database's digest reads as an escape. There is no
+    verification beyond this, by choice."""
+    local, at, domain = email.partition("@")
+    if not at or not local or "." not in domain or "@" in domain or email != email.strip():
+        raise ValueError("enter an email address")
+    if "\\" in email:
+        raise ValueError("an email address holds no backslash")
+
+
+MAX_OPERATOR_TOKEN_TTL = timedelta(hours=1)
+"""The longest life an operator token may have. An agent's token expires
+within the hour whoever minted it."""
+
+PLATFORM_EMAIL_DOMAIN = "platform.tadas.invalid"
+"""The domain of the identities no person signs in as: the provisioner and
+the smoke identity. A sign-up with an address in it is refused, so nobody
+can take one of them before the grant job makes it. `.invalid` never
+resolves, so no mailbox stands behind it either."""
+
+
+def is_platform_email(email: str) -> bool:
+    return email.lower().endswith("@" + PLATFORM_EMAIL_DOMAIN)
+
+
+TOTP_STEP = timedelta(seconds=30)
+TOTP_DIGITS = 6
+TOTP_WINDOW = 1
+"""RFC 6238 with the defaults every authenticator app assumes: HMAC-SHA1, a
+30-second step, six digits. A code is accepted one step either side of
+now, for a clock that drifts."""
+
+
+def totp_step(at: datetime) -> int:
+    """The RFC 6238 time step `at` falls in."""
+    return int(at.timestamp()) // int(TOTP_STEP.total_seconds())
+
+
+def totp_code(secret: bytes, step: int) -> str:
+    """The code of one time step (RFC 4226's HOTP over the step counter)."""
+    mac = hmac.new(secret, step.to_bytes(8, "big"), hashlib.sha1).digest()
+    offset = mac[-1] & 0x0F
+    value = int.from_bytes(mac[offset : offset + 4], "big") & 0x7FFFFFFF
+    return str(value % 10**TOTP_DIGITS).zfill(TOTP_DIGITS)
+
+
+def matching_totp_step(secret: bytes, code: str, at: datetime) -> int | None:
+    """The step a presented code belongs to, within the window around `at`,
+    or None when it matches none. Every step in the window is compared, in
+    constant time, so the answer's timing says nothing about which one
+    matched. Whether the step was used already is storage's to say."""
+    if len(code) != TOTP_DIGITS or not code.isdigit():
+        return None
+    now = totp_step(at)
+    found: int | None = None
+    for step in range(now - TOTP_WINDOW, now + TOTP_WINDOW + 1):
+        if hmac.compare_digest(totp_code(secret, step), code):
+            found = step
+    return found
+
+
+def otpauth_uri(secret: bytes, account: str, issuer: str) -> str:
+    """The `otpauth://` URI an authenticator app reads from a QR code or a
+    paste: the base32 secret, the account, and the issuer."""
+    encoded = base64.b32encode(secret).decode().rstrip("=")
+    label = quote(f"{issuer}:{account}")
+    return (
+        f"otpauth://totp/{label}?secret={encoded}&issuer={quote(issuer)}"
+        f"&algorithm=SHA1&digits={TOTP_DIGITS}&period={int(TOTP_STEP.total_seconds())}"
+    )
 
 
 def hash_password(password: str, salt: bytes) -> str:
@@ -86,10 +171,11 @@ def check_sign_up(email: str, password: str, display_name: str, org_name: str, s
     both accepted: a held address answers as a conflict, so anyone can tell
     which addresses have an account, and anyone can sign up with an address
     that is not theirs. And with no verified address there is no account
-    recovery: a forgotten password is an account an operator re-creates."""
-    local, at, domain = email.partition("@")
-    if not at or not local or "." not in domain or "@" in domain or email != email.strip():
-        raise ValueError("enter an email address")
+    recovery by mail: an operator resets a forgotten password, and the reset
+    is audited."""
+    check_email(email)
+    if is_platform_email(email):
+        raise ValueError("that address belongs to the platform")
     if len(password) < MIN_PASSWORD_LENGTH:
         raise ValueError(f"a password has at least {MIN_PASSWORD_LENGTH} characters")
     if not display_name.strip():
@@ -146,7 +232,7 @@ def sign_in_delay(
     base: timedelta,
     cap: timedelta,
 ) -> timedelta:
-    """How long the next sign-in of an identity waits before it is checked:
+    """How long the next sign-in of an email waits before it is checked:
     nothing for the first `free` failures of a run, then `base`, doubling
     with each failure after, never more than `cap`, counted from the last
     failure. Zero once that has passed."""

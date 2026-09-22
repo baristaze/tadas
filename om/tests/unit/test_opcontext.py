@@ -167,7 +167,9 @@ async def test_admit_operator_produces_the_operator_stage_for_operators_only(
     with pytest.raises(NotAnOperator):
         await manager.admit_operator(await manager.authenticate_login(request(), login.token))
 
-    root = await manager.login(request(), "root@example.test", "pw-1234")
+    # Admitted on the operator token the grant job mints; the sign-in with a
+    # second factor is the tenancy manager's tests' subject.
+    root = await manager.grant_operator_token(request(), "root@example.test")
     ictx = await manager.authenticate_login(request(), root.token)
     admin = await manager.admit_operator(ictx)
     assert type(admin) is OperatorContext
@@ -204,8 +206,11 @@ async def test_a_read_operator_is_admitted_with_read_and_refused_a_write(
         "Sup",
         operator_role=OperatorRole.READ,
     )
-    login = await manager.login(request(), "sup@example.test", "pw-1234")
-    admin = await manager.admit_operator(await manager.authenticate_login(request(), login.token))
+    admin = await manager.admit_operator(
+        await manager.authenticate_login(
+            request(), (await manager.grant_operator_token(request(), "sup@example.test")).token
+        )
+    )
     assert admin.permissions == frozenset({OperatorPermission.READ})
     admin.require(OperatorPermission.READ)
     with pytest.raises(NotAuthorized, match="operator lacks write"):
@@ -220,7 +225,8 @@ async def test_a_read_operator_is_admitted_with_read_and_refused_a_write(
         "Sup",
         operator_role=OperatorRole.WRITE,
     )
-    widened = await manager.admit_operator(await manager.authenticate_login(request(), login.token))
+    token = await manager.grant_operator_token(request(), "sup@example.test")
+    widened = await manager.admit_operator(await manager.authenticate_login(request(), token.token))
     assert widened.permissions == operator_permissions_of(OperatorRole.WRITE)
     await manager.bootstrap(
         request(),
@@ -231,7 +237,8 @@ async def test_a_read_operator_is_admitted_with_read_and_refused_a_write(
         "Sup",
         operator_role=OperatorRole.READ,
     )
-    kept = await manager.admit_operator(await manager.authenticate_login(request(), login.token))
+    token = await manager.grant_operator_token(request(), "sup@example.test")
+    kept = await manager.admit_operator(await manager.authenticate_login(request(), token.token))
     assert kept.permissions == operator_permissions_of(OperatorRole.WRITE)
 
 

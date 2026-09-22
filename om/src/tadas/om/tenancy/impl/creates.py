@@ -20,23 +20,24 @@ from tadas.om.base import new_id, utcnow
 from tadas.om.exceptions import Conflict, MembershipLimitReached, ValidationFailed
 from tadas.om.opcontext import OperatorRole, RequestScope, Role
 from tadas.om.outbox import OutboxRelayInterface
-from tadas.om.outbox.types.row import OutboxRow, snapshot
-from tadas.om.tenancy.rules import hash_password
+from tadas.om.outbox.types.row import OutboxRow
+from tadas.om.tenancy.rules import check_email, email_digest, hash_password, is_platform_email
 from tadas.om.tenancy.storage import TenancyStorageInterface
 from tadas.om.tenancy.types.identity import Identity
 from tadas.om.tenancy.types.membership import Membership
 from tadas.om.tenancy.types.org import Org
 from tadas.om.tenancy.types.role import operator_permissions_of
-from tadas.om.tenancy.types.user import PERSONAL_FIELDS, User
+from tadas.om.tenancy.types.user import User
 
 MAX_ORGS_PER_IDENTITY = 100
 """How many orgs one person may be a member of: the default of the managers'
 option, which is the bound on every read of the users one identity is."""
 
 
-def user_snapshot(user: User) -> Mapping[str, Any]:
-    """What an event about a user records: the user without who they are."""
-    return snapshot(user, exclude=PERSONAL_FIELDS)
+def user_payload(user: User) -> Mapping[str, Any]:
+    """What an outbox row about a user carries: ids, never who they are, so
+    the relay and the stream hold nothing an erasure has to reach."""
+    return {"identity_id": str(user.identity_id)}
 
 
 async def users_of(
@@ -86,7 +87,16 @@ async def identity_for(
     in the create, so a create refused meanwhile leaves no identity carrying
     this attempt's password or role, and a retry with another password is not
     kept out."""
-    identity = await storage.read_identity_by_email(email)
+    if is_platform_email(email):
+        # The provisioner and the smoke identity are the grant job's to make,
+        # with no password anyone knows; no create names one.
+        raise ValidationFailed("that address belongs to the platform")
+    identity = await storage.read_identity_by_email_digest(email_digest(email))
+    if identity is None:
+        try:
+            check_email(email)
+        except ValueError as error:
+            raise ValidationFailed(str(error)) from None
     if identity is None:
         identity_id = new_id()
         identity = Identity(
@@ -249,7 +259,7 @@ async def add_member_to(
         org_id=org_id,
         kind="tenancy.user.created",
         target_id=user.id,
-        payload=user_snapshot(user),
+        payload=user_payload(user),
         actor_id=actor_id,
         request_id=request.request_id,
         traceparent=current_traceparent(),

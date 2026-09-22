@@ -1,9 +1,11 @@
 import asyncio
 import secrets
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
+
+from pydantic import Field
 
 from tadas.infra.cache import CacheInterface
 from tadas.infra.observability import current_traceparent
@@ -15,6 +17,7 @@ from tadas.om.exceptions import (
     NotAnOperator,
     NotAuthorized,
     NotFound,
+    SecondFactorRequired,
     SignInDelayed,
     UniqueKeyTaken,
     ValidationFailed,
@@ -25,6 +28,7 @@ from tadas.om.opcontext import (
     IdentityContext,
     OpContext,
     OperatorContext,
+    OperatorPermission,
     OperatorRole,
     Permission,
     RequestContext,
@@ -32,26 +36,31 @@ from tadas.om.opcontext import (
     build_context,
 )
 from tadas.om.outbox import OutboxRelayInterface
-from tadas.om.outbox.types.row import OutboxRow, outbox_row, snapshot
+from tadas.om.outbox.types.row import OutboxRow, outbox_row
 from tadas.om.tenancy.impl.creates import (
     MAX_ORGS_PER_IDENTITY,
     add_member_to,
     create_org_with_owner,
     new_identity,
     owner_rows,
-    user_snapshot,
+    user_payload,
     users_of,
 )
+from tadas.om.tenancy.impl.totp import TotpSealer
 from tadas.om.tenancy.manager import TenancyManagerInterface
 from tadas.om.tenancy.rules import (
     DUMMY_PASSWORD_HASH,
     MAX_API_KEY_TTL,
+    MAX_OPERATOR_TOKEN_TTL,
     PREFIX_FOR_KIND,
     capped_role,
     check_sign_up,
     credential_kind_of,
+    email_digest,
     hash_password,
     hash_token,
+    is_platform_email,
+    matching_totp_step,
     role_at_most,
     sign_in_delay,
     verify_password,
@@ -62,6 +71,7 @@ from tadas.om.tenancy.types.identity import Identity
 from tadas.om.tenancy.types.issued import (
     IssuedApiKey,
     IssuedLogin,
+    IssuedOperatorToken,
     IssuedSession,
     IssuedTicket,
     OrgMembership,
@@ -80,9 +90,14 @@ round trip; the row decides, so a miss (or a cache that is down) costs
 one conditional write and nothing else."""
 TICKET_CREDENTIALS = (CredentialKind.SESSION_TOKEN, CredentialKind.API_KEY)
 """The credentials a socket ticket may stand for."""
-IDENTITY_CREDENTIALS = (CredentialKind.LOGIN, CredentialKind.SESSION_TOKEN)
-"""The credentials that prove an identity: the person's own sign-in, and a
-session exchanged from it. An api key is an agent's and proves none."""
+IDENTITY_CREDENTIALS = (
+    CredentialKind.LOGIN,
+    CredentialKind.SESSION_TOKEN,
+    CredentialKind.OPERATOR_TOKEN,
+)
+"""The credentials that prove an identity: the person's own sign-in, a
+session exchanged from it, and an operator token, which reaches the operator
+plane and nothing else. An api key is an agent's and proves none."""
 
 
 class TenancyOptions(Platform):
@@ -90,12 +105,25 @@ class TenancyOptions(Platform):
 
     login_ttl: timedelta = timedelta(minutes=10)
     session_ttl: timedelta = timedelta(hours=12)
+    """A session's absolute lifetime, from its exchange."""
+    session_idle_ttl: timedelta = timedelta(hours=4)
+    """A session not presented for this long has ended, whatever is left of
+    its absolute lifetime. It ends at whichever passes first."""
+    session_seen_every: timedelta = timedelta(minutes=1)
+    """How stale `last_seen_at` may be before a request writes it again, so a
+    busy session costs one write a minute and not one per request."""
     sign_in_free_failures: int = 3
-    """Failed sign-ins in a row an identity may make before the next waits."""
+    """Failed sign-ins in a row an email may make before the next waits."""
     sign_in_delay_base: timedelta = timedelta(seconds=1)
     sign_in_delay_cap: timedelta = timedelta(minutes=5)
     """The wait starts at the base and doubles with each failure past the
     free ones, up to the cap, whatever address the attempts come from."""
+    operator_token_ttl: timedelta = MAX_OPERATOR_TOKEN_TTL
+    """The longest an operator token lives, and the lifetime a mint that names
+    none gets. Never more than an hour."""
+    totp_encryption_key: str | None = Field(default=None, repr=False)
+    """The key the TOTP secrets are sealed under, a process credential. None
+    refuses every enrolment and every sign-in that presents a code."""
     api_key_ttl: timedelta = MAX_API_KEY_TTL
     ticket_ttl: timedelta = timedelta(seconds=60)
     max_limit: int = 200
@@ -111,6 +139,48 @@ def mint_token(kind: CredentialKind) -> str:
     return PREFIX_FOR_KIND[kind] + secrets.token_urlsafe(32)
 
 
+async def issue_operator_token(
+    storage: TenancyStorageInterface,
+    identity_id: UUID,
+    operator_role: OperatorRole,
+    expires_in: timedelta | None,
+    most: timedelta,
+) -> IssuedOperatorToken:
+    """An operator token for one identity: one permission, an hour at most,
+    stored under the system scope as a session of kind `operator_token` and
+    as its digest. The two entry points, a signed-in operator's mint and the
+    grant job's, authorize before they call this."""
+    ttl = most if expires_in is None else expires_in
+    if not timedelta(0) < ttl <= most:
+        raise ValidationFailed(
+            f"an operator token lives between one second and {int(most.total_seconds())} seconds"
+        )
+    now = utcnow()
+    token = mint_token(CredentialKind.OPERATOR_TOKEN)
+    session = Session(
+        id=new_id(),
+        created_at=now,
+        updated_at=now,
+        created_by=identity_id,
+        updated_by=identity_id,
+        identity_id=identity_id,
+        token_hash=hash_token(token),
+        credential_kind=CredentialKind.OPERATOR_TOKEN,
+        expires_at=now + ttl,
+        operator_role=operator_role,
+    )
+    await storage.write_session(EMPTY_UUID, session)
+    return IssuedOperatorToken(
+        token=token, expires_at=session.expires_at, operator_role=operator_role
+    )
+
+
+def platform_password_hash() -> str:
+    """The password of an identity no person signs in as: a hash of a random
+    secret nobody is told, so the sign-in never admits it."""
+    return hash_password(secrets.token_urlsafe(32), secrets.token_bytes(16))
+
+
 class TenancyManagerImpl(TenancyManagerInterface):
     def __init__(
         self,
@@ -118,11 +188,15 @@ class TenancyManagerImpl(TenancyManagerInterface):
         relay: OutboxRelayInterface,
         cache: CacheInterface,
         options: TenancyOptions,
+        clock: Callable[[], datetime] = utcnow,
     ) -> None:
         self._storage = storage
         self._relay = relay
         self._cache = cache
         self._options = options
+        self._totp = TotpSealer(options.totp_encryption_key)
+        # The TOTP time step is read from this clock, so a test can step it.
+        self._clock = clock
 
     # The transitions: each takes a stage and produces a stronger one.
 
@@ -216,7 +290,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
             check_sign_up(email, password, display_name, org_name, org_slug)
         except ValueError as error:
             raise ValidationFailed(str(error)) from None
-        if await self._storage.read_identity_by_email(email) is not None:
+        if await self._storage.read_identity_by_email_digest(email_digest(email)) is not None:
             raise Conflict("an account with this email exists; sign in instead")
         if await self._storage.read_org_by_slug(org_slug) is not None:
             raise Conflict(f"org slug {org_slug!r} is taken")
@@ -237,17 +311,22 @@ class TenancyManagerImpl(TenancyManagerInterface):
         owner = OrgMembership(org=org, user=user, role=membership.role)
         return await self._issue_login(identity, (owner,))
 
-    async def login(self, rctx: RequestContext, email: str, password: str) -> IssuedLogin:
-        identity = await self._storage.read_identity_by_email(email)
+    async def login(
+        self, rctx: RequestContext, email: str, password: str, totp_code: str | None = None
+    ) -> IssuedLogin:
+        digest = email_digest(email)
         now = utcnow()
         # The per-address limit rides the cache and fails open. This one is
-        # counted per identity in the tenancy role's own storage, so a guessed
-        # identity waits whatever address the guesses come from, and it holds
-        # when the cache is down. The wait is checked before the password.
-        if identity is not None:
+        # counted per email, in the tenancy role's own storage, so a guessed
+        # email waits whatever address the guesses come from, and it holds
+        # when the cache is down. The key is the email and not the identity,
+        # so an address nobody holds is delayed like one somebody does. The
+        # wait is checked before the password.
+        run = await self._storage.read_sign_in_delay(digest)
+        if run is not None:
             wait = sign_in_delay(
-                identity.failed_sign_ins,
-                identity.last_failed_sign_in_at,
+                run.failures,
+                run.last_failed_at,
                 now,
                 free=self._options.sign_in_free_failures,
                 base=self._options.sign_in_delay_base,
@@ -255,21 +334,43 @@ class TenancyManagerImpl(TenancyManagerInterface):
             )
             if wait > timedelta(0):
                 raise SignInDelayed(wait)
+        identity = await self._storage.read_identity_by_email_digest(digest)
         # The hash is verified on a miss too, against a fixed dummy, so an
         # unknown email costs what a wrong password costs; scrypt runs off the
         # event loop, so a sign-in never stalls every other request.
         stored = DUMMY_PASSWORD_HASH if identity is None else identity.password_hash
         verified = await asyncio.to_thread(verify_password, password, stored)
         if identity is None or not verified:
-            if identity is not None:
-                await self._storage.record_failed_sign_in(identity.id, now)
+            await self._storage.record_failed_sign_in(digest, now)
             raise InvalidCredential("email or password is wrong")
-        if identity.failed_sign_ins:
-            await self._storage.clear_failed_sign_ins(identity.id)
-        return await self._issue_login(identity, await self._memberships_of(identity.id))
+        second_factor_at = None
+        if totp_code is not None:
+            if not await self._second_factor_holds(identity, totp_code):
+                await self._storage.record_failed_sign_in(digest, now)
+                raise InvalidCredential("the code is wrong or was used already")
+            second_factor_at = now
+        if run is not None:
+            await self._storage.clear_failed_sign_ins(digest)
+        memberships = await self._memberships_of(identity.id)
+        return await self._issue_login(identity, memberships, second_factor_at)
+
+    async def _second_factor_holds(self, identity: Identity, code: str) -> bool:
+        """The code matches the identity's enrolled secret in the window around
+        now, and its step was not used before: the step is recorded in one
+        conditional write, so of two sign-ins presenting one code, one passes."""
+        if not identity.totp_enrolled or identity.totp_secret is None:
+            raise ValidationFailed("no second factor is enrolled for this sign-in")
+        secret = self._totp.open(identity.id, identity.totp_secret)
+        step = matching_totp_step(secret, code, self._clock())
+        if step is None:
+            return False
+        return await self._storage.use_totp_step(identity.id, step)
 
     async def _issue_login(
-        self, identity: Identity, memberships: tuple[OrgMembership, ...]
+        self,
+        identity: Identity,
+        memberships: tuple[OrgMembership, ...],
+        second_factor_at: datetime | None = None,
     ) -> IssuedLogin:
         """The credential that carries no tenant, stored under the system scope."""
         now = utcnow()
@@ -284,6 +385,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
             token_hash=hash_token(token),
             credential_kind=CredentialKind.LOGIN,
             expires_at=now + self._options.login_ttl,
+            second_factor_at=second_factor_at,
         )
         await self._storage.write_session(EMPTY_UUID, session)
         return IssuedLogin(token=token, expires_at=session.expires_at, memberships=memberships)
@@ -291,8 +393,10 @@ class TenancyManagerImpl(TenancyManagerInterface):
     async def authenticate_login(self, rctx: RequestContext, credential: str) -> IdentityContext:
         kind = credential_kind_of(credential)
         if kind is None or kind not in IDENTITY_CREDENTIALS:
-            raise InvalidCredential("expected the sign-in credential or a session token")
-        found = await self._storage.read_session_by_token_hash(hash_token(credential))
+            raise InvalidCredential(
+                "expected the sign-in credential, a session token, or an operator token"
+            )
+        found = await self._storage.read_session_by_digest(hash_token(credential))
         if found is None:
             raise InvalidCredential(f"unknown {kind.value} credential")
         org_id, proof = found
@@ -301,6 +405,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
             # A session proves its user's identity only while it proves the
             # tenant too: the org, the user, and the membership are live.
             await self._principal(org_id, proof.user_id)
+            await self._seen(org_id, proof)
         identity = await self._storage.read_identity(proof.identity_id)
         if identity is None:
             raise InvalidCredential("the identity is gone")
@@ -313,9 +418,12 @@ class TenancyManagerImpl(TenancyManagerInterface):
             email=identity.email,
             credential_kind=kind,
             credential_id=proof.id,
+            second_factor=proof.second_factor_at is not None,
+            operator_role=proof.operator_role,
         )
 
     async def exchange_login(self, ictx: IdentityContext, org_id: UUID) -> IssuedSession:
+        self._refuse_operator_token(ictx)
         org, user, membership = await self._principal_in(org_id, ictx.identity_id)
         now = utcnow()
         token = mint_token(CredentialKind.SESSION_TOKEN)
@@ -359,7 +467,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
             org_id=ended_org_id,
             kind="tenancy.session.revoked",
             target_id=ended.id,
-            payload=snapshot(ended, exclude=frozenset({"token_hash"})),
+            payload=self._session_payload(ended),
             actor_id=presented.user_id,
             request_id=ictx.request_id,
             traceparent=current_traceparent(),
@@ -378,6 +486,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
     async def get_identity_memberships(
         self, ictx: IdentityContext, after: UUID | None, limit: int
     ) -> OrgMembershipPage:
+        self._refuse_operator_token(ictx)
         limit = self._clamp(limit)
         rows = await self._storage.read_memberships_by_identity(ictx.identity_id, limit + 1, after)
         return OrgMembershipPage(items=tuple(rows[:limit]), has_more=len(rows) > limit)
@@ -385,12 +494,13 @@ class TenancyManagerImpl(TenancyManagerInterface):
     async def authenticate(self, rctx: RequestContext, credential: str) -> OpContext:
         kind = credential_kind_of(credential)
         if kind is CredentialKind.SESSION_TOKEN:
-            found = await self._storage.read_session_by_token_hash(hash_token(credential))
+            found = await self._storage.read_session_by_digest(hash_token(credential))
             if found is None:
                 raise InvalidCredential("unknown session token")
             org_id, session = found
             self._check_session(session, CredentialKind.SESSION_TOKEN)
             org, user, membership = await self._principal(org_id, session.user_id)
+            await self._seen(org_id, session)
             return build_context(
                 rctx,
                 user_id=user.id,
@@ -402,7 +512,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
                 credential_id=session.id,
             )
         if kind is CredentialKind.API_KEY:
-            found = await self._storage.read_api_key_by_hash(hash_token(credential))
+            found = await self._storage.read_api_key_by_digest(hash_token(credential))
             if found is None:
                 raise InvalidCredential("unknown api key")
             org_id, api_key = found
@@ -421,11 +531,30 @@ class TenancyManagerImpl(TenancyManagerInterface):
         raise InvalidCredential("this route accepts a session token or an api key")
 
     async def admit_operator(self, ictx: IdentityContext) -> OperatorContext:
-        if ictx.credential_kind is not CredentialKind.LOGIN:
-            raise InvalidCredential("the operator plane takes the sign-in credential")
+        if ictx.credential_kind not in (CredentialKind.LOGIN, CredentialKind.OPERATOR_TOKEN):
+            raise InvalidCredential(
+                "the operator plane takes the sign-in credential or an operator token"
+            )
         identity = await self._storage.read_identity(ictx.identity_id)
         if identity is None or identity.operator_role is None:
             raise NotAnOperator("this identity is not an operator")
+        if ictx.credential_kind is CredentialKind.OPERATOR_TOKEN:
+            # The one exception to "a password alone never admits": a second
+            # factor or the grant job stood behind the mint. The token carries
+            # one permission, and never more than the entry grants today.
+            if ictx.operator_role is None:
+                raise InvalidCredential("an operator token names its permission")
+            granted = operator_permissions_of(ictx.operator_role) & operator_permissions_of(
+                identity.operator_role
+            )
+        elif not identity.totp_enrolled:
+            # Allowlisted, with no second factor yet: the two calls that
+            # enrol one, and nothing else.
+            granted = frozenset({OperatorPermission.ENROL})
+        elif not ictx.second_factor:
+            raise SecondFactorRequired("sign in with the code from your authenticator")
+        else:
+            granted = operator_permissions_of(identity.operator_role)
         return OperatorContext(
             request_id=ictx.request_id,
             app=ictx.app,
@@ -435,7 +564,83 @@ class TenancyManagerImpl(TenancyManagerInterface):
             email=identity.email,
             credential_kind=ictx.credential_kind,
             credential_id=ictx.credential_id,
-            permissions=operator_permissions_of(identity.operator_role),
+            second_factor=ictx.second_factor,
+            operator_role=ictx.operator_role,
+            permissions=granted,
+        )
+
+    async def grant_operator(
+        self, rctx: RequestContext, email: str, operator_role: OperatorRole
+    ) -> Identity:
+        identity = await self._storage.read_identity_by_email_digest(email_digest(email))
+        if identity is None:
+            if not is_platform_email(email):
+                raise NotFound("no identity holds that email; an operator signs up first")
+            identity = await self._platform_identity(email)
+        if identity.operator_role is operator_role:
+            return identity
+        return await self._write_entry(rctx, identity, operator_role)
+
+    async def disable_operator(self, rctx: RequestContext, email: str) -> Identity:
+        identity = await self._storage.read_identity_by_email_digest(email_digest(email))
+        if identity is None:
+            raise NotFound("no identity holds that email")
+        if identity.operator_role is None:
+            return identity
+        return await self._write_entry(rctx, identity, None)
+
+    async def _platform_identity(self, email: str) -> Identity:
+        """The provisioner or the smoke identity, made the first time the grant
+        job names it: no org, and a password nobody is told."""
+        password_hash = await asyncio.to_thread(platform_password_hash)
+        identity = new_identity(email, password_hash, utcnow())
+        await self._storage.write_identity(identity)
+        return identity
+
+    async def _write_entry(
+        self, rctx: RequestContext, identity: Identity, operator_role: OperatorRole | None
+    ) -> Identity:
+        """The allowlist entry changes with its audit row, in one commit under
+        the system scope: the grant job acts for the platform, so the actor
+        is the system user."""
+        now = utcnow()
+        updated = identity.model_copy(
+            update={"operator_role": operator_role, "updated_at": now, "updated_by": EMPTY_UUID}
+        )
+        kind = "granted" if operator_role is not None else "disabled"
+        row = OutboxRow(
+            id=new_id(),
+            created_at=now,
+            org_id=EMPTY_UUID,
+            kind=f"tenancy.operator.{kind}",
+            target_id=identity.id,
+            payload={} if operator_role is None else {"operator_role": operator_role.value},
+            actor_id=EMPTY_UUID,
+            request_id=rctx.request_id,
+            traceparent=current_traceparent(),
+            app=rctx.app.type.value,
+        )
+        await self._storage.write_identity(updated, (row,))
+        await self._relay.relay(EMPTY_UUID, row)
+        return updated
+
+    async def grant_operator_token(
+        self,
+        rctx: RequestContext,
+        email: str,
+        expires_in: timedelta | None = None,
+        operator_role: OperatorRole | None = None,
+    ) -> IssuedOperatorToken:
+        identity = await self._storage.read_identity_by_email_digest(email_digest(email))
+        if identity is None or identity.operator_role is None:
+            raise NotAnOperator("no operator holds that email")
+        role = operator_role or identity.operator_role
+        if not operator_permissions_of(role) <= operator_permissions_of(identity.operator_role):
+            raise NotAuthorized(
+                f"the entry grants {identity.operator_role.value}, not {role.value}"
+            )
+        return await issue_operator_token(
+            self._storage, identity.id, role, expires_in, self._options.operator_token_ttl
         )
 
     async def resume(
@@ -451,6 +656,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
                 raise InvalidCredential("the session behind the ticket is gone")
             self._check_session(session, CredentialKind.SESSION_TOKEN)
             org, user, membership = await self._principal(org_id, session.user_id)
+            await self._seen(org_id, session)
             role = membership.role
             expires_at = session.expires_at
         elif credential_kind is CredentialKind.API_KEY:
@@ -483,7 +689,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
             raise InvalidCredential("socket ticket already redeemed")
         now = utcnow()
         # One conditional write consumes the ticket: only the first redeemer gets the row.
-        consumed = await self._storage.consume_socket_ticket(digest, now)
+        consumed = await self._storage.redeem_socket_ticket(digest, now)
         if consumed is None:
             raise InvalidCredential("unknown or already redeemed socket ticket")
         org_id, behind = consumed
@@ -613,7 +819,9 @@ class TenancyManagerImpl(TenancyManagerInterface):
         updated = membership.model_copy(
             update={"role": role, "updated_at": utcnow(), "updated_by": ctx.user_id}
         )
-        row = outbox_row(ctx, "tenancy.membership.updated", updated.id, snapshot(updated))
+        row = outbox_row(
+            ctx, "tenancy.membership.updated", updated.id, {"user_id": str(updated.user_id)}
+        )
         await self._storage.write_membership(ctx.org_id, updated, (row,))
         await self._relay.relay(ctx.org_id, row)
         return updated
@@ -626,11 +834,6 @@ class TenancyManagerImpl(TenancyManagerInterface):
         user = await self._live_user(ctx, user_id)
         if not role_at_most(membership.role, ctx.security.role):
             raise NotAuthorized("cannot remove a member above your own role")
-        # Their credentials go first, each revoked with its outbox row the way
-        # a revocation is, so no key of theirs stays listed. A failure here
-        # leaves a member with fewer credentials, which the next remove_member
-        # finishes.
-        revocations = await self._revoke_credentials_of(ctx, user_id)
         now = utcnow()
         removed = user.model_copy(
             update={
@@ -640,9 +843,6 @@ class TenancyManagerImpl(TenancyManagerInterface):
                 "updated_by": ctx.user_id,
             }
         )
-        # The membership ends with the member: soft-deleted beside the user in
-        # one commit, so no read lists it, no role change reaches it during
-        # the retention, and no failure leaves a live user without one.
         ended = membership.model_copy(
             update={
                 "deleted_at": now,
@@ -651,49 +851,26 @@ class TenancyManagerImpl(TenancyManagerInterface):
                 "updated_by": ctx.user_id,
             }
         )
-        row = outbox_row(ctx, "tenancy.user.deleted", removed.id, user_snapshot(removed))
-        await self._storage.remove_member(ctx.org_id, removed, ended, (row,))
+        row = outbox_row(ctx, "tenancy.user.deleted", removed.id, user_payload(removed))
+
+        def revocation(kind: str, credential_id: UUID) -> OutboxRow:
+            return outbox_row(ctx, kind, credential_id, {"user_id": str(user_id)})
+
+        # One commit: the user, the membership, every live session and api
+        # key of theirs, and a row for each. A failure leaves the member whole
+        # with every credential; a success leaves no credential of theirs, so
+        # no key stays listed and no session stays live.
+        revocations = await self._storage.remove_member(
+            ctx.org_id, removed, ended, (row,), revocation
+        )
         # The removal is announced first, so a socket of theirs closes because
         # their membership ended, not because a credential was revoked; then
         # each revocation, as the record it is. Every row is durable already:
         # whatever a crash leaves unrelayed, the sweep relays.
         await self._relay.relay(ctx.org_id, row)
-        for revocation in revocations:
-            await self._relay.relay(ctx.org_id, revocation)
+        for revoked in revocations:
+            await self._relay.relay(ctx.org_id, revoked)
         return removed
-
-    async def _revoke_credentials_of(self, ctx: OpContext, user_id: UUID) -> list[OutboxRow]:
-        """Revokes every live session and every unrevoked api key of the user,
-        a page at a time until none is left, each landing with its outbox row;
-        returns the rows, for the caller to relay in the order it means."""
-        rows: list[OutboxRow] = []
-        page = self._options.max_limit
-        while sessions := await self._storage.read_sessions(ctx.org_id, user_id, utcnow(), page):
-            now = utcnow()
-            for session in sessions:
-                revoked = session.model_copy(
-                    update={"revoked_at": now, "updated_at": now, "updated_by": ctx.user_id}
-                )
-                row = self._session_row(ctx, revoked, "revoked")
-                await self._storage.write_session(ctx.org_id, revoked, (row,))
-                rows.append(row)
-        while keys := await self._storage.read_api_keys(ctx.org_id, None, page, user_id):
-            now = utcnow()
-            for api_key in keys:
-                revoked_key = api_key.model_copy(
-                    update={
-                        "deleted_at": now,
-                        "deleted_by": ctx.user_id,
-                        "updated_at": now,
-                        "updated_by": ctx.user_id,
-                    }
-                )
-                row = outbox_row(
-                    ctx, "tenancy.api_key.deleted", revoked_key.id, self._key_snapshot(revoked_key)
-                )
-                await self._storage.write_api_key(ctx.org_id, revoked_key, (row,))
-                rows.append(row)
-        return rows
 
     # Credentials.
 
@@ -778,7 +955,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
         # (the marker stored no outcome). The one storage method inserts the
         # key, or re-mints the secret on the row the id already names, and the
         # re-mint lands only while the marker still holds this attempt.
-        row = outbox_row(ctx, "tenancy.api_key.created", api_key.id, self._key_snapshot(api_key))
+        row = outbox_row(ctx, "tenancy.api_key.created", api_key.id, self._key_payload(api_key))
         stored, created = await self._storage.issue_api_key(
             ctx.org_id, api_key, (row,), attempt.attempt_id if attempt else None
         )
@@ -810,7 +987,13 @@ class TenancyManagerImpl(TenancyManagerInterface):
         if await self.tenant_expired(ctx):
             # The tenant itself is past the retention: every row of it goes.
             return await self._storage.purge_tenant(ctx.org_id)
-        return await self._storage.purge_deleted(ctx.org_id, utcnow() - self._options.retention)
+        before = utcnow() - self._options.retention
+        purged = await self._storage.purge_deleted(ctx.org_id, before)
+        if ctx.org_id == EMPTY_UUID:
+            # The system scope also holds the sign-in delays, keyed on emails
+            # nobody may hold: a run that ended long ago goes with the logins.
+            purged += await self._storage.purge_sign_in_delays(before)
+        return purged
 
     async def tenant_expired(self, ctx: OpContext) -> bool:
         ctx.require(Permission.READ)
@@ -846,18 +1029,19 @@ class TenancyManagerImpl(TenancyManagerInterface):
     # left behind.
 
     async def _write_user(self, ctx: OpContext, user: User, action: str) -> None:
-        row = outbox_row(ctx, f"tenancy.user.{action}", user.id, user_snapshot(user))
+        row = outbox_row(ctx, f"tenancy.user.{action}", user.id, user_payload(user))
         await self._storage.write_user(ctx.org_id, user, (row,))
         await self._relay.relay(ctx.org_id, row)
 
     @staticmethod
-    def _session_row(ctx: OpContext, session: Session, action: str) -> OutboxRow:
-        # The snapshot never carries the hash; the event is a record, not a credential.
+    def _session_payload(session: Session) -> Mapping[str, Any]:
+        # Ids only: the row names the session by its target, and never carries
+        # the hash; the event is a record, not a credential.
+        return {"user_id": str(session.user_id)}
+
+    def _session_row(self, ctx: OpContext, session: Session, action: str) -> OutboxRow:
         return outbox_row(
-            ctx,
-            f"tenancy.session.{action}",
-            session.id,
-            snapshot(session, exclude=frozenset({"token_hash"})),
+            ctx, f"tenancy.session.{action}", session.id, self._session_payload(session)
         )
 
     async def _write_session(self, ctx: OpContext, session: Session, action: str) -> None:
@@ -866,23 +1050,44 @@ class TenancyManagerImpl(TenancyManagerInterface):
         await self._relay.relay(ctx.org_id, row)
 
     @staticmethod
-    def _key_snapshot(api_key: ApiKey) -> Mapping[str, Any]:
-        # The snapshot never carries the hash; the event is a record, not a credential.
-        return snapshot(api_key, exclude=frozenset({"key_hash"}))
+    def _key_payload(api_key: ApiKey) -> Mapping[str, Any]:
+        # Ids only, and never the hash; the event is a record, not a credential.
+        return {"user_id": str(api_key.user_id)}
 
     async def _write_api_key(self, ctx: OpContext, api_key: ApiKey, action: str) -> None:
-        row = outbox_row(ctx, f"tenancy.api_key.{action}", api_key.id, self._key_snapshot(api_key))
+        row = outbox_row(ctx, f"tenancy.api_key.{action}", api_key.id, self._key_payload(api_key))
         await self._storage.write_api_key(ctx.org_id, api_key, (row,))
         await self._relay.relay(ctx.org_id, row)
 
-    @staticmethod
-    def _check_session(session: Session, kind: CredentialKind) -> None:
+    def _check_session(self, session: Session, kind: CredentialKind) -> None:
         if session.credential_kind is not kind:
             raise InvalidCredential("credential kind does not match its prefix")
         if session.revoked_at is not None:
             raise CredentialExpired("session revoked")
-        if session.expires_at <= utcnow():
+        now = utcnow()
+        if session.expires_at <= now:
             raise CredentialExpired("session expired")
+        # The idle lifetime beside the absolute one. A session no request has
+        # touched yet (one an older release wrote) starts its idle clock at
+        # its first use here, not at its creation.
+        seen = session.last_seen_at
+        if seen is not None and seen + self._options.session_idle_ttl <= now:
+            raise CredentialExpired("session idle")
+
+    async def _seen(self, org_id: UUID, session: Session) -> None:
+        """Records a tenant session's use, at most once a `session_seen_every`,
+        for its idle lifetime."""
+        now = utcnow()
+        seen = session.last_seen_at
+        if seen is None or seen + self._options.session_seen_every <= now:
+            await self._storage.touch_session(org_id, session.id, now)
+
+    @staticmethod
+    def _refuse_operator_token(ictx: IdentityContext) -> None:
+        """An operator token reaches the operator plane and nothing else: it
+        never lists a person's places or enters a tenant."""
+        if ictx.credential_kind is CredentialKind.OPERATOR_TOKEN:
+            raise InvalidCredential("an operator token reaches the operator plane only")
 
     @staticmethod
     def _check_api_key(api_key: ApiKey) -> None:

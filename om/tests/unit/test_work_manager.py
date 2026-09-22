@@ -473,10 +473,11 @@ async def test_a_claim_in_a_deleted_org_fails_the_item_and_moves_on(
         "Root",
         operator_role=OperatorRole.WRITE,
     )
+    # Admitted on the operator token the grant job mints: the claim is the
+    # subject here, not how an operator signs in.
+    token = await tenancy.grant_operator_token(request(APP), "root@example.test")
     admin = await tenancy.admit_operator(
-        await tenancy.authenticate_login(
-            request(APP), (await tenancy.login(request(APP), "root@example.test", "pw-1234")).token
-        )
+        await tenancy.authenticate_login(request(APP), token.token)
     )
     await managers.tenancy_operator.delete_org(admin, ctx.org_id)
 

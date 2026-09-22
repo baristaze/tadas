@@ -8,6 +8,7 @@ from pathlib import Path
 from uuid import UUID
 
 import pytest
+from contracts.second_factor import TOTP_KEY, SteppingClock, enrolled_operator
 
 from tadas.infra.cache import CacheScope
 from tadas.infra.impl.local import InfraLocalImpl
@@ -34,6 +35,7 @@ from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor
 from tadas.om.tasks.types.task import Task, TaskStatus
 from tadas.om.tenancy.impl.manager import TenancyManagerImpl, TenancyOptions
 from tadas.om.tenancy.impl.operator import TenancyOperatorManagerImpl, TenancyOperatorOptions
+from tadas.om.tenancy.rules import email_digest
 from tadas.om.tenancy.storage.impl.memory import TenancyStorageMemoryImpl
 from tadas.om.tenancy.types.membership import Membership
 from tadas.om.tenancy.types.org import Org
@@ -62,22 +64,31 @@ class Plane:
         self.storage = TenancyStorageMemoryImpl(self.outbox, IdempotencyStorageMemoryImpl())
         self.tasks = TasksStorageMemoryImpl(self.outbox)
         relay = OutboxRelayImpl(self.outbox, self.events, infra.get_topics())
+        self.clock = SteppingClock()
         self.manager = TenancyManagerImpl(
-            self.storage, relay, infra.get_cache(CacheScope.REALTIME_TICKET), TenancyOptions()
+            self.storage,
+            relay,
+            infra.get_cache(CacheScope.REALTIME_TICKET),
+            TenancyOptions(totp_encryption_key=TOTP_KEY),
+            self.clock,
         )
         self.operator = TenancyOperatorManagerImpl(
-            self.storage, self.tasks, self.events, relay, TenancyOperatorOptions(max_limit=3)
+            self.storage,
+            self.tasks,
+            self.events,
+            relay,
+            TenancyOperatorOptions(max_limit=3, totp_encryption_key=TOTP_KEY),
+            self.clock,
         )
 
     async def admit(self, role: OperatorRole, email: str) -> OperatorContext:
-        """An operator with the given role, seeded into an org of their own."""
+        """An operator with the given role, seeded into an org of their own and
+        signed in with a second factor."""
         await self.manager.bootstrap(
             request(), email, email.split("@")[0], email, PASSWORD, "Op", operator_role=role
         )
-        login = await self.manager.login(request(), email, PASSWORD)
-        return await self.manager.admit_operator(
-            await self.manager.authenticate_login(request(), login.token)
-        )
+        admin, _ = await enrolled_operator(self.manager, self.operator, self.clock, email, PASSWORD)
+        return admin
 
 
 @pytest.fixture
@@ -122,7 +133,9 @@ async def test_a_read_operator_reads_and_is_refused_every_write(
             await write
     # Nothing landed: the refusal came before the write.
     assert await plane.storage.read_org_by_slug("other") is None
-    assert await plane.storage.read_identity_by_email("bob@example.test") is None
+    assert (
+        await plane.storage.read_identity_by_email_digest(email_digest("bob@example.test")) is None
+    )
     assert (await plane.storage.read_org(org.id)) == org
 
 
@@ -223,7 +236,9 @@ async def test_the_creates_refuse_what_the_commands_refuse_and_a_little_more(
         await plane.operator.add_member(
             writer, org.id, "bob@example.test", PASSWORD, "Bob", Role.MEMBER
         )
-    assert await plane.storage.read_identity_by_email("bob@example.test") is None
+    assert (
+        await plane.storage.read_identity_by_email_digest(email_digest("bob@example.test")) is None
+    )
 
 
 async def test_a_rerun_of_a_create_returns_the_row_as_stored(

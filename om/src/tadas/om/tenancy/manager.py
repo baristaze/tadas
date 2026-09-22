@@ -18,7 +18,13 @@ from tadas.om.opcontext import (
 )
 from tadas.om.tenancy.types.api_key import ApiKey
 from tadas.om.tenancy.types.identity import Identity
-from tadas.om.tenancy.types.issued import IssuedApiKey, IssuedLogin, IssuedSession, IssuedTicket
+from tadas.om.tenancy.types.issued import (
+    IssuedApiKey,
+    IssuedLogin,
+    IssuedOperatorToken,
+    IssuedSession,
+    IssuedTicket,
+)
 from tadas.om.tenancy.types.membership import Membership
 from tadas.om.tenancy.types.org import Org
 from tadas.om.tenancy.types.page import ApiKeyPage, MembershipPage, OrgMembershipPage, UserPage
@@ -104,21 +110,31 @@ class TenancyManagerInterface(ABC):
         ...
 
     @abstractmethod
-    async def login(self, rctx: RequestContext, email: str, password: str) -> IssuedLogin:
-        """Platform-internal: verifies a sign-in and issues a credential that carries no tenant."""
+    async def login(
+        self, rctx: RequestContext, email: str, password: str, totp_code: str | None = None
+    ) -> IssuedLogin:
+        """Platform-internal: verifies a sign-in and issues a credential that
+        carries no tenant. A run of failed sign-ins for the email, known or
+        not, makes the next one wait before its password is checked
+        (SignInDelayed). A `totp_code`, when presented, is checked against the
+        identity's enrolled secret, refused when it was used already, and
+        recorded on the credential as the verified second factor; a tenant
+        sign-in needs none, and the operator gate asks for it."""
         ...
 
     @abstractmethod
     async def authenticate_login(self, rctx: RequestContext, credential: str) -> IdentityContext:
         """Platform-internal: the transition to the identity stage. Verifies the
         person's own sign-in and produces the identity behind it: the login
-        credential (`lgn_`), or a live session token (`ses_`), which proves the
+        credential (`lgn_`), a live session token (`ses_`), which proves the
         identity of its user as well as the tenant, so a signed-in app lists
-        its memberships and switches with the one bearer it holds. A revoked
-        or expired session, or one whose user, membership, or org is gone, is
-        refused; an api key is refused with InvalidCredential, since it is an
-        agent's and not the person's sign-in. Every operation on an identity
-        starts here."""
+        its memberships and switches with the one bearer it holds, or an
+        operator token (`opr_`), which carries its one permission to the
+        operator gate and reaches nothing else. A revoked or expired session,
+        one idle past its idle lifetime, or one whose user, membership, or org
+        is gone, is refused; an api key is refused with InvalidCredential,
+        since it is an agent's and not the person's sign-in. Every operation on
+        an identity starts here."""
         ...
 
     @abstractmethod
@@ -129,7 +145,8 @@ class TenancyManagerInterface(ABC):
         ends in the same write that lands the new one, announced as any
         revocation is, so its socket closes and a tab never holds two live
         sessions. A session another write already ended is refused with
-        CredentialExpired and nothing lands."""
+        CredentialExpired and nothing lands. An operator token never enters a
+        tenant (InvalidCredential)."""
         ...
 
     @abstractmethod
@@ -140,7 +157,7 @@ class TenancyManagerInterface(ABC):
         The places the verified identity holds, each its org, its user, and its
         role, the same choice a sign-in answers with; by user id, a page at a
         time as `get_users` pages. Deleted orgs and ended memberships are not
-        listed."""
+        listed. An operator token lists nothing (InvalidCredential)."""
         ...
 
     @abstractmethod
@@ -153,10 +170,54 @@ class TenancyManagerInterface(ABC):
     async def admit_operator(self, ictx: IdentityContext) -> OperatorContext:
         """Platform-internal: the transition to the operator stage. Admits the
         verified identity when it is on the operator allowlist, NotAnOperator
-        otherwise, with the permissions the entry's role grants. Only the
-        login credential admits: the identity stage also accepts a tenant
-        session, and a tenant's credential never reaches the operator plane,
-        so one is refused with InvalidCredential."""
+        otherwise. Two credentials admit, and a tenant's never does (a tenant
+        session is InvalidCredential): the person's own sign-in, and an
+        operator token. A sign-in admits with the permissions the entry's role
+        grants only when it verified a TOTP code (SecondFactorRequired when an
+        enrolled operator's did not); an operator with no second factor
+        enrolled yet is admitted with `OperatorPermission.ENROL` alone. An
+        operator token admits with its one permission, never wider than the
+        entry grants today: the one exception to "a password alone never
+        admits", since a second factor or the grant job stood behind it."""
+        ...
+
+    @abstractmethod
+    async def grant_operator(
+        self, rctx: RequestContext, email: str, operator_role: OperatorRole
+    ) -> Identity:
+        """Platform-internal: the grant job's, on a deployed database as on a
+        local one. Puts the identity that holds the email on the operator
+        allowlist with that entry, audited under the system scope. No identity
+        holding the email is NotFound, since an operator signs up like any
+        person first; the platform's own identities (the provisioner and the
+        smoke identity, in the platform's reserved domain) are made here the
+        first time, with no org and a password nobody is told. A rerun with
+        the same arguments changes nothing. It enrols no second factor: the
+        operator does that at the first sign-in to the plane."""
+        ...
+
+    @abstractmethod
+    async def disable_operator(self, rctx: RequestContext, email: str) -> Identity:
+        """Platform-internal: the grant job's. Takes the identity off the
+        allowlist, audited; its operator tokens stop admitting at once, since
+        the gate reads the entry on every request."""
+        ...
+
+    @abstractmethod
+    async def grant_operator_token(
+        self,
+        rctx: RequestContext,
+        email: str,
+        expires_in: timedelta | None = None,
+        operator_role: OperatorRole | None = None,
+    ) -> IssuedOperatorToken:
+        """Platform-internal: the grant job mints the operator token of an
+        agent's identity, the provisioner's or the smoke identity's, carrying
+        one permission, `operator_role` or else the entry's, never wider than
+        the entry (NotAuthorized), and expiring within the hour (3600 seconds
+        when `expires_in` is None; longer is ValidationFailed). An identity
+        off the allowlist is NotAnOperator. The token is shown once and
+        stored as its digest."""
         ...
 
     @abstractmethod
@@ -243,9 +304,10 @@ class TenancyManagerInterface(ABC):
 
     @abstractmethod
     async def remove_member(self, ctx: OpContext, user_id: UUID) -> User:
-        """Soft-deletes the member's user in this org and ends their membership
-        with it; their credentials stop resolving, no list shows them, and no
-        role change reaches them."""
+        """Soft-deletes the member's user in this org, ends their membership,
+        and revokes every live session and api key of theirs, in one
+        transaction; no list shows them, no role change reaches them, and
+        each revocation is announced, so their sockets close."""
         ...
 
     # Credentials.

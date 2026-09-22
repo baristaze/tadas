@@ -126,6 +126,20 @@ class NotAnOperator(TenancyException, NotAuthorized):
     """The identity is not on the operator allowlist."""
 
 
+class SecondFactorRequired(TenancyException, NotAuthenticated):
+    """An operator with an enrolled second factor presented a sign-in that
+    verified no code. The operator plane never admits a password alone."""
+
+    code = "second_factor_required"
+
+
+class SecondFactorNotEnrolled(TenancyException, NotAuthorized):
+    """An operator whose second factor is not enrolled yet reached a route
+    other than the two that enrol it."""
+
+    code = "second_factor_not_enrolled"
+
+
 class WorkException(PlatformException): ...
 
 

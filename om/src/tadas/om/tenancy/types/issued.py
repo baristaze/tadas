@@ -3,7 +3,7 @@
 from datetime import datetime
 
 from tadas.om.base import Platform
-from tadas.om.opcontext import Role
+from tadas.om.opcontext import OperatorRole, Role
 from tadas.om.tenancy.types.api_key import ApiKey
 from tadas.om.tenancy.types.org import Org
 from tadas.om.tenancy.types.user import User
@@ -39,3 +39,18 @@ class IssuedTicket(Platform):
 
     ticket: str
     expires_at: datetime
+
+
+class IssuedOperatorToken(Platform):
+    """An operator token in the clear, once: one permission, an hour at most."""
+
+    token: str
+    expires_at: datetime
+    operator_role: OperatorRole
+
+
+class IssuedTotpSecret(Platform):
+    """A freshly minted TOTP secret, once, as the `otpauth://` URI an
+    authenticator app reads; only the sealed secret is kept."""
+
+    otpauth_uri: str
