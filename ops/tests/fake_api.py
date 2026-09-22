@@ -11,6 +11,8 @@ from uuid import UUID, uuid4
 
 import httpx
 
+from tadas.ops.traffic import route_template
+
 ORG_ID = UUID("0199a4c0-0000-7000-8000-00000000000a")
 OWNER_ID = UUID("0199a4c0-0000-7000-8000-0000000000aa")
 NOW = datetime(2026, 9, 20, 12, 0, tzinfo=UTC).isoformat()
@@ -35,7 +37,9 @@ class FakeApi:
         self.seq = 10
         self.requests: list[httpx.Request] = []
         self.sockets: list[FakeSocket] = []
-        self.fail_on = fail_on  # "METHOD path" answered 503 once
+        self.fail_on = fail_on
+        """"METHOD path" answered 503 once; the path may be a route template
+        (`DELETE /v1/tasks/{id}`), since a test knows no id in advance."""
 
     def _event(self, kind: str, target_id: str) -> None:
         self.seq += 1
@@ -75,7 +79,7 @@ class FakeApi:
 
     def answer(self, request: httpx.Request) -> httpx.Response:
         method, path = request.method, request.url.path
-        if self.fail_on == f"{method} {path}":
+        if self.fail_on in (f"{method} {path}", f"{method} {route_template(path)}"):
             self.fail_on = None
             return httpx.Response(503, json={"error": {"code": "unavailable", "message": "no"}})
         if request.headers.get("x-app") not in ("portal", "admin", "cli", "api"):

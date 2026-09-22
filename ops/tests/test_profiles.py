@@ -27,9 +27,11 @@ def test_an_unknown_profile_is_named_in_the_error() -> None:
         profile_named("gentle")
 
 
-def test_the_light_profile_stays_under_the_login_rate_limit() -> None:
-    """Two sessions at once, each at least twelve steps of the shortest
-    think, is at most ten sign-ins a minute from one address."""
-    steps = 12
-    shortest = LIGHT.think_seconds[0] * steps
-    assert LIGHT.concurrency * (60 / shortest) <= 10 + 2.5
+def test_a_profile_lighter_than_heavy_stays_under_the_login_rate_limit() -> None:
+    """A run signs each person in once and drives at most one session per
+    worker, so its sign-ins are its concurrency. Light and regular stay
+    under the login rate limit of one address, ten a minute. Heavy and
+    stress do not: a run of either needs more than one generator, and from
+    one address the rest of its people are refused at sign-in."""
+    assert all(p.concurrency <= 10 for p in (LIGHT, REGULAR))
+    assert all(p.concurrency > 10 for p in (HEAVY, STRESS))

@@ -2,11 +2,18 @@
 never a manager: a session is what a person does in the portal, and a run is
 many sessions at once, for a bounded time, at a profile.
 
-A session: sign in, choose the org, open the socket, list the open tasks, add
-five or six with an idempotency key each, edit one, complete two, reopen one,
-move one, list the done ones, delete one, read the stream after where it
-stood at the start, see one of its own changes arrive on the socket, sign
-out. A person thinks between steps.
+A person signs in once, at the start of the run: a login, then the exchange
+for a session token in the org. Every session that person drives reuses that
+token, and the sign-out comes once, at the end. Sign-in verifies a password
+on purpose, so it is the slowest route the generator calls, and the API
+counts it against a per-address rate limit; a session that signed in for
+itself measured password hashing and that limit instead of the application.
+
+A session: open the socket, list the open tasks, add five or six with an
+idempotency key each, edit one, complete two, reopen one, move one, list the
+done ones, delete one, read the stream after where it stood at the start,
+see one of its own changes arrive on the socket. A person thinks between
+steps.
 
 The tenants a run needs come from the operator plane (`POST /v1/admin/orgs`
 and its members) under the provisioner's operator token, a `write` entry and
@@ -26,6 +33,7 @@ from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError, version
+from itertools import zip_longest
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -51,12 +59,9 @@ CUT_GRACE_SECONDS = 5.0
 """Past the duration, how long a request already in flight may take to end
 before the run stops waiting for it."""
 FAILED_SESSION_PAUSE_SECONDS = 5.0
-"""A person whose session failed does not sign in again at once. Without the
-pause a refusal at sign-in is a tight loop of sign-ins, which is a flood and
-not traffic."""
-RATE_LIMITED_PAUSE_SECONDS = 15.0
-"""A 429 names a window; the next sign-in from this worker waits a good part
-of the login window out instead of adding to the count that closed it."""
+"""A person whose session failed does not start another at once. Without the
+pause a refusal is a tight loop of sessions, which is a flood and not
+traffic."""
 
 _UUID = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
 
@@ -132,6 +137,17 @@ class Person:
     org_slug: str
 
 
+@dataclass(frozen=True)
+class Seat:
+    """A person signed in for the whole run: the session token every session
+    that person drives reuses, and the user id whose changes the socket shows
+    them as their own."""
+
+    person: Person
+    token: str
+    user_id: UUID
+
+
 class SessionFailed(Exception):
     """A step did not do what a person expects; the session is counted as failed."""
 
@@ -146,7 +162,6 @@ class SessionOutcome:
     completed: bool = False
     cut: bool = False
     failure: str | None = None
-    rate_limited: bool = False
     saw_own_change: bool = False
     write_request_ids: list[str] = field(default_factory=list)
     """The request ids of the creating calls, first to last, for a caller
@@ -187,14 +202,17 @@ class Clock:
 
 
 class Session:
-    """One person's session over one client. `recording` is the transport the
-    client sends through, for the request ids of the writes; `connect` opens
-    the socket and is injected by tests; the default is the client's own."""
+    """One person's session over one client, under the token their seat
+    holds: a session opens the socket and does the work, and never signs in
+    or out, because the run does that once per person. `recording` is the
+    transport the client sends through, for the request ids of the writes;
+    `connect` opens the socket and is injected by tests; the default is the
+    client's own."""
 
     def __init__(
         self,
         client: ApiClient,
-        person: Person,
+        seat: Seat,
         clock: Clock,
         *,
         recording: RecordingTransport | None = None,
@@ -202,27 +220,28 @@ class Session:
         task_count: Callable[[], int] = lambda: random.randint(5, 6),
     ) -> None:
         self.client = client
-        self.person = person
+        self.seat = seat
+        self.person = seat.person
         self.clock = clock
         self.samples: list[Sample] = recording.samples if recording is not None else []
         self.connect = connect
         self.task_count = task_count
-        self.outcome = SessionOutcome(person)
+        self.outcome = SessionOutcome(seat.person)
         self._changes: list[EntityChanged] = []
         self._own_change = asyncio.Event()
         self._opened = asyncio.Event()
-        self._user_id: UUID | None = None
+        self._user_id: UUID = seat.user_id
         self._start_seq: int | None = None
         self._channel: Channel | None = None
 
     async def run(self) -> SessionOutcome:
         channel_task: asyncio.Task[None] | None = None
         try:
-            await self._sign_in()
+            self.clock.check()
+            self.client.token = self.seat.token
             channel_task = asyncio.create_task(self._listen(), name=f"channel-{self.person.email}")
             await self._open_channel()
             await self._work()
-            await self._sign_out()
             self.outcome.completed = True
         except SessionCut:
             self.outcome.cut = True
@@ -230,7 +249,6 @@ class Session:
             self.outcome.failure = str(failed)
         except ApiError as error:
             self.outcome.failure = f"{error.status} {error.code} on the API"
-            self.outcome.rate_limited = error.status == 429
         except httpx.HTTPError as failure:
             self.outcome.failure = f"{type(failure).__name__} on the wire"
         finally:
@@ -243,17 +261,6 @@ class Session:
         return self.outcome
 
     # The steps
-
-    async def _sign_in(self) -> None:
-        self.clock.check()
-        login = await self.client.login(self.person.email, self.person.password)
-        choices = [m for m in login.memberships if m.org.slug == self.person.org_slug]
-        if not choices:
-            raise SessionFailed(f"{self.person.email} is not a member of {self.person.org_slug}")
-        await self.clock.think()
-        session = await self.client.exchange_session(login.token, choices[0].org.id)
-        self.client.token = session.token
-        self._user_id = session.user.id
 
     async def _listen(self) -> None:
         def on_state(state: State) -> None:
@@ -343,9 +350,93 @@ class Session:
             raise SessionFailed("the socket showed none of the session's own changes") from None
         self.outcome.saw_own_change = True
 
-    async def _sign_out(self) -> None:
-        await self.clock.think()
-        await self.client.logout()
+
+# The sign-in and the sign-out of a run
+
+
+def seat_order(people: list[Person]) -> list[Person]:
+    """The people to sign in, in the order a run takes them: one from each
+    org in turn. A run signs in fewer people than a profile provisions, and
+    taking them in the order they were made would leave the last org with no
+    traffic at all."""
+    by_org: dict[str, list[Person]] = {}
+    for person in people:
+        by_org.setdefault(person.org_slug, []).append(person)
+    ordered: list[Person] = []
+    for row in zip_longest(*by_org.values()):
+        ordered.extend(person for person in row if person is not None)
+    return ordered
+
+
+async def sign_in(
+    env: Environment,
+    people: list[Person],
+    *,
+    transport: httpx.AsyncBaseTransport,
+    samples: list[Sample],
+) -> tuple[list[Seat], list[str]]:
+    """Signs each person in once, one after another: a login, then the
+    exchange for a session token in their org. The requests are the run's
+    like any other and land in `samples`.
+
+    A person the API refuses is named in a note and left out; a 429 stops the
+    sign-ins there, since the address's login window is closed and asking
+    again would only add to the count that closed it."""
+    recording = RecordingTransport(transport, also=samples)
+    seats: list[Seat] = []
+    notes: list[str] = []
+    async with ApiClient(
+        env.api_url, app=SESSION_APP, app_version=app_version(), transport=recording
+    ) as client:
+        for person in people:
+            try:
+                login = await client.login(person.email, person.password)
+                choices = [m for m in login.memberships if m.org.slug == person.org_slug]
+                if not choices:
+                    notes.append(f"{person.email} is not a member of {person.org_slug}")
+                    continue
+                session = await client.exchange_session(login.token, choices[0].org.id)
+            except ApiError as error:
+                notes.append(f"{person.email} was refused at sign-in: {error.status} {error.code}")
+                if error.status == 429:
+                    notes.append("the address's login window is closed; no one else signed in")
+                    break
+                continue
+            except httpx.HTTPError as failure:
+                notes.append(f"{person.email} was refused at sign-in: {type(failure).__name__}")
+                continue
+            seats.append(Seat(person, session.token, session.user.id))
+    return seats, notes
+
+
+async def sign_out(
+    env: Environment,
+    seats: list[Seat],
+    *,
+    transport: httpx.AsyncBaseTransport,
+    samples: list[Sample],
+) -> list[str]:
+    """One sign-out per person, once, when the run is over. A refusal is a
+    note: the run is done, and the token expires on its own."""
+    if not seats:
+        return []
+    recording = RecordingTransport(transport, also=samples)
+    notes: list[str] = []
+    async with ApiClient(
+        env.api_url, app=SESSION_APP, app_version=app_version(), transport=recording
+    ) as client:
+        for seat in seats:
+            client.token = seat.token
+            try:
+                await client.logout()
+            except (ApiError, httpx.HTTPError) as error:
+                reason = (
+                    f"{error.status} {error.code}"
+                    if isinstance(error, ApiError)
+                    else type(error).__name__
+                )
+                notes.append(f"{seat.person.email} was refused at sign-out: {reason}")
+    return notes
 
 
 # Tenants
@@ -511,15 +602,19 @@ async def run_traffic(
     people: list[Person] | None = None,
     pause_after_failure: float = FAILED_SESSION_PAUSE_SECONDS,
 ) -> RunResult:
-    """Sessions at `profile.concurrency` at once, each over a person of the
-    profile's tenants in turn, until the duration is up. The duration is a
-    hard bound: a session past it is cut at its next step, and a request in
-    flight is given a short grace and then abandoned. The concurrency is a
-    semaphore. A linear ramp starts the workers one after another across
-    `ramp_seconds`. `max_sessions` bounds the run by count instead, which is
-    how one session is driven for a test. A worker whose session failed
-    pauses before the next one, longer after a 429, so a refusal never
-    becomes a flood."""
+    """The run signs its people in, drives sessions at `profile.concurrency`
+    at once over their seats in turn until the duration is up, and signs them
+    out. The duration is a hard bound over the whole of it: a session past it
+    is cut at its next step, and a request in flight is given a short grace
+    and then abandoned. The concurrency is a semaphore. A linear ramp starts
+    the workers one after another across `ramp_seconds`. `max_sessions`
+    bounds the run by count instead, which is how one session is driven for a
+    test. A worker whose session failed pauses before the next one, so a
+    refusal never becomes a flood.
+
+    The run signs in one person per worker at most, since that is as many as
+    can drive at once, and one sign-in per person from one address is what a
+    per-address rate limit has room for."""
     duration = profile.duration_seconds if duration_seconds is None else duration_seconds
     wanted_orgs = profile.orgs if orgs is None else orgs
     inner = transport or network_transport()
@@ -564,10 +659,12 @@ async def run_traffic(
     started = time.monotonic()
     clock = Clock(started + duration, profile.think_seconds)
     gate = asyncio.Semaphore(profile.concurrency)
-    queue: AsyncIterator[Person] = _cycle(people)
     budget = {"left": max_sessions}
+    seats: list[Seat] = []
 
-    async def worker(index: int) -> None:
+    async def worker(index: int, queue: AsyncIterator[Seat]) -> None:
+        # The queue is one iterator over every seat, shared by the workers,
+        # so each starts on a seat of its own.
         if ramp_seconds > 0 and profile.concurrency > 1:
             await asyncio.sleep(ramp_seconds * index / profile.concurrency)
         while clock.remaining > 0:
@@ -575,38 +672,50 @@ async def run_traffic(
                 if budget["left"] <= 0:
                     return
                 budget["left"] -= 1
-            person = await anext(queue)
+            seat = await anext(queue)
             async with gate:
                 recording = RecordingTransport(inner, also=samples)
                 async with ApiClient(
                     env.api_url, app=SESSION_APP, app_version=app_version(), transport=recording
                 ) as client:
                     outcome = await Session(
-                        client, person, clock, recording=recording, connect=connect
+                        client, seat, clock, recording=recording, connect=connect
                     ).run()
                 outcomes.append(outcome)
                 if outcome.failure:
-                    log.info("session as %s failed: %s", person.email, outcome.failure)
+                    log.info("session as %s failed: %s", seat.person.email, outcome.failure)
             if budget["left"] is not None and budget["left"] <= 0:
                 return
             if outcome.failure:
-                pause = RATE_LIMITED_PAUSE_SECONDS if outcome.rate_limited else pause_after_failure
-                await asyncio.sleep(min(pause, max(clock.remaining, 0.0)))
+                await asyncio.sleep(min(pause_after_failure, max(clock.remaining, 0.0)))
 
-    workers = [
-        asyncio.create_task(worker(i), name=f"traffic-{i}") for i in range(profile.concurrency)
-    ]
     try:
-        await asyncio.wait_for(
-            asyncio.gather(*workers), duration + CUT_GRACE_SECONDS + ramp_seconds
+        wanted = seat_order(people)[: profile.concurrency]
+        seats, refused = await sign_in(env, wanted, transport=inner, samples=samples)
+        notes.append(
+            f"signed in {len(seats)} of {len(wanted)} people, one sign-in each for the whole run"
         )
-    except TimeoutError:
-        notes.append("a session was still in flight past the duration and its grace; abandoned")
-        for task in workers:
-            task.cancel()
-    finally:
-        # The run's tenants go when the run ends, however it ended.
+        notes.extend(refused)
+        if not seats:
+            notes.append("no one signed in, so the run drove no session")
+        queue = _cycle(seats)
+        workers = [
+            asyncio.create_task(worker(i, queue), name=f"traffic-{i}")
+            for i in range(profile.concurrency if seats else 0)
+        ]
         try:
+            await asyncio.wait_for(
+                asyncio.gather(*workers), max(clock.remaining, 0.0) + CUT_GRACE_SECONDS
+            )
+        except TimeoutError:
+            notes.append("a session was still in flight past the duration and its grace; abandoned")
+            for task in workers:
+                task.cancel()
+    finally:
+        # The sign-outs and the run's tenants go when the run ends, however
+        # it ended.
+        try:
+            notes.extend(await sign_out(env, seats, transport=inner, samples=samples))
             left = await remove_tenants(env, created, inner)
             if created:
                 notes.append(
@@ -643,7 +752,7 @@ async def run_traffic(
     return RunResult(report, samples, outcomes)
 
 
-async def _cycle(people: list[Person]) -> AsyncIterator[Person]:
+async def _cycle(seats: list[Seat]) -> AsyncIterator[Seat]:
     while True:
-        for person in people:
-            yield person
+        for seat in seats:
+            yield seat
