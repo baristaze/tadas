@@ -134,10 +134,10 @@ async def test_the_funnel_opens_the_system_scope_on_the_system_login(
 ) -> None:
     events = EventStoragePostgresImpl(pg_sessions)
     who = text("SELECT current_user")
-    async with events._session_for(Events, EMPTY_UUID) as session:
+    async with events._session_for(Events, org_id=EMPTY_UUID) as session:
         assert (await session.execute(who)).scalar_one() == SYSTEM_LOGIN
     org = new_id()
-    async with events._session_for(Events, org) as session:
+    async with events._session_for(Events, org_id=org) as session:
         assert (await session.execute(who)).scalar_one() == RUNTIME_LOGIN
 
 
@@ -268,11 +268,15 @@ async def test_a_narrowed_transaction_sees_only_its_person(pg_sessions: Sessions
     await markers.write_record(org, theirs)
 
     read_all = text("SELECT key FROM core.idempotency_records ORDER BY key")
-    async with markers._session_for(IdempotencyRecords, org) as session:
+    async with markers._session_for(IdempotencyRecords, org_id=org) as session:
         assert [row.key for row in await session.execute(read_all)] == ["mine", "theirs"]
-    async with markers._session_for(IdempotencyRecords, org, user_id=mine.user_id) as session:
+    async with markers._session_for(
+        IdempotencyRecords, org_id=org, user_id=mine.user_id
+    ) as session:
         assert [row.key for row in await session.execute(read_all)] == ["mine"]
-    async with markers._session_for(IdempotencyRecords, org, user_id=theirs.user_id) as session:
+    async with markers._session_for(
+        IdempotencyRecords, org_id=org, user_id=theirs.user_id
+    ) as session:
         assert [row.key for row in await session.execute(read_all)] == ["theirs"]
 
 
@@ -289,11 +293,11 @@ async def test_a_user_is_narrowed_on_the_identity_behind_it(pg_sessions: Session
 
     read_all = text("SELECT id FROM core.users WHERE org_id = :org ORDER BY id")
     every = sorted([ann.id, bob.id])
-    async with tenancy._session_for(Users, org) as session:
+    async with tenancy._session_for(Users, org_id=org) as session:
         assert [row.id for row in await session.execute(read_all, {"org": org})] == every
-    async with tenancy._session_for(Users, org, user_id=ann.id) as session:
+    async with tenancy._session_for(Users, org_id=org, user_id=ann.id) as session:
         assert [row.id for row in await session.execute(read_all, {"org": org})] == every
-    async with tenancy._session_for(Users, org, identity_id=ann.identity_id) as session:
+    async with tenancy._session_for(Users, org_id=org, identity_id=ann.identity_id) as session:
         assert [row.id for row in await session.execute(read_all, {"org": org})] == [ann.id]
-    async with tenancy._session_for(Users, org, identity_id=bob.identity_id) as session:
+    async with tenancy._session_for(Users, org_id=org, identity_id=bob.identity_id) as session:
         assert [row.id for row in await session.execute(read_all, {"org": org})] == [bob.id]

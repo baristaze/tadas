@@ -25,7 +25,7 @@ class WorkStoragePostgresImpl(PgStorageBase, WorkStorageInterface):
                 return InsertOutcome.INSERTED
         except UniqueKeyTaken:
             return InsertOutcome.KEY_EXISTS
-        async with self._session_for(WorkItems, org_id) as session:
+        async with self._session_for(WorkItems, org_id=org_id) as session:
             row = await session.get(WorkItems, item.id)
         if row is None or row.org_id != org_id:
             # The id is taken and this tenant cannot read it: another tenant
@@ -50,7 +50,7 @@ class WorkStoragePostgresImpl(PgStorageBase, WorkStorageInterface):
             .values(**values)
             .returning(WorkItems)
         )
-        async with self._session_for(stmt, org_id) as session:
+        async with self._session_for(stmt, org_id=org_id) as session:
             row = (await session.execute(stmt)).scalar_one_or_none()
             if row is None:
                 return None
@@ -89,7 +89,7 @@ class WorkStoragePostgresImpl(PgStorageBase, WorkStorageInterface):
             )
             .returning(WorkItems)
         )
-        async with self._session_for(stmt, EMPTY_UUID) as session:
+        async with self._session_for(stmt, org_id=EMPTY_UUID) as session:
             row = (await session.execute(stmt)).scalar_one_or_none()
             if row is None:
                 return None
@@ -134,7 +134,7 @@ class WorkStoragePostgresImpl(PgStorageBase, WorkStorageInterface):
             )
             .returning(WorkItems)
         )
-        async with self._session_for(stmt, org_id) as session:
+        async with self._session_for(stmt, org_id=org_id) as session:
             rows = (await session.execute(stmt)).scalars().all()
             changed = sorted((to_model(row, WorkItem) for row in rows), key=lambda item: item.id)
             await session.commit()
@@ -150,7 +150,7 @@ class WorkStoragePostgresImpl(PgStorageBase, WorkStorageInterface):
             .returning(WorkItems.id)
         )
         # Every tenant's settled items, so the system scope, spelled here.
-        async with self._session_for(stmt, EMPTY_UUID) as session:
+        async with self._session_for(stmt, org_id=EMPTY_UUID) as session:
             purged = len((await session.execute(stmt)).scalars().all())
             await session.commit()
             return purged
@@ -166,6 +166,6 @@ class WorkStoragePostgresImpl(PgStorageBase, WorkStorageInterface):
         return await self._one(stmt, org_id)
 
     async def _one(self, stmt: Select[tuple[WorkItems]], org_id: UUID) -> WorkItem | None:
-        async with self._session_for(stmt, org_id) as session:
+        async with self._session_for(stmt, org_id=org_id) as session:
             row = (await session.execute(stmt)).scalar_one_or_none()
             return None if row is None else to_model(row, WorkItem)

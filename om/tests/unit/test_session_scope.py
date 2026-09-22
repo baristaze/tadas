@@ -79,7 +79,7 @@ def enclosing_class(tree: ast.AST, function: ast.AST) -> str:
 
 
 def test_every_funnel_call_names_its_scope() -> None:
-    """The tenant is the second argument, always spelled at the call site: a
+    """The tenant is the `org_id` keyword, always spelled at the call site: a
     statement whose session is opened without one does not compile past here."""
     seen = 0
     for path in impl_modules():

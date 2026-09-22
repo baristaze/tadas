@@ -32,7 +32,7 @@ class EventStoragePostgresImpl(PgStorageBase, EventStorageInterface):
             )
             .returning(EventCursors.head)
         )
-        async with self._session_for(Events, org_id) as session:
+        async with self._session_for(Events, org_id=org_id) as session:
             head = (await session.execute(take_next)).scalar_one()
             values: dict[str, Any] = {**to_values(event, Events), "org_id": org_id, "seq": head}
             stmt = insert(Events).values(values).returning(Events)
@@ -58,7 +58,7 @@ class EventStoragePostgresImpl(PgStorageBase, EventStorageInterface):
 
     async def _read(self, org_id: UUID, event_id: UUID) -> Event | None:
         stmt = select(Events).where(Events.org_id == org_id, Events.id == event_id)
-        async with self._session_for(stmt, org_id) as session:
+        async with self._session_for(stmt, org_id=org_id) as session:
             row = (await session.execute(stmt)).scalar_one_or_none()
             return None if row is None else to_model(row, Event)
 
@@ -69,14 +69,14 @@ class EventStoragePostgresImpl(PgStorageBase, EventStorageInterface):
             .order_by(Events.seq)
             .limit(limit)
         )
-        async with self._session_for(stmt, org_id) as session:
+        async with self._session_for(stmt, org_id=org_id) as session:
             result = await session.execute(stmt)
             return [to_model(row, Event) for row in result.scalars()]
 
     async def purge_tenant(self, org_id: UUID) -> int:
         events = delete(Events).where(Events.org_id == org_id).returning(Events.id)
         cursor = delete(EventCursors).where(EventCursors.org_id == org_id)
-        async with self._session_for(Events, org_id) as session:
+        async with self._session_for(Events, org_id=org_id) as session:
             purged = len((await session.execute(events)).scalars().all())
             await session.execute(cursor)
             await session.commit()
@@ -84,11 +84,11 @@ class EventStoragePostgresImpl(PgStorageBase, EventStorageInterface):
 
     async def count_since(self, since: datetime) -> int:
         stmt = select(func.count()).select_from(Events).where(Events.produced_at >= since)
-        async with self._session_for(stmt, EMPTY_UUID) as session:
+        async with self._session_for(stmt, org_id=EMPTY_UUID) as session:
             return (await session.execute(stmt)).scalar_one()
 
     async def read_head(self, org_id: UUID) -> int:
         # The cursor row is the head: one row, never a scan of the stream.
         stmt = select(EventCursors.head).where(EventCursors.org_id == org_id)
-        async with self._session_for(stmt, org_id) as session:
+        async with self._session_for(stmt, org_id=org_id) as session:
             return int(await session.scalar(stmt) or 0)

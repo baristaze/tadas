@@ -131,9 +131,9 @@ class PgStorageBase:
     async def _session_for(
         self,
         target: Any,
+        *,
         org_id: UUID,
         user_id: UUID | None = None,
-        *,
         identity_id: UUID | None = None,
     ) -> AsyncIterator[AsyncSession]:
         """A short session on the pool of the one role `target` touches, opened
@@ -201,7 +201,7 @@ class PgStorageBase:
             raise CrossRoleStatement(
                 f"{row_type.__tablename__} is not in the outbox's role; no outbox row"
             )
-        async with self._session_for(row_type, org_id) as session:
+        async with self._session_for(row_type, org_id=org_id) as session:
             row = await session.get(row_type, entity_id)
             if row is None:
                 session.add(to_row(entity, row_type, org_id=org_id))
@@ -244,7 +244,7 @@ class PgStorageBase:
             raise CrossRoleStatement(
                 f"{row_type.__tablename__} is not in the outbox's role; no outbox row"
             )
-        async with self._session_for(row_type, org_id) as session:
+        async with self._session_for(row_type, org_id=org_id) as session:
             session.add(to_row(entity, row_type, org_id=org_id))
             for outbox_row in outbox_rows:
                 session.add(to_row(outbox_row, OutboxRows, org_id=org_id))
@@ -268,7 +268,7 @@ class PgStorageBase:
         caller. Every caller of this primitive is in the enumerated
         exceptions, because a global row is written with no tenant in hand."""
         entity_id = entity.id
-        async with self._session_for(row_type, EMPTY_UUID) as session:
+        async with self._session_for(row_type, org_id=EMPTY_UUID) as session:
             row = await session.get(row_type, entity_id)
             if row is None:
                 session.add(to_row(entity, row_type))

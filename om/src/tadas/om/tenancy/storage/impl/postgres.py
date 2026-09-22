@@ -38,13 +38,13 @@ from tadas.om.tenancy.types.user import User
 class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
     async def read_identity(self, identity_id: UUID) -> Identity | None:
         stmt = select(Identities).where(Identities.id == identity_id)
-        async with self._session_for(stmt, EMPTY_UUID) as session:
+        async with self._session_for(stmt, org_id=EMPTY_UUID) as session:
             row = (await session.execute(stmt)).scalar_one_or_none()
             return None if row is None else to_model(row, Identity)
 
     async def read_identity_by_email_digest(self, email_digest: str) -> Identity | None:
         stmt = select(Identities).where(Identities.email_digest == email_digest)
-        async with self._session_for(stmt, EMPTY_UUID) as session:
+        async with self._session_for(stmt, org_id=EMPTY_UUID) as session:
             row = (await session.execute(stmt)).scalar_one_or_none()
             return None if row is None else to_model(row, Identity)
 
@@ -56,7 +56,7 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
             return
         # The identity and its audit rows in one commit, under the system
         # scope, which is the one the rows belong to: no tenant holds them.
-        async with self._session_for(Identities, EMPTY_UUID) as session:
+        async with self._session_for(Identities, org_id=EMPTY_UUID) as session:
             row = await session.get(Identities, identity.id)
             if row is None:
                 session.add(to_row(identity, Identities))
@@ -86,7 +86,7 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
             .values(totp_secret=sealed, totp_last_step=None, updated_at=at)
             .returning(Identities.id)
         )
-        async with self._session_for(stmt, EMPTY_UUID) as session:
+        async with self._session_for(stmt, org_id=EMPTY_UUID) as session:
             return await self._matched(session, stmt)
 
     async def confirm_totp(self, identity_id: UUID, step: int, at: datetime) -> bool:
@@ -100,7 +100,7 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
             .values(totp_confirmed_at=at, totp_last_step=step, updated_at=at)
             .returning(Identities.id)
         )
-        async with self._session_for(stmt, EMPTY_UUID) as session:
+        async with self._session_for(stmt, org_id=EMPTY_UUID) as session:
             return await self._matched(session, stmt)
 
     async def use_totp_step(self, identity_id: UUID, step: int) -> bool:
@@ -114,12 +114,12 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
             .values(totp_last_step=step)
             .returning(Identities.id)
         )
-        async with self._session_for(stmt, EMPTY_UUID) as session:
+        async with self._session_for(stmt, org_id=EMPTY_UUID) as session:
             return await self._matched(session, stmt)
 
     async def read_sign_in_delay(self, email_digest: str) -> SignInDelay | None:
         stmt = select(SignInDelays).where(SignInDelays.email_digest == email_digest)
-        async with self._session_for(stmt, EMPTY_UUID) as session:
+        async with self._session_for(stmt, org_id=EMPTY_UUID) as session:
             row = (await session.execute(stmt)).scalar_one_or_none()
             return None if row is None else to_model(row, SignInDelay)
 
@@ -134,13 +134,13 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
                 set_={"failures": SignInDelays.failures + 1, "last_failed_at": at},
             )
         )
-        async with self._session_for(stmt, EMPTY_UUID) as session:
+        async with self._session_for(stmt, org_id=EMPTY_UUID) as session:
             await session.execute(stmt)
             await session.commit()
 
     async def clear_failed_sign_ins(self, email_digest: str) -> None:
         stmt = delete(SignInDelays).where(SignInDelays.email_digest == email_digest)
-        async with self._session_for(stmt, EMPTY_UUID) as session:
+        async with self._session_for(stmt, org_id=EMPTY_UUID) as session:
             await session.execute(stmt)
             await session.commit()
 
@@ -150,38 +150,38 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
             .where(SignInDelays.last_failed_at < before)
             .returning(SignInDelays.id)
         )
-        async with self._session_for(stmt, EMPTY_UUID) as session:
+        async with self._session_for(stmt, org_id=EMPTY_UUID) as session:
             purged = len((await session.execute(stmt)).scalars().all())
             await session.commit()
             return purged
 
     async def read_org(self, org_id: UUID) -> Org | None:
         stmt = select(Orgs).where(Orgs.org_id == org_id, Orgs.id == org_id)
-        async with self._session_for(stmt, org_id) as session:
+        async with self._session_for(stmt, org_id=org_id) as session:
             row = (await session.execute(stmt)).scalar_one_or_none()
             return None if row is None else to_model(row, Org)
 
     async def read_org_by_slug(self, slug: str) -> Org | None:
         stmt = select(Orgs).where(Orgs.slug == slug, Orgs.deleted_at.is_(None))
-        async with self._session_for(stmt, EMPTY_UUID) as session:
+        async with self._session_for(stmt, org_id=EMPTY_UUID) as session:
             row = (await session.execute(stmt)).scalar_one_or_none()
             return None if row is None else to_model(row, Org)
 
     async def count_orgs(self) -> int:
         stmt = select(func.count()).select_from(Orgs).where(Orgs.deleted_at.is_(None))
-        async with self._session_for(stmt, EMPTY_UUID) as session:
+        async with self._session_for(stmt, org_id=EMPTY_UUID) as session:
             return (await session.execute(stmt)).scalar_one()
 
     async def count_users(self) -> int:
         stmt = select(func.count()).select_from(Users).where(Users.deleted_at.is_(None))
-        async with self._session_for(stmt, EMPTY_UUID) as session:
+        async with self._session_for(stmt, org_id=EMPTY_UUID) as session:
             return (await session.execute(stmt)).scalar_one()
 
     async def read_orgs(self, limit: int, after_id: UUID | None = None) -> list[Org]:
         stmt = select(Orgs).order_by(Orgs.id).limit(limit)
         if after_id is not None:
             stmt = stmt.where(Orgs.id > after_id)
-        async with self._session_for(stmt, EMPTY_UUID) as session:
+        async with self._session_for(stmt, org_id=EMPTY_UUID) as session:
             result = await session.execute(stmt)
             return [to_model(row, Org) for row in result.scalars()]
 
@@ -230,7 +230,7 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
         it exists (the global table has no tenant to check). A violated key is
         UniqueKeyTaken, never a driver error."""
         row_type = rows[0][0]
-        async with self._session_for(row_type, org_id) as session:
+        async with self._session_for(row_type, org_id=org_id) as session:
             if identity is not None:
                 existing = await session.get(Identities, identity.id)
                 if existing is None:
@@ -266,7 +266,7 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
         if at is None or by is None:
             raise ValueError("remove_member lands a user that is deleted")
         revoked: list[OutboxRow] = []
-        async with self._session_for(Users, org_id) as session:
+        async with self._session_for(Users, org_id=org_id) as session:
             for table, entity in ((Users, user), (Memberships, membership)):
                 row = await session.get(table, entity.id)
                 if row is None or row.org_id != org_id:
@@ -310,13 +310,13 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
         )
         if after is not None:
             stmt = stmt.where(Users.id > after)  # is_after_in_id_order
-        async with self._session_for(stmt, org_id) as session:
+        async with self._session_for(stmt, org_id=org_id) as session:
             result = await session.execute(stmt)
             return [to_model(row, User) for row in result.scalars()]
 
     async def read_user(self, org_id: UUID, user_id: UUID) -> User | None:
         stmt = select(Users).where(Users.org_id == org_id, Users.id == user_id)
-        async with self._session_for(stmt, org_id) as session:
+        async with self._session_for(stmt, org_id=org_id) as session:
             row = (await session.execute(stmt)).scalar_one_or_none()
             return None if row is None else to_model(row, User)
 
@@ -329,7 +329,7 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
             .order_by(Users.id)
             .limit(limit)
         )
-        async with self._session_for(stmt, EMPTY_UUID) as session:
+        async with self._session_for(stmt, org_id=EMPTY_UUID) as session:
             result = await session.execute(stmt)
             return [(row.org_id, to_model(row, User)) for row in result.scalars()]
 
@@ -356,7 +356,7 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
         )
         if after_user_id is not None:
             stmt = stmt.where(Users.id > after_user_id)  # is_after_in_id_order
-        async with self._session_for(stmt, EMPTY_UUID) as session:
+        async with self._session_for(stmt, org_id=EMPTY_UUID) as session:
             result = await session.execute(stmt)
             return [
                 OrgMembership(
@@ -390,7 +390,7 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
         )
         if after_user_id is not None:
             stmt = stmt.where(Memberships.user_id > after_user_id)  # is_after_in_id_order
-        async with self._session_for(stmt, org_id) as session:
+        async with self._session_for(stmt, org_id=org_id) as session:
             result = await session.execute(stmt)
             return [to_model(row, Membership) for row in result.scalars()]
 
@@ -400,7 +400,7 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
             Memberships.user_id == user_id,
             Memberships.deleted_at.is_(None),
         )
-        async with self._session_for(stmt, org_id, user_id) as session:
+        async with self._session_for(stmt, org_id=org_id, user_id=user_id) as session:
             row = (await session.execute(stmt)).scalar_one_or_none()
             return None if row is None else to_model(row, Membership)
 
@@ -423,19 +423,19 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
             .order_by(Sessions.id.desc())
             .limit(limit)
         )
-        async with self._session_for(stmt, org_id, user_id) as session:
+        async with self._session_for(stmt, org_id=org_id, user_id=user_id) as session:
             result = await session.execute(stmt)
             return [to_model(row, Session) for row in result.scalars()]
 
     async def read_session(self, org_id: UUID, session_id: UUID) -> Session | None:
         stmt = select(Sessions).where(Sessions.org_id == org_id, Sessions.id == session_id)
-        async with self._session_for(stmt, org_id) as session:
+        async with self._session_for(stmt, org_id=org_id) as session:
             row = (await session.execute(stmt)).scalar_one_or_none()
             return None if row is None else to_model(row, Session)
 
     async def read_session_by_digest(self, token_hash: str) -> tuple[UUID, Session] | None:
         stmt = select(Sessions).where(Sessions.token_hash == token_hash)
-        async with self._session_for(stmt, EMPTY_UUID) as session:
+        async with self._session_for(stmt, org_id=EMPTY_UUID) as session:
             row = (await session.execute(stmt)).scalar_one_or_none()
             return None if row is None else (row.org_id, to_model(row, Session))
 
@@ -449,13 +449,13 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
             )
             .values(last_seen_at=seen_at)
         )
-        async with self._session_for(stmt, org_id) as session:
+        async with self._session_for(stmt, org_id=org_id) as session:
             await session.execute(stmt)
             await session.commit()
 
     async def read_session_by_id(self, session_id: UUID) -> tuple[UUID, Session] | None:
         stmt = select(Sessions).where(Sessions.id == session_id)
-        async with self._session_for(stmt, EMPTY_UUID) as session:
+        async with self._session_for(stmt, org_id=EMPTY_UUID) as session:
             row = (await session.execute(stmt)).scalar_one_or_none()
             return None if row is None else (row.org_id, to_model(row, Session))
 
@@ -477,7 +477,7 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
         # to the new session's tenant for its insert, so each statement is
         # fenced by the tenant it touches. The row lock makes a second switch
         # on the same session wait and then find it ended.
-        async with self._session_for(Sessions, ended_org_id) as db:
+        async with self._session_for(Sessions, org_id=ended_org_id) as db:
             row = await db.get(Sessions, ended.id, with_for_update=True)
             if row is None or row.org_id != ended_org_id:
                 raise NotFound(f"session {ended.id} is not in {ended_org_id}")
@@ -509,19 +509,19 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
             stmt = stmt.where(ApiKeys.user_id == user_id)
         if after is not None:
             stmt = stmt.where(ApiKeys.id < after)  # is_after_newest_first
-        async with self._session_for(stmt, org_id, user_id) as session:
+        async with self._session_for(stmt, org_id=org_id, user_id=user_id) as session:
             result = await session.execute(stmt)
             return [to_model(row, ApiKey) for row in result.scalars()]
 
     async def read_api_key(self, org_id: UUID, api_key_id: UUID) -> ApiKey | None:
         stmt = select(ApiKeys).where(ApiKeys.org_id == org_id, ApiKeys.id == api_key_id)
-        async with self._session_for(stmt, org_id) as session:
+        async with self._session_for(stmt, org_id=org_id) as session:
             row = (await session.execute(stmt)).scalar_one_or_none()
             return None if row is None else to_model(row, ApiKey)
 
     async def read_api_key_by_digest(self, key_hash: str) -> tuple[UUID, ApiKey] | None:
         stmt = select(ApiKeys).where(ApiKeys.key_hash == key_hash)
-        async with self._session_for(stmt, EMPTY_UUID) as session:
+        async with self._session_for(stmt, org_id=EMPTY_UUID) as session:
             row = (await session.execute(stmt)).scalar_one_or_none()
             return None if row is None else (row.org_id, to_model(row, ApiKey))
 
@@ -568,7 +568,7 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
             )
             .returning(ApiKeys)
         )
-        async with self._session_for(stmt, org_id) as session:
+        async with self._session_for(stmt, org_id=org_id) as session:
             row = (await session.execute(stmt)).scalar_one_or_none()
             if row is None:
                 raise Conflict(f"api key {api_key.id} cannot be re-minted")
@@ -588,7 +588,7 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
             .returning(Users.id)
         )
         purged = 0
-        async with self._session_for(gone_users, org_id) as session:
+        async with self._session_for(gone_users, org_id=org_id) as session:
             user_ids = list((await session.execute(gone_users)).scalars().all())
             purged += len(user_ids)
             memberships = (
@@ -632,7 +632,7 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
 
     async def purge_tenant(self, org_id: UUID) -> int:
         purged = 0
-        async with self._session_for(Users, org_id) as session:
+        async with self._session_for(Users, org_id=org_id) as session:
             for table in (Users, Memberships, ApiKeys, Sessions, SocketTickets):
                 stmt = delete(table).where(table.org_id == org_id).returning(table.id)
                 purged += len((await session.execute(stmt)).scalars().all())
@@ -651,7 +651,7 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
             .values(redeemed_at=redeemed_at)
             .returning(SocketTickets)
         )
-        async with self._session_for(stmt, EMPTY_UUID) as session:
+        async with self._session_for(stmt, org_id=EMPTY_UUID) as session:
             row = (await session.execute(stmt)).scalar_one_or_none()
             if row is None:
                 return None

@@ -24,7 +24,7 @@ class IdempotencyStoragePostgresImpl(PgStorageBase, IdempotencyStorageInterface)
             IdempotencyRecords.user_id == user_id,
             IdempotencyRecords.key == key,
         )
-        async with self._session_for(stmt, org_id, user_id) as session:
+        async with self._session_for(stmt, org_id=org_id, user_id=user_id) as session:
             row = (await session.execute(stmt)).scalar_one_or_none()
             return None if row is None else to_model(row, IdempotencyRecord)
 
@@ -43,7 +43,7 @@ class IdempotencyStoragePostgresImpl(PgStorageBase, IdempotencyStorageInterface)
             .values(status=status, body=body)
             .returning(IdempotencyRecords)
         )
-        async with self._session_for(stmt, org_id, user_id) as session:
+        async with self._session_for(stmt, org_id=org_id, user_id=user_id) as session:
             row = (await session.execute(stmt)).scalar_one_or_none()
             if row is None:
                 return None
@@ -66,7 +66,7 @@ class IdempotencyStoragePostgresImpl(PgStorageBase, IdempotencyStorageInterface)
             .values(attempt_id=None)
             .returning(IdempotencyRecords.id)
         )
-        async with self._session_for(stmt, org_id, user_id) as session:
+        async with self._session_for(stmt, org_id=org_id, user_id=user_id) as session:
             released = (await session.execute(stmt)).scalar_one_or_none() is not None
             await session.commit()
             return released
@@ -94,7 +94,7 @@ class IdempotencyStoragePostgresImpl(PgStorageBase, IdempotencyStorageInterface)
             )
             .returning(IdempotencyRecords.id)
         )
-        async with self._session_for(stmt, org_id) as session:
+        async with self._session_for(stmt, org_id=org_id) as session:
             purged = len((await session.execute(stmt)).scalars().all())
             await session.commit()
             return purged
@@ -122,7 +122,7 @@ class IdempotencyStoragePostgresImpl(PgStorageBase, IdempotencyStorageInterface)
             .values(attempt_id=attempt_id)
             .returning(IdempotencyRecords)
         )
-        async with self._session_for(stmt, org_id, user_id) as session:
+        async with self._session_for(stmt, org_id=org_id, user_id=user_id) as session:
             row = (await session.execute(stmt)).scalar_one_or_none()
             if row is None:
                 return None
@@ -145,7 +145,7 @@ class IdempotencyStoragePostgresImpl(PgStorageBase, IdempotencyStorageInterface)
             .values(attempt_id=attempt_id)
             .returning(IdempotencyRecords)
         )
-        async with self._session_for(stmt, org_id, user_id) as session:
+        async with self._session_for(stmt, org_id=org_id, user_id=user_id) as session:
             row = (await session.execute(stmt)).scalar_one_or_none()
             if row is None:
                 return None

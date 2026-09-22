@@ -56,7 +56,7 @@ class OutboxStoragePostgresImpl(PgStorageBase, OutboxStorageInterface):
             )
             .returning(OutboxRows)
         )
-        async with self._session_for(stmt, EMPTY_UUID) as session:
+        async with self._session_for(stmt, org_id=EMPTY_UUID) as session:
             rows = (await session.execute(stmt)).scalars().all()
             claimed = sorted((to_model(row, OutboxRow) for row in rows), key=lambda r: r.id)
             await session.commit()
@@ -72,7 +72,7 @@ class OutboxStoragePostgresImpl(PgStorageBase, OutboxStorageInterface):
             )
             .values(done_at=utcnow())
         )
-        async with self._session_for(stmt, org_id) as session:
+        async with self._session_for(stmt, org_id=org_id) as session:
             await session.execute(stmt)
             await session.commit()
 
@@ -88,7 +88,7 @@ class OutboxStoragePostgresImpl(PgStorageBase, OutboxStorageInterface):
             )
             .values(last_error=error, failed_at=failed_at)
         )
-        async with self._session_for(stmt, org_id) as session:
+        async with self._session_for(stmt, org_id=org_id) as session:
             await session.execute(stmt)
             await session.commit()
 
@@ -98,7 +98,7 @@ class OutboxStoragePostgresImpl(PgStorageBase, OutboxStorageInterface):
             .where(or_(OutboxRows.done_at < before, OutboxRows.failed_at < before))
             .returning(OutboxRows.id)
         )
-        async with self._session_for(stmt, EMPTY_UUID) as session:
+        async with self._session_for(stmt, org_id=EMPTY_UUID) as session:
             purged = len((await session.execute(stmt)).scalars().all())
             await session.commit()
             return purged
