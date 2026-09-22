@@ -54,38 +54,48 @@ These are choices, each kept on purpose:
 - **`valkeys://` to the cache.** The guideline writes `rediss://` for
   TLS to the cache. Tadas's client is Valkey's, whose TLS scheme is
   `valkeys://`. It is the same transport under the client's own name.
+- **The work item's unique index leads with the tenant (`ASY-16`).**
+  The lens asks for a unique index on `(org_id, idempotency_key)` and
+  calls one on the key alone a violation, because a key another tenant
+  holds would answer `KEY_EXISTS` and the read-back under this tenant
+  would find nothing. `queue.work_items` carries the index the lens
+  names. The rule's coverage is partial: it reads a unique index on the
+  key alone and nothing else, so it reports the shape it asks for. The
+  exception in `pyproject.toml` names this record.
 - **Audit redaction has nothing to redact today (`STO-34`).** An audit
   entry is an event (ADR 0011), and every event, outbox payload, and
   work-item payload carries ids only. So the erasure sweep finds no
   personal value in an audit entry. The redaction arrives with the
   first audit entry that records a value.
 
-Release B follows release A once every task of the release before has
-stopped. It removes the three compatibility pieces:
+Release B followed release A once every task of the release before had
+stopped. It removed the three compatibility pieces: the transitional
+`'tadas'` clause from every `tenant_fence` policy, which closed
+[ADR 0023](0023-the-row-level-security-bypass-is-a-setting-for-now.md);
+`uq_work_items_idempotency_key`, the work-item key's index on the key
+alone, leaving the one led by the tenant; and the deprecated body and
+query `version` on the task routes, which `If-Match` and
+`expected_version` replaced (ADR 0009).
 
-- **The transitional `'tadas'` clause.** Every `tenant_fence` policy
-  admits the system scope to `current_user IN ('tadas_system',
-  'tadas')`. Release B drops `'tadas'`, and ADR 0023 closes.
-- **The old work-items idempotency index.** `uq_work_items_idempotency_key`,
-  on the key alone, stays beside `uq_work_items_org_id_idempotency_key`
-  so a task of the release before still reads a taken key as a retry.
-  Release B drops it.
-- **The deprecated body and query `version`.** A task write names its
-  version in `If-Match` or `expected_version` (ADR 0009). The body's
-  and the query's `version` stay accepted, marked deprecated, for a
-  portal tab or a CLI of the release before. Release B drops them from
-  the API and regenerates both type sets.
-
-Release B also drops `identities.failed_sign_ins` and
-`identities.last_failed_sign_in_at`, which the sign-in delay's own
-table replaced.
+One piece is left, a release further out than release A planned.
+`identities.failed_sign_ins` and `identities.last_failed_sign_in_at`
+are dead: `sign_in_delays` holds the run, nothing writes either, and
+the database's default fills the one that is NOT NULL. Release A still
+read both, though, because a mapped column is in every `SELECT` the
+mapper emits. A migration runs before the services roll, and a release
+is compatible with the one before it, so a drop in release B would have
+met a release A task mid-rollout and failed its next sign-in. Release B
+defers both columns instead: they leave every read, and the mapping
+stays for the schema check to compare with. The release after drops the
+columns and the mapping together.
 
 ## Consequences
 
 - A review that reads `CTX-12`, `STO-34`, or the session lifetimes
   against Tadas cites this record.
-- Release B is one pull request of contractions: migrations that drop, and
-  one API change. It needs no rollout order of its own, since nothing
-  running still reads what it drops.
+- Release B is one pull request of contractions: migrations that drop,
+  and one API change. It needs no rollout order of its own, since
+  nothing running still reads what it drops. What release A still read,
+  it does not drop.
 - The day Tadas adds an external provider, the fifth lookup lands with
   it and its line here goes.

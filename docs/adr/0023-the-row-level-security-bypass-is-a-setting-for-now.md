@@ -1,10 +1,10 @@
 # ADR 0023: The row-level security bypass is a setting, for now
 
-**Status**: accepted (2026-09-22), amended (2026-09-22). A deviation
-for one more release. [TAZ-54](https://linear.app/taze/issue/TAZ-54)
-and [TAZ-56](https://linear.app/taze/issue/TAZ-56) split the logins
-(release A, below); release B removes the master from the clause and
-closes this record.
+**Status**: closed (2026-09-22). The deviation is over.
+[TAZ-54](https://linear.app/taze/issue/TAZ-54) and
+[TAZ-56](https://linear.app/taze/issue/TAZ-56) split the logins
+(release A, below); release B took the master out of the clause (Closed
+below). The record stays for the interval it covers.
 
 ## Context
 
@@ -83,3 +83,26 @@ Release B drops `'tadas'` from the clause, in a migration of its own,
 after every task of the release before has stopped. This record closes
 with it. [ADR 0026](0026-what-0-31-0-leaves-as-a-choice.md) lists what
 else release B removes.
+
+## Closed: release B
+
+The system-scope clause of every `tenant_fence` policy is now:
+
+```sql
+current_setting('app.org_id', true) = '00000000-0000-0000-0000-000000000000'
+AND current_user = 'tadas_system'
+```
+
+One migration per chain (`202609240000_system_login_alone`) alters every
+policy to it, and the down puts the master back beside the system login.
+The bypass is no longer a setting any login can write: it is the system
+login, on a pool of its own, naming the system scope. The runtime login
+naming it reads nothing, and neither does the migration login serving a
+request, because no request reaches it.
+
+The master, `tadas`, is what the migrate task connects as for
+`ensure-logins` and nothing else. It owns no policy clause now, so its
+password no longer reads across tenants.
+
+The fence test asserts each policy names `tadas_system` and no login
+beside it.
