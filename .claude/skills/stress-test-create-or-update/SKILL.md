@@ -42,9 +42,12 @@ no profile and no env file.
      number, so the first second is not the verdict;
    - a soak: the profile held for `soak` seconds after the ramp, so
      the pool, the queue, and the cache settle;
-   - a target stated before the run: the p95 in milliseconds and the
-     error ratio, both numbers the team chose, and the scenario says
-     who and when in `target.note`;
+   - a target stated before the run: the p95 in milliseconds, over
+     the working requests (the sign-in and the sign-out a run makes
+     once per person are reported beside the verdict and judged by
+     nothing), and the error ratio over every request, both numbers
+     the team chose, and the scenario says who and when in
+     `target.note`;
    - the signals read back after: the run reads the request counter,
      the p95, the worker outcomes, and the error count through the
      signals API, and the pass or fail is against those, never

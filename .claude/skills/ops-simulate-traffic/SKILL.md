@@ -117,9 +117,12 @@ a mismatch: the right role in the wrong account is the wrong credential.
    edge, the client, and the signals are wired and is never a stress
    test.
 3. Read the table the run prints: requests by route and status, p50,
-   p95, p99 per route, and the error ratio, then its two notes: the
-   profile's concurrency and think time, and one sample request id of
-   the run. A 5xx during the run is a
+   p95, p99 per route, and the error ratio, then the two totals, the
+   working requests and the sign-in and sign-out beside them (the run
+   signs each person in once, at the start, and out once at the end),
+   and the notes: how many people signed in, the profile's concurrency
+   and think time, and one sample request id of the run. A 5xx during
+   the run is a
    finding with its request id; a 4xx from the generator's own
    sessions (a conflict on a retried create, a 404 after the delete)
    is expected where the session shape explains it.
@@ -166,7 +169,8 @@ a mismatch: the right role in the wrong account is the wrong credential.
 |-------|--------|-------|--------|--------|--------|
 | <route> | <status> | <n> | <ms> | <ms> | <ms> |
 
-**Total.** <n> requests, error ratio <ratio>
+**Total.** <n> requests, error ratio <ratio>; working <n> requests,
+p95 <ms> ms; sign-in and sign-out <n> requests, p95 <ms> ms
 **Run tenants.** <n> created, <n> removed, <ids left behind, or none>
 **Provisioner.** <local | staging | production: disable dispatch due>
 

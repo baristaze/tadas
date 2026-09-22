@@ -7,10 +7,17 @@ and it reads the signals back when it ends.
 
 ## What a good one is
 
-- **The edge is the target.** A run signs in, lists, adds, edits,
-  completes, moves, and deletes tasks, reads the diary, and holds one
-  socket that sees its own change, then signs out. Every request goes
-  through the gateway like a person's would.
+- **The edge is the target.** A session lists, adds, edits, completes,
+  moves, and deletes tasks, reads the diary, and holds one socket that
+  sees its own change. Every request goes through the gateway like a
+  person's would.
+- **A person signs in once.** The run signs each of its people in at
+  the start, one person per worker, and every session that person
+  drives reuses that token until the run signs them out at the end.
+  Sign-in verifies a password on purpose, so it is the slowest route
+  the generator calls, and the API counts it against a per-address rate
+  limit of ten a minute; a run that signed in per session measured
+  password hashing and its own throttling.
 - **Sessions are realistic.** Profiles differ by how many orgs and
   members take part, how many run at once, and how long they think
   between requests. `light` is a sanity run; `regular` is a normal day;
@@ -22,6 +29,14 @@ and it reads the signals back when it ends.
 - **The target is stated first.** A p95 and an error ratio, written
   in the scenario before the run. A run without a target is a
   demonstration, not a test.
+- **The target judges the working requests.** The p95 it holds is over
+  the task routes, the event stream, and the socket's ticket: the
+  requests a run makes hundreds of. The sign-in and the sign-out, one
+  of each per person, are reported beside the verdict, named, with
+  their own p95, and never mixed into the number the target holds, so
+  the verdict does not move with how often the generator signs in. The
+  error ratio is over every request, sign-in and sign-out included: a
+  refused sign-in is a refusal whoever made it.
 - **The signals are read back.** After the run, the platform's own
   request counter and its 5xx count are read from its telemetry, and
   the run fails when the platform counted no requests or more errors
@@ -44,7 +59,7 @@ One YAML file per scenario under this folder.
 | `profile` | `light`, `regular`, `heavy`, or `stress`. |
 | `duration_seconds` | How long the run lasts, ramp included. |
 | `ramp_seconds` | How long concurrency takes to climb to the profile's. |
-| `target.p95_ms` | The p95 latency, in milliseconds, the run must stay under. |
+| `target.p95_ms` | The p95 latency, in milliseconds, the run's working requests must stay under. |
 | `target.error_ratio` | The share of requests that may fail, as a fraction. |
 | `weights` | The relative weight of each route in a session, by route name. Parsed, not applied yet: the generator's session shape is fixed. |
 

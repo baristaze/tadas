@@ -3,13 +3,12 @@
 # environment does not make them: the edge is a load balancer, the
 # database is across a network, and a request costs more.
 #
-# The target is what the environment does, not what it should do. The
-# first run's numbers set it: a light run of 45 requests measured a p95
-# of 593 ms and a p99 of 881 ms with no errors, and its slowest step,
-# sign-in, had a p95 of 881 ms. 900 ms is that p95 with headroom, and
-# sits above the slowest step, so the extra sign-ins a regular profile
-# makes do not decide the run on their own. A later run with more
-# requests behind it replaces this number, downward.
+# The target is what the environment does, not what it should do. This
+# 900 ms came from runs that signed in around every session and held
+# the target to a p95 over those sign-ins as well, so it is stale: it
+# was set to sit above a sign-in's cost, and the p95 it now judges is
+# the working requests' alone. It stays as it is until the first run of
+# the new shape measures one, and that run sets it, downward.
 name: staging
 profile: regular
 duration_seconds: 180
