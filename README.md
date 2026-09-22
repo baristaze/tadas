@@ -7,14 +7,18 @@ at the center (`om/`), one infrastructure toolkit (`infra/`), services
 and workers around them, and apps at the edge.
 
 <p align="center">
-  <img src="docs/media/realtime-demo.gif" width="876" alt="Two portal windows side by side, the owner on the left and Bob on the right, both on Team's Tasks. Tasks added in either window appear in the other at once, and a task completed in one fades out of Open and into Done in both.">
+  <img src="docs/media/realtime-demo.gif" width="876" alt="Two portal windows side by side, Bob on the left and the owner on the right, both on Team's Tasks. Bob adds three tasks, renames one and assigns it to the owner, drags it to the top by its handle, completes another, and deletes a third; each change appears in the owner's window at once.">
 </p>
 
-The portal in two windows, signed in as the two people `make seed` creates:
-`owner@example.test` on the left, `bob@example.test` on the right, both on
-Team's Tasks. Every task one of them adds or completes reaches the other over
-the realtime channel as it happens. `make demo-gif` records it again from a
-running `make up` stack (`scripts/record_demo.py`).
+The portal in two windows, signed in as two of the people `make seed` creates:
+`bob@example.test` on the left, `owner@example.test` on the right, both on
+Team's Tasks. Bob takes tasks through their whole life: adds three, renames
+one and assigns it to the owner, drags it to the top by its handle, completes
+one, and deletes one. Every change reaches the owner's window over the
+realtime channel as it happens. Each window is narrower than half a laptop
+screen, and every task stays on one line there. `make demo-gif` records it
+again from a running `make up` stack (`scripts/record_demo.py`), and refuses
+to when a row would wrap.
 
 <p align="center">
   <img src="docs/media/cli-demo.gif" width="876" alt="Two terminals side by side. On the left Bob adds, edits, completes, reopens, and deletes tasks with the tadas command line. On the right the owner runs tadas listen, and every change appears as a line the moment it happens.">
@@ -24,7 +28,8 @@ The same thing from two terminals. On the left Bob works in command mode,
 one `tadas` call at a time; on the right the owner runs `tadas listen` and
 every change reaches the terminal over the same realtime channel the portal
 uses, as one line: who did what to which task. `make demo-cli-gif` records
-it from a running `make up` stack (`scripts/record_cli_demo.py`).
+it from a running `make up` stack (`scripts/record_cli_demo.py`), and refuses
+to when a line would wrap.
 
 ## Quick start
 
@@ -43,7 +48,7 @@ once. Once it is up:
 
 | What | URL | Sign-in and what it shows |
 |------|-----|---------------------------|
-| Portal | http://localhost:55173 | `owner@example.test` (owner) or `bob@example.test` (member), both `tadas-local`; the two people `make seed` creates |
+| Portal | http://localhost:55173 | `owner@example.test` (owner) or `bob@example.test` (member) of Acme, or `admin@admin.test` (owner of Fabrikam, admin of Acme), all `tadas-local`; the three people `make seed` creates. The admin is in two orgs, so the org picker and the org chip show |
 | API | http://127.0.0.1:8000 | Swagger UI at `/docs`, Prometheus metrics at `/metrics` |
 | pgweb | http://localhost:58081 | Postgres: schemas `core`, `activity`, `queue`, `admin`; run SQL |
 | Valkey Admin | http://localhost:58080 | Valkey: keys, metrics, commands; add a connection to host `valkey`, port `6379`, no username or password |
@@ -89,7 +94,7 @@ make setup        # Python and TypeScript dependencies
 cp .env.example .env
 make infra-up     # Postgres, Valkey, ElasticMQ, MinIO on host ports 55432, 56379, 59324, 59000
 make migrate      # every role's migration chain
-make seed         # org "acme" with the owner and the member of the table above (the SEED_* knobs in .env)
+make seed         # orgs "acme" and "fabrikam" with the three people of the table above (the SEED_* knobs in .env)
 ```
 
 ## Run
@@ -104,10 +109,11 @@ make stack-up     # in containers, built from the working tree: API, worker, por
 
 The API is at the same address either way; only the portal's port differs:
 `scripts/dev.sh` serves it from Vite on http://localhost:5173, `make
-stack-up` from nginx on the port in the table above. Sign in as each of
-the two seeded people in two browser windows to see "My Tasks" differ from
-"Team's Tasks" and to watch changes arrive live, or create an account at
-`/sign-up`, which is how a person enters a deployed environment.
+stack-up` from nginx on the port in the table above. Sign in as the
+seeded owner and member in two browser windows to see "My Tasks" differ from
+"Team's Tasks" and to watch changes arrive live, as the seeded admin to
+switch between two orgs, or create an account at `/sign-up`, which is how
+a person enters a deployed environment.
 
 ### Dashboards
 

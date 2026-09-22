@@ -14,9 +14,10 @@ timeline into a GIF.
     make up
     uv run --with pillow python scripts/record_cli_demo.py docs/media/cli-demo.gif
 
-Other stacks: --api. --still writes a PNG per pane of the final state
-instead of the GIF; --stills-dir writes those PNGs next to the GIF as well,
-to check the layout.
+Every line fits its pane: the recorder stops, writing nothing, when a line
+would wrap. Other stacks: --api. --still writes a PNG per pane of the final
+state instead of the GIF; --stills-dir writes those PNGs next to the GIF as
+well, to check the layout.
 """
 
 import argparse
@@ -184,11 +185,11 @@ def short_id(added: list[str]) -> str:
 async def story(bob: Pane, cli: Cli) -> None:
     """Bob's session: two tasks, one renamed, completed and reopened, a third
     added, one removed, and a last one completed."""
-    migrate = short_id(await command(bob, cli, "add", "Migrate DB"))
+    fix = short_id(await command(bob, cli, "add", "Fix CI"))
     review = short_id(await command(bob, cli, "add", "Review PR #42"))
-    await command(bob, cli, "edit", migrate, "--title", "Migrate the DB")
-    await command(bob, cli, "done", migrate)
-    await command(bob, cli, "reopen", migrate)
+    await command(bob, cli, "edit", fix, "--title", "Fix CI flake")
+    await command(bob, cli, "done", fix)
+    await command(bob, cli, "reopen", fix)
     changelog = short_id(await command(bob, cli, "add", "Write changelog"))
     await command(bob, cli, "rm", review)
     await command(bob, cli, "done", changelog)
@@ -217,6 +218,16 @@ class Renderer:
         self.char = self.font.getlength("M")
         self.cols = int((WIDTH - 2 * PAD) * SCALE // self.char)
         self.visible = (HEIGHT - TITLE_HEIGHT - 2 * PAD) // LINE_HEIGHT
+
+    def too_wide(self, panes: Sequence[Pane]) -> list[str]:
+        """The lines that would wrap: a README shows each pane at half its
+        width, and a wrapped line there reads as two."""
+        return [
+            f"{pane.name}: {line!r} is {len(line)} columns, the pane has {self.cols}"
+            for pane in panes
+            for line in pane.lines_at(len(pane.events))
+            if len(line) > self.cols
+        ]
 
     def wrap(self, lines: Sequence[str]) -> list[str]:
         """Long lines wrap the way a terminal wraps them, at the last column."""
@@ -336,6 +347,8 @@ async def record(args: argparse.Namespace) -> None:
         shutil.rmtree(home, ignore_errors=True)
 
     renderer = Renderer()
+    if too_wide := renderer.too_wide((bob, owner)):
+        raise SystemExit("; ".join(too_wide))
     stills_dir = args.stills_dir or (os.path.dirname(args.out) or "." if args.still else None)
     if stills_dir is not None:
         stills(renderer, (bob, owner), args.out, stills_dir)

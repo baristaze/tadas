@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import { loadRuntimeConfig } from "./app/config";
 import { initErrorReporting } from "./app/errors";
 import "./design/motion.css";
+import "./design/states.css";
 
 // The config comes first: the API client and error reporting are built from it,
 // so the app is imported only once it is known.

@@ -45,7 +45,7 @@ describe("switchOrg", () => {
     const e = effects(() => Promise.reject(new ApiError(403, "not_authorized", "no longer a member", "r2")));
     await expect(switchOrg(e)).resolves.toBe("refused");
     expect(e.adopt).not.toHaveBeenCalled();
-    expect(e.report).toHaveBeenCalledWith("no longer a member (r2)");
+    expect(e.report).toHaveBeenCalledWith("No longer a member.");
   });
 });
 

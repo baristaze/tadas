@@ -38,11 +38,11 @@ describe("signOut", () => {
     expect(e.report).toHaveBeenCalledWith("Failed to fetch");
   });
 
-  it("finishes locally on a server refusal too, quoting its request id", async () => {
+  it("finishes locally on a server fault too, quoting its request id", async () => {
     const e = effects(() => Promise.reject(new ApiError(503, "unavailable", "Try again later.", "req_2")));
     await expect(signOut(e)).resolves.toBe("not_revoked");
     expect(e.forget).toHaveBeenCalledTimes(1);
-    expect(e.report).toHaveBeenCalledWith("Try again later. (req_2)");
+    expect(e.report).toHaveBeenCalledWith("Try again later. Reference: req_2");
   });
 
   it("knows a 401 from any other failure", () => {
