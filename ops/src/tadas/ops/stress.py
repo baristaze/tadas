@@ -3,7 +3,12 @@ names a profile, a duration, a ramp, and a target (a p95 and an error ratio)
 stated before the run. The run ramps the workers up linearly, drives the
 profile for the duration, then reads the signals back for the window and
 passes or fails against the target. The numbers a system is held to are the
-system's, and they live in the scenario file, not here."""
+system's, and they live in the scenario file, not here.
+
+The caller may state the target instead, one number or both, and then the
+scenario's is a default and not a judgement. Either way the run says which
+target it judged and where that number came from: a verdict without that is
+a number without a claim."""
 
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
@@ -25,10 +30,20 @@ collector's batch (5 s) that writes a host process's samples into
 Prometheus (deployment/local/otel-collector/collector.yml)."""
 
 
+FROM_SCENARIO = "from the scenario"
+FROM_THE_RUN = "set for this run"
+
+
 @dataclass(frozen=True)
 class Target:
+    """The pass mark, and where each half of it came from. A number the
+    caller stated carries `FROM_THE_RUN`, a number the file stated carries
+    `FROM_SCENARIO`, and the run prints both beside the verdict."""
+
     p95_ms: float
     error_ratio: float
+    p95_source: str = FROM_SCENARIO
+    error_ratio_source: str = FROM_SCENARIO
 
 
 @dataclass(frozen=True)
@@ -77,6 +92,34 @@ def with_duration(scenario: Scenario, seconds: float) -> Scenario:
     )
 
 
+def with_target(
+    scenario: Scenario, p95_ms: float | None = None, error_ratio: float | None = None
+) -> Scenario:
+    """The same scenario judged against a target the caller states: the
+    working requests' p95, the error ratio, or both. A number left out keeps
+    the scenario's, and keeps the scenario as its source, so the run can say
+    where each half of the pass mark came from. Nothing else moves: the
+    profile, the duration, and the ramp are the file's."""
+    if p95_ms is None and error_ratio is None:
+        return scenario
+    if p95_ms is not None and p95_ms <= 0:
+        raise ValueError("the target p95 is a positive number of milliseconds")
+    if error_ratio is not None and not 0.0 <= error_ratio <= 1.0:
+        raise ValueError("the target error ratio is a fraction between 0 and 1")
+    current = scenario.target
+    return replace(
+        scenario,
+        target=Target(
+            p95_ms=current.p95_ms if p95_ms is None else p95_ms,
+            error_ratio=current.error_ratio if error_ratio is None else error_ratio,
+            p95_source=current.p95_source if p95_ms is None else FROM_THE_RUN,
+            error_ratio_source=(
+                current.error_ratio_source if error_ratio is None else FROM_THE_RUN
+            ),
+        ),
+    )
+
+
 def load_scenario(path: Path) -> Scenario:
     data = yaml.safe_load(path.read_text())
     if not isinstance(data, Mapping):
@@ -114,8 +157,10 @@ class Verdict:
         lines = [
             f"stress {scenario.name}: profile {scenario.profile.name}, "
             f"{scenario.duration_seconds:.0f}s with a {scenario.ramp_seconds:.0f}s ramp",
-            f"target: p95 <= {scenario.target.p95_ms:.0f} ms over the working requests, "
-            f"error ratio <= {scenario.target.error_ratio:.4f} over every request",
+            f"target: p95 <= {scenario.target.p95_ms:.0f} ms over the working requests "
+            f"({scenario.target.p95_source}), "
+            f"error ratio <= {scenario.target.error_ratio:.4f} over every request "
+            f"({scenario.target.error_ratio_source})",
             f"measured: p95 {report.working.p95_ms:.1f} ms over {report.working.requests} "
             f"working requests, error ratio {report.error_ratio:.4f} over {report.requests} "
             f"requests, {report.sessions.completed} sessions completed",

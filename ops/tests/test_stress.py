@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from tadas.ops.main import build_parser
 from tadas.ops.report import Report, Sample, Sessions
 from tadas.ops.stress import (
     Readback,
@@ -13,6 +14,7 @@ from tadas.ops.stress import (
     parse_scenario,
     verdict,
     with_duration,
+    with_target,
 )
 
 HERE = Path(__file__).parent
@@ -36,7 +38,7 @@ def test_every_scenario_a_run_can_name_parses() -> None:
     staging = load_scenario(folder / "staging.yaml")
     assert staging.profile.name == "regular"
     assert (staging.duration_seconds, staging.ramp_seconds) == (180.0, 30.0)
-    assert (staging.target.p95_ms, staging.target.error_ratio) == (900.0, 0.01)
+    assert (staging.target.p95_ms, staging.target.error_ratio) == (3000.0, 0.01)
 
 
 @pytest.mark.parametrize(
@@ -94,6 +96,61 @@ def test_a_named_duration_shortens_the_run_and_its_ramp_and_moves_no_target() ->
     assert shorter.target == scenario.target and shorter.profile == scenario.profile
     with pytest.raises(ValueError, match="duration must be positive"):
         with_duration(scenario, 0)
+
+
+def test_a_stated_target_is_judged_instead_and_the_scenario_keeps_the_rest() -> None:
+    """The pass mark is an input. A caller may state one half of it, or
+    both, and the scenario still names the profile, the duration, and the
+    ramp."""
+    scenario = load_scenario(HERE / "smoke.yaml")  # target: p95 500 ms, ratio 0.01
+    stricter = with_target(scenario, p95_ms=200)
+    assert (stricter.target.p95_ms, stricter.target.error_ratio) == (200.0, 0.01)
+    assert stricter.profile == scenario.profile
+    assert stricter.duration_seconds == scenario.duration_seconds
+    both = with_target(scenario, p95_ms=200, error_ratio=0.0)
+    assert (both.target.p95_ms, both.target.error_ratio) == (200.0, 0.0)
+    assert with_target(scenario) is scenario
+
+
+def test_the_run_says_where_each_half_of_the_target_came_from() -> None:
+    """A verdict is a number against a claim, so the text names the claim's
+    source: the scenario's file, or the run that stated its own."""
+    scenario = load_scenario(HERE / "smoke.yaml")
+    report = report_with(120.0, 0)
+    stated = with_target(scenario, p95_ms=200)
+    text = verdict(stated, report, Readback(100, 0)).text(stated, report, Readback(100, 0))
+    assert "p95 <= 200 ms over the working requests (set for this run)" in text
+    assert "error ratio <= 0.0100 over every request (from the scenario)" in text
+    own = verdict(scenario, report, Readback(100, 0)).text(scenario, report, Readback(100, 0))
+    assert "p95 <= 500 ms over the working requests (from the scenario)" in own
+
+
+@pytest.mark.parametrize(
+    ("p95_ms", "error_ratio", "message"),
+    [
+        (0, None, "positive number of milliseconds"),
+        (-1, None, "positive number of milliseconds"),
+        (None, 1.5, "fraction between 0 and 1"),
+        (None, -0.1, "fraction between 0 and 1"),
+    ],
+)
+def test_a_target_outside_what_a_target_can_be_is_refused(
+    p95_ms: float | None, error_ratio: float | None, message: str
+) -> None:
+    scenario = load_scenario(HERE / "smoke.yaml")
+    with pytest.raises(ValueError, match=message):
+        with_target(scenario, p95_ms=p95_ms, error_ratio=error_ratio)
+
+
+def test_the_command_takes_the_target_as_flags_and_the_scenario_when_it_does_not() -> None:
+    """`.github/workflows/stress.yml` passes its inputs as these flags, so
+    a dispatch that states a target reaches the verdict as one."""
+    parser = build_parser()
+    scenario = ["stress", "--scenario", "ops/stress/staging.yaml"]
+    stated = parser.parse_args([*scenario, "--p95-ms", "1200", "--error-ratio", "0"])
+    assert (stated.p95_ms, stated.error_ratio) == (1200.0, 0.0)
+    bare = parser.parse_args(scenario)
+    assert (bare.p95_ms, bare.error_ratio) == (None, None)
 
 
 def report_with(p95: float, errors: int, total: int = 100) -> Report:
