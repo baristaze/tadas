@@ -15,8 +15,9 @@ Two branches, two workflows, one approval.
   it; nobody commits to `release` and nothing merges into it. A push to
   `release` runs `.github/workflows/deploy-production.yml`: it refuses
   unless `release` is an ancestor of `main`, resolves the digests and
-  the portal build staging made for that commit (a commit staging never
-  built is refused), plans production, waits for a reviewer's approval
+  the portal build staging made for that commit, from the copies
+  replicated into production's account (a commit with no copy there is
+  refused), plans production, waits for a reviewer's approval
   on that plan, and applies exactly it.
 
 The approval is the `production` GitHub environment's required reviewer,
@@ -24,33 +25,57 @@ the owner. The environment is created outside the repository, not by
 Terraform, since it is what protects the deploy role's use; the
 production workflow fails before it plans when the rule is missing.
 
-## One credential per environment
+## One account per environment, one credential per job
 
-Three roles, declared in `deployment/terraform/shared`, and each trusts
-exactly one subject:
+Each environment has an AWS account of its own, named in
+[deployment/cloud/environments.json](../../deployment/cloud/environments.json)
+with the region and the public names
+([ADR 0021](../adr/0021-each-environment-has-an-aws-account-of-its-own.md)).
+Three roles stand behind the workflows, each declared by its account's
+bootstrap root (`deployment/terraform/bootstrap/staging`,
+`bootstrap/prod`), and each trusts exactly one subject:
 
-| Role | Assumed by a job that declares | On ref | May |
-|------|--------------------------------|--------|-----|
-| `tadas-deploy-staging` | `environment: staging` | `refs/heads/main` | apply staging |
-| `tadas-plan-production` | `environment: production-plan` | `refs/heads/release` | read production, plan it |
-| `tadas-deploy-production` | `environment: production` | `refs/heads/release` | apply production |
+| Role | Account | Assumed by a job that declares | On ref | May |
+|------|---------|--------------------------------|--------|-----|
+| `tadas-deploy-staging` | staging | `environment: staging` | `refs/heads/main` | apply staging |
+| `tadas-plan-production` | production | `environment: production-plan` | `refs/heads/release` | read production, plan it |
+| `tadas-deploy-production` | production | `environment: production` | `refs/heads/release` | apply production |
 
 A GitHub job presents `repo:<owner>/<name>:environment:<name>` in its
 token only when it declares that environment, and presents its branch
 when it declares none. So the gate on the `production` environment is
 the gate on the credential: a job that has not waited for the reviewer
-never produces the subject the applying role trusts, and a staging run,
-which waits for nobody by design, holds a credential that reaches no
-production state, secret, bucket, queue, or database.
+never produces the subject the applying role trusts. A staging run,
+which waits for nobody by design, holds a credential in another account,
+and nothing in production's account trusts it.
 
 Each role's permissions stop at what its environment owns: names
 beginning `tadas-<environment>`, secrets under `tadas/<environment>/`,
-log groups under `/tadas/<environment>/`, its own key in the state
-bucket, and the record names under its own base domain. Everything
-tagged as the other environment is denied outright, and so is any path
-by which a role could widen itself: the deploy roles, the OIDC trust,
-a new user or access key, and a task role created without the
+log groups under `/tadas/<environment>/`, its own keys in its account's
+state bucket, and its environment's two public names. Everything tagged
+as the other environment is denied too, which holds if a root is ever
+applied in the wrong account. So is any path by which a role could
+widen itself: the deploy roles, the OIDC trust, the replication, a new
+user or access key, and a task role created without the
 `tadas-task-boundary-<environment>` permissions boundary.
+
+Each GitHub environment holds its own variables under the same names,
+so a job reads `AWS_ROLE_ARN` and gets the role of the environment it
+declared:
+
+| GitHub environment | Variables |
+|--------------------|-----------|
+| `staging` | `AWS_ROLE_ARN` (the staging deploy role), `TF_STATE_BUCKET`, `API_DOMAIN_NAME`, `APP_DOMAIN_NAME`, `ALARM_EMAIL`, and optionally `PORTAL_SENTRY_DSN` |
+| `production-plan` | the same names: `AWS_ROLE_ARN` is the plan role |
+| `production` | `AWS_ROLE_ARN` (the production deploy role), `TF_STATE_BUCKET` |
+
+No AWS secret is stored in GitHub: the roles are assumed through OIDC.
+
+Production reads nothing from staging's account. Staging's registry
+replicates every image into production's, digest for digest, and
+staging's state bucket replicates every portal build under
+`builds/portal/` into production's. Production's registry and bucket
+grant staging those two writes and nothing else.
 
 `tadas-plan-production` runs the jobs before the approval. It changes
 nothing: it reads production, takes the state lock while it plans, and
@@ -64,39 +89,50 @@ profiles that hold them, are in [operate.md](operate.md).
 ## Create the environment
 
 `scripts/cloud_create.sh <staging|production>` is the administrator's
-one run, and the `ops-cloud-deployment-create` skill narrates it. It
-refuses to run under any profile but `tadas-admin`, prints every command
+one run per account, and the `ops-cloud-deployment-create` skill
+narrates it. It runs under the environment's administrator profile
+(`tadas-staging-admin` or `tadas-prod-admin`, an Identity Center
+permission set) and refuses any other. It clears any AWS key exported in
+the shell, checks the account before every apply, prints every command
 before it runs it, and with `--dry-run` prints them all and runs none.
-Its inputs are `DNS_ZONE_NAME`, `OWNER_EMAIL`, `ALARM_EMAIL`, and
-`TF_STATE_BUCKET`, as flags or environment variables. The state bucket's
-name must not start with `tadas-staging-` or `tadas-production-`: the
-roles fence each environment's files by those prefixes. In order:
+Its inputs are `OWNER_EMAIL` and `ALARM_EMAIL`, as flags or environment
+variables, and `CLOUDFLARE_API_TOKEN`, an environment variable with DNS
+edit on the domain's zone. Everything else comes from
+`deployment/cloud/environments.json`.
 
-1. `aws sts get-caller-identity` and `gh auth status`.
-2. `deployment/terraform/shared`, applied with local state because the
-   root makes the state bucket, then `init -migrate-state` into it. The
-   root declares the OIDC provider, the two task boundaries, the three
-   deploy roles above, the two investigate roles, the `tadas-operators`
-   user, the budget, the anomaly monitor, and the hosted zone. Its
-   `dns_name_servers` output goes to the registrar, once.
-3. An access key for `tadas-operators`, and the profiles below appended
-   to `~/.aws/credentials` and `~/.aws/config`. A profile that exists is
-   left alone, and the secret is never printed.
-4. The repository variables, from the shared outputs:
-   `AWS_STAGING_ROLE_ARN`, `AWS_PRODUCTION_PLAN_ROLE_ARN`,
-   `AWS_PRODUCTION_ROLE_ARN`, `TF_STATE_BUCKET`, `DNS_ZONE_NAME`, and
-   `ALARM_EMAIL`, which the deploy workflows pass to the root's
-   `alarm_email`. Setting the wrong ARN in one of them does not cross
-   the boundary: the role refuses a subject it does not trust.
-5. The GitHub environments: `staging` and `production-plan` with no
-   rule (a reviewer on `production-plan` would hold the plan the
-   reviewer is meant to read), `production` with the owner as required
-   reviewer.
+Run it three times: staging, production, then staging again. Staging's
+replication into production needs production's bucket to exist, and
+the second staging run finds it and turns the replication on. In order,
+each run does:
+
+1. `aws sts get-caller-identity`, compared with the environment's
+   account, and `gh auth status`.
+2. The account's bootstrap root, applied with local state because the
+   root makes the state bucket `tadas-state-<account>`, then `init
+   -migrate-state` into it. The root declares the registry, the OIDC
+   provider, the task boundary, the environment's deploy roles above,
+   its investigate role, the budget, the anomaly monitor, and a hosted
+   zone per public name; staging's adds the replication into
+   production.
+3. The delegation at Cloudflare, where the domain is registered: NS
+   records for each public name, naming its zone's name servers. A
+   stale NS record at that name is deleted.
+4. The investigate profile below, appended to `~/.aws/config`. A
+   profile that exists is left alone.
+5. The GitHub environments and their variables, from the root's
+   outputs: `staging` with no rule, or `production-plan` with no rule
+   (a reviewer on it would hold the plan the reviewer is meant to read)
+   and `production` with the owner as required reviewer. Setting the
+   wrong ARN in one of them does not cross the boundary: the role
+   refuses a subject it does not trust.
 6. `~/.config/tadas/ops/<environment>.env`, mode 600, with
    `TADAS_API_URL` set and the operator identity and error tracker
    lines empty; the skills read it.
 7. The first deploy, through the pipeline like every other:
-   `deploy-staging.yml` for staging, `release.yml` for production.
+   `deploy-staging.yml` for staging. Production's first release waits:
+   replication copies only what staging pushes after it is on, so the
+   first release is a commit merged to `main` after the second staging
+   run, released with `release.yml`.
 8. When the deploy is green, the smoke test: one request through the
    edge, then every signal read back by the request id it answered with.
 
@@ -111,17 +147,26 @@ roles fence each environment's files by those prefixes. In order:
    the identity, the first org, and its owner. Sign-up stays open unless
    `TADAS_SIGNUP_ENABLED=false`, which makes the route answer 404.
 
-`shared` is never applied by a deploy run; every deploy role denies the
-calls that would change the registry, the state bucket, or the trust.
+A bootstrap root is never applied by a deploy run; every deploy role
+denies the calls that would change the registry, its replication, the
+state bucket, or the trust.
 
 ### The profiles
 
+People sign in through IAM Identity Center. There is no IAM user and no
+access key.
+
 | Profile | Holds | Used by |
 |---------|-------|---------|
-| `tadas-admin` | the person's administrator credential, made outside this repository | create and nuke, nothing else |
-| `tadas-operators` | the `tadas-operators` user's key; its only permission is `sts:AssumeRole` on `tadas-investigate-*` | the `source_profile` of the two below, never directly |
-| `tadas-staging-investigate` | `role_arn` = `tadas-investigate-staging`, `source_profile` = `tadas-operators` | every read of staging |
-| `tadas-production-investigate` | `role_arn` = `tadas-investigate-production`, `source_profile` = `tadas-operators` | every read of production |
+| `tadas-staging-admin`, `tadas-prod-admin` | the account's administrator permission set, granted for the bootstrap | create and nuke, nothing else |
+| `tadas-staging`, `tadas-prod` | the account's PowerUserAccess permission set, a person's sign-in | the `source_profile` of the investigate profile, never a skill directly |
+| `tadas-staging-investigate` | `role_arn` = `tadas-investigate-staging`, `source_profile` = `tadas-staging` | every read of staging |
+| `tadas-production-investigate` | `role_arn` = `tadas-investigate-production`, `source_profile` = `tadas-prod` | every read of production |
+
+The investigate role trusts the account's PowerUserAccess role, matched
+by pattern because its name carries a generated suffix. A person signs
+in once (`aws sso login --profile tadas-staging`), and an agent works
+under the investigate profile inside that session.
 
 An investigate role reads everything in its environment and writes
 nothing: every log group, metric, trace, alarm, and resource
@@ -132,8 +177,8 @@ write. Sessions last one hour.
 
 ### The budget and the anomaly monitor
 
-`shared` declares a monthly cost budget (`monthly_budget_usd`, default
-400, sized in [the cloud pricing](../../deployment/cloud/README.md)) that mails `owner_email` at 50, 80, and 100 percent of the amount
+Each bootstrap root declares its account's monthly cost budget
+(`monthly_budget_usd`, default 200, sized in [the cloud pricing](../../deployment/cloud/README.md)) that mails `owner_email` at 50, 80, and 100 percent of the amount
 and when the forecast crosses it, and an anomaly monitor on each
 service's spend that reports a jump of 20 USD or more daily. Every
 resource carries `tadas:environment`, so a cost report splits by it.
@@ -164,9 +209,12 @@ Production refuses unless `--confirm production` is typed and
 pull request a person read. The run applies the root once with
 `destroyable=true` (buckets empty on destroy, the database skips its
 final snapshot and drops its protection), destroys it, and prints what
-remains: the zone, the state prefix, the portal builds, the images, the
-shared roles, the profiles and the env file. `--dry-run` prints every
-command and runs none.
+remains: the account's bootstrap root whole (its zones and their
+delegation, the registry and its images, the roles, the budget), the
+state prefix, the portal builds, the profile and the env file. It runs
+under the environment's administrator profile and checks the account
+before the apply and the destroy. `--dry-run` prints every command and
+runs none.
 
 ## Cut a release
 
@@ -293,13 +341,15 @@ each role trusts the name of the one it belongs to.
 ## When it fails
 
 - `deploy-staging` skipped every cloud job although the account exists:
-  set `AWS_STAGING_ROLE_ARN`, `TF_STATE_BUCKET`, `DNS_ZONE_NAME`,
-  `ALARM_EMAIL` as repository variables (deployment/terraform/modules/README.md).
-  `deploy-production` wants `AWS_PRODUCTION_PLAN_ROLE_ARN` and
-  `AWS_PRODUCTION_ROLE_ARN` instead of the staging one. The
-  public names follow the zone: `api.staging.<zone>`,
-  `app.staging.<zone>`, `api.<zone>`, `app.<zone>`. `deploy-production`
-  fails, not skips, on the same condition.
+  the `staging` environment's variables are empty. Run
+  `scripts/cloud_create.sh staging` again; it sets them (the table in
+  "One account per environment, one credential per job").
+  `deploy-production` reads the same names from `production-plan` and
+  `production`, and fails, not skips, when one is empty.
+- `resolve` says production's registry has no image for the commit:
+  staging never built it, or built it before the replication into
+  production was on. Release a commit `deploy-staging` built after the
+  second staging run of `cloud_create.sh`.
 - `guard` says `release` is not an ancestor of `main`: someone committed
   to `release`. Reset it to a `main` commit by hand
   (`git push --force origin <main commit>:release`, by a bypass actor)

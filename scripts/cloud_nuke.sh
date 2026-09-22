@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Destroy an environment, as the administrator. The `ops-cloud-deployment-nuke`
-# skill narrates this script; the script is the hands.
+# Destroy an environment, as its account's administrator. The
+# `ops-cloud-deployment-nuke` skill narrates this script; the script is the
+# hands.
 #
 #   scripts/cloud_nuke.sh staging [--dry-run]
 #   scripts/cloud_nuke.sh production --confirm production [--dry-run]
@@ -14,17 +15,17 @@
 # empty on destroy, the database skips its final snapshot and drops its
 # protection), destroys it, and prints what remains. It prints every command
 # before it runs it, and `--dry-run` prints them without running anything.
+# The account, the administrator profile, the region, and the public names
+# come from deployment/cloud/environments.json, and the account is checked
+# before the apply and before the destroy. The bootstrap root stays: the
+# account keeps its roles, its registry, its zones, and its state.
 #
 # Inputs, as flags or as environment variables:
-#   --profile        AWS_PROFILE       the administrator profile, tadas-admin
-#   --dns-zone-name  DNS_ZONE_NAME     the hosted zone, e.g. tadas.fyi
 #   --alarm-email    ALARM_EMAIL       the address the root's alarms go to
-#   --state-bucket   TF_STATE_BUCKET   the state bucket every root shares
-#   --region         AWS_REGION        default us-east-1
 set -euo pipefail
 
 usage() {
-  sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//' >&2
+  sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//' >&2
   exit 2
 }
 
@@ -37,20 +38,14 @@ environment=""
 confirm=""
 dry_run=false
 profile="${AWS_PROFILE:-}"
-dns_zone_name="${DNS_ZONE_NAME:-}"
 alarm_email="${ALARM_EMAIL:-}"
-state_bucket="${TF_STATE_BUCKET:-}"
-region="${AWS_REGION:-us-east-1}"
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) dry_run=true ;;
     --confirm) confirm="${2:-}"; shift ;;
     --profile) profile="${2:-}"; shift ;;
-    --dns-zone-name) dns_zone_name="${2:-}"; shift ;;
     --alarm-email) alarm_email="${2:-}"; shift ;;
-    --state-bucket) state_bucket="${2:-}"; shift ;;
-    --region) region="${2:-}"; shift ;;
     -h|--help) usage ;;
     -*) echo "unknown flag: $1" >&2; usage ;;
     *) [ -z "$environment" ] || usage; environment="$1" ;;
@@ -59,30 +54,36 @@ while [ $# -gt 0 ]; do
 done
 
 case "$environment" in
-  staging)
-    root="environments/staging"
-    api_domain_name="api.staging.$dns_zone_name"
-    app_domain_name="app.staging.$dns_zone_name"
-    ;;
-  production)
-    root="environments/prod"
-    api_domain_name="api.$dns_zone_name"
-    app_domain_name="app.$dns_zone_name"
-    ;;
+  staging|production) ;;
   "") usage ;;
   *) refuse "the environment is staging or production, not '$environment'" ;;
 esac
 
-[ "$profile" = "tadas-admin" ] || refuse "this runs under the tadas-admin profile only (AWS_PROFILE or --profile); it holds '${profile:-nothing}'"
-
-missing=""
-[ -n "$dns_zone_name" ] || missing="$missing DNS_ZONE_NAME"
-[ -n "$alarm_email" ] || missing="$missing ALARM_EMAIL"
-[ -n "$state_bucket" ] || missing="$missing TF_STATE_BUCKET"
-[ -z "$missing" ] || refuse "missing:$missing (as flags or environment variables)"
-
 cd "$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
+environments=deployment/cloud/environments.json
+
+config() {
+  jq -er "$1" "$environments"
+}
+
+region="$(config .region)"
+account_id="$(config ".environments.$environment.account_id")"
+admin_profile="$(config ".environments.$environment.admin_profile")"
+root="$(config ".environments.$environment.environment_root")"
+api_domain_name="$(config ".environments.$environment.api_domain_name")"
+app_domain_name="$(config ".environments.$environment.app_domain_name")"
+state_bucket="tadas-state-$account_id"
+
+profile="${profile:-$admin_profile}"
+[ "$profile" = "$admin_profile" ] || refuse "$environment is destroyed under the $admin_profile profile only (AWS_PROFILE or --profile); it holds '$profile'"
+
+[ -n "$alarm_email" ] || refuse "missing: ALARM_EMAIL (as a flag or an environment variable)"
+
+# Keys exported in the shell outrank a profile for Terraform; they do not
+# get to decide which account this destroys.
+unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_DEFAULT_PROFILE AWS_DEFAULT_REGION
 export AWS_PROFILE="$profile"
+export AWS_REGION="$region"
 
 if [ "$environment" = "production" ]; then
   # Two things, and both are read here rather than trusted: the typed name,
@@ -105,8 +106,16 @@ say() {
   printf '%s\n' "$*"
 }
 
+check_account() {
+  say "+ aws sts get-caller-identity --profile $profile  (expect account $account_id)"
+  if $dry_run; then return; fi
+  local actual
+  actual="$(aws sts get-caller-identity --profile "$profile" --query Account --output text)"
+  [ "$actual" = "$account_id" ] || refuse "$profile resolves to account $actual, and $environment is account $account_id"
+}
+
 say "== 1. Who am I"
-run aws sts get-caller-identity --profile "$profile"
+check_account
 
 say "== 2. The environment root, as it is deployed"
 root_dir="deployment/terraform/$root"
@@ -135,7 +144,6 @@ fi
 root_vars=(
   -var "api_image=$api_image"
   -var "maintenance_image=$maintenance_image"
-  -var "dns_zone_name=$dns_zone_name"
   -var "api_domain_name=$api_domain_name"
   -var "app_domain_name=$app_domain_name"
   -var "alarm_email=$alarm_email"
@@ -143,15 +151,18 @@ root_vars=(
 )
 
 say "== 3. Lift the protections: buckets empty on destroy, the database skips its snapshot"
+check_account
 run terraform -chdir="$root_dir" apply -input=false -auto-approve "${root_vars[@]}"
 
 say "== 4. Destroy $environment"
+check_account
 run terraform -chdir="$root_dir" destroy -input=false -auto-approve "${root_vars[@]}"
 
 say "== 5. What remains"
-say "- the hosted zone $dns_zone_name and its name servers at the registrar (shared root)"
+say "- the bootstrap root, whole: the zones $api_domain_name and $app_domain_name and their delegation at Cloudflare, the registry and its images, the roles, the budget, and the anomaly monitor"
 say "- the state prefix $root/ and plans/$root/ in s3://$state_bucket (empty the prefix by hand if the environment is not coming back)"
 say "- the portal builds under builds/portal/ in s3://$state_bucket"
-say "- the images in the registry (shared root; the lifecycle policy keeps the last 30, and the last 10 tagged prod-)"
-say "- the shared roles, the operators user, the budget, and the anomaly monitor (shared root)"
-say "- $HOME/.config/tadas/ops/$environment.env, and the profiles in $HOME/.aws"
+if [ "$environment" = "staging" ]; then
+  say "- production's copies of what staging built: its images and portal builds, in production's account"
+fi
+say "- $HOME/.config/tadas/ops/$environment.env, and the investigate profile in $HOME/.aws/config"

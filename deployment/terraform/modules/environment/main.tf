@@ -102,11 +102,17 @@ module "secrets" {
   destroyable  = var.destroyable
 }
 
-# Two public names in one Route 53 zone: the API at the load balancer, the
-# portal at CloudFront. Each gets a DNS-validated certificate; the portal's is
-# in us-east-1, the only region CloudFront reads certificates from.
-data "aws_route53_zone" "this" {
-  name = var.dns_zone_name
+# Two public names, each at the apex of a Route 53 zone of its own that the
+# account's bootstrap root made and delegated from Cloudflare: the API at the
+# load balancer, the portal at CloudFront. Each gets a DNS-validated
+# certificate; the portal's is in us-east-1, the only region CloudFront reads
+# certificates from.
+data "aws_route53_zone" "api" {
+  name = var.api_domain_name
+}
+
+data "aws_route53_zone" "app" {
+  name = var.app_domain_name
 }
 
 module "api_certificate" {
@@ -114,7 +120,7 @@ module "api_certificate" {
 
   environment = var.environment
   domain_name = var.api_domain_name
-  zone_id     = data.aws_route53_zone.this.zone_id
+  zone_id     = data.aws_route53_zone.api.zone_id
 }
 
 module "app_certificate" {
@@ -123,7 +129,7 @@ module "app_certificate" {
 
   environment = var.environment
   domain_name = var.app_domain_name
-  zone_id     = data.aws_route53_zone.this.zone_id
+  zone_id     = data.aws_route53_zone.app.zone_id
 }
 
 module "load_balancer" {
@@ -151,7 +157,8 @@ module "portal" {
 module "domain_records" {
   source = "../domain_records"
 
-  zone_id                  = data.aws_route53_zone.this.zone_id
+  api_zone_id              = data.aws_route53_zone.api.zone_id
+  app_zone_id              = data.aws_route53_zone.app.zone_id
   api_domain_name          = var.api_domain_name
   app_domain_name          = var.app_domain_name
   load_balancer_dns_name   = module.load_balancer.dns_name

@@ -128,7 +128,7 @@ jobs:
     timeout-minutes: 10
     strategy:
       matrix:
-        root: [shared, environments/staging, environments/prod]
+        root: [bootstrap/staging, bootstrap/prod, environments/staging, environments/prod]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
@@ -137,9 +137,9 @@ jobs:
       - run: terraform fmt -check -recursive deployment/terraform
       - run: terraform -chdir=deployment/terraform/${{ matrix.root }} init -backend=false -input=false
       - run: terraform -chdir=deployment/terraform/${{ matrix.root }} validate
-      - if: matrix.root == 'shared'
+      - if: matrix.root == 'bootstrap/staging'
         run: terraform -chdir=deployment/terraform/modules/portal init -backend=false -input=false
-      - if: matrix.root == 'shared'
+      - if: matrix.root == 'bootstrap/staging'
         run: terraform -chdir=deployment/terraform/modules/portal test
       - if: matrix.root == 'environments/staging'
         run: terraform -chdir=deployment/terraform/modules/service init -backend=false -input=false

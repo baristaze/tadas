@@ -9,27 +9,27 @@
 #
 # Production (deploy-production.yml) never rebuilds: it resolves the digests
 # tagged here and the portal files kept here, by the commit `release` points
-# at. The portal build holds no environment; each environment's /config.json,
-# written by Terraform, does.
+# at, from the copies replicated into its own account. The portal build holds
+# no environment; each environment's /config.json, written by Terraform, does.
 #
-# Credentials come from the staging deploy role in
-# deployment/terraform/shared through GitHub's OIDC provider. That role is
-# staging's and no more: it trusts one subject, a job of this repository that
-# declares `environment: staging` and runs on `main`, and its permissions stop
-# at what staging owns. Production's state, secrets, and database are outside
-# it, which is what lets a merge deploy with no approval. Every job here that
-# touches the cloud therefore declares the environment; a job without it
-# presents its branch instead and is refused by the role's trust.
+# Staging has an AWS account of its own (deployment/cloud/environments.json).
+# Credentials come from the staging deploy role that
+# deployment/terraform/bootstrap/staging declares there, through GitHub's
+# OIDC provider. That role trusts one subject, a job of this repository that
+# declares `environment: staging` and runs on `main`. Production is another
+# account, which is what lets a merge deploy with no approval. Every job here
+# therefore declares the environment; a job without it presents its branch
+# instead and is refused by the role's trust.
 #
-# The role's ARN and the state bucket are repository variables, and so is the
-# zone (DNS_ZONE_NAME, e.g. tadas.fyi) and the address the alarm topic
-# subscribes (ALARM_EMAIL). The public names follow the zone:
-# api.staging.<zone> and app.staging.<zone> here, api.<zone> and app.<zone>
-# in production.
+# The variables are the `staging` environment's own: the role (AWS_ROLE_ARN),
+# the state bucket (TF_STATE_BUCKET), the two public names (API_DOMAIN_NAME,
+# APP_DOMAIN_NAME), and the address the alarm topic subscribes (ALARM_EMAIL).
+# scripts/cloud_create.sh sets them. Production's environments hold the same
+# names with production's values, and a job here never sees those.
 #
-# Until those repository variables are set there is no cloud to deploy to:
-# the `cloud` job says so in its summary and every job that touches the cloud
-# is skipped, so the run stays green and the portal still builds.
+# Until those variables are set there is no cloud to deploy to: the `cloud`
+# job says so in its summary and every job that touches the cloud is
+# skipped, so the run stays green and the portal still builds.
 name: deploy-staging
 
 on:
@@ -48,7 +48,9 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  AWS_REGION: us-east-1
+  # The region deployment/cloud/environments.json names; a test holds them
+  # equal.
+  AWS_REGION: us-west-2
   TERRAFORM_VERSION: "1.16.3"
 
 jobs:
@@ -66,6 +68,9 @@ jobs:
        github.event.workflow_run.event == 'push' &&
        github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-latest
+    # The variables are the environment's, so this job declares it to read
+    # them. It assumes no role.
+    environment: staging
     outputs:
       configured: ${{ steps.check.outputs.configured }}
       sha: ${{ steps.sha.outputs.sha }}
@@ -79,24 +84,25 @@ jobs:
         run: |
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
           echo "Deploying \`$SHA\` to staging." >> "$GITHUB_STEP_SUMMARY"
-      - name: check the repository variables
+      - name: check the environment's variables
         id: check
         env:
-          AWS_STAGING_ROLE_ARN: ${{ vars.AWS_STAGING_ROLE_ARN }}
+          AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
           TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
-          DNS_ZONE_NAME: ${{ vars.DNS_ZONE_NAME }}
+          API_DOMAIN_NAME: ${{ vars.API_DOMAIN_NAME }}
+          APP_DOMAIN_NAME: ${{ vars.APP_DOMAIN_NAME }}
           ALARM_EMAIL: ${{ vars.ALARM_EMAIL }}
         run: |
           missing=""
-          for name in AWS_STAGING_ROLE_ARN TF_STATE_BUCKET DNS_ZONE_NAME ALARM_EMAIL; do
+          for name in AWS_ROLE_ARN TF_STATE_BUCKET API_DOMAIN_NAME APP_DOMAIN_NAME ALARM_EMAIL; do
             [ -n "${!name}" ] || missing="${missing:+$missing, }$name"
           done
           if [ -z "$missing" ]; then
             echo "configured=true" >> "$GITHUB_OUTPUT"
-            echo "The cloud deployment is configured: staging deploys under \`$AWS_STAGING_ROLE_ARN\`." >> "$GITHUB_STEP_SUMMARY"
+            echo "The cloud deployment is configured: staging deploys under \`$AWS_ROLE_ARN\`." >> "$GITHUB_STEP_SUMMARY"
           else
             echo "configured=false" >> "$GITHUB_OUTPUT"
-            echo "**The cloud deployment is not configured.** The repository variables \`$missing\` are empty, so every job that touches the cloud is skipped; only the portal builds. Set them once the account exists (deployment/terraform/shared)." >> "$GITHUB_STEP_SUMMARY"
+            echo "**The cloud deployment is not configured.** The \`staging\` environment's variables \`$missing\` are empty, so every job that touches the cloud is skipped; only the portal builds. scripts/cloud_create.sh staging sets them." >> "$GITHUB_STEP_SUMMARY"
           fi
 
   images:
@@ -114,7 +120,7 @@ jobs:
           ref: ${{ needs.cloud.outputs.sha }}
       - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
-          role-to-assume: ${{ vars.AWS_STAGING_ROLE_ARN }}
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
       - uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2.1.7
         id: ecr
@@ -195,13 +201,13 @@ jobs:
           path: apps/portal/dist
           if-no-files-found: error
           retention-days: 30
-      # The build is kept by the commit in the state bucket, which is where
-      # production reads it from: a workflow artifact expires and is one
-      # run's, the bucket outlives both and is reachable by the commit alone.
+      # The build is kept by the commit in the state bucket, which replicates
+      # it into production's: a workflow artifact expires and is one run's,
+      # the bucket outlives both and is reachable by the commit alone.
       - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         if: needs.cloud.outputs.configured == 'true'
         with:
-          role-to-assume: ${{ vars.AWS_STAGING_ROLE_ARN }}
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
       - name: keep the build by the commit
         if: needs.cloud.outputs.configured == 'true'
@@ -222,7 +228,7 @@ jobs:
           ref: ${{ needs.cloud.outputs.sha }}
       - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
-          role-to-assume: ${{ vars.AWS_STAGING_ROLE_ARN }}
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
       - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
         with:
@@ -231,10 +237,11 @@ jobs:
       - name: plan staging
         env:
           TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
-          DNS_ZONE_NAME: ${{ vars.DNS_ZONE_NAME }}
+          API_DOMAIN_NAME: ${{ vars.API_DOMAIN_NAME }}
+          APP_DOMAIN_NAME: ${{ vars.APP_DOMAIN_NAME }}
           ALARM_EMAIL: ${{ vars.ALARM_EMAIL }}
           # Empty (unset) leaves browser error reporting off, the root default.
-          PORTAL_SENTRY_DSN: ${{ vars.PORTAL_SENTRY_DSN_STAGING }}
+          PORTAL_SENTRY_DSN: ${{ vars.PORTAL_SENTRY_DSN }}
           API_IMAGE: ${{ needs.images.outputs.api_image }}
           MAINTENANCE_IMAGE: ${{ needs.images.outputs.maintenance_image }}
         run: |
@@ -246,10 +253,9 @@ jobs:
           terraform -chdir=deployment/terraform/environments/staging plan -input=false -out=tfplan \
             -var "api_image=$API_IMAGE" \
             -var "maintenance_image=$MAINTENANCE_IMAGE" \
-            -var "dns_zone_name=$DNS_ZONE_NAME" \
             -var "alarm_email=$ALARM_EMAIL" \
-            -var "api_domain_name=api.staging.$DNS_ZONE_NAME" \
-            -var "app_domain_name=app.staging.$DNS_ZONE_NAME" \
+            -var "api_domain_name=$API_DOMAIN_NAME" \
+            -var "app_domain_name=$APP_DOMAIN_NAME" \
             -var "portal_sentry_dsn=$PORTAL_SENTRY_DSN"
           terraform -chdir=deployment/terraform/environments/staging show -no-color tfplan > plan.txt
           {

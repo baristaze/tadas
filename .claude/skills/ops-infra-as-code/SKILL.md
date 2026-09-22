@@ -37,11 +37,20 @@ aws sts get-caller-identity --profile tadas-<env>-investigate
 
 and check that `Arn` reads
 `arn:aws:sts::<account>:assumed-role/tadas-investigate-<env>/...`.
-Refuse any other identity, the administrator profile `tadas-admin`
-above all. The role reads the state bucket under
-`environments/staging/` or `environments/prod/` and describes every resource, which is all a
+Refuse any other identity: the administrator profiles
+(`tadas-staging-admin`, `tadas-prod-admin`) above all, and the bare
+sign-in profiles (`tadas-staging`, `tadas-prod`), whose PowerUserAccess
+is wider than the role. Each environment has an AWS account of its own
+(`deployment/cloud/environments.json`). The role reads that account's
+state bucket, `tadas-state-<account>`, under `environments/staging/` or
+`environments/prod/`, and describes every resource, which is all a
 plan needs. It cannot lock the state and cannot write it, so the plan
 runs with `-lock=false`, and an apply under it fails by construction.
+
+Check the account too: `Account` in the same answer must equal the
+environment's `account_id` in `deployment/cloud/environments.json`
+(read the file; the value is `.environments.<env>.account_id`). Stop on
+a mismatch: the right role in the wrong account is the wrong credential.
 
 The pull request needs `gh auth status` to name a login. No env file
 is read; this skill touches no application credential.
@@ -49,7 +58,7 @@ is read; this skill touches no application credential.
 ## Procedure
 
 1. Read `deployment/terraform/` whole before writing: `modules/`, both
-   `environments/`, and `shared/`. The shape to keep:
+   `environments/`, and both `bootstrap/` roots. The shape to keep:
    - One module graph. Every environment instantiates the same
      modules; what differs is a value in that environment's root
      module call (`environments/<staging | prod>/main.tf`) or a `-var`
@@ -64,8 +73,9 @@ is read; this skill touches no application credential.
      `false`: buckets `force_destroy`, the database
      `skip_final_snapshot`, deletion protection off, all under the one
      variable.
-   - The budget in `shared`: `monthly_budget_usd`, the four
-     notifications, the anomaly monitor, to `owner_email`.
+   - The budget in each account's bootstrap root (`modules/account`):
+     `monthly_budget_usd`, the four notifications, the anomaly monitor,
+     to `owner_email`.
    - The alarm topic `tadas-<env>-alarms` and the seven alarms, the
      dashboard `tadas-<env>`, the log retention on every group, and
      `default_tags` with `environment` on the provider.
@@ -82,17 +92,19 @@ is read; this skill touches no application credential.
    # <root> is staging or prod; production's root is environments/prod.
    cd deployment/terraform/environments/<root>
    AWS_PROFILE=tadas-<env>-investigate terraform init -reconfigure \
-     -backend-config="bucket=$TF_STATE_BUCKET" \
+     -backend-config="bucket=tadas-state-<account>" \
      -backend-config="key=environments/<root>/terraform.tfstate" \
-     -backend-config="region=us-east-1" \
+     -backend-config="region=us-west-2" \
      -backend-config="use_lockfile=true"
    AWS_PROFILE=tadas-<env>-investigate terraform plan -lock=false -out=/dev/null \
      -var "api_image=<in state>" -var "maintenance_image=<in state>" \
-     -var "dns_zone_name=$DNS_ZONE_NAME" -var "alarm_email=$ALARM_EMAIL" \
+     -var "alarm_email=$ALARM_EMAIL" \
      -var "api_domain_name=<api host>" -var "app_domain_name=<app host>"
    ```
 
-   The `-var` values are the ones the deploy workflow passes
+   The account and the two hosts are the environment's entry in
+   `deployment/cloud/environments.json`. The `-var` values are the ones
+   the deploy workflow passes
    (`.github/workflows/deploy-<staging | production>.yml`); the images
    are the ones in state, so the plan shows the change and not a roll.
 
@@ -113,8 +125,10 @@ is read; this skill touches no application credential.
 - No secret value in the Terraform or the pull request: a secret is a
   reference to the secret store, never its value.
 - No tenant data; the skill reads resource descriptions and state.
-- No change to `shared/` and an environment in the same pull request
-  unless the change needs both, said in the description.
+- No change to a `bootstrap/` root and an environment in the same pull
+  request unless the change needs both, said in the description. A
+  bootstrap root is applied by its account's administrator through
+  `ops-cloud-deployment-create`, never by the pipeline.
 
 ## Output
 

@@ -13,8 +13,9 @@
 # that make a network (there is no VPC to name before CreateVpc returns), so
 # the allow side is the set of services this environment's graph declares and
 # the deny side is what fences it: anything tagged as the other environment,
-# the other environment's state, the account-level resources `shared` owns,
-# and any path by which this role could widen itself. Every name in the graph
+# what the account's bootstrap root owns, and any path by which this role
+# could widen itself. The other environment lives in another account, so the
+# tag fences only matter if a root is ever applied in the wrong one. Every name in the graph
 # carries the environment (`tadas-<environment>`, `tadas/<environment>/`,
 # `/tadas/<environment>/`), which is what makes the resource-level scoping
 # below possible at all.
@@ -216,9 +217,9 @@ data "aws_iam_policy_document" "graph_platform" {
     resources = ["*"]
   }
 
-  # The zone is shared, so the fence is the record name, not the zone: this
-  # role changes the names under its own environment and the validation
-  # records beneath them, and nothing else anyone has in the zone.
+  # The account holds this environment's zones only, and the fence is the
+  # record name all the same: this role changes its own two names and the
+  # validation records beneath them, and nothing else a zone could hold.
   statement {
     sid       = "OwnRecordNamesOnly"
     actions   = ["route53:ChangeResourceRecordSets"]
@@ -519,28 +520,22 @@ data "aws_iam_policy_document" "fences" {
     }
   }
 
+  # The bootstrap root is applied by a person, never by a deploy run: the
+  # registry and its replication, the state bucket itself, and the trust that
+  # makes any of this work.
   statement {
-    sid     = "NotTheOtherEnvironmentsState"
-    effect  = "Deny"
-    actions = ["s3:*"]
-    resources = [
-      "${local.state_bucket_arn}/${var.other_state_key_prefix}/*",
-      "${local.state_bucket_arn}/plans/${var.other_state_key_prefix}/*",
-    ]
-  }
-
-  # `shared` is applied by a person, never by a deploy run: the registry, the
-  # state bucket itself, and the trust that makes any of this work.
-  statement {
-    sid    = "NotWhatSharedOwns"
+    sid    = "NotWhatTheBootstrapOwns"
     effect = "Deny"
     actions = [
       "ecr:CreateRepository",
       "ecr:DeleteLifecyclePolicy",
+      "ecr:DeleteRegistryPolicy",
       "ecr:DeleteRepository",
       "ecr:DeleteRepositoryPolicy",
       "ecr:PutImageTagMutability",
       "ecr:PutLifecyclePolicy",
+      "ecr:PutRegistryPolicy",
+      "ecr:PutReplicationConfiguration",
       "ecr:SetRepositoryPolicy",
     ]
     resources = ["*"]
@@ -551,17 +546,19 @@ data "aws_iam_policy_document" "fences" {
     effect = "Deny"
     actions = [
       "s3:DeleteBucket",
+      "s3:DeleteBucketPolicy",
       "s3:PutBucketPolicy",
       "s3:PutBucketPublicAccessBlock",
       "s3:PutBucketVersioning",
       "s3:PutEncryptionConfiguration",
+      "s3:PutReplicationConfiguration",
     ]
     resources = [local.state_bucket_arn]
   }
 
   # The role cannot widen itself, nor reach the roles of the other jobs, nor
-  # the operators' roles and user, nor the trust that issues any of them, nor
-  # mint a principal outside all of these.
+  # the operators' roles, nor the replication role, nor the trust
+  # that issues any of them, nor mint a principal outside all of these.
   statement {
     sid     = "NoWideningOfTheDeployCredentials"
     effect  = "Deny"
@@ -570,7 +567,7 @@ data "aws_iam_policy_document" "fences" {
       "arn:${local.partition}:iam::${local.account}:role/tadas-deploy-*",
       "arn:${local.partition}:iam::${local.account}:role/tadas-plan-*",
       "arn:${local.partition}:iam::${local.account}:role/tadas-investigate-*",
-      "arn:${local.partition}:iam::${local.account}:user/tadas-operators",
+      "arn:${local.partition}:iam::${local.account}:role/tadas-replication-*",
       "arn:${local.partition}:iam::${local.account}:policy/tadas-task-boundary-*",
     ]
   }
@@ -625,25 +622,6 @@ data "aws_iam_policy_document" "fences" {
       test     = "ArnNotLike"
       variable = "iam:PolicyARN"
       values   = local.attachable_policy_arns
-    }
-  }
-
-  # Production's allowed pattern is the whole zone, because its names sit at
-  # the base domain; staging's names sit under it and are subtracted here.
-  dynamic "statement" {
-    for_each = length(var.denied_dns_record_patterns) > 0 ? [1] : []
-
-    content {
-      sid       = "NotTheOtherEnvironmentsRecordNames"
-      effect    = "Deny"
-      actions   = ["route53:ChangeResourceRecordSets"]
-      resources = ["arn:${local.partition}:route53:::hostedzone/*"]
-
-      condition {
-        test     = "ForAnyValue:StringLike"
-        variable = "route53:ChangeResourceRecordSetsNormalizedRecordNames"
-        values   = var.denied_dns_record_patterns
-      }
     }
   }
 }
@@ -770,7 +748,7 @@ resource "aws_iam_role_policy_attachment" "object_fence" {
 }
 
 # Production tags the digest it promotes `prod-<sha>` so the registry's
-# lifecycle never expires an image production runs (shared/main.tf). The tag
+# lifecycle never expires an image production runs (modules/account). The tag
 # is a manifest put on a digest that exists; with no layer upload granted,
 # nothing new can be pushed. Only an environment that does not build gets it.
 data "aws_iam_policy_document" "promote" {

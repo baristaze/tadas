@@ -100,6 +100,6 @@ own.
 ## What it costs
 
 A scale-out is tasks, and tasks are the bill. The ceiling is the most
-an environment can spend on a service at once; the budget in `shared`
-is the catch-all under it, and its 80 percent notification is the one
+an environment can spend on a service at once; its account's budget,
+declared by the bootstrap root, is the catch-all under it, and its 80 percent notification is the one
 to read when a flip has been on for a while.

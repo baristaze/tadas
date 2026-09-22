@@ -35,14 +35,20 @@ back, verified before anything else with
 aws sts get-caller-identity --profile tadas-<env>-investigate
 ```
 
-and refused under any other identity, `tadas-admin` above all. The env
-file `~/.config/tadas/ops/<env>.env`, owner-only and outside the
-repository, gives the generator its provisioner identity
-(`TADAS_PROVISIONER_EMAIL`, `TADAS_PROVISIONER_PASSWORD` against
-`TADAS_API_URL`, the file's one `write` entry, which creates the run's
-own tenants),
-and the signals their URLs and token. Never print the password or the
-token.
+and refused under any other identity, the administrator profiles
+(`tadas-staging-admin`, `tadas-prod-admin`) above all, and the bare
+sign-in profiles (`tadas-staging`, `tadas-prod`), whose PowerUserAccess
+is wider than the role. The env file `~/.config/tadas/ops/<env>.env`,
+owner-only and outside the repository, gives the generator its
+provisioner identity (`TADAS_PROVISIONER_EMAIL`,
+`TADAS_PROVISIONER_PASSWORD` against `TADAS_API_URL`, the file's one
+`write` entry, which creates the run's own tenants), and the signals
+their URLs and token. Never print the password or the token.
+
+Check the account too: `Account` in the same answer must equal the
+environment's `account_id` in `deployment/cloud/environments.json`
+(read the file; the value is `.environments.<env>.account_id`). Stop on
+a mismatch: the right role in the wrong account is the wrong credential.
 
 ## Procedure
 

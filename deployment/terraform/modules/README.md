@@ -11,22 +11,24 @@ Three kinds of root live under this folder:
   cannot drift; a new environment is another root, never a copy. Both
   take the image digests as variables: `deploy-staging.yml` passes what
   it built, `deploy-production.yml` the digests it resolves from the
-  registry by the commit `release` points at.
-- `shared/`: account-level resources every environment uses: the image
-  registry (production promotes the digests staging already ran), the state
-  bucket, one deploy role per environment behind GitHub's OIDC provider,
-  each trusting a single subject and scoped to what its own environment
-  owns (the deploy runbook has the table), one investigate role per
-  environment that reads everything there and writes nothing, the
-  `tadas-operators` user whose only permission is to assume them, the
-  monthly budget and the cost anomaly monitor, and the hosted zone.
-  `scripts/cloud_create.sh` applies it.
+  registry by the commit `release` points at. Each pins its provider to
+  its environment's account.
+- `bootstrap/<name>/`: one root per environment's AWS account (`staging`,
+  `prod`). Each environment has an account of its own, and
+  `deployment/cloud/environments.json` names it. A bootstrap root calls
+  the `account` module and adds the roles its deploy workflow assumes,
+  each trusting a single subject (the deploy runbook has the table).
+  Staging's also replicates every image and portal build into
+  production's account; production's grants those two writes and nothing
+  else. `scripts/cloud_create.sh` applies it, under the account's
+  administrator profile.
 - `modules/`: one module per resource family, each with `versions.tf`,
   `variables.tf`, `main.tf`, and `outputs.tf`.
 
 | Module          | Declares                                                        |
 |-----------------|-----------------------------------------------------------------|
 | `environment`   | One environment whole: every module below, wired                |
+| `account`       | One environment's account before its first deploy: the registry, the state bucket, the OIDC provider, the task boundary, the investigate role, the budget and anomaly monitor, one hosted zone per public name |
 | `deploy_role`   | One environment's deploy role: its OIDC trust and its fences     |
 | `investigate_role` | One environment's read-only role: ReadOnlyAccess plus the signal reads, fenced off secrets, data, the database, the other environment, and IAM |
 | `network`       | VPC, public and private subnets, NAT, the security groups        |
@@ -83,45 +85,46 @@ key, and region as `-backend-config` arguments:
 
 ```bash
 terraform -chdir=deployment/terraform/environments/staging init \
-  -backend-config="bucket=$TF_STATE_BUCKET" \
+  -backend-config="bucket=tadas-state-<account>" \
   -backend-config="key=environments/staging/terraform.tfstate" \
-  -backend-config="region=us-east-1" \
+  -backend-config="region=us-west-2" \
   -backend-config="use_lockfile=true"
 ```
 
 The `use_lockfile` option needs Terraform 1.10 or later, which the
-roots require. `shared/` creates the state bucket itself: apply it once with local
-state, then run `init -migrate-state` against the bucket it made. No
-root holds credentials; a developer's AWS profile or an environment's
-deploy role provides them through its OIDC session. `shared/` is applied
-by a person with an administrator profile and never by a deploy run:
-every deploy role denies the calls that would change the registry, the
+roots require. Each account has its own state bucket,
+`tadas-state-<account>`: the bootstrap root's state sits at
+`bootstrap/terraform.tfstate`, the environment root's under
+`environments/staging/` or `environments/prod/`. A bootstrap root creates
+its bucket itself: it applies once with local state, then runs `init
+-migrate-state` against the bucket it made. No root holds credentials; a
+person's Identity Center profile or an environment's deploy role
+provides them through its OIDC session. A bootstrap root is applied by
+its account's administrator and never by a deploy run: every deploy role
+denies the calls that would change the registry, its replication, the
 state bucket, or the trust that issues the roles.
 
 ## Domains
 
-Each environment has two public names in one Route 53 hosted zone, all three
-inputs rather than code:
+Each environment has two public names, and each name is the apex of a
+Route 53 hosted zone of its own in the environment's account:
 
 | Input | staging | production |
 |-------|---------|------------|
-| `dns_zone_name` | `tadas.fyi` | `tadas.fyi` |
 | `api_domain_name` | `api.staging.tadas.fyi` | `api.tadas.fyi` |
 | `app_domain_name` | `app.staging.tadas.fyi` | `app.tadas.fyi` |
 
-Each environment has one base domain: production's is the zone itself,
-staging's is `staging.` under it, and `api.` and `app.` sit under the base
-domain. The two names are inputs, not a computed shape, so any name inside
-the zone works; the certificate and the alias record are per name.
-
-The deploy workflows pass them from one repository variable, the zone
-(`DNS_ZONE_NAME`): `api.staging.<zone>` and `app.staging.<zone>` for staging,
-`api.<zone>` and `app.<zone>` for production. The Terraform variables refuse
-a name outside the zone. The zone must already exist in
-the account. Terraform does the rest: a DNS-validated certificate per name
-(the portal's in us-east-1, where CloudFront reads them), the alias records,
-and the API's CORS origin, which is always the app's name. The zone apex, the
-company page, is not managed here.
+The names are written once, in `deployment/cloud/environments.json`. The
+bootstrap root makes the two zones. The domain itself is registered at
+Cloudflare, which keeps its zone, so `scripts/cloud_create.sh` delegates
+each name there with NS records naming its zone's servers. The create
+script also sets the names as the `API_DOMAIN_NAME` and `APP_DOMAIN_NAME`
+variables of the environment's GitHub environments, and the deploy
+workflows pass them in. The environment root finds each zone by its name.
+Terraform does the rest: a DNS-validated certificate per name (the
+portal's in us-east-1, where CloudFront reads them), the alias records,
+and the API's CORS origin, which is always the app's name. The domain's
+apex, the company page, is not managed here.
 
 ## The portal
 
@@ -136,12 +139,13 @@ connects there directly.
 The build carries no environment. Terraform writes `/config.json` per
 environment (`apiUrl`, `sentryDsn`, `environment`). `deploy-staging.yml`
 builds the portal once, publishes it with `scripts/deploy_portal.sh` after
-the apply, and keeps the build by the commit in the state bucket
-(`builds/portal/<sha>/`); `deploy-production.yml` publishes those same files
-to production. `portal_sentry_dsn`, the root's variable, turns browser
-error reporting on; the deploy workflows pass it from the repository
-variables `PORTAL_SENTRY_DSN_STAGING` and `PORTAL_SENTRY_DSN_PRODUCTION`,
-and an unset one leaves reporting off. The `api_url` and `portal_url` outputs are
+the apply, and keeps the build by the commit in staging's state bucket
+(`builds/portal/<sha>/`). The bucket replicates it into production's, and
+`deploy-production.yml` publishes those same files to production from
+there. `portal_sentry_dsn`, the root's variable, turns browser error
+reporting on; the deploy workflows pass it from the `PORTAL_SENTRY_DSN`
+variable of the environment's GitHub environment, and an unset one
+leaves reporting off. The `api_url` and `portal_url` outputs are
 where an environment answers.
 
 ## Telemetry and error reporting

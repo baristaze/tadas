@@ -5,10 +5,11 @@
 # environment root; what it cannot do is write to the cloud, read a tenant's
 # data, open the database, or reach the other environment.
 #
-# Trust is the operators user (`tadas-operators`, whose only permission is to
-# assume `tadas-investigate-*`) plus any principal the account owner names.
-# When a team grows, IAM Identity Center replaces the user here and nothing
-# else changes.
+# Trust is a person signed in through IAM Identity Center: the account's own
+# principals, narrowed by a condition to the permission set roles named in
+# `operator_principal_arn_patterns`. Those roles carry a generated suffix,
+# and a principal element takes no wildcard, so the pattern goes in the
+# condition. A person gives an agent this role, never their own.
 #
 # Permission is ReadOnlyAccess, which reads the whole account, plus the calls
 # ReadOnlyAccess leaves out that an investigation needs (Logs Insights
@@ -28,12 +29,18 @@ locals {
 
 data "aws_iam_policy_document" "assume" {
   statement {
-    sid     = "TheOperatorsUserAndTheNamedPrincipals"
+    sid     = "OperatorsSignedInThroughIdentityCenter"
     actions = ["sts:AssumeRole"]
 
     principals {
       type        = "AWS"
-      identifiers = concat([var.operators_user_arn], var.operator_principal_arns)
+      identifiers = ["arn:${local.partition}:iam::${local.account}:root"]
+    }
+
+    condition {
+      test     = "ArnLike"
+      variable = "aws:PrincipalArn"
+      values   = var.operator_principal_arn_patterns
     }
   }
 }
@@ -151,18 +158,6 @@ data "aws_iam_policy_document" "fences" {
       variable = "aws:ResourceTag/tadas:environment"
       values   = [var.other_environment]
     }
-  }
-
-  statement {
-    sid    = "NotTheOtherEnvironmentsState"
-    effect = "Deny"
-    actions = [
-      "s3:*",
-    ]
-    resources = [
-      "${local.state_bucket_arn}/${var.other_state_key_prefix}/*",
-      "${local.state_bucket_arn}/plans/${var.other_state_key_prefix}/*",
-    ]
   }
 
   # Every IAM write verb, and any hop to another role. A plan reads IAM

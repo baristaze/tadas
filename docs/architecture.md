@@ -876,14 +876,22 @@ everything in-process for tests.
   resource family (`network`, `cluster`, `database`, `cache`, `queue`,
   `buckets`, `secrets`, `load_balancer`, `certificate`, `domain_records`,
   `portal`, `service`, `alarms`, `dashboard`), `environment`, the graph
-  that wires them and that each root calls, and `deploy_role` and
-  `investigate_role`, which `shared/` instantiates once per
-  environment; `environments/staging`
+  that wires them and that each root calls, and `account`,
+  `deploy_role`, and `investigate_role`, which the bootstrap roots
+  instantiate; `environments/staging`
   and `environments/prod` instantiate the same graph and differ only in
   variables, including the image digests, the autoscaling flip, and
-  the alarm address; `shared/` holds the registry, the state bucket,
-  the zone, the deploy roles, the investigate roles and the operators'
-  user, and the budget (see [Operations](#operations-ops-claudeskills)). The load balancer's idle timeout is read from
+  the alarm address. Each environment has an AWS account of its own,
+  named in `deployment/cloud/environments.json` with the region and the
+  public names
+  ([ADR 0021](adr/0021-each-environment-has-an-aws-account-of-its-own.md)),
+  and every root pins its provider to that account. `bootstrap/staging`
+  and `bootstrap/prod` hold what an account has before its first deploy:
+  the registry, the state bucket, the two zones, the deploy roles, the
+  investigate role, and the budget (see
+  [Operations](#operations-ops-claudeskills)). Staging's replicates
+  every image and portal build into production's account, so
+  production never reads staging's. The load balancer's idle timeout is read from
   `deployment/realtime-timeouts.json`, the file the api pins its
   protocol ping against and the api and the portal pin the client's
   ping interval against. The API's target group polls `/readyz`, and
@@ -904,7 +912,7 @@ everything in-process for tests.
   ([ADR 0008](adr/0008-main-is-staging-release-is-production.md)).
   `main` is staging: `deploy-staging.yml` follows every green `ci` run
   on `main`, builds and pushes both images tagged by the commit `ci`
-  ran, keeps the portal build by the commit in the state bucket, and
+  ran, keeps the portal build by the commit in its state bucket, and
   plans and applies staging with no approval (the plan text goes to the
   job summary and the `staging-plan` artifact). `release` is production,
   moved only by a fast-forward from `main` that `release.yml` makes when
@@ -912,8 +920,9 @@ everything in-process for tests.
   check). A push to `release` runs `deploy-production.yml`: a guard that
   refuses unless `release` is an ancestor of `main` and the `production`
   environment carries a required-reviewers rule, a job that resolves the
-  digests and the portal build staging made for that commit and refuses
-  a commit staging never built, a plan job (text to the
+  digests and the portal build staging made for that commit, from the
+  copies replicated into production's account, and refuses a commit
+  with no copy there, a plan job (text to the
   `production-plan` artifact, the saved plan to the state bucket), and,
   behind the `production` environment's approval, an apply of exactly
   that plan and the publication of the same portal files. Nothing is
@@ -933,11 +942,11 @@ everything in-process for tests.
   a job that has not waited there cannot mint the subject the writing
   role trusts. The plan runs before that approval by construction, so
   it runs under the reading role, in an environment of its own,
-  `production-plan`, which carries no reviewer. The first job of each
-  workflow checks the repository variables (`AWS_STAGING_ROLE_ARN` for
-  staging, `AWS_PRODUCTION_PLAN_ROLE_ARN` and `AWS_PRODUCTION_ROLE_ARN`
-  for production, and `TF_STATE_BUCKET`, `DNS_ZONE_NAME`, and
-  `ALARM_EMAIL` for both);
+  `production-plan`, which carries no reviewer. Each GitHub environment
+  holds its own variables under the same names (`AWS_ROLE_ARN`,
+  `TF_STATE_BUCKET`, and, where the job plans, `API_DOMAIN_NAME`,
+  `APP_DOMAIN_NAME`, and `ALARM_EMAIL`), so a staging job never holds a
+  production value, and the first job of each workflow checks them;
   while they are empty staging skips every cloud job, says so in the
   summary, and stays green, and production fails. [The deploy
   runbook](runbooks/deploy.md) says how to cut a release, what to check
@@ -945,10 +954,13 @@ everything in-process for tests.
 - Public names are inputs: the API at `api_domain_name` (the load balancer,
   e.g. `api.tadas.fyi`, `api.staging.tadas.fyi` for staging) and the portal at
   `app_domain_name` (a private S3 bucket behind CloudFront, e.g.
-  `app.tadas.fyi`), with certificates and records in one Route 53 zone.
-  Each environment has one base domain, the zone for production and
-  `staging.` under it for staging, and the workflows derive both names
-  from the one `DNS_ZONE_NAME` variable. The
+  `app.tadas.fyi`). Each name is the apex of a Route 53 zone of its own
+  in the environment's account, delegated from the domain's zone at
+  Cloudflare, where the domain is registered, and holds its certificate's
+  validation record and its alias. Each environment has one base domain,
+  `tadas.fyi` for production and `staging.tadas.fyi` for staging; the
+  names are written in `deployment/cloud/environments.json`, and the
+  workflows pass them from the environment's variables. The
   portal reads `/config.json`, written per environment by Terraform, before
   it renders, and calls the API cross-origin; locally it falls back to the
   `VITE_` build variables. The distribution's response headers policy,
@@ -970,13 +982,15 @@ skill holds. [ops/README.md](../ops/README.md) is the operator's own
 page; this section says what exists.
 
 - **Roles.** Four, as "Operator Roles" names them. The administrator is
-  a person under the `tadas-admin` profile, and only
-  `scripts/cloud_create.sh` and `scripts/cloud_nuke.sh` run under it.
+  a person under the account's administrator profile
+  (`tadas-staging-admin`, `tadas-prod-admin`, an Identity Center
+  permission set), and only `scripts/cloud_create.sh` and
+  `scripts/cloud_nuke.sh` run under it.
   The deployers are the three OIDC roles of
   [ADR 0013](adr/0013-each-environment-has-its-own-deploy-credential.md).
   The investigators are `tadas-investigate-staging` and
   `tadas-investigate-production`, declared by `modules/investigate_role`
-  in `shared/`: `ReadOnlyAccess`, the log, trace, metric, cost, and
+  in each account: `ReadOnlyAccess`, the log, trace, metric, cost, and
   budget reads spelled out, the state bucket's environment prefix so
   `terraform plan -lock=false` runs, and fences that deny every
   `secretsmanager:GetSecretValue`, every object of a data bucket,
@@ -984,12 +998,15 @@ page; this section says what exists.
   write. The supporter holds no role of its own: it is the investigate
   profile plus an operator identity whose allowlist entry is read
   ([ADR 0018](adr/0018-the-operator-allowlist-carries-a-role.md)).
-  The principal an agent holds is the IAM user `tadas-operators`, whose
-  one permission is `sts:AssumeRole` on the investigate roles
-  ([ADR 0017](adr/0017-the-operators-principal-is-one-user-that-only-assumes.md)).
-- **Credentials.** Four profiles in `~/.aws/config`: `tadas-admin`,
-  `tadas-operators`, `tadas-staging-investigate`,
-  `tadas-production-investigate`, the last two chaining from the user.
+  There is no IAM user and no access key: the investigate role trusts
+  the account's Identity Center PowerUserAccess role, and an agent runs
+  inside the session a person signed in
+  ([ADR 0021](adr/0021-each-environment-has-an-aws-account-of-its-own.md)).
+- **Credentials.** Three profiles per account in `~/.aws/config`: the
+  administrator (`tadas-staging-admin`, `tadas-prod-admin`), the
+  sign-in (`tadas-staging`, `tadas-prod`), and the investigate profile
+  (`tadas-staging-investigate`, `tadas-production-investigate`), which
+  chains from the sign-in.
   Everything else an operator reaches lives in
   `~/.config/tadas/ops/<env>.env`, owner-only: the API's URL, the
   operator identity (a read entry), the provisioner identity (the
@@ -1028,17 +1045,21 @@ page; this section says what exists.
   `autoscaling_enabled`, which both roots set to `false`: the one flip.
   `desired_count` stays the truth an apply resets to, and the policy
   raises it from there ([runbooks/scale.md](runbooks/scale.md)).
-- **Cost.** `shared/` declares a monthly budget (`monthly_budget_usd`,
-  400 by default, sized in
+- **Cost.** Each account's bootstrap root declares a monthly budget
+  (`monthly_budget_usd`, 200 by default in each, sized in
   [deployment/cloud/README.md](../deployment/cloud/README.md)) with alerts at 50, 80, and 100 percent actual and
   100 percent forecast to `owner_email`, and a cost anomaly monitor
   by service with a daily subscription above 20 dollars of impact.
   Every log group has a retention and every resource carries
   `tadas:environment` from the provider's default tags.
 - **Create and nuke.** `scripts/cloud_create.sh <env>` is the
-  administrator's one run: the state backend, `shared`, the operators'
-  key and the profiles, the GitHub variables and environments, the
-  first deploy through the pipeline, and the smoke command.
+  administrator's one run per account, staging, then production, then
+  staging again to turn the replication on: the state backend, the
+  bootstrap root, the delegation of the two names at Cloudflare, the
+  investigate profile, the GitHub environments and their variables, the
+  first deploy through the pipeline, and the smoke command. It clears
+  any AWS key exported in the shell and checks the account before every
+  apply.
   `scripts/cloud_nuke.sh <env>` refuses `production` unless
   `--confirm production` is typed and `environments/prod/main.tf` on
   `origin/main` reads `database_deletion_protection = false`; it

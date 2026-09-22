@@ -14,7 +14,7 @@ variable "other_environment" {
 }
 
 variable "state_bucket" {
-  description = "The bucket every root's state lives in."
+  description = "This account's state bucket."
   type        = string
 }
 
@@ -23,18 +23,7 @@ variable "state_key_prefix" {
   type        = string
 }
 
-variable "other_state_key_prefix" {
-  description = "The other environment's prefix, denied outright."
-  type        = string
-}
-
-variable "operators_user_arn" {
-  description = "The IAM user the agents run as; its only permission is to assume the investigate roles."
-  type        = string
-}
-
-variable "operator_principal_arns" {
-  description = "Principals besides the operators user that may assume this role: a person's user, or an Identity Center permission set's role."
+variable "operator_principal_arn_patterns" {
+  description = "ARN patterns of the principals in this account that may assume this role, e.g. the Identity Center PowerUserAccess role."
   type        = list(string)
-  default     = []
 }

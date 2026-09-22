@@ -9,7 +9,7 @@ variable "environment" {
 }
 
 variable "other_environment" {
-  description = "The environment this role must never reach. Resources tagged with it are denied outright."
+  description = "The other environment. It lives in another account; resources tagged with it are denied as well, a backstop for a root applied in the wrong account."
   type        = string
 }
 
@@ -34,17 +34,12 @@ variable "oidc_provider_arn" {
 }
 
 variable "state_bucket" {
-  description = "The bucket every root's state lives in."
+  description = "This account's state bucket."
   type        = string
 }
 
 variable "state_key_prefix" {
   description = "This environment's prefix inside the state bucket, without a trailing slash, e.g. environments/staging."
-  type        = string
-}
-
-variable "other_state_key_prefix" {
-  description = "The other environment's prefix, denied outright."
   type        = string
 }
 
@@ -63,20 +58,9 @@ variable "write_portal_builds" {
   type        = bool
 }
 
-variable "dns_zone_name" {
-  description = "The hosted zone both environments' names live in, e.g. tadas.fyi."
-  type        = string
-}
-
 variable "dns_record_patterns" {
-  description = "The record names this role may change, as IAM name patterns. An environment owns its own names and the validation records under them, nothing else in the zone."
+  description = "The record names this role may change, as IAM name patterns: its own two names and the validation records under them."
   type        = list(string)
-}
-
-variable "denied_dns_record_patterns" {
-  description = "Record names this role may never change although dns_record_patterns would allow them; production's pattern covers the whole zone, so staging's names are subtracted here."
-  type        = list(string)
-  default     = []
 }
 
 variable "task_boundary_policy_arn" {
