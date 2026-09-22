@@ -46,6 +46,9 @@ cloud.
   needs. Each expires within the hour. The file never holds a password
   or a TOTP secret: an agent never signs in to the operator plane. A
   command refuses a file its group or anyone else can read.
+- A person gets onto the plane once, by the walk-through in
+  `docs/runbooks/operator.md`: sign up, the grant, the second factor,
+  then the token below.
 - `tadas-ops token --env <env> --identity operator` is run by a person
   in their own terminal. It asks there for the email, the password, and
   the TOTP code, signs in, mints a `read` token through
