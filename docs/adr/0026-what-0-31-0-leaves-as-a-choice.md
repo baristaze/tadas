@@ -4,7 +4,7 @@
 
 ## Context
 
-Tadas moves its pin from guideline v0.29.0 to v0.31.0 in one change,
+Tadas moves its pin from guideline v0.29.0 to v0.31.1 in one change,
 release A. It adds the three database logins, the fence that admits the
 system scope to the system login, operator tokens and a second factor,
 the grant job, the caller's version and 412, the per-tenant work-item
