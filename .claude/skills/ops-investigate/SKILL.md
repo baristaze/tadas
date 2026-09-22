@@ -56,7 +56,10 @@ The env file `~/.config/tadas/ops/<env>.env` is owner-only and outside
 the repository. It holds `TADAS_API_URL`, `TADAS_OPERATOR_TOKEN` (a
 `read` operator token; the file's `TADAS_PROVISIONER_TOKEN`, a `write`
 token, belongs to the traffic generator alone), `TADAS_ERROR_TRACKER_URL`,
-and `TADAS_ERROR_TRACKER_TOKEN`. `local.env`, when there is one,
+`TADAS_ERROR_TRACKER_TOKEN`, and the tracker's org and project,
+`TADAS_ERROR_TRACKER_ORG` and `TADAS_ERROR_TRACKER_PROJECT`, which name
+the product's one project and are the same in every environment.
+`local.env`, when there is one,
 points at the compose stack and adds the twins, `TADAS_PROMETHEUS_URL`
 and `TADAS_JAEGER_URL`, on the ports `.env` names. It holds no password
 and no TOTP secret: an agent never signs in with a password.
@@ -160,18 +163,29 @@ lists them.
      --profile tadas-<env>-investigate
    ```
 
-6. Errors. Cloud: the error tracker's REST API at
+6. Errors. There is one tracker project for the product, and every
+   environment reports into it, so the read names that project and
+   filters on the environment. Cloud: the error tracker's REST API at
    `$TADAS_ERROR_TRACKER_URL` with the token as a bearer, the issues
-   of the window, newest first. Local: the same shape against
-   GlitchTip:
+   of the window in this environment, newest first. Local: the same
+   shape against GlitchTip, with `local` as the environment:
 
    ```bash
    set -a; . ~/.config/tadas/ops/<env>.env; set +a
-   curl -s -H "Authorization: Bearer $TADAS_ERROR_TRACKER_TOKEN" \
-     "$TADAS_ERROR_TRACKER_URL/api/0/organizations/<org>/issues/?statsPeriod=<since>"
+   curl -s -H "Authorization: Bearer $TADAS_ERROR_TRACKER_TOKEN" --get \
+     --data-urlencode "query=environment:<env>" --data "statsPeriod=<since>" \
+     "$TADAS_ERROR_TRACKER_URL/api/0/projects/$TADAS_ERROR_TRACKER_ORG/$TADAS_ERROR_TRACKER_PROJECT/issues/"
    ```
 
-   `<org>` is the slug `GET /api/0/organizations/` lists (locally
+   An issue in that project can hold events of more than one
+   environment, so an issue the query returned is not by itself this
+   environment's: read its events
+   (`/api/0/issues/<issue id>/events/`) and keep the ones whose
+   `environment` tag is `<env>`. Dropping the filter reports every
+   environment's errors as this one's, which is wrong, not wider.
+
+   The org and the project are the same in every environment; the
+   org's slug is what `GET /api/0/organizations/` lists (locally
    `tadas`):
 
    ```bash
