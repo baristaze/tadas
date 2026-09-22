@@ -15,10 +15,14 @@ from fake_api import OWNER_ID, FakeApi, connect_to
 
 from tadas.client.client import ApiClient
 from tadas.ops.environments import Environment, SeedPeople
+from tadas.ops.main import FAILED, OK, traffic_exit_code
 from tadas.ops.profiles import LIGHT, Profile
 from tadas.ops.report import AUTH_ROUTES, Report, Sample, Sessions
 from tadas.ops.stress import Readback, load_scenario, verdict
 from tadas.ops.traffic import (
+    LOGIN_WINDOW_SECONDS,
+    MAX_LOGIN_WAITS,
+    NO_ONE_SIGNED_IN,
     Clock,
     Person,
     RecordingTransport,
@@ -188,7 +192,95 @@ async def test_a_wrong_password_signs_no_one_in_and_the_run_drives_nothing() -> 
     assert result.outcomes == [] and result.report.sessions.started == 0
     assert [r.url.path for r in api.requests] == ["/v1/auth/login"] * 2
     assert any("401 invalid_credential" in note for note in result.report.notes)
-    assert "no one signed in, so the run drove no session" in result.report.notes
+    assert NO_ONE_SIGNED_IN in result.report.notes
+
+
+class Waits:
+    """The pauses a run asked for, recorded instead of slept: a test that
+    waits out a minute-long window twice takes no longer than one that does
+    not wait at all."""
+
+    def __init__(self) -> None:
+        self.seconds: list[float] = []
+
+    async def __call__(self, seconds: float) -> None:
+        self.seconds.append(seconds)
+
+
+async def test_a_refused_sign_in_waits_out_the_window_and_asks_again() -> None:
+    """The step before a run signs in from the same address, so the run can
+    meet a window that is already full. It waits the window out and asks
+    again for the same person, and the run drives as it would have."""
+    api = FakeApi(refuse_logins=1)
+    waits = Waits()
+    result = await run_traffic(
+        local_env(),
+        Profile("light", 1, 2, 2, (0.0, 0.0), 60),
+        duration_seconds=20,
+        orgs=0,
+        max_sessions=2,
+        transport=httpx.MockTransport(api),
+        connect=connect_to(api),
+        login_wait=waits,
+    )
+    assert waits.seconds == [LOGIN_WINDOW_SECONDS]
+    report = result.report
+    assert [r.url.path for r in api.requests][:3] == [
+        "/v1/auth/login",  # refused: the window was full
+        "/v1/auth/login",  # the same person again, once it had passed
+        "/v1/auth/sessions",
+    ]
+    assert report.sessions.completed == 2
+    assert any("429 rate_limited" in note for note in report.notes)
+    assert any("waited 60 s for the login window and asked again" in note for note in report.notes)
+    assert any("signed in 2 of 2 people" in note for note in report.notes)
+    assert traffic_exit_code(report) == OK
+
+
+async def test_the_answers_retry_after_says_how_long_the_run_waits() -> None:
+    api = FakeApi(refuse_logins=1, retry_after="3")
+    waits = Waits()
+    result = await run_traffic(
+        local_env(),
+        Profile("light", 1, 2, 2, (0.0, 0.0), 60),
+        duration_seconds=20,
+        orgs=0,
+        max_sessions=1,
+        transport=httpx.MockTransport(api),
+        connect=connect_to(api),
+        login_wait=waits,
+    )
+    assert waits.seconds == [3.0]
+    assert any("waited 3 s for the login window" in note for note in result.report.notes)
+    assert result.report.sessions.completed == 1
+
+
+async def test_a_login_window_that_never_opens_is_bounded_and_the_run_fails(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An environment that refuses every sign-in fails the run fast: the
+    waits are bounded, the last refusal stands, and the exit status and the
+    message name the rate limit."""
+    api = FakeApi(refuse_logins=99)
+    waits = Waits()
+    result = await run_traffic(
+        local_env(),
+        Profile("light", 1, 2, 2, (0.0, 0.0), 60),
+        duration_seconds=5,
+        orgs=0,
+        transport=httpx.MockTransport(api),
+        connect=connect_to(api),
+        login_wait=waits,
+    )
+    assert waits.seconds == [LOGIN_WINDOW_SECONDS] * MAX_LOGIN_WAITS
+    assert [r.url.path for r in api.requests] == ["/v1/auth/login"] * (MAX_LOGIN_WAITS + 1)
+    report = result.report
+    assert result.outcomes == [] and report.sessions.started == 0
+    assert any("429 rate_limited" in note for note in report.notes)
+    assert any(f"still closed after {MAX_LOGIN_WAITS} wait(s)" in note for note in report.notes)
+    assert NO_ONE_SIGNED_IN in report.notes
+    assert traffic_exit_code(report) == FAILED
+    assert "per-address rate limit on POST /v1/auth/login" in capsys.readouterr().err
 
 
 async def test_a_person_signs_in_once_for_the_run_and_the_target_judges_the_rest() -> None:
