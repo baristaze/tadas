@@ -145,12 +145,13 @@ services:
     ports:
       - "127.0.0.1:${TADAS_PROMETHEUS_PORT:-59090}:9090"
 
-  # The host processes' collector, as the cloud's sidecar: it scrapes the
-  # api (8000) and the worker (9464) that scripts/dev.sh binds to 127.0.0.1
-  # and remote-writes into Prometheus. These two settings place it on the
-  # compose network; on Linux docker-compose.linux.yml moves it onto the
-  # host's network, the one place a loopback listener answers (the Makefile
-  # adds that file there). It publishes no port.
+  # The host processes' collector, as the cloud's sidecar: it scrapes the api
+  # (TADAS_COLLECTOR_SCRAPE_PORT, 8000 unless a run says otherwise) and the
+  # worker (9464) that scripts/dev.sh binds to 127.0.0.1, and remote-writes
+  # into Prometheus. These settings place it on the compose network; on Linux
+  # docker-compose.linux.yml moves it onto the host's network, the one place a
+  # loopback listener answers (the Makefile adds that file there). It
+  # publishes no port.
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.161.0
     profiles: [devx]
@@ -158,6 +159,7 @@ services:
     command: ["--config=/etc/otelcol-contrib/collector.yml"]
     environment:
       TADAS_COLLECTOR_SCRAPE_HOST: host.docker.internal
+      TADAS_COLLECTOR_SCRAPE_PORT: "${TADAS_COLLECTOR_SCRAPE_PORT:-8000}"
       TADAS_COLLECTOR_WRITE_URL: http://prometheus:9090/api/v1/write
     volumes:
       - ./otel-collector/collector.yml:/etc/otelcol-contrib/collector.yml:ro

@@ -160,7 +160,15 @@ Everything below needs the `devx` profile (`make up` or `make devx-up`).
   network, where it scrapes `127.0.0.1:8000` and `:9464` and writes to
   `http://127.0.0.1:${TADAS_PROMETHEUS_PORT}/api/v1/write`, host to
   container, the way traces reach Jaeger. It listens on nothing, so the
-  host gains no port. Grafana
+  host gains no port.
+- **The api's port is a knob.** The api job has one host target, and the
+  `8000` in it is `TADAS_COLLECTOR_SCRAPE_PORT`. `make collector-scrape
+  SCRAPE_PORT=54321` points the collector somewhere else and recreates it,
+  since a collector reads a changed config no other way; `make
+  collector-scrape` with no argument puts it back on the `.env` port. The
+  telemetry round trip runs both: it takes a free port for its own api, aims
+  the collector at it, and restores the default when it is done, so the
+  round trip no longer needs 8000 to itself. Grafana
   opens on the provisioned Tadas overview dashboard (requests, statuses,
   p95 latency, cache, queue, and worker outcomes). Dashboards changed in the
   UI are lost with the container; export them into

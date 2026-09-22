@@ -1107,10 +1107,14 @@ page; this section says what exists.
   GlitchTip, the process's own log stream) and `SignalsCloudImpl`
   (CloudWatch Logs Insights, CloudWatch metrics on namespace `Tadas`,
   X-Ray, Sentry). `ops/tests/test_telemetry_roundtrip.py`, marker
-  `telemetry`, starts the API as a real process, drives one session,
-  and reads every signal back by request id; `make test-telemetry`
-  runs it and CI's `telemetry` job runs it with thirty seconds of
-  light traffic (`make traffic PROFILE=light DURATION=30`). A run signs
+  `telemetry`, starts the API as a real process on a free port, aims
+  the devx collector at that port for the length of the run
+  (`make collector-scrape`), drives one session, and reads every
+  signal back by request id; `make test-telemetry` runs it, and CI's
+  `telemetry` job runs it under `TADAS_TELEMETRY_REQUIRED=1`, which
+  turns the skips a developer's machine wants into failures, then
+  with thirty seconds of light traffic
+  (`make traffic PROFILE=light DURATION=30`). A run signs
   each of its people in once and out once, and the target judges the
   working requests, with the sign-in and the sign-out reported beside
   the verdict. The target is an input: the scenario states one, a run

@@ -78,7 +78,10 @@ jobs:
       # code and GlitchTip's health are read back instead of the wait's.
       # The runner is Linux, so the Makefile puts the collector that scrapes
       # the host processes on the host's network; the round trip's counter
-      # leg is the proof that it reaches the API on 127.0.0.1.
+      # leg is the proof that it reaches the API on 127.0.0.1, at the free
+      # port the test takes and aims the collector at for the length of the
+      # run. It puts the default target back afterwards, which is what the
+      # traffic step below then needs.
       - name: the compose stack with the devx profile
         run: |
           make devx-up || true
@@ -87,7 +90,13 @@ jobs:
           docker logs tadas-glitchtip-seed-1 | tail -n 1
           test "$(docker inspect -f '{{.HostConfig.NetworkMode}}' tadas-otel-collector-1)" = host
       - run: make migrate seed
+      # The round trip skips, naming what is missing, on a machine that has
+      # no devx profile up. Here everything it needs is a step above, so a
+      # skip would be a green job that proved nothing: this says so, and the
+      # test fails instead.
       - run: make test-telemetry
+        env:
+          TADAS_TELEMETRY_REQUIRED: "1"
       - name: the API on 8000 for the traffic run
         run: |
           nohup uv run tadas-api serve > api.log 2>&1 &
