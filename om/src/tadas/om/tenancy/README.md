@@ -5,8 +5,13 @@ of the six kinds of thing [Tadas is made of](../../../../README.md).
 
 ## The nouns
 
-- **Org**: a name and a slug, the short handle that names the org in
-  a URL. The slug is unique among living orgs.
+- **Org**: a name, a slug (the short handle that names the org in a
+  URL), and a kind. The slug is unique among living orgs. An org is
+  personal or team. Every person has exactly one **personal org**, made
+  with them: their place to work from the first moment, with a name and
+  a slug made for them. Every other org is a **team org**, made on
+  purpose. A personal org is otherwise an ordinary org: anyone may be
+  added to it, and it holds tasks the way a team org does.
 - **Identity**: one person across every org: an email, a password
   kept as a hash, and whether the person is on the operator allowlist
   and what an operator may do there (read, or write, which includes
@@ -32,16 +37,26 @@ of the six kinds of thing [Tadas is made of](../../../../README.md).
 
 ## What can happen
 
-- **Sign up.** A person nobody knows yet gives an email, a name, a
-  password, and an org with its slug. The identity, the org, and the
-  owner membership land together, and the answer is what a sign-in
-  answers: a login and the one org. A held email or a taken slug is
-  refused and nothing lands. The email is not verified, by choice. This
-  is how a person enters a deployed environment; the seeding below is
-  local only. A setting closes it, and then it answers as if it did not
-  exist.
+- **Sign up.** A person nobody knows yet gives an email, a name, and a
+  password, and nothing about an org. The identity, their personal org,
+  their user in it, and the owner membership land together, and the
+  answer is what a sign-in answers: a login and the one place. The
+  personal org is named after the person and its slug is generated from
+  that name with a random tail. A held email is refused and nothing
+  lands. The email is not verified, by choice. This is how a person
+  enters a deployed environment; the seeding below is local only. A
+  setting closes it, and then it answers as if it did not exist. The
+  password is only this door's: the person and their place are one
+  create (`create_person`) that any other way in calls the same way.
+- **Create a team org.** A signed-in person names an org, and a slug
+  if they want one; otherwise the slug is made from the name. The org,
+  their user in it under the name they carry where they are, and the
+  owner membership land together, and the answer is their place in it.
+  They move there with the switch below. Only a session creates an org;
+  an api key is a program's and belongs to its tenant.
 - **Sign in.** Email and password give a login that lists the orgs the
-  person belongs to. The login is exchanged for a session in one of
+  person belongs to, their personal org among them. A person an older
+  release made without one gets it at this sign-in. The login is exchanged for a session in one of
   them. An unknown email costs the same time as a wrong password, so
   the answer does not say which emails exist. A run of failed sign-ins
   for one email makes the next one wait, whether or not anyone holds
@@ -67,12 +82,14 @@ of the six kinds of thing [Tadas is made of](../../../../README.md).
 - **Seed an environment.** Create an org with its first owner, or add
   a person to an org. Both are the platform's own operations, run by
   `make seed` on a local environment; there is no invitation flow yet.
+  A person either one makes who did not exist before comes with their
+  personal org, in the same commit.
 - **Operate across orgs.** An operator, admitted from the allowlist,
   can create an org with its owner, add a member, read an org, its
   members, its tasks, and its events, read the platform's size, list
-  every org, and delete an org. A deleted org keeps its row as the
-  record; everything else of it is purged once the retention has
-  passed. A write operator also resets a person's password, which is
+  every org, and delete a team org. A personal org is never deleted.
+  A deleted org keeps its row as the record; everything else of it is
+  purged once the retention has passed. A write operator also resets a person's password, which is
   audited with the operator and the person.
 - **Grant an operator.** The grant job puts an identity on the
   allowlist, takes it off, or mints the operator token of the
@@ -101,9 +118,14 @@ of the six kinds of thing [Tadas is made of](../../../../README.md).
   no rung of the ladder: nothing a person mints may carry it.
 - **A key never mints a key.** Only a session creates an API key, so
   revoking a leaked key ends every access it gave.
-- **Unique among the living.** One slug per living org, one user per
-  identity in an org, one membership per user in an org. Removing a
-  member or deleting an org frees the name for reuse.
+- **Unique among the living.** One slug per living org, one personal
+  org per identity, one user per identity in an org, one membership per
+  user in an org. Removing a member or deleting an org frees the name
+  for reuse.
+- **A personal org stays its person's.** It is not deleted, and its
+  person is not removed from it and does not change role in it, so it
+  never changes hands. Nobody leaves an org by removing themselves, in
+  any org. Everyone else in a personal org is an ordinary member.
 - **Secrets are fingerprints.** A session token, an API key, and a
   socket ticket are stored as hashes. The plain value is shown once.
 - **A ticket works once.** A second redemption is refused.

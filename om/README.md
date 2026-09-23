@@ -12,6 +12,13 @@ An **organization**, org for short, is one team: a company, a club, a
 family. Everything in Tadas belongs to exactly one org, and nothing in
 one org can see anything in another. That is a rule, not a choice.
 
+Every person has one **personal org**, their own place to work. It is
+made with them when they sign up, named after them, and it is theirs
+for as long as they exist: it is never deleted, and it never changes
+hands. Every other org is a **team org**, which a person makes when a
+team needs one and owns from then on. A person can belong to many team
+orgs, and anyone can be added to a personal org too.
+
 An **identity** is one person, across every org. It is the email and
 the password the person signs in with. One person has one identity,
 however many teams they belong to.
@@ -22,7 +29,8 @@ user in one org knows nothing of the same person in another.
 
 A **membership** is the user's place in the org. It carries a role:
 viewer, member, admin, or owner. The role decides what the person may
-do in that org. The person who creates the org is its first owner.
+do in that org. The person who creates the org is its first owner, and
+the person of a personal org is its owner for good.
 
 ## How a person proves who they are
 
@@ -87,6 +95,8 @@ a second task.
 
 - An org has users. A user is one identity's place in that org, held
   by a membership with a role.
+- An identity has exactly one personal org, and a user and an owner
+  membership in it.
 - A session or an API key belongs to a user, so everything done with
   it is done as that user in that org. A socket ticket stands for one
   of them.
