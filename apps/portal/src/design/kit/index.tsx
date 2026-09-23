@@ -112,12 +112,14 @@ export function TextField({
   onChange,
   type = "text",
   autoComplete,
+  placeholder,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   type?: "text" | "email" | "password";
   autoComplete?: string;
+  placeholder?: string;
 }) {
   return (
     <label style={{ display: "grid", gap: tokens.space.xs, fontSize: tokens.font.size.sm }}>
@@ -126,6 +128,7 @@ export function TextField({
         type={type}
         value={value}
         autoComplete={autoComplete}
+        placeholder={placeholder}
         onChange={(event) => onChange(event.target.value)}
         style={{
           font: "inherit",

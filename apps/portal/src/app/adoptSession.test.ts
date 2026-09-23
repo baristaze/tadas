@@ -34,7 +34,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-const org = (slug: string) => ({ id: slug, name: slug, slug, created_at: "2026-09-01T00:00:00Z" });
+const org = (slug: string) => ({ id: slug, name: slug, slug, kind: "team" as const, created_at: "2026-09-01T00:00:00Z" });
 
 describe("adoptSession", () => {
   it("drops every answer of the old tenant before the new session is set", async () => {
