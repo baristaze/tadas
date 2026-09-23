@@ -136,6 +136,33 @@ resource "aws_secretsmanager_secret_version" "sentry_dsn" {
   }
 }
 
+# The payment processor's key and the signing secret of the endpoint it
+# delivers to: process credentials, injected at start into the API and the
+# worker, the way the error tracker's DSN is. Terraform creates each as "off",
+# which leaves billing unconfigured (every org keeps its plan and a checkout
+# answers 503), and never writes it again. The key is set once by hand:
+#   aws secretsmanager put-secret-value --secret-id <prefix>stripe_org_key --secret-string <key>
+# and the signing secret by `tadas-ops stripe-bootstrap --env <env>`, which
+# learns it when it registers the endpoint (docs/runbooks/stripe.md).
+resource "aws_secretsmanager_secret" "stripe" {
+  for_each = toset(["stripe_org_key", "stripe_webhook_secret"])
+
+  name                    = "${var.prefix}${each.key}"
+  recovery_window_in_days = local.recovery_window_in_days
+  tags                    = local.tags
+}
+
+resource "aws_secretsmanager_secret_version" "stripe" {
+  for_each = aws_secretsmanager_secret.stripe
+
+  secret_id     = each.value.id
+  secret_string = "off"
+
+  lifecycle {
+    ignore_changes = [secret_string]
+  }
+}
+
 data "aws_iam_policy_document" "application" {
   statement {
     actions = [

@@ -19,6 +19,10 @@ module "environment" {
   cors_origins      = var.cors_origins
   portal_sentry_dsn = var.portal_sentry_dsn
 
+  # The payment processor's account, the live account. The process refuses a key
+  # whose mode is not this environment's.
+  stripe_account_id = "acct_1UIfTS4Dj4HbbS1T"
+
   # Scale: size S, the demo posture (deployment/cloud/README.md prices
   # every size, and names what changes when real customers arrive: size L,
   # with a second zone for the database and the cache). Everything below is
