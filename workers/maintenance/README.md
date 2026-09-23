@@ -14,9 +14,20 @@ replica told its lane.
   naming the request that caused the work and linking its trace to
   that request. When the handler returns, the item is completed; when
   it raises, the item is failed, which requeues it with a growing delay
-  or, once its attempts are spent, makes it a dead letter. Today the
-  one kind does nothing; it keeps the loop honest for the kinds that
-  come next.
+  or, once its attempts are spent, makes it a dead letter. One kind
+  does nothing and keeps the loop honest; the other, `SYNC_SEATS`,
+  reads an org's active members when it runs and holds a Max
+  subscription's quantity to them, with no proration and under a key
+  made of the item and the count, so a retried run is one change.
+- **Apply the payment processor's deliveries.** Beside the claim loop,
+  the worker long-polls the inbound queue the webhook route fills. For
+  each delivery it finds the org the delivery names, mints that org's
+  service context, and applies the delivery: the subscription is read
+  from the processor again, and the delivery's mark lands in the
+  account's commit, so a copy changes nothing. A message is deleted once
+  it is applied, or once it can never be (no org named, or the org is
+  gone); any other failure leaves it to come back after its visibility,
+  and the queue dead-letters it past its receives.
 - **Renew the lease and fence itself.** While an item runs, the worker
   renews its lease. A renewal refused because the lease was lost
   cancels the running task at once, since another worker holds the
@@ -31,8 +42,8 @@ replica told its lane.
     for the next sweep.
   - **Purge** each namespace's rows past its retention: deleted tasks,
     removed members with their ended memberships, revoked keys, dead
-    sessions, spent tickets, finished idempotency records, and settled
-    work items. Under an org deleted longer ago than the retention,
+    sessions, spent tickets, finished idempotency records, the payment
+    processor's delivery marks, and settled work items. Under an org deleted longer ago than the retention,
     every row goes, its event stream included, and the org row stays as
     the record. Each namespace
     purges its own rows and asks tenancy the one question, whether the

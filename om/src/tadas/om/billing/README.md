@@ -1,7 +1,8 @@
 # Billing
 
 What an org's plan is, what it lets the org have, and how the org pays
-for it.
+for it. This is one of the seven kinds of thing
+[Tadas is made of](../../../../README.md).
 
 ## The plans
 
@@ -45,8 +46,9 @@ API keys are kept too, and are refused while the org is on a plan without
 them: each answers with the same refusal, and works again the day the org
 is on a plan with keys. A key is never revoked for a plan.
 
-The files bound is part of every plan, and what reads it is the part of
-Tadas that holds files.
+The files bound is part of every plan. Tadas holds no files yet; the
+bound is declared here so the part that comes to hold them reads it from
+the same table.
 
 ## Paying
 

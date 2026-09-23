@@ -181,6 +181,9 @@ person follows by hand is a runbook under
   code, and each namespace carries a README of its own
 - `infra/` cache, buckets, topics, queues, secrets, observability
   ([infra/README.md](infra/README.md))
+- `integrations/` the third-party providers, each an interface, a real
+  client, and a twin: the payment processor first
+  ([integrations/README.md](integrations/README.md))
 - `services/` web services ([services/api/README.md](services/api/README.md));
   `workers/` background roles
   ([workers/maintenance/README.md](workers/maintenance/README.md));

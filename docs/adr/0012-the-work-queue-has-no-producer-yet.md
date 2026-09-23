@@ -1,6 +1,12 @@
 # ADR 0012: A write that also starts work is built and tested; no write in Tadas starts work yet
 
-**Status**: accepted (2026-09-20)
+**Status**: closed (2026-09-22) by
+[ADR 0027](0027-plans-are-levers-and-the-processor-is-mirrored.md). The
+first domain work kind, `SYNC_SEATS`, rides the path this record
+describes: adding or removing a member of an org on Max lands a second
+outbox row of kind `work.SYNC_SEATS` in the change's own commit, and the
+relay enqueues it. No second enqueue path was added. The record stays
+for the interval it covers.
 
 ## Context
 

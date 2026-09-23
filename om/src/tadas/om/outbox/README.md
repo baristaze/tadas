@@ -1,7 +1,7 @@
 # Outbox rows
 
 The note written beside every change, from which the event and the
-push come. This is one of the six kinds of thing
+push come. This is one of the seven kinds of thing
 [Tadas is made of](../../../../README.md).
 
 ## The nouns

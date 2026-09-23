@@ -1,7 +1,7 @@
 # Tenancy
 
 The org, the people in it, and the credentials they hold. This is one
-of the six kinds of thing [Tadas is made of](../../../../README.md).
+of the seven kinds of thing [Tadas is made of](../../../../README.md).
 
 ## The nouns
 
@@ -62,13 +62,19 @@ of the six kinds of thing [Tadas is made of](../../../../README.md).
   sockets close. A failure lands none of it.
 - **Manage API keys.** Create one with a name, a role, and a lifetime
   of at most ninety days; list them (a member manager sees the org's,
-  everyone else their own); revoke one.
+  everyone else their own); revoke one. An org on a plan without API
+  keys is refused the first one, and a key it already has is kept and
+  refused while it is on that plan ([billing](../billing/README.md)).
 - **Open the live channel.** Issue a socket ticket; redeem it once.
 - **Seed an environment.** Create an org with its first owner, or add
   a person to an org. Both are the platform's own operations, run by
   `make seed` on a local environment; there is no invitation flow yet.
+  The seeding is the platform arranging a laptop, not a tenant adding
+  someone, so it is not bound by the org's seats: a seeded org can sit
+  over its plan's bound, which is the state a downgrade leaves.
 - **Operate across orgs.** An operator, admitted from the allowlist,
-  can create an org with its owner, add a member, read an org, its
+  can create an org with its owner, add a member (bound by the org's
+  seats like any other door), read an org, its
   members, its tasks, and its events, read the platform's size, list
   every org, and delete an org. A deleted org keeps its row as the
   record; everything else of it is purged once the retention has
@@ -92,7 +98,7 @@ of the six kinds of thing [Tadas is made of](../../../../README.md).
 
 - **The role ladder.** Viewer, member, admin, owner, in that order. A
   viewer reads. A member also writes and manages their own keys. An
-  admin and an owner also manage members. The owner ranks above the
+  admin and an owner also manage members and the org's plan. The owner ranks above the
   admin although they hold the same permissions today, because the
   owner is the founder and not a permission set.
 - **Nothing is issued above the issuer.** An API key's role and a

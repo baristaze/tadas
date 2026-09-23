@@ -1,7 +1,7 @@
 # Work items
 
 Durable background jobs and the queue they wait in. This is one of the
-six kinds of thing [Tadas is made of](../../../../README.md).
+seven kinds of thing [Tadas is made of](../../../../README.md).
 
 ## The nouns
 
@@ -10,9 +10,11 @@ six kinds of thing [Tadas is made of](../../../../README.md).
   carries its status (queued, claimed, done, failed), when it becomes
   available, who claimed it and until when, how many attempts it has
   spent of how many it has, and its last error.
-- **Kind**: the job's shape. The payload of each kind is fixed. Today
-  there is one kind, which does nothing but keep the loop honest; the
-  first real kind rides the same rails.
+- **Kind**: the job's shape. The payload of each kind is fixed. There
+  are two: one that does nothing but keep the loop honest, and one that
+  brings a per-seat subscription's seat count in step with the org's
+  members. Each kind names the permission a person needs to ask for it,
+  and whoever holds that permission may do everything the job does.
 - **Lane**: a routing name. A worker serves one lane.
 - **Handler**: the code that does one kind of work. A handler is
   idempotent, because the same item may run twice.
@@ -20,7 +22,8 @@ six kinds of thing [Tadas is made of](../../../../README.md).
 ## What can happen
 
 - **Enqueue.** Directly by a person's request, or by the outbox relay
-  when a change asked for work. The item starts queued with zero
+  when a change asked for work: adding or removing a member of an org on
+  Max asks for its seat count, in the same step as the change. The item starts queued with zero
   attempts and no claim, whatever the caller sent.
 - **Claim.** A worker takes the oldest available item on its lane, in
   one statement, and gets a claim token and the context the job runs

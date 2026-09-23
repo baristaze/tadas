@@ -44,6 +44,22 @@ happen. It works once and it expires in minutes. It stands for the
 session or the API key that asked for it, so it opens nothing they
 could not open themselves.
 
+## The plan
+
+A **plan** is what an org is entitled to: how many members, whether it
+may have API keys, how many active tasks, and how much room for files.
+Every org is on one, Free to begin with. The plan belongs to the org,
+never to a person: the owner pays for the team.
+
+A **billing account** is the org's place at the payment processor: its
+customer there, and Tadas's copy of the subscription the org pays for.
+The processor owns the money; Tadas owns what a plan lets the org have,
+and copies what the processor holds whenever it says something changed.
+An operator can also grant an org a plan with no payment.
+
+A **delivery mark** says that one message from the processor has been
+applied, so the same message arriving again changes nothing.
+
 ## The work
 
 A **task** is one item on the list: a title, notes, who it is assigned
@@ -92,6 +108,11 @@ a second task.
   of them.
 - Tasks belong to the org. Each is created by a user and may be
   assigned to a user.
+- An org is on one plan. The plan bounds its members, its API keys,
+  and its active tasks; meeting a bound is a refusal that offers the
+  plan that lifts it, and nothing is ever taken away. The billing
+  account and its delivery marks belong to the org like everything
+  else.
 - Every change to a task, and every change to a user, a membership, a
   session, or an API key that the org's screens act on (a member added,
   changed, or removed, a credential revoked), writes an outbox row, which
@@ -105,6 +126,7 @@ a second task.
 
 - [Orgs, identities, users, memberships, sessions, API keys, and socket tickets](src/tadas/om/tenancy/README.md)
 - [Tasks](src/tadas/om/tasks/README.md)
+- [Plans, billing accounts, and delivery marks](src/tadas/om/billing/README.md)
 - [Events](src/tadas/om/events/README.md)
 - [Work items](src/tadas/om/work/README.md)
 - [Idempotency records](src/tadas/om/idempotency/README.md)
