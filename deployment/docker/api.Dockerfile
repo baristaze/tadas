@@ -10,6 +10,7 @@ WORKDIR /app
 COPY pyproject.toml uv.lock .python-version ./
 COPY om/pyproject.toml om/
 COPY infra/pyproject.toml infra/
+COPY integrations/pyproject.toml integrations/
 COPY services/api/pyproject.toml services/api/
 # Every workspace member's manifest, so the frozen lock resolves; only the
 # members this image runs are copied whole below.
@@ -18,6 +19,7 @@ COPY apps/cli/pyproject.toml apps/cli/
 RUN uv sync --frozen --no-dev --package tadas-api --no-install-workspace
 COPY om om
 COPY infra infra
+COPY integrations integrations
 COPY services/api services/api
 RUN uv sync --frozen --no-dev --package tadas-api
 
