@@ -18,8 +18,8 @@ done ones, delete one, read the stream after where it stood at the start,
 see one of its own changes arrive on the socket. A person thinks between
 steps.
 
-The tenants a run needs come from the operator plane (`POST /v1/admin/orgs`
-and its members) under the provisioner's operator token, a `write` entry and
+The tenants a run needs come from the operator plane (`POST /v1/admin/orgs`,
+a grant of Max, and its members) under the provisioner's operator token, a `write` entry and
 never a password. They are named for the run, `ops-<run id>-<n>`, so no real
 tenant is touched and anything that counts tenants can leave them out, and
 the run removes them (`DELETE /v1/admin/orgs/{org_id}`) when it ends, a
@@ -559,6 +559,10 @@ def provisioner_client(
     )
 
 
+RUN_PLAN = "max"
+"""The plan a run's tenants are granted: no bound on members or tasks."""
+
+
 async def provision(
     env: Environment,
     profile: Profile,
@@ -587,6 +591,12 @@ async def provision(
                     owner_name="Ops Owner",
                 )
                 org_ids.append(org.id)
+                # Every org starts on Free: one member and ten active tasks.
+                # A run's tenants are the platform's own load, so they are
+                # granted Max, whose levers are open, before anyone joins.
+                await client.request(
+                    "PUT", f"/v1/admin/orgs/{org.id}/plan", json={"plan": RUN_PLAN}
+                )
                 people.append(Person(owner, password, slug))
                 for m in range(max(profile.members_per_org - 1, 0)):
                     email = f"member{m + 1}@{slug}.example.test"
