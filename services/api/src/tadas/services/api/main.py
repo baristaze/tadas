@@ -18,6 +18,7 @@ import uvicorn
 
 from tadas.infra.impl.local import InfraLocalImpl
 from tadas.om.base import new_id
+from tadas.om.billing.types.plan import Plan
 from tadas.om.exceptions import Conflict
 from tadas.om.opcontext import AppContext, AppType, OperatorRole, RequestContext, Role
 from tadas.om.storage import migrate
@@ -112,6 +113,9 @@ def bootstrap(args: argparse.Namespace) -> int:
                 args.name,
                 operator_role=OperatorRole(args.operator_role) if args.operator else None,
             )
+            if args.plan:
+                # The seeded team is on a plan of its own, not on Free.
+                await container.managers.billing.grant_seeded_plan(ctx, Plan(args.plan))
         except Conflict:
             # The only conflict bootstrap raises is a taken slug.
             if not args.if_absent:
@@ -120,7 +124,8 @@ def bootstrap(args: argparse.Namespace) -> int:
             return 0
         finally:
             await container.close()
-        print(f"bootstrapped org {org.slug} ({org.id}) with owner {ctx.user_id}")
+        granted = f", on {args.plan}" if args.plan else ""
+        print(f"bootstrapped org {org.slug} ({org.id}) with owner {ctx.user_id}{granted}")
         return 0
 
     return asyncio.run(run())
@@ -258,6 +263,11 @@ def main(argv: list[str] | None = None) -> int:
         default=OperatorRole.WRITE.value,
         choices=[r.value for r in OperatorRole],
         help="what the allowlist entry grants, with --operator; write includes read",
+    )
+    p_boot.add_argument(
+        "--plan",
+        choices=[plan.value for plan in Plan],
+        help="grant the new org this plan with no payment; a laptop's seed, never a tenant's",
     )
     p_boot.add_argument(
         "--if-absent", action="store_true", help="succeed without changes when the slug exists"

@@ -93,6 +93,15 @@ class BillingManagerInterface(EntitlementsInterface):
         ...
 
     @abstractmethod
+    async def grant_seeded_plan(self, ctx: OpContext, plan: Plan) -> Billing:
+        """Platform-internal: the local seed's grant, so the team a laptop is
+        seeded with is not on Free. It takes the context a seeding transition
+        produced (`bootstrap`), an internal credential held by the org's
+        owner; a tenant's own credential is never internal, so no route
+        reaches it. The operator plane's grant is `comp_plan`."""
+        ...
+
+    @abstractmethod
     async def purge_deleted(self, ctx: OpContext) -> int:
         """The sweep, for one tenant: the marks of deliveries past the
         retention; under a tenant past its own retention, its account too."""

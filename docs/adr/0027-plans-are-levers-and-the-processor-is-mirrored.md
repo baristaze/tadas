@@ -55,11 +55,14 @@ next one is refused. A count under the row lock of the insert would hold
 the line exactly at the cost of a statement every create pays, and a
 plan's bound does not need that.
 
-**Seeding is not bound by seats.** The seed's `add_member` is the
-platform arranging a laptop, and a seeded org sits over Free's one seat,
-which is the state a downgrade leaves and what the local portal shows.
-Every tenant-facing door and the operator plane are bound; there is no
-invitation flow yet, and the one that lands asks the same check.
+**Seeding is not bound by seats, and grants its own team a plan.** The
+seed's `add_member` is the platform arranging a laptop, not a tenant
+adding someone. `bootstrap --plan team` grants the seeded Acme Team
+through `grant_seeded_plan`, which takes only the internal, owner-held
+context a seeding transition produces, so no route reaches it; the
+operator plane's grant is the one a deployed environment has. Every
+tenant-facing door and the operator plane are bound by seats; there is
+no invitation flow yet, and the one that lands asks the same check.
 
 **The Max quantity follows the members through the queue.** A member added
 or removed on Max lands a second outbox row, `work.SYNC_SEATS`, in the
@@ -76,7 +79,8 @@ permissions its handler's calls take.
 **Deliveries are queued, then applied once.** `POST /webhooks/stripe` sits
 outside `/v1`, since the shape is Stripe's and is pinned on the endpoint.
 It checks the signature over the body and the timestamp with the SDK's
-`construct_event` check and its five-minute window, and queues the
+own check, the one `Webhook.construct_event` runs, and its five-minute
+window, and queues the
 delivery on `tadas-webhooks` with a UUID v5 of the event id as its key;
 one that fails is a 400 and nothing is queued. The route has no rate
 limit of its own: there is no path token to key one on, the check is one

@@ -87,8 +87,7 @@ of the seven kinds of thing [Tadas is made of](../../../../README.md).
   A person either one makes who did not exist before comes with their
   personal org, in the same commit. The seeding is the platform
   arranging a laptop, not a tenant adding someone, so it is not bound by
-  the org's seats: a seeded org can sit over its plan's bound, which is
-  the state a downgrade leaves.
+  the org's seats, and it grants the seeded team Team.
 - **Operate across orgs.** An operator, admitted from the allowlist,
   can create an org with its owner, add a member (bound by the org's
   seats like any other door), read an org, its

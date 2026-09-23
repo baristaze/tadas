@@ -507,3 +507,15 @@ async def test_an_operator_adding_a_member_past_the_seats_is_refused(
         "default", [WorkKind.SYNC_SEATS], "w", timedelta(seconds=30)
     )
     assert claimed is not None and claimed[0] == org.id
+
+
+async def test_the_seed_grants_its_own_team_a_plan_and_a_tenants_credential_cannot(
+    world: World,
+) -> None:
+    seeded = await world.org("acme")  # the context `bootstrap` produced: internal, the owner
+    granted = await world.billing.grant_seeded_plan(seeded, Plan.TEAM)
+    assert (granted.plan, granted.comped_plan, granted.paid_plan) == (Plan.TEAM, Plan.TEAM, None)
+    owner = await world.signed_in("owner@acme.test", seeded.org_id)
+    with pytest.raises(NotAuthorized):
+        await world.billing.grant_seeded_plan(owner, Plan.MAX)
+    assert (await world.billing.get_billing(owner)).plan is Plan.TEAM

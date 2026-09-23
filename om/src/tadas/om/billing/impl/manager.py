@@ -23,12 +23,20 @@ from tadas.om.billing.types.billing import Billing, CheckoutStart, Entitlements
 from tadas.om.billing.types.delivery import BillingDelivery
 from tadas.om.billing.types.plan import Plan
 from tadas.om.exceptions import (
+    NotAuthorized,
     NotFound,
     SubscriptionExists,
     TenantMismatch,
     ValidationFailed,
 )
-from tadas.om.opcontext import OpContext, Permission, ProvenanceScope, RequestContext
+from tadas.om.opcontext import (
+    CredentialKind,
+    OpContext,
+    Permission,
+    ProvenanceScope,
+    RequestContext,
+    Role,
+)
 from tadas.om.outbox import OutboxRelayInterface
 from tadas.om.outbox.types.row import OutboxRow, outbox_row
 from tadas.om.tenancy import TenancyManagerInterface
@@ -256,6 +264,36 @@ class BillingManagerImpl(BillingManagerInterface):
             current = await self._payments.set_quantity(current.id, wanted, idempotency_key)
             log.info("org %s now pays for %d seats", ctx.org_id, wanted)
         updated = mirrored(account, current, ctx.user_id, now)
+        await self._write(ctx, updated)
+        return billing_of(updated, now)
+
+    async def grant_seeded_plan(self, ctx: OpContext, plan: Plan) -> Billing:
+        ctx.require(Permission.MANAGE_BILLING)
+        if ctx.credential_kind is not CredentialKind.INTERNAL or ctx.role is not Role.OWNER:
+            raise NotAuthorized("a plan is granted by an operator; the seed grants its own org")
+        now = self._clock()
+        account = await self._storage.read_account(ctx.org_id)
+        grant = None if plan is Plan.FREE else plan
+        if account is None:
+            created = BillingAccount(
+                id=new_id(),
+                created_at=now,
+                updated_at=now,
+                created_by=ctx.user_id,
+                updated_by=ctx.user_id,
+                comped_plan=grant,
+            )
+            rows = (outbox_row(ctx, ACCOUNT_CREATED, created.id, {}),)
+            if await self._storage.create_account(ctx.org_id, created, rows):
+                for row in rows:
+                    await self._relay.relay(ctx.org_id, row)
+                return billing_of(created, now)
+            account = await self._storage.read_account(ctx.org_id)
+            if account is None:
+                raise TenantMismatch(f"billing_accounts {created.id} is not in {ctx.org_id}")
+        updated = account.model_copy(
+            update={"comped_plan": grant, "updated_at": now, "updated_by": ctx.user_id}
+        )
         await self._write(ctx, updated)
         return billing_of(updated, now)
 

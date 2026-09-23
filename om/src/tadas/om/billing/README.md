@@ -93,5 +93,6 @@ Marks are kept for thirty days, past any retry the processor makes.
 ## Grants
 
 An operator can put an org on a plan with no payment: support, a
-partner, the tenants of a load test. The org is on the higher of the
+partner, the tenants of a load test. A laptop's seed grants its team org
+Team the same way. The org is on the higher of the
 plan it pays for and the plan it was granted. A grant can be taken back.
