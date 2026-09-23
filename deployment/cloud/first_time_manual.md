@@ -470,13 +470,31 @@ If the shell profile exports either, remove the export. Terraform prefers export
 
 ## 18a. Cloudflare token for the delegation
 
-`tadas.fyi` is registered at Cloudflare, and its zone stays there. The create run writes one NS record per public name to delegate it to Route 53. Create an API token with **Zone / DNS / Edit** on the `tadas.fyi` zone only, and pass it as an environment variable for the run:
+`tadas.fyi` is registered at Cloudflare, and its zone stays there. The create run writes one NS record per public name to delegate it to Route 53: the API (`api.`), the portal (`app.`), and the company site (`www.`), each under `staging.` for staging. Create an API token with **Zone / DNS / Edit** on the `tadas.fyi` zone only, and pass it as an environment variable for the run:
 
 ```bash
 export CLOUDFLARE_API_TOKEN=<token>
 ```
 
 Nothing else needs it; CI never does.
+
+A new public name is a new zone and a new delegation, so it takes a create run for each environment before the change that serves it merges (section 19). The company site's name did: `www.staging.tadas.fyi` for staging, `www.tadas.fyi` for production. The run is the same command as the first time, and safe to repeat: the bootstrap root adds the zone and lets the deploy role write its records, the delegation adds the name's NS records and leaves the others, and the GitHub environments get `SITE_DOMAIN_NAME`. Until that variable is set, a deploy says the cloud is not configured and skips it. Production's run also lets staging's replication write the site's builds into production's artifacts bucket, so a site build replicates only once production's run is done: the first release after it takes a commit staging built after it, the same rule as the first release.
+
+## 18b. The apex: `tadas.fyi` redirects to `www.tadas.fyi`
+
+The domain's own apex cannot be delegated: it is the apex of the zone Cloudflare keeps, and an NS record cannot sit there. So `tadas.fyi` stays at Cloudflare and redirects to `https://www.tadas.fyi`, which is delegated and served like every other name. Nothing in AWS knows the apex. This is by hand, once, in the Cloudflare dashboard, because the create run's token edits DNS records and a redirect is a rule. Do it after production's first release has made `https://www.tadas.fyi` answer; production is parked until then, and staging needs nothing here.
+
+1. **DNS > Records > Add record**, on the `tadas.fyi` zone: type `A`, name `@`, IPv4 address `192.0.2.1`, proxy status **Proxied**. Add a second: type `AAAA`, name `@`, IPv6 address `100::`, **Proxied**. The addresses are never reached: a proxied record is answered by Cloudflare's edge, which is where the redirect runs, and Cloudflare's own certificate covers the apex.
+2. **Rules > Redirect Rules > Create rule** (a single redirect), named `apex to www`. When incoming requests match a custom filter expression: `Hostname` `equals` `tadas.fyi`. Then: URL redirect, type **Dynamic**, expression `concat("https://www.tadas.fyi", http.request.uri.path)`, status code **301**, **Preserve query string** on. Deploy.
+3. Check it:
+
+   ```bash
+   curl -sI https://tadas.fyi/          # 301, location: https://www.tadas.fyi/
+   curl -sI 'https://tadas.fyi/x?y=1'   # 301, location: https://www.tadas.fyi/x?y=1
+   curl -sI https://www.tadas.fyi/      # 200, from CloudFront
+   ```
+
+The redirect is a choice, not the only way. Cloudflare could instead flatten a CNAME at the apex onto the CloudFront distribution, but then the apex would have to be in the distribution's certificate, validated by a record at Cloudflare that the create run would write and keep, and the site would answer at two names. The redirect keeps one name for the site and leaves the apex out of AWS.
 
 ## 19. Bootstrap, then hand the admin back
 

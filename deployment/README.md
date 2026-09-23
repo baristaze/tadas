@@ -13,6 +13,7 @@ the cloud from Terraform. Nothing is clicked into place in either.
 | The maintenance worker | the `maintenance` container, or a host process | a container service of its own, rolled one at a time because it holds leases |
 | The Slack bridge (`tadas-maintenance slack`) | not run; a host process by hand for a short run, since local and staging share one Slack app | exactly one task on the maintenance image, never two, not even during a rollout |
 | The portal | nginx in a container, or Vite on the host | a private bucket behind a CDN, publishing the build staging made |
+| The company site | Vite on the host (`pnpm --filter @tadas/site dev`) | the same module as the portal: a private bucket behind a CDN at `www.`, publishing the page for its environment from the one build staging made |
 | Postgres | one container, four schemas, one per database role | a managed instance with backups and storage that grows on its own |
 | Valkey (cache, topics) | one container | a managed cluster, encrypted in transit |
 | Queues (`webhooks`, `slack`) | ElasticMQ over the SQS API, declared in `local/elasticmq/elasticmq.conf` | SQS, with a dead-letter queue each |
@@ -45,8 +46,8 @@ the one this repository makes.
 - `release` moves only by a fast-forward from `main`, which a person
   dispatches. A push to `release` plans production, waits for a
   reviewer's approval on exactly that plan, and applies it. Nothing is
-  rebuilt for production: the images and the portal build are the ones
-  staging already ran.
+  rebuilt for production: the images, the portal build, and the site
+  build are the ones staging already made.
 - The database migration runs inside the apply, before the service
   rolls. A failed migration fails the apply with the old tasks still
   serving. A migration is compatible with the release before it, so

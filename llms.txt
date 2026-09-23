@@ -36,6 +36,7 @@ served to it. Exposure is by listing, never by folder.
 - [Support runbook](docs/runbooks/support.md): how a support investigation runs
 - [Tenant isolation runbook](docs/runbooks/tenant-isolation.md): the cross-tenant cases and what they catch
 - [The portal](apps/portal/README.md): the browser app
+- [The company site](apps/site/README.md): the static marketing page, its build per environment, and where it is served
 - [The command line](apps/cli/README.md): the terminal client and its exit codes
 - [The Python client](clients/python/README.md): the one client every Python caller goes through
 

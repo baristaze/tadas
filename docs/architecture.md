@@ -987,6 +987,16 @@ everything in-process for tests.
   forgets the file whatever the API answers; `TADAS_TOKEN` (a session
   token or an api key) and `TADAS_API_URL` win over it. The rules of what is shown live in `model.py`, pure and unit
   tested; the commands run in tests against the whole API in-process.
+- `apps/site` (`@tadas/site`): the company site, one page and a
+  not-found page, HTML and CSS built by Vite with no script at all. It
+  imports the portal's `theme.css`, so the tokens, the accent, and the
+  light and dark values are the portal's own, and bundles the same Inter;
+  the product visual is the README's realtime GIF, copied in at build
+  time. It calls nothing: its links (the app's sign-in and sign-up, the
+  repository) are written into the HTML per build mode from
+  `deployment/cloud/environments.json`, so `vite build` runs once per
+  environment and a mode that names none is refused. Its tests hold that
+  the page loads nothing from another origin and runs no script.
 
 ## Deployment (`deployment/`)
 
@@ -1012,7 +1022,7 @@ everything in-process for tests.
 - `terraform/`: every cloud resource. `modules/` holds one module per
   resource family (`network`, `cluster`, `database`, `cache`, `queue`,
   `buckets`, `secrets`, `load_balancer`, `certificate`, `domain_records`,
-  `portal`, `service`, `alarms`, `dashboard`), `environment`, the graph
+  `static_site`, `service`, `alarms`, `dashboard`), `environment`, the graph
   that wires them and that each root calls, and `account`,
   `deploy_role`, and `investigate_role`, which the bootstrap roots
   instantiate; `environments/staging`
@@ -1024,10 +1034,10 @@ everything in-process for tests.
   ([ADR 0021](adr/0021-each-environment-has-an-aws-account-of-its-own.md)),
   and every root pins its provider to that account. `bootstrap/staging`
   and `bootstrap/prod` hold what an account has before its first deploy:
-  the registry, the state bucket, the two zones, the deploy roles, the
+  the registry, the state bucket, the three zones, the deploy roles, the
   investigate role, and the budget (see
   [Operations](#operations-ops-claudeskills)). Staging's replicates
-  every image and portal build into production's account, so
+  every image and static build into production's account, so
   production never reads staging's. The load balancer's idle timeout is read from
   `deployment/realtime-timeouts.json`, the file the api pins its
   protocol ping against and the api and the portal pin the client's
@@ -1052,6 +1062,8 @@ everything in-process for tests.
   `main` is staging: `deploy-staging.yml` follows every green `ci` run
   on `main`, builds and pushes both images tagged by the commit `ci`
   ran, keeps the portal build by the commit in its artifacts bucket, and
+  the company site's build beside it (one build holding a page per
+  environment, since the site's links are in its HTML), and
   plans and applies staging with no approval (the plan text goes to the
   job summary and the `staging-plan` artifact). `release` is production,
   moved only by a fast-forward from `main` that `release.yml` makes when
@@ -1059,12 +1071,13 @@ everything in-process for tests.
   check). A push to `release` runs `deploy-production.yml`: a guard that
   refuses unless `release` is an ancestor of `main` and the `production`
   environment carries a required-reviewers rule, a job that resolves the
-  digests and the portal build staging made for that commit, from the
+  digests and the portal and site builds staging made for that commit, from the
   copies replicated into production's account, and refuses a commit
   with no copy there, a plan job (text to the
   `production-plan` artifact, the saved plan to the state bucket), and,
   behind the `production` environment's approval, an apply of exactly
-  that plan and the publication of the same portal files. Nothing is
+  that plan and the publication of the same portal files and of the
+  site's production page from the same build. Nothing is
   rebuilt for production. The migration is inside the apply: the
   `service` module runs the API's `pre_rollout_command` as a one-off
   task on every new task definition before the service rolls, the
@@ -1084,26 +1097,30 @@ everything in-process for tests.
   `production-plan`, which carries no reviewer. Each GitHub environment
   holds its own variables under the same names (`AWS_ROLE_ARN`,
   `TF_STATE_BUCKET`, and, where the job plans, `API_DOMAIN_NAME`,
-  `APP_DOMAIN_NAME`, and `ALARM_EMAIL`), so a staging job never holds a
+  `APP_DOMAIN_NAME`, `SITE_DOMAIN_NAME`, and `ALARM_EMAIL`), so a staging job never holds a
   production value, and the first job of each workflow checks them;
   while they are empty staging skips every cloud job, says so in the
   summary, and stays green, and production fails. [The deploy
   runbook](runbooks/deploy.md) says how to cut a release, what to check
   at the approval, and how to roll back.
 - Public names are inputs: the API at `api_domain_name` (the load balancer,
-  e.g. `api.tadas.fyi`, `api.staging.tadas.fyi` for staging) and the portal at
+  e.g. `api.tadas.fyi`, `api.staging.tadas.fyi` for staging), the portal at
   `app_domain_name` (a private S3 bucket behind CloudFront, e.g.
-  `app.tadas.fyi`). Each name is the apex of a Route 53 zone of its own
+  `app.tadas.fyi`), and the company site at `site_domain_name` (the same
+  shape, `www.tadas.fyi`, `www.staging.tadas.fyi` for staging). Each name is the apex of a Route 53 zone of its own
   in the environment's account, delegated from the domain's zone at
   Cloudflare, where the domain is registered, and holds its certificate's
   validation record and its alias. Each environment has one base domain,
   `tadas.fyi` for production and `staging.tadas.fyi` for staging; the
   names are written in `deployment/cloud/environments.json`, and the
-  workflows pass them from the environment's variables. The
+  workflows pass them from the environment's variables. The domain's own
+  apex, `tadas.fyi`, is the one name that cannot be delegated, since it
+  is the apex of Cloudflare's zone; it redirects to `www.tadas.fyi` by a
+  rule at Cloudflare (the first-time manual, 18b). The
   portal reads `/config.json`, written per environment by Terraform, before
   it renders, and calls the API cross-origin; locally it falls back to the
   `VITE_` build variables. The distribution's response headers policy,
-  declared beside it in the portal module, sends the security headers:
+  declared beside it in the `static_site` module, sends the security headers:
   a `Content-Security-Policy` that names the page's own origin, the API
   over HTTPS and over the websocket (both from `api_url`), the error
   reporter's origin when a DSN is set, and nothing else, with no unsafe
@@ -1111,7 +1128,9 @@ everything in-process for tests.
   `nosniff`, `DENY` framing, the referrer policy, and HSTS. An offline
   `terraform test` in the module pins the header. The local nginx sends
   no such header: the API and GlitchTip origins it would name are build
-  arguments the static config cannot read.
+  arguments the static config cannot read. The company site is the same
+  module called a second time, with no API and no config: its policy
+  names its own origin alone, and a missing path gets its `404.html`.
 
 ## Operations (`ops/`, `.claude/skills/`)
 

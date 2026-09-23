@@ -160,6 +160,9 @@ dispatches the `release` workflow, which fast-forwards `release` to
 `release`. [docs/runbooks/deploy.md](docs/runbooks/deploy.md) has the
 steps, the rollback, and the protection to set on the branch.
 
+The company site deploys with them: `www.staging.tadas.fyi` on staging,
+`www.tadas.fyi` in production, where `tadas.fyi` redirects to it.
+
 A deployed environment carries no seed: `make seed` is local, and so is
 the sign-in by address. A person enters staging or production by
 signing in at the portal through WorkOS, which creates their identity,
@@ -198,15 +201,16 @@ person follows by hand is a runbook under
   `apps/` clients: the
   portal, with its generated API types and one transport client under
   `src/api/` (a deadline on every call; the session in the tab's session
-  storage, never local storage), and the CLI; `clients/python/` the one
-  Python client
+  storage, never local storage), the CLI, and the company site
+  ([apps/site/README.md](apps/site/README.md)), a static page with no
+  script; `clients/python/` the one Python client
 - `deployment/` compose, images, Terraform
   ([deployment/README.md](deployment/README.md)); the portal's distribution
   sends the security headers, a `Content-Security-Policy` naming its own
   origin and the API among them
 - `ops/` the operators' package and the stress scenarios
   ([ops/README.md](ops/README.md))
-- `docs/` as built, ADRs, runbooks; `scripts/` dev.sh, the portal publisher, and the by-hand migration runner
+- `docs/` as built, ADRs, runbooks; `scripts/` dev.sh, the publisher of the portal and the site, and the by-hand migration runner
 - `llms.txt` the knowledge map: which documents each audience is
   served (platform developers, platform operators, tenant users and
   admins); a document is served by being listed there, never by its
