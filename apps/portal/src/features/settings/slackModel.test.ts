@@ -26,7 +26,7 @@ const status = (c: SlackConnectionView | null): SlackStatusView => ({ connection
 
 const me = (permissions: MeView["permissions"]): MeView => ({
   user: { id: "u1", email: "a@b.c", display_name: "Ann", created_at: "2026-09-01T00:00:00Z" },
-  org: { id: "o1", name: "Acme", slug: "acme", created_at: "2026-09-01T00:00:00Z" },
+  org: { id: "o1", name: "Acme", slug: "acme", kind: "team", created_at: "2026-09-01T00:00:00Z" },
   role: "member",
   permissions,
   app: "portal",
