@@ -61,16 +61,32 @@ change. A name the image does not host refuses the boot.
   code, shown once, and the disconnect, an owner or an admin.
   (`/v1/slack/connection`, `/v1/slack/link-codes`)
 - **Events.** The org's diary after a sequence number. (`/v1/events`)
+- **Billing.** The org's plan, where it comes from, its seats and
+  active tasks against the plan's bounds, and the plans on offer; a
+  checkout for a paid plan and the processor's own portal, each coming
+  back only to a page of the portal; cancel at the period's end, and
+  taking that back. Everyone in the org reads; an owner or an admin
+  changes. (`/v1/billing`, `/v1/billing/checkout`,
+  `/v1/billing/portal`, `/v1/billing/cancel`, `/v1/billing/resume`)
+- **The payment processor's deliveries.** Outside `/v1`, since their
+  shape is the processor's, pinned on the endpoint it delivers to. No
+  credential: the route checks the processor's signature over the body
+  and its timestamp, within a five-minute window, and queues the
+  delivery for the worker; one that fails the check is a 400 and
+  nothing is queued. (`/webhooks/stripe`)
 - **Realtime.** The live channel, a websocket opened with a
   single-use ticket. (`/v1/realtime`)
 - **The operator plane.** For an identity on the operator allowlist,
   across every org: create an org with its owner, add a member, read
   an org, its members, its tasks, and its events, list every org a
-  page at a time, delete a team org (a personal org is refused), and read the platform's size: the tenant count, the
+  page at a time, delete a team org (a personal org is refused), read
+  an org's plan and grant it one with no payment, and read the
+  platform's size: the tenant count, the
   user count, and the tasks of the last twenty-four hours.
   (`/v1/admin/orgs`, `/v1/admin/orgs/{org_id}`,
   `/v1/admin/orgs/{org_id}/members`, `/v1/admin/orgs/{org_id}/tasks`,
-  `/v1/admin/orgs/{org_id}/events`, `/v1/admin/size`). A read route
+  `/v1/admin/orgs/{org_id}/events`, `/v1/admin/orgs/{org_id}/billing`,
+  `/v1/admin/orgs/{org_id}/plan`, `/v1/admin/size`). A read route
   needs an operator who may read; a write route one who may write.
   The plane admits two credentials: a person's sign-in that verified a
   TOTP code, and an operator token. An operator enrols the second
@@ -96,14 +112,19 @@ change. A name the image does not host refuses the boot.
   ships sends one, and a create without it runs once per request. The same key with the same
   request gets the first answer back, marked `Idempotent-Replayed:
   true`; the same key with a different request is refused. A secret
-  is in the first answer only.
+  is in the first answer only. A 429 and a plan's bound (402) are
+  answers about now and are not kept: the retry of the same create runs
+  again, and lands once the org has room.
 - **The calling app and its version.** `x-app` and `x-app-version`
   name the client, and travel into the provenance of every write.
 - **One error envelope.** Every refusal, the framework's own included,
   is one shape: a code, a message, and the request id, under the HTTP
   status. A 5xx says `internal error` and the real message goes to the
   log under the request id; the admission 503 alone says which bound it
-  hit, with a `Retry-After`.
+  hit, with a `Retry-After`. A plan's bound is a 402,
+  `plan_limit_reached`, and its envelope also carries `plan_limit`: the
+  lever, the org's plan, the bound, and the plan that lifts it, which
+  is what a client turns into an offer to upgrade.
 - **Bearer by prefix.** The credential's prefix says what it is: a
   session token, an API key, a login, a ticket, or an operator token. A missing or
   invalid one is a 401; a route asked with the wrong kind is refused.
@@ -136,7 +157,7 @@ container the server does.
 |------------|------|
 | `serve` | Runs the process. |
 | `migrate` | Applies every role's migration chain (`--all`) or one role's. Idempotent per revision. `migrate ensure-logins` makes the database logins, as the master. |
-| `bootstrap` | Seeds a fresh local environment with one org and its owner; `--operator` puts the owner on the operator allowlist with write. Local only, like every seed. |
+| `bootstrap` | Seeds a fresh local environment with one org and its owner; `--operator` puts the owner on the operator allowlist with write, and `--plan` grants the org a plan with no payment. Local only, like every seed. |
 | `grant-operator` | The grant job: `--email <e> --permission read\|write` puts an identity on the operator allowlist, `--email <e> --disable` takes it off, and `--email <e> --mint-token provisioner\|smoke [--expires-in N]` mints that identity's operator token into the secret store as `tadas-<env>-<holder>-token`, never printed in the cloud. An operator signs up first; the platform's own identities (`@platform.tadas.invalid`) are made by their first grant. |
 | `add-member` | Seeds a person into an existing org; a no-op for a member. |
 | `openapi` | Emits the OpenAPI document the clients are generated from. |

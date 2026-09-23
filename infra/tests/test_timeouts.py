@@ -28,6 +28,7 @@ SOURCE_ROOTS = (
     "services/api/src",
     "infra/src",
     "integrations/src",
+    "ops/src",
     "workers/maintenance/src",
 )
 
@@ -37,6 +38,8 @@ CLIENT_CONSTRUCTORS = {
     "connect",  # websockets
     "OTLPSpanExporter",
     "GlideClientConfiguration",
+    "HTTPXClient",  # stripe's transport, which carries the timeout
+    "StripeClient",
     "AsyncWebClient",  # slack_sdk
     "AsyncWebhookClient",  # slack_sdk
 }
@@ -71,8 +74,22 @@ def _is_client_construction(call: ast.Call) -> bool:
 
 
 def _carries_a_timeout(call: ast.Call) -> bool:
+    """A timeout by name, the AWS configuration that carries one, or, for a
+    Stripe client, the transport it is handed, which the scan holds to a
+    timeout of its own."""
     keywords = {keyword.arg for keyword in call.keywords if keyword.arg}
+    if _name_of(call) == "StripeClient":
+        return "http_client" in keywords
     return "config" in keywords or any("timeout" in name for name in keywords)
+
+
+def _name_of(call: ast.Call) -> str | None:
+    func = call.func
+    if isinstance(func, ast.Name):
+        return func.id
+    if isinstance(func, ast.Attribute):
+        return func.attr
+    return None
 
 
 def _bounded_by_wait_for(tree: ast.AST) -> set[int]:
@@ -117,6 +134,8 @@ def test_every_client_construction_names_a_timeout() -> None:
         "infra/src/tadas/infra/secrets/aws.py",
         "infra/src/tadas/infra/impl/valkey.py",
         "infra/src/tadas/infra/observability.py",
+        "integrations/src/tadas/integrations/payments/stripe.py",
+        "integrations/src/tadas/integrations/payments/catalog.py",
         "integrations/src/tadas/integrations/slack/web.py",
         "workers/maintenance/src/tadas/workers/maintenance/slack_socket.py",
     }, "the scan no longer sees a client it used to; widen it before trusting it"

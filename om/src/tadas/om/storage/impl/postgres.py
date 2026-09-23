@@ -9,6 +9,8 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 
+from tadas.om.billing.storage import BillingStorageInterface
+from tadas.om.billing.storage.impl.postgres import BillingStoragePostgresImpl
 from tadas.om.events.storage import EventStorageInterface
 from tadas.om.events.storage.impl.postgres import EventStoragePostgresImpl
 from tadas.om.idempotency.storage import IdempotencyStorageInterface
@@ -114,6 +116,7 @@ class StoragePostgresImpl(StorageInterface):
         self._idempotency = IdempotencyStoragePostgresImpl(sessions)
         self._events = EventStoragePostgresImpl(sessions)
         self._outbox = OutboxStoragePostgresImpl(sessions)
+        self._billing = BillingStoragePostgresImpl(sessions)
         self._slack = SlackStoragePostgresImpl(sessions)
 
     def get_tenancy_storage(self) -> TenancyStorageInterface:
@@ -136,6 +139,9 @@ class StoragePostgresImpl(StorageInterface):
 
     def get_outbox_storage(self) -> OutboxStorageInterface:
         return self._outbox
+
+    def get_billing_storage(self) -> BillingStorageInterface:
+        return self._billing
 
     def get_slack_storage(self) -> SlackStorageInterface:
         return self._slack

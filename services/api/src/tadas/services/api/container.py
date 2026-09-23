@@ -15,7 +15,12 @@ from tadas.infra.observability import (
 )
 from tadas.infra.root import InfraInterface
 from tadas.infra.trust import install_trust_store
-from tadas.integrations.impl.configured import IntegrationsConfiguredImpl, absent_integrations
+from tadas.integrations.impl.configured import (
+    IntegrationsConfiguredImpl,
+    absent_integrations,
+    payments_for,
+)
+from tadas.integrations.payments import PaymentsInterface
 from tadas.integrations.root import IntegrationsInterface
 from tadas.om.root import Managers, TenancyOperatorOptions, TenancyOptions, build_managers
 from tadas.om.storage.impl.memory import StorageMemoryImpl
@@ -128,6 +133,10 @@ class AppContainer:
         self.services = services
         self.rate_limits = rate_limits
 
+    @property
+    def payments(self) -> PaymentsInterface:
+        return self.integrations.get_payments()
+
     @classmethod
     def build(cls, settings: ApiSettings) -> AppContainer:
         return cls.over(
@@ -148,9 +157,19 @@ class AppContainer:
         integrations: IntegrationsInterface | None = None,
     ) -> AppContainer:
         settings = settings or ApiSettings.model_validate(
-            {"_env_file": None, "environment": "test", "dev_sign_in_enabled": True}
+            {
+                "_env_file": None,
+                "environment": "test",
+                "dev_sign_in_enabled": True,
+                "billing_backend": "twin",
+            }
         )
-        return cls.over(settings, storage, infra, integrations or absent_integrations())
+        # No identity provider unless the test hands one in, and the payment
+        # processor the settings name: the twin, in a test.
+        integrations = integrations or absent_integrations(
+            payments_for(settings, settings.environment)
+        )
+        return cls.over(settings, storage, infra, integrations)
 
     @classmethod
     def over(
@@ -168,7 +187,9 @@ class AppContainer:
             operator_options(settings),
             integrations,
         )
-        services = build_services(managers, infra)
+        services = build_services(
+            managers, infra, integrations.get_payments(), settings.cors_origins
+        )
         return cls(
             settings,
             storage,

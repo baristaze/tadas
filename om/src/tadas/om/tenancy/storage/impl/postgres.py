@@ -433,6 +433,15 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
             result = await session.execute(stmt)
             return [to_model(row, Membership) for row in result.scalars()]
 
+    async def count_members(self, org_id: UUID) -> int:
+        stmt = (
+            select(func.count())
+            .select_from(Memberships)
+            .where(Memberships.org_id == org_id, Memberships.deleted_at.is_(None))
+        )
+        async with self._session_for(stmt, org_id=org_id) as session:
+            return (await session.execute(stmt)).scalar_one()
+
     async def read_membership_for_user(self, org_id: UUID, user_id: UUID) -> Membership | None:
         stmt = select(Memberships).where(
             Memberships.org_id == org_id,

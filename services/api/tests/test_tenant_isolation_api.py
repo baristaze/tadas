@@ -14,9 +14,10 @@ from uuid import UUID
 
 import httpx
 import pytest
-from api_support import add_member, build_container, run, seed_request, sign_in_as
+from api_support import add_member, build_container, on_plan, run, seed_request, sign_in_as
 from starlette.testclient import TestClient
 
+from tadas.om.billing.types.plan import Plan
 from tadas.om.opcontext import Role
 from tadas.services.api.app import create_app
 from tadas.services.api.container import AppContainer
@@ -78,6 +79,7 @@ async def seed_tenant(
     page."""
     email = f"owner@{slug}.test"
     _, org = await container.managers.tenancy.bootstrap(seed_request(), name, slug, email, name)
+    await on_plan(container, org.id, Plan.TEAM)
     headers = await sign_in_as(client, email, org.id)
     member = await add_member(container, org.id, f"member@{slug}.test", Role.MEMBER)
     tasks: list[str] = []
@@ -337,6 +339,7 @@ def test_a_socket_of_one_tenant_never_hears_a_change_in_another(tmp_path: Path) 
                 seed_request(), name, slug, f"owner@{slug}.test", name
             )
         )
+        run(on_plan(container, org.id, Plan.TEAM))
         orgs[slug] = org.id
     with TestClient(create_app(container)) as tc:
         mine = sign_in_over(tc, "acme", orgs["acme"])

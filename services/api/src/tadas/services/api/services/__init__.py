@@ -5,6 +5,7 @@ translates the request, calls one manager, and projects the result."""
 from abc import ABC, abstractmethod
 
 from tadas.services.api.services.admin import AdminServiceInterface
+from tadas.services.api.services.billing import BillingServiceInterface, WebhooksServiceInterface
 from tadas.services.api.services.events import EventsServiceInterface
 from tadas.services.api.services.media import MediaServiceInterface
 from tadas.services.api.services.realtime import RealtimeServiceInterface
@@ -14,6 +15,7 @@ from tadas.services.api.services.tenancy import TenancyServiceInterface
 
 __all__ = [
     "AdminServiceInterface",
+    "BillingServiceInterface",
     "EventsServiceInterface",
     "MediaServiceInterface",
     "RealtimeServiceInterface",
@@ -21,6 +23,7 @@ __all__ = [
     "SlackServiceInterface",
     "TasksServiceInterface",
     "TenancyServiceInterface",
+    "WebhooksServiceInterface",
 ]
 
 
@@ -42,6 +45,12 @@ class ServicesInterface(ABC):
 
     @abstractmethod
     def get_realtime_service(self) -> RealtimeServiceInterface: ...
+
+    @abstractmethod
+    def get_billing_service(self) -> BillingServiceInterface: ...
+
+    @abstractmethod
+    def get_webhooks_service(self) -> WebhooksServiceInterface: ...
 
     @abstractmethod
     def get_slack_service(self) -> SlackServiceInterface: ...

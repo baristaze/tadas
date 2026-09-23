@@ -1,7 +1,7 @@
 # Tasks
 
 The to-do items a team creates, works, and closes. This is one of the
-six kinds of thing [Tadas is made of](../../../../README.md).
+seven kinds of thing [Tadas is made of](../../../../README.md).
 
 ## The nouns
 
@@ -43,6 +43,12 @@ six kinds of thing [Tadas is made of](../../../../README.md).
 
 ## The rules
 
+- **The plan bounds the active tasks.** An active task is one that is
+  neither done nor deleted. An org on a plan with a bound (ten on Free)
+  is refused the task past it, and a reopen past it, with a refusal
+  that names the plan that lifts the bound; a done or deleted task
+  makes room again. Nothing is ever deleted for a bound
+  ([billing](../billing/README.md)).
 - **Every write names the version it read.** A task carries a version
   number, and every edit, move, and delete says which version the
   caller saw. If the stored task has moved on, the write is refused

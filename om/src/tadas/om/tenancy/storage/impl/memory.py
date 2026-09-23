@@ -380,6 +380,9 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
             live = [m for m in live if is_after_in_id_order(m.user_id, after_user_id)]
         return sorted(live, key=lambda m: m.user_id)[:limit]
 
+    async def count_members(self, org_id: UUID) -> int:
+        return sum(1 for m in self._rows(self._memberships, org_id) if m.deleted_at is None)
+
     async def read_membership_for_user(self, org_id: UUID, user_id: UUID) -> Membership | None:
         return next(
             (

@@ -15,6 +15,7 @@ token is said once in the log and posts nothing. Anything else fails the
 item, which retries with a growing delay."""
 
 import logging
+from typing import ClassVar
 
 from tadas.integrations.slack import (
     SlackChannelUnusable,
@@ -23,7 +24,7 @@ from tadas.integrations.slack import (
     SlackRateLimited,
 )
 from tadas.om.exceptions import NotFound
-from tadas.om.opcontext import OpContext
+from tadas.om.opcontext import OpContext, Permission
 from tadas.om.slack import SlackManagerInterface
 from tadas.om.slack.types.connection import SlackConnectionStatus
 from tadas.om.tasks import TasksManagerInterface
@@ -52,6 +53,10 @@ def message_for(event: SlackPostEvent, task: Task) -> str:
 
 
 class SlackPostHandlerImpl(WorkHandlerInterface):
+    REQUIRES: ClassVar[tuple[Permission, ...]] = (Permission.READ, Permission.WRITE)
+    """The connection, the task, and the post are read; a post is recorded
+    and a broken connection marked."""
+
     def __init__(
         self,
         tasks: TasksManagerInterface,

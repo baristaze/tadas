@@ -8,12 +8,15 @@ import httpx
 import pytest
 from api_support import (
     OWNER,
+    SMALL_BUDGET,
     add_member,
     bearer,
     build_container,
+    client_over,
     code_at,
     dev_login,
     enrol_operator,
+    on_plan,
     run,
     seed_request,
     sign_in_as,
@@ -21,10 +24,12 @@ from api_support import (
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
+from tadas.om.billing.types.plan import Plan
 from tadas.om.idempotency.impl.manager import IdempotencyOptions
 from tadas.om.opcontext import OperatorRole, Role
 from tadas.services.api.app import create_app
 from tadas.services.api.container import AppContainer
+from tadas.services.api.settings import ApiSettings
 
 
 async def test_sign_in_round_trip(client: httpx.AsyncClient, owner: dict[str, str]) -> None:
@@ -74,31 +79,37 @@ async def test_not_found_flows_through_the_one_handler(
     assert response.json()["error"]["code"] == "not_found"
 
 
-async def test_sign_in_is_rate_limited_per_client(
-    client: httpx.AsyncClient, container: AppContainer
-) -> None:
-    # The budget is the container's, never a number repeated here: it is sized
-    # for a crowd behind one address and moves with the settings. Every
-    # sign-in route counts against it; the callback of a process with no
-    # provider answers 503 and still counts.
+async def test_sign_in_is_rate_limited_per_client(tmp_path: Path) -> None:
+    # The settings' budget is sized for a crowd behind one address; the
+    # mechanism is the same at any size, so this process gets a small one.
+    # Every sign-in route counts against it; the callback of a process with
+    # no provider answers 503 and still counts.
+    container = build_container(tmp_path, login_rate_limit=SMALL_BUDGET)
     budget = container.rate_limits.of("login").limit
-    for index in range(budget):
-        body = {"code": f"code-{index}", "code_verifier": "v" * 43}
-        assert (await client.post("/v1/auth/callback", json=body)).status_code == 503
-    rejected = await client.post("/v1/auth/dev-sign-in", json={"email": "nobody@example.test"})
+    assert budget == SMALL_BUDGET
+    async with client_over(container) as client:
+        for index in range(budget):
+            body = {"code": f"code-{index}", "code_verifier": "v" * 43}
+            assert (await client.post("/v1/auth/callback", json=body)).status_code == 503
+        rejected = await client.post("/v1/auth/dev-sign-in", json={"email": "nobody@example.test"})
     assert rejected.status_code == 429
     assert rejected.json()["error"]["code"] == "rate_limited"
     assert int(rejected.headers["Retry-After"]) >= 1
 
 
+def test_the_sign_in_budget_is_generous() -> None:
+    """Far above a demo, the traffic run, or a person clicking fast."""
+    assert ApiSettings.model_validate({"_env_file": None}).login_rate_limit >= 1000
+
+
 async def test_a_guessed_second_factor_waits_before_its_next_try(
     client: httpx.AsyncClient, container: AppContainer
 ) -> None:
-    """Per email and in the database, beside the per-address limit: after
-    three wrong codes even the right one is answered 429 with the wait."""
+    """Per email and in the database, beside the per-address limit: after the
+    free run of wrong codes even the right one is answered 429 with the wait."""
     _, secret = await enrol_operator(client, container, "root@example.test", OperatorRole.WRITE)
     login = bearer(await dev_login(client, "root@example.test"))
-    for _ in range(3):
+    for _ in range(container.settings.sign_in_free_failures):
         wrong = await client.post(
             "/v1/auth/second-factor", headers=login, json={"totp_code": "000000"}
         )
@@ -428,6 +439,7 @@ def test_realtime_channel_delivers_tenant_events(tmp_path: Path) -> None:
             seed_request(), "Acme", "acme", OWNER["email"], OWNER["name"]
         )
     )
+    run(on_plan(container, org.id, Plan.TEAM))
     app = create_app(container)
     with TestClient(app) as tc:
         login = tc.post("/v1/auth/dev-sign-in", json={"email": OWNER["email"]})

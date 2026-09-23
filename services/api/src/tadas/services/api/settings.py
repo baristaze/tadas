@@ -50,15 +50,15 @@ class ApiSettings(StorageSettings, InfraSettings, IntegrationsSettings):
     # sign-in, and the second factor. The identity provider guards its own
     # sign-in; the defence against guessing a second factor is the per-email
     # delay below, which no crowd dilutes.
-    login_rate_limit: int = 200
+    login_rate_limit: int = 2000
     login_rate_window_seconds: int = 60
     # Past the per-address limit, which rides the cache and fails open: a run
     # of wrong second-factor codes for one email makes the next one wait,
     # counted in the database. The first `sign_in_free_failures` cost
     # nothing; then the wait starts at the base and doubles, up to the cap.
-    sign_in_free_failures: int = Field(default=3, ge=1)
+    sign_in_free_failures: int = Field(default=10, ge=1)
     sign_in_delay_base_seconds: float = Field(default=1.0, gt=0)
-    sign_in_delay_cap_seconds: float = Field(default=300.0, gt=0)
+    sign_in_delay_cap_seconds: float = Field(default=30.0, gt=0)
     # How long a sign-in lasts before it must be exchanged for a session, and
     # how long a session lasts: from its exchange, whatever it is used for
     # (the absolute lifetime), and from its last use (the idle one). A
@@ -120,8 +120,8 @@ class ApiSettings(StorageSettings, InfraSettings, IntegrationsSettings):
     # checkout, which has a bound of its own, and only a flood is refused; it
     # is not the login rate limit, which is fairness between subjects and
     # fails open.
-    admission_limit_reads: int = Field(default=48, gt=0)
-    admission_limit_writes: int = Field(default=16, gt=0)
+    admission_limit_reads: int = Field(default=400, gt=0)
+    admission_limit_writes: int = Field(default=200, gt=0)
     admission_retry_after_seconds: int = 1
 
     @model_validator(mode="after")

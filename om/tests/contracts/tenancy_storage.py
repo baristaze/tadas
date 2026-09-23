@@ -40,6 +40,7 @@ from tadas.om.tenancy.types.user import User
 
 CROSS_TENANT_CASES: frozenset[str] = frozenset(
     {
+        "count_members",
         "create_member",
         "create_org_with_owner",
         "issue_api_key",
@@ -316,6 +317,21 @@ class TenancyStorageContract:
                 org_b.id, membership.model_copy(update={"role": Role.OWNER})
             )
         assert await storage.read_memberships(org_a.id, limit=10) == [membership]
+
+    async def test_the_member_count_is_the_tenants_live_memberships(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        """The seats a plan counts: live memberships of this tenant, an ended
+        one not among them, another tenant's never."""
+        org_a, org_b = make_org("A"), make_org("B")
+        kept, ended = make_membership(new_id()), make_membership(new_id())
+        await storage.write_membership(org_a.id, kept)
+        await storage.write_membership(org_a.id, ended)
+        await storage.write_membership(
+            org_a.id, ended.model_copy(update={"deleted_at": utcnow(), "deleted_by": new_id()})
+        )
+        assert await storage.count_members(org_a.id) == 1
+        assert await storage.count_members(org_b.id) == 0
 
     async def test_the_session_reads_and_writes_are_tenant_scoped(
         self, storage: TenancyStorageInterface

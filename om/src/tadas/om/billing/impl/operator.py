@@ -1,0 +1,97 @@
+import logging
+from uuid import UUID
+
+from tadas.infra.observability import current_traceparent
+from tadas.om.base import new_id, utcnow
+from tadas.om.billing.impl.manager import ACCOUNT_CREATED, ACCOUNT_UPDATED, billing_of
+from tadas.om.billing.manager import BillingOperatorManagerInterface
+from tadas.om.billing.storage import BillingStorageInterface
+from tadas.om.billing.types.account import BillingAccount
+from tadas.om.billing.types.billing import Billing
+from tadas.om.billing.types.plan import Plan
+from tadas.om.exceptions import NotFound
+from tadas.om.opcontext import OperatorContext, OperatorPermission
+from tadas.om.outbox import OutboxRelayInterface
+from tadas.om.outbox.types.row import OutboxRow
+from tadas.om.tenancy.storage import TenancyStorageInterface
+
+log = logging.getLogger(__name__)
+
+
+class BillingOperatorManagerImpl(BillingOperatorManagerInterface):
+    """Reads and writes one named org's account through the billing storage,
+    under the tenant the operator named, and reads the org through the
+    tenancy storage, as the tenancy operator plane does: no `OpContext`
+    exists on this plane, so no tenant manager is asked."""
+
+    def __init__(
+        self,
+        storage: BillingStorageInterface,
+        tenancy: TenancyStorageInterface,
+        relay: OutboxRelayInterface,
+    ) -> None:
+        self._storage = storage
+        self._tenancy = tenancy
+        self._relay = relay
+
+    async def get_billing(self, admin: OperatorContext, org_id: UUID) -> Billing:
+        admin.require(OperatorPermission.READ)
+        await self._org(org_id)
+        log.info("operator %s read billing of org %s", admin.identity_id, org_id)
+        return billing_of(await self._storage.read_account(org_id), utcnow())
+
+    async def comp_plan(self, admin: OperatorContext, org_id: UUID, plan: Plan | None) -> Billing:
+        admin.require(OperatorPermission.WRITE)
+        await self._org(org_id)
+        now = utcnow()
+        account = await self._storage.read_account(org_id)
+        grant = None if plan is Plan.FREE else plan
+        if account is None:
+            account = BillingAccount(
+                id=new_id(),
+                created_at=now,
+                updated_at=now,
+                created_by=admin.identity_id,
+                updated_by=admin.identity_id,
+                comped_plan=grant,
+            )
+            row = self._row(admin, org_id, ACCOUNT_CREATED, account.id)
+            if not await self._storage.create_account(org_id, account, (row,)):
+                # Another write made the account first; the grant goes on it.
+                return await self.comp_plan(admin, org_id, plan)
+        else:
+            account = account.model_copy(
+                update={"comped_plan": grant, "updated_at": now, "updated_by": admin.identity_id}
+            )
+            row = self._row(admin, org_id, ACCOUNT_UPDATED, account.id)
+            await self._storage.write_account(org_id, account, (row,))
+        await self._relay.relay(org_id, row)
+        log.info(
+            "operator %s granted org %s %s",
+            admin.identity_id,
+            org_id,
+            "no plan" if grant is None else grant.value,
+        )
+        return billing_of(account, now)
+
+    async def _org(self, org_id: UUID) -> None:
+        org = await self._tenancy.read_org(org_id)
+        if org is None or org.deleted_at is not None:
+            raise NotFound(f"org {org_id} not found")
+
+    @staticmethod
+    def _row(admin: OperatorContext, org_id: UUID, kind: str, target_id: UUID) -> OutboxRow:
+        """An operator has no user in the tenant, so the row records the
+        operator's identity as its actor, as the tenancy operator plane's do."""
+        return OutboxRow(
+            id=new_id(),
+            created_at=utcnow(),
+            org_id=org_id,
+            kind=kind,
+            target_id=target_id,
+            payload={},
+            actor_id=admin.identity_id,
+            request_id=admin.request_id,
+            app=admin.app.type.value,
+            traceparent=current_traceparent(),
+        )

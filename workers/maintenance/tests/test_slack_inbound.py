@@ -18,6 +18,7 @@ from slack_support import (
     inbound,
     make_task,
     member_of,
+    on_team,
     owner_of,
 )
 
@@ -173,6 +174,7 @@ async def test_add_creates_the_task_in_the_channels_org_alone(tmp_path: Path) ->
     container, twin = build(tmp_path)
     ann = await owner_of(container, "acme")
     zoe = await owner_of(container, "zenith")
+    await on_team(container, zoe)
     await connect(container, twin, ann, "C0ACME")
     await connect(container, twin, zoe, "C0ZENITH")
     typed = command("add Order more coffee", "C0ACME")
@@ -192,6 +194,20 @@ async def test_add_creates_the_task_in_the_channels_org_alone(tmp_path: Path) ->
     assert task.id == derived_id(typed.key, typed.received_at)
     assert task.created_by == ann.user_id, "the member who linked the channel"
     assert twin.responses[-1][1] == "Added: *Order more coffee*"
+
+
+async def test_add_past_the_plans_bound_says_so_and_where_to_upgrade(tmp_path: Path) -> None:
+    container, twin = build(tmp_path)
+    ann = await owner_of(container, "acme")  # a new org is on Free: ten active tasks
+    await connect(container, twin, ann, "C0ACME")
+    for n in range(10):
+        await container.managers.tasks.create_task(ann, make_task(ann, f"task {n}"))
+    await inbound(container, twin).handle(command("add One too many", "C0ACME"))
+    assert twin.responses[-1][1] == (
+        "Not added: the Free plan allows 10 active tasks. Pro lifts it. An owner or an "
+        f"admin can upgrade in Tadas, under <{PORTAL}/settings/billing|Settings, Billing>."
+    )
+    assert await container.managers.tasks.count_active_tasks(ann) == 10
 
 
 async def test_disconnecting_stops_the_channel(tmp_path: Path) -> None:
@@ -303,6 +319,7 @@ async def test_the_list_is_the_open_list_in_its_own_order(tmp_path: Path) -> Non
 async def test_a_long_list_shows_ten_and_counts_the_rest(tmp_path: Path) -> None:
     container, twin = build(tmp_path)
     ann = await owner_of(container, "acme")
+    await on_team(container, ann)
     await connect(container, twin, ann)
     await add_tasks(container, ann, 12)
     answer = await listed(inbound(container, twin), twin, " LIST ")
@@ -347,6 +364,7 @@ async def test_the_list_is_the_channels_org_alone(tmp_path: Path) -> None:
     container, twin = build(tmp_path)
     ann = await owner_of(container, "acme")
     zoe = await owner_of(container, "zenith")
+    await on_team(container, zoe)
     await connect(container, twin, ann, "C0ACME")
     await connect(container, twin, zoe, "C0ZENITH")
     await container.managers.tasks.create_task(ann, make_task(ann, "Acme's own"))

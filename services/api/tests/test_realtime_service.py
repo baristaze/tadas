@@ -6,10 +6,11 @@ from collections.abc import Callable
 from pathlib import Path
 from uuid import UUID
 
-from api_support import OWNER, add_member, build_container, seed_request
+from api_support import OWNER, add_member, build_container, on_plan, seed_request
 
 from tadas.infra.topics import EntityChangedPayload, Topics
 from tadas.om.base import new_id, utcnow
+from tadas.om.billing.types.plan import Plan
 from tadas.om.opcontext import OpContext, Role
 from tadas.services.api.services.realtime import CREDENTIAL_REVOKED, MEMBERSHIP_ENDED
 
@@ -18,6 +19,7 @@ async def test_a_revocation_ends_the_sockets_it_names_and_no_other(tmp_path: Pat
     container = build_container(tmp_path)
     tenancy = container.managers.tenancy
     _, org = await tenancy.bootstrap(seed_request(), "Acme", "acme", OWNER["email"], OWNER["name"])
+    await on_plan(container, org.id, Plan.TEAM)
     bob = await add_member(container, org.id, "bob@example.test", Role.MEMBER)
 
     async def session_of(email: str) -> str:

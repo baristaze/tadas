@@ -1,7 +1,7 @@
 # Events
 
 The org's diary: the append-only stream behind every live push. This
-is one of the six kinds of thing [Tadas is made of](../../../../README.md).
+is one of the seven kinds of thing [Tadas is made of](../../../../README.md).
 
 ## The nouns
 

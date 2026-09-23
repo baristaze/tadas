@@ -2,8 +2,10 @@
 
 **Status**: accepted (2026-09-22), trimmed (2026-09-22): the three
 logins, the operator's second factor and token, the traffic identity
-between runs, and a session's idle lifetime hold now and are gone from
-the list. Each item left names what closes it.
+between runs, a session's idle lifetime, and the enqueue permission that
+covers a handler's calls (`WORK_ENQUEUE_PERMISSIONS`, held by the
+worker's tests since the first user-caused kinds) hold now and
+are gone from the list. Each item left names what closes it.
 
 ## Context
 
@@ -37,9 +39,6 @@ These are deviations, each recorded with its reason and its route back:
 - **Queue and outbox alarms (`OPS-15`).** The work queue and the outbox
   are tables, so they have no metric to alarm on until the worker
   publishes one. TAZ-59.
-- **The enqueue permission covering the handler's calls.** Every handler
-  today is system maintenance, and no user-caused work kind exists yet.
-  TAZ-58 lands with the first one.
 
 ## Consequences
 

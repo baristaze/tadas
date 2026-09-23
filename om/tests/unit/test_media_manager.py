@@ -9,6 +9,7 @@ from uuid import UUID
 import pytest
 from contracts.doubles import Members, context, media_of, no_slack
 from contracts.factories import make_org
+from contracts.plans import ON_TEAM
 
 from tadas.infra.buckets import Buckets
 from tadas.infra.exceptions import UploadRefused
@@ -64,7 +65,13 @@ def tasks(
     media: MediaManagerImpl,
 ) -> TasksManagerImpl:
     return TasksManagerImpl(
-        TasksStorageMemoryImpl(outbox), members, media, relay, no_slack(), TasksOptions()
+        TasksStorageMemoryImpl(outbox),
+        members,
+        media,
+        relay,
+        no_slack(),
+        TasksOptions(),
+        entitlements=ON_TEAM,
     )
 
 
@@ -396,7 +403,13 @@ async def test_a_task_delete_stands_when_its_attachments_cannot_follow(
         MediaOptions(),  # type: ignore[attr-defined]
     )
     tasks = TasksManagerImpl(
-        TasksStorageMemoryImpl(outbox), members, failing, relay, no_slack(), TasksOptions()
+        TasksStorageMemoryImpl(outbox),
+        members,
+        failing,
+        relay,
+        no_slack(),
+        TasksOptions(),
+        entitlements=ON_TEAM,
     )
     ctx = context(Role.MEMBER)
     task = await tasks.create_task(ctx, make_task(ctx))

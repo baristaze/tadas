@@ -1,5 +1,7 @@
 """The in-memory storage root: the default for unit tests and the fast gate."""
 
+from tadas.om.billing.storage import BillingStorageInterface
+from tadas.om.billing.storage.impl.memory import BillingStorageMemoryImpl
 from tadas.om.events.storage import EventStorageInterface
 from tadas.om.events.storage.impl.memory import EventStorageMemoryImpl
 from tadas.om.idempotency.storage import IdempotencyStorageInterface
@@ -31,6 +33,7 @@ class StorageMemoryImpl(StorageInterface):
         self._tasks = TasksStorageMemoryImpl(self._outbox)
         self._media = MediaStorageMemoryImpl(self._outbox)
         self._events = EventStorageMemoryImpl()
+        self._billing = BillingStorageMemoryImpl(self._outbox)
         self._slack = SlackStorageMemoryImpl(self._outbox)
 
     def get_tenancy_storage(self) -> TenancyStorageInterface:
@@ -53,6 +56,9 @@ class StorageMemoryImpl(StorageInterface):
 
     def get_outbox_storage(self) -> OutboxStorageInterface:
         return self._outbox
+
+    def get_billing_storage(self) -> BillingStorageInterface:
+        return self._billing
 
     def get_slack_storage(self) -> SlackStorageInterface:
         return self._slack

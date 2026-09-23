@@ -54,6 +54,11 @@ variable "cors_origins" {
   default     = []
 }
 
+variable "stripe_account_id" {
+  description = "The payment processor's account every call names in Stripe-Context: the sandbox outside production, the live account in it. Not a secret."
+  type        = string
+}
+
 variable "portal_sentry_dsn" {
   description = "The portal's error-reporting DSN (public by design), of the product's one tracker project and the same in every environment; the page tags its events with the environment. Empty turns browser reporting off."
   type        = string

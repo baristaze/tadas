@@ -22,7 +22,8 @@ from tadas.infra.trust import install_trust_store
 from tadas.om.opcontext import AppContext, AppType
 from tadas.om.work.types.work_item import WorkKind
 from tadas.workers.maintenance.container import WorkerContainer
-from tadas.workers.maintenance.handler import NoopHandlerImpl
+from tadas.workers.maintenance.deliveries import DeliveryConsumer, DeliveryOptions
+from tadas.workers.maintenance.handler import NoopHandlerImpl, SyncSeatsHandlerImpl
 from tadas.workers.maintenance.health import Probe, WorkerHttpServer
 from tadas.workers.maintenance.loop import LoopOptions, WorkerLoop
 from tadas.workers.maintenance.reminders import TaskReminderHandlerImpl
@@ -61,10 +62,14 @@ def build_loop(container: WorkerContainer, lane: str | None = None) -> WorkerLoo
             "tenancy": container.managers.tenancy.purge_deleted,
             "idempotency": container.managers.idempotency.purge,
             "events": container.managers.events.purge_expired,
+            "billing": container.managers.billing.purge_deleted,
             "slack": container.managers.slack.purge_deleted,
         },
         handlers={
             WorkKind.NOOP: NoopHandlerImpl(),
+            WorkKind.SYNC_SEATS: SyncSeatsHandlerImpl(
+                container.managers.tenancy, container.managers.billing
+            ),
             WorkKind.TASK_REMINDER: TaskReminderHandlerImpl(container.managers.tasks),
             WorkKind.SLACK_POST: SlackPostHandlerImpl(
                 container.managers.tasks, container.managers.slack, container.slack
@@ -73,6 +78,15 @@ def build_loop(container: WorkerContainer, lane: str | None = None) -> WorkerLoo
         topics=container.infra.get_topics(),
         liveness=container.infra.get_cache(CacheScope.WORKER_LIVENESS),
         options=loop_options(container.settings, lane),
+    )
+
+
+def build_consumer(container: WorkerContainer) -> DeliveryConsumer:
+    return DeliveryConsumer(
+        queues=container.infra.get_queues(),
+        billing=container.managers.billing,
+        tenancy=container.managers.tenancy,
+        options=DeliveryOptions(worker_id=container.settings.worker_id),
     )
 
 
@@ -118,10 +132,12 @@ async def serve(lane: str | None) -> int:
     await container.start()
     loop = build_loop(container, lane)
     inbound = build_inbound(container)
+    consumer = build_consumer(container)
     running = asyncio.get_running_loop()
 
     def stop() -> None:
         inbound.stop()
+        consumer.stop()
         loop.stop()
 
     for sig in (signal.SIGTERM, signal.SIGINT):
@@ -138,7 +154,9 @@ async def serve(lane: str | None) -> int:
     http.start()
     consuming = asyncio.create_task(inbound.run(), name="slack-inbound")
     try:
-        await loop.run()
+        # The claim loop and the processor's deliveries run side by side; a
+        # stop ends both, the loop draining its items first.
+        await asyncio.gather(loop.run(), consumer.run())
     finally:
         consuming.cancel()
         await asyncio.gather(consuming, return_exceptions=True)

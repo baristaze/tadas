@@ -16,7 +16,7 @@ from tadas.services.api.container import AppContainer, boot
 from tadas.services.api.gateway.admission import AdmissionMiddleware
 from tadas.services.api.gateway.errors import register_error_handlers
 from tadas.services.api.gateway.observability import RequestIdMiddleware
-from tadas.services.api.routers import all_routers
+from tadas.services.api.routers import all_routers, webhooks
 from tadas.services.api.settings import ApiSettings
 
 API_PREFIX = "/v1"
@@ -86,6 +86,9 @@ def create_app(container: AppContainer | None = None) -> FastAPI:
     for router in all_routers(settings.namespaces):
         api.include_router(router)
     app.include_router(api)
+    # The processor's deliveries sit outside /v1: their shape is versioned by
+    # the processor, on the endpoint it delivers to.
+    app.include_router(webhooks.router)
 
     @app.get("/healthz", include_in_schema=False)
     async def healthz() -> dict[str, str]:

@@ -239,5 +239,5 @@ async def test_the_namespaces_setting_mounts_the_media_routes_alone(tmp_path: Pa
 
 
 def test_a_namespace_the_image_does_not_host_refuses_the_boot(tmp_path: Path) -> None:
-    with pytest.raises(ValueError, match="billing"):
-        create_app(build_container(tmp_path, namespaces=["media", "billing"]))
+    with pytest.raises(ValueError, match="payroll"):
+        create_app(build_container(tmp_path, namespaces=["media", "payroll"]))

@@ -2,9 +2,11 @@
 hands back the network-layer root the container holds."""
 
 from tadas.infra.root import InfraInterface
+from tadas.integrations.payments import PaymentsInterface
 from tadas.om.root import Managers
 from tadas.services.api.services import (
     AdminServiceInterface,
+    BillingServiceInterface,
     EventsServiceInterface,
     MediaServiceInterface,
     RealtimeServiceInterface,
@@ -12,8 +14,10 @@ from tadas.services.api.services import (
     SlackServiceInterface,
     TasksServiceInterface,
     TenancyServiceInterface,
+    WebhooksServiceInterface,
 )
 from tadas.services.api.services.impl.admin import AdminServiceImpl
+from tadas.services.api.services.impl.billing import BillingServiceImpl, WebhooksServiceImpl
 from tadas.services.api.services.impl.events import EventsServiceImpl
 from tadas.services.api.services.impl.media import MediaServiceImpl
 from tadas.services.api.services.impl.realtime import RealtimeServiceImpl
@@ -31,6 +35,8 @@ class ServicesImpl(ServicesInterface):
         events: EventsServiceInterface,
         media: MediaServiceInterface,
         realtime: RealtimeServiceInterface,
+        billing: BillingServiceInterface,
+        webhooks: WebhooksServiceInterface,
         slack: SlackServiceInterface,
     ) -> None:
         self._tasks = tasks
@@ -39,6 +45,8 @@ class ServicesImpl(ServicesInterface):
         self._events = events
         self._media = media
         self._realtime = realtime
+        self._billing = billing
+        self._webhooks = webhooks
         self._slack = slack
 
     def get_tasks_service(self) -> TasksServiceInterface:
@@ -59,19 +67,34 @@ class ServicesImpl(ServicesInterface):
     def get_realtime_service(self) -> RealtimeServiceInterface:
         return self._realtime
 
+    def get_billing_service(self) -> BillingServiceInterface:
+        return self._billing
+
     def get_slack_service(self) -> SlackServiceInterface:
         return self._slack
 
+    def get_webhooks_service(self) -> WebhooksServiceInterface:
+        return self._webhooks
 
-def build_services(managers: Managers, infra: InfraInterface) -> ServicesInterface:
+
+def build_services(
+    managers: Managers,
+    infra: InfraInterface,
+    payments: PaymentsInterface,
+    portal_origins: list[str],
+) -> ServicesInterface:
     """In-process impls only: the remote impl of each interface is the typed
     Python client, which arrives with the first Python consumer (ADR 0004)."""
     return ServicesImpl(
         tasks=TasksServiceImpl(managers.tasks),
         tenancy=TenancyServiceImpl(managers.tenancy),
-        admin=AdminServiceImpl(managers.tenancy_operator),
+        admin=AdminServiceImpl(managers.tenancy_operator, managers.billing_operator),
         events=EventsServiceImpl(managers.events),
         media=MediaServiceImpl(managers.media),
         realtime=RealtimeServiceImpl(managers.tenancy, managers.events, infra.get_topics()),
+        billing=BillingServiceImpl(
+            managers.billing, managers.tenancy, managers.tasks, managers.media, portal_origins
+        ),
+        webhooks=WebhooksServiceImpl(payments, infra.get_queues()),
         slack=SlackServiceImpl(managers.slack),
     )

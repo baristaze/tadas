@@ -61,6 +61,7 @@ class Permission(StrEnum):
     WRITE = "write"
     MANAGE_MEMBERS = "manage_members"
     MANAGE_KEYS = "manage_keys"
+    MANAGE_BILLING = "manage_billing"
 
 
 class OperatorRole(StrEnum):

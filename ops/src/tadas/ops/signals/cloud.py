@@ -26,6 +26,7 @@ from typing import Any, Protocol, cast
 import aioboto3
 import httpx
 
+from tadas.infra.aws_clients import client_config
 from tadas.ops.signals import ErrorEventFound, SignalsInterface, TraceFound
 from tadas.ops.signals.sentry import find_error_event
 
@@ -41,7 +42,13 @@ METRIC_QUERIES_PER_CALL = 500
 class SessionLike(Protocol):
     """What the impl needs of `aioboto3.Session`; a test hands a fake."""
 
-    def client(self, service_name: str) -> AbstractAsyncContextManager[Any]: ...
+    def client(
+        self, service_name: str, *, config: Any = None
+    ) -> AbstractAsyncContextManager[Any]: ...
+
+
+AWS_TIMEOUT = timedelta(seconds=10)
+"""Connect and read, per call, on every AWS client a reader opens."""
 
 
 def log_group(environment: str) -> str:
@@ -111,7 +118,7 @@ class SignalsCloudImpl(SignalsInterface):
 
     async def log_lines(self, request_id: str) -> list[str]:
         now = self._now()
-        async with self._session.client("logs") as logs:
+        async with self._session.client("logs", config=client_config(AWS_TIMEOUT)) as logs:
             started = await logs.start_query(
                 logGroupName=log_group(self.environment),
                 startTime=int((now - self.lookback).timestamp()),
@@ -143,7 +150,8 @@ class SignalsCloudImpl(SignalsInterface):
         Prometheus reads it), and their sums over the window added up."""
         now = self._now()
         period = max(60, int(((now - since).total_seconds() // 60 + 1) * 60))
-        async with self._session.client("cloudwatch") as cloudwatch:
+        config = client_config(AWS_TIMEOUT)
+        async with self._session.client("cloudwatch", config=config) as cloudwatch:
             series = [
                 dimensions
                 for dimensions in await self._series(cloudwatch, name)
@@ -202,7 +210,7 @@ class SignalsCloudImpl(SignalsInterface):
 
     async def trace(self, request_id: str) -> TraceFound | None:
         now = self._now()
-        async with self._session.client("xray") as xray:
+        async with self._session.client("xray", config=client_config(AWS_TIMEOUT)) as xray:
             summaries = await xray.get_trace_summaries(
                 StartTime=now - self.lookback,
                 EndTime=now,

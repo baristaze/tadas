@@ -28,7 +28,8 @@ uv run tadas listen                           # the team's tasks, reminders amon
 - Dumb client. The CLI never decides; it calls the API through the one
   Python client (`clients/python/`, `tadas.client`) and shows the answer.
   A refusal is printed as the API's own code and message, with the
-  request id.
+  request id. A plan's bound is said in its own words, with who lifts it:
+  an owner or an admin, in the portal, under Settings, Billing.
 - One command, one call, one exit code: 0 done, 1 the API refused, 2
   usage, 3 not signed in, 4 the API is unreachable (any failure of the
   wire: refused, timed out, reset; the API did not decide). A setting the

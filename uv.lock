@@ -1610,6 +1610,19 @@ wheels = [
 ]
 
 [[package]]
+name = "stripe"
+version = "15.6.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "requests" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/1e/a6/02ea2b4e1b57913ae2e68801bf2168120bec97206782a781599339abfd64/stripe-15.6.1.tar.gz", hash = "sha256:9f3986aa960419041aba9c76191746bdf2c342c95892acfbf6edb500ab006d31", size = 1569005, upload-time = "2026-09-01T18:44:41.751Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a9/4b/cd2d7ad83a3f49300cb3cc69ae102de68de792035bf31b0383e1c6563ec3/stripe-15.6.1-py3-none-any.whl", hash = "sha256:b33e1ea76462d7289e5fe755a1132b82099151bfb31e961021655471e6d216bf", size = 2218765, upload-time = "2026-09-01T18:44:39.706Z" },
+]
+
+[[package]]
 name = "tadas-api"
 version = "0.1.0"
 source = { editable = "services/api" }
@@ -1705,6 +1718,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "slack-sdk" },
+    { name = "stripe" },
     { name = "tadas-infra" },
     { name = "workos" },
 ]
@@ -1716,6 +1730,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.13" },
     { name = "pydantic-settings", specifier = ">=2.15" },
     { name = "slack-sdk", specifier = ">=3.36" },
+    { name = "stripe", specifier = "==15.6.1" },
     { name = "tadas-infra", editable = "infra" },
     { name = "workos", specifier = "==10.4.0" },
 ]
@@ -1775,6 +1790,8 @@ dependencies = [
     { name = "httpx" },
     { name = "pyyaml" },
     { name = "tadas-client" },
+    { name = "tadas-infra" },
+    { name = "tadas-integrations" },
 ]
 
 [package.metadata]
@@ -1783,6 +1800,8 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "tadas-client", editable = "clients/python" },
+    { name = "tadas-infra", editable = "infra" },
+    { name = "tadas-integrations", editable = "integrations" },
 ]
 
 [[package]]

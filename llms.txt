@@ -17,12 +17,13 @@ served to it. Exposure is by listing, never by folder.
 - [Files](om/src/tadas/om/media/README.md): files as references, the bounded upload straight to the store, the confirm, the purpose, the storage used, and the sweep
 - [Tasks](om/src/tadas/om/tasks/README.md): the to-do items, the fractional position, the version every write names, and the due time and its one reminder
 - [Slack](om/src/tadas/om/slack/README.md): the one channel an org connects, the one-time link code, and the record of every post
+- [Billing](om/src/tadas/om/billing/README.md): plans, their bounds as levers, the org's account at the payment processor, deliveries applied once, and grants
 - [Events](om/src/tadas/om/events/README.md): the org's diary and its gapless sequence
 - [Work items](om/src/tadas/om/work/README.md): background jobs, the claim, and the lease
 - [Idempotency records](om/src/tadas/om/idempotency/README.md): the outcome of a request that may arrive twice
 - [Outbox rows](om/src/tadas/om/outbox/README.md): the note written beside every change
 - [Infrastructure](infra/README.md): cache, buckets, topics, queues, secrets, observability; what each promises and which twin runs where
-- [Integrations](integrations/README.md): the third-party providers, each an interface, a real client, and a twin: Slack, and the identity provider (WorkOS); the errors a caller decides on
+- [Integrations](integrations/README.md): the third-party providers, each an interface, a real client, and a twin: Slack, and the identity provider (WorkOS), the payment processor (Stripe); the errors a caller decides on
 - [The API process](services/api/README.md): the routes by area, the gateway's guarantees, the subcommands
 - [The maintenance worker](workers/maintenance/README.md): claim, handle, complete; reminders and Slack posts; what Slack sends; the Socket Mode bridge; the sweep; liveness
 - [Deployment](deployment/README.md): the two twins and the branch convention
@@ -35,6 +36,7 @@ served to it. Exposure is by listing, never by folder.
 - [Deploy runbook](docs/runbooks/deploy.md): cutting a release, approving a plan, rolling back
 - [Operate runbook](docs/runbooks/operate.md): reading an environment under the investigate profile
 - [Scale runbook](docs/runbooks/scale.md): the one variable that turns autoscaling on
+- [Stripe runbook](docs/runbooks/stripe.md): the payment processor's account made to match the desired state, the webhook secret, and local deliveries
 - [Support runbook](docs/runbooks/support.md): how a support investigation runs
 - [Tenant isolation runbook](docs/runbooks/tenant-isolation.md): the cross-tenant cases and what they catch
 - [The portal](apps/portal/README.md): the browser app
@@ -50,6 +52,7 @@ served to it. Exposure is by listing, never by folder.
 - [Deploy runbook](docs/runbooks/deploy.md): cutting a release, approving a plan, rolling back
 - [Operate runbook](docs/runbooks/operate.md): reading an environment under the investigate profile
 - [Scale runbook](docs/runbooks/scale.md): the one variable that turns autoscaling on
+- [Stripe runbook](docs/runbooks/stripe.md): the payment processor's account made to match the desired state, the webhook secret, and local deliveries
 - [Support runbook](docs/runbooks/support.md): how a support investigation runs
 - [Tenant isolation runbook](docs/runbooks/tenant-isolation.md): the cross-tenant cases and what they catch
 - [Deployment](deployment/README.md): what runs where, locally and in the cloud, and the branch convention
@@ -62,6 +65,7 @@ served to it. Exposure is by listing, never by folder.
 - [Files](om/src/tadas/om/media/README.md): the files kept with the work, their bounds, and the storage used
 - [Tasks](om/src/tadas/om/tasks/README.md): the to-do items and their rules, due times among them
 - [Slack](om/src/tadas/om/slack/README.md): connecting a Slack channel, what it posts, `/tadas add`, and `/tadas list`
+- [Billing](om/src/tadas/om/billing/README.md): the plans, what each allows, and how an org pays
 - [Events](om/src/tadas/om/events/README.md): the org's diary
 - [Work items](om/src/tadas/om/work/README.md): background jobs
 - [Idempotency records](om/src/tadas/om/idempotency/README.md): why a repeated request does one thing

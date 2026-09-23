@@ -203,10 +203,19 @@ context on keeps the stage the callee needs.
   tenancy managers). Every read of the users one identity is asks for
   one past the bound; an add or an org create past it is
   `MembershipLimitReached` (409), and a read that still finds more (two
-  adds that raced) is refused the same way, never cut short.
+  adds that raced) is refused the same way, never cut short. The plan
+  bounds the rest: `create_api_key` is refused on a plan without keys,
+  and an api key of such an org authenticates to the same 402 rather
+  than a 401, kept and never revoked; the operator plane's add asks
+  `refuse_past` for a seat through `add_member_to`'s admission hook,
+  which also answers the `work.SYNC_SEATS` row a per-seat plan's add
+  rides, and `remove_member` lands that row beside its own. The seed's
+  add is not bound by seats. Owners and admins hold `manage_billing`.
 - `work`: the table-backed work queue in the `queue` role; a row's
   routing field is its `lane`, payload shapes are fixed per `WorkKind`
-  by `WORK_PAYLOADS`. Enqueue is a create: it validates the payload, and
+  by `WORK_PAYLOADS`, and the permission each kind is asked for with by
+  `WORK_ENQUEUE_PERMISSIONS`, which the worker's tests hold to every
+  handler's `REQUIRES`. The kinds are `NOOP` and `SYNC_SEATS`. Enqueue is a create: it validates the payload, and
   the manager's copy stamps the actor from the context, the timestamps,
   status `QUEUED`, zero attempts, and clears every claim field whatever
   the caller sent; the insert reports an existing id and changes nothing,
@@ -243,7 +252,10 @@ context on keeps the stage the callee needs.
   cursor, `OpenTaskCursor` over (position, id) for the open list and
   `TaskCursor` over (updated_at, id) for the done one, all passed
   unchanged from the manager to storage; the visibility, cursor, and
-  placement rules are pure functions in `tasks.rules`, which the memory
+  placement rules are pure functions in `tasks.rules`, the active-task
+  bound is the plan's (`count_open_tasks`, asked before a create and a
+  reopen, a read then a write, so a race at the bound can overshoot by
+  the racers), which the memory
   impl calls and the Postgres impl mirrors in SQL. A placement reads one
   open place, bounded in the statement: the top one for a task created
   or reopened, the one that follows the anchor for a move
@@ -331,6 +343,33 @@ context on keeps the stage the callee needs.
   announcement, so a moved, cleared, finished, or already reminded due
   time writes nothing and announces nothing.
 
+- `billing`: an org's plan and its account at the payment processor
+  ([ADR 0031](adr/0031-plans-are-levers-and-the-processor-is-mirrored.md)).
+  `BillingAccount` (one per org, the org its unique key, every field
+  manager-owned) mirrors the subscription: the customer, the
+  subscription, the price's lookup key, the status, the period's end,
+  cancel at period end, the quantity, and a plan an operator granted.
+  `billing.rules` is the one table of what each plan entitles an org to
+  (`PLAN_LIMITS`: members, api keys, active tasks, storage) and costs
+  (`PLAN_PRICES`, Max's volume tiers mirrored by `monthly_price_cents`),
+  and derives the plan from the mirror: a live status carries its plan,
+  a subscription set to end carries it until the period's end, and a
+  grant is a second source, the higher winning. `refuse_past` is the
+  lever: it raises `PlanLimitReached`, a 402 carrying the lever, the
+  plan, the bound, and the plan that lifts it. The tasks and tenancy
+  managers hold `EntitlementsInterface` alone; the billing manager reads
+  the processor through `PaymentsInterface` (see Integrations) and
+  writes the account only from what it answers. `apply_delivery`
+  re-reads the subscription for every delivery, copies it when the
+  account follows it or it is live (`should_mirror`), and lands the
+  delivery's mark (`BillingDelivery`, its id the delivery's UUID v5) in
+  the account's commit, so a copy changes nothing and deliveries out of
+  order converge. `org_of_delivery` is the request-stage lookup of the
+  org a delivery names; `sync_seats` holds a Max subscription's
+  quantity to the member count. The operator plane is
+  `BillingOperatorManagerInterface`: read an org's plan, grant one.
+  Both tables are `core` and `org`-scoped. The marks are purged after
+  thirty days; a tenant past its retention loses its account too.
 - `slack`: the org's one Slack connection (`SlackConnection`: the
   workspace and channel, who linked it, and `status`, `ok` or `broken`
   with the refusal that broke it), the one-time link codes
@@ -459,6 +498,8 @@ context on keeps the stage the callee needs.
   beside it. A kind whose payload is a `ScheduledPayload` names
   `not_before`, and the relayed enqueue makes the item available then,
   so a reminder a week out waits in the queue and no timer holds it.
+  A member added or removed on Max lands a `work.SYNC_SEATS` row beside
+  its change the same way.
   Tadas relays in the request path, the step the guideline names as the
   one a system takes when push latency earns it, and pays the round
   trips it names for a push that arrives in milliseconds; the sweep
@@ -698,6 +739,28 @@ backoff that grows with consecutive failures.
 `InfraConfiguredImpl` picks impls from settings; `InfraLocalImpl` runs
 everything in-process for tests.
 
+## Integrations (`integrations/`)
+
+The `tadas-integrations` distribution holds the providers the platform
+cannot conjure, each an interface with a real client and a deterministic
+twin; it imports infra and nothing from the object model, and its
+exceptions hang under infra's root. Payments is the first:
+`PaymentsInterface` (a customer per org, a checkout, the processor's
+portal, cancel at period end, the seat count, a read of a subscription,
+and `verify_delivery`), `PaymentsStripeImpl` over the Stripe SDK (one
+client opened at start, `Stripe-Context` naming the account and a pinned
+`Stripe-Version` on every call, a timeout on its transport, errors
+translated to `PaymentsRefused`, `BackendUnreachable`, or
+`BackendFailed`), and `PaymentsTwinImpl`, which keeps customers and
+subscriptions in memory and signs its own deliveries with the
+processor's scheme, which the SDK's own check verifies. `build_payments`
+refuses the twin outside local and test and a key whose mode is not the
+environment's (production live, everything else test), and with no key
+answers `billing_unavailable` (503) to every call.
+`PaymentsCatalogInterface` is the bootstrap's view of the same account:
+products, prices by lookup key, webhook endpoints, and the portal's
+configuration.
+
 ## Processes
 
 - `services/api` (`tadas-api`): the one API process. It mounts the
@@ -712,7 +775,14 @@ everything in-process for tests.
   admission, edge idempotency), routers for tenancy, tasks, media, and
   the operator plane
   under `/v1/admin/*`, health, readiness, and metrics outside `/v1`, and the
-  realtime channel at `/v1/realtime` opened with a single-use ticket.
+  realtime channel at `/v1/realtime` opened with a single-use ticket,
+  billing under `/v1/billing`, and the payment processor's deliveries at
+  `/webhooks/stripe`, outside `/v1`: the gateway reads the body and the
+  `Stripe-Signature` header, the service checks the signature and its
+  five-minute window before anything is queued, and queues the delivery
+  on `webhooks` under a UUID v5 of the event id. A `plan_limit_reached`
+  envelope carries `plan_limit`, and the edge's idempotency marker is
+  released on a 402 as on a 429.
   The client address is the peer's, or the one `X-Forwarded-For` names
   when the peer is one of `TADAS_TRUSTED_PROXIES` (empty locally; the
   VPC block in the cloud, where the load balancer lives; each entry is
@@ -846,8 +916,13 @@ everything in-process for tests.
   `tadas-api serve | migrate | bootstrap | add-member | openapi`
   (`bootstrap` and `add-member` are what `make seed` runs; both produce
   the context the seeding then runs under).
-- `workers/maintenance` (`tadas-maintenance`): the claim loop for the
-  kinds `TASK_REMINDER`, `SLACK_POST`, and `NOOP` on one lane
+- `workers/maintenance` (`tadas-maintenance`): beside the claim loop, a
+  delivery consumer that long-polls the `webhooks` queue, finds the org a
+  delivery names, and applies it under that org's service context,
+  deleting the message once applied or when it never can be and leaving
+  any other failure to its visibility and the queue's dead letter; the
+  claim loop for the kinds `TASK_REMINDER`, `SLACK_POST`, `SYNC_SEATS`,
+  and `NOOP` on one lane
   (`TADAS_WORKER_LANE`, or `serve --lane`); a handler that raises
   `WorkParked` has its item deferred for the time it names, no attempt
   spent, and a Slack rate limit is that case; lease
@@ -1116,7 +1191,12 @@ everything in-process for tests.
   secret is per environment because a secret is per account, but the DSN
   in it is one project's: there is one tracker project for the product,
   and the environment on each event is what separates them, so a read of
-  it filters on `environment:<env>`. The
+  it filters on `environment:<env>`. The payment processor's key and the
+  signing secret of its endpoint are `<prefix>stripe_org_key` and
+  `<prefix>stripe_webhook_secret`, injected into the API and the worker
+  the same way and "off" until set (`tadas-ops stripe-bootstrap` writes
+  the second), and each root commits its `stripe_account_id`: the
+  sandbox for staging, the live account for production. The
   module README explains state and credentials.
 - `.github/workflows/ci.yml`: the fast gate, the integration job (which
   runs `make migrate-check` right after `make migrate`), an image build

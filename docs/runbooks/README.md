@@ -27,6 +27,10 @@ touches and the ADR that explains why it is shaped that way.
   restore as break-glass to a new instance, the rehearsal and its
   record, and relaying the outbox again when one role comes back
   earlier than the others.
+- [stripe.md](stripe.md): making the payment processor's account
+  match the committed desired state per environment, where the webhook
+  endpoint's signing secret lives, rolling it, and forwarding
+  deliveries to a laptop with `stripe listen`.
 - [support.md](support.md): how a support investigation runs: a
   tenant names a problem, the supporter takes the org id, runs
   `ops-root-cause`, what it reads and in which order, and what is

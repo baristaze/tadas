@@ -75,3 +75,15 @@ output "operator_tokens_policy_arn" {
   description = "PutSecretValue on the two token secrets and nothing else; the grant task's role alone carries it."
   value       = aws_iam_policy.operator_tokens.arn
 }
+
+output "stripe_org_key_secret_arn" {
+  description = "Injected into the API and the worker as TADAS_STRIPE_ORG_KEY; \"off\" until set, which leaves billing unconfigured."
+  value       = aws_secretsmanager_secret.stripe["stripe_org_key"].arn
+  depends_on  = [aws_secretsmanager_secret_version.stripe]
+}
+
+output "stripe_webhook_secret_arn" {
+  description = "Injected into the API as TADAS_STRIPE_WEBHOOK_SECRET; written by the Stripe bootstrap when it registers the endpoint."
+  value       = aws_secretsmanager_secret.stripe["stripe_webhook_secret"].arn
+  depends_on  = [aws_secretsmanager_secret_version.stripe]
+}
