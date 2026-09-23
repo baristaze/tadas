@@ -57,6 +57,31 @@ def engine_for(url: str, pool: RolePool) -> AsyncEngine:
     )
 
 
+def login_sessions(
+    urls: Mapping[DatabaseRole, str],
+    pools: Mapping[DatabaseRole, RolePool],
+    *,
+    system_urls: Mapping[DatabaseRole, str],
+) -> tuple[LoginSessions, dict[tuple[str, RolePool], AsyncEngine]]:
+    """The session factories of both logins, and the engines behind them keyed
+    by URL and bounds so the caller can dispose of them. This is the one way a
+    pool is opened: the storage root builds its sessions here, and so do the
+    integration suites, which then run every case under the bounds a deployed
+    process holds and not under a library's defaults."""
+    engines: dict[tuple[str, RolePool], AsyncEngine] = {}
+
+    def factories(by_role: Mapping[DatabaseRole, str]) -> dict[DatabaseRole, SessionFactory]:
+        found: dict[DatabaseRole, SessionFactory] = {}
+        for role in DatabaseRole:
+            key = (by_role[role], pools[role])
+            if key not in engines:
+                engines[key] = engine_for(*key)
+            found[role] = async_sessionmaker(engines[key], expire_on_commit=False)
+        return found
+
+    return LoginSessions(factories(urls), factories(system_urls)), engines
+
+
 class StoragePostgresImpl(StorageInterface):
     def __init__(
         self,
@@ -75,18 +100,7 @@ class StoragePostgresImpl(StorageInterface):
         `system_urls` are the same roles under the system login. They name
         another login, so they open pools of their own under the same bounds,
         and only the system scope draws on them."""
-        engines: dict[tuple[str, RolePool], AsyncEngine] = {}
-
-        def factories(by_role: Mapping[DatabaseRole, str]) -> dict[DatabaseRole, SessionFactory]:
-            found: dict[DatabaseRole, SessionFactory] = {}
-            for role in DatabaseRole:
-                key = (by_role[role], pools[role])
-                if key not in engines:
-                    engines[key] = engine_for(*key)
-                found[role] = async_sessionmaker(engines[key], expire_on_commit=False)
-            return found
-
-        sessions = LoginSessions(factories(urls), factories(system_urls))
+        sessions, engines = login_sessions(urls, pools, system_urls=system_urls)
         self._engines = engines
         self._sessions = sessions
         self._tenancy = TenancyStoragePostgresImpl(sessions)
