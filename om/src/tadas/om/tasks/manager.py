@@ -4,6 +4,8 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from uuid import UUID
 
+from tadas.om.media.types.file import File
+from tadas.om.media.types.page import FilePage
 from tadas.om.opcontext import OpContext
 from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor, TaskFilter
 from tadas.om.tasks.types.page import TaskPage
@@ -60,7 +62,29 @@ class TasksManagerInterface(ABC):
     async def delete_task(self, ctx: OpContext, task_id: UUID, expected_version: int) -> Task:
         """The soft delete. `expected_version` is the one the caller read, as
         on `update_task`: a delete that raced an edit is refused, and an edit
-        that raced a delete finds the task gone and cannot bring it back."""
+        that raced a delete finds the task gone and cannot bring it back. The
+        task's attachments are soft-deleted after it, in their own writes."""
+        ...
+
+    @abstractmethod
+    async def attach_file(self, ctx: OpContext, task_id: UUID, file: File) -> File:
+        """Starts an upload of a file to a live task: the media namespace lands
+        it pending, as a task attachment whose subject is the task, whatever
+        purpose and subject the caller's file names. The bytes and the confirm
+        go through the media namespace."""
+        ...
+
+    @abstractmethod
+    async def get_attachments(
+        self, ctx: OpContext, task_id: UUID, after: UUID | None, limit: int
+    ) -> FilePage:
+        """One page of a live task's stored attachments, oldest first."""
+        ...
+
+    @abstractmethod
+    async def remove_attachment(self, ctx: OpContext, task_id: UUID, file_id: UUID) -> File:
+        """Soft-deletes one attachment of a live task. A file that is not this
+        task's attachment is `NotFound`, as one that never existed is."""
         ...
 
     @abstractmethod

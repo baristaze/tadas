@@ -8,7 +8,7 @@ from collections.abc import Callable, Sequence
 from datetime import datetime, timedelta, tzinfo
 from uuid import UUID
 
-from tadas.client.types import MembershipChoiceView, OrgKind, TaskStatus, TaskView
+from tadas.client.types import FileView, MembershipChoiceView, OrgKind, TaskStatus, TaskView
 
 SHORT_ID = 8
 NameOf = Callable[[UUID | None], str]
@@ -38,6 +38,35 @@ def resolve(reference: str, tasks: Sequence[TaskView]) -> TaskView:
         raise LookupError(f"no task matches {reference!r}")
     listed = ", ".join(short_id(t.id) for t in matches[:5])
     raise LookupError(f"{reference!r} matches more than one task ({listed}); give more of the id")
+
+
+def human_size(size_bytes: int) -> str:
+    """Bytes as a person reads them: B under a kilobyte, then KB and MB with
+    one decimal, powers of 1024."""
+    if size_bytes < 1024:
+        return f"{size_bytes} B"
+    if size_bytes < 1024 * 1024:
+        return f"{size_bytes / 1024:.1f} KB"
+    return f"{size_bytes / (1024 * 1024):.1f} MB"
+
+
+def attachment_table(files: Sequence[FileView]) -> str:
+    header = f"{'ID':<{SHORT_ID}}  {'SIZE':>9}  {'TYPE':<24}  NAME"
+    lines = [
+        f"{short_id(f.id)}  {human_size(f.size_bytes):>9}  {f.content_type[:24]:<24}  {f.name}"
+        for f in files
+    ]
+    return "\n".join([header, *lines])
+
+
+def resolve_file(reference: str, files: Sequence[FileView]) -> FileView:
+    """A full id or a unique tail of one, over a task's attachments."""
+    matches = [f for f in files if str(f.id).endswith(reference.lower())]
+    if len(matches) == 1:
+        return matches[0]
+    if not matches:
+        raise LookupError(f"no attachment matches {reference!r}")
+    raise LookupError(f"{reference!r} matches more than one attachment; give more of the id")
 
 
 def task_line(task: TaskView, name_of: NameOf) -> str:

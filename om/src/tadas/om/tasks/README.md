@@ -15,6 +15,7 @@ six kinds of thing [Tadas is made of](../../../../README.md).
   right after it. The open list pages by position, the done list by the
   time of the last change.
 - **Page**: the tasks of one page and whether another page follows.
+- **Attachment**: a [file](../media/README.md) kept with a task.
 
 ## What can happen
 
@@ -26,7 +27,10 @@ six kinds of thing [Tadas is made of](../../../../README.md).
 - **Edit**: the title, the notes, the assignee, the status. A task
   reopened from done goes back to the top of the open list.
 - **Move** an open task right after another one, or to the top.
-- **Delete.** The task is hidden, not erased.
+- **Delete.** The task is hidden, not erased. Its attachments are
+  removed with it.
+- **Attach a file**, list a task's files, and remove one. The upload
+  itself, its confirm, and its download are the file's own.
 - **Set, move, or clear the due time.** Setting it schedules one
   reminder at that time; moving it schedules a new one; clearing it
   schedules none.
@@ -64,6 +68,13 @@ six kinds of thing [Tadas is made of](../../../../README.md).
   clearing the assignee is always allowed.
 - **Mine is about nobody else.** The person the *mine* filter is about
   is always the caller.
+- **A file is attached to a live task.** A deleted task, or another
+  org's, takes no file and lists none; a file is removed only from the
+  task it is attached to.
+- **A task's delete does not wait on its files.** The task is deleted
+  first and its attachments after it; when removing them fails, the
+  delete still stands, the failure is logged and counted, and the files
+  stay out of every list while still counting toward the storage used.
 - **A reminder is for the due time it was set for.** It goes out only
   while the task is open, not deleted, still due at that time, and not
   yet reminded, all checked in one write. So a reminder for a time that

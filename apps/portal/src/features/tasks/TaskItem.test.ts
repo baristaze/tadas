@@ -6,6 +6,10 @@ import type { TaskView } from "../../api";
 import { TaskItem } from "./TaskItem";
 import { taskRow } from "./tasksModel";
 
+// The attachments panel reads its own queries; this case is about the draft.
+vi.mock("../attachments/Attachments", () => ({
+  Attachments: ({ canWrite }: { canWrite: boolean }) => createElement("aside", { "data-can-write": String(canWrite) }),
+}));
 vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
 const container = document.createElement("div");
 document.body.append(container);
@@ -98,6 +102,27 @@ it("leads with the drag handle, keeps one line, and names the creator without a 
   expect(pills).toContain("for you");
   await act(async () => title!.dispatchEvent(new MouseEvent("dblclick", { bubbles: true })));
   expect(onEdit).toHaveBeenCalledOnce();
+});
+
+it("lets someone who cannot write open a task's files, read-only, with no edit form", async () => {
+  const task: TaskView = {
+    id: "t1", title: "Read only", notes: "", status: "open", assignee_id: null,
+    position: 0, version: 1, created_by: "u1", deleted_at: null,
+    created_at: "2026-09-20T10:00:00Z", updated_at: "2026-09-20T10:00:00Z",
+  };
+  await act(async () => {
+    root.render(createElement(TaskItem, {
+      task, row: taskRow(task, new Map(), "u1"), leaving: false,
+      listMountedAt: Date.now(), canWrite: false, editing: false, saving: false,
+      assigneeOptions: [],
+      onToggle: vi.fn(), onEdit: vi.fn(), onCancelEdit: vi.fn(), onDelete: vi.fn(), onSave: vi.fn(),
+    }));
+  });
+  expect(container.querySelector("aside")).toBeNull();
+  const files = [...container.querySelectorAll("button")].find((b) => b.textContent === "files")!;
+  await act(async () => files.click());
+  expect(container.querySelector("aside")!.dataset.canWrite).toBe("false");
+  expect(container.querySelector("form")).toBeNull();
 });
 
 it("shows the due time on the row and sends a changed or cleared one from the edit", async () => {

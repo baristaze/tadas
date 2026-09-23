@@ -23,6 +23,7 @@ import pkgutil
 from contracts import (
     event_storage,
     idempotency_storage,
+    media_storage,
     outbox_storage,
     slack_storage,
     task_storage,
@@ -70,6 +71,7 @@ STORAGE_EXCEPTIONS: frozenset[tuple[str, str]] = frozenset(
 CROSS_TENANT_CASES: dict[str, frozenset[str]] = {
     "EventStorageInterface": event_storage.CROSS_TENANT_CASES,
     "IdempotencyStorageInterface": idempotency_storage.CROSS_TENANT_CASES,
+    "MediaStorageInterface": media_storage.CROSS_TENANT_CASES,
     "OutboxStorageInterface": outbox_storage.CROSS_TENANT_CASES,
     "SlackStorageInterface": slack_storage.CROSS_TENANT_CASES,
     "TasksStorageInterface": task_storage.CROSS_TENANT_CASES,

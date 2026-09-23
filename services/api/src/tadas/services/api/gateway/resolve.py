@@ -11,6 +11,7 @@ from starlette.requests import HTTPConnection
 from tadas.services.api.services import (
     AdminServiceInterface,
     EventsServiceInterface,
+    MediaServiceInterface,
     RealtimeServiceInterface,
     ServicesInterface,
     SlackServiceInterface,
@@ -46,6 +47,10 @@ def events_service(connection: HTTPConnection) -> EventsServiceInterface:
     return services_of(connection).get_events_service()
 
 
+def media_service(connection: HTTPConnection) -> MediaServiceInterface:
+    return services_of(connection).get_media_service()
+
+
 def realtime_service(connection: HTTPConnection) -> RealtimeServiceInterface:
     return services_of(connection).get_realtime_service()
 
@@ -58,5 +63,6 @@ TasksService = Annotated[TasksServiceInterface, Depends(tasks_service)]
 TenancyService = Annotated[TenancyServiceInterface, Depends(tenancy_service)]
 AdminService = Annotated[AdminServiceInterface, Depends(admin_service)]
 EventsService = Annotated[EventsServiceInterface, Depends(events_service)]
+MediaService = Annotated[MediaServiceInterface, Depends(media_service)]
 RealtimeService = Annotated[RealtimeServiceInterface, Depends(realtime_service)]
 SlackService = Annotated[SlackServiceInterface, Depends(slack_service)]

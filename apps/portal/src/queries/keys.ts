@@ -19,6 +19,16 @@ export const keys = {
     all: ["api_key"] as const,
     list: (limit: number) => ["api_key", "list", limit] as const,
   },
+  // Files: a task's attachments and the org's usage, both refreshed by a
+  // `media.file.*` push, since the entity is `file`.
+  files: {
+    all: ["file"] as const,
+    ofTask: (taskId: string) => ["file", "task", taskId] as const,
+    usage: ["file", "usage"] as const,
+    // Outside "file": a file's bytes never change, so a push about the list
+    // has no reason to sign its previews again.
+    preview: (fileId: string) => ["file_preview", fileId] as const,
+  },
   // A `tenancy.invitation.*` push invalidates these by convention.
   invitations: {
     all: ["invitation"] as const,

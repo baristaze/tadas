@@ -102,7 +102,14 @@ class BucketsLocalImpl(BucketsInterface):
         await asyncio.to_thread(remove)
 
     async def presign_get(
-        self, org_id: UUID, bucket: Buckets, key: str, ttl: timedelta
+        self,
+        org_id: UUID,
+        bucket: Buckets,
+        key: str,
+        ttl: timedelta,
+        *,
+        content_type: str | None = None,
+        content_disposition: str | None = None,
     ) -> str | None:
         return None
 
