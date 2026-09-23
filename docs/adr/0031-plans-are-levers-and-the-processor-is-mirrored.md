@@ -63,8 +63,9 @@ context a seeding transition produces, so no route reaches it; the
 operator plane's grant is the one a deployed environment has. Every
 other door is bound by seats: an invitation is refused before anything
 is sent to the identity provider, its acceptance asks again (a seat can
-be taken between the two), a join through the org's single sign-on
-takes a seat, and so does the operator plane's add.
+be taken between the two; without one the invitation stays pending and
+the sign-in goes on), a join through the org's single sign-on takes a
+seat, and so does the operator plane's add.
 
 **The Max quantity follows the members through the queue.** A member added
 or removed on Max lands a second outbox row, `work.SYNC_SEATS`, in the

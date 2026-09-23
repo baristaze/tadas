@@ -39,6 +39,7 @@ from tadas.om.exceptions import (
     NotAuthorized,
     NotFound,
     PersonalOrgFixed,
+    PlanLimitReached,
     SecondFactorRequired,
     SignInDelayed,
     SignInPending,
@@ -548,7 +549,10 @@ class TenancyManagerImpl(TenancyManagerInterface):
             elif signed_in.via_sso and org.kind is OrgKind.TEAM:
                 if sso_joins(identity.email, provided.verified_domains):
                     await self._join(rctx, org, identity, signed_in, Role.MEMBER, org.created_by)
-        except MembershipLimitReached as error:
+        except (MembershipLimitReached, PlanLimitReached) as error:
+            # A person over their own bound of orgs, or an org whose plan has
+            # no seat left: the invitation stays pending, and the sign-in
+            # goes on into the places the person has.
             log.warning("sign-in into org %s joined nothing: %s", org.id, error.message)
 
     async def _org_of(self, provided: ProvidedOrganization) -> Org | None:

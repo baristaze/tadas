@@ -120,7 +120,9 @@ of the seven kinds of thing [Tadas is made of](../../../../README.md).
   The seeding is the platform arranging a laptop, not a tenant adding
   someone, so it is not bound by the org's seats, and it grants the
   seeded team Team. An invitation, and a join through the org's single
-  sign-on, take a seat like any other door.
+  sign-on, take a seat like any other door: an invitation past the seats
+  is refused before it is sent, and one accepted when the seats have
+  filled meanwhile stays pending while the sign-in goes on.
 - **Operate across orgs.** An operator, admitted from the allowlist,
   can create an org with its owner, add a member (bound by the org's
   seats like any other door), read an org, its
