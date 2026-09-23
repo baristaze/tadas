@@ -34,7 +34,7 @@ from collections.abc import Sequence
 from PIL import Image, ImageDraw, ImageFont
 
 from tadas.client.client import ApiClient
-from tadas.client.types import TaskScope, TaskStatus
+from tadas.client.types import OrgKind, TaskScope, TaskStatus
 
 WIDTH, HEIGHT = 420, 330  # each pane in the GIF; the two match the portal GIF's width
 SCALE = 2  # render at twice the size, then downscale, for crisp text
@@ -76,10 +76,11 @@ class Api:
         return ApiClient(self.base, app="cli", app_version="cli@demo", token=token)
 
     async def token(self, email: str, password: str) -> str:
-        """A session token for the person's first org, what `tadas login` would keep."""
+        """A session token for the person's team org, what `tadas login --org`
+        would keep; every person also has a personal org."""
         async with self._client() as client:
             login = await client.login(email, password)
-            org = login.memberships[0].org
+            org = next(m.org for m in login.memberships if m.org.kind is OrgKind.team)
             issued = await client.exchange_session(login.token, org.id)
         return issued.token
 
