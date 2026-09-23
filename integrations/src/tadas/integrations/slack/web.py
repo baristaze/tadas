@@ -63,9 +63,12 @@ class SlackWebImpl(SlackInterface):
 
     async def _call(self, method: str, **params: Any) -> Any:
         """One Web API call, its refusals translated into the errors a caller
-        decides on; the token never appears in what is raised or logged."""
+        decides on; the token never appears in what is raised or logged. A
+        client used before start() is a programming error, raised as one and
+        never as a failure a retry could fix."""
+        web = self._web()
         try:
-            return await self._web().api_call(method, json=params)
+            return await web.api_call(method, json=params)
         except SlackApiError as error:
             response = error.response
             code = str(response.get("error") or f"http_{response.status_code}")
