@@ -1,7 +1,8 @@
 // Preferences only the UI knows about, kept across visits: which task list
-// the person looked at last. Local storage is the right place for a
+// the person looked at last, and the theme they picked (or the system's). Local storage is the right place for a
 // preference; the session token is the one thing that never goes there.
 import type { TaskScope } from "../api";
+import { parseTheme, type ThemePreference } from "../app/themeModel";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
@@ -13,6 +14,8 @@ export const LEGACY_SCOPE_KEY = "tadas.portal.taskScope";
 interface PreferencesState {
   taskScope: TaskScope;
   setTaskScope: (scope: TaskScope) => void;
+  theme: ThemePreference;
+  setTheme: (theme: ThemePreference) => void;
 }
 
 /** Pure: the scope an earlier build left as a bare word, and nothing else. */
@@ -39,7 +42,17 @@ export const usePreferencesStore = create<PreferencesState>()(
     (set) => ({
       taskScope: adopted ?? "mine",
       setTaskScope: (taskScope) => set({ taskScope }),
+      theme: "system",
+      setTheme: (theme) => set({ theme }),
     }),
-    { name: PREFERENCES_STORAGE_KEY, storage: createJSONStorage(() => localStorage) },
+    {
+      name: PREFERENCES_STORAGE_KEY,
+      storage: createJSONStorage(() => localStorage),
+      // A theme the stored state does not name, or names wrongly, is the system's.
+      merge: (stored, current) => {
+        const kept = (stored ?? {}) as Partial<PreferencesState>;
+        return { ...current, ...kept, theme: parseTheme(kept.theme) };
+      },
+    },
   ),
 );
