@@ -16,11 +16,12 @@ import httpx
 import pytest
 import uvicorn
 import websockets
-from api_support import OWNER, build_container, seed_request, sign_in_as
+from api_support import OWNER, build_container, on_plan, seed_request, sign_in_as
 from websockets.exceptions import ConnectionClosed
 
 from tadas.infra.topics import EntityChangedPayload, Topics
 from tadas.om.base import new_id, utcnow
+from tadas.om.billing.types.plan import Plan
 from tadas.om.tenancy.types.org import Org
 from tadas.services.api.app import create_app
 from tadas.services.api.container import AppContainer
@@ -58,6 +59,7 @@ async def serving(container: AppContainer) -> AsyncIterator[Serving]:
     _, org = await container.managers.tenancy.bootstrap(
         seed_request(), "Acme", "acme", OWNER["email"], OWNER["password"], OWNER["name"]
     )
+    await on_plan(container, org.id, Plan.TEAM)
     port = free_port()
     settings = ApiSettings.model_validate({"_env_file": None, "environment": "test"})
     config = uvicorn.Config(
