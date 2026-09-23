@@ -2,9 +2,10 @@
 person with their personal org, an org with its owner, and a member of an
 org. The seeding commands (`bootstrap`, `add-member`) reach them through the
 tenant manager's transitions, under a request stage; the operator plane
-reaches them through the operator manager, under an operator; a sign-up
-reaches the first one with a person nobody has seen before, and a signed-in
-person reaches the second one for a team org of their own. Every path builds
+reaches them through the operator manager, under an operator; a first
+sign-in reaches the first one with a person nobody has seen before, an
+accepted invitation reaches the third, and a signed-in person reaches the
+second one for a team org of their own. Every path builds
 the same rows and lands them in the same named atomic write, so a tenant
 seeded from the command line, one created over the operator API, and one a
 person made are indistinguishable afterwards. Nothing here constructs a stage
@@ -33,13 +34,13 @@ from tadas.om.tenancy.rules import (
     SLUG_SUFFIX_LENGTH,
     check_email,
     email_digest,
-    hash_password,
     is_platform_email,
     personal_org_name,
     slug_from_name,
 )
 from tadas.om.tenancy.storage import TenancyStorageInterface
 from tadas.om.tenancy.types.identity import Identity
+from tadas.om.tenancy.types.invitation import Invitation
 from tadas.om.tenancy.types.issued import OrgMembership
 from tadas.om.tenancy.types.membership import Membership
 from tadas.om.tenancy.types.org import Org, OrgKind
@@ -98,7 +99,6 @@ create of a tenant lands together."""
 async def identity_for(
     storage: TenancyStorageInterface,
     email: str,
-    password: str,
     display_name: str,
     operator_role: OperatorRole | None,
     now: datetime,
@@ -106,14 +106,14 @@ async def identity_for(
     """The identity as it should read once the create lands, the row to write
     beside the create when it changed, and the personal org to land with it:
     a new identity comes with its personal org, and an existing one promoted
-    to the operator role asked for comes alone. An existing identity keeps its
-    password, and a role is never narrowed. Nothing is written here; it all
-    lands in the create, so a create refused meanwhile leaves no identity
-    carrying this attempt's password or role, and a retry with another
-    password is not kept out."""
+    to the operator role asked for comes alone. A new identity holds no
+    credential: the person signs in through the identity provider with the
+    address, which links them then. A role is never narrowed. Nothing is
+    written here; it all lands in the create, so a create refused meanwhile
+    leaves no identity carrying this attempt's role."""
     if is_platform_email(email):
-        # The provisioner and the smoke identity are the grant job's to make,
-        # with no password anyone knows; no create names one.
+        # The provisioner and the smoke identity are the grant job's to make;
+        # no create names one.
         raise ValidationFailed("that address belongs to the platform")
     identity = await storage.read_identity_by_email_digest(email_digest(email))
     if identity is None:
@@ -121,7 +121,7 @@ async def identity_for(
             check_email(email)
         except ValueError as error:
             raise ValidationFailed(str(error)) from None
-        identity = new_identity(email, hash_password(password, secrets.token_bytes(16)), now)
+        identity = new_identity(email, now)
         if operator_role is not None:
             identity = identity.model_copy(update={"operator_role": operator_role})
         return identity, identity, personal_rows(identity, display_name, now)
@@ -133,9 +133,13 @@ async def identity_for(
     return identity, None, None
 
 
-def new_identity(email: str, password_hash: str, now: datetime) -> Identity:
-    """A person nobody has seen before, as a sign-up makes one: the provenance
-    names the identity itself, since no one else acted."""
+def new_identity(
+    email: str, now: datetime, *, issuer: str | None = None, subject: str | None = None
+) -> Identity:
+    """A person nobody has seen before: the provenance names the identity
+    itself, since no one else acted. A first sign-in through the identity
+    provider names the issuer and the subject; the seeding and the operator
+    plane name neither, and the person's first sign-in links them."""
     identity_id = new_id()
     return Identity(
         id=identity_id,
@@ -144,7 +148,8 @@ def new_identity(email: str, password_hash: str, now: datetime) -> Identity:
         created_by=identity_id,
         updated_by=identity_id,
         email=email,
-        password_hash=password_hash,
+        issuer=issuer,
+        subject=subject,
     )
 
 
@@ -180,10 +185,10 @@ async def create_person(
 ) -> OrgMembership:
     """A person nobody has seen before, whole: the identity, their personal
     org, their user in it, and the owner membership, in one commit. Every way
-    a person comes to exist calls this, the password sign-up and the seeding
-    today, and a first sign-in through an identity provider when one exists:
-    it takes the identity as the caller built it, credential and all, and
-    asks nothing about an org. An email or a personal org taken meanwhile is
+    a person comes to exist calls this, a first sign-in through the identity
+    provider and the local sign-in among them: it takes the identity as the
+    caller built it, the provider's link and all, and asks nothing about an
+    org. An email or a personal org taken meanwhile is
     `UniqueKeyTaken`, and nothing lands. `new=False` is the one other case:
     a person who exists and has no personal org yet gets one, and the
     identity is left as it is."""
@@ -199,7 +204,6 @@ async def create_org_with_owner(
     org_name: str,
     slug: str,
     email: str,
-    password: str,
     display_name: str,
     max_orgs: int,
     operator_role: OperatorRole | None = None,
@@ -213,7 +217,7 @@ async def create_org_with_owner(
         raise Conflict(f"org slug {slug!r} is taken")
     now = utcnow()
     identity, to_write, personal = await identity_for(
-        storage, email, password, display_name, operator_role, now
+        storage, email, display_name, operator_role, now
     )
     refuse_one_more(identity.id, await users_of(storage, identity.id, max_orgs), max_orgs)
     org, user, membership = owner_rows(org_id, org_name, slug, identity, display_name, now)
@@ -268,28 +272,29 @@ async def add_member_to(
     org_id: UUID,
     user_id: UUID,
     email: str,
-    password: str,
     display_name: str,
     role: Role,
     actor_id: UUID,
     request: RequestScope,
     max_orgs: int,
+    invitation: Invitation | None = None,
 ) -> tuple[User, bool]:
     """A person in an org: the identity is created if the email is new, with
-    its personal org (an existing identity keeps its password), then the user and the membership
-    land with the row that announces them, in one commit, and the row is
-    relayed. A person who is already a live member is returned as they are,
-    with False. `actor_id` is who the rows record as their maker: the org's
-    creator on the seeding path, the operator's identity on the operator plane,
-    which has no user in the tenant. The service role is refused by name: it is
-    the role a sweep's context carries, never a membership. A person already a
-    member of `max_orgs` orgs is refused with `MembershipLimitReached`."""
+    its personal org, then the user and the membership land with the row that
+    announces them, in one commit, and the row is relayed. `invitation`, when
+    given, is the tenant's invitation the membership accepts, as it reads once
+    accepted, and lands in the same commit. A person who is already a live
+    member is returned as they are, with False, and nothing is written.
+    `actor_id` is who the rows record as their maker: the org's creator on the
+    seeding path, the operator's identity on the operator plane, which has no
+    user in the tenant, and the inviter on an accepted invitation. The service
+    role is refused by name: it is the role a sweep's context carries, never a
+    membership. A person already a member of `max_orgs` orgs is refused with
+    `MembershipLimitReached`."""
     if role is Role.SERVICE:
         raise ValidationFailed("service is not a membership role")
     now = utcnow()
-    identity, to_write, personal = await identity_for(
-        storage, email, password, display_name, None, now
-    )
+    identity, to_write, personal = await identity_for(storage, email, display_name, None, now)
     users = await users_of(storage, identity.id, max_orgs)
     for member_org_id, existing in users:
         if member_org_id == org_id and existing.deleted_at is None:
@@ -329,6 +334,8 @@ async def add_member_to(
         traceparent=current_traceparent(),
         app=request.app.type.value,
     )
-    await storage.create_member(org_id, user, membership, (row,), to_write, personal)
+    await storage.create_member(
+        org_id, user, membership, (row,), to_write, personal, invitation=invitation
+    )
     await relay.relay(org_id, row)
     return user, True

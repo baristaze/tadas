@@ -17,6 +17,7 @@ from typing import Any
 import uvicorn
 
 from tadas.infra.impl.local import InfraLocalImpl
+from tadas.integrations.impl.configured import absent_integrations
 from tadas.om.base import new_id
 from tadas.om.exceptions import Conflict
 from tadas.om.opcontext import AppContext, AppType, OperatorRole, RequestContext, Role
@@ -108,7 +109,6 @@ def bootstrap(args: argparse.Namespace) -> int:
                 args.org,
                 args.slug,
                 args.email,
-                args.password,
                 args.name,
                 operator_role=OperatorRole(args.operator_role) if args.operator else None,
             )
@@ -140,7 +140,10 @@ def grant_operator(args: argparse.Namespace) -> int:
         boot(settings)
         with tempfile.TemporaryDirectory() as tmp:
             container = AppContainer.over(
-                settings, postgres_storage(settings), InfraLocalImpl(Path(tmp))
+                settings,
+                postgres_storage(settings),
+                InfraLocalImpl(Path(tmp)),
+                absent_integrations(),
             )
             await container.start()
             try:
@@ -192,7 +195,6 @@ def add_member(args: argparse.Namespace) -> int:
                 command_request(settings),
                 args.slug,
                 args.email,
-                args.password,
                 args.name,
                 Role(args.role),
             )
@@ -246,7 +248,6 @@ def main(argv: list[str] | None = None) -> int:
     p_boot.add_argument("--org", required=True)
     p_boot.add_argument("--slug", required=True)
     p_boot.add_argument("--email", required=True)
-    p_boot.add_argument("--password", required=True)
     p_boot.add_argument("--name", required=True)
     p_boot.add_argument(
         "--operator",
@@ -268,7 +269,6 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_member.add_argument("--slug", required=True, help="the org to join")
     p_member.add_argument("--email", required=True)
-    p_member.add_argument("--password", required=True, help="kept only for a new identity")
     p_member.add_argument("--name", required=True)
     # Neither OWNER (the org's own, minted by bootstrap) nor SERVICE (the role
     # a sweep's context carries, which update_membership_role refuses).

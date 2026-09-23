@@ -37,6 +37,11 @@ variable "app_domain_name" {
   type        = string
 }
 
+variable "workos_client_id" {
+  description = "The client id of the WorkOS application people of this environment sign in through: staging's application in staging, production's in production. Not a secret; the API key is (TADAS_WORKOS_API_KEY, from the secrets module)."
+  type        = string
+}
+
 variable "cors_origins" {
   description = "Browser origins the API accepts besides the portal's, which is always allowed."
   type        = list(string)

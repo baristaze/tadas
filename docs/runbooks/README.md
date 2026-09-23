@@ -5,7 +5,7 @@ to expect. A runbook names the process, the setting, or the table it
 touches and the ADR that explains why it is shaped that way.
 
 - [operator.md](operator.md): how a person gets onto the operator
-  plane: sign up, the grant, enrolling the second factor, the check
+  plane: sign in, the grant, enrolling the second factor, the check
   that the plane refuses a sign-in without a code, and the token an
   agent then works from.
 - [deploy.md](deploy.md): staging is `main`, production is `release`;

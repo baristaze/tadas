@@ -67,15 +67,6 @@ class TenancyOperatorManagerInterface(ABC):
         token. Shown once, stored as its digest."""
         ...
 
-    @abstractmethod
-    async def reset_password(self, admin: OperatorContext, email: str, password: str) -> Identity:
-        """The recovery a platform with no verified mailbox has: a write
-        operator, signed in with a second factor, sets a person's password.
-        Audited under the system scope with the operator and the identity it
-        reset, and logged. The platform's own identities are refused, and so
-        is an operator token, which is an agent's."""
-        ...
-
     # Across every tenant.
 
     @abstractmethod
@@ -97,13 +88,13 @@ class TenancyOperatorManagerInterface(ABC):
         name: str,
         slug: str,
         owner_email: str,
-        owner_password: str,
         owner_name: str,
         attempt: Attempt | None = None,
     ) -> Org:
         """A team org with its owner, the way `bootstrap` seeds one: the
-        owner's identity is created with its personal org, or kept with its
-        password when the email is known. A taken slug is `Conflict`. `attempt`, when given, is the
+        owner's identity is created with its personal org when the email is
+        new, and the owner signs in through the identity provider with it. A
+        taken slug is `Conflict`. `attempt`, when given, is the
         attempt a retried request runs under: the org is created on its id,
         and an org already written under that id is the rerun of this create
         and is returned as stored."""
@@ -130,7 +121,6 @@ class TenancyOperatorManagerInterface(ABC):
         admin: OperatorContext,
         org_id: UUID,
         email: str,
-        password: str,
         display_name: str,
         role: Role,
         attempt: Attempt | None = None,

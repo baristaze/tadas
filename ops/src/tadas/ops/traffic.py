@@ -2,15 +2,20 @@
 never a manager: a session is what a person does in the portal, and a run is
 many sessions at once, for a bounded time, at a profile.
 
-A person signs in once, at the start of the run: a login, then the exchange
-for a session token in the org. Every session that person drives reuses that
-token, and the sign-out comes once, at the end. Sign-in verifies a password
-on purpose, so it is the slowest route the generator calls, and the API
-counts it against a per-address rate limit; a session that signed in for
-itself measured password hashing and that limit instead of the application.
-One sign-in per person leaves little room for a refusal, so a sign-in the
-rate limit turns away waits the window out and asks again, a bounded number
-of times, and a run that still signs nobody in fails and says why.
+A person signs in once, at the start of the run: the local sign-in, by
+address alone, then the exchange for a session token in the org. Every
+session that person drives reuses that token, and the sign-out comes once,
+at the end. The API counts every sign-in against a per-address rate limit,
+and a run signs all its people in from one address; a session that signed in
+for itself would measure that limit instead of the application. One sign-in
+per person leaves little room for a refusal, so a sign-in the rate limit
+turns away waits the window out and asks again, a bounded number of times,
+and a run that still signs nobody in fails and says why.
+
+The local sign-in is the local stack's alone: a deployed environment signs
+people in through the identity provider, in a browser, and answers the
+local sign-in with 404. So a run against a deployed environment is refused
+before it provisions anything.
 
 A session: open the socket, list the open tasks, add five or six with an
 idempotency key each, edit one, complete two, reopen one, move one, list the
@@ -20,7 +25,7 @@ steps.
 
 The tenants a run needs come from the operator plane (`POST /v1/admin/orgs`
 and its members) under the provisioner's operator token, a `write` entry and
-never a password. They are named for the run, `ops-<run id>-<n>`, so no real
+never a sign-in. They are named for the run, `ops-<run id>-<n>`, so no real
 tenant is touched and anything that counts tenants can leave them out, and
 the run removes them (`DELETE /v1/admin/orgs/{org_id}`) when it ends, a
 failure included; the ones it could not remove are named in the report.
@@ -79,7 +84,7 @@ window the step before the run filled; a run that needs more is not waiting
 out a window, it is waiting on an environment that will not have it."""
 NO_ONE_SIGNED_IN = (
     "no one signed in, so the run drove no session; the likeliest cause is the "
-    "per-address rate limit on POST /v1/auth/login, and every refusal is named above"
+    "per-address rate limit on POST /v1/auth/dev-sign-in, and every refusal is named above"
 )
 """What a run that signed nobody in says, in its notes and on stderr. It is
 the one outcome where the report is empty for a reason worth naming."""
@@ -151,10 +156,9 @@ class RecordingTransport(httpx.AsyncBaseTransport):
 
 @dataclass(frozen=True)
 class Person:
-    """Someone a session runs as: the sign-in and the org to choose."""
+    """Someone a session runs as: the address they sign in with and the org to choose."""
 
     email: str
-    password: str
     org_slug: str
 
 
@@ -434,7 +438,7 @@ async def sign_in(
         while queue:
             person = queue[0]
             try:
-                login = await client.login(person.email, person.password)
+                login = await client.dev_sign_in(person.email)
                 choices = [m for m in login.memberships if m.org.slug == person.org_slug]
                 if not choices:
                     notes.append(f"{person.email} is not a member of {person.org_slug}")
@@ -512,6 +516,19 @@ def is_run_tenant(slug: str) -> bool:
     return slug.startswith(RUN_TENANT_PREFIX)
 
 
+class DeployedSignIn(ValueError):
+    """A run against a deployed environment, refused before it provisions
+    anything: its people would sign in by the local sign-in, which only the
+    local stack serves."""
+
+    def __init__(self, env: Environment) -> None:
+        super().__init__(
+            f"{env.name!r} signs people in through the identity provider, in a browser; "
+            "the traffic generator's people sign in by the local sign-in, which only the "
+            "local stack serves, so no run starts there"
+        )
+
+
 class TokenRefused(ValueError):
     """The operator plane refused an operator token: it expired, or it was
     never minted. The message names the command that writes a fresh one."""
@@ -536,8 +553,8 @@ async def seeded_people(env: Environment) -> Tenants:
         raise ValueError(f"environment {env.name!r} names no seeded people; provision with --orgs")
     seed = env.seed
     people = [
-        Person(seed.owner_email, seed.password, seed.slug),
-        Person(seed.member_email, seed.password, seed.slug),
+        Person(seed.owner_email, seed.slug),
+        Person(seed.member_email, seed.slug),
     ]
     return Tenants(people, [], [f"orgs 0: the seeded org {seed.slug!r} and its two people"])
 
@@ -571,7 +588,6 @@ async def provision(
     way removes what it made before it raises, so a failed start leaves
     nothing behind."""
     run = run_id or datetime.now(UTC).strftime("%Y%m%d%H%M%S")
-    password = f"ops-{uuid4().hex}"
     people: list[Person] = []
     org_ids: list[UUID] = []
     async with provisioner_client(env, transport) as client:
@@ -583,20 +599,18 @@ async def provision(
                     f"Ops {run} {n + 1}",
                     slug,
                     owner_email=owner,
-                    owner_password=password,
                     owner_name="Ops Owner",
                 )
                 org_ids.append(org.id)
-                people.append(Person(owner, password, slug))
+                people.append(Person(owner, slug))
                 for m in range(max(profile.members_per_org - 1, 0)):
                     email = f"member{m + 1}@{slug}.example.test"
                     await client.admin_add_member(
                         org.id,
                         email,
-                        password=password,
                         display_name=f"Member {m + 1}",
                     )
-                    people.append(Person(email, password, slug))
+                    people.append(Person(email, slug))
         except ApiError as error:
             await remove_tenants(env, org_ids, transport)
             if error.status == 401:
@@ -683,15 +697,12 @@ async def run_traffic(
     time. `login_wait` is that pause, injected by tests."""
     duration = profile.duration_seconds if duration_seconds is None else duration_seconds
     wanted_orgs = profile.orgs if orgs is None else orgs
+    if env.is_cloud:
+        raise DeployedSignIn(env)
     inner = transport or network_transport()
     notes: list[str] = []
     created: list[UUID] = []
     if people is None:
-        if wanted_orgs == 0 and env.is_cloud:
-            raise ValueError(
-                f"{env.name!r} has no seeded people; "
-                "a run there provisions its own (--orgs 1 or more)"
-            )
         try:
             tenants = (
                 await seeded_people(env)

@@ -9,6 +9,8 @@ signed in, 4 the API is unreachable."""
 import asyncio
 import json
 import sys
+import time
+import webbrowser
 from collections.abc import Callable, Coroutine
 from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError, version
@@ -31,7 +33,14 @@ from tadas.apps.cli.model import (
 )
 from tadas.client.client import UNSET, ApiClient, ApiError, Unset
 from tadas.client.realtime import ChannelRefused
-from tadas.client.types import IssuedSessionView, TaskScope, TaskStatus, TaskView, UserView
+from tadas.client.types import (
+    IssuedLoginView,
+    IssuedSessionView,
+    TaskScope,
+    TaskStatus,
+    TaskView,
+    UserView,
+)
 
 EXIT_REFUSED = 1
 EXIT_USAGE = 2
@@ -97,7 +106,7 @@ def run[T](work: Callable[[ApiClient], Coroutine[Any, Any, T]], api: str | None 
 
 def _run[T](coroutine: Coroutine[Any, Any, T], *, signed_in: bool = False) -> T:
     """`signed_in` says a 401 means the kept credential is dead, not that a
-    password was wrong."""
+    sign-in was refused."""
     try:
         return asyncio.run(coroutine)
     except config.BadSetting as error:
@@ -190,21 +199,84 @@ async def _user(client: ApiClient, reference: str) -> UserView:
 # Signing in
 
 
+SLOW_DOWN_SECONDS = 5
+"""How much longer the next ask waits when the API says to ask less often."""
+
+
+def open_browser(url: str) -> None:
+    """Opens the confirmation page in the person's browser, when there is one
+    to open; a terminal with none, or over SSH, prints the address instead."""
+    try:
+        webbrowser.open(url)
+    except webbrowser.Error:
+        pass
+
+
+async def pause(seconds: float) -> None:
+    """The wait between two asks; tests replace it."""
+    await asyncio.sleep(seconds)
+
+
+def now() -> float:
+    """The clock the device code's expiry is read on; tests replace it."""
+    return time.monotonic()
+
+
+async def device_sign_in(client: ApiClient, *, browser: bool) -> IssuedLoginView:
+    """The device sign-in: the API starts it at the identity provider, the
+    person confirms the code in any browser, and the CLI asks every interval
+    until they do, or the code expires."""
+    started = await client.start_device_sign_in()
+    typer.echo(
+        f"to sign in, open {started.verification_uri_complete}\n"
+        f"and confirm the code {started.user_code}",
+        err=True,
+    )
+    if browser:
+        open_browser(started.verification_uri_complete)
+    interval = float(started.interval)
+    deadline = now() + started.expires_in
+    while True:
+        await pause(interval)
+        try:
+            return await client.finish_device_sign_in(started.device_code)
+        except ApiError as error:
+            if error.code == "sign_in_slow_down":
+                interval += SLOW_DOWN_SECONDS
+            elif error.code != "sign_in_pending":
+                raise
+        if now() >= deadline:
+            _fail("the code expired before it was confirmed; run `tadas login` again", EXIT_REFUSED)
+
+
 @app.command()
 def login(
-    email: Annotated[str, typer.Option(prompt=True)],
-    password: Annotated[str, typer.Option(prompt=True, hide_input=True)],
     org: Annotated[
         str | None, typer.Option(help="The org's slug, when you belong to several.")
     ] = None,
+    no_browser: Annotated[
+        bool, typer.Option("--no-browser", help="Print the address; open no browser.")
+    ] = False,
+    dev_email: Annotated[
+        str | None,
+        typer.Option(
+            "--dev-email",
+            help="Local stack only: sign in as this address with no browser. "
+            "A deployed API has no such door and answers 404.",
+        ),
+    ] = None,
     api: Api = None,
 ) -> None:
-    """Sign in with email and password and keep the session for the next commands."""
+    """Sign in through the browser with a one-time code and keep the session
+    for the next commands."""
     api_url = config.api_url(api)
 
     async def go() -> None:
         async with build_client(api_url, None) as client:
-            issued = await client.login(email, password)
+            if dev_email is not None:
+                issued = await client.dev_sign_in(dev_email)
+            else:
+                issued = await device_sign_in(client, browser=not no_browser)
             try:
                 chosen = choose_org(issued.memberships, org)
             except LookupError as slugs:

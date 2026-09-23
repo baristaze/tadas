@@ -1,5 +1,5 @@
 // Pure: rows, formatting, and gating predicates for the settings screen.
-import type { ApiKeyView, MeView, UserView } from "../../api";
+import type { ApiKeyView, InvitationView, MeView, Role, UserView } from "../../api";
 
 export interface MemberRow {
   id: string;
@@ -54,4 +54,47 @@ export function canManageKeys(me: MeView | undefined): boolean {
 export function signedInAs(me: MeView | undefined): string {
   if (!me) return "";
   return `Signed in to ${me.org.name} as ${me.user.display_name} (${me.role})`;
+}
+
+export function canManageMembers(me: MeView | undefined): boolean {
+  return me?.permissions.includes("manage_members") ?? false;
+}
+
+/** Single sign-on is a team org's, set up by a member who manages members. */
+export function ssoAvailable(me: MeView | undefined): boolean {
+  return canManageMembers(me) && me?.org.kind === "team";
+}
+
+const INVITABLE: readonly Role[] = ["viewer", "member", "admin"];
+const RANK: Readonly<Record<string, number>> = { viewer: 0, member: 1, admin: 2, owner: 3 };
+
+/** The roles an invitation may carry: never above the caller's own, and
+ * never owner, which an org has one of. */
+export function invitableRoles(me: MeView | undefined): Role[] {
+  if (!me) return [];
+  const mine = RANK[me.role] ?? -1;
+  return INVITABLE.filter((role) => (RANK[role] ?? 99) <= mine);
+}
+
+export interface InvitationRow {
+  id: string;
+  email: string;
+  role: string;
+  expires: string;
+  expired: boolean;
+}
+
+export function invitationRows(invitations: InvitationView[], now: Date): InvitationRow[] {
+  return invitations.map((invitation) => ({
+    id: invitation.id,
+    email: invitation.email,
+    role: invitation.role,
+    expires: formatDate(invitation.expires_at),
+    expired: new Date(invitation.expires_at).getTime() <= now.getTime(),
+  }));
+}
+
+/** The invite form asks for an address; the server checks the rest. */
+export function checkInvite(email: string): string | null {
+  return email.trim().includes("@") ? null : "Enter the email address to invite.";
 }

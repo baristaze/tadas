@@ -79,6 +79,7 @@ TABLE_SCOPES: dict[str, TableScope] = {
     "sign_in_delays": TableScope(ScopeKind.SYSTEM),
     # A tenant's own rows. An org's `org_id` is its own id.
     "orgs": TableScope(ScopeKind.ORG),
+    "invitations": TableScope(ScopeKind.ORG),
     "tasks": TableScope(ScopeKind.ORG),
     "outbox_rows": TableScope(ScopeKind.ORG),
     "work_items": TableScope(ScopeKind.ORG),

@@ -179,27 +179,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/admin/password-resets": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Reset Password
-         * @description Sets a person's password, the recovery a platform with no verified
-         *     mailbox has; a write operator signed in with a second factor, audited.
-         */
-        post: operations["reset_password_v1_admin_password_resets_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/v1/admin/size": {
         parameters: {
             query?: never;
@@ -252,7 +231,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/auth/login": {
+    "/v1/auth/callback": {
         parameters: {
             query?: never;
             header?: never;
@@ -261,8 +240,59 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Login */
-        post: operations["login_v1_auth_login_post"];
+        /** Finish Sign In */
+        post: operations["finish_sign_in_v1_auth_callback_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/auth/dev-sign-in": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Dev Sign In */
+        post: operations["dev_sign_in_v1_auth_dev_sign_in_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/auth/device": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start Device Sign In */
+        post: operations["start_device_sign_in_v1_auth_device_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/auth/device/token": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Finish Device Sign In */
+        post: operations["finish_device_sign_in_v1_auth_device_token_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -303,6 +333,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/auth/second-factor": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Verify Second Factor */
+        post: operations["verify_second_factor_v1_auth_second_factor_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/auth/sessions": {
         parameters: {
             query?: never;
@@ -320,7 +367,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/auth/signup": {
+    "/v1/auth/sign-in": {
         parameters: {
             query?: never;
             header?: never;
@@ -329,8 +376,8 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Sign Up */
-        post: operations["sign_up_v1_auth_signup_post"];
+        /** Start Sign In */
+        post: operations["start_sign_in_v1_auth_sign_in_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -348,6 +395,58 @@ export interface paths {
         get: operations["list_events_v1_events_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/invitations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Invitations */
+        get: operations["list_invitations_v1_invitations_get"];
+        put?: never;
+        /** Invite Member */
+        post: operations["invite_member_v1_invitations_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/invitations/{invitation_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Revoke Invitation */
+        delete: operations["revoke_invitation_v1_invitations__invitation_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/invitations/{invitation_id}/resend": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resend Invitation */
+        post: operations["resend_invitation_v1_invitations__invitation_id__resend_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -452,6 +551,23 @@ export interface paths {
         get: operations["current_org_v1_orgs_current_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/orgs/current/sso-link": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Sso Link */
+        post: operations["sso_link_v1_orgs_current_sso_link_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -638,8 +754,6 @@ export interface components {
             display_name: string;
             /** Email */
             email: string;
-            /** Password */
-            password: string;
             role: components["schemas"]["Role"];
         };
         /**
@@ -711,8 +825,8 @@ export interface components {
         /**
          * CreateOrgRequest
          * @description An org with its owner, as `bootstrap` seeds one. The owner's identity
-         *     is created with the password, or kept with its own when the email is
-         *     known already.
+         *     is created with its personal org when the email is new; the owner signs
+         *     in through the identity provider with the address.
          */
         CreateOrgRequest: {
             /** Name */
@@ -721,8 +835,6 @@ export interface components {
             owner_email: string;
             /** Owner Name */
             owner_name: string;
-            /** Owner Password */
-            owner_password: string;
             /** Slug */
             slug: string;
         };
@@ -743,6 +855,56 @@ export interface components {
          * @enum {string}
          */
         CredentialKind: "api_key" | "session_token" | "login" | "socket_ticket" | "operator_token" | "internal";
+        /**
+         * DevSignInRequest
+         * @description Local and test only: a sign-in by address alone, with no browser round
+         *     trip, for the seed, the demos, the traffic generator, and the tests. A
+         *     person nobody knew is made, with their personal org. A deployed
+         *     environment never serves it: the route answers 404 there, and the
+         *     process refuses to start with it on.
+         */
+        DevSignInRequest: {
+            /**
+             * Display Name
+             * @default
+             */
+            display_name: string;
+            /** Email */
+            email: string;
+        };
+        /**
+         * DeviceSignInView
+         * @description The start of a sign-in for a device with no browser, the command
+         *     line. The person opens `verification_uri_complete` (or
+         *     `verification_uri` and types `user_code`) in any browser; the device
+         *     keeps `device_code` to itself and asks `POST /v1/auth/device/token`
+         *     with it every `interval` seconds, for at most `expires_in` seconds.
+         */
+        DeviceSignInView: {
+            /** Device Code */
+            device_code: string;
+            /** Expires In */
+            expires_in: number;
+            /** Interval */
+            interval: number;
+            /** User Code */
+            user_code: string;
+            /** Verification Uri */
+            verification_uri: string;
+            /** Verification Uri Complete */
+            verification_uri_complete: string;
+        };
+        /**
+         * DeviceTokenRequest
+         * @description The device code a device sign-in started with. The answer is a
+         *     sign-in's once the person confirmed it; before that, 400
+         *     `sign_in_pending` (or `sign_in_slow_down`: ask less often), and 401
+         *     `sign_in_refused` when they declined or it expired.
+         */
+        DeviceTokenRequest: {
+            /** Device Code */
+            device_code: string;
+        };
         /**
          * EventView
          * @description One record of the tenant's append-only stream, paged by `after_seq`.
@@ -791,9 +953,8 @@ export interface components {
         };
         /**
          * IdentityView
-         * @description The person behind the caller's user; never carries the password hash.
-         *     `operator_role` is the allowlist entry: null for a person who is not an
-         *     operator.
+         * @description The person behind the caller's user. `operator_role` is the allowlist
+         *     entry: null for a person who is not an operator.
          */
         IdentityView: {
             /**
@@ -809,6 +970,64 @@ export interface components {
              */
             id: string;
             operator_role: components["schemas"]["OperatorRole"] | null;
+        };
+        /**
+         * InvitationPageView
+         * @description One page of the org's pending invitations, newest first; `next_cursor`
+         *     as on `UserPageView`.
+         */
+        InvitationPageView: {
+            /** Items */
+            items: components["schemas"]["InvitationView"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+        };
+        /**
+         * InvitationState
+         * @enum {string}
+         */
+        InvitationState: "pending" | "accepted" | "revoked";
+        /**
+         * InvitationView
+         * @description A person asked to join the org. The identity provider sent the email
+         *     with the link; `expires_at` is when the link stops working, after which
+         *     the invitation is sent again or replaced.
+         */
+        InvitationView: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Created By
+             * Format: uuid
+             */
+            created_by: string;
+            /** Email */
+            email: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            role: components["schemas"]["Role"];
+            state: components["schemas"]["InvitationState"];
+        };
+        /**
+         * InviteMemberRequest
+         * @description The address to invite and the role the person gets, at most the
+         *     caller's own.
+         */
+        InviteMemberRequest: {
+            /** Email */
+            email: string;
+            role: components["schemas"]["Role"];
         };
         /**
          * IssuedApiKeyView
@@ -900,21 +1119,6 @@ export interface components {
         IssuedTotpSecretView: {
             /** Otpauth Uri */
             otpauth_uri: string | null;
-        };
-        /**
-         * LoginRequest
-         * @description An email and a password, and the code from an authenticator when the
-         *     identity has a second factor enrolled. A tenant's sign-in needs none; the
-         *     operator plane admits an enrolled operator only on a sign-in that
-         *     verified one. A code used once is refused.
-         */
-        LoginRequest: {
-            /** Email */
-            email: string;
-            /** Password */
-            password: string;
-            /** Totp Code */
-            totp_code?: string | null;
         };
         /** MeView */
         MeView: {
@@ -1097,19 +1301,6 @@ export interface components {
             slug: string;
         };
         /**
-         * PasswordResetView
-         * @description Whose password was reset; the reset is audited with the operator.
-         */
-        PasswordResetView: {
-            /** Email */
-            email: string;
-            /**
-             * Identity Id
-             * Format: uuid
-             */
-            identity_id: string;
-        };
-        /**
          * Permission
          * @enum {string}
          */
@@ -1137,20 +1328,21 @@ export interface components {
             users: number;
         };
         /**
-         * ResetPasswordRequest
-         * @description The person, by email, and the password they sign in with from now on.
-         */
-        ResetPasswordRequest: {
-            /** Email */
-            email: string;
-            /** Password */
-            password: string;
-        };
-        /**
          * Role
          * @enum {string}
          */
         Role: "owner" | "admin" | "member" | "viewer" | "service";
+        /**
+         * SecondFactorRequest
+         * @description The code from an authenticator, presented with a sign-in credential.
+         *     The answer is a new sign-in that records the verified code, which the
+         *     operator plane asks of an enrolled operator. A code used once is
+         *     refused.
+         */
+        SecondFactorRequest: {
+            /** Totp Code */
+            totp_code: string;
+        };
         /**
          * SessionView
          * @description Only the hash of a token is ever kept, so a session view carries no secret.
@@ -1176,31 +1368,56 @@ export interface components {
             revoked_at: string | null;
         };
         /**
-         * SignUpRequest
-         * @description A new person and their password. The person's personal org is made
-         *     with them, named and slugged for them, so a sign-up names no org. The
-         *     answer is a sign-in's (`IssuedLoginView`), so the client goes on through
-         *     the same choice and exchange; a held email is 409. No email is verified.
-         *     `org_name` and `org_slug` are what a sign-up named before and are
-         *     ignored; the release after this one refuses them.
+         * SignInCallbackRequest
+         * @description The code the browser brought back to the callback, and the verifier
+         *     the sign-in's start answered with, which the API exchanges with the
+         *     identity provider, server-side. The answer is a
+         *     sign-in's (`IssuedLoginView`); a person nobody knew is signed up by it,
+         *     with their personal org.
          */
-        SignUpRequest: {
-            /** Display Name */
-            display_name: string;
-            /** Email */
-            email: string;
+        SignInCallbackRequest: {
+            /** Code */
+            code: string;
+            /** Code Verifier */
+            code_verifier: string;
+            /** Invitation Token */
+            invitation_token?: string | null;
+        };
+        /**
+         * SignInStartRequest
+         * @description The start of a sign-in at the identity provider. `redirect_uri` is where
+         *     the browser comes back with a code: this environment's portal callback,
+         *     and nothing else. `state` is the caller's own random value, kept by the
+         *     tab that started the sign-in and compared when the browser comes back,
+         *     which binds the round trip to that tab; it may carry nothing else.
+         *     `invitation_token` is the one an invitation's link carried, and
+         *     `sign_up` opens the provider on its sign-up screen.
+         */
+        SignInStartRequest: {
+            /** Invitation Token */
+            invitation_token?: string | null;
+            /** Redirect Uri */
+            redirect_uri: string;
             /**
-             * Org Name
-             * @deprecated
+             * Sign Up
+             * @default false
              */
-            org_name?: string | null;
-            /**
-             * Org Slug
-             * @deprecated
-             */
-            org_slug?: string | null;
-            /** Password */
-            password: string;
+            sign_up: boolean;
+            /** State */
+            state: string;
+        };
+        /**
+         * SignInStartView
+         * @description Where the browser goes next, the identity provider's sign-in, and the
+         *     PKCE verifier the tab keeps beside its state and sends back with the
+         *     code. The provider holds only the verifier's digest, so a code is worth
+         *     nothing to anyone who does not hold it.
+         */
+        SignInStartView: {
+            /** Authorization Url */
+            authorization_url: string;
+            /** Code Verifier */
+            code_verifier: string;
         };
         /**
          * SlackConnectionStatus
@@ -1249,6 +1466,29 @@ export interface components {
          */
         SlackStatusView: {
             connection: components["schemas"]["SlackConnectionView"] | null;
+        };
+        /**
+         * SsoLinkRequest
+         * @description What the identity provider's admin portal opens on: the single sign-on
+         *     connection (`sso`) or the org's domains (`domain_verification`), and the
+         *     page of this environment's portal it links back to.
+         */
+        SsoLinkRequest: {
+            /**
+             * Intent
+             * @enum {string}
+             */
+            intent: "sso" | "domain_verification";
+            /** Return Url */
+            return_url: string;
+        };
+        /**
+         * SsoLinkView
+         * @description A short-lived link to the admin portal; open it at once.
+         */
+        SsoLinkView: {
+            /** Url */
+            url: string;
         };
         /**
          * TaskPageView
@@ -1854,43 +2094,6 @@ export interface operations {
             };
         };
     };
-    reset_password_v1_admin_password_resets_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-                "x-app"?: string | null;
-                "x-app-version"?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ResetPasswordRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PasswordResetView"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     platform_size_v1_admin_size_get: {
         parameters: {
             query?: never;
@@ -2033,7 +2236,7 @@ export interface operations {
             };
         };
     };
-    login_v1_auth_login_post: {
+    finish_sign_in_v1_auth_callback_post: {
         parameters: {
             query?: never;
             header?: {
@@ -2045,7 +2248,111 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["LoginRequest"];
+                "application/json": components["schemas"]["SignInCallbackRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssuedLoginView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    dev_sign_in_v1_auth_dev_sign_in_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DevSignInRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssuedLoginView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    start_device_sign_in_v1_auth_device_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeviceSignInView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    finish_device_sign_in_v1_auth_device_token_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeviceTokenRequest"];
             };
         };
         responses: {
@@ -2138,6 +2445,43 @@ export interface operations {
             };
         };
     };
+    verify_second_factor_v1_auth_second_factor_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SecondFactorRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssuedLoginView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     exchange_session_v1_auth_sessions_post: {
         parameters: {
             query?: never;
@@ -2175,7 +2519,7 @@ export interface operations {
             };
         };
     };
-    sign_up_v1_auth_signup_post: {
+    start_sign_in_v1_auth_sign_in_post: {
         parameters: {
             query?: never;
             header?: {
@@ -2187,7 +2531,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["SignUpRequest"];
+                "application/json": components["schemas"]["SignInStartRequest"];
             };
         };
         responses: {
@@ -2197,7 +2541,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["IssuedLoginView"];
+                    "application/json": components["schemas"]["SignInStartView"];
                 };
             };
             /** @description Validation Error */
@@ -2234,6 +2578,150 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["EventView"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_invitations_v1_invitations_get: {
+        parameters: {
+            query?: {
+                cursor?: string | null;
+                limit?: number;
+            };
+            header?: {
+                authorization?: string | null;
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InvitationPageView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    invite_member_v1_invitations_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
+                "idempotency-key"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InviteMemberRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InvitationView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    revoke_invitation_v1_invitations__invitation_id__delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
+            };
+            path: {
+                invitation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InvitationView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    resend_invitation_v1_invitations__invitation_id__resend_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
+            };
+            path: {
+                invitation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InvitationView"];
                 };
             };
             /** @description Validation Error */
@@ -2518,6 +3006,43 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OrgView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    sso_link_v1_orgs_current_sso_link_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SsoLinkRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SsoLinkView"];
                 };
             };
             /** @description Validation Error */

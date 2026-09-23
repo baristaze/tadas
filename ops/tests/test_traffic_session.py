@@ -33,7 +33,7 @@ from tadas.ops.traffic import (
     seat_order,
 )
 
-PERSON = Person("owner@example.test", "tadas-local", "acme")
+PERSON = Person("owner@example.test", "acme")
 SEAT = Seat(PERSON, "ses_1", OWNER_ID)
 """The seat the fake's sign-in hands out: `ses_1` is the token it accepts."""
 
@@ -51,7 +51,7 @@ def client_over(api: FakeApi, samples: list[Sample]) -> tuple[ApiClient, Recordi
     return client, recording
 
 
-def local_env(password: str = "tadas-local") -> Environment:
+def local_env() -> Environment:
     return Environment(
         name="local",
         api_url="http://test",
@@ -65,7 +65,7 @@ def local_env(password: str = "tadas-local") -> Environment:
         jaeger_url=None,
         aws_profile=None,
         aws_region=None,
-        seed=SeedPeople("acme", "owner@example.test", "owner@example.test", password),
+        seed=SeedPeople("acme", "owner@example.test", "owner@example.test"),
     )
 
 
@@ -81,7 +81,7 @@ def test_the_people_to_sign_in_are_taken_one_org_at_a_time() -> None:
     """A run signs in fewer people than a profile provisions, so it takes
     them one from each org in turn and no org is left with no traffic."""
     people = [
-        Person(f"{who}@{org}", "x", org)
+        Person(f"{who}@{org}", org)
         for org in ("one", "two", "three")
         for who in ("owner", "member")
     ]
@@ -177,12 +177,13 @@ async def test_the_deadline_cuts_a_session_between_steps() -> None:
     assert api.requests == []
 
 
-async def test_a_wrong_password_signs_no_one_in_and_the_run_drives_nothing() -> None:
-    """The sign-in is the run's, once per person, so a refused password ends
-    the run there instead of failing session after session."""
-    api = FakeApi()
+async def test_a_refused_sign_in_signs_no_one_in_and_the_run_drives_nothing() -> None:
+    """The sign-in is the run's, once per person, so a stack whose local
+    sign-in is off ends the run there instead of failing session after
+    session."""
+    api = FakeApi(dev_sign_in=False)
     result = await run_traffic(
-        local_env(password="wrong"),
+        local_env(),
         Profile("light", 1, 2, 2, (0.0, 0.0), 60),
         duration_seconds=5,
         orgs=0,
@@ -190,8 +191,8 @@ async def test_a_wrong_password_signs_no_one_in_and_the_run_drives_nothing() -> 
         connect=connect_to(api),
     )
     assert result.outcomes == [] and result.report.sessions.started == 0
-    assert [r.url.path for r in api.requests] == ["/v1/auth/login"] * 2
-    assert any("401 invalid_credential" in note for note in result.report.notes)
+    assert [r.url.path for r in api.requests] == ["/v1/auth/dev-sign-in"] * 2
+    assert any("404 not_found" in note for note in result.report.notes)
     assert NO_ONE_SIGNED_IN in result.report.notes
 
 
@@ -226,8 +227,8 @@ async def test_a_refused_sign_in_waits_out_the_window_and_asks_again() -> None:
     assert waits.seconds == [LOGIN_WINDOW_SECONDS]
     report = result.report
     assert [r.url.path for r in api.requests][:3] == [
-        "/v1/auth/login",  # refused: the window was full
-        "/v1/auth/login",  # the same person again, once it had passed
+        "/v1/auth/dev-sign-in",  # refused: the window was full
+        "/v1/auth/dev-sign-in",  # the same person again, once it had passed
         "/v1/auth/sessions",
     ]
     assert report.sessions.completed == 2
@@ -273,14 +274,14 @@ async def test_a_login_window_that_never_opens_is_bounded_and_the_run_fails(
         login_wait=waits,
     )
     assert waits.seconds == [LOGIN_WINDOW_SECONDS] * MAX_LOGIN_WAITS
-    assert [r.url.path for r in api.requests] == ["/v1/auth/login"] * (MAX_LOGIN_WAITS + 1)
+    assert [r.url.path for r in api.requests] == ["/v1/auth/dev-sign-in"] * (MAX_LOGIN_WAITS + 1)
     report = result.report
     assert result.outcomes == [] and report.sessions.started == 0
     assert any("429 rate_limited" in note for note in report.notes)
     assert any(f"still closed after {MAX_LOGIN_WAITS} wait(s)" in note for note in report.notes)
     assert NO_ONE_SIGNED_IN in report.notes
     assert traffic_exit_code(report) == FAILED
-    assert "per-address rate limit on POST /v1/auth/login" in capsys.readouterr().err
+    assert "per-address rate limit on POST /v1/auth/dev-sign-in" in capsys.readouterr().err
 
 
 async def test_a_person_signs_in_once_for_the_run_and_the_target_judges_the_rest() -> None:
@@ -300,10 +301,10 @@ async def test_a_person_signs_in_once_for_the_run_and_the_target_judges_the_rest
     report = result.report
     assert report.sessions.completed == 4
     paths = [r.url.path for r in api.requests]
-    assert paths.count("/v1/auth/login") == 2  # the seeded org's two people, once each
+    assert paths.count("/v1/auth/dev-sign-in") == 2  # the seeded org's two people, once each
     assert paths.count("/v1/auth/sessions") == 2
     assert paths.count("/v1/auth/logout") == 2
-    assert paths[:4] == ["/v1/auth/login", "/v1/auth/sessions"] * 2  # at the start
+    assert paths[:4] == ["/v1/auth/dev-sign-in", "/v1/auth/sessions"] * 2  # at the start
     assert paths[-2:] == ["/v1/auth/logout"] * 2  # and at the end
     assert report.auth.requests == 6
     assert report.working.requests == report.requests - 6
@@ -387,7 +388,7 @@ async def test_a_failed_session_pauses_the_worker_before_the_next_one() -> None:
 
 async def test_a_run_needs_seeded_people_or_a_provisioner() -> None:
     env = Environment(
-        name="staging",
+        name="local",
         api_url="http://test",
         operator_token=None,
         provisioner_token=None,

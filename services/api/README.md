@@ -7,20 +7,33 @@ the database, the cache, and the topic bus.
 
 ## Routes, by area
 
-- **Sign-up.** A new person with an email, a name, and a password,
-  who comes with their personal org; answered as a sign-in.
-  (`/v1/auth/signup`)
-- **Sign-in.** Sign in with email and password, and the code from an
-  authenticator when a second factor is enrolled; list my places;
-  exchange the login, or switch a session, for a session in one org;
-  sign out. (`/v1/auth/login`, `/v1/auth/memberships`,
-  `/v1/auth/sessions`, `/v1/auth/logout`)
+- **Sign-in.** Start a sign-in at the identity provider, WorkOS
+  AuthKit, for this environment's portal callback, and finish it with
+  the code the browser brought back, which the API exchanges
+  server-side; a person nobody knew is signed up by it, with their
+  personal org (`/v1/auth/sign-in`, `/v1/auth/callback`). Start and
+  finish a device sign-in for the command line (`/v1/auth/device`,
+  `/v1/auth/device/token`). Confirm an operator's second factor on a
+  sign-in (`/v1/auth/second-factor`). List my places; exchange the
+  login, or switch a session, for a session in one org; sign out
+  (`/v1/auth/memberships`, `/v1/auth/sessions`, `/v1/auth/logout`).
+  Locally and in the tests only, sign in by address alone
+  (`/v1/auth/dev-sign-in`, ADR 0029); a deployed process refuses to
+  start with it on.
 - **Me.** The current org, my user, my identity, and my display name;
   a new team org I own. (`/v1/orgs/current`, `/v1/me`,
   `/v1/me/identity`, `/v1/orgs`)
 - **Members.** The org's members and their roles a page at a time,
   a member's role, removing a member. (`/v1/users`, `/v1/memberships`,
   `/v1/memberships/{user_id}`)
+- **Invitations and single sign-on.** Invite a person by email with a
+  role, under an Idempotency-Key; the identity provider sends the
+  email. The org's pending invitations a page at a time, sending one
+  again, revoking one. A short-lived link to the provider's admin
+  portal, where an owner or an admin of a team org sets up single
+  sign-on or proves a domain. (`/v1/invitations`,
+  `/v1/invitations/{invitation_id}/resend`,
+  `/v1/invitations/{invitation_id}`, `/v1/orgs/current/sso-link`)
 - **Credentials.** My live sessions and revoking one; the org's API
   keys, creating one, revoking one; a ticket for the live channel.
   (`/v1/sessions`, `/v1/api-keys`, `/v1/realtime/tickets`)
@@ -49,8 +62,7 @@ the database, the cache, and the topic bus.
   the two enrolment routes answer (`/v1/admin/me/totp`,
   `/v1/admin/me/totp/confirm`). A signed-in operator mints an operator
   token for an agent, one permission and an hour at most
-  (`/v1/admin/me/tokens`), and a write operator resets a person's
-  password, audited (`/v1/admin/password-resets`).
+  (`/v1/admin/me/tokens`).
 - **Operational.** Liveness (`/healthz`, the process alone),
   readiness (`/readyz`, asks the database under a deadline shorter
   than the probe's interval), metrics (`/metrics`), and the OpenAPI

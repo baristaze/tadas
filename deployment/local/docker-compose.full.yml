@@ -37,6 +37,14 @@ services:
       <<: *app-env
       TADAS_HOST: 0.0.0.0
       TADAS_PORT: "8000"
+      # Sign-in through the WorkOS staging environment's application, whose
+      # redirects include this stack's portal; the key comes from the shell
+      # or .env and is never written here. Without it, WorkOS answers 503
+      # and the local sign-in by address still works.
+      TADAS_IDENTITY_PROVIDER: workos
+      TADAS_WORKOS_CLIENT_ID: ${TADAS_WORKOS_CLIENT_ID:-client_01M3640D8WBF9KC0P89YW4E72N}
+      TADAS_WORKOS_API_KEY: ${TADAS_WORKOS_API_KEY:-}
+      TADAS_DEV_SIGN_IN_ENABLED: "true"
     ports:
       - "127.0.0.1:8000:8000"
     depends_on:

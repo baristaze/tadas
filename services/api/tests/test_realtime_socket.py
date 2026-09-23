@@ -60,7 +60,7 @@ def test_a_client_that_drops_mid_stream_is_not_an_error(
     container = build_container(tmp_path)
     _, org = run(
         container.managers.tenancy.bootstrap(
-            seed_request(), "Acme", "acme", OWNER["email"], OWNER["password"], OWNER["name"]
+            seed_request(), "Acme", "acme", OWNER["email"], OWNER["name"]
         )
     )
 
@@ -69,9 +69,7 @@ def test_a_client_that_drops_mid_stream_is_not_an_error(
 
     monkeypatch.setattr(SendBuffer, "drain", dead_drain)
     with TestClient(create_app(container)) as tc:
-        login = tc.post(
-            "/v1/auth/login", json={"email": OWNER["email"], "password": OWNER["password"]}
-        )
+        login = tc.post("/v1/auth/dev-sign-in", json={"email": OWNER["email"]})
         session = tc.post(
             "/v1/auth/sessions",
             json={"org_id": str(org.id)},
@@ -95,13 +93,13 @@ async def test_the_close_after_the_peer_left_is_not_an_error(
     is logged as an error."""
     container = build_container(tmp_path)
     _, org = await container.managers.tenancy.bootstrap(
-        seed_request(), "Acme", "acme", OWNER["email"], OWNER["password"], OWNER["name"]
+        seed_request(), "Acme", "acme", OWNER["email"], OWNER["name"]
     )
     app = create_app(container)
     async with app.router.lifespan_context(app):
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            headers = await sign_in_as(client, OWNER["email"], OWNER["password"], org.id)
+            headers = await sign_in_as(client, OWNER["email"], org.id)
             ticket = (await client.post("/v1/realtime/tickets", headers=headers)).json()["ticket"]
         inbound: asyncio.Queue[Message] = asyncio.Queue()
         outbound: list[Message] = []
@@ -149,11 +147,11 @@ def test_a_binary_frame_is_a_bad_command_and_the_socket_stays_open(tmp_path: Pat
     container = build_container(tmp_path)
     _, org = run(
         container.managers.tenancy.bootstrap(
-            seed_request(), "Acme", "acme", OWNER["email"], OWNER["password"], OWNER["name"]
+            seed_request(), "Acme", "acme", OWNER["email"], OWNER["name"]
         )
     )
     with TestClient(create_app(container)) as tc:
-        owner = sign_in(tc, OWNER["email"], OWNER["password"], org.id)
+        owner = sign_in(tc, OWNER["email"], org.id)
         with open_socket(tc, owner) as ws:
             assert ws.receive_json()["type"] == "hello"
             ws.send_bytes(b"\x00\x01")
@@ -167,13 +165,13 @@ def session_token(container: AppContainer) -> str:
     """Signs the owner in and returns the session token."""
     _, org = run(
         container.managers.tenancy.bootstrap(
-            seed_request(), "Acme", "acme", OWNER["email"], OWNER["password"], OWNER["name"]
+            seed_request(), "Acme", "acme", OWNER["email"], OWNER["name"]
         )
     )
     tenancy = container.managers.tenancy
 
     async def issue() -> str:
-        login = await tenancy.login(seed_request(), OWNER["email"], OWNER["password"])
+        login = await tenancy.dev_sign_in(seed_request(), OWNER["email"])
         identity = await tenancy.authenticate_login(seed_request(), login.token)
         return (await tenancy.exchange_login(identity, org.id)).token
 
@@ -208,8 +206,8 @@ def test_a_socket_is_closed_with_4401_when_the_session_behind_it_expires(tmp_pat
     assert closed.value.reason == "credential_expired"
 
 
-def sign_in(tc: TestClient, email: str, password: str, org_id: UUID) -> dict[str, str]:
-    login = tc.post("/v1/auth/login", json={"email": email, "password": password})
+def sign_in(tc: TestClient, email: str, org_id: UUID) -> dict[str, str]:
+    login = tc.post("/v1/auth/dev-sign-in", json={"email": email})
     session = tc.post(
         "/v1/auth/sessions",
         json={"org_id": str(org_id)},
@@ -229,12 +227,12 @@ def test_revoking_the_session_behind_a_socket_closes_it_and_no_other(tmp_path: P
     container = build_container(tmp_path)
     _, org = run(
         container.managers.tenancy.bootstrap(
-            seed_request(), "Acme", "acme", OWNER["email"], OWNER["password"], OWNER["name"]
+            seed_request(), "Acme", "acme", OWNER["email"], OWNER["name"]
         )
     )
     with TestClient(create_app(container)) as tc:
-        first = sign_in(tc, OWNER["email"], OWNER["password"], org.id)
-        second = sign_in(tc, OWNER["email"], OWNER["password"], org.id)
+        first = sign_in(tc, OWNER["email"], org.id)
+        second = sign_in(tc, OWNER["email"], org.id)
         with open_socket(tc, first) as ws:
             assert ws.receive_json()["type"] == "hello"
             assert tc.post("/v1/auth/logout", headers=second).status_code == 200
@@ -251,13 +249,13 @@ def test_removing_a_member_closes_their_socket(tmp_path: Path) -> None:
     container = build_container(tmp_path)
     _, org = run(
         container.managers.tenancy.bootstrap(
-            seed_request(), "Acme", "acme", OWNER["email"], OWNER["password"], OWNER["name"]
+            seed_request(), "Acme", "acme", OWNER["email"], OWNER["name"]
         )
     )
-    bob = run(add_member(container, org.id, "bob@example.test", "pw-1234", Role.MEMBER))
+    bob = run(add_member(container, org.id, "bob@example.test", Role.MEMBER))
     with TestClient(create_app(container)) as tc:
-        owner = sign_in(tc, OWNER["email"], OWNER["password"], org.id)
-        member = sign_in(tc, "bob@example.test", "pw-1234", org.id)
+        owner = sign_in(tc, OWNER["email"], org.id)
+        member = sign_in(tc, "bob@example.test", org.id)
         with open_socket(tc, member) as ws:
             assert ws.receive_json()["type"] == "hello"
             assert tc.delete(f"/v1/memberships/{bob.id}", headers=owner).status_code == 200
@@ -271,11 +269,11 @@ def test_revoking_an_api_key_closes_the_socket_it_opened(tmp_path: Path) -> None
     container = build_container(tmp_path)
     _, org = run(
         container.managers.tenancy.bootstrap(
-            seed_request(), "Acme", "acme", OWNER["email"], OWNER["password"], OWNER["name"]
+            seed_request(), "Acme", "acme", OWNER["email"], OWNER["name"]
         )
     )
     with TestClient(create_app(container)) as tc:
-        owner = sign_in(tc, OWNER["email"], OWNER["password"], org.id)
+        owner = sign_in(tc, OWNER["email"], org.id)
         issued = tc.post("/v1/api-keys", headers=owner, json={"name": "ci", "role": "member"})
         key = {"Authorization": f"Bearer {issued.json()['key']}"}
         with open_socket(tc, key) as ws:
@@ -298,7 +296,7 @@ def test_a_hello_that_cannot_read_the_head_leaves_no_task_behind(
     container = build_container(tmp_path)
     _, org = run(
         container.managers.tenancy.bootstrap(
-            seed_request(), "Acme", "acme", OWNER["email"], OWNER["password"], OWNER["name"]
+            seed_request(), "Acme", "acme", OWNER["email"], OWNER["name"]
         )
     )
 
@@ -316,7 +314,7 @@ def test_a_hello_that_cannot_read_the_head_leaves_no_task_behind(
 
     monkeypatch.setattr(SendBuffer, "drain", counted_drain)
     with TestClient(create_app(container)) as tc:
-        headers = sign_in(tc, OWNER["email"], OWNER["password"], org.id)
+        headers = sign_in(tc, OWNER["email"], org.id)
         with pytest.raises(WebSocketDisconnect) as closed:
             with open_socket(tc, headers) as ws:
                 ws.receive_json()  # the hello that the failed read never built
@@ -337,7 +335,7 @@ def test_a_revocation_during_the_hello_still_closes_the_socket(
     container = build_container(tmp_path)
     _, org = run(
         container.managers.tenancy.bootstrap(
-            seed_request(), "Acme", "acme", OWNER["email"], OWNER["password"], OWNER["name"]
+            seed_request(), "Acme", "acme", OWNER["email"], OWNER["name"]
         )
     )
     service = container.services.get_realtime_service()
@@ -353,7 +351,7 @@ def test_a_revocation_during_the_hello_still_closes_the_socket(
 
     monkeypatch.setattr(service, "head", head_while_revoked)
     with TestClient(create_app(container)) as tc:
-        headers = sign_in(tc, OWNER["email"], OWNER["password"], org.id)
+        headers = sign_in(tc, OWNER["email"], org.id)
         with open_socket(tc, headers) as ws:
             # The hello may or may not go out before the close does.
             with pytest.raises(WebSocketDisconnect) as closed:
@@ -383,7 +381,7 @@ def test_a_command_that_fails_closes_the_socket_and_leaves_no_subscription(
     container = build_container(tmp_path)
     _, org = run(
         container.managers.tenancy.bootstrap(
-            seed_request(), "Acme", "acme", OWNER["email"], OWNER["password"], OWNER["name"]
+            seed_request(), "Acme", "acme", OWNER["email"], OWNER["name"]
         )
     )
     service = type(container.services.get_realtime_service())
@@ -397,7 +395,7 @@ def test_a_command_that_fails_closes_the_socket_and_leaves_no_subscription(
 
     monkeypatch.setattr(service, "head", head)
     with TestClient(create_app(container)) as tc:
-        headers = sign_in(tc, OWNER["email"], OWNER["password"], org.id)
+        headers = sign_in(tc, OWNER["email"], org.id)
         with open_socket(tc, headers) as ws:
             assert ws.receive_json()["type"] == "hello"
             ws.send_json({"op": "subscribe", "topic": "entity_changed"})

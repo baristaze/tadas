@@ -2,15 +2,21 @@
 knobs that belong to this service, all under the TADAS_ prefix."""
 
 import ipaddress
+from urllib.parse import urlsplit
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import SettingsConfigDict
 
-from tadas.infra.impl.settings import InfraSettings
+from tadas.infra.impl.settings import CLOUD_ENVIRONMENTS, InfraSettings
+from tadas.integrations.settings import IntegrationsSettings
 from tadas.om.storage.settings import StorageSettings
 
+DEV_SIGN_IN_ENVIRONMENTS = frozenset({"local", "test"})
+"""Where the sign-in by address alone may be on. Anywhere else it is
+refused at boot, the way a local backend is."""
 
-class ApiSettings(StorageSettings, InfraSettings):
+
+class ApiSettings(StorageSettings, InfraSettings, IntegrationsSettings):
     model_config = SettingsConfigDict(env_prefix="TADAS_", env_file=".env", extra="ignore")
 
     service_name: str = "api"
@@ -33,15 +39,17 @@ class ApiSettings(StorageSettings, InfraSettings):
     #
     # This budget is per address, and one address is a crowd: a company
     # behind one gateway, a school, a shared runner. So it is sized for a
-    # crowd signing in, not for one person, and the defence against guessing
-    # a password is the per-email delay below, which no crowd dilutes.
+    # crowd signing in, not for one person. It covers every sign-in route:
+    # the start, the callback, the device sign-in and its polls, the local
+    # sign-in, and the second factor. The identity provider guards its own
+    # sign-in; the defence against guessing a second factor is the per-email
+    # delay below, which no crowd dilutes.
     login_rate_limit: int = 200
     login_rate_window_seconds: int = 60
     # Past the per-address limit, which rides the cache and fails open: a run
-    # of failed sign-ins for one email, held by an identity or not, makes the
-    # next one wait, counted in the database. The first
-    # `sign_in_free_failures` cost nothing; then the wait starts at the base
-    # and doubles, up to the cap.
+    # of wrong second-factor codes for one email makes the next one wait,
+    # counted in the database. The first `sign_in_free_failures` cost
+    # nothing; then the wait starts at the base and doubles, up to the cap.
     sign_in_free_failures: int = Field(default=3, ge=1)
     sign_in_delay_base_seconds: float = Field(default=1.0, gt=0)
     sign_in_delay_cap_seconds: float = Field(default=300.0, gt=0)
@@ -62,18 +70,25 @@ class ApiSettings(StorageSettings, InfraSettings):
     # sign-in that presents a code, and says so; one of the wrong shape
     # refuses to start.
     totp_encryption_key: SecretStr | None = None
-    # Sign-up is open by default: a deployed environment has no other door,
-    # since the seeding is local. False closes it, and the route then answers
-    # 404 as a route that does not exist would. Its budget is its own, per
-    # client address, the way the login's is.
-    signup_enabled: bool = True
+    # Where a sign-in at the identity provider may come back to: this
+    # environment's portal callback. A deployed environment names its own
+    # and nothing else, over https, never a local address; the local stack
+    # names the portal's two local ports. A redirect not named here is
+    # refused, so a code is never sent anywhere else.
+    sign_in_redirect_uris: list[str] = [
+        "http://localhost:55173/auth/callback",
+        "http://localhost:5173/auth/callback",
+    ]
+    # The sign-in by address alone, with no browser round trip, for the
+    # seed, the demo recorders, the traffic generator, and the tests. Off
+    # unless set, and refused at boot outside a local or test environment.
+    dev_sign_in_enabled: bool = False
+    # How long an invitation's link works, from its send or resend.
+    invitation_lifetime_days: int = Field(default=7, ge=1, le=30)
     # The interactive API docs and the OpenAPI document, served locally for
     # a developer. A deployed environment turns them off: the document is in
     # the repository, and a production edge has no use for a console.
     interactive_docs: bool = True
-    # Per address, like the login budget and for the same reason.
-    signup_rate_limit: int = 200
-    signup_rate_window_seconds: int = 60
     # The socket's two send lanes, each bounded on its own. The stream lane
     # holds the event hints, and a full one drops its oldest: the client that
     # sees the gap replays from storage. The control lane holds the frames
@@ -102,6 +117,26 @@ class ApiSettings(StorageSettings, InfraSettings):
     admission_limit_reads: int = Field(default=48, gt=0)
     admission_limit_writes: int = Field(default=16, gt=0)
     admission_retry_after_seconds: int = 1
+
+    @model_validator(mode="after")
+    def local_doors_stay_local(self) -> ApiSettings:
+        """The local sign-in is refused outside a local or test environment,
+        and a deployed environment's sign-in comes back to its own https
+        address and nowhere else. Each refusal names the setting."""
+        if self.dev_sign_in_enabled and self.environment not in DEV_SIGN_IN_ENVIRONMENTS:
+            raise ValueError(
+                "TADAS_DEV_SIGN_IN_ENABLED=true is refused "
+                f"when TADAS_ENVIRONMENT={self.environment}"
+            )
+        if self.environment in CLOUD_ENVIRONMENTS:
+            for uri in self.sign_in_redirect_uris:
+                parts = urlsplit(uri)
+                if parts.scheme != "https" or parts.hostname in (None, "localhost", "127.0.0.1"):
+                    raise ValueError(
+                        f"TADAS_SIGN_IN_REDIRECT_URIS names {uri!r}; a deployed "
+                        "environment's sign-in comes back to its own https address"
+                    )
+        return self
 
     @field_validator("trusted_proxies")
     @classmethod

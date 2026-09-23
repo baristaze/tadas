@@ -15,9 +15,7 @@ from tadas.services.api.types.admin import (
     IssuedTotpSecretView,
     MintOperatorTokenRequest,
     OperatorView,
-    PasswordResetView,
     PlatformSizeView,
-    ResetPasswordRequest,
     TotpConfirmedView,
 )
 from tadas.services.api.types.events import OperatorEventView
@@ -46,11 +44,6 @@ class AdminServiceInterface(ABC):
     async def mint_token(
         self, admin: OperatorContext, body: MintOperatorTokenRequest
     ) -> IssuedOperatorTokenView: ...
-
-    @abstractmethod
-    async def reset_password(
-        self, admin: OperatorContext, body: ResetPasswordRequest
-    ) -> PasswordResetView: ...
 
     @abstractmethod
     async def size(self, admin: OperatorContext) -> PlatformSizeView: ...

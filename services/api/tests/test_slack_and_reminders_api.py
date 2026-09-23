@@ -69,8 +69,8 @@ async def test_an_owner_connects_and_disconnects_and_a_member_reads(
     assert datetime.fromisoformat(issued.json()["expires_at"]) > datetime.now(UTC)
 
     org_id = UUID((await client.get("/v1/orgs/current", headers=owner)).json()["id"])
-    await add_member(container, org_id, "bob@example.test", "pw-bob-1", Role.MEMBER)
-    bob = await sign_in_as(client, "bob@example.test", "pw-bob-1", org_id)
+    await add_member(container, org_id, "bob@example.test", Role.MEMBER)
+    bob = await sign_in_as(client, "bob@example.test", org_id)
     assert (await client.get("/v1/slack/connection", headers=bob)).status_code == 200
     refused = await client.post("/v1/slack/link-codes", headers=bob)
     assert refused.status_code == 403 and refused.json()["error"]["code"] == "not_authorized"

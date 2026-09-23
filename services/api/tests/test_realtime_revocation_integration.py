@@ -43,6 +43,8 @@ def settings_over_the_stack(tmp_path: Path) -> ApiSettings:
         buckets_root=tmp_path / "buckets",
         queues_backend="memory",
         secrets_backend="local",
+        # The people of the run sign in by address alone, as the local stack does.
+        dev_sign_in_enabled=True,
         # The rest comes from the environment and .env, the tracker's DSN
         # and the collector aside: a test reports nothing anywhere.
         sentry_dsn=None,
@@ -71,7 +73,7 @@ async def two_processes(tmp_path: Path) -> AsyncIterator[TwoProcesses]:
     suffix = new_id().hex[-8:]  # the random tail; a uuid7 leads with the clock
     email = f"ann-{suffix}@example.test"
     _, org = await a.managers.tenancy.bootstrap(
-        seed_request(), "Acme", f"acme-{suffix}", email, OWNER["password"], OWNER["name"]
+        seed_request(), "Acme", f"acme-{suffix}", email, OWNER["name"]
     )
     port = free_port()
     config = uvicorn.Config(create_app(b), host="127.0.0.1", port=port, **server_options(settings))
@@ -94,7 +96,7 @@ async def test_a_revocation_in_one_process_closes_the_socket_in_another(
 ) -> None:
     address, revoker, org = two_processes.address, two_processes.revoker, two_processes.org
     async with httpx.AsyncClient(base_url=f"http://{address}") as client:
-        headers = await sign_in_as(client, two_processes.email, OWNER["password"], org.id)
+        headers = await sign_in_as(client, two_processes.email, org.id)
         ticket = (await client.post("/v1/realtime/tickets", headers=headers)).json()["ticket"]
     token = headers["Authorization"].removeprefix("Bearer ")
     async with websockets.connect(f"ws://{address}/v1/realtime?ticket={ticket}") as ws:

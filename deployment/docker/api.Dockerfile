@@ -19,6 +19,7 @@ COPY apps/cli/pyproject.toml apps/cli/
 RUN uv sync --frozen --no-dev --package tadas-api --no-install-workspace
 COPY om om
 COPY infra infra
+COPY integrations integrations
 COPY services/api services/api
 RUN uv sync --frozen --no-dev --package tadas-api
 

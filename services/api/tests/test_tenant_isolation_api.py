@@ -21,8 +21,6 @@ from tadas.om.opcontext import Role
 from tadas.services.api.app import create_app
 from tadas.services.api.container import AppContainer
 
-PASSWORD = "pw-1234"
-
 
 def ids_in(payload: object) -> set[str]:
     """Every id anywhere in a response body. A leak is a leak wherever in the
@@ -79,11 +77,9 @@ async def seed_tenant(
     with nothing done leaves the sweep over the done half passing on an empty
     page."""
     email = f"owner@{slug}.test"
-    _, org = await container.managers.tenancy.bootstrap(
-        seed_request(), name, slug, email, PASSWORD, name
-    )
-    headers = await sign_in_as(client, email, PASSWORD, org.id)
-    member = await add_member(container, org.id, f"member@{slug}.test", PASSWORD, Role.MEMBER)
+    _, org = await container.managers.tenancy.bootstrap(seed_request(), name, slug, email, name)
+    headers = await sign_in_as(client, email, org.id)
+    member = await add_member(container, org.id, f"member@{slug}.test", Role.MEMBER)
     tasks: list[str] = []
     keys: list[str] = []
     for index in range(2):
@@ -287,9 +283,7 @@ async def test_a_sign_in_is_not_exchangeable_for_another_tenant(
     """The one place a caller names a tenant: A's person exchanges a login
     for a session in B and is refused, and the login lists only A."""
     caller, other = tenants
-    login = await client.post(
-        "/v1/auth/login", json={"email": "owner@acme.test", "password": PASSWORD}
-    )
+    login = await client.post("/v1/auth/dev-sign-in", json={"email": "owner@acme.test"})
     assert login.status_code == 200, login.text
     places = login.json()["memberships"]
     assert [m["org"]["id"] for m in places if m["org"]["kind"] == "team"] == [str(caller.org_id)]
@@ -319,7 +313,7 @@ async def test_the_event_stream_stops_at_the_tenant_boundary(
 def sign_in_over(tc: TestClient, slug: str, org_id: UUID) -> dict[str, str]:
     """The sign-in of a seeded tenant's owner, driven by the test client: a
     socket is opened in process and an async client cannot open one."""
-    login = tc.post("/v1/auth/login", json={"email": f"owner@{slug}.test", "password": PASSWORD})
+    login = tc.post("/v1/auth/dev-sign-in", json={"email": f"owner@{slug}.test"})
     assert login.status_code == 200, login.text
     session = tc.post(
         "/v1/auth/sessions",
@@ -340,7 +334,7 @@ def test_a_socket_of_one_tenant_never_hears_a_change_in_another(tmp_path: Path) 
     for name, slug in (("Acme", "acme"), ("Other", "other")):
         _, org = run(
             container.managers.tenancy.bootstrap(
-                seed_request(), name, slug, f"owner@{slug}.test", PASSWORD, name
+                seed_request(), name, slug, f"owner@{slug}.test", name
             )
         )
         orgs[slug] = org.id

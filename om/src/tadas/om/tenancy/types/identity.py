@@ -6,20 +6,32 @@ from tadas.om.opcontext import OperatorRole
 
 
 class Identity(Identifiable, Trackable):
-    """A person, across every tenant. Global by nature: a user is this identity inside one org."""
+    """A person, across every tenant. Global by nature: a user is this identity inside one org.
+
+    Tadas keeps no password. The identity provider proves the email and hands
+    back an issuer and a subject, which this row holds once the person has
+    signed in through it; the row, its id, and everything hung on it are
+    Tadas's own."""
 
     MANAGER_OWNED_FIELDS: ClassVar[tuple[str, ...]] = (
-        "password_hash",
+        "issuer",
+        "subject",
         "operator_role",
         "totp_secret",
         "totp_confirmed_at",
         "totp_last_step",
     )
-    """The credential and the allowlist entry: set by the manager's own
-    operations, never copied from a caller."""
+    """The link to the provider and the allowlist entry: set by the manager's
+    own operations, never copied from a caller."""
 
     email: str
-    password_hash: str
+    # The provider's name for this person: the issuer and the subject under
+    # it, unique together. None until the person first signs in through the
+    # provider (a person the seeding or the operator plane made, or one an
+    # older release made with a password, is linked then, by the verified
+    # email).
+    issuer: str | None = None
+    subject: str | None = None
     # The operator allowlist is this field: a person whose entry is set may be
     # admitted to the operator plane, and the entry says what they may do there.
     operator_role: OperatorRole | None = None

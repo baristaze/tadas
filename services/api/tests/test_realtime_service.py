@@ -17,13 +17,11 @@ from tadas.services.api.services.realtime import CREDENTIAL_REVOKED, MEMBERSHIP_
 async def test_a_revocation_ends_the_sockets_it_names_and_no_other(tmp_path: Path) -> None:
     container = build_container(tmp_path)
     tenancy = container.managers.tenancy
-    _, org = await tenancy.bootstrap(
-        seed_request(), "Acme", "acme", OWNER["email"], OWNER["password"], OWNER["name"]
-    )
-    bob = await add_member(container, org.id, "bob@example.test", "pw-1234", Role.MEMBER)
+    _, org = await tenancy.bootstrap(seed_request(), "Acme", "acme", OWNER["email"], OWNER["name"])
+    bob = await add_member(container, org.id, "bob@example.test", Role.MEMBER)
 
     async def session_of(email: str) -> str:
-        login = await tenancy.login(seed_request(), email, "pw-1234")
+        login = await tenancy.dev_sign_in(seed_request(), email)
         identity = await tenancy.authenticate_login(seed_request(), login.token)
         return (await tenancy.exchange_login(identity, org.id)).token
 

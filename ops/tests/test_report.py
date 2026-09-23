@@ -53,9 +53,9 @@ def test_the_report_groups_by_route_and_status_and_counts_errors() -> None:
 
 def test_the_sign_ins_are_totalled_beside_the_working_requests() -> None:
     """A target's p95 is the working requests', so the report splits them:
-    the sign-in and the sign-out of a run are slow by design and few."""
+    the sign-in and the sign-out of a run are few and not what it measures."""
     samples = [
-        Sample("/v1/auth/login", "POST", 200, 900.0),
+        Sample("/v1/auth/dev-sign-in", "POST", 200, 900.0),
         Sample("/v1/auth/sessions", "POST", 200, 40.0),
         Sample("/v1/tasks", "GET", 200, 10.0),
         Sample("/v1/tasks", "POST", 201, 20.0),

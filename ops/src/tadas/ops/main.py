@@ -1,14 +1,16 @@
 """`tadas-ops`: traffic, stress, signals check, size, and token, each against
-one named environment. Exit 0 when the run did what was asked, 1 when a
-stress target was missed or a reader found nothing, 2 for a bad invocation
-or a credential the operator plane refused."""
+one named environment, and workos-bootstrap against one WorkOS environment.
+Exit 0 when the run did what was asked, 1 when a stress target was missed, a
+reader found nothing, or a redirect needs the WorkOS dashboard, 2 for a bad
+invocation or a credential the operator plane refused."""
 
 import argparse
 import asyncio
 import getpass
 import json
 import sys
-from collections.abc import Callable, Iterable
+import time
+from collections.abc import Awaitable, Callable, Iterable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import cast
@@ -49,6 +51,7 @@ from tadas.ops.traffic import (
     is_run_tenant,
     run_traffic,
 )
+from tadas.ops.workos import workos_bootstrap_command
 
 OK, FAILED, USAGE = 0, 1, 2
 
@@ -318,29 +321,69 @@ async def read_provisioner_token(env: Environment, profile: str | None = None) -
     return token
 
 
-async def mint_operator_token(
-    env: Environment, transport: httpx.AsyncBaseTransport | None = None
+DEVICE_SLOW_DOWN_SECONDS = 5.0
+"""How much longer each ask waits once the API answers `sign_in_slow_down`."""
+
+
+async def device_sign_in(
+    client: ApiClient,
+    *,
+    sleep: Callable[[float], Awaitable[object]] = asyncio.sleep,
+    clock: Callable[[], float] = time.monotonic,
 ) -> str:
-    """A person's `read` operator token: the email, the password, and the
-    TOTP code are asked for here, in the person's own terminal, and go only
-    to the sign-in; what is kept is the token the mint route answers."""
-    email = (await asyncio.to_thread(input, "operator email: ")).strip()
-    password = await asyncio.to_thread(getpass.getpass, "password: ")
-    code = (await asyncio.to_thread(getpass.getpass, "TOTP code: ")).strip()
+    """A person's sign-in through the identity provider, for a terminal with
+    no browser of its own: the code and the address go to stderr, the person
+    confirms them in any browser, and the answer is the sign-in credential.
+    Asked again every interval the start named, longer after each
+    `sign_in_slow_down`, until the device code expires."""
+    started = await client.start_device_sign_in()
+    print(
+        f"open {started.verification_uri_complete} and confirm the code {started.user_code}",
+        file=sys.stderr,
+    )
+    interval = float(started.interval)
+    deadline = clock() + started.expires_in
+    while clock() < deadline:
+        await sleep(interval)
+        try:
+            login = await client.finish_device_sign_in(started.device_code)
+        except ApiError as error:
+            if error.code == "sign_in_slow_down":
+                interval += DEVICE_SLOW_DOWN_SECONDS
+                continue
+            if error.code == "sign_in_pending":
+                continue
+            raise
+        return login.token
+    raise ValueError("the sign-in was not confirmed before its code expired; run the command again")
+
+
+async def mint_operator_token(
+    env: Environment,
+    transport: httpx.AsyncBaseTransport | None = None,
+    *,
+    dev_email: str | None = None,
+    sleep: Callable[[float], Awaitable[object]] | None = None,
+) -> str:
+    """A person's `read` operator token. The person signs in through the
+    identity provider (or, on the local stack with `--dev-email`, by the
+    local sign-in), then the TOTP code is asked for here, in the person's own
+    terminal, and goes only to the second-factor route; what is kept is the
+    token the mint route answers."""
     async with ApiClient(
         env.api_url, app=OPERATOR_APP, app_version=app_version(), transport=transport
     ) as client:
-        login = await client.request(
-            "POST",
-            "/v1/auth/login",
-            json={"email": email, "password": password, "totp_code": code},
-            token=None,
-        )
+        if dev_email is not None:
+            login_token = (await client.dev_sign_in(dev_email)).token
+        else:
+            login_token = await device_sign_in(client, sleep=sleep or asyncio.sleep)
+        code = (await asyncio.to_thread(getpass.getpass, "TOTP code: ")).strip()
+        verified = await client.verify_second_factor(login_token, code)
         minted = await client.request(
             "POST",
             "/v1/admin/me/tokens",
             json={"permission": "read"},
-            token=str(login["token"]),
+            token=verified.token,
             idempotency_key=str(uuid4()),
         )
     return str(minted["token"])
@@ -357,12 +400,19 @@ async def token_command(
     if args.identity == "operator":
         if not sys.stdin.isatty():
             print(
-                "the operator's token is minted in a person's own terminal: it asks for the "
-                "password and the TOTP code there, and no agent holds either",
+                "the operator's token is minted in a person's own terminal: the person signs "
+                "in and gives the TOTP code there, and no agent holds either",
                 file=sys.stderr,
             )
             return USAGE
-        token = await mint_operator_token(env, transport)
+        dev_email = getattr(args, "dev_email", None)
+        if dev_email is not None and env.name != "local":
+            print(
+                "--dev-email signs in by the local sign-in, which only --env local serves",
+                file=sys.stderr,
+            )
+            return USAGE
+        token = await mint_operator_token(env, transport, dev_email=dev_email)
         key = "TADAS_OPERATOR_TOKEN"
     else:
         if env.name not in CLOUD_ENVIRONMENTS:
@@ -437,6 +487,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="provisioner only: the person's own AWS profile that reads the secret; "
         "the environment's sign-in profile when absent (production's needs tadas-prod-power)",
     )
+    p_token.add_argument(
+        "--dev-email",
+        help="operator on --env local only: sign in by the local sign-in with this address "
+        "instead of through the identity provider",
+    )
+
+    p_workos = sub.add_parser(
+        "workos-bootstrap",
+        help="reconcile a WorkOS environment with deployment/workos/environments.yaml",
+    )
+    p_workos.add_argument("--environment", required=True, help="staging or production")
+    p_workos.add_argument(
+        "--apply", action="store_true", help="make the changes; without it, only say them"
+    )
     return parser
 
 
@@ -451,6 +515,8 @@ def main(argv: list[str] | None = None) -> int:
             return asyncio.run(signals_command(args))
         if args.command == "token":
             return asyncio.run(token_command(args))
+        if args.command == "workos-bootstrap":
+            return asyncio.run(workos_bootstrap_command(args))
         return asyncio.run(size_command(args))
     except (ValueError, FileNotFoundError) as error:
         print(f"tadas-ops: {error}", file=sys.stderr)

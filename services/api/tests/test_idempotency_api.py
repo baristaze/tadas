@@ -95,8 +95,8 @@ async def test_keys_are_personal_inside_a_tenant(
     client: httpx.AsyncClient, container: AppContainer, owner: dict[str, str]
 ) -> None:
     org_id = UUID((await client.get("/v1/orgs/current", headers=owner)).json()["id"])
-    await add_member(container, org_id, "bob@example.test", "pw-1234", Role.MEMBER)
-    bob = await sign_in_as(client, "bob@example.test", "pw-1234", org_id)
+    await add_member(container, org_id, "bob@example.test", Role.MEMBER)
+    bob = await sign_in_as(client, "bob@example.test", org_id)
     first = await client.post("/v1/tasks", headers={**owner, "Idempotency-Key": "k"}, json=BODY)
     second = await client.post("/v1/tasks", headers={**bob, "Idempotency-Key": "k"}, json=BODY)
     assert first.status_code == 201 and second.status_code == 201

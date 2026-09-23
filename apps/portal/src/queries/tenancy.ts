@@ -5,16 +5,23 @@ import type {
   ApiKeyPageView,
   ApiKeyView,
   CreateTeamOrgRequest,
+  DevSignInRequest,
   ExchangeSessionRequest,
   IssuedApiKeyView,
   IssuedLoginView,
   IssuedSessionView,
-  LoginRequest,
+  InvitationPageView,
+  InvitationView,
+  InviteMemberRequest,
   MembershipChoicePageView,
   MembershipChoiceView,
   MeView,
   SessionView,
-  SignUpRequest,
+  SignInCallbackRequest,
+  SignInStartRequest,
+  SignInStartView,
+  SsoLinkRequest,
+  SsoLinkView,
   UserPageView,
   UserView,
 } from "../api";
@@ -27,6 +34,7 @@ import { keys } from "./keys";
  * gives; the key list is read a page at a time on the screen that shows it. */
 const USERS_PAGE_SIZE = 200;
 export const API_KEYS_PAGE_SIZE = 50;
+export const INVITATIONS_PAGE_SIZE = 50;
 /** A person belongs to at most a hundred orgs; the chip reads them whole. */
 const MY_MEMBERSHIPS_PAGE_SIZE = 200;
 
@@ -135,20 +143,30 @@ export function useMyMemberships() {
   };
 }
 
-/** A new person, who comes with their personal org. Answered as a sign-in
- * is, so the flow goes on to the exchange. Sent once, with no bearer and no
- * idempotency key: a retry would meet the email the first attempt took. */
-export function useSignUp() {
+/** Where the browser goes to sign in at the identity provider. Sent once,
+ * with no bearer: nothing is signed in yet. */
+export function useStartSignIn() {
   return useMutation({
-    mutationFn: (body: SignUpRequest) =>
-      api.post<IssuedLoginView>("/v1/auth/signup", body, { token: null }),
+    mutationFn: (body: SignInStartRequest) =>
+      api.post<SignInStartView>("/v1/auth/sign-in", body, { token: null }),
   });
 }
 
-export function useLogin() {
+/** The code the browser brought back, exchanged by the API. A code is good
+ * once, so this is sent once; the answer is a sign-in, and a person nobody
+ * knew is signed up by it, with their personal org. */
+export function useFinishSignIn() {
   return useMutation({
-    mutationFn: (body: LoginRequest) =>
-      api.post<IssuedLoginView>("/v1/auth/login", body, { token: null }),
+    mutationFn: (body: SignInCallbackRequest) =>
+      api.post<IssuedLoginView>("/v1/auth/callback", body, { token: null }),
+  });
+}
+
+/** The local stack's sign-in by address alone; a deployed API answers 404. */
+export function useDevSignIn() {
+  return useMutation({
+    mutationFn: (body: DevSignInRequest) =>
+      api.post<IssuedLoginView>("/v1/auth/dev-sign-in", body, { token: null }),
   });
 }
 
@@ -182,5 +200,60 @@ export function useCreateOrg() {
     mutationFn: (body: CreateTeamOrgRequest) =>
       api.post<MembershipChoiceView>("/v1/orgs", body, { idempotencyKey: crypto.randomUUID() }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: keys.myMemberships.all }),
+  });
+}
+
+/** The org's pending invitations, for a member who manages members; paged on
+ * demand like the key list. Disabled for anyone else, who would be refused. */
+export function useInvitations(enabled = true) {
+  const query = useInfiniteQuery({
+    queryKey: keys.invitations.list(INVITATIONS_PAGE_SIZE),
+    initialPageParam: null as string | null,
+    getNextPageParam: (last: InvitationPageView) => last.next_cursor,
+    queryFn: ({ pageParam, signal }) => {
+      const cursor = pageParam ? `&cursor=${encodeURIComponent(pageParam)}` : "";
+      return api.get<InvitationPageView>(`/v1/invitations?limit=${INVITATIONS_PAGE_SIZE}${cursor}`, {
+        signal,
+      });
+    },
+    enabled,
+  });
+  return {
+    ...query,
+    data: query.data?.pages.flatMap((page) => page.items) as InvitationView[] | undefined,
+  };
+}
+
+/** The identity provider sends the email with the link. A creating POST, so
+ * it carries an idempotency key and a retry sends one invitation. */
+export function useInviteMember() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: InviteMemberRequest) =>
+      api.post<InvitationView>("/v1/invitations", body, { idempotencyKey: crypto.randomUUID() }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: keys.invitations.all }),
+  });
+}
+
+export function useResendInvitation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (invitationId: string) => api.post<InvitationView>(`/v1/invitations/${invitationId}/resend`),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: keys.invitations.all }),
+  });
+}
+
+export function useRevokeInvitation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (invitationId: string) => api.del<InvitationView>(`/v1/invitations/${invitationId}`),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: keys.invitations.all }),
+  });
+}
+
+/** A short-lived link to the identity provider's admin portal for this org. */
+export function useSsoLink() {
+  return useMutation({
+    mutationFn: (body: SsoLinkRequest) => api.post<SsoLinkView>("/v1/orgs/current/sso-link", body),
   });
 }

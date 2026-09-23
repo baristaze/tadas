@@ -494,7 +494,7 @@ A bootstrap root is applied by a person before the change that needs it merges. 
 
 ## 20. The first operator
 
-A deployed environment starts with no operator: a grant marks an identity, it does not make one. After the environment's first green deploy, follow `docs/runbooks/operator.md`, which is the same walk-through for every operator: sign up, grant, enrol the second factor, check the fence, and write the token into the ops env file. `docs/runbooks/deploy.md` (Grant an operator) is the reference for the workflow itself.
+A deployed environment starts with no operator: a grant marks an identity, it does not make one. After the environment's first green deploy, follow `docs/runbooks/operator.md`, which is the same walk-through for every operator: sign in, grant, enrol the second factor, check the fence, and write the token into the ops env file. `docs/runbooks/deploy.md` (Grant an operator) is the reference for the workflow itself.
 
 The first environment also needs, once:
 

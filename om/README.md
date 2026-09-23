@@ -13,15 +13,18 @@ family. Everything in Tadas belongs to exactly one org, and nothing in
 one org can see anything in another. That is a rule, not a choice.
 
 Every person has one **personal org**, their own place to work. It is
-made with them when they sign up, named after them, and it is theirs
+made with them the first time they sign in, named after them, and it is theirs
 for as long as they exist: it is never deleted, and it never changes
 hands. Every other org is a **team org**, which a person makes when a
 team needs one and owns from then on. A person can belong to many team
 orgs, and anyone can be added to a personal org too.
 
-An **identity** is one person, across every org. It is the email and
-the password the person signs in with. One person has one identity,
-however many teams they belong to.
+An **identity** is one person, across every org. It is the email the
+person signs in with, which the sign-in provider has verified. One
+person has one identity, however many teams they belong to. Tadas keeps
+no password: WorkOS, the sign-in provider, proves who the person is,
+with an email code or link, Google, GitHub, or their company's single
+sign-on.
 
 A **user** is that person inside one org: the name the team sees. The
 same identity is a different user in each org it belongs to, and a
@@ -32,10 +35,14 @@ viewer, member, admin, or owner. The role decides what the person may
 do in that org. The person who creates the org is its first owner, and
 the person of a personal org is its owner for good.
 
+An **invitation** asks a person to join an org, by email, with a role.
+The sign-in provider sends the email; signing in through its link makes
+the person a member.
+
 ## How a person proves who they are
 
-A **session** is a signed-in visit. Signing in with the email and the
-password gives one. It is good for a while, and it ends when the
+A **session** is a signed-in visit. Signing in through the sign-in
+provider gives one. It is good for a while, and it ends when the
 person signs out or when it expires. A session belongs to one user in
 one org, so a person who belongs to two teams picks which team they
 are visiting.

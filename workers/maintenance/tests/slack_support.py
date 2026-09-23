@@ -7,12 +7,15 @@ from uuid import UUID
 
 from worker_support import request
 
+from tadas.infra.cache import CacheScope
 from tadas.infra.impl.local import InfraLocalImpl
+from tadas.integrations.identity.absent import IdentityProviderAbsentImpl
 from tadas.integrations.slack.twin import SlackTwinImpl
 from tadas.om.base import new_id, utcnow
 from tadas.om.opcontext import AppContext, AppType, OpContext, Role
 from tadas.om.storage.impl.memory import StorageMemoryImpl
 from tadas.om.tasks.types.task import Task
+from tadas.om.tenancy.impl.manager import TenancyManagerImpl, TenancyOptions
 from tadas.om.work.types.work_item import WorkItem, WorkKind
 from tadas.workers.maintenance.container import WorkerContainer
 from tadas.workers.maintenance.slack_inbound import (
@@ -33,15 +36,24 @@ def build(tmp_path: Path) -> tuple[WorkerContainer, SlackTwinImpl]:
 
 async def owner_of(container: WorkerContainer, slug: str) -> OpContext:
     ctx, _ = await container.managers.tenancy.bootstrap(
-        request(), slug.title(), slug, f"owner@{slug}.test", "pw-12345678", "Owner"
+        request(), slug.title(), slug, f"owner@{slug}.test", "Owner"
     )
     return ctx
 
 
 async def member_of(container: WorkerContainer, slug: str, email: str) -> OpContext:
     tenancy = container.managers.tenancy
-    await tenancy.add_member(request(), slug, email, "pw-12345678", "Member", Role.MEMBER)
-    login = await tenancy.login(request(), email, "pw-12345678")
+    await tenancy.add_member(request(), slug, email, "Member", Role.MEMBER)
+    # The worker signs nobody in, so the sign-in runs through a manager over
+    # the same storage with the local sign-in on.
+    signing = TenancyManagerImpl(
+        container.storage.get_tenancy_storage(),
+        container.managers.outbox,
+        container.infra.get_cache(CacheScope.REALTIME_TICKET),
+        TenancyOptions(dev_sign_in=True),
+        identity_provider=IdentityProviderAbsentImpl(),
+    )
+    login = await signing.dev_sign_in(request(), email)
     identity = await tenancy.authenticate_login(request(), login.token)
     memberships = await tenancy.get_identity_memberships(identity, None, 10)
     issued = await tenancy.exchange_login(identity, memberships.items[0].org.id)

@@ -47,13 +47,11 @@ def test_a_push_carries_the_stream_position(tmp_path: Path) -> None:
     container = build_container(tmp_path)
     _, org = run(
         container.managers.tenancy.bootstrap(
-            seed_request(), "Acme", "acme", OWNER["email"], OWNER["password"], OWNER["name"]
+            seed_request(), "Acme", "acme", OWNER["email"], OWNER["name"]
         )
     )
     with TestClient(create_app(container)) as tc:
-        login = tc.post(
-            "/v1/auth/login", json={"email": OWNER["email"], "password": OWNER["password"]}
-        )
+        login = tc.post("/v1/auth/dev-sign-in", json={"email": OWNER["email"]})
         session = tc.post(
             "/v1/auth/sessions",
             json={"org_id": str(org.id)},

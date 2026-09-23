@@ -13,6 +13,7 @@ from tadas.om.tenancy.rules import is_after_in_id_order, is_after_newest_first
 from tadas.om.tenancy.storage import TenancyStorageInterface
 from tadas.om.tenancy.types.api_key import ApiKey
 from tadas.om.tenancy.types.identity import Identity
+from tadas.om.tenancy.types.invitation import Invitation, InvitationState
 from tadas.om.tenancy.types.issued import OrgMembership
 from tadas.om.tenancy.types.membership import Membership
 from tadas.om.tenancy.types.org import Org
@@ -38,6 +39,7 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
         self._sessions: MemoryTable[Session] = {}
         self._api_keys: MemoryTable[ApiKey] = {}
         self._socket_tickets: MemoryTable[SocketTicket] = {}
+        self._invitations: MemoryTable[Invitation] = {}
 
     @staticmethod
     def _require_free[E: HasId](
@@ -55,6 +57,12 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
     async def read_identity_by_email_digest(self, email_digest: str) -> Identity | None:
         return next(
             (i for i in self._identities.values() if digest_of(i.email) == email_digest),
+            None,
+        )
+
+    async def read_identity_by_issuer_subject(self, issuer: str, subject: str) -> Identity | None:
+        return next(
+            (i for i in self._identities.values() if i.issuer == issuer and i.subject == subject),
             None,
         )
 
@@ -133,6 +141,14 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
             lambda other: other.email == identity.email,
             "uq_identities_email",
         )
+        # uq_identities_issuer_subject: one identity per subject of an issuer.
+        if identity.subject is not None:
+            self._require_free(
+                self._identities.values(),
+                identity,
+                lambda other: other.issuer == identity.issuer and other.subject == identity.subject,
+                "uq_identities_issuer_subject",
+            )
 
     async def read_org(self, org_id: UUID) -> Org | None:
         return self._get(self._orgs, org_id, org_id)
@@ -182,6 +198,16 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
                 ),
                 "uq_orgs_personal_identity_id",
             )
+        # uq_orgs_provider_org_id: one living org per organization at the provider.
+        if org.provider_org_id is not None and org.deleted_at is None:
+            self._require_free(
+                self._every(self._orgs),
+                org,
+                lambda other: (
+                    other.provider_org_id == org.provider_org_id and other.deleted_at is None
+                ),
+                "uq_orgs_provider_org_id",
+            )
 
     async def create_org_with_owner(
         self,
@@ -230,6 +256,7 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
         outbox_rows: tuple[OutboxRow, ...],
         identity: Identity | None = None,
         personal: tuple[Org, User, Membership] | None = None,
+        invitation: Invitation | None = None,
     ) -> None:
         async with self._lock:
             if identity is not None:
@@ -240,12 +267,18 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
             self._require_membership_free(org_id, membership)
             if user.id in self._users or membership.id in self._memberships:
                 raise UniqueKeyTaken(f"{user.id} or {membership.id} is already written")
+            if invitation is not None:
+                if self._get(self._invitations, org_id, invitation.id) is None:
+                    raise NotFound(f"invitation {invitation.id} is not in {org_id}")
+                self._require_invitation_free(org_id, invitation)
             if identity is not None:
                 self._identities[identity.id] = identity
             if personal is not None:
                 self._put_tenant(personal[0].id, *personal)
             self._put(self._users, org_id, user, outbox_rows)
             self._put(self._memberships, org_id, membership)
+            if invitation is not None:
+                self._put(self._invitations, org_id, invitation)
 
     async def remove_member(
         self,
@@ -520,6 +553,68 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
             "uq_api_keys_key_hash",
         )
 
+    async def read_invitation(self, org_id: UUID, invitation_id: UUID) -> Invitation | None:
+        return self._get(self._invitations, org_id, invitation_id)
+
+    async def read_invitation_by_provider_id(
+        self, org_id: UUID, provider_invitation_id: str
+    ) -> Invitation | None:
+        return next(
+            (
+                i
+                for i in self._rows(self._invitations, org_id)
+                if i.provider_invitation_id == provider_invitation_id
+            ),
+            None,
+        )
+
+    async def read_pending_invitation(self, org_id: UUID, email: str) -> Invitation | None:
+        return next(
+            (
+                i
+                for i in self._rows(self._invitations, org_id)
+                if i.email == email and i.state is InvitationState.PENDING
+            ),
+            None,
+        )
+
+    async def read_invitations(
+        self, org_id: UUID, after: UUID | None, limit: int
+    ) -> list[Invitation]:
+        pending = [
+            i for i in self._rows(self._invitations, org_id) if i.state is InvitationState.PENDING
+        ]
+        newest_first = pending[::-1]
+        if after is not None:
+            newest_first = [i for i in newest_first if is_after_newest_first(i.id, after)]
+        return newest_first[:limit]
+
+    async def write_invitation(
+        self, org_id: UUID, invitation: Invitation, outbox_rows: tuple[OutboxRow, ...] = ()
+    ) -> None:
+        async with self._lock:
+            self._require_invitation_free(org_id, invitation)
+            self._put(self._invitations, org_id, invitation, outbox_rows)
+
+    def _require_invitation_free(self, org_id: UUID, invitation: Invitation) -> None:
+        # uq_invitations_provider_invitation_id, across every tenant.
+        self._require_free(
+            self._every(self._invitations),
+            invitation,
+            lambda other: other.provider_invitation_id == invitation.provider_invitation_id,
+            "uq_invitations_provider_invitation_id",
+        )
+        # uq_invitations_pending_email: one pending invitation per address.
+        if invitation.state is InvitationState.PENDING:
+            self._require_free(
+                self._rows(self._invitations, org_id),
+                invitation,
+                lambda other: (
+                    other.email == invitation.email and other.state is InvitationState.PENDING
+                ),
+                "uq_invitations_pending_email",
+            )
+
     async def purge_deleted(self, org_id: UUID, before: datetime) -> int:
         gone_users = [
             u.id
@@ -546,12 +641,19 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
             for t in self._rows(self._socket_tickets, org_id)
             if (t.redeemed_at is not None and t.redeemed_at < before) or t.expires_at < before
         ]
+        gone_invitations = [
+            i.id
+            for i in self._rows(self._invitations, org_id)
+            if (i.state is not InvitationState.PENDING and i.updated_at < before)
+            or i.expires_at < before
+        ]
         for table, ids in (
             (self._users, gone_users),
             (self._memberships, gone_memberships),
             (self._api_keys, gone_keys),
             (self._sessions, gone_sessions),
             (self._socket_tickets, gone_tickets),
+            (self._invitations, gone_invitations),
         ):
             for row_id in ids:
                 del table[row_id]
@@ -561,6 +663,7 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
             + len(gone_keys)
             + len(gone_sessions)
             + len(gone_tickets)
+            + len(gone_invitations)
         )
 
     async def purge_tenant(self, org_id: UUID) -> int:
@@ -570,6 +673,7 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
             + self._drop_tenant(self._api_keys, org_id)
             + self._drop_tenant(self._sessions, org_id)
             + self._drop_tenant(self._socket_tickets, org_id)
+            + self._drop_tenant(self._invitations, org_id)
         )
 
     @classmethod
