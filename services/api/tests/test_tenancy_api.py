@@ -8,8 +8,10 @@ import httpx
 import pytest
 from api_support import (
     OWNER,
+    SMALL_BUDGET,
     add_member,
     build_container,
+    client_over,
     enrol_operator,
     on_plan,
     run,
@@ -24,6 +26,7 @@ from tadas.om.idempotency.impl.manager import IdempotencyOptions
 from tadas.om.opcontext import OperatorRole, Role
 from tadas.services.api.app import create_app
 from tadas.services.api.container import AppContainer
+from tadas.services.api.settings import ApiSettings
 
 
 async def test_sign_in_round_trip(client: httpx.AsyncClient, owner: dict[str, str]) -> None:
@@ -73,35 +76,42 @@ async def test_not_found_flows_through_the_one_handler(
     assert response.json()["error"]["code"] == "not_found"
 
 
-async def test_login_is_rate_limited_per_client(
-    client: httpx.AsyncClient, container: AppContainer
-) -> None:
-    # The budget is the container's, never a number repeated here: it is sized
-    # for a crowd behind one address and moves with the settings.
+async def test_login_is_rate_limited_per_client(tmp_path: Path) -> None:
+    # The settings' budget is sized for a crowd behind one address; the
+    # mechanism is the same at any size, so this process gets a small one.
+    container = build_container(tmp_path, login_rate_limit=SMALL_BUDGET)
     budget = container.rate_limits.of("login").limit
-    # Another email each time, so the per-email delay never answers first.
-    for index in range(budget):
-        body = {"email": f"nobody-{index}@example.test", "password": "x"}
-        assert (await client.post("/v1/auth/login", json=body)).status_code == 401
-    rejected = await client.post(
-        "/v1/auth/login", json={"email": "nobody@example.test", "password": "x"}
-    )
+    assert budget == SMALL_BUDGET
+    async with client_over(container) as client:
+        # Another email each time, so the per-email delay never answers first.
+        for index in range(budget):
+            body = {"email": f"nobody-{index}@example.test", "password": "x"}
+            assert (await client.post("/v1/auth/login", json=body)).status_code == 401
+        rejected = await client.post(
+            "/v1/auth/login", json={"email": "nobody@example.test", "password": "x"}
+        )
     assert rejected.status_code == 429
     assert rejected.json()["error"]["code"] == "rate_limited"
     assert int(rejected.headers["Retry-After"]) >= 1
+
+
+def test_the_login_budget_is_generous() -> None:
+    """Far above a demo, the traffic run, or a person clicking fast."""
+    assert ApiSettings.model_validate({"_env_file": None}).login_rate_limit >= 1000
 
 
 async def test_a_guessed_identity_waits_before_its_next_sign_in(
     client: httpx.AsyncClient, container: AppContainer
 ) -> None:
     """Per email and in the database, beside the per-address limit: after
-    three wrong passwords even the right one is answered 429 with the wait,
-    and an email nobody holds waits the same way."""
+    the free run of wrong passwords even the right one is answered 429 with
+    the wait, and an email nobody holds waits the same way."""
     await container.managers.tenancy.bootstrap(
         seed_request(), "Acme", "acme", OWNER["email"], OWNER["password"], OWNER["name"]
     )
+    free = container.settings.sign_in_free_failures
     wrong = {"email": OWNER["email"], "password": "nope"}
-    for _ in range(3):
+    for _ in range(free):
         assert (await client.post("/v1/auth/login", json=wrong)).status_code == 401
     right = {"email": OWNER["email"], "password": OWNER["password"]}
     delayed = await client.post("/v1/auth/login", json=right)
@@ -109,7 +119,7 @@ async def test_a_guessed_identity_waits_before_its_next_sign_in(
     assert delayed.json()["error"]["code"] == "sign_in_delayed"
     assert int(delayed.headers["Retry-After"]) >= 1
     unknown = {"email": "nobody@example.test", "password": "nope"}
-    for _ in range(3):
+    for _ in range(free):
         assert (await client.post("/v1/auth/login", json=unknown)).status_code == 401
     assert (await client.post("/v1/auth/login", json=unknown)).status_code == 429
 

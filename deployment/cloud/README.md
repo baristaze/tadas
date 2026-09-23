@@ -106,8 +106,9 @@ A serving process connects as two logins, each with a pool of its own:
 `tadas_runtime` for every request, and `tadas_system` for the system
 scope. Each pool opens up to `database_pool_size` connections
 (`TADAS_DATABASE_POOL_SIZE`), so a process holds at most twice that.
-The API's admission bounds follow the pool: four reads in flight per
-connection, and a third as many writes. Two one-off tasks run beside
+The API's admission bounds follow the pool, generously: thirty-two reads
+in flight per connection, and half as many writes, so a burst waits on a
+checkout and only a flood is refused. Two one-off tasks run beside
 the services: the migrate task before every rollout, and the grant task
 when an operator is granted or a token minted. Each opens two pools of
 two, so the two together hold at most 8.

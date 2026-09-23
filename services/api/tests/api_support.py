@@ -3,7 +3,8 @@
 import asyncio
 import base64
 import secrets
-from collections.abc import Coroutine
+from collections.abc import AsyncIterator, Coroutine
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
@@ -193,6 +194,24 @@ async def enrol_operator(
     )
     assert login.status_code == 200, login.text
     return bearer(login.json()["token"]), secret
+
+
+SMALL_BUDGET = 5
+"""A rate limit's budget in a test that spends it: the settings' own is
+sized for a crowd behind one address, far past what a test should send."""
+
+
+@asynccontextmanager
+async def client_over(container: AppContainer) -> AsyncIterator[httpx.AsyncClient]:
+    """The app over a container a test built with settings of its own, inside
+    its lifespan, and a client of it."""
+    from tadas.services.api.app import create_app
+
+    app = create_app(container)
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            yield client
 
 
 def run[T](coro: Coroutine[Any, Any, T]) -> T:

@@ -6,7 +6,16 @@ from uuid import UUID
 
 import httpx
 import pytest
-from api_support import OWNER, build_container, enrol_operator, on_plan, seed_request, sign_in_as
+from api_support import (
+    OWNER,
+    SMALL_BUDGET,
+    build_container,
+    client_over,
+    enrol_operator,
+    on_plan,
+    seed_request,
+    sign_in_as,
+)
 from httpx import ASGITransport
 
 from tadas.om.billing.types.plan import Plan
@@ -110,14 +119,16 @@ async def test_a_closed_sign_up_answers_as_no_route_would(tmp_path: Path) -> Non
     assert await storage.read_identity_by_email_digest(email_digest(DEE["email"])) is None
 
 
-async def test_sign_up_is_rate_limited_per_client(
-    client: httpx.AsyncClient, container: AppContainer
-) -> None:
+async def test_sign_up_is_rate_limited_per_client(tmp_path: Path) -> None:
+    # A small budget of this process's own: the settings' is sized for a crowd.
+    container = build_container(tmp_path, signup_rate_limit=SMALL_BUDGET)
     budget = container.rate_limits.of("signup").limit
-    for index in range(budget):
-        body = DEE | {"email": f"d{index}@example.test"}
-        assert (await client.post("/v1/auth/signup", json=body)).status_code == 200
-    rejected = await client.post("/v1/auth/signup", json=DEE)
+    assert budget == SMALL_BUDGET
+    async with client_over(container) as client:
+        for index in range(budget):
+            body = DEE | {"email": f"d{index}@example.test"}
+            assert (await client.post("/v1/auth/signup", json=body)).status_code == 200
+        rejected = await client.post("/v1/auth/signup", json=DEE)
     assert rejected.status_code == 429
     assert rejected.json()["error"]["code"] == "rate_limited"
 

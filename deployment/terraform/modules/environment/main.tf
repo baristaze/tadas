@@ -62,11 +62,12 @@ locals {
     TADAS_DATABASE_POOL_SIZE = "2"
   })
 
-  # The API's admission bounds follow its pool, as the settings' defaults
-  # do (48 and 16 over 12): four reads in flight per connection, and a
-  # third as many writes.
-  admission_limit_reads  = 4 * var.database_pool_size
-  admission_limit_writes = ceil(4 * var.database_pool_size / 3)
+  # The API's admission bounds follow its pool, generously: a burst waits on
+  # a checkout, which has a bound of its own, and only a flood is refused.
+  # Thirty-two reads in flight per connection and half as many writes, which
+  # no demo, traffic run, or person clicking fast comes near.
+  admission_limit_reads  = 32 * var.database_pool_size
+  admission_limit_writes = 16 * var.database_pool_size
 
   process_policies = [
     module.queue.policy_arn,

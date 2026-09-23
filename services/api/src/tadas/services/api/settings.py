@@ -36,16 +36,16 @@ class ApiSettings(StorageSettings, InfraSettings, IntegrationsSettings):
     # behind one gateway, a school, a shared runner. So it is sized for a
     # crowd signing in, not for one person, and the defence against guessing
     # a password is the per-email delay below, which no crowd dilutes.
-    login_rate_limit: int = 200
+    login_rate_limit: int = 2000
     login_rate_window_seconds: int = 60
     # Past the per-address limit, which rides the cache and fails open: a run
     # of failed sign-ins for one email, held by an identity or not, makes the
     # next one wait, counted in the database. The first
     # `sign_in_free_failures` cost nothing; then the wait starts at the base
     # and doubles, up to the cap.
-    sign_in_free_failures: int = Field(default=3, ge=1)
+    sign_in_free_failures: int = Field(default=10, ge=1)
     sign_in_delay_base_seconds: float = Field(default=1.0, gt=0)
-    sign_in_delay_cap_seconds: float = Field(default=300.0, gt=0)
+    sign_in_delay_cap_seconds: float = Field(default=30.0, gt=0)
     # How long a sign-in lasts before it must be exchanged for a session, and
     # how long a session lasts: from its exchange, whatever it is used for
     # (the absolute lifetime), and from its last use (the idle one). A
@@ -73,7 +73,7 @@ class ApiSettings(StorageSettings, InfraSettings, IntegrationsSettings):
     # the repository, and a production edge has no use for a console.
     interactive_docs: bool = True
     # Per address, like the login budget and for the same reason.
-    signup_rate_limit: int = 200
+    signup_rate_limit: int = 2000
     signup_rate_window_seconds: int = 60
     # The socket's two send lanes, each bounded on its own. The stream lane
     # holds the event hints, and a full one drops its oldest: the client that
@@ -100,8 +100,8 @@ class ApiSettings(StorageSettings, InfraSettings, IntegrationsSettings):
     # checkout, which has a bound of its own, and only a flood is refused; it
     # is not the login rate limit, which is fairness between subjects and
     # fails open.
-    admission_limit_reads: int = Field(default=48, gt=0)
-    admission_limit_writes: int = Field(default=16, gt=0)
+    admission_limit_reads: int = Field(default=400, gt=0)
+    admission_limit_writes: int = Field(default=200, gt=0)
     admission_retry_after_seconds: int = 1
 
     @field_validator("trusted_proxies")

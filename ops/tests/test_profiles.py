@@ -32,5 +32,5 @@ def test_every_profile_stays_under_the_login_rate_limit() -> None:
     worker, so its sign-ins are its concurrency. The login budget is sized
     for a crowd behind one address, so every profile fits, and a generator
     is never refused for driving the load it was asked to drive."""
-    login_rate_limit = 200  # the API's `login_rate_limit`, per address
+    login_rate_limit = 2000  # the API's `login_rate_limit`, per address
     assert all(p.concurrency <= login_rate_limit for p in (LIGHT, REGULAR, HEAVY, STRESS))
