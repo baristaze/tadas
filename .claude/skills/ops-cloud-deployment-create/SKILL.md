@@ -121,7 +121,8 @@ the names of what was written and never a value.
      portal and site builds and never the state; the registry; the GitHub OIDC provider; the deploy role (staging)
      or the plan and deploy roles (production); the task boundary; the
      investigate role `tadas-investigate-<env>`; the budget and the
-     anomaly monitor; one hosted zone per public name. The monitor
+     anomaly monitor; a hosted zone for the API's name and one for the
+     app's; the company site's certificate in us-east-1. The monitor
      needs Cost Explorer, which only the organization's management
      account turns on; when the account's Cost Explorer does not
      answer, the script leaves the monitor out and says so, and the
@@ -137,10 +138,15 @@ the names of what was written and never a value.
    - The delegation at Cloudflare: each public name gets NS records
      naming its zone's four name servers, and any stale NS record at
      that name is deleted. This is the only write outside AWS and
-     GitHub, and the only one the token is for. For production the
-     script also prints the one step it cannot take: the apex
-     `tadas.fyi` redirects to `www.tadas.fyi` by a rule at Cloudflare,
-     set once by hand (the first-time manual, 18b).
+     GitHub, and the only one the token is for. The company site's
+     name is not delegated: it is a record in the Cloudflare zone
+     (`tadas.fyi`, `staging.tadas.fyi`). The run writes its
+     certificate's validation record there and waits for the
+     certificate (3b), then, once a deploy has made the site's
+     distribution, the name as a CNAME to it, DNS only (3c). On a first
+     run there is no distribution yet, and 3c says so: the person runs
+     the script again after the first green deploy. A name that holds
+     an address record is refused, and the person decides.
    - The investigate profile, `tadas-<env>-investigate`: the role's ARN
      with the Identity Center profile as its `source_profile`.
    - The GitHub environments and their variables: `staging-build` and

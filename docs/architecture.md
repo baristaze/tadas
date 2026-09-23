@@ -1097,7 +1097,8 @@ everything in-process for tests.
   ([ADR 0021](adr/0021-each-environment-has-an-aws-account-of-its-own.md)),
   and every root pins its provider to that account. `bootstrap/staging`
   and `bootstrap/prod` hold what an account has before its first deploy:
-  the registry, the state bucket, the three zones, the deploy roles, the
+  the registry, the state bucket, the two zones, the company site's
+  certificate, the deploy roles, the
   investigate role, and the budget (see
   [Operations](#operations-ops-claudeskills)). Staging's replicates
   every image and static build into production's account, so
@@ -1170,16 +1171,20 @@ everything in-process for tests.
   e.g. `api.tadas.fyi`, `api.staging.tadas.fyi` for staging), the portal at
   `app_domain_name` (a private S3 bucket behind CloudFront, e.g.
   `app.tadas.fyi`), and the company site at `site_domain_name` (the same
-  shape, `www.tadas.fyi`, `www.staging.tadas.fyi` for staging). Each name is the apex of a Route 53 zone of its own
-  in the environment's account, delegated from the domain's zone at
-  Cloudflare, where the domain is registered, and holds its certificate's
-  validation record and its alias. Each environment has one base domain,
+  shape, `tadas.fyi`, `staging.tadas.fyi` for staging). The API's and the
+  app's names are each the apex of a Route 53 zone of its own in the
+  environment's account, delegated from the domain's zone at Cloudflare,
+  where the domain is registered, and each holds its certificate's
+  validation record and its alias. The site's name cannot be delegated
+  (the apex is Cloudflare's own, and a delegation of `staging.tadas.fyi`
+  would hide the two staging delegations beneath it), so it is a CNAME in
+  the Cloudflare zone, DNS only, to the site's distribution. The create
+  run writes it and its certificate's validation record, since no deploy
+  holds the Cloudflare token; the certificate is the bootstrap root's, and
+  the environment root reads it once issued (the first-time manual, 18a). Each environment has one base domain,
   `tadas.fyi` for production and `staging.tadas.fyi` for staging; the
   names are written in `deployment/cloud/environments.json`, and the
-  workflows pass them from the environment's variables. The domain's own
-  apex, `tadas.fyi`, is the one name that cannot be delegated, since it
-  is the apex of Cloudflare's zone; it redirects to `www.tadas.fyi` by a
-  rule at Cloudflare (the first-time manual, 18b). The
+  workflows pass them from the environment's variables. The
   portal reads `/config.json`, written per environment by Terraform, before
   it renders, and calls the API cross-origin; locally it falls back to the
   `VITE_` build variables. The distribution's response headers policy,

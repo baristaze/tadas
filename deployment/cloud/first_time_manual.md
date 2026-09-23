@@ -468,33 +468,27 @@ Permanent AWS_SECRET_ACCESS_KEY
 
 If the shell profile exports either, remove the export. Terraform prefers exported keys to `--profile`, so an exported key silently decides which account a command reaches. The create and nuke scripts clear them for their own run and say so.
 
-## 18a. Cloudflare token for the delegation
+## 18a. Cloudflare token for the delegation and the site's records
 
-`tadas.fyi` is registered at Cloudflare, and its zone stays there. The create run writes one NS record per public name to delegate it to Route 53: the API (`api.`), the portal (`app.`), and the company site (`www.`), each under `staging.` for staging. Create an API token with **Zone / DNS / Edit** on the `tadas.fyi` zone only, and pass it as an environment variable for the run:
+`tadas.fyi` is registered at Cloudflare, and its zone stays there. The create run writes into it with an API token: create one with **Zone / DNS / Edit** on the `tadas.fyi` zone only, and pass it as an environment variable for the run:
 
 ```bash
 export CLOUDFLARE_API_TOKEN=<token>
 ```
 
-Nothing else needs it; CI never does.
+Nothing else needs it; CI never does. Making the token and running the create run are the manual steps. Everything the run writes at Cloudflare, it writes itself, and every write is safe to repeat:
 
-A new public name is a new zone and a new delegation, so it takes a create run for each environment before the change that serves it merges (section 19). The company site's name did: `www.staging.tadas.fyi` for staging, `www.tadas.fyi` for production. The run is the same command as the first time, and safe to repeat: the bootstrap root adds the zone and lets the deploy role write its records, the delegation adds the name's NS records and leaves the others, and the GitHub environments get `SITE_DOMAIN_NAME`. Until that variable is set, a deploy says the cloud is not configured and skips it. Production's run also lets staging's replication write the site's builds into production's artifacts bucket, so a site build replicates only once production's run is done: the first release after it takes a commit staging built after it, the same rule as the first release.
+- **The API and the portal** (`api.`, `app.`, each under `staging.` for staging) are delegated to Route 53: one NS record per name server of the zone the bootstrap root made, and any stale NS record at that name deleted.
+- **The company site** is `tadas.fyi` in production and `staging.tadas.fyi` in staging. Neither can be delegated. The apex is the Cloudflare zone's own apex, where an NS record cannot sit, and a delegation of `staging.tadas.fyi` would hide the `app.staging` and `api.staging` delegations beneath it. So the site's names are records in the Cloudflare zone, **DNS only** (not proxied), so CloudFront serves TLS with its own certificate:
+  1. The bootstrap root requests the site's certificate in us-east-1. The run writes its validation record at Cloudflare as a CNAME, then waits until ACM has issued it (step 3b).
+  2. A deploy makes the site's distribution, with the issued certificate. The environment root finds the certificate by the site's name, and a plan before it is issued stops there, naming it.
+  3. The next create run finds the distribution by its alias and writes the site's name as a CNAME to the distribution's domain (step 3c). At the apex Cloudflare flattens the CNAME into addresses. Until then the step says there is no distribution yet.
 
-## 18b. The apex: `tadas.fyi` redirects to `www.tadas.fyi`
+  If the site's name already holds an `A`, `AAAA`, or `NS` record at Cloudflare, the run refuses and names it, since what that record serves is a person's call. Remove it by hand if the site is to serve there, then run again.
 
-The domain's own apex cannot be delegated: it is the apex of the zone Cloudflare keeps, and an NS record cannot sit there. So `tadas.fyi` stays at Cloudflare and redirects to `https://www.tadas.fyi`, which is delegated and served like every other name. Nothing in AWS knows the apex. This is by hand, once, in the Cloudflare dashboard, because the create run's token edits DNS records and a redirect is a rule. Do it after production's first release has made `https://www.tadas.fyi` answer; production is parked until then, and staging needs nothing here.
+So a new environment runs the create run twice: once before its first deploy, and once after it, for the site's CNAME. The same holds when the site came to an existing environment. For staging: the create run from the pull request's branch before it merges (certificate, validation record, `SITE_DOMAIN_NAME` on the GitHub environments), the merge (the deploy makes the distribution and publishes the site), then the create run again (the CNAME). Until `SITE_DOMAIN_NAME` is set, a deploy says the cloud is not configured and skips it. For production: the create run before the first release that carries the site, the release, then the create run again. Production's first run also lets staging's replication write the site's builds into production's artifacts bucket, so that release takes a commit staging built after it, the same rule as the first release.
 
-1. **DNS > Records > Add record**, on the `tadas.fyi` zone: type `A`, name `@`, IPv4 address `192.0.2.1`, proxy status **Proxied**. Add a second: type `AAAA`, name `@`, IPv6 address `100::`, **Proxied**. The addresses are never reached: a proxied record is answered by Cloudflare's edge, which is where the redirect runs, and Cloudflare's own certificate covers the apex.
-2. **Rules > Redirect Rules > Create rule** (a single redirect), named `apex to www`. When incoming requests match a custom filter expression: `Hostname` `equals` `tadas.fyi`. Then: URL redirect, type **Dynamic**, expression `concat("https://www.tadas.fyi", http.request.uri.path)`, status code **301**, **Preserve query string** on. Deploy.
-3. Check it:
-
-   ```bash
-   curl -sI https://tadas.fyi/          # 301, location: https://www.tadas.fyi/
-   curl -sI 'https://tadas.fyi/x?y=1'   # 301, location: https://www.tadas.fyi/x?y=1
-   curl -sI https://www.tadas.fyi/      # 200, from CloudFront
-   ```
-
-The redirect is a choice, not the only way. Cloudflare could instead flatten a CNAME at the apex onto the CloudFront distribution, but then the apex would have to be in the distribution's certificate, validated by a record at Cloudflare that the create run would write and keep, and the site would answer at two names. The redirect keeps one name for the site and leaves the apex out of AWS.
+The records the Terraform does not hold stay at Cloudflare when an environment is destroyed; the nuke lists them.
 
 ## 19. Bootstrap, then hand the admin back
 

@@ -1,7 +1,7 @@
 # Tadas company site
 
-The public page at `www.tadas.fyi` (and `www.staging.tadas.fyi` on
-staging): what Tadas is, what it does today, the plans, and the way into
+The public page at `https://tadas.fyi` (and `https://staging.tadas.fyi`
+on staging): what Tadas is, what it does today, the plans, and the way into
 the app. One page, plus the page a missing address gets.
 
 ## What it is made of
@@ -54,8 +54,8 @@ built, with production's links.
 ## Where it is served
 
 Terraform's `static_site` module, the portal's module called a second
-time: a private bucket read only by its CloudFront distribution, a
-certificate for its name, and alias records in the name's own zone. The
+time: a private bucket read only by its CloudFront distribution, with the
+certificate the bootstrap root made for its name. The
 distribution sends the same security headers as the portal's, with a
 `Content-Security-Policy` that names the page's own origin and nothing
 else. A missing path gets `404.html` with a 404.
@@ -63,8 +63,9 @@ else. A missing path gets `404.html` with a 404.
 cached for a year, the pages revalidated on every load, and an
 invalidation of every page.
 
-The apex, `tadas.fyi`, redirects to `www.tadas.fyi` at Cloudflare; see
-the first-time manual, section 18b.
+The site's name is a CNAME in the Cloudflare zone, DNS only, to the
+distribution; the create run writes it, and its certificate's validation
+record. The first-time manual, 18a, has the order.
 
 ## Checks
 

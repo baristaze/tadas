@@ -160,8 +160,8 @@ dispatches the `release` workflow, which fast-forwards `release` to
 `release`. [docs/runbooks/deploy.md](docs/runbooks/deploy.md) has the
 steps, the rollback, and the protection to set on the branch.
 
-The company site deploys with them: `www.staging.tadas.fyi` on staging,
-`www.tadas.fyi` in production, where `tadas.fyi` redirects to it.
+The company site deploys with them: `https://staging.tadas.fyi` on
+staging, `https://tadas.fyi` in production.
 
 A deployed environment carries no seed: `make seed` is local, and so is
 the sign-in by address. A person enters staging or production by

@@ -13,7 +13,7 @@ the cloud from Terraform. Nothing is clicked into place in either.
 | The maintenance worker | the `maintenance` container, or a host process | a container service of its own, rolled one at a time because it holds leases |
 | The Slack bridge (`tadas-maintenance slack`) | not run; a host process by hand for a short run, since local and staging share one Slack app | exactly one task on the maintenance image, never two, not even during a rollout |
 | The portal | nginx in a container, or Vite on the host | a private bucket behind a CDN, publishing the build staging made |
-| The company site | Vite on the host (`pnpm --filter @tadas/site dev`) | the same module as the portal: a private bucket behind a CDN at `www.`, publishing the page for its environment from the one build staging made |
+| The company site | Vite on the host (`pnpm --filter @tadas/site dev`) | the same module as the portal: a private bucket behind a CDN at `tadas.fyi` (`staging.tadas.fyi` on staging), publishing the page for its environment from the one build staging made |
 | Postgres | one container, four schemas, one per database role | a managed instance with backups and storage that grows on its own |
 | Valkey (cache, topics) | one container | a managed cluster, encrypted in transit |
 | Queues (`webhooks`, `slack`) | ElasticMQ over the SQS API, declared in `local/elasticmq/elasticmq.conf` | SQS, with a dead-letter queue each |

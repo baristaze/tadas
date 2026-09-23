@@ -25,8 +25,8 @@ before a change of size, and correct this page when a price moves.
 | dev | none | the laptop, from `deployment/local` | $0 |
 | staging | XS | AWS, `environments/staging/main.tf` | $124 |
 | production | S | AWS, `environments/prod/main.tf` | $139 |
-| bootstrap, per account | n/a | AWS, `bootstrap/<staging \| prod>/`: registry, state, three DNS zones, budget | $3 each |
-| **Total** | | | **$269** |
+| bootstrap, per account | n/a | AWS, `bootstrap/<staging \| prod>/`: registry, state, two DNS zones, the site's certificate, budget | $2 each |
+| **Total** | | | **$267** |
 
 This is the demo posture. There are no customers yet, only demos, so
 production is sized to be shown and not to be leaned on. Dev has no
@@ -140,11 +140,11 @@ together: $200 each today.
 
 | Posture | Staging | Production | About a month | Budget |
 |---------|---------|------------|---------------|--------|
-| **Demo, production off** | XS | not applied | $127 | $400 |
-| **Demo** (today) | XS | S | $269 | $400 |
-| **First customers** | S | M | $412 | $600 |
-| **Real production** | S | L | $712 | $1,000 |
-| **Growth** | M | XL | $1,407 | re-plan |
+| **Demo, production off** | XS | not applied | $126 | $400 |
+| **Demo** (today) | XS | S | $267 | $400 |
+| **First customers** | S | M | $410 | $600 |
+| **Real production** | S | L | $710 | $1,000 |
+| **Growth** | M | XL | $1,405 | re-plan |
 
 Staging stays small in every posture. It proves the deploy and the
 migration, not the capacity. A load test that needs production's size

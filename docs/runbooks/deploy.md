@@ -60,7 +60,7 @@ expects the name-only form refuses every job with `AccessDenied`.
 Each role's permissions stop at what its environment owns: names
 beginning `tadas-<environment>`, secrets under `tadas/<environment>/`,
 log groups under `/tadas/<environment>/`, its own keys in its account's
-state bucket, and its environment's three public names. Everything tagged
+state bucket, and its environment's two delegated public names. Everything tagged
 as the other environment is denied too, which holds if a root is ever
 applied in the wrong account. So is any path by which a role could
 widen itself: the deploy roles, the OIDC trust, the replication, a new
