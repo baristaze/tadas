@@ -67,6 +67,7 @@
       },
       "AddTaskRequest": {
         "additionalProperties": false,
+        "description": "`remind_at` schedules one reminder at that time, pushed to every open\nscreen of the org and posted to its Slack channel when one is connected.\nIt carries its offset; a time without one is refused.",
         "properties": {
           "assignee_id": {
             "anyOf": [
@@ -84,6 +85,18 @@
             "default": "",
             "title": "Notes",
             "type": "string"
+          },
+          "remind_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remind At"
           },
           "title": {
             "maxLength": 500,
@@ -498,6 +511,33 @@
           "role"
         ],
         "title": "IssuedSessionView",
+        "type": "object"
+      },
+      "IssuedSlackLinkCodeView": {
+        "description": "A one-time code, typed into a Slack channel as `/tadas link <code>`. It\nworks once, until `expires_at`, and is shown here only: the platform keeps\nits digest.",
+        "properties": {
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "expires_at"
+        ],
+        "title": "IssuedSlackLinkCodeView",
         "type": "object"
       },
       "IssuedTicketView": {
@@ -1142,6 +1182,93 @@
         "title": "SignUpRequest",
         "type": "object"
       },
+      "SlackConnectionStatus": {
+        "enum": [
+          "ok",
+          "broken"
+        ],
+        "title": "SlackConnectionStatus",
+        "type": "string"
+      },
+      "SlackConnectionView": {
+        "description": "The Slack channel the org is connected to. `status` is `broken` when\nSlack refused a post for good (`broken_reason` says which refusal); the\nchannel is linked again to mend it. `created_by` is the member whose code\nlinked it, whom a task added from the channel is attributed to.",
+        "properties": {
+          "broken_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Broken Reason"
+          },
+          "channel_id": {
+            "title": "Channel Id",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "format": "uuid",
+            "title": "Created By",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SlackConnectionStatus"
+          },
+          "team_id": {
+            "title": "Team Id",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "team_id",
+          "channel_id",
+          "status",
+          "broken_reason",
+          "created_by",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "SlackConnectionView",
+        "type": "object"
+      },
+      "SlackStatusView": {
+        "description": "Whether the org has a channel connected, and which.",
+        "properties": {
+          "connection": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SlackConnectionView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "connection"
+        ],
+        "title": "SlackStatusView",
+        "type": "object"
+      },
       "TaskPageView": {
         "description": "One page of a task list. `next_cursor` fetches the next page of the same\nlist, open or done, and is null on the last page. The page size is\nclamped, and a list the clamp cut still says a page follows.",
         "properties": {
@@ -1237,6 +1364,30 @@
             "title": "Position",
             "type": "number"
           },
+          "remind_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remind At"
+          },
+          "reminded_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reminded At"
+          },
           "status": {
             "$ref": "#/components/schemas/TaskStatus"
           },
@@ -1322,7 +1473,7 @@
       },
       "UpdateTaskRequest": {
         "additionalProperties": false,
-        "description": "A partial update: absent fields are kept. An explicit null\n`assignee_id` unassigns the task. The version the update compares with is\nthe task's as the caller read it, in the `If-Match` header: the update\nlands only when the task is still at it, and is refused with 412\n`precondition_failed` when another write landed since, so the caller reads\nagain and decides over the current task. An update that names no version\nis refused with 422 `validation_failed`, since it would overwrite blind.",
+        "description": "A partial update: absent fields are kept. An explicit null\n`assignee_id` unassigns the task. The version the update compares with is\nthe task's as the caller read it, in the `If-Match` header: the update\nlands only when the task is still at it, and is refused with 412\n`precondition_failed` when another write landed since, so the caller reads\nagain and decides over the current task. An update that names no version\nis refused with 422 `validation_failed`, since it would overwrite blind.\nAn explicit null `remind_at` clears the due time; a new one reschedules\nthe reminder, and the one scheduled before it never goes out.",
         "properties": {
           "assignee_id": {
             "anyOf": [
@@ -1346,6 +1497,18 @@
               }
             ],
             "title": "Notes"
+          },
+          "remind_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remind At"
           },
           "status": {
             "anyOf": [
@@ -4731,6 +4894,265 @@
         "summary": "Revoke Session",
         "tags": [
           "tenancy"
+        ]
+      }
+    },
+    "/v1/slack/connection": {
+      "delete": {
+        "operationId": "disconnect_v1_slack_connection_delete",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app-version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Version"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SlackStatusView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Disconnect",
+        "tags": [
+          "slack"
+        ]
+      },
+      "get": {
+        "operationId": "get_connection_v1_slack_connection_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app-version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Version"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SlackStatusView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Connection",
+        "tags": [
+          "slack"
+        ]
+      }
+    },
+    "/v1/slack/link-codes": {
+      "post": {
+        "operationId": "issue_link_code_v1_slack_link_codes_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app-version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Version"
+            }
+          },
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 255,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssuedSlackLinkCodeView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Issue Link Code",
+        "tags": [
+          "slack"
         ]
       }
     },

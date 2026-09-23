@@ -1,7 +1,7 @@
 import { Banner, Button, Card, LinkButton, Muted, Page, Table, TextField } from "../../design/kit";
 import { AppNav } from "../../app/AppNav";
 import { tokens } from "../../design/tokens";
-import { useSettingsVm } from "./useSettingsVm";
+import { useSettingsVm, type SettingsVm } from "./useSettingsVm";
 
 export function SettingsPage() {
   const vm = useSettingsVm();
@@ -64,6 +64,44 @@ export function SettingsPage() {
           ) : null}
         </Card>
       ) : null}
+      <SlackCard slack={vm.slack} />
     </Page>
+  );
+}
+
+function SlackCard({ slack }: { slack: SettingsVm["slack"] }) {
+  const { summary, code } = slack;
+  return (
+    <Card title="Slack">
+      {slack.loading ? (
+        <Muted>Loading</Muted>
+      ) : slack.error ? (
+        <Banner>{slack.error.message}</Banner>
+      ) : (
+        <div style={{ display: "grid", gap: tokens.space.md }}>
+          <div data-slack-state={summary.state}>{summary.line}</div>
+          {summary.fix ? <Banner>{summary.fix}</Banner> : null}
+          {code ? (
+            <Banner>
+              In the Slack channel, type <code>{code.invite}</code>, then <code>{code.command}</code>. The code
+              works once and expires at {code.expiresAt}.{" "}
+              <LinkButton onClick={slack.dismissCode}>dismiss</LinkButton>
+            </Banner>
+          ) : null}
+          {slack.canManage ? (
+            <div style={{ display: "flex", gap: tokens.space.sm }}>
+              <Button onClick={() => void slack.connect()} disabled={slack.connecting}>
+                {summary.connectLabel}
+              </Button>
+              {slack.connected ? (
+                <Button tone="danger" onClick={() => void slack.disconnect()} disabled={slack.disconnecting}>
+                  Disconnect
+                </Button>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      )}
+    </Card>
   );
 }

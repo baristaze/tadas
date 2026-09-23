@@ -33,3 +33,7 @@ export type TaskScope = Schemas["TaskScope"];
 export type EventView = Schemas["EventView"];
 export type Role = Schemas["Role"];
 export type Permission = Schemas["Permission"];
+export type SlackConnectionView = Schemas["SlackConnectionView"];
+export type SlackConnectionStatus = Schemas["SlackConnectionStatus"];
+export type SlackStatusView = Schemas["SlackStatusView"];
+export type IssuedSlackLinkCodeView = Schemas["IssuedSlackLinkCodeView"];

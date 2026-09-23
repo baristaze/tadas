@@ -23,10 +23,10 @@ before a change of size, and correct this page when a price moves.
 | Environment | Size | Where | About a month |
 |-------------|------|-------|---------------|
 | dev | none | the laptop, from `deployment/local` | $0 |
-| staging | XS | AWS, `environments/staging/main.tf` | $115 |
-| production | S | AWS, `environments/prod/main.tf` | $130 |
+| staging | XS | AWS, `environments/staging/main.tf` | $124 |
+| production | S | AWS, `environments/prod/main.tf` | $139 |
 | bootstrap, per account | n/a | AWS, `bootstrap/<staging \| prod>/`: registry, state, two DNS zones, budget | $2 each |
-| **Total** | | | **$249** |
+| **Total** | | | **$267** |
 
 This is the demo posture. There are no customers yet, only demos, so
 production is sized to be shown and not to be leaned on. Dev has no
@@ -35,7 +35,7 @@ costs nothing.
 
 ## What every environment pays before it runs anything
 
-About $75 a month per environment is fixed. It does not move with the
+About $84 a month per environment is fixed. It does not move with the
 size:
 
 | Item | About a month | Why it is there |
@@ -43,7 +43,8 @@ size:
 | NAT gateway, and the data through it | $35 | The tasks live in private subnets and reach the registry and AWS APIs through it |
 | Load balancer | $18 | The API's public edge, with its certificate |
 | Three public IPv4 addresses | $11 | The NAT's address and one per zone for the load balancer |
-| Telemetry: Container Insights, the app's metrics, logs, seven alarms, the dashboard | $10 | What an operator reads; this line grows with traffic |
+| Telemetry: Container Insights, the app's metrics, logs, eight alarms, the dashboard | $10 | What an operator reads; this line grows with traffic |
+| The Slack bridge: one task of 0.25 vCPU and 0.5 GB | $9 | Exactly one per environment at every size, since Slack spreads its deliveries across every open connection |
 | Secrets, queues, buckets, the portal's CDN, traces | $2 | At demo traffic most of it is inside the free allowances |
 
 The telemetry line is the least certain. Each series the app exports
@@ -54,15 +55,15 @@ $20 to $50.
 
 ## The five sizes
 
-The fixed $75 is included in every total below.
+The fixed $84 is included in every total below.
 
 | Size | API tasks | Worker tasks | Postgres | Valkey | Pool | Ceilings | About a month |
 |------|-----------|--------------|----------|--------|------|----------|---------------|
-| **XS** | 1 × 0.25 vCPU, 0.5 GB | 1 × 0.25, 0.5 | `db.t4g.micro`, one zone | 1 × `cache.t4g.micro` | 6 | 2, 1 | **$115** |
-| **S** | 1 × 0.25, 0.5 | 1 × 0.25, 0.5 | `db.t4g.small`, one zone | 1 × `cache.t4g.micro` | 10 | 3, 1 | **$130** |
-| **M** | 2 × 0.5, 1 | 1 × 0.25, 0.5 | `db.t4g.medium`, two zones | 2 × `cache.t4g.small` | 12 | 4, 2 | **$260** |
-| **L** | 2 × 0.5, 1 | 2 × 0.5, 1 | `db.m6g.large`, two zones | 2 × `cache.m6g.large` | 12 | 6, 2 | **$560** |
-| **XL** | 4 × 1, 2 | 2 × 1, 2 | `db.m6g.xlarge`, two zones, 100 GB | 2 × `cache.m6g.xlarge` | 12 | 12, 4 | **$1,125** |
+| **XS** | 1 × 0.25 vCPU, 0.5 GB | 1 × 0.25, 0.5 | `db.t4g.micro`, one zone | 1 × `cache.t4g.micro` | 6 | 2, 1 | **$124** |
+| **S** | 1 × 0.25, 0.5 | 1 × 0.25, 0.5 | `db.t4g.small`, one zone | 1 × `cache.t4g.micro` | 10 | 3, 1 | **$139** |
+| **M** | 2 × 0.5, 1 | 1 × 0.25, 0.5 | `db.t4g.medium`, two zones | 2 × `cache.t4g.small` | 12 | 4, 2 | **$269** |
+| **L** | 2 × 0.5, 1 | 2 × 0.5, 1 | `db.m6g.large`, two zones | 2 × `cache.m6g.large` | 12 | 6, 2 | **$569** |
+| **XL** | 4 × 1, 2 | 2 × 1, 2 | `db.m6g.xlarge`, two zones, 100 GB | 2 × `cache.m6g.xlarge` | 12 | 12, 4 | **$1,134** |
 
 The ceilings are the autoscaling maximums, API first and worker
 second. A total is the month at the floor, with the flip off or with
@@ -110,7 +111,9 @@ The API's admission bounds follow the pool: four reads in flight per
 connection, and a third as many writes. Two one-off tasks run beside
 the services: the migrate task before every rollout, and the grant task
 when an operator is granted or a token minted. Each opens two pools of
-two, so the two together hold at most 8.
+two, so the two together hold at most 8. The Slack bridge builds the
+same settings but never touches the database, so its pools stay empty
+and the rule below leaves it out.
 
 The rule each size keeps: twice the API's ceiling (a rollout may double
 its replicas for a moment), plus the worker's ceiling, times two pools,
@@ -137,11 +140,11 @@ together: $200 each today.
 
 | Posture | Staging | Production | About a month | Budget |
 |---------|---------|------------|---------------|--------|
-| **Demo, production off** | XS | not applied | $117 | $400 |
-| **Demo** (today) | XS | S | $249 | $400 |
-| **First customers** | S | M | $392 | $600 |
-| **Real production** | S | L | $692 | $1,000 |
-| **Growth** | M | XL | $1,387 | re-plan |
+| **Demo, production off** | XS | not applied | $126 | $400 |
+| **Demo** (today) | XS | S | $267 | $400 |
+| **First customers** | S | M | $410 | $600 |
+| **Real production** | S | L | $710 | $1,000 |
+| **Growth** | M | XL | $1,405 | re-plan |
 
 Staging stays small in every posture. It proves the deploy and the
 migration, not the capacity. A load test that needs production's size
@@ -168,10 +171,10 @@ These are ordered by what they save. None of them changes the
 architecture.
 
 1. **Leave production unapplied until the first demo.** That saves
-   about $130 a month. `release` does not move, so nothing deploys it.
+   about $139 a month. `release` does not move, so nothing deploys it.
 2. **Tear staging down between demo weeks**, with
    `scripts/cloud_nuke.sh staging`, and build it again with
-   `scripts/cloud_create.sh staging`. That saves about $115, and
+   `scripts/cloud_create.sh staging`. That saves about $124, and
    staging's data goes with it.
 3. **Commit once the size is settled.** A one-year reserved instance
    for RDS and ElastiCache, or a Compute Savings Plan for Fargate,

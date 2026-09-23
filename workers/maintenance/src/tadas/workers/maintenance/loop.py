@@ -28,7 +28,7 @@ from tadas.om.exceptions import LeaseLost, NotFound
 from tadas.om.opcontext import AppContext, AppType, OpContext, RequestContext
 from tadas.om.outbox import OutboxRelayInterface
 from tadas.om.work import WorkManagerInterface
-from tadas.om.work.types.handler import WorkHandlerInterface
+from tadas.om.work.types.handler import WorkHandlerInterface, WorkParked
 from tadas.om.work.types.work_item import WorkItem, WorkKind
 
 log = logging.getLogger(__name__)
@@ -245,6 +245,12 @@ class WorkerLoop:
             else:
                 log.warning("lease lost on %s; task cancelled before the lease expired", item.id)
                 OUTCOMES.labels(subsystem="worker", outcome="lease_lost").inc()
+        except WorkParked as parked:
+            # A guard, not a failure: back to the queue for the time the
+            # handler named, with its reason as the note, no attempt spent.
+            log.info("parked %s for %s: %s", item.id, parked.resume_after, parked.reason)
+            note = item.model_copy(update={"last_error": f"parked: {parked.reason}"})
+            await self._settle(item, self._work.defer(ctx, note, parked.resume_after), "parked")
         except Exception as error:
             log.exception("handler failed on %s", item.id)
             failure = self._work.fail(ctx, item, f"{type(error).__name__}: {error}"[:500])

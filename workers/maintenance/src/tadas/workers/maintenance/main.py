@@ -1,5 +1,6 @@
-"""The worker binary: settings, container, stop handlers, `serve`, and the
-`health` probe, which asks the serving process's `/healthz`."""
+"""The worker binary: settings, container, stop handlers, `serve`, `slack`
+(the Socket Mode bridge), and the `health` probe, which asks the serving
+process's `/healthz`."""
 
 import argparse
 import asyncio
@@ -18,12 +19,21 @@ from tadas.infra.observability import (
     name_process,
 )
 from tadas.infra.trust import install_trust_store
+from tadas.om.opcontext import AppContext, AppType
 from tadas.om.work.types.work_item import WorkKind
 from tadas.workers.maintenance.container import WorkerContainer
 from tadas.workers.maintenance.handler import NoopHandlerImpl
 from tadas.workers.maintenance.health import Probe, WorkerHttpServer
 from tadas.workers.maintenance.loop import LoopOptions, WorkerLoop
+from tadas.workers.maintenance.reminders import TaskReminderHandlerImpl
 from tadas.workers.maintenance.settings import MaintenanceSettings
+from tadas.workers.maintenance.slack_inbound import (
+    InboundOptions,
+    SlackInboundConsumer,
+    SlackInboundHandler,
+)
+from tadas.workers.maintenance.slack_posts import SlackPostHandlerImpl
+from tadas.workers.maintenance.slack_socket import SlackSocketBridge, hold_connection
 
 log = logging.getLogger(__name__)
 
@@ -49,16 +59,40 @@ def build_loop(container: WorkerContainer, lane: str | None = None) -> WorkerLoo
             "tenancy": container.managers.tenancy.purge_deleted,
             "idempotency": container.managers.idempotency.purge,
             "events": container.managers.events.purge_expired,
+            "slack": container.managers.slack.purge_deleted,
         },
-        handlers={WorkKind.NOOP: NoopHandlerImpl()},
+        handlers={
+            WorkKind.NOOP: NoopHandlerImpl(),
+            WorkKind.TASK_REMINDER: TaskReminderHandlerImpl(container.managers.tasks),
+            WorkKind.SLACK_POST: SlackPostHandlerImpl(
+                container.managers.tasks, container.managers.slack, container.slack
+            ),
+        },
         topics=container.infra.get_topics(),
         liveness=container.infra.get_cache(CacheScope.WORKER_LIVENESS),
         options=loop_options(container.settings, lane),
     )
 
 
-async def serve(lane: str | None) -> int:
-    settings = MaintenanceSettings()
+def build_inbound(container: WorkerContainer) -> SlackInboundConsumer:
+    """The consumer of the `slack` queue: what the Socket Mode bridge
+    acknowledged and queued, handled under the request stage it mints."""
+    settings = container.settings
+    handler = SlackInboundHandler(
+        container.managers.slack,
+        container.managers.tasks,
+        container.slack,
+        AppContext(type=AppType.SLACK, version=f"slack@{settings.worker_id}"),
+    )
+    options = InboundOptions(
+        visibility=timedelta(seconds=settings.slack_inbound_visibility_seconds)
+    )
+    return SlackInboundConsumer(container.infra.get_queues(), handler, options)
+
+
+def boot(settings: MaintenanceSettings) -> None:
+    """Logging first, then the process's name, the trust store, error
+    reporting, and tracing: the order every process boots in."""
     configure_logging(settings.log_level, settings.log_json)
     # Second, before anything logs: every line this process writes carries the
     # service and the environment, whether or not reporting is configured.
@@ -72,12 +106,23 @@ async def serve(lane: str | None) -> int:
         settings.service_name,
         timedelta(seconds=settings.otel_timeout_seconds),
     )
+
+
+async def serve(lane: str | None) -> int:
+    settings = MaintenanceSettings()
+    boot(settings)
     container = WorkerContainer.build(settings)
     await container.start()
     loop = build_loop(container, lane)
+    inbound = build_inbound(container)
     running = asyncio.get_running_loop()
+
+    def stop() -> None:
+        inbound.stop()
+        loop.stop()
+
     for sig in (signal.SIGTERM, signal.SIGINT):
-        running.add_signal_handler(sig, loop.stop)
+        running.add_signal_handler(sig, stop)
     # /metrics for Prometheus locally and the collector sidecar in the cloud,
     # /healthz for the container probe: the loop's own last beat, held in
     # memory, so a cache outage never restarts a worker.
@@ -88,12 +133,48 @@ async def serve(lane: str | None) -> int:
         running,
     )
     http.start()
+    consuming = asyncio.create_task(inbound.run(), name="slack-inbound")
     try:
         await loop.run()
     finally:
+        consuming.cancel()
+        await asyncio.gather(consuming, return_exceptions=True)
         http.stop()
         await container.close()
     log.info("%s stopped", settings.worker_id)
+    return 0
+
+
+async def slack() -> int:
+    """The Socket Mode bridge: one per environment. It needs the queue and the
+    app token, and nothing else: no database, no bot token. With no app token
+    it holds no connection and idles, healthy, saying so, so a deployed
+    environment whose secret is still "off" runs the process harmlessly."""
+    settings = MaintenanceSettings(service_name="slack")
+    boot(settings)
+    container = WorkerContainer.build(settings)
+    await container.infra.start()
+    stopping = asyncio.Event()
+    running = asyncio.get_running_loop()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        running.add_signal_handler(sig, stopping.set)
+
+    async def alive() -> bool:
+        return True
+
+    http = WorkerHttpServer(settings.metrics_host, settings.metrics_port, alive, running)
+    http.start()
+    try:
+        if settings.slack_app_token is None:
+            log.warning("no Slack app token is set; the Socket Mode connection stays closed")
+            await stopping.wait()
+        else:
+            bridge = SlackSocketBridge(container.infra.get_queues())
+            timeout = timedelta(seconds=settings.slack_timeout_seconds)
+            await hold_connection(settings.slack_app_token, bridge, stopping, timeout)
+    finally:
+        http.stop()
+        await container.close()
     return 0
 
 
@@ -126,9 +207,12 @@ def main(argv: list[str] | None = None) -> int:
     p_serve = sub.add_parser("serve", help="run the worker loop")
     p_serve.add_argument("--lane", help="the lane to claim from; defaults to TADAS_WORKER_LANE")
     sub.add_parser("health", help="exit 0 while the serving worker answers /healthz with 200")
+    sub.add_parser("slack", help="hold the Slack Socket Mode connection and queue what arrives")
     args = parser.parse_args(argv)
     if args.command == "health":
         return health(MaintenanceSettings())
+    if args.command == "slack":
+        return asyncio.run(slack())
     return asyncio.run(serve(args.lane))
 
 

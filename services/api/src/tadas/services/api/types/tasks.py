@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import Field
+from pydantic import AwareDatetime, Field
 
 from tadas.om.tasks.types.task import TaskStatus
 from tadas.services.api.types.common import RequestBody, View
@@ -19,6 +19,10 @@ class TaskView(View):
     created_by: UUID
     deleted_at: datetime | None
     version: int
+    # Later fields default, so a client reads a response from a build that
+    # predates them.
+    remind_at: datetime | None = None
+    reminded_at: datetime | None = None
 
 
 class TaskPageView(View):
@@ -31,9 +35,14 @@ class TaskPageView(View):
 
 
 class AddTaskRequest(RequestBody):
+    """`remind_at` schedules one reminder at that time, pushed to every open
+    screen of the org and posted to its Slack channel when one is connected.
+    It carries its offset; a time without one is refused."""
+
     title: str = Field(max_length=500)
     notes: str = ""
     assignee_id: UUID | None = None
+    remind_at: AwareDatetime | None = None
 
 
 class UpdateTaskRequest(RequestBody):
@@ -43,12 +52,15 @@ class UpdateTaskRequest(RequestBody):
     lands only when the task is still at it, and is refused with 412
     `precondition_failed` when another write landed since, so the caller reads
     again and decides over the current task. An update that names no version
-    is refused with 422 `validation_failed`, since it would overwrite blind."""
+    is refused with 422 `validation_failed`, since it would overwrite blind.
+    An explicit null `remind_at` clears the due time; a new one reschedules
+    the reminder, and the one scheduled before it never goes out."""
 
     title: str | None = Field(default=None, max_length=500)
     notes: str | None = None
     status: TaskStatus | None = None
     assignee_id: UUID | None = None
+    remind_at: AwareDatetime | None = None
 
 
 class MoveTaskRequest(RequestBody):

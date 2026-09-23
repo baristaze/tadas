@@ -1,6 +1,6 @@
 import logging
 from collections.abc import Sequence
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -27,6 +27,7 @@ from tadas.om.work.storage import InsertOutcome, WorkStorageInterface
 from tadas.om.work.types.work_item import (
     WORK_PAYLOADS,
     WORK_ROW_PREFIX,
+    ScheduledPayload,
     WorkItem,
     WorkKind,
     WorkStatus,
@@ -54,6 +55,19 @@ def caused_by(rctx: RequestContext, item: WorkItem) -> RequestContext:
     empty, the way a request that arrived at the edge does."""
     cause = item.request_id if item.request_id != EMPTY_UUID else None
     return rctx.model_copy(update={"caused_by_request_id": cause})
+
+
+def not_before(kind: WorkKind, payload: object) -> datetime | None:
+    """When work of this kind may run, read off its payload: the payload's
+    `not_before` for a scheduled kind, None for any other. A payload that
+    does not parse answers None here; `_land` refuses it with the reason."""
+    shape = WORK_PAYLOADS[kind]
+    if not issubclass(shape, ScheduledPayload):
+        return None
+    try:
+        return shape.model_validate(payload).not_before
+    except ValidationError:
+        return None
 
 
 class WorkManagerImpl(WorkManagerInterface):
@@ -102,11 +116,13 @@ class WorkManagerImpl(WorkManagerInterface):
         caused the work and its trace context come from the row too, which
         names the request that made the write: the row is the whole handoff,
         so nothing here is minted afresh. The lane is the
-        default one; a row carries no routing of its own."""
+        default one; a row carries no routing of its own. A kind whose payload
+        is a `ScheduledPayload` waits in the queue until its `not_before`."""
         kind = row.kind.removeprefix(WORK_ROW_PREFIX)
         if kind not in {k.value for k in WorkKind}:
             raise ValidationFailed(f"outbox row {row.id} asks for unknown work {row.kind}")
         now = utcnow()
+        available_at = max(now, not_before(WorkKind(kind), row.payload) or now)
         return await self._land(
             org_id,
             WorkItem(
@@ -122,7 +138,7 @@ class WorkManagerImpl(WorkManagerInterface):
                 traceparent=row.traceparent,  # its trace context, for the run's link
                 payload=row.payload,
                 status=WorkStatus.QUEUED,
-                available_at=now,
+                available_at=available_at,
             ),
         )
 

@@ -13,11 +13,17 @@ class TtlDays(RootModel[int]):
 
 
 class AddTaskRequest(BaseModel):
+    """
+    `remind_at` schedules one reminder at that time, pushed to every open
+    screen of the org and posted to its Slack channel when one is connected.
+    It carries its offset; a time without one is refused.
+    """
     model_config = ConfigDict(
         extra='forbid',
     )
     assignee_id: Annotated[UUID | None, Field(title='Assignee Id')] = None
     notes: Annotated[str | None, Field(title='Notes')] = ''
+    remind_at: Annotated[AwareDatetime | None, Field(title='Remind At')] = None
     title: Annotated[str, Field(max_length=500, title='Title')]
 
 
@@ -97,6 +103,16 @@ class ExchangeSessionRequest(BaseModel):
         extra='forbid',
     )
     org_id: Annotated[UUID, Field(title='Org Id')]
+
+
+class IssuedSlackLinkCodeView(BaseModel):
+    """
+    A one-time code, typed into a Slack channel as `/tadas link <code>`. It
+    works once, until `expires_at`, and is shown here only: the platform keeps
+    its digest.
+    """
+    code: Annotated[str | None, Field(title='Code')]
+    expires_at: Annotated[AwareDatetime, Field(title='Expires At')]
 
 
 class IssuedTicketView(BaseModel):
@@ -302,6 +318,35 @@ class SignUpRequest(BaseModel):
     password: Annotated[str, Field(max_length=200, min_length=8, title='Password')]
 
 
+class SlackConnectionStatus(StrEnum):
+    ok = 'ok'
+    broken = 'broken'
+
+
+class SlackConnectionView(BaseModel):
+    """
+    The Slack channel the org is connected to. `status` is `broken` when
+    Slack refused a post for good (`broken_reason` says which refusal); the
+    channel is linked again to mend it. `created_by` is the member whose code
+    linked it, whom a task added from the channel is attributed to.
+    """
+    broken_reason: Annotated[str | None, Field(title='Broken Reason')]
+    channel_id: Annotated[str, Field(title='Channel Id')]
+    created_at: Annotated[AwareDatetime, Field(title='Created At')]
+    created_by: Annotated[UUID, Field(title='Created By')]
+    id: Annotated[UUID, Field(title='Id')]
+    status: SlackConnectionStatus
+    team_id: Annotated[str, Field(title='Team Id')]
+    updated_at: Annotated[AwareDatetime, Field(title='Updated At')]
+
+
+class SlackStatusView(BaseModel):
+    """
+    Whether the org has a channel connected, and which.
+    """
+    connection: SlackConnectionView | None
+
+
 class TaskScope(StrEnum):
     """
     Which tasks a list shows. The org is the team.
@@ -323,6 +368,8 @@ class TaskView(BaseModel):
     id: Annotated[UUID, Field(title='Id')]
     notes: Annotated[str, Field(title='Notes')]
     position: Annotated[float, Field(title='Position')]
+    remind_at: Annotated[AwareDatetime | None, Field(title='Remind At')] = None
+    reminded_at: Annotated[AwareDatetime | None, Field(title='Reminded At')] = None
     status: TaskStatus
     title: Annotated[str, Field(title='Title')]
     updated_at: Annotated[AwareDatetime, Field(title='Updated At')]
@@ -366,12 +413,15 @@ class UpdateTaskRequest(BaseModel):
     `precondition_failed` when another write landed since, so the caller reads
     again and decides over the current task. An update that names no version
     is refused with 422 `validation_failed`, since it would overwrite blind.
+    An explicit null `remind_at` clears the due time; a new one reschedules
+    the reminder, and the one scheduled before it never goes out.
     """
     model_config = ConfigDict(
         extra='forbid',
     )
     assignee_id: Annotated[UUID | None, Field(title='Assignee Id')] = None
     notes: Annotated[str | None, Field(title='Notes')] = None
+    remind_at: Annotated[AwareDatetime | None, Field(title='Remind At')] = None
     status: TaskStatus | None = None
     title: Annotated[Title | None, Field(title='Title')] = None
 

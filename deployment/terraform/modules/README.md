@@ -37,7 +37,7 @@ Three kinds of root live under this folder:
 | `cache`         | Valkey (cache scopes and the topic bus), encrypted in transit   |
 | `queue`         | One SQS queue and dead-letter queue per `Queues` member, IAM    |
 | `buckets`       | One private versioned bucket per `Buckets` member, IAM          |
-| `secrets`       | The four database URLs (master, migration, runtime, system), the Sentry DSN, the TOTP encryption key, the two operator token secrets, the application secrets policy |
+| `secrets`       | The four database URLs (master, migration, runtime, system), the Sentry DSN, the Slack bot and app tokens, the TOTP encryption key, the two operator token secrets, the application secrets policy |
 | `load_balancer` | The load balancer at the API's domain name: HTTPS, HTTP redirects |
 | `portal`        | The portal's private bucket and the CloudFront distribution at the app's domain name |
 | `certificate`   | A DNS-validated ACM certificate for one name                    |
@@ -58,7 +58,7 @@ protection. What each set of numbers costs is in
 calls side by side is how the environments are compared.
 
 Three inputs of the `environment` module are operations rather than
-scale. `alarm_email` is where the environment's seven alarms deliver.
+scale. `alarm_email` is where the environment's eight alarms deliver.
 `autoscaling_enabled` is the one flip: each service's lever under it
 (`api_autoscaling`, `maintenance_autoscaling`: a ceiling, a CPU target,
 and `enabled = true` by default) takes effect only when it is true, and
@@ -77,7 +77,13 @@ each as a one-off task on the migrate task's definition
 and the service depends on it, so a step that fails ends the apply with
 the old tasks still serving.
 The worker passes the API's `rollout_gate` as `rollout_after`, so it
-rolls after the migration ran. Every service waits for its new tasks to
+rolls after the migration ran. The Slack bridge is a third instance, on
+the maintenance image with `command = ["tadas-maintenance", "slack"]`:
+one task, no autoscaling, `deployment_maximum_percent = 100` and
+`deployment_minimum_healthy_percent = 0`, so the old task stops before
+its replacement starts. Slack spreads deliveries across every open
+connection, so two at once would each see only some of them. It also
+rolls after the migration. Every service waits for its new tasks to
 serve (`wait_for_steady_state`): a rollout ECS rolls back fails the
 apply instead of leaving it green over old tasks.
 
@@ -195,6 +201,19 @@ aws secretsmanager put-secret-value \
 Tasks read the secret when they start, so roll the services afterwards
 (`aws ecs update-service --force-new-deployment`, or the next deploy).
 Terraform never overwrites the value; `off` turns reporting off again.
+
+The Slack app's two tokens take the same path, one secret each, both
+created as `off`. The bot token (`xoxb-`) reaches the maintenance
+service as `TADAS_SLACK_BOT_TOKEN`; the app-level token (`xapp-`)
+reaches the slack service alone as `TADAS_SLACK_APP_TOKEN`. With either
+`off`, its side of Slack stays off and the process stays healthy.
+
+```bash
+aws secretsmanager put-secret-value \
+  --secret-id tadas/staging/slack_bot_token --secret-string 'xoxb-...'
+aws secretsmanager put-secret-value \
+  --secret-id tadas/staging/slack_app_token --secret-string 'xapp-...'
+```
 
 ## Checks
 
