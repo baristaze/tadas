@@ -53,23 +53,42 @@ Zustand, one realtime channel.
   route into the query cache (`router.ts`), never into components. The
   ping interval comes from
   `deployment/realtime-timeouts.json`.
-- One tenant at a time. A person enters through sign-in (`/sign-in`) or
-  sign-up (`/sign-up`: email, name, password; nothing about an org, since
-  the person's personal org comes with them), and both answer with the
-  person's places: one goes straight in, several show a picker with the
-  personal org first, none says so. The exchange turns the choice into
-  the one session the tab holds. The org chip in the chrome
-  (`src/app/OrgChip.tsx`) shows the current org, marks a personal one,
-  and opens a menu: the other places to switch to, and a new team org
-  (`/orgs/new`, `src/features/new_org/`: a name and an optional short
-  name, which the server makes from the name when it is left empty). A
-  switch presents the current session to the exchange, which the server
-  ends in the same write, and `adoptSession` then drops the old tenant
-  (`forgetSession`: the token and every cached answer) before the new
-  session is set. A new team org is created under an idempotency key and
-  then switched into the same way. The token change reopens the realtime
-  socket; a late 4401 from the old socket signs nothing out, since it
-  belongs to a token the tab no longer holds.
+- A person signs in through WorkOS AuthKit, which the API fronts. `/login`
+  is the address WorkOS sends a person to when a sign-in did not start here
+  (an invitation's link, a bookmarked sign-in page), and it starts one at
+  once, with no form (`src/features/sign_in/`): it keeps a fresh random
+  `state` in the tab's session storage (`src/store/signInState.ts`), with
+  the page to come back to and an invitation's token, asks the API for the
+  authorization URL for this origin's `/auth/callback`, and sends the
+  browser there. `/auth/callback` goes on only with a state this tab
+  stored, consumed once, so a code started anywhere else is refused; it
+  hands the code to the API, which exchanges it with WorkOS server-side,
+  and a person nobody knew is signed up by it, with their personal org. A
+  tab that just signed out waits on `/login` for the person to ask, rather
+  than being signed straight back in. `/sign-in` and `/sign-up` still lead
+  there. The local stack also serves `/login/dev`, a sign-in by address
+  alone for the seeded people and anyone a developer names, offered only
+  when the runtime config says `devSignIn` (true locally, absent in the
+  cloud) and refused by a deployed API.
+- One tenant at a time. Every sign-in answers with the person's places:
+  one goes straight in, several show a picker with the personal org first,
+  none says so. The exchange turns the choice into the one session the tab
+  holds. The org chip in the chrome (`src/app/OrgChip.tsx`) shows the
+  current org, marks a personal one, and opens a menu: the other places to
+  switch to, and a new team org (`/orgs/new`, `src/features/new_org/`: a
+  name and an optional short name, which the server makes from the name
+  when it is left empty). A switch presents the current session to the
+  exchange, which the server ends in the same write, and `adoptSession`
+  then drops the old tenant (`forgetSession`: the token and every cached
+  answer) before the new session is set. A new team org is created under
+  an idempotency key and then switched into the same way. The token change
+  reopens the realtime socket; a late 4401 from the old socket signs
+  nothing out, since it belongs to a token the tab no longer holds.
+- Settings, for a member who manages members: an invitation by email and
+  role (at most their own, never owner), which WorkOS sends, and the
+  pending ones to send again or revoke. A team org's settings also open
+  WorkOS's admin portal, where the org's admin connects their identity
+  provider for single sign-on or proves a domain; a personal org has none.
 - Design tokens and the kit live in `src/design/`; the operator console,
   when it is built (ADR 0010), imports them from here. A colour or a
   shadow token is a CSS custom property, and `theme.css` gives each its
@@ -96,9 +115,10 @@ in a container at http://localhost:55173, from
 `deployment/docker/portal.Dockerfile`. The API address is compiled into
 that bundle (build argument `VITE_API_URL`, default
 `http://127.0.0.1:8000`), so a change to it needs a rebuild, which
-`make stack-up` does. Sign in as `owner@example.test` (owner) or
-`bob@example.test` (member), both `tadas-local`, after `make seed`, or
-create an account at `/sign-up`; see the root README for every local URL.
+`make stack-up` does. After `make seed`, sign in at `/login/dev` as
+`owner@example.test` (owner) or `bob@example.test` (member), by address
+alone; `/login` signs a person in through WorkOS, once the API holds a
+WorkOS key. See the root README for every local URL.
 
 ## Configuration
 
@@ -114,5 +134,7 @@ call; without it, and locally, the deadline is 30 seconds. It may name
 `retryAttempts` and `retryBaseDelayMs` the same way, the extra attempts a
 retryable failure gets and the wait before the first of them; without them the
 client makes 2 extra attempts, the first after 125 to 250 ms and the second
-after 250 to 500 ms. `retryAttempts: 0` sends every call exactly once. How the
+after 250 to 500 ms. `retryAttempts: 0` sends every call exactly once. `devSignIn: true` offers
+the local sign-in at `/login/dev`; a deployed config leaves it out, and
+locally, with no file, it is on unless `VITE_DEV_SIGN_IN=false`. How the
 build reaches the cloud is in `deployment/terraform/modules/README.md`.

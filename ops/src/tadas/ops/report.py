@@ -4,9 +4,9 @@ the sessions completed, and how long it all took. A sample is one request as
 the transport saw it; the report is pure arithmetic over the samples.
 
 The two groups are the working requests and the sign-in and sign-out that
-carry them. They are split because they measure different things: sign-in
-verifies a password on purpose and is the slowest route the generator calls,
-and a run makes one of each per person while it makes hundreds of the rest.
+carry them. They are split because they measure different things: a run
+makes one sign-in, one exchange, and one sign-out per person, while it makes
+hundreds of the rest, and the sign-in writes a credential every time.
 A p95 over both is a p95 of the mix, and the mix moves with the profile."""
 
 import json
@@ -17,7 +17,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import Any
 
-AUTH_ROUTES = frozenset({"/v1/auth/login", "/v1/auth/sessions", "/v1/auth/logout"})
+AUTH_ROUTES = frozenset({"/v1/auth/dev-sign-in", "/v1/auth/sessions", "/v1/auth/logout"})
 """Sign-in and sign-out. Every other route a run calls is a working request:
 the task routes, the event stream, and the socket's ticket."""
 

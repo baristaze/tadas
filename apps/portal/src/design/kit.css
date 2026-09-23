@@ -312,6 +312,12 @@ select.tadas-field {
   color: var(--tadas-link);
 }
 
+/* A due time that has passed, or whose reminder went out. */
+.tadas-pill[data-tone="danger"] {
+  border-color: var(--tadas-danger);
+  color: var(--tadas-danger-text);
+}
+
 /* The segmented control: a track with the chosen segment raised. */
 .tadas-segmented {
   display: inline-flex;

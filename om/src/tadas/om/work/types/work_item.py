@@ -16,6 +16,8 @@ from tadas.om.opcontext import Permission
 class WorkKind(StrEnum):
     NOOP = "NOOP"  # the maintenance worker's kind: no work beyond the sweep
     SYNC_SEATS = "SYNC_SEATS"  # a per-seat plan's quantity follows the member count
+    TASK_REMINDER = "TASK_REMINDER"  # a task's due time came: remind the team
+    SLACK_POST = "SLACK_POST"  # a message to the channel the org connected
 
 
 WORK_ROW_PREFIX = "work."
@@ -87,15 +89,48 @@ class SyncSeatsPayload(Platform):
     on the members the org has then."""
 
 
+class ScheduledPayload(Platform):
+    """A payload that says when its work may run. The relayed enqueue makes
+    the item available at `not_before`, or at once when that has passed, so
+    work that waits for a time waits in the queue and no timer holds it."""
+
+    not_before: datetime
+
+
+class TaskReminderPayload(ScheduledPayload):
+    """The due time a task carried when the reminder was set, as
+    `not_before`. The handler fires only while the task still carries it:
+    an edit that moved or cleared the due time leaves this item stale, and
+    a stale item completes without a word."""
+
+
+class SlackPostEvent(StrEnum):
+    CREATED = "created"
+    COMPLETED = "completed"
+    REMINDED = "reminded"
+
+
+class SlackPostPayload(Platform):
+    """What happened to the task the item targets. The message is composed
+    when the item runs, from the task as it is then; the payload carries no
+    field of it."""
+
+    event: SlackPostEvent
+
+
 WORK_PAYLOADS: dict[WorkKind, type[Platform]] = {
     WorkKind.NOOP: NoopPayload,
     WorkKind.SYNC_SEATS: SyncSeatsPayload,
+    WorkKind.TASK_REMINDER: TaskReminderPayload,
+    WorkKind.SLACK_POST: SlackPostPayload,
 }
 """The payload shape of every kind; enqueue validates the item's payload against it."""
 
 WORK_ENQUEUE_PERMISSIONS: dict[WorkKind, Permission] = {
     WorkKind.NOOP: Permission.WRITE,
     WorkKind.SYNC_SEATS: Permission.MANAGE_MEMBERS,
+    WorkKind.TASK_REMINDER: Permission.WRITE,
+    WorkKind.SLACK_POST: Permission.WRITE,
 }
 """The permission that asks for each kind. The person who asks authorizes
 the whole run once, so the permission has to be as wide as the run: every

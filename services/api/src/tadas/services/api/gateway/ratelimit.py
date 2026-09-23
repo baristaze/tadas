@@ -37,10 +37,9 @@ class RateLimitOptions(Platform):
     on the container; the dependency reads its route's budget from here."""
 
     login: RateLimit
-    signup: RateLimit
 
     def of(self, route: str) -> RateLimit:
-        budgets = {"login": self.login, "signup": self.signup}
+        budgets = {"login": self.login}
         return budgets[route]
 
 

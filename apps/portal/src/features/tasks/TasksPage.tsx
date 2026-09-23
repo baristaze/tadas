@@ -47,6 +47,23 @@ export function TasksPage() {
               borderRadius: tokens.radius.sm,
             }}
           />
+          <input
+            type="datetime-local"
+            aria-label="Due time for the new task"
+            title="Due time (optional), in your local time"
+            value={vm.due}
+            onChange={(event) => vm.setDue(event.target.value)}
+            style={{
+              flex: "0 1 auto",
+              minWidth: 0,
+              font: "inherit",
+              fontSize: tokens.font.size.sm,
+              padding: tokens.space.sm,
+              border: `1px solid ${tokens.color.border}`,
+              borderRadius: tokens.radius.sm,
+              color: vm.due ? tokens.color.text : tokens.color.muted,
+            }}
+          />
           <Button type="submit" disabled={!vm.title.trim() || vm.adding}>
             Add
           </Button>

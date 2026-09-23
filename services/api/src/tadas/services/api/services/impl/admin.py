@@ -19,9 +19,7 @@ from tadas.services.api.types.admin import (
     IssuedTotpSecretView,
     MintOperatorTokenRequest,
     OperatorView,
-    PasswordResetView,
     PlatformSizeView,
-    ResetPasswordRequest,
     TotpConfirmedView,
 )
 from tadas.services.api.types.billing import CompPlanRequest, OperatorBillingView
@@ -75,12 +73,6 @@ class AdminServiceImpl(AdminServiceInterface):
             token=issued.token, expires_at=issued.expires_at, permission=issued.operator_role
         )
 
-    async def reset_password(
-        self, admin: OperatorContext, body: ResetPasswordRequest
-    ) -> PasswordResetView:
-        identity = await self._tenancy.reset_password(admin, body.email, body.password)
-        return PasswordResetView(identity_id=identity.id, email=identity.email)
-
     async def size(self, admin: OperatorContext) -> PlatformSizeView:
         return PlatformSizeView.model_validate(await self._tenancy.size(admin))
 
@@ -92,7 +84,6 @@ class AdminServiceImpl(AdminServiceInterface):
             body.name,
             body.slug,
             body.owner_email,
-            body.owner_password,
             body.owner_name,
             attempt,
         )
@@ -116,7 +107,7 @@ class AdminServiceImpl(AdminServiceInterface):
         self, admin: OperatorContext, org_id: UUID, body: AddMemberRequest, attempt: Attempt
     ) -> UserView:
         user = await self._tenancy.add_member(
-            admin, org_id, body.email, body.password, body.display_name, body.role, attempt
+            admin, org_id, body.email, body.display_name, body.role, attempt
         )
         return UserView.model_validate(user)
 

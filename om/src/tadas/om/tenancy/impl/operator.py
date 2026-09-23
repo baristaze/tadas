@@ -1,6 +1,4 @@
-import asyncio
 import logging
-import secrets
 from collections.abc import Callable
 from datetime import datetime, timedelta
 from uuid import UUID
@@ -45,10 +43,6 @@ from tadas.om.tenancy.impl.totp import TotpSealer, new_totp_secret
 from tadas.om.tenancy.operator import TenancyOperatorManagerInterface
 from tadas.om.tenancy.rules import (
     MAX_OPERATOR_TOKEN_TTL,
-    MIN_PASSWORD_LENGTH,
-    email_digest,
-    hash_password,
-    is_platform_email,
     matching_totp_step,
     otpauth_uri,
 )
@@ -165,47 +159,6 @@ class TenancyOperatorManagerImpl(TenancyOperatorManagerInterface):
         log.info("operator %s minted a %s token", admin.identity_id, operator_role.value)
         return issued
 
-    async def reset_password(self, admin: OperatorContext, email: str, password: str) -> Identity:
-        admin.require(OperatorPermission.WRITE)
-        if admin.credential_kind is not CredentialKind.LOGIN or not admin.second_factor:
-            raise NotAuthorized("a password is reset by an operator signed in with a second factor")
-        if len(password) < MIN_PASSWORD_LENGTH:
-            raise ValidationFailed(f"a password has at least {MIN_PASSWORD_LENGTH} characters")
-        if is_platform_email(email):
-            raise ValidationFailed("that address belongs to the platform")
-        digest = email_digest(email)
-        identity = await self._storage.read_identity_by_email_digest(digest)
-        if identity is None:
-            raise NotFound("no identity holds that email")
-        password_hash = await asyncio.to_thread(hash_password, password, secrets.token_bytes(16))
-        now = utcnow()
-        reset = identity.model_copy(
-            update={
-                "password_hash": password_hash,
-                "updated_at": now,
-                "updated_by": admin.identity_id,
-            }
-        )
-        # The audit row names the operator and the identity, and nothing of
-        # the password; it lands with the new hash, under the system scope.
-        row = OutboxRow(
-            id=new_id(),
-            created_at=now,
-            org_id=EMPTY_UUID,
-            kind="tenancy.identity.password_reset",
-            target_id=identity.id,
-            payload={"operator_id": str(admin.identity_id)},
-            actor_id=admin.identity_id,
-            request_id=admin.request_id,
-            app=admin.app.type.value,
-            traceparent=current_traceparent(),
-        )
-        await self._storage.write_identity(reset, (row,))
-        await self._storage.clear_failed_sign_ins(digest)
-        await self._relay.relay(EMPTY_UUID, row)
-        log.info("operator %s reset the password of identity %s", admin.identity_id, identity.id)
-        return reset
-
     async def _identity(self, admin: OperatorContext) -> Identity:
         identity = await self._storage.read_identity(admin.identity_id)
         if identity is None:
@@ -237,7 +190,6 @@ class TenancyOperatorManagerImpl(TenancyOperatorManagerInterface):
         name: str,
         slug: str,
         owner_email: str,
-        owner_password: str,
         owner_name: str,
         attempt: Attempt | None = None,
     ) -> Org:
@@ -254,7 +206,6 @@ class TenancyOperatorManagerImpl(TenancyOperatorManagerInterface):
             org_name=name,
             slug=slug,
             email=owner_email,
-            password=owner_password,
             display_name=owner_name,
             max_orgs=self._options.max_orgs_per_identity,
         )
@@ -284,7 +235,6 @@ class TenancyOperatorManagerImpl(TenancyOperatorManagerInterface):
         admin: OperatorContext,
         org_id: UUID,
         email: str,
-        password: str,
         display_name: str,
         role: Role,
         attempt: Attempt | None = None,
@@ -306,7 +256,6 @@ class TenancyOperatorManagerImpl(TenancyOperatorManagerInterface):
             org_id=org_id,
             user_id=user_id,
             email=email,
-            password=password,
             display_name=display_name,
             role=role,
             actor_id=admin.identity_id,

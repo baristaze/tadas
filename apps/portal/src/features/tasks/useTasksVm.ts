@@ -14,6 +14,7 @@ import { useMe, useUsers } from "../../queries/tenancy";
 import { usePreferencesStore } from "../../store/preferences";
 import { errorMessage } from "../../app/errorMessage";
 import { isPlanLimit } from "../../store/upgrade";
+import { fromInputValue } from "./dueModel";
 import { isStale, reorder, STALE_MESSAGE } from "./reorder";
 import {
   canAdd,
@@ -35,6 +36,8 @@ export interface TaskEdit {
   title: string;
   notes: string;
   assigneeId: string | null;
+  /** The new due time, null to clear it, or left out to keep it. */
+  remindAt?: string | null;
 }
 
 export function useTasksVm() {
@@ -50,6 +53,8 @@ export function useTasksVm() {
   const move = useMoveTask();
   const remove = useDeleteTask();
   const [title, setTitle] = useState("");
+  // The add form's due time, as the `datetime-local` input holds it.
+  const [due, setDue] = useState("");
   const [leaving, setLeaving] = useState<Leaving[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -100,14 +105,18 @@ export function useTasksVm() {
 
   const add = async () => {
     if (!canAdd(title)) return;
-    const body = { title: title.trim(), notes: "" };
+    const remindAt = fromInputValue(due);
+    const body = { title: title.trim(), notes: "", ...(remindAt ? { remind_at: remindAt } : {}) };
+    const draftDue = due;
     setTitle("");
+    setDue("");
     try {
       const created = await create.mutateAsync(body);
       editOpen((data) => pagesWithTaskOnTop(data, created));
       setError(null);
     } catch (cause) {
       setTitle(body.title);
+      setDue(draftDue);
       fail(cause);
     } finally {
       refresh();
@@ -172,6 +181,8 @@ export function useTasksVm() {
           title: edit.title.trim(),
           notes: edit.notes,
           assignee_id: edit.assigneeId,
+          // Absent keeps the due time; null clears it; a time reschedules.
+          ...(edit.remindAt !== undefined ? { remind_at: edit.remindAt } : {}),
         },
         version: edit.version,
       });
@@ -237,6 +248,8 @@ export function useTasksVm() {
     setScope: changeScope,
     title,
     setTitle,
+    due,
+    setDue,
     add,
     adding: create.isPending,
     saving,

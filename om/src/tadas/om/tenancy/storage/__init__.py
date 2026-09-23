@@ -10,6 +10,7 @@ from uuid import UUID
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.tenancy.types.api_key import ApiKey
 from tadas.om.tenancy.types.identity import Identity
+from tadas.om.tenancy.types.invitation import Invitation
 from tadas.om.tenancy.types.issued import OrgMembership
 from tadas.om.tenancy.types.membership import Membership
 from tadas.om.tenancy.types.org import Org
@@ -34,12 +35,22 @@ class TenancyStorageInterface(ABC):
         ...
 
     @abstractmethod
+    async def read_identity_by_issuer_subject(self, issuer: str, subject: str) -> Identity | None:
+        """Global table: identities have no tenant. The identity provider's
+        sign-in lookup, by the issuer and the subject the provider vouched
+        for: it runs before any identity is known, so it takes the system
+        scope, on the system login."""
+        ...
+
+    @abstractmethod
     async def write_identity(
         self, identity: Identity, outbox_rows: tuple[OutboxRow, ...] = ()
     ) -> None:
         """Global table: identities have no tenant. The outbox rows, when
         given, land in the same commit under the system scope: the audit of a
-        write no tenant holds, the operator's password reset."""
+        write no tenant holds, a change of the operator allowlist. A subject
+        another identity holds under the same issuer, or an email another
+        holds, is UniqueKeyTaken."""
         ...
 
     @abstractmethod
@@ -160,6 +171,7 @@ class TenancyStorageInterface(ABC):
         outbox_rows: tuple[OutboxRow, ...],
         identity: Identity | None = None,
         personal: tuple[Org, User, Membership] | None = None,
+        invitation: Invitation | None = None,
     ) -> None:
         """A named atomic create: the user, their membership, and the outbox rows
         land in one commit or not at all. A key taken meanwhile (one live user
@@ -167,7 +179,8 @@ class TenancyStorageInterface(ABC):
         lands, the outbox rows included. `identity`, when given, is the person's
         new identity and lands in the same commit, for the same reason, and so
         does `personal`, the new person's personal org, as on
-        `create_org_with_owner`."""
+        `create_org_with_owner`, and `invitation`, the invitation of the tenant
+        the membership accepts, as it reads once accepted."""
         ...
 
     @abstractmethod
@@ -373,20 +386,54 @@ class TenancyStorageInterface(ABC):
         self, org_id: UUID, api_key: ApiKey, outbox_rows: tuple[OutboxRow, ...] = ()
     ) -> None: ...
 
+    # Invitations: a tenant's rows.
+    @abstractmethod
+    async def read_invitation(self, org_id: UUID, invitation_id: UUID) -> Invitation | None: ...
+
+    @abstractmethod
+    async def read_invitation_by_provider_id(
+        self, org_id: UUID, provider_invitation_id: str
+    ) -> Invitation | None:
+        """The tenant's invitation the identity provider knows by that id."""
+        ...
+
+    @abstractmethod
+    async def read_pending_invitation(self, org_id: UUID, email: str) -> Invitation | None:
+        """The tenant's pending invitation for the address, expired or not."""
+        ...
+
+    @abstractmethod
+    async def read_invitations(
+        self, org_id: UUID, after: UUID | None, limit: int
+    ) -> list[Invitation]:
+        """The tenant's pending invitations, newest first; `after` is the id
+        the previous page ended on (`is_after_newest_first`)."""
+        ...
+
+    @abstractmethod
+    async def write_invitation(
+        self, org_id: UUID, invitation: Invitation, outbox_rows: tuple[OutboxRow, ...] = ()
+    ) -> None:
+        """Lands the row and the outbox rows that announce it together. A
+        provider id another row holds, or a second pending invitation for the
+        address in the tenant, is UniqueKeyTaken, and nothing lands."""
+        ...
+
     @abstractmethod
     async def purge_deleted(self, org_id: UUID, before: datetime) -> int:
         """The one hard delete: removes the tenant's users soft-deleted before `before`
         with their memberships (and any membership ended before `before`), its
         api keys revoked or expired before `before`, its sessions revoked or
-        expired before `before`, and its socket tickets redeemed or expired
+        expired before `before`, its socket tickets redeemed or expired
+        before `before`, and its invitations accepted, revoked, or expired
         before `before`; returns how many rows went."""
         ...
 
     @abstractmethod
     async def purge_tenant(self, org_id: UUID) -> int:
         """The hard delete of a deleted tenant's rows once the retention has
-        passed: every user, membership, api key, session, and socket ticket of
-        the tenant, whatever its state; returns how many rows went. The org row
+        passed: every user, membership, api key, session, socket ticket, and
+        invitation of the tenant, whatever its state; returns how many rows went. The org row
         stays as the record that the tenant existed, so the operator plane
         still lists it and no new tenant takes its id."""
         ...

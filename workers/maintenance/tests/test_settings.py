@@ -54,6 +54,8 @@ LOCAL_DEFAULT_SERVES_THE_CLOUD = {
     "valkey_breaker_cooldown_seconds": "the local cool-down is the cool-down",
     "otel_timeout_seconds": "the local default is the tuning",
     "stripe_timeout_seconds": "the local default is the tuning",
+    "workos_base_url": "the worker signs nobody in",
+    "workos_timeout_seconds": "the worker signs nobody in",
     "version": "the image carries it",
     "metrics_host": "the collector sidecar shares the task's network namespace; 127.0.0.1 serves",
     "metrics_port": "9464, the port the service module tells the sidecar to scrape",
@@ -64,6 +66,8 @@ LOCAL_DEFAULT_SERVES_THE_CLOUD = {
     "worker_heartbeat_seconds": "the local default is the tuning",
     "worker_sweep_seconds": "the local default is the tuning",
     "worker_poll_seconds": "the local default is the tuning",
+    "slack_timeout_seconds": "the local default is the tuning",
+    "slack_inbound_visibility_seconds": "the local default is the tuning",
 }
 
 

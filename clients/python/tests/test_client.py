@@ -170,12 +170,12 @@ async def test_the_sign_in_flow_uses_the_credential_it_is_given() -> None:
     }
     recorder = Recorder(
         {
-            "/v1/auth/login": httpx.Response(200, json=login),
+            "/v1/auth/dev-sign-in": httpx.Response(200, json=login),
             "/v1/auth/sessions": httpx.Response(200, json=session),
         }
     )
     async with client_over(recorder, token=None) as client:
-        issued = await client.login("ann@example.test", "pw")
+        issued = await client.dev_sign_in("ann@example.test")
         exchanged = await client.exchange_session(issued.token, issued.memberships[0].org.id)
     assert exchanged.token == "ses_2" and exchanged.org.slug == "acme"
     assert "authorization" not in recorder.requests[0].headers
@@ -186,23 +186,120 @@ CHOICE = {"org": ORG, "user": USER, "role": "owner"}
 LOGIN = {"token": "lgn_1", "expires_at": "2026-09-18T13:00:00Z", "memberships": [CHOICE]}
 
 
-async def test_sign_up_carries_no_bearer_and_no_key_and_is_sent_once() -> None:
-    recorder = Recorder({"/v1/auth/signup": httpx.Response(503, json={})})
-    async with client_over(recorder, token="ses_stale") as client:
-        with pytest.raises(ApiError):
-            await client.sign_up("dee@example.test", "long-enough", "Dee")
-    [sent] = recorder.requests
-    assert "authorization" not in sent.headers and "idempotency-key" not in sent.headers
-    # A sign-up names no org: the person's personal org comes with them.
-    assert json.loads(sent.content) == {
-        "email": "dee@example.test",
-        "password": "long-enough",
-        "display_name": "Dee",
+async def test_the_sign_in_calls_carry_no_bearer_and_no_key() -> None:
+    """Before a sign-in there is no principal: no bearer, and no idempotency
+    key, since the marker is a principal's."""
+    device = {
+        "device_code": "dc-1",
+        "user_code": "ABCD-EFGH",
+        "verification_uri": "https://auth.example.test/device",
+        "verification_uri_complete": "https://auth.example.test/device?user_code=ABCD-EFGH",
+        "expires_in": 300,
+        "interval": 5,
     }
-    recorder.respond["/v1/auth/signup"] = httpx.Response(200, json=LOGIN)
+    recorder = Recorder(
+        {
+            "/v1/auth/sign-in": httpx.Response(
+                200,
+                json={
+                    "authorization_url": "https://auth.example.test/authorize",
+                    "code_verifier": "v" * 43,
+                },
+            ),
+            "/v1/auth/callback": httpx.Response(200, json=LOGIN),
+            "/v1/auth/device": httpx.Response(200, json=device),
+            "/v1/auth/device/token": httpx.Response(200, json=LOGIN),
+            "/v1/auth/dev-sign-in": httpx.Response(200, json=LOGIN),
+        }
+    )
+    async with client_over(recorder, token="ses_stale") as client:
+        started = await client.start_sign_in(
+            "http://localhost:55173/auth/callback", "state-of-the-tab", invitation_token="inv"
+        )
+        called_back = await client.finish_sign_in("code-1", "v" * 43)
+        begun = await client.start_device_sign_in()
+        confirmed = await client.finish_device_sign_in(begun.device_code)
+        local = await client.dev_sign_in("dee@example.test", "Dee")
+    assert started.authorization_url == "https://auth.example.test/authorize"
+    assert begun.user_code == "ABCD-EFGH" and begun.interval == 5
+    assert called_back.token == confirmed.token == local.token == "lgn_1"
+    for sent in recorder.requests:
+        assert "authorization" not in sent.headers and "idempotency-key" not in sent.headers
+    bodies = [json.loads(r.content) if r.content else None for r in recorder.requests]
+    assert bodies == [
+        {
+            "redirect_uri": "http://localhost:55173/auth/callback",
+            "state": "state-of-the-tab",
+            "sign_up": False,
+            "invitation_token": "inv",
+        },
+        {"code": "code-1", "code_verifier": "v" * 43},
+        None,
+        {"device_code": "dc-1"},
+        {"email": "dee@example.test", "display_name": "Dee"},
+    ]
+
+
+async def test_a_pending_device_sign_in_is_a_typed_refusal_sent_once() -> None:
+    pending = {"error": {"code": "sign_in_pending", "message": "not yet", "request_id": "r1"}}
+    recorder = Recorder({"/v1/auth/device/token": httpx.Response(400, json=pending)})
     async with client_over(recorder, token=None) as client:
-        issued = await client.sign_up("dee@example.test", "long-enough", "Dee")
-    assert issued.token == "lgn_1" and issued.memberships[0].org.slug == "acme"
+        with pytest.raises(ApiError) as refused:
+            await client.finish_device_sign_in("dc-1")
+    assert (refused.value.status, refused.value.code) == (400, "sign_in_pending")
+    assert len(recorder.requests) == 1
+
+
+async def test_the_second_factor_is_presented_with_the_sign_in() -> None:
+    recorder = Recorder({"/v1/auth/second-factor": httpx.Response(200, json=LOGIN)})
+    async with client_over(recorder, token=None) as client:
+        verified = await client.verify_second_factor("lgn_0", "123456")
+    [sent] = recorder.requests
+    assert sent.headers["authorization"] == "Bearer lgn_0"
+    assert json.loads(sent.content) == {"totp_code": "123456"}
+    assert verified.token == "lgn_1"
+
+
+INVITATION = {
+    "id": "0199a4c0-0000-7000-8000-0000000000dd",
+    "email": "bob@example.test",
+    "role": "member",
+    "state": "pending",
+    "expires_at": "2026-09-25T12:00:00Z",
+    "created_at": "2026-09-18T12:00:00Z",
+    "created_by": USER["id"],
+}
+
+
+async def test_invitations_are_sent_under_a_key_and_managed_by_id() -> None:
+    invitation_id = UUID(INVITATION["id"])
+    recorder = Recorder(
+        {
+            "/v1/invitations": httpx.Response(201, json=INVITATION),
+            f"/v1/invitations/{invitation_id}/resend": httpx.Response(200, json=INVITATION),
+            f"/v1/invitations/{invitation_id}": httpx.Response(
+                200, json=INVITATION | {"state": "revoked"}
+            ),
+            "/v1/orgs/current/sso-link": httpx.Response(
+                200, json={"url": "https://auth.example.test/portal"}
+            ),
+        }
+    )
+    async with client_over(recorder) as client:
+        sent = await client.invite_member("bob@example.test", Role.admin)
+        await client.resend_invitation(invitation_id)
+        revoked = await client.revoke_invitation(invitation_id)
+        link = await client.sso_link("http://localhost:55173/settings")
+    assert sent.email == "bob@example.test" and revoked.state.value == "revoked"
+    assert link.url == "https://auth.example.test/portal"
+    invite, resend, revoke, sso = recorder.requests
+    UUID(invite.headers["idempotency-key"])
+    assert json.loads(invite.content) == {"email": "bob@example.test", "role": "admin"}
+    assert (resend.method, revoke.method) == ("POST", "DELETE")
+    assert json.loads(sso.content) == {
+        "intent": "sso",
+        "return_url": "http://localhost:55173/settings",
+    }
 
 
 async def test_create_org_carries_a_key_and_the_slug_only_when_given() -> None:
@@ -520,13 +617,12 @@ async def test_admin_create_org_is_a_creating_call_under_a_key() -> None:
     recorder = Recorder({"/v1/admin/orgs": httpx.Response(201, json=ORG)})
     async with client_over(recorder, token="lgn_1") as client:
         created = await client.admin_create_org(
-            "Acme", "acme", owner_email="ann@example.test", owner_password="pw", owner_name="Ann"
+            "Acme", "acme", owner_email="ann@example.test", owner_name="Ann"
         )
         again = await client.admin_create_org(
             "Acme",
             "acme",
             owner_email="ann@example.test",
-            owner_password="pw",
             owner_name="Ann",
             idempotency_key="given",
         )
@@ -536,8 +632,7 @@ async def test_admin_create_org_is_a_creating_call_under_a_key() -> None:
     UUID(minted.headers["idempotency-key"])
     assert given.headers["idempotency-key"] == "given"
     assert minted.read() == (
-        b'{"name":"Acme","slug":"acme","owner_email":"ann@example.test",'
-        b'"owner_password":"pw","owner_name":"Ann"}'
+        b'{"name":"Acme","slug":"acme","owner_email":"ann@example.test","owner_name":"Ann"}'
     )
 
 
@@ -546,13 +641,10 @@ async def test_admin_add_member_is_a_creating_call_under_a_key() -> None:
     path = f"/v1/admin/orgs/{org_id}/members"
     recorder = Recorder({path: httpx.Response(201, json=USER)})
     async with client_over(recorder, token="lgn_1") as client:
-        added = await client.admin_add_member(
-            org_id, "bob@example.test", password="pw", display_name="Bob"
-        )
+        added = await client.admin_add_member(org_id, "bob@example.test", display_name="Bob")
         as_admin = await client.admin_add_member(
             org_id,
             "bob@example.test",
-            password="pw",
             display_name="Bob",
             role=Role.admin,
             idempotency_key="given",
@@ -562,9 +654,7 @@ async def test_admin_add_member_is_a_creating_call_under_a_key() -> None:
     assert minted.method == "POST" and minted.url.path == path
     UUID(minted.headers["idempotency-key"])
     assert given.headers["idempotency-key"] == "given"
-    assert minted.read() == (
-        b'{"email":"bob@example.test","password":"pw","display_name":"Bob","role":"member"}'
-    )
+    assert minted.read() == (b'{"email":"bob@example.test","display_name":"Bob","role":"member"}')
     assert given.read().endswith(b'"role":"admin"}')
 
 

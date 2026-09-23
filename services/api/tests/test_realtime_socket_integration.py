@@ -57,7 +57,7 @@ async def serving(container: AppContainer) -> AsyncIterator[Serving]:
     bound of its own builds the container and opens this itself; the fixture
     below is the same thing over the plain test container."""
     _, org = await container.managers.tenancy.bootstrap(
-        seed_request(), "Acme", "acme", OWNER["email"], OWNER["password"], OWNER["name"]
+        seed_request(), "Acme", "acme", OWNER["email"], OWNER["name"]
     )
     await on_plan(container, org.id, Plan.TEAM)
     port = free_port()
@@ -98,7 +98,7 @@ async def test_a_refused_ticket_is_a_4401_close_on_the_wire(served: Serving) -> 
 
 async def ticket_for(served: Serving) -> str:
     async with httpx.AsyncClient(base_url=f"http://{served.address}") as client:
-        headers = await sign_in_as(client, OWNER["email"], OWNER["password"], served.org.id)
+        headers = await sign_in_as(client, OWNER["email"], served.org.id)
         return (await client.post("/v1/realtime/tickets", headers=headers)).json()["ticket"]
 
 
@@ -142,7 +142,7 @@ async def test_a_flood_of_hints_drops_hints_and_not_the_pong(tmp_path: Path) -> 
     container = build_container(tmp_path, realtime_send_buffer_size=STREAM_LANE)
     async with serving(container) as served:
         async with httpx.AsyncClient(base_url=f"http://{served.address}") as client:
-            headers = await sign_in_as(client, OWNER["email"], OWNER["password"], served.org.id)
+            headers = await sign_in_as(client, OWNER["email"], served.org.id)
             ticket = (await client.post("/v1/realtime/tickets", headers=headers)).json()["ticket"]
             channel = f"ws://{served.address}/v1/realtime?ticket={ticket}"
             async with websockets.connect(channel) as ws:

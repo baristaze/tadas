@@ -13,15 +13,18 @@ family. Everything in Tadas belongs to exactly one org, and nothing in
 one org can see anything in another. That is a rule, not a choice.
 
 Every person has one **personal org**, their own place to work. It is
-made with them when they sign up, named after them, and it is theirs
+made with them the first time they sign in, named after them, and it is theirs
 for as long as they exist: it is never deleted, and it never changes
 hands. Every other org is a **team org**, which a person makes when a
 team needs one and owns from then on. A person can belong to many team
 orgs, and anyone can be added to a personal org too.
 
-An **identity** is one person, across every org. It is the email and
-the password the person signs in with. One person has one identity,
-however many teams they belong to.
+An **identity** is one person, across every org. It is the email the
+person signs in with, which the sign-in provider has verified. One
+person has one identity, however many teams they belong to. Tadas keeps
+no password: WorkOS, the sign-in provider, proves who the person is,
+with an email code or link, Google, GitHub, or their company's single
+sign-on.
 
 A **user** is that person inside one org: the name the team sees. The
 same identity is a different user in each org it belongs to, and a
@@ -32,10 +35,14 @@ viewer, member, admin, or owner. The role decides what the person may
 do in that org. The person who creates the org is its first owner, and
 the person of a personal org is its owner for good.
 
+An **invitation** asks a person to join an org, by email, with a role.
+The sign-in provider sends the email; signing in through its link makes
+the person a member.
+
 ## How a person proves who they are
 
-A **session** is a signed-in visit. Signing in with the email and the
-password gives one. It is good for a while, and it ends when the
+A **session** is a signed-in visit. Signing in through the sign-in
+provider gives one. It is good for a while, and it ends when the
 person signs out or when it expires. A session belongs to one user in
 one org, so a person who belongs to two teams picks which team they
 are visiting.
@@ -73,7 +80,17 @@ applied, so the same message arriving again changes nothing.
 A **task** is one item on the list: a title, notes, who it is assigned
 to, and whether it is open or done. Open tasks sit in the order the
 team arranged them; done tasks are listed newest first. A task
-remembers who created it and who last changed it.
+remembers who created it and who last changed it. It can carry a
+**due time**: when it comes, the team gets one reminder, on every open
+screen and in the org's Slack channel.
+
+## Slack
+
+A **Slack connection** is the one Slack channel an org posts to:
+reminders, new tasks, and finished ones appear there, and
+`/tadas add <title>` typed there adds a task. An owner or an admin
+connects it with a **link code**, a short code Tadas shows once and
+that works once.
 
 ## What the platform writes for itself
 
@@ -97,7 +114,9 @@ without its announcement, and no announcement is made of a change that
 did not happen.
 
 A **work item** is a job for later: something the platform does in the
-background on behalf of a person who asked once. It waits in a queue.
+background on behalf of a person who asked once, such as the reminder a
+due time scheduled or a post to Slack. It waits in a queue, some of it
+until a set time.
 A worker claims it, holds it for a short lease, does it, and marks it
 done. If the worker dies, the lease runs out and another worker picks
 the job up.
@@ -117,7 +136,9 @@ a second task.
   it is done as that user in that org. A socket ticket stands for one
   of them.
 - Tasks belong to the org. Each is created by a user and may be
-  assigned to a user.
+  assigned to a user. A task added from Slack is created by the user
+  whose code linked the channel.
+- A Slack connection belongs to the org, and a channel to one org.
 - An org is on one plan. The plan bounds its members, its API keys,
   and its active tasks; meeting a bound is a refusal that offers the
   plan that lifts it, and nothing is ever taken away. The billing
@@ -136,6 +157,7 @@ a second task.
 
 - [Orgs, identities, users, memberships, sessions, API keys, and socket tickets](src/tadas/om/tenancy/README.md)
 - [Tasks](src/tadas/om/tasks/README.md)
+- [Slack connections, link codes, and posts](src/tadas/om/slack/README.md)
 - [Plans, billing accounts, and delivery marks](src/tadas/om/billing/README.md)
 - [Events](src/tadas/om/events/README.md)
 - [Work items](src/tadas/om/work/README.md)

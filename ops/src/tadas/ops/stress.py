@@ -192,9 +192,9 @@ def verdict(scenario: Scenario, report: Report, readback: Readback) -> Verdict:
     names none still passes or fails on the counter it did read.
 
     The p95 is the working requests': the task and event routes, and the
-    socket's ticket. A run makes one sign-in and one sign-out per person, and
-    sign-in verifies a password on purpose, so holding a target to a p95 over
-    both would judge how often the generator signs in. They are reported
+    socket's ticket. A run makes one sign-in and one sign-out per person, so
+    holding a target to a p95 over both would judge how often the generator
+    signs in. They are reported
     beside the verdict, with their own p95. The error ratio is over every
     request, sign-in and sign-out included: a refused sign-in is a refusal
     whoever made it."""

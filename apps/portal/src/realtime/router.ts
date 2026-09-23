@@ -35,3 +35,13 @@ export function routeEnvelope(queryClient: QueryClient, envelope: Envelope): Rou
   for (const queryKey of targets) void queryClient.invalidateQueries({ queryKey });
   return { invalidated: targets };
 }
+
+// A reminder is the one push a person is told about as well as refreshed by:
+// the task's queries refresh by the convention above, and this names the task
+// to announce. Null for every other frame.
+export const REMINDED_KIND = "tasks.task.reminded";
+
+export function reminderOf(envelope: Envelope): string | null {
+  if (!isEntityChanged(envelope) || envelope.payload.kind !== REMINDED_KIND) return null;
+  return envelope.payload.target_id;
+}

@@ -1,14 +1,29 @@
-import asyncio
+import logging
 import secrets
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime, timedelta
 from typing import Any
+from urllib.parse import urlsplit
 from uuid import UUID
 
 from pydantic import Field
 
 from tadas.infra.cache import CacheInterface
 from tadas.infra.observability import current_traceparent
+from tadas.integrations.exceptions import (
+    DevicePending,
+    DeviceSlowDown,
+    ProviderConflict,
+    ProviderRefused,
+    ProviderUnavailable,
+)
+from tadas.integrations.identity import (
+    DeviceAuthorization,
+    IdentityProviderInterface,
+    PortalIntent,
+    ProvidedOrganization,
+    ProvidedSignIn,
+)
 from tadas.om.base import EMPTY_UUID, Platform, new_id, utcnow
 from tadas.om.billing.manager import EntitlementsInterface
 from tadas.om.billing.rules import refuse_past, seats_metered
@@ -16,13 +31,20 @@ from tadas.om.billing.types.plan import Lever
 from tadas.om.exceptions import (
     Conflict,
     CredentialExpired,
+    EmailNotVerified,
     InvalidCredential,
+    InvitationClosed,
+    MembershipLimitReached,
     NotAnOperator,
     NotAuthorized,
     NotFound,
     PersonalOrgFixed,
     SecondFactorRequired,
     SignInDelayed,
+    SignInPending,
+    SignInRefused,
+    SignInSlowDown,
+    Unavailable,
     UniqueKeyTaken,
     ValidationFailed,
 )
@@ -43,6 +65,7 @@ from tadas.om.outbox import OutboxRelayInterface
 from tadas.om.outbox.types.row import OutboxRow, outbox_row
 from tadas.om.tenancy.impl.creates import (
     MAX_ORGS_PER_IDENTITY,
+    Admission,
     add_member_to,
     create_org_with_owner,
     create_person,
@@ -56,27 +79,27 @@ from tadas.om.tenancy.impl.creates import (
 from tadas.om.tenancy.impl.totp import TotpSealer
 from tadas.om.tenancy.manager import TenancyManagerInterface
 from tadas.om.tenancy.rules import (
-    DUMMY_PASSWORD_HASH,
     MAX_API_KEY_TTL,
     MAX_OPERATOR_TOKEN_TTL,
     PREFIX_FOR_KIND,
     capped_role,
+    check_email,
     check_org,
-    check_sign_up,
     credential_kind_of,
     email_digest,
-    hash_password,
     hash_token,
     is_platform_email,
     matching_totp_step,
+    pkce_challenge,
     role_at_most,
     sign_in_delay,
     slug_from_name,
-    verify_password,
+    sso_joins,
 )
 from tadas.om.tenancy.storage import TenancyStorageInterface
 from tadas.om.tenancy.types.api_key import ApiKey
 from tadas.om.tenancy.types.identity import Identity
+from tadas.om.tenancy.types.invitation import Invitation, InvitationState
 from tadas.om.tenancy.types.issued import (
     IssuedApiKey,
     IssuedLogin,
@@ -84,15 +107,24 @@ from tadas.om.tenancy.types.issued import (
     IssuedSession,
     IssuedTicket,
     OrgMembership,
+    SignInStart,
 )
 from tadas.om.tenancy.types.membership import Membership
-from tadas.om.tenancy.types.org import Org
-from tadas.om.tenancy.types.page import ApiKeyPage, MembershipPage, OrgMembershipPage, UserPage
+from tadas.om.tenancy.types.org import Org, OrgKind
+from tadas.om.tenancy.types.page import (
+    ApiKeyPage,
+    InvitationPage,
+    MembershipPage,
+    OrgMembershipPage,
+    UserPage,
+)
 from tadas.om.tenancy.types.role import operator_permissions_of, permissions_of
 from tadas.om.tenancy.types.session import Session
 from tadas.om.tenancy.types.socket_ticket import SocketPrincipal, SocketTicket
 from tadas.om.tenancy.types.user import User
 from tadas.om.work.types.work_item import WorkKind, work_row_kind
+
+log = logging.getLogger(__name__)
 
 TICKET_USED_KEY = "ticket-used:"
 """The cache remembers a redeemed ticket so a replay is refused without a
@@ -141,8 +173,24 @@ class TenancyOptions(Platform):
     """How many orgs one person may join; the bound on every read of the users
     one identity is. An add past it is refused (`MembershipLimitReached`)."""
     retention: timedelta = timedelta(days=30)
-    """Removed members, revoked keys, dead sessions, and spent socket tickets
-    are purged this long after they ended."""
+    """Removed members, revoked keys, dead sessions, spent socket tickets, and
+    closed invitations are purged this long after they ended."""
+    sign_in_redirect_uris: tuple[str, ...] = ()
+    """Where a sign-in at the identity provider may come back to: this
+    environment's own portal callback, and nothing else. A redirect not
+    named here is refused."""
+    dev_sign_in: bool = False
+    """The local sign-in by address alone, for local and test processes. A
+    deployed environment refuses it at boot, so it is never on there."""
+    invitation_ttl_days: int = 7
+    """How long an invitation's link works, from its send or resend."""
+
+
+def origin_of(url: str) -> str:
+    """The scheme and the host of an address, which is what makes it this
+    environment's portal or not."""
+    parts = urlsplit(url)
+    return f"{parts.scheme}://{parts.netloc}".lower()
 
 
 def mint_token(kind: CredentialKind) -> str:
@@ -185,12 +233,6 @@ async def issue_operator_token(
     )
 
 
-def platform_password_hash() -> str:
-    """The password of an identity no person signs in as: a hash of a random
-    secret nobody is told, so the sign-in never admits it."""
-    return hash_password(secrets.token_urlsafe(32), secrets.token_bytes(16))
-
-
 class TenancyManagerImpl(TenancyManagerInterface):
     def __init__(
         self,
@@ -200,6 +242,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
         options: TenancyOptions,
         clock: Callable[[], datetime] = utcnow,
         *,
+        identity_provider: IdentityProviderInterface,
         entitlements: EntitlementsInterface,
     ) -> None:
         """`entitlements` is what the plan levers ask: an api key and a
@@ -208,6 +251,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
         self._relay = relay
         self._cache = cache
         self._options = options
+        self._provider = identity_provider
         self._entitlements = entitlements
         self._totp = TotpSealer(options.totp_encryption_key)
         # The TOTP time step is read from this clock, so a test can step it.
@@ -221,7 +265,6 @@ class TenancyManagerImpl(TenancyManagerInterface):
         org_name: str,
         slug: str,
         email: str,
-        password: str,
         display_name: str,
         *,
         operator_role: OperatorRole | None = None,
@@ -232,7 +275,6 @@ class TenancyManagerImpl(TenancyManagerInterface):
             org_name=org_name,
             slug=slug,
             email=email,
-            password=password,
             display_name=display_name,
             max_orgs=self._options.max_orgs_per_identity,
             operator_role=operator_role,
@@ -254,7 +296,6 @@ class TenancyManagerImpl(TenancyManagerInterface):
         rctx: RequestContext,
         slug: str,
         email: str,
-        password: str,
         display_name: str,
         role: Role,
     ) -> tuple[OpContext, User, bool]:
@@ -283,7 +324,6 @@ class TenancyManagerImpl(TenancyManagerInterface):
             org_id=ctx.org_id,
             user_id=new_id(),
             email=email,
-            password=password,
             display_name=display_name,
             role=role,
             actor_id=ctx.user_id,
@@ -292,38 +332,99 @@ class TenancyManagerImpl(TenancyManagerInterface):
         )
         return ctx, user, created
 
-    async def sign_up(
-        self, rctx: RequestContext, email: str, password: str, display_name: str
+    async def sign_in_url(
+        self,
+        rctx: RequestContext,
+        redirect_uri: str,
+        state: str,
+        *,
+        invitation_token: str | None = None,
+        sign_up: bool = False,
+    ) -> SignInStart:
+        if redirect_uri not in self._options.sign_in_redirect_uris:
+            raise ValidationFailed("that is not this environment's sign-in callback")
+        if not state:
+            raise ValidationFailed("a sign-in carries the state that binds it to its tab")
+        verifier = secrets.token_urlsafe(48)
+        try:
+            url = self._provider.authorization_url(
+                redirect_uri=redirect_uri,
+                state=state,
+                code_challenge=pkce_challenge(verifier),
+                invitation_token=invitation_token,
+                screen_hint="sign-up" if sign_up else None,
+            )
+        except ProviderUnavailable as error:
+            raise Unavailable(f"sign-in is not available: {error.message}") from None
+        return SignInStart(authorization_url=url, code_verifier=verifier)
+
+    async def sign_in_with_code(
+        self,
+        rctx: RequestContext,
+        code: str,
+        invitation_token: str | None = None,
+        *,
+        code_verifier: str | None = None,
     ) -> IssuedLogin:
         try:
-            check_sign_up(email, password, display_name)
+            signed_in = await self._provider.authenticate_code(
+                code, code_verifier=code_verifier, invitation_token=invitation_token
+            )
+        except ProviderUnavailable as error:
+            raise Unavailable(f"sign-in is not available: {error.message}") from None
+        except ProviderRefused as error:
+            raise SignInRefused(f"the sign-in was refused: {error.message}") from None
+        return await self._signed_in(rctx, signed_in)
+
+    async def start_device_sign_in(self, rctx: RequestContext) -> DeviceAuthorization:
+        try:
+            return await self._provider.start_device()
+        except ProviderUnavailable as error:
+            raise Unavailable(f"sign-in is not available: {error.message}") from None
+        except ProviderRefused as error:
+            raise SignInRefused(f"the sign-in was refused: {error.message}") from None
+
+    async def finish_device_sign_in(self, rctx: RequestContext, device_code: str) -> IssuedLogin:
+        try:
+            signed_in = await self._provider.authenticate_device(device_code)
+        except DeviceSlowDown:
+            raise SignInSlowDown("asked too often; wait longer before asking again") from None
+        except DevicePending:
+            raise SignInPending("the sign-in is not confirmed yet") from None
+        except ProviderUnavailable as error:
+            raise Unavailable(f"sign-in is not available: {error.message}") from None
+        except ProviderRefused as error:
+            raise SignInRefused(f"the sign-in was refused: {error.message}") from None
+        return await self._signed_in(rctx, signed_in)
+
+    async def dev_sign_in(
+        self, rctx: RequestContext, email: str, display_name: str = ""
+    ) -> IssuedLogin:
+        if not self._options.dev_sign_in:
+            raise NotFound("Not Found")
+        if is_platform_email(email):
+            raise ValidationFailed("that address belongs to the platform")
+        try:
+            check_email(email)
         except ValueError as error:
             raise ValidationFailed(str(error)) from None
-        if await self._storage.read_identity_by_email_digest(email_digest(email)) is not None:
-            raise Conflict("an account with this email exists; sign in instead")
-        # scrypt runs off the event loop, as a sign-in's check does.
-        password_hash = await asyncio.to_thread(hash_password, password, secrets.token_bytes(16))
-        # Always a new identity, never the one an email already names: a
-        # sign-up that raced another for the email meets the unique key and
-        # lands nothing, instead of adding a place to someone else's identity.
-        identity = new_identity(email, password_hash, utcnow())
-        # One commit: the identity, the personal org, the person's user in
-        # it, and the owner membership. An email taken meanwhile is
-        # UniqueKeyTaken, a Conflict, and nothing lands.
-        personal = await create_person(self._storage, identity, display_name)
-        return await self._issue_login(identity, (personal,))
+        identity = await self._storage.read_identity_by_email_digest(email_digest(email))
+        if identity is None:
+            identity = await self._made(new_identity(email, utcnow()), display_name)
+        memberships = await self._with_personal(identity, await self._memberships_of(identity.id))
+        return await self._issue_login(identity, memberships)
 
-    async def login(
-        self, rctx: RequestContext, email: str, password: str, totp_code: str | None = None
-    ) -> IssuedLogin:
-        digest = email_digest(email)
+    async def verify_second_factor(self, ictx: IdentityContext, totp_code: str) -> IssuedLogin:
+        if ictx.credential_kind is not CredentialKind.LOGIN:
+            raise InvalidCredential("a second factor is verified on a sign-in credential")
+        identity = await self._storage.read_identity(ictx.identity_id)
+        if identity is None:
+            raise InvalidCredential("the identity is gone")
+        digest = email_digest(identity.email)
         now = utcnow()
-        # The per-address limit rides the cache and fails open. This one is
-        # counted per email, in the tenancy role's own storage, so a guessed
-        # email waits whatever address the guesses come from, and it holds
-        # when the cache is down. The key is the email and not the identity,
-        # so an address nobody holds is delayed like one somebody does. The
-        # wait is checked before the password.
+        # A run of wrong codes for the email makes the next one wait, counted
+        # in the tenancy role's own storage, so it holds when the cache is
+        # down and whatever address the guesses come from.
         run = await self._storage.read_sign_in_delay(digest)
         if run is not None:
             wait = sign_in_delay(
@@ -336,25 +437,194 @@ class TenancyManagerImpl(TenancyManagerInterface):
             )
             if wait > timedelta(0):
                 raise SignInDelayed(wait)
-        identity = await self._storage.read_identity_by_email_digest(digest)
-        # The hash is verified on a miss too, against a fixed dummy, so an
-        # unknown email costs what a wrong password costs; scrypt runs off the
-        # event loop, so a sign-in never stalls every other request.
-        stored = DUMMY_PASSWORD_HASH if identity is None else identity.password_hash
-        verified = await asyncio.to_thread(verify_password, password, stored)
-        if identity is None or not verified:
+        if not await self._second_factor_holds(identity, totp_code):
             await self._storage.record_failed_sign_in(digest, now)
-            raise InvalidCredential("email or password is wrong")
-        second_factor_at = None
-        if totp_code is not None:
-            if not await self._second_factor_holds(identity, totp_code):
-                await self._storage.record_failed_sign_in(digest, now)
-                raise InvalidCredential("the code is wrong or was used already")
-            second_factor_at = now
+            raise InvalidCredential("the code is wrong or was used already")
         if run is not None:
             await self._storage.clear_failed_sign_ins(digest)
+        memberships = await self._memberships_of(identity.id)
+        return await self._issue_login(identity, memberships, now)
+
+    async def _signed_in(self, rctx: RequestContext, signed_in: ProvidedSignIn) -> IssuedLogin:
+        """The identity the provider vouched for, found, linked, or made, and
+        the places it holds, joined first to the org the sign-in named when
+        an invitation or a single sign-on puts the person there."""
+        person = signed_in.user
+        if not person.email_verified:
+            raise EmailNotVerified("verify your email address with the sign-in provider first")
+        if is_platform_email(person.email):
+            raise InvalidCredential("that address belongs to the platform")
+        identity = await self._identity_of(signed_in)
+        if signed_in.organization_id is not None:
+            await self._join_through_provider(rctx, identity, signed_in)
         memberships = await self._with_personal(identity, await self._memberships_of(identity.id))
-        return await self._issue_login(identity, memberships, second_factor_at)
+        return await self._issue_login(identity, memberships)
+
+    async def _identity_of(self, signed_in: ProvidedSignIn) -> Identity:
+        """By the issuer and the subject; else by the verified email, linked
+        from now on; else a new person. A person who changed their address at
+        the provider is found by the subject and keeps the identity they
+        have."""
+        issuer, person = self._provider.issuer, signed_in.user
+        identity = await self._storage.read_identity_by_issuer_subject(issuer, person.id)
+        if identity is not None:
+            return identity
+        by_email = await self._storage.read_identity_by_email_digest(email_digest(person.email))
+        now = utcnow()
+        if by_email is None:
+            return await self._made(
+                new_identity(person.email, now, issuer=issuer, subject=person.id),
+                person.display_name,
+            )
+        # The provider verified the address this identity holds, so it is the
+        # same person: an identity the seeding or the operator plane made, or
+        # one an older release made with a password. It is linked once; a link
+        # to another subject is replaced, since the address, verified again,
+        # decides who holds it.
+        linked = by_email.model_copy(
+            update={
+                "issuer": issuer,
+                "subject": person.id,
+                "updated_at": now,
+                "updated_by": by_email.id,
+            }
+        )
+        try:
+            await self._storage.write_identity(linked)
+        except UniqueKeyTaken:
+            # A second sign-in of the same subject linked it meanwhile.
+            raced = await self._storage.read_identity_by_issuer_subject(issuer, person.id)
+            if raced is None:
+                raise
+            return raced
+        return linked
+
+    async def _made(self, identity: Identity, display_name: str) -> Identity:
+        """A new person with their personal org, in one commit. Two first
+        sign-ins that race for one address or subject meet the unique key,
+        and the loser reads the winner's identity."""
+        try:
+            await create_person(self._storage, identity, display_name)
+        except UniqueKeyTaken:
+            raced = await self._storage.read_identity_by_email_digest(email_digest(identity.email))
+            if raced is None:
+                raise
+            return raced
+        return identity
+
+    async def _join_through_provider(
+        self, rctx: RequestContext, identity: Identity, signed_in: ProvidedSignIn
+    ) -> None:
+        """The membership a sign-in through one of the provider's organizations
+        lands: the invitation the person accepted, with its role; else, for a
+        sign-in through the org's single sign-on, a member's place when the
+        person's address is in a domain the org verified. Anything else lands
+        nothing, and the sign-in goes on: a place the person cannot have is
+        not a reason to refuse them their own."""
+        assert signed_in.organization_id is not None
+        try:
+            provided = await self._provider.get_organization(signed_in.organization_id)
+            org = await self._org_of(provided)
+            if org is None:
+                return
+            accepted = await self._provider.accepted_invitation(
+                organization_id=provided.id, user_id=signed_in.user.id
+            )
+        except (ProviderRefused, ProviderUnavailable) as error:
+            log.warning(
+                "sign-in through organization %s joined nothing: %s",
+                signed_in.organization_id,
+                error,
+            )
+            return
+        invitation = (
+            None
+            if accepted is None
+            else await self._storage.read_invitation_by_provider_id(org.id, accepted.id)
+        )
+        try:
+            if invitation is not None and invitation.state is InvitationState.PENDING:
+                await self._accept(rctx, org, identity, signed_in, invitation)
+            elif signed_in.via_sso and org.kind is OrgKind.TEAM:
+                if sso_joins(identity.email, provided.verified_domains):
+                    await self._join(rctx, org, identity, signed_in, Role.MEMBER, org.created_by)
+        except MembershipLimitReached as error:
+            log.warning("sign-in into org %s joined nothing: %s", org.id, error.message)
+
+    async def _org_of(self, provided: ProvidedOrganization) -> Org | None:
+        """The living team or personal org the provider's organization stands
+        for: the one its external id names, which names it back."""
+        try:
+            org_id = UUID(provided.external_id or "")
+        except ValueError:
+            return None
+        org = await self._storage.read_org(org_id)
+        if org is None or org.deleted_at is not None or org.provider_org_id != provided.id:
+            return None
+        return org
+
+    async def _accept(
+        self,
+        rctx: RequestContext,
+        org: Org,
+        identity: Identity,
+        signed_in: ProvidedSignIn,
+        invitation: Invitation,
+    ) -> None:
+        """The invitation's membership, with its role and recorded as its
+        inviter's, and the invitation accepted, in one commit. A person who
+        is a member already keeps their place and the invitation closes."""
+        now = utcnow()
+        user_id = new_id()
+        accepted = invitation.model_copy(
+            update={
+                "state": InvitationState.ACCEPTED,
+                "accepted_user_id": user_id,
+                "updated_at": now,
+                "updated_by": invitation.created_by,
+            }
+        )
+        user, created = await self._join(
+            rctx,
+            org,
+            identity,
+            signed_in,
+            invitation.role,
+            invitation.created_by,
+            accepted,
+            user_id,
+        )
+        if not created:
+            await self._storage.write_invitation(
+                org.id, accepted.model_copy(update={"accepted_user_id": user.id})
+            )
+
+    async def _join(
+        self,
+        rctx: RequestContext,
+        org: Org,
+        identity: Identity,
+        signed_in: ProvidedSignIn,
+        role: Role,
+        actor_id: UUID,
+        invitation: Invitation | None = None,
+        user_id: UUID | None = None,
+    ) -> tuple[User, bool]:
+        shown = signed_in.user.display_name or identity.email.partition("@")[0]
+        return await add_member_to(
+            self._storage,
+            self._relay,
+            org_id=org.id,
+            user_id=user_id or new_id(),
+            email=identity.email,
+            display_name=shown,
+            role=role,
+            actor_id=actor_id,
+            request=rctx,
+            max_orgs=self._options.max_orgs_per_identity,
+            invitation=invitation,
+            admission=self._admission(rctx, org.id),
+        )
 
     async def _with_personal(
         self, identity: Identity, memberships: tuple[OrgMembership, ...]
@@ -567,7 +837,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
         if identity is None or identity.operator_role is None:
             raise NotAnOperator("this identity is not an operator")
         if ictx.credential_kind is CredentialKind.OPERATOR_TOKEN:
-            # The one exception to "a password alone never admits": a second
+            # The one exception to "a sign-in alone never admits": a second
             # factor or the grant job stood behind the mint. The token carries
             # one permission, and never more than the entry grants today.
             if ictx.operator_role is None:
@@ -619,9 +889,9 @@ class TenancyManagerImpl(TenancyManagerInterface):
 
     async def _platform_identity(self, email: str) -> Identity:
         """The provisioner or the smoke identity, made the first time the grant
-        job names it: no org, and a password nobody is told."""
-        password_hash = await asyncio.to_thread(platform_password_hash)
-        identity = new_identity(email, password_hash, utcnow())
+        job names it: no org, and no way to sign in, since the provider never
+        vouches for an address in the platform's domain."""
+        identity = new_identity(email, utcnow())
         await self._storage.write_identity(identity)
         return identity
 
@@ -827,6 +1097,196 @@ class TenancyManagerImpl(TenancyManagerInterface):
             raise NotFound(f"identity {user.identity_id} not found")
         return identity
 
+    # Invitations and single sign-on.
+
+    async def invite_member(
+        self, ctx: OpContext, email: str, role: Role, attempt: Attempt | None = None
+    ) -> Invitation:
+        ctx.require(Permission.MANAGE_MEMBERS)
+        if role is Role.SERVICE:
+            raise ValidationFailed("service is not a membership role")
+        if not role_at_most(role, ctx.security.role):
+            raise NotAuthorized(f"cannot invite as {role.value}, above {ctx.security.role.value}")
+        email = email.strip()
+        if is_platform_email(email):
+            raise ValidationFailed("that address belongs to the platform")
+        try:
+            check_email(email)
+        except ValueError as error:
+            raise ValidationFailed(str(error)) from None
+        invitation_id = new_id() if attempt is None else attempt.target_id
+        if attempt is not None:
+            rerun = await self._storage.read_invitation(ctx.org_id, invitation_id)
+            if rerun is not None:
+                return rerun
+        await self._refuse_member(ctx, email)
+        now = utcnow()
+        pending = await self._storage.read_pending_invitation(ctx.org_id, email)
+        if pending is not None and pending.open_at(now):
+            raise Conflict("an invitation for this address is pending; send it again instead")
+        # The plan's seats are checked here, before anything is sent: this is
+        # the one door a person of a deployed environment comes in by. The
+        # acceptance asks again, since the org may have filled up meanwhile.
+        await self._refuse_past_seats(ctx)
+        org = await self._provider_org(ctx)
+        assert org.provider_org_id is not None
+        if pending is not None:
+            # Expired: it closes, and the new one takes its place.
+            await self._close_invitation(ctx, pending, InvitationState.REVOKED)
+        try:
+            sent = await self._provider.send_invitation(
+                email=email,
+                organization_id=org.provider_org_id,
+                expires_in_days=self._options.invitation_ttl_days,
+            )
+        except ProviderConflict:
+            # Pending at the provider already (an earlier attempt sent it and
+            # lost its answer): that one is adopted.
+            found = await self._provider_call(
+                self._provider.find_pending_invitation(
+                    email=email, organization_id=org.provider_org_id
+                )
+            )
+            if found is None:
+                raise Conflict("the invitation could not be sent; try again") from None
+            sent = found
+        except ProviderRefused as error:
+            raise ValidationFailed(f"the invitation was not sent: {error.message}") from None
+        except ProviderUnavailable as error:
+            raise Unavailable(f"invitations are not available: {error.message}") from None
+        invitation = Invitation(
+            id=invitation_id,
+            created_at=now,
+            updated_at=now,
+            created_by=ctx.user_id,
+            updated_by=ctx.user_id,
+            email=email,
+            role=role,
+            provider_invitation_id=sent.id,
+            expires_at=sent.expires_at,
+        )
+        row = outbox_row(ctx, "tenancy.invitation.created", invitation.id, {})
+        await self._storage.write_invitation(ctx.org_id, invitation, (row,))
+        await self._relay.relay(ctx.org_id, row)
+        return invitation
+
+    async def get_invitations(
+        self, ctx: OpContext, after: UUID | None, limit: int
+    ) -> InvitationPage:
+        ctx.require(Permission.MANAGE_MEMBERS)
+        limit = self._clamp(limit)
+        rows = await self._storage.read_invitations(ctx.org_id, after, limit + 1)
+        return InvitationPage(items=tuple(rows[:limit]), has_more=len(rows) > limit)
+
+    async def resend_invitation(self, ctx: OpContext, invitation_id: UUID) -> Invitation:
+        ctx.require(Permission.MANAGE_MEMBERS)
+        invitation = await self._pending_invitation(ctx, invitation_id)
+        sent = await self._provider_call(
+            self._provider.resend_invitation(invitation.provider_invitation_id)
+        )
+        now = utcnow()
+        resent = invitation.model_copy(
+            update={
+                "provider_invitation_id": sent.id,
+                "expires_at": sent.expires_at,
+                "updated_at": now,
+                "updated_by": ctx.user_id,
+            }
+        )
+        row = outbox_row(ctx, "tenancy.invitation.updated", resent.id, {})
+        await self._storage.write_invitation(ctx.org_id, resent, (row,))
+        await self._relay.relay(ctx.org_id, row)
+        return resent
+
+    async def revoke_invitation(self, ctx: OpContext, invitation_id: UUID) -> Invitation:
+        ctx.require(Permission.MANAGE_MEMBERS)
+        invitation = await self._pending_invitation(ctx, invitation_id)
+        if invitation.open_at(utcnow()):
+            try:
+                await self._provider.revoke_invitation(invitation.provider_invitation_id)
+            except ProviderRefused as error:
+                # Accepted or expired at the provider meanwhile: closed here too.
+                log.info("the provider refused the revocation: %s", error.message)
+            except ProviderUnavailable as error:
+                raise Unavailable(f"invitations are not available: {error.message}") from None
+        return await self._close_invitation(ctx, invitation, InvitationState.REVOKED)
+
+    async def sso_setup_link(self, ctx: OpContext, intent: PortalIntent, return_url: str) -> str:
+        ctx.require(Permission.MANAGE_MEMBERS)
+        if origin_of(return_url) not in {origin_of(u) for u in self._options.sign_in_redirect_uris}:
+            raise ValidationFailed("the link comes back to this environment's portal only")
+        current = await self.get_org(ctx)
+        if current.personal:
+            raise ValidationFailed("single sign-on is a team org's; a personal org has none")
+        org = await self._provider_org(ctx)
+        assert org.provider_org_id is not None
+        return await self._provider_call(
+            self._provider.portal_link(
+                organization_id=org.provider_org_id, intent=intent, return_url=return_url
+            )
+        )
+
+    async def _provider_org(self, ctx: OpContext) -> Org:
+        """The org, with its organization at the identity provider, made the
+        first time and kept: the provider finds it by the org's id when a
+        write of the link was lost, so a rerun never makes a second one."""
+        org = await self.get_org(ctx)
+        if org.provider_org_id is not None:
+            return org
+        provided = await self._provider_call(
+            self._provider.ensure_organization(external_id=str(org.id), name=org.name)
+        )
+        linked = org.model_copy(
+            update={
+                "provider_org_id": provided.id,
+                "updated_at": utcnow(),
+                "updated_by": ctx.user_id,
+            }
+        )
+        await self._storage.write_org(ctx.org_id, linked)
+        return linked
+
+    async def _provider_call[T](self, call: Awaitable[T]) -> T:
+        """A provider call of the principal's operations, its refusals said as
+        the platform's own."""
+        try:
+            return await call
+        except ProviderConflict as error:
+            raise Conflict(error.message) from None
+        except ProviderRefused as error:
+            raise ValidationFailed(error.message) from None
+        except ProviderUnavailable as error:
+            raise Unavailable(f"the identity provider is not available: {error.message}") from None
+
+    async def _refuse_member(self, ctx: OpContext, email: str) -> None:
+        """An address whose person is a member of the org already is Conflict."""
+        identity = await self._storage.read_identity_by_email_digest(email_digest(email))
+        if identity is None:
+            return
+        most = self._options.max_orgs_per_identity
+        for member_org_id, user in await users_of(self._storage, identity.id, most):
+            if member_org_id == ctx.org_id and user.deleted_at is None:
+                raise Conflict("that person is a member already")
+
+    async def _pending_invitation(self, ctx: OpContext, invitation_id: UUID) -> Invitation:
+        invitation = await self._storage.read_invitation(ctx.org_id, invitation_id)
+        if invitation is None:
+            raise NotFound(f"invitation {invitation_id} not found")
+        if invitation.state is not InvitationState.PENDING:
+            raise InvitationClosed(f"the invitation is {invitation.state.value}")
+        return invitation
+
+    async def _close_invitation(
+        self, ctx: OpContext, invitation: Invitation, state: InvitationState
+    ) -> Invitation:
+        closed = invitation.model_copy(
+            update={"state": state, "updated_at": utcnow(), "updated_by": ctx.user_id}
+        )
+        row = outbox_row(ctx, "tenancy.invitation.updated", closed.id, {})
+        await self._storage.write_invitation(ctx.org_id, closed, (row,))
+        await self._relay.relay(ctx.org_id, row)
+        return closed
+
     async def update_user(self, ctx: OpContext, user: User) -> User:
         ctx.require(Permission.READ)
         if user.id != ctx.user_id:
@@ -950,6 +1410,24 @@ class TenancyManagerImpl(TenancyManagerInterface):
         if not seats_metered(entitlements.plan):
             return ()
         return (outbox_row(ctx, work_row_kind(WorkKind.SYNC_SEATS), ctx.org_id, {}),)
+
+    async def _refuse_past_seats(self, ctx: OpContext) -> None:
+        """The plan's bound on members, for one more."""
+        entitlements = await self._entitlements.get_entitlements(ctx)
+        refuse_past(entitlements.plan, Lever.MEMBERS, await self._storage.count_members(ctx.org_id))
+
+    def _admission(self, rctx: RequestContext, org_id: UUID) -> Admission:
+        """What a person joining the org by invitation or by its single sign-on
+        is asked: a seat, under the org's service context, since no member of
+        the org is acting; and on a per-seat plan, the row that asks for the
+        seat count."""
+
+        async def admit() -> tuple[OutboxRow, ...]:
+            ctx = await self.service_context(rctx, org_id, EMPTY_UUID)
+            await self._refuse_past_seats(ctx)
+            return await self._seat_rows(ctx)
+
+        return admit
 
     async def _refuse_without_keys(self, ctx: OpContext) -> None:
         entitlements = await self._entitlements.get_entitlements(ctx)

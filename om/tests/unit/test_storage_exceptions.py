@@ -25,6 +25,7 @@ from contracts import (
     event_storage,
     idempotency_storage,
     outbox_storage,
+    slack_storage,
     task_storage,
     tenancy_storage,
     work_storage,
@@ -37,6 +38,7 @@ STORAGE_EXCEPTIONS: frozenset[tuple[str, str]] = frozenset(
     {
         ("TenancyStorageInterface", "read_identity"),
         ("TenancyStorageInterface", "read_identity_by_email_digest"),
+        ("TenancyStorageInterface", "read_identity_by_issuer_subject"),
         ("TenancyStorageInterface", "write_identity"),
         ("TenancyStorageInterface", "write_totp_secret"),
         ("TenancyStorageInterface", "confirm_totp"),
@@ -61,6 +63,8 @@ STORAGE_EXCEPTIONS: frozenset[tuple[str, str]] = frozenset(
         ("WorkStorageInterface", "purge_items"),
         ("OutboxStorageInterface", "claim_pending"),
         ("OutboxStorageInterface", "purge_done"),
+        ("SlackStorageInterface", "read_connection_by_channel"),
+        ("SlackStorageInterface", "redeem_link_code"),
     }
 )
 
@@ -69,6 +73,7 @@ CROSS_TENANT_CASES: dict[str, frozenset[str]] = {
     "EventStorageInterface": event_storage.CROSS_TENANT_CASES,
     "IdempotencyStorageInterface": idempotency_storage.CROSS_TENANT_CASES,
     "OutboxStorageInterface": outbox_storage.CROSS_TENANT_CASES,
+    "SlackStorageInterface": slack_storage.CROSS_TENANT_CASES,
     "TasksStorageInterface": task_storage.CROSS_TENANT_CASES,
     "TenancyStorageInterface": tenancy_storage.CROSS_TENANT_CASES,
     "WorkStorageInterface": work_storage.CROSS_TENANT_CASES,
@@ -99,8 +104,11 @@ REQUEST_TRANSITIONS: frozenset[tuple[str, str]] = frozenset(
         # Take `RequestContext`, the weakest stage: nobody is known yet.
         ("TenancyManagerInterface", "bootstrap"),
         ("TenancyManagerInterface", "add_member"),
-        ("TenancyManagerInterface", "sign_up"),
-        ("TenancyManagerInterface", "login"),
+        ("TenancyManagerInterface", "sign_in_url"),
+        ("TenancyManagerInterface", "sign_in_with_code"),
+        ("TenancyManagerInterface", "start_device_sign_in"),
+        ("TenancyManagerInterface", "finish_device_sign_in"),
+        ("TenancyManagerInterface", "dev_sign_in"),
         ("TenancyManagerInterface", "authenticate_login"),
         ("TenancyManagerInterface", "authenticate"),
         ("TenancyManagerInterface", "resume"),
@@ -115,6 +123,10 @@ REQUEST_TRANSITIONS: frozenset[tuple[str, str]] = frozenset(
         # The org a verified delivery from the payment processor names, before
         # any stage exists for it: the webhook consumer's lookup.
         ("BillingManagerInterface", "org_of_delivery"),
+        # A Slack command arrives with a channel or a code and no tenant; each
+        # finds the tenant from what Slack sent, as a webhook's lookup does.
+        ("SlackManagerInterface", "redeem_link_code"),
+        ("SlackManagerInterface", "channel_context"),
     }
 )
 
@@ -124,6 +136,7 @@ IDENTITY_TRANSITIONS: frozenset[tuple[str, str]] = frozenset(
         ("TenancyManagerInterface", "exchange_login"),
         ("TenancyManagerInterface", "get_identity_memberships"),
         ("TenancyManagerInterface", "admit_operator"),
+        ("TenancyManagerInterface", "verify_second_factor"),
     }
 )
 

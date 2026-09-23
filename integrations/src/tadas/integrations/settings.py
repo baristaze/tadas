@@ -1,20 +1,71 @@
-"""The providers' half of a process's settings, and the refusals a process
-makes at boot: a twin outside a local environment, and a processor key
-whose mode is not the environment's. Production takes a live key and
-every other environment a test key, so a laptop or staging can never move
-real money and production can never answer with a sandbox."""
+"""The settings the integrations read, mixed into a process's one settings
+object; nothing below reads the environment."""
 
-from datetime import timedelta
 from typing import Literal
 
-from pydantic import SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from tadas.infra.impl.settings import ENV_FILE
-from tadas.integrations.exceptions import UnsafeProviderConfiguration
-from tadas.integrations.payments import PaymentsInterface
-from tadas.integrations.payments.stripe import PaymentsStripeImpl
-from tadas.integrations.payments.twin import TWIN_ENVIRONMENTS, PaymentsTwinImpl
+
+
+class IntegrationsSettings(BaseSettings):
+    model_config = SettingsConfigDict(env_prefix="TADAS_", env_file=ENV_FILE, extra="ignore")
+
+    # Which identity provider signs people in: WorkOS, its twin (local only,
+    # refused at boot anywhere else), or none, which refuses every sign-in
+    # through a provider and is what a process that signs nobody in holds.
+    identity_provider: Literal["workos", "twin", "none"] = "none"
+    # The WorkOS application's client id. Not a secret: it is in every
+    # authorization URL a browser sees. Each environment names its own
+    # application in its deployment config.
+    workos_client_id: str = ""
+    # The WorkOS API key: a process credential, injected at start from the
+    # secret store in a deployed environment and read from the environment
+    # locally. Empty or "off" means not set, and WorkOS is then not
+    # configured: the process starts, says so, and every sign-in through it
+    # answers 503.
+    workos_api_key: SecretStr | None = Field(default=None, repr=False)
+    workos_base_url: str = "https://api.workos.com"
+    workos_timeout_seconds: float = Field(default=10.0, gt=0)
+
+    # The payment processor: Stripe, or its twin in memory (the tests, and
+    # one process on a laptop), which is refused outside local and test.
+    # Stripe with no key is unconfigured: every org keeps its plan.
+    billing_backend: Literal["twin", "stripe"] = "stripe"
+    # The account every call names in `Stripe-Context`. Not a secret: each
+    # environment commits its own.
+    stripe_account_id: str | None = None
+    # The key, and the signing secret of the endpoint the processor delivers
+    # to. Both are process credentials, injected at start; empty or "off"
+    # leaves billing unconfigured, which answers 503 and keeps every org on
+    # its plan.
+    stripe_org_key: SecretStr | None = Field(default=None, repr=False)
+    stripe_webhook_secret: SecretStr | None = Field(default=None, repr=False)
+    stripe_timeout_seconds: float = Field(default=10.0, gt=0)
+
+    @field_validator("workos_api_key")
+    @classmethod
+    def _key_off_is_none(cls, value: SecretStr | None) -> SecretStr | None:
+        if value is None or value.get_secret_value().strip().lower() in ("", "off"):
+            return None
+        return value
+
+    @field_validator("stripe_org_key", "stripe_webhook_secret", mode="before")
+    @classmethod
+    def _stripe_off_is_none(cls, value: object) -> object:
+        """The cloud secret starts as "off", as the error tracker's DSN does."""
+        if isinstance(value, str) and value.strip().lower() in ("", "off"):
+            return None
+        return value
+
+    @field_validator("stripe_account_id", mode="before")
+    @classmethod
+    def _empty_account_is_none(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
 
 LIVE_PREFIXES = ("sk_live_", "rk_live_", "sk_org_live_", "rk_org_live_")
 TEST_PREFIXES = ("sk_test_", "rk_test_", "sk_org_test_", "rk_org_test_")
@@ -30,79 +81,7 @@ def key_mode(key: str) -> Literal["live", "test"] | None:
 
 
 def mode_for(environment: str) -> Literal["live", "test"]:
+    """Production takes a live key and every other environment a test key, so
+    a laptop or staging never moves real money and production never answers
+    with a sandbox."""
     return "live" if environment == "production" else "test"
-
-
-class IntegrationsSettings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="TADAS_", env_file=ENV_FILE, extra="ignore")
-
-    environment: str = "local"
-
-    # The payment processor: the twin in memory (tests, one process on a
-    # laptop), or Stripe. The twin is refused outside local and test.
-    billing_backend: Literal["twin", "stripe"] = "twin"
-    # The account every call names in `Stripe-Context`. Not a secret: each
-    # environment commits its own.
-    stripe_account_id: str | None = None
-    # The key, and the signing secret of the endpoint the processor delivers
-    # to. Both are process credentials, injected at start; empty or "off"
-    # leaves billing unconfigured, which answers 503 and keeps every org on
-    # its plan.
-    stripe_org_key: SecretStr | None = None
-    stripe_webhook_secret: SecretStr | None = None
-    stripe_timeout_seconds: float = 10.0
-
-    @field_validator("stripe_org_key", "stripe_webhook_secret", mode="before")
-    @classmethod
-    def _off_is_none(cls, value: object) -> object:
-        """The cloud secret starts as "off", as the error tracker's DSN does."""
-        if isinstance(value, str) and value.strip().lower() in ("", "off"):
-            return None
-        return value
-
-    @field_validator("stripe_account_id", mode="before")
-    @classmethod
-    def _empty_is_none(cls, value: object) -> object:
-        if isinstance(value, str) and not value.strip():
-            return None
-        return value
-
-
-def refuse_unsafe_payments(settings: IntegrationsSettings) -> None:
-    """The boot's refusals, each naming the setting."""
-    if settings.billing_backend == "twin":
-        if settings.environment not in TWIN_ENVIRONMENTS:
-            raise UnsafeProviderConfiguration(
-                "TADAS_BILLING_BACKEND=twin is refused "
-                f"when TADAS_ENVIRONMENT={settings.environment}"
-            )
-        return
-    key = settings.stripe_org_key
-    if key is None:
-        return
-    expected = mode_for(settings.environment)
-    found = key_mode(key.get_secret_value())
-    if found != expected:
-        raise UnsafeProviderConfiguration(
-            f"TADAS_STRIPE_ORG_KEY is a {found or 'unrecognised'} key; "
-            f"TADAS_ENVIRONMENT={settings.environment} takes a {expected} key"
-        )
-
-
-def build_payments(settings: IntegrationsSettings) -> PaymentsInterface:
-    """The payments client the settings name, after the boot's refusals."""
-    refuse_unsafe_payments(settings)
-    if settings.billing_backend == "twin":
-        return PaymentsTwinImpl(environment=settings.environment)
-    return PaymentsStripeImpl(
-        api_key=None
-        if settings.stripe_org_key is None
-        else settings.stripe_org_key.get_secret_value(),
-        account_id=settings.stripe_account_id,
-        webhook_secret=(
-            None
-            if settings.stripe_webhook_secret is None
-            else settings.stripe_webhook_secret.get_secret_value()
-        ),
-        timeout=timedelta(seconds=settings.stripe_timeout_seconds),
-    )

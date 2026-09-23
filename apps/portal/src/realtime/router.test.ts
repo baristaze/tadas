@@ -2,7 +2,7 @@ import { QueryClient, type QueryKey } from "@tanstack/react-query";
 import { describe, expect, it } from "vitest";
 import { keys } from "../queries/keys";
 import { parseEnvelope } from "./envelopes";
-import { routeEnvelope } from "./router";
+import { reminderOf, routeEnvelope } from "./router";
 
 function recording() {
   const queryClient = new QueryClient();
@@ -34,8 +34,14 @@ const SERVER_KINDS = [
   "tasks.task.created",
   "tasks.task.updated",
   "tasks.task.deleted",
+  "tasks.task.reminded",
+  "slack.connection.created",
+  "slack.connection.updated",
+  "slack.connection.deleted",
   "tenancy.api_key.created",
   "tenancy.api_key.deleted",
+  "tenancy.invitation.created",
+  "tenancy.invitation.updated",
   "tenancy.membership.updated",
   "tenancy.session.revoked",
   "tenancy.user.created",
@@ -116,6 +122,21 @@ describe("routeEnvelope", () => {
     }
   });
 
+  it("refreshes the task lists when a reminder goes out, since the task's version moved on", () => {
+    const { queryClient, seen } = recording();
+    expect(routeEnvelope(queryClient, pushOf("tasks.task.reminded"))).toEqual({ invalidated: [keys.tasks.all] });
+    expect(seen).toEqual([keys.tasks.all]);
+  });
+
+  it("refreshes the Slack connection on each of its pushes", () => {
+    for (const action of ["created", "updated", "deleted"]) {
+      const { queryClient, seen } = recording();
+      routeEnvelope(queryClient, pushOf(`slack.connection.${action}`));
+      expect(seen).toHaveLength(1);
+      expect(isPrefixOf(seen[0]!, keys.slack.connection)).toBe(true);
+    }
+  });
+
   it("ignores frames that are not pushes and rejects malformed ones", () => {
     const queryClient = new QueryClient();
     const pong = parseEnvelope(JSON.stringify({ type: "pong", sent_at: null }));
@@ -126,5 +147,26 @@ describe("routeEnvelope", () => {
       JSON.stringify({ type: "event", sent_at: null, topic: "entity_changed", payload: {} }),
     );
     expect(routeEnvelope(queryClient, bare!)).toEqual({ invalidated: [] });
+  });
+});
+
+describe("reminderOf", () => {
+  it("names the task a reminder push is about", () => {
+    expect(reminderOf(pushOf("tasks.task.reminded"))).toBe("x");
+  });
+
+  it("is null for every other push and every other frame", () => {
+    expect(reminderOf(pushOf("tasks.task.updated"))).toBeNull();
+    expect(reminderOf(pushOf("slack.connection.updated"))).toBeNull();
+    expect(reminderOf(parseEnvelope(JSON.stringify({ type: "pong", sent_at: null, seq: 1 }))!)).toBeNull();
+    const other = parseEnvelope(
+      JSON.stringify({
+        type: "event",
+        sent_at: null,
+        topic: "presence",
+        payload: { kind: "tasks.task.reminded", target_id: "x", seq: 3 },
+      }),
+    );
+    expect(reminderOf(other!)).toBeNull();
   });
 });

@@ -109,7 +109,7 @@ export function TextField({
   label: string;
   value: string;
   onChange: (value: string) => void;
-  type?: "text" | "email" | "password";
+  type?: "text" | "email" | "password" | "datetime-local";
   autoComplete?: string;
   placeholder?: string;
 }) {
@@ -184,7 +184,7 @@ export function Pill({
 }: {
   children: ReactNode;
   title?: string;
-  tone?: "plain" | "accent";
+  tone?: "plain" | "accent" | "danger";
 }) {
   return (
     <span title={title} className="tadas-pill" data-tone={tone}>

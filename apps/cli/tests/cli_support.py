@@ -16,12 +16,14 @@ from typer.testing import CliRunner
 
 from tadas.apps.cli import main
 from tadas.client.client import ApiClient
+from tadas.integrations.identity.twin import IdentityProviderTwinImpl
+from tadas.integrations.impl.configured import IntegrationsOverImpl
 from tadas.om.billing.types.plan import Plan
 from tadas.om.opcontext import Role
 from tadas.services.api.app import create_app
 from tadas.services.api.container import AppContainer
 
-BOB = {"email": "bob@example.test", "password": "pw-5678"}
+BOB = {"email": "bob@example.test"}
 
 
 class Hop(httpx.AsyncBaseTransport):
@@ -31,7 +33,9 @@ class Hop(httpx.AsyncBaseTransport):
         self._tc = tc
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
-        def send() -> httpx.Response:
+        # The test client answers with its own response type, which is read
+        # for its parts and rebuilt as the one the CLI's transport returns.
+        def send() -> Any:
             return self._tc.request(
                 request.method,
                 str(request.url),
@@ -46,8 +50,11 @@ class Hop(httpx.AsyncBaseTransport):
 
 
 class Stack:
-    def __init__(self, tc: TestClient, container: AppContainer, org_id: Any) -> None:
+    def __init__(
+        self, tc: TestClient, container: AppContainer, org_id: Any, twin: IdentityProviderTwinImpl
+    ) -> None:
         self.tc = tc
+        self.twin = twin
         self.container = container
         self.org_id = org_id
         self.runner = CliRunner()
@@ -58,14 +65,14 @@ class Stack:
             "http://test", app="cli", app_version="cli@test", token=token, transport=Hop(self.tc)
         )
 
-    def session_token(self, email: str, password: str) -> str:
+    def session_token(self, email: str) -> str:
         """One session per person; signing in on every command would trip the login rate limit."""
         if email not in self._tokens:
-            self._tokens[email] = self._sign_in(email, password)
+            self._tokens[email] = self._sign_in(email)
         return self._tokens[email]
 
-    def _sign_in(self, email: str, password: str) -> str:
-        login = self.tc.post("/v1/auth/login", json={"email": email, "password": password})
+    def _sign_in(self, email: str) -> str:
+        login = self.tc.post("/v1/auth/dev-sign-in", json={"email": email})
         assert login.status_code == 200, login.text
         session = self.tc.post(
             "/v1/auth/sessions",
@@ -75,11 +82,33 @@ class Stack:
         assert session.status_code == 200, session.text
         return session.json()["token"]
 
+    def confirm_as(self, email: str, monkeypatch: pytest.MonkeyPatch) -> list[str]:
+        """The person at the browser: the page the CLI opens is confirmed at
+        the twin as `email`, and the wait between asks is none. Answers the
+        addresses the CLI opened."""
+        opened: list[str] = []
+
+        def confirm(url: str) -> None:
+            opened.append(url)
+            self.twin.confirm_device(url.rpartition("user_code=")[2], email)
+
+        async def no_wait(seconds: float) -> None:
+            return None
+
+        monkeypatch.setattr(main, "open_browser", confirm)
+        monkeypatch.setattr(main, "pause", no_wait)
+        return opened
+
+    def login(self, *args: str, monkeypatch: pytest.MonkeyPatch, email: str = OWNER["email"]):
+        """`tadas login` with the device sign-in confirmed as `email`."""
+        self.confirm_as(email, monkeypatch)
+        return self.tadas("login", *args, token=None)
+
     def tadas(self, *args: str, token: str | None = "owner", env: dict[str, str] | None = None):
         """Runs one command as the owner (or as `token`); returns the result."""
         variables = {"TADAS_API_URL": "http://test", **(env or {})}
         if token == "owner":
-            token = self.session_token(OWNER["email"], OWNER["password"])
+            token = self.session_token(OWNER["email"])
         if token is not None:
             variables["TADAS_TOKEN"] = token
         return self.runner.invoke(main.app, list(args), env=variables, catch_exceptions=False)
@@ -87,19 +116,20 @@ class Stack:
 
 @pytest.fixture
 def stack(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Stack]:
-    container = build_container(tmp_path)
+    twin = IdentityProviderTwinImpl()
+    container = build_container(tmp_path, integrations=IntegrationsOverImpl(twin))
     _, org = run(
         container.managers.tenancy.bootstrap(
-            seed_request(), "Acme", "acme", OWNER["email"], OWNER["password"], OWNER["name"]
+            seed_request(), "Acme", "acme", OWNER["email"], OWNER["name"]
         )
     )
     # Team: two people and more tasks than Free allows, the case most commands
     # are about; the plan's own refusal has a test of its own.
     run(on_plan(container, org.id, Plan.TEAM))
-    run(add_member(container, org.id, BOB["email"], BOB["password"], Role.MEMBER))
+    run(add_member(container, org.id, BOB["email"], Role.MEMBER))
     monkeypatch.setenv("TADAS_HOME", str(tmp_path / "home"))
     monkeypatch.delenv("TADAS_TOKEN", raising=False)
     with TestClient(create_app(container)) as tc:
-        stack = Stack(tc, container, org.id)
+        stack = Stack(tc, container, org.id, twin)
         monkeypatch.setattr(main, "build_client", lambda _url, token: stack.client(token))
         yield stack

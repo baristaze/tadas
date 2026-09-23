@@ -8,6 +8,8 @@ from tadas.om.idempotency.storage import IdempotencyStorageInterface
 from tadas.om.idempotency.storage.impl.memory import IdempotencyStorageMemoryImpl
 from tadas.om.outbox.storage import OutboxStorageInterface
 from tadas.om.outbox.storage.impl.memory import OutboxStorageMemoryImpl
+from tadas.om.slack.storage import SlackStorageInterface
+from tadas.om.slack.storage.impl.memory import SlackStorageMemoryImpl
 from tadas.om.storage.root import StorageInterface
 from tadas.om.tasks.storage import TasksStorageInterface
 from tadas.om.tasks.storage.impl.memory import TasksStorageMemoryImpl
@@ -29,6 +31,7 @@ class StorageMemoryImpl(StorageInterface):
         self._tasks = TasksStorageMemoryImpl(self._outbox)
         self._events = EventStorageMemoryImpl()
         self._billing = BillingStorageMemoryImpl(self._outbox)
+        self._slack = SlackStorageMemoryImpl(self._outbox)
 
     def get_tenancy_storage(self) -> TenancyStorageInterface:
         return self._tenancy
@@ -50,6 +53,9 @@ class StorageMemoryImpl(StorageInterface):
 
     def get_billing_storage(self) -> BillingStorageInterface:
         return self._billing
+
+    def get_slack_storage(self) -> SlackStorageInterface:
+        return self._slack
 
     async def healthcheck(self) -> bool:
         return True

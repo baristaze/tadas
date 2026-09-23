@@ -202,3 +202,35 @@ class TasksStoragePostgresImpl(PgStorageBase, TasksStorageInterface):
         return PreconditionFailed(
             f"task {task_id} is at version {found.version}, not {expected_version}"
         )
+
+    async def mark_reminded(
+        self,
+        org_id: UUID,
+        task_id: UUID,
+        remind_at: datetime,
+        reminded_at: datetime,
+        outbox_rows: tuple[OutboxRow, ...],
+    ) -> Task | None:
+        stmt = (
+            update(Tasks)
+            .where(
+                Tasks.id == task_id,
+                Tasks.org_id == org_id,
+                Tasks.status == TaskStatus.OPEN.value,
+                Tasks.deleted_at.is_(None),
+                Tasks.remind_at == remind_at,
+                Tasks.reminded_at.is_(None),
+            )
+            .values(reminded_at=reminded_at, version=Tasks.version + 1)
+            .returning(Tasks)
+        )
+        async with self._session_for(stmt, org_id=org_id) as session:
+            row = (await session.execute(stmt)).scalar_one_or_none()
+            if row is None:
+                await session.rollback()
+                return None
+            written = to_model(row, Task)
+            for outbox_row in outbox_rows:
+                session.add(to_row(outbox_row, OutboxRows, org_id=org_id))
+            await session.commit()
+            return written

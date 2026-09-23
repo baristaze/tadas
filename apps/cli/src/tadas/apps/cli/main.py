@@ -9,7 +9,10 @@ signed in, 4 the API is unreachable."""
 import asyncio
 import json
 import sys
+import time
+import webbrowser
 from collections.abc import Callable, Coroutine
+from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Annotated, Any, NoReturn
@@ -20,10 +23,24 @@ import typer
 
 from tadas.apps.cli import config
 from tadas.apps.cli.listen import listen as run_listener
-from tadas.apps.cli.model import choose_org, org_lines, resolve, short_id, task_table
+from tadas.apps.cli.model import (
+    choose_org,
+    org_lines,
+    parse_due,
+    resolve,
+    short_id,
+    task_table,
+)
 from tadas.client.client import UNSET, ApiClient, ApiError, Unset
 from tadas.client.realtime import ChannelRefused
-from tadas.client.types import IssuedSessionView, TaskScope, TaskStatus, TaskView, UserView
+from tadas.client.types import (
+    IssuedLoginView,
+    IssuedSessionView,
+    TaskScope,
+    TaskStatus,
+    TaskView,
+    UserView,
+)
 
 EXIT_REFUSED = 1
 EXIT_USAGE = 2
@@ -89,7 +106,7 @@ def run[T](work: Callable[[ApiClient], Coroutine[Any, Any, T]], api: str | None 
 
 def _run[T](coroutine: Coroutine[Any, Any, T], *, signed_in: bool = False) -> T:
     """`signed_in` says a 401 means the kept credential is dead, not that a
-    password was wrong."""
+    sign-in was refused."""
     try:
         return asyncio.run(coroutine)
     except config.BadSetting as error:
@@ -127,6 +144,18 @@ def _run[T](coroutine: Coroutine[Any, Any, T], *, signed_in: bool = False) -> T:
 def _fail(message: str, code: int) -> NoReturn:
     typer.echo(message, err=True)
     raise typer.Exit(code)
+
+
+REMIND_HELP = "A due time to be reminded at: +30m, +2h, +1d, or 2026-10-01T09:00 (local time)."
+
+
+def _due(text: str) -> datetime:
+    """The due time a person typed, or a usage error that says the forms."""
+    now = datetime.now().astimezone()
+    try:
+        return parse_due(text, now, now.tzinfo or UTC)
+    except ValueError as error:
+        _fail(str(error), EXIT_USAGE)
 
 
 def _show(task: TaskView, verb: str, as_json: bool) -> None:
@@ -178,21 +207,84 @@ async def _user(client: ApiClient, reference: str) -> UserView:
 # Signing in
 
 
+SLOW_DOWN_SECONDS = 5
+"""How much longer the next ask waits when the API says to ask less often."""
+
+
+def open_browser(url: str) -> None:
+    """Opens the confirmation page in the person's browser, when there is one
+    to open; a terminal with none, or over SSH, prints the address instead."""
+    try:
+        webbrowser.open(url)
+    except webbrowser.Error:
+        pass
+
+
+async def pause(seconds: float) -> None:
+    """The wait between two asks; tests replace it."""
+    await asyncio.sleep(seconds)
+
+
+def now() -> float:
+    """The clock the device code's expiry is read on; tests replace it."""
+    return time.monotonic()
+
+
+async def device_sign_in(client: ApiClient, *, browser: bool) -> IssuedLoginView:
+    """The device sign-in: the API starts it at the identity provider, the
+    person confirms the code in any browser, and the CLI asks every interval
+    until they do, or the code expires."""
+    started = await client.start_device_sign_in()
+    typer.echo(
+        f"to sign in, open {started.verification_uri_complete}\n"
+        f"and confirm the code {started.user_code}",
+        err=True,
+    )
+    if browser:
+        open_browser(started.verification_uri_complete)
+    interval = float(started.interval)
+    deadline = now() + started.expires_in
+    while True:
+        await pause(interval)
+        try:
+            return await client.finish_device_sign_in(started.device_code)
+        except ApiError as error:
+            if error.code == "sign_in_slow_down":
+                interval += SLOW_DOWN_SECONDS
+            elif error.code != "sign_in_pending":
+                raise
+        if now() >= deadline:
+            _fail("the code expired before it was confirmed; run `tadas login` again", EXIT_REFUSED)
+
+
 @app.command()
 def login(
-    email: Annotated[str, typer.Option(prompt=True)],
-    password: Annotated[str, typer.Option(prompt=True, hide_input=True)],
     org: Annotated[
         str | None, typer.Option(help="The org's slug, when you belong to several.")
     ] = None,
+    no_browser: Annotated[
+        bool, typer.Option("--no-browser", help="Print the address; open no browser.")
+    ] = False,
+    dev_email: Annotated[
+        str | None,
+        typer.Option(
+            "--dev-email",
+            help="Local stack only: sign in as this address with no browser. "
+            "A deployed API has no such door and answers 404.",
+        ),
+    ] = None,
     api: Api = None,
 ) -> None:
-    """Sign in with email and password and keep the session for the next commands."""
+    """Sign in through the browser with a one-time code and keep the session
+    for the next commands."""
     api_url = config.api_url(api)
 
     async def go() -> None:
         async with build_client(api_url, None) as client:
-            issued = await client.login(email, password)
+            if dev_email is not None:
+                issued = await client.dev_sign_in(dev_email)
+            else:
+                issued = await device_sign_in(client, browser=not no_browser)
             try:
                 chosen = choose_org(issued.memberships, org)
             except LookupError as slugs:
@@ -361,16 +453,19 @@ def add(
     title: Annotated[str, typer.Argument(help="What to do.")],
     notes: Annotated[str, typer.Option(help="Details, kept with the task.")] = "",
     assignee: Annotated[str | None, typer.Option(help="`me`, an email, or a name.")] = None,
+    remind: Annotated[str | None, typer.Option(help=REMIND_HELP)] = None,
     as_json: Json = False,
     api: Api = None,
 ) -> None:
     """Create a task at the top of the open list."""
+    remind_at = _due(remind) if remind else None
 
     async def go(client: ApiClient) -> None:
         assignee_id = (await _user(client, assignee)).id if assignee else None
-        _show(
-            await client.create_task(title, notes=notes, assignee_id=assignee_id), "added", as_json
+        created = await client.create_task(
+            title, notes=notes, assignee_id=assignee_id, remind_at=remind_at
         )
+        _show(created, "added", as_json)
 
     run(go, api)
 
@@ -382,14 +477,28 @@ def edit(
     notes: Annotated[str | None, typer.Option(help="New notes.")] = None,
     assignee: Annotated[str | None, typer.Option(help="`me`, an email, or a name.")] = None,
     unassign: Annotated[bool, typer.Option("--unassign", help="Clear the assignee.")] = False,
+    remind: Annotated[str | None, typer.Option(help=REMIND_HELP)] = None,
+    no_remind: Annotated[bool, typer.Option("--no-remind", help="Clear the due time.")] = False,
     as_json: Json = False,
     api: Api = None,
 ) -> None:
-    """Change a task's title, notes, or assignee."""
+    """Change a task's title, notes, assignee, or due time."""
     if assignee and unassign:
         _fail("--assignee and --unassign exclude each other", EXIT_USAGE)
-    if title is None and notes is None and assignee is None and not unassign:
-        _fail("nothing to change; give --title, --notes, --assignee, or --unassign", EXIT_USAGE)
+    if remind and no_remind:
+        _fail("--remind and --no-remind exclude each other", EXIT_USAGE)
+    nothing = title is None and notes is None and assignee is None and remind is None
+    if nothing and not (unassign or no_remind):
+        _fail(
+            "nothing to change; give --title, --notes, --assignee, --unassign, --remind,"
+            " or --no-remind",
+            EXIT_USAGE,
+        )
+    remind_at: datetime | Unset | None = UNSET
+    if no_remind:
+        remind_at = None
+    elif remind:
+        remind_at = _due(remind)
 
     async def go(client: ApiClient) -> None:
         task = await _task(client, ref)
@@ -399,7 +508,12 @@ def edit(
         elif assignee:
             assignee_id = (await _user(client, assignee)).id
         updated = await client.update_task(
-            task.id, version=task.version, title=title, notes=notes, assignee_id=assignee_id
+            task.id,
+            version=task.version,
+            title=title,
+            notes=notes,
+            assignee_id=assignee_id,
+            remind_at=remind_at,
         )
         _show(updated, "edited", as_json)
 

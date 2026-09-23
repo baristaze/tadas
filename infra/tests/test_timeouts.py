@@ -40,6 +40,8 @@ CLIENT_CONSTRUCTORS = {
     "GlideClientConfiguration",
     "HTTPXClient",  # stripe's transport, which carries the timeout
     "StripeClient",
+    "AsyncWebClient",  # slack_sdk
+    "AsyncWebhookClient",  # slack_sdk
 }
 """A call by one of these names is a client being built; `session.client(...)`
 (an AWS client) is matched by its receiver below."""
@@ -90,6 +92,22 @@ def _name_of(call: ast.Call) -> str | None:
     return None
 
 
+def _bounded_by_wait_for(tree: ast.AST) -> set[int]:
+    """The calls awaited through `asyncio.wait_for(call, timeout=...)`: the
+    bound is the caller's, named at the same site, for a client whose opening
+    takes no timeout of its own."""
+    bounded: set[int] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not node.args:
+            continue
+        func = node.func
+        name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
+        timed = len(node.args) > 1 or any(k.arg == "timeout" for k in node.keywords)
+        if name == "wait_for" and timed and isinstance(node.args[0], ast.Call):
+            bounded.add(id(node.args[0]))
+    return bounded
+
+
 def client_constructions() -> list[tuple[str, bool]]:
     """Every client construction under the source roots as (site, bounded)."""
     root = repository_root()
@@ -97,10 +115,11 @@ def client_constructions() -> list[tuple[str, bool]]:
     for source_root in SOURCE_ROOTS:
         for path in sorted((root / source_root).rglob("*.py")):
             tree = ast.parse(path.read_text(), filename=str(path))
+            waited = _bounded_by_wait_for(tree)
             for node in ast.walk(tree):
                 if isinstance(node, ast.Call) and _is_client_construction(node):
                     site = f"{path.relative_to(root)}:{node.lineno}"
-                    found.append((site, _carries_a_timeout(node)))
+                    found.append((site, _carries_a_timeout(node) or id(node) in waited))
     return found
 
 
@@ -117,6 +136,8 @@ def test_every_client_construction_names_a_timeout() -> None:
         "infra/src/tadas/infra/observability.py",
         "integrations/src/tadas/integrations/payments/stripe.py",
         "integrations/src/tadas/integrations/payments/catalog.py",
+        "integrations/src/tadas/integrations/slack/web.py",
+        "workers/maintenance/src/tadas/workers/maintenance/slack_socket.py",
     }, "the scan no longer sees a client it used to; widen it before trusting it"
     unbounded = [site for site, bounded in found if not bounded]
     assert not unbounded, f"clients built without a timeout: {unbounded}"

@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from tadas.infra.impl.local import InfraLocalImpl
+from tadas.integrations.impl.configured import absent_integrations
 from tadas.integrations.payments.twin import PaymentsTwinImpl
 from tadas.om.billing import BillingManagerInterface, BillingOperatorManagerInterface
 from tadas.om.billing.storage import BillingStorageInterface
@@ -79,7 +80,9 @@ def test_the_system_login_follows_a_role_to_its_own_database() -> None:
 
 def test_business_root_has_a_field_per_manager(tmp_path: Path) -> None:
     managers = build_managers(
-        StorageMemoryImpl(), InfraLocalImpl(tmp_path), payments=PaymentsTwinImpl(environment="test")
+        StorageMemoryImpl(),
+        InfraLocalImpl(tmp_path),
+        integrations=absent_integrations(PaymentsTwinImpl(environment="test")),
     )
     assert isinstance(managers.tenancy, TenancyManagerInterface)
     assert isinstance(managers.tenancy_operator, TenancyOperatorManagerInterface)

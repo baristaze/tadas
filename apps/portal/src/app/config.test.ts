@@ -3,6 +3,7 @@ import { DEFAULT_RETRY_ATTEMPTS, DEFAULT_RETRY_BASE_DELAY_MS } from "../api";
 import { DEFAULT_REQUEST_TIMEOUT_MS, resolveConfig } from "./config";
 
 const defaults = {
+  devSignIn: false,
   requestTimeoutMs: DEFAULT_REQUEST_TIMEOUT_MS,
   retryAttempts: DEFAULT_RETRY_ATTEMPTS,
   retryBaseDelayMs: DEFAULT_RETRY_BASE_DELAY_MS,
@@ -58,8 +59,16 @@ describe("runtime config", () => {
         sentryDsn: "http://k@localhost:58000/1",
         environment: "local",
         ...defaults,
+        devSignIn: true,
       });
     }
     expect(resolveConfig(null, {}, origin).apiUrl).toBe("http://127.0.0.1:8000");
+  });
+
+  it("offers the local sign-in locally and only where a config names it", () => {
+    expect(resolveConfig({ apiUrl: "", devSignIn: true }, {}, origin).devSignIn).toBe(true);
+    expect(resolveConfig({ apiUrl: "", devSignIn: "yes" }, {}, origin).devSignIn).toBe(false);
+    expect(resolveConfig(null, {}, origin).devSignIn).toBe(true);
+    expect(resolveConfig(null, { VITE_DEV_SIGN_IN: "false" }, origin).devSignIn).toBe(false);
   });
 });

@@ -6,8 +6,8 @@ seven kinds of thing [Tadas is made of](../../../../README.md).
 ## The nouns
 
 - **Task**: a title, notes, a status (open or done), an assignee, a
-  position in the open list, and a version. It remembers who created
-  it and who last changed it.
+  position in the open list, a due time, and a version. It remembers
+  who created it, who last changed it, and when its reminder went out.
 - **Filter**: which tasks a list shows. *Team* shows every task of the
   org. *Mine* shows the tasks assigned to me, plus the unassigned ones I
   created.
@@ -27,6 +27,12 @@ seven kinds of thing [Tadas is made of](../../../../README.md).
   reopened from done goes back to the top of the open list.
 - **Move** an open task right after another one, or to the top.
 - **Delete.** The task is hidden, not erased.
+- **Set, move, or clear the due time.** Setting it schedules one
+  reminder at that time; moving it schedules a new one; clearing it
+  schedules none.
+- **Remind.** When the due time comes, the task is marked reminded and
+  every open screen of the org hears of it; so does the org's Slack
+  channel, when one is connected.
 - **Sweep.** Deleted tasks are erased for good after the retention.
 
 ## The rules
@@ -64,3 +70,10 @@ seven kinds of thing [Tadas is made of](../../../../README.md).
   clearing the assignee is always allowed.
 - **Mine is about nobody else.** The person the *mine* filter is about
   is always the caller.
+- **A reminder is for the due time it was set for.** It goes out only
+  while the task is open, not deleted, still due at that time, and not
+  yet reminded, all checked in one write. So a reminder for a time that
+  was moved or cleared, or for a task finished or deleted meanwhile,
+  never goes out, and a reminder goes out once.
+- **A due time carries its time zone.** The API refuses one without an
+  offset rather than guess.

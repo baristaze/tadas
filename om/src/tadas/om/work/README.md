@@ -11,10 +11,12 @@ seven kinds of thing [Tadas is made of](../../../../README.md).
   available, who claimed it and until when, how many attempts it has
   spent of how many it has, and its last error.
 - **Kind**: the job's shape. The payload of each kind is fixed. There
-  are two: one that does nothing but keep the loop honest, and one that
-  brings a per-seat subscription's seat count in step with the org's
-  members. Each kind names the permission a person needs to ask for it,
-  and whoever holds that permission may do everything the job does.
+  are four: a task's reminder, a post to the org's Slack channel, the
+  seat count of a per-seat subscription brought in step with the org's
+  members, and one that does nothing but keep the loop honest. A kind
+  whose payload names a time waits in the queue until then. Each kind
+  names the permission a person needs to ask for it, and whoever holds
+  that permission may do everything the job does.
 - **Lane**: a routing name. A worker serves one lane.
 - **Handler**: the code that does one kind of work. A handler is
   idempotent, because the same item may run twice.
@@ -22,8 +24,9 @@ seven kinds of thing [Tadas is made of](../../../../README.md).
 ## What can happen
 
 - **Enqueue.** Directly by a person's request, or by the outbox relay
-  when a change asked for work: adding or removing a member of an org on
-  Max asks for its seat count, in the same step as the change. The item starts queued with zero
+  when a change asked for work: setting a due time, a task created,
+  completed, or reminded in an org with a Slack channel, and a member
+  added or removed in an org on Max. The item starts queued with zero
   attempts and no claim, whatever the caller sent.
 - **Claim.** A worker takes the oldest available item on its lane, in
   one statement, and gets a claim token and the context the job runs
@@ -32,6 +35,9 @@ seven kinds of thing [Tadas is made of](../../../../README.md).
 - **Complete**, **fail** (requeued with a growing delay, or a dead
   letter once the attempts are spent), **defer** (hand it back for
   later), **release** (hand it back now), **extend the lease**.
+- **Park.** A job that must wait (Slack asked for a pause) is handed
+  back for the time it named, with the reason as its note, and spends
+  no attempt: a guard parks, only a real limit fails.
 - **Sweep.** Items whose lease has expired go back to the queue, or
   fail when their attempts are spent. Done and failed items are erased
   after the retention, thirty days by default, every org's in one step.

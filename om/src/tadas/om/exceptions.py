@@ -111,8 +111,8 @@ class CredentialExpired(TenancyException, NotAuthenticated):
 
 
 class SignInDelayed(TenancyException):
-    """A run of failed sign-ins for this identity: the next attempt is not
-    checked before `retry_after` has passed."""
+    """A run of failed second-factor codes for this identity: the next attempt
+    is not checked before `retry_after` has passed."""
 
     http_status = 429
     code = "sign_in_delayed"
@@ -136,7 +136,7 @@ class PersonalOrgFixed(TenancyException, Conflict):
 
 class SecondFactorRequired(TenancyException, NotAuthenticated):
     """An operator with an enrolled second factor presented a sign-in that
-    verified no code. The operator plane never admits a password alone."""
+    verified no code. The operator plane never admits a sign-in alone."""
 
     code = "second_factor_required"
 
@@ -177,6 +177,52 @@ class IdempotencyAttemptLost(IdempotencyException, Conflict):
     pending lease passed, and only the holder may finish or release it."""
 
     code = "idempotency_attempt_lost"
+
+
+class SignInRefused(TenancyException, NotAuthenticated):
+    """The identity provider did not sign the person in: the code was spent,
+    expired, or never issued, or the person declined a device sign-in, or it
+    expired before they confirmed it. Start the sign-in again."""
+
+    code = "sign_in_refused"
+
+
+class EmailNotVerified(TenancyException, NotAuthenticated):
+    """The identity provider signed the person in with an address it has not
+    verified. Tadas links a person by a verified address only."""
+
+    code = "email_not_verified"
+
+
+class SignInPending(TenancyException):
+    """A device sign-in the person has not confirmed yet: ask again after the
+    interval the start named."""
+
+    http_status = 400
+    code = "sign_in_pending"
+
+
+class SignInSlowDown(SignInPending):
+    """A device sign-in asked about too often: wait longer before asking again."""
+
+    code = "sign_in_slow_down"
+
+
+class InvitationClosed(TenancyException, Conflict):
+    """The invitation was accepted or revoked already; only a pending one is
+    sent again or revoked."""
+
+    code = "invitation_closed"
+
+
+class SlackException(PlatformException): ...
+
+
+class SlackChannelTaken(SlackException, Conflict):
+    """The channel is connected to another org. A channel speaks for one org;
+    the other org disconnects it first."""
+
+    code = "slack_channel_taken"
 
 
 class BillingException(PlatformException): ...

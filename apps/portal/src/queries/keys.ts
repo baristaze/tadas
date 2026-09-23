@@ -22,9 +22,19 @@ export const keys = {
   // The org's plan and its usage. The server pushes `billing.account.*`,
   // whose entity (`account`) the router's table maps here.
   billing: ["billing"] as const,
+  // A `tenancy.invitation.*` push invalidates these by convention.
+  invitations: {
+    all: ["invitation"] as const,
+    list: (limit: number) => ["invitation", "list", limit] as const,
+  },
   tasks: {
     all: ["task"] as const,
     open: (scope: string) => ["task", "open", scope] as const,
     done: (scope: string) => ["task", "done", scope] as const,
+  },
+  // The org's one Slack channel. The server pushes it as
+  // `slack.connection.<action>`, so the key starts with the entity name.
+  slack: {
+    connection: ["connection", "slack"] as const,
   },
 };

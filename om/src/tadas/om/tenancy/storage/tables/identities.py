@@ -19,10 +19,27 @@ class Identities(GlobalIdentifiableMixin, TrackableMixin, Base):
     __table_args__ = (
         Index("uq_identities_email", "email", unique=True),
         Index("uq_identities_email_digest", "email_digest", unique=True),
+        # One identity per subject of an issuer: the provider's sign-in lookup.
+        Index(
+            "uq_identities_issuer_subject",
+            "issuer",
+            "subject",
+            unique=True,
+            postgresql_where=text("subject IS NOT NULL"),
+        ),
     )
     email: Mapped[str]
     email_digest: Mapped[str] = mapped_column(Computed(EMAIL_DIGEST, persisted=True))
-    password_hash: Mapped[str]
+    issuer: Mapped[str | None]
+    subject: Mapped[str | None]
+    # Tadas keeps no password: sign-in is the identity provider's. The column
+    # is dead and deferred, as the two below are: no read names it and no
+    # write sets it, and it is nullable, so this release's inserts leave it
+    # empty. The release before this one reads it in every identity read, and
+    # a migration runs before the services roll, so a drop here would break a
+    # request it served mid-rollout. The release after this one drops the
+    # column, with the hashes it still holds, and this line.
+    password_hash: Mapped[str | None] = mapped_column(deferred=True)
     operator_role: Mapped[str | None]
     totp_secret: Mapped[str | None]
     totp_confirmed_at: Mapped[datetime | None]

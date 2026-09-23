@@ -2,6 +2,7 @@ import type { TaskView } from "../../api";
 import { useState, type DragEvent } from "react";
 import { Button, LinkButton, Pill, Select, TextArea, TextField } from "../../design/kit";
 import { tokens } from "../../design/tokens";
+import { remindAtChange, toInputValue } from "./dueModel";
 import type { DropSide, TaskRow } from "./tasksModel";
 import type { TaskEdit } from "./useTasksVm";
 
@@ -126,17 +127,23 @@ export function TaskItem({
             for {row.assignee}
           </Pill>
         ) : null}
+        {row.due ? (
+          <Pill title={row.due.title} tone={row.done || row.due.state === "upcoming" ? "plain" : "danger"}>
+            {row.due.text}
+          </Pill>
+        ) : null}
         {canWrite && !leaving ? (
           <LinkButton onClick={editing ? onCancelEdit : onEdit}>{editing ? "close" : "edit"}</LinkButton>
         ) : null}
       </div>
-      {editing ? <EditForm key={task.id} version={task.version} row={row} saving={saving} assigneeOptions={assigneeOptions} onSave={onSave} onCancel={onCancelEdit} onDelete={onDelete} /> : null}
+      {editing ? <EditForm key={task.id} version={task.version} remindAt={task.remind_at ?? null} row={row} saving={saving} assigneeOptions={assigneeOptions} onSave={onSave} onCancel={onCancelEdit} onDelete={onDelete} /> : null}
     </li>
   );
 }
 
 function EditForm({
   version,
+  remindAt,
   row,
   saving,
   assigneeOptions,
@@ -145,6 +152,7 @@ function EditForm({
   onDelete,
 }: {
   version: number;
+  remindAt: string | null;
   row: TaskRow;
   saving: boolean;
   assigneeOptions: { value: string; label: string }[];
@@ -157,18 +165,32 @@ function EditForm({
   const [title, setTitle] = useState(row.title);
   const [notes, setNotes] = useState(row.notes);
   const [assigneeId, setAssigneeId] = useState(row.assigneeId ?? "");
+  // The due time as first opened: the edit sends it only when it changed.
+  const [dueAtOpen] = useState(() => toInputValue(remindAt));
+  const [due, setDue] = useState(dueAtOpen);
   return (
     <form
       className="tadas-arriving"
       onSubmit={(event) => {
         event.preventDefault();
-        onSave({ title, notes, assigneeId: assigneeId || null, version: draftVersion });
+        const change = remindAtChange(dueAtOpen, due);
+        onSave({
+          title,
+          notes,
+          assigneeId: assigneeId || null,
+          version: draftVersion,
+          ...(change !== undefined ? { remindAt: change } : {}),
+        });
       }}
       style={{ display: "grid", gap: tokens.space.md, padding: `${tokens.space.md} 0 ${tokens.space.sm} ${HANDLE_WIDTH + 18 + 16}px` }}
     >
       <TextField label="Title" value={title} onChange={setTitle} />
       <TextArea label="Notes" value={notes} onChange={setNotes} />
       <Select label="Assigned to" value={assigneeId} options={assigneeOptions} onChange={setAssigneeId} />
+      <div style={{ display: "flex", gap: tokens.space.sm, alignItems: "end" }}>
+        <TextField label="Due (your local time)" type="datetime-local" value={due} onChange={setDue} />
+        {due ? <LinkButton onClick={() => setDue("")}>clear due time</LinkButton> : null}
+      </div>
       <div style={{ display: "flex", gap: tokens.space.sm }}>
         {/* The draft names the version it was opened at, so a second submit
             of the same draft would be refused as someone else's change. */}

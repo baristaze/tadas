@@ -126,12 +126,11 @@ async def test_a_backfill_that_misses_rows_fails_and_keeps_the_fence(
 # The personal org backfill.
 
 
-BACKFILL = "202609250001"
 BEFORE_BACKFILL = "202609250000"
-"""The revision the backfill follows: the run goes back there, whatever the
-chain holds after the backfill, and forward to the backfill alone."""
-"""The revision that gives every existing person their personal org; the
-one before it adds the columns."""
+"""The revision that adds the columns; the one after it gives every existing
+person their personal org. The test steps back to here by name, never by a
+count: later revisions sit on top of the backfill, the step back takes them
+down with it, and the upgrade to the head brings them back."""
 
 
 async def person_without_a_place(
@@ -181,7 +180,7 @@ async def test_the_backfill_gives_every_person_one_personal_org(
     before = await storage.count_orgs()
 
     await downgrade(DatabaseRole.CORE, migrated[DatabaseRole.CORE], BEFORE_BACKFILL)
-    await upgrade(DatabaseRole.CORE, migrated[DatabaseRole.CORE], BACKFILL)
+    await upgrade(DatabaseRole.CORE, migrated[DatabaseRole.CORE])
 
     async def personal(identity: Identity) -> list[OrgMembership]:
         places = await storage.read_memberships_by_identity(identity.id, 10)
@@ -204,7 +203,7 @@ async def test_the_backfill_gives_every_person_one_personal_org(
 
     # Idempotent: run again, and nobody is left to do.
     await downgrade(DatabaseRole.CORE, migrated[DatabaseRole.CORE], BEFORE_BACKFILL)
-    await upgrade(DatabaseRole.CORE, migrated[DatabaseRole.CORE], BACKFILL)
+    await upgrade(DatabaseRole.CORE, migrated[DatabaseRole.CORE])
     assert await storage.count_orgs() == before + 3
     # The rest of the chain again, so the suite goes on at the head.
     await upgrade(DatabaseRole.CORE, migrated[DatabaseRole.CORE])

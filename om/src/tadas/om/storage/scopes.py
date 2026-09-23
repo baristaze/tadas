@@ -79,6 +79,7 @@ TABLE_SCOPES: dict[str, TableScope] = {
     "sign_in_delays": TableScope(ScopeKind.SYSTEM),
     # A tenant's own rows. An org's `org_id` is its own id.
     "orgs": TableScope(ScopeKind.ORG),
+    "invitations": TableScope(ScopeKind.ORG),
     "tasks": TableScope(ScopeKind.ORG),
     "outbox_rows": TableScope(ScopeKind.ORG),
     "work_items": TableScope(ScopeKind.ORG),
@@ -86,6 +87,9 @@ TABLE_SCOPES: dict[str, TableScope] = {
     "event_cursors": TableScope(ScopeKind.ORG),
     "billing_accounts": TableScope(ScopeKind.ORG),
     "billing_deliveries": TableScope(ScopeKind.ORG),
+    "slack_connections": TableScope(ScopeKind.ORG),
+    "slack_link_codes": TableScope(ScopeKind.ORG),
+    "slack_posts": TableScope(ScopeKind.ORG),
     # A tenant's rows that also belong to one person in it. A user's person
     # is the identity behind it, so it narrows on `app.identity_id`; every
     # other row here names the user and narrows on `app.user_id`.

@@ -10,8 +10,11 @@ from api_support import (
     OWNER,
     SMALL_BUDGET,
     add_member,
+    bearer,
     build_container,
     client_over,
+    code_at,
+    dev_login,
     enrol_operator,
     on_plan,
     run,
@@ -76,52 +79,47 @@ async def test_not_found_flows_through_the_one_handler(
     assert response.json()["error"]["code"] == "not_found"
 
 
-async def test_login_is_rate_limited_per_client(tmp_path: Path) -> None:
+async def test_sign_in_is_rate_limited_per_client(tmp_path: Path) -> None:
     # The settings' budget is sized for a crowd behind one address; the
     # mechanism is the same at any size, so this process gets a small one.
+    # Every sign-in route counts against it; the callback of a process with
+    # no provider answers 503 and still counts.
     container = build_container(tmp_path, login_rate_limit=SMALL_BUDGET)
     budget = container.rate_limits.of("login").limit
     assert budget == SMALL_BUDGET
     async with client_over(container) as client:
-        # Another email each time, so the per-email delay never answers first.
         for index in range(budget):
-            body = {"email": f"nobody-{index}@example.test", "password": "x"}
-            assert (await client.post("/v1/auth/login", json=body)).status_code == 401
-        rejected = await client.post(
-            "/v1/auth/login", json={"email": "nobody@example.test", "password": "x"}
-        )
+            body = {"code": f"code-{index}", "code_verifier": "v" * 43}
+            assert (await client.post("/v1/auth/callback", json=body)).status_code == 503
+        rejected = await client.post("/v1/auth/dev-sign-in", json={"email": "nobody@example.test"})
     assert rejected.status_code == 429
     assert rejected.json()["error"]["code"] == "rate_limited"
     assert int(rejected.headers["Retry-After"]) >= 1
 
 
-def test_the_login_budget_is_generous() -> None:
+def test_the_sign_in_budget_is_generous() -> None:
     """Far above a demo, the traffic run, or a person clicking fast."""
     assert ApiSettings.model_validate({"_env_file": None}).login_rate_limit >= 1000
 
 
-async def test_a_guessed_identity_waits_before_its_next_sign_in(
+async def test_a_guessed_second_factor_waits_before_its_next_try(
     client: httpx.AsyncClient, container: AppContainer
 ) -> None:
-    """Per email and in the database, beside the per-address limit: after
-    the free run of wrong passwords even the right one is answered 429 with
-    the wait, and an email nobody holds waits the same way."""
-    await container.managers.tenancy.bootstrap(
-        seed_request(), "Acme", "acme", OWNER["email"], OWNER["password"], OWNER["name"]
+    """Per email and in the database, beside the per-address limit: after the
+    free run of wrong codes even the right one is answered 429 with the wait."""
+    _, secret = await enrol_operator(client, container, "root@example.test", OperatorRole.WRITE)
+    login = bearer(await dev_login(client, "root@example.test"))
+    for _ in range(container.settings.sign_in_free_failures):
+        wrong = await client.post(
+            "/v1/auth/second-factor", headers=login, json={"totp_code": "000000"}
+        )
+        assert wrong.status_code == 401, wrong.text
+    delayed = await client.post(
+        "/v1/auth/second-factor", headers=login, json={"totp_code": code_at(secret, 2)}
     )
-    free = container.settings.sign_in_free_failures
-    wrong = {"email": OWNER["email"], "password": "nope"}
-    for _ in range(free):
-        assert (await client.post("/v1/auth/login", json=wrong)).status_code == 401
-    right = {"email": OWNER["email"], "password": OWNER["password"]}
-    delayed = await client.post("/v1/auth/login", json=right)
     assert delayed.status_code == 429
     assert delayed.json()["error"]["code"] == "sign_in_delayed"
     assert int(delayed.headers["Retry-After"]) >= 1
-    unknown = {"email": "nobody@example.test", "password": "nope"}
-    for _ in range(free):
-        assert (await client.post("/v1/auth/login", json=unknown)).status_code == 401
-    assert (await client.post("/v1/auth/login", json=unknown)).status_code == 429
 
 
 async def test_api_key_creation_replays_on_the_same_idempotency_key(
@@ -157,8 +155,8 @@ async def test_a_member_cannot_mint_a_service_key(
     client: httpx.AsyncClient, container: AppContainer, owner: dict[str, str]
 ) -> None:
     org_id = UUID((await client.get("/v1/orgs/current", headers=owner)).json()["id"])
-    await add_member(container, org_id, "bob@example.test", "pw-1234", Role.MEMBER)
-    bob = await sign_in_as(client, "bob@example.test", "pw-1234", org_id)
+    await add_member(container, org_id, "bob@example.test", Role.MEMBER)
+    bob = await sign_in_as(client, "bob@example.test", org_id)
     for headers in (bob, owner):
         refused = await client.post(
             "/v1/api-keys", headers=headers, json={"name": "svc", "role": "service"}
@@ -316,8 +314,8 @@ async def test_idempotency_keys_are_per_user_inside_a_tenant(
     client: httpx.AsyncClient, container: AppContainer, owner: dict[str, str]
 ) -> None:
     org_id = (await client.get("/v1/orgs/current", headers=owner)).json()["id"]
-    await add_member(container, UUID(org_id), "bob@example.test", "pw-1234", Role.MEMBER)
-    bob = await sign_in_as(client, "bob@example.test", "pw-1234", UUID(org_id))
+    await add_member(container, UUID(org_id), "bob@example.test", Role.MEMBER)
+    bob = await sign_in_as(client, "bob@example.test", UUID(org_id))
     body = {"name": "ci", "role": "member"}
 
     first = await client.post(
@@ -337,8 +335,8 @@ async def test_members_are_promoted_and_removed_by_a_member_manager(
     client: httpx.AsyncClient, container: AppContainer, owner: dict[str, str]
 ) -> None:
     org_id = UUID((await client.get("/v1/orgs/current", headers=owner)).json()["id"])
-    bob = await add_member(container, org_id, "bob@example.test", "pw-1234", Role.VIEWER)
-    as_bob = await sign_in_as(client, "bob@example.test", "pw-1234", org_id)
+    bob = await add_member(container, org_id, "bob@example.test", Role.VIEWER)
+    as_bob = await sign_in_as(client, "bob@example.test", org_id)
 
     refused = await client.patch(
         f"/v1/memberships/{bob.id}", headers=as_bob, json={"role": "admin"}
@@ -389,7 +387,7 @@ async def test_sessions_are_listed_revoked_and_logged_out(
     client: httpx.AsyncClient, container: AppContainer, owner: dict[str, str]
 ) -> None:
     org_id = UUID((await client.get("/v1/orgs/current", headers=owner)).json()["id"])
-    other = await sign_in_as(client, OWNER["email"], OWNER["password"], org_id)
+    other = await sign_in_as(client, OWNER["email"], org_id)
 
     listed = await client.get("/v1/sessions", headers=owner)
     assert listed.status_code == 200, listed.text
@@ -438,15 +436,13 @@ def test_realtime_channel_delivers_tenant_events(tmp_path: Path) -> None:
     container = build_container(tmp_path)
     _, org = run(
         container.managers.tenancy.bootstrap(
-            seed_request(), "Acme", "acme", OWNER["email"], OWNER["password"], OWNER["name"]
+            seed_request(), "Acme", "acme", OWNER["email"], OWNER["name"]
         )
     )
     run(on_plan(container, org.id, Plan.TEAM))
     app = create_app(container)
     with TestClient(app) as tc:
-        login = tc.post(
-            "/v1/auth/login", json={"email": OWNER["email"], "password": OWNER["password"]}
-        )
+        login = tc.post("/v1/auth/dev-sign-in", json={"email": OWNER["email"]})
         session = tc.post(
             "/v1/auth/sessions",
             json={"org_id": str(org.id)},
@@ -521,7 +517,7 @@ async def test_the_membership_list_pages_beside_the_member_list(
     same cursor and limit, so no member of a large org is shown without one."""
     org_id = UUID((await client.get("/v1/orgs/current", headers=owner)).json()["id"])
     for index in range(4):
-        await add_member(container, org_id, f"m{index}@example.test", "pw-1234", Role.MEMBER)
+        await add_member(container, org_id, f"m{index}@example.test", Role.MEMBER)
 
     listed: list[str] = []
     users_cursor: str | None = None
@@ -555,7 +551,7 @@ async def test_a_cursor_from_another_list_is_refused(
     """The cursor is opaque and names the list that issued it: the member
     list's cursor is not the key list's, and neither is a made-up string."""
     org_id = UUID((await client.get("/v1/orgs/current", headers=owner)).json()["id"])
-    await add_member(container, org_id, "bob@example.test", "pw-1234", Role.MEMBER)
+    await add_member(container, org_id, "bob@example.test", Role.MEMBER)
     users = await client.get("/v1/users", headers=owner, params={"limit": 1})
     cursor = users.json()["next_cursor"]
     assert cursor is not None

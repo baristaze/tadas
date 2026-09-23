@@ -48,9 +48,8 @@ services:
     image: softwaremill/elasticmq-native:1.7.1
     ports:
       - "127.0.0.1:59324:9324"
-    # The queues the cloud declares, declared here too, so a producer and a
-    # consumer find them on the first call.
     volumes:
+      # The queues and their dead-letter queues, as the cloud declares them.
       - ./elasticmq/elasticmq.conf:/opt/elasticmq.conf:ro
     healthcheck:
       # 1.7 dropped the built-in stats UI on 9325; probe the SQS API itself.

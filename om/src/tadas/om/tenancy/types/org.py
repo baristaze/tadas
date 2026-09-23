@@ -20,6 +20,10 @@ class Org(Identifiable, Named, Trackable, SoftDeletable):
     personal_identity_id: UUID | None = None
     """The person a personal org belongs to; None on a team org. One living
     personal org per identity, which the database holds."""
+    provider_org_id: str | None = None
+    """The org's organization at the identity provider, which carries this
+    org's id as its external id. Made the first time an owner or an admin
+    invites someone or opens single sign-on, and kept from then on."""
 
     @model_validator(mode="after")
     def _personal_names_its_person(self) -> Org:

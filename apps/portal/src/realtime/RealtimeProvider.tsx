@@ -8,10 +8,13 @@ import { api } from "../app/api";
 import { forgetSessionIfHeld } from "../app/forgetSession";
 import { Banner } from "../design/kit";
 import { EVENTS_PAGE, fetchEventsAfter } from "../queries/events";
+import { fetchTask } from "../queries/tasks";
 import { useConnectionStore } from "../store/connection";
+import { notify } from "../store/notices";
 import { useSessionStore } from "../store/session";
 import { openChannel } from "./channel";
-import { routeEnvelope } from "./router";
+import { announceReminder } from "./reminder";
+import { reminderOf, routeEnvelope } from "./router";
 
 export function RealtimeProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
@@ -25,7 +28,11 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
       openSocket: (ticket) =>
         new WebSocket(api.websocketUrl(`/v1/realtime?ticket=${encodeURIComponent(ticket)}`)),
       fetchEventsAfter,
-      route: (envelope) => routeEnvelope(queryClient, envelope),
+      route: (envelope) => {
+        routeEnvelope(queryClient, envelope);
+        const reminded = reminderOf(envelope);
+        if (reminded) void announceReminder(reminded, { readTask: fetchTask, notify });
+      },
       refreshAll: () => queryClient.invalidateQueries(),
       connection: useConnectionStore,
       pageSize: EVENTS_PAGE,

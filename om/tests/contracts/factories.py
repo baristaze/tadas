@@ -5,6 +5,7 @@ from tadas.om.base import new_id, utcnow
 from tadas.om.opcontext import CredentialKind, OperatorRole, Role
 from tadas.om.tenancy.types.api_key import ApiKey
 from tadas.om.tenancy.types.identity import Identity
+from tadas.om.tenancy.types.invitation import Invitation
 from tadas.om.tenancy.types.membership import Membership
 from tadas.om.tenancy.types.org import Org, OrgKind
 from tadas.om.tenancy.types.session import Session
@@ -45,7 +46,6 @@ def make_identity(
         created_by=identity_id,
         updated_by=identity_id,
         email=email or f"{identity_id.hex[-12:]}@example.test",
-        password_hash="scrypt$00$00",
         operator_role=operator_role,
     )
 
@@ -124,4 +124,27 @@ def make_socket_ticket(
         credential_kind=CredentialKind.SESSION_TOKEN,
         credential_id=new_id(),
         expires_at=now + ttl,
+    )
+
+
+def make_invitation(
+    email: str = "invited@example.test",
+    role: Role = Role.MEMBER,
+    *,
+    expires_in: timedelta = timedelta(days=7),
+    provider_invitation_id: str | None = None,
+) -> Invitation:
+    now = utcnow()
+    invitation_id = new_id()
+    inviter = new_id()
+    return Invitation(
+        id=invitation_id,
+        created_at=now,
+        updated_at=now,
+        created_by=inviter,
+        updated_by=inviter,
+        email=email,
+        role=role,
+        provider_invitation_id=provider_invitation_id or f"invitation_{invitation_id.hex}",
+        expires_at=now + expires_in,
     )

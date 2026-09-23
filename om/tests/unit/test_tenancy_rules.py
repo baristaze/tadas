@@ -9,14 +9,15 @@ from tadas.om.tenancy.rules import (
     SLUG_PATTERN,
     check_email,
     check_org,
-    check_sign_up,
     email_digest,
+    email_domain,
     is_platform_email,
     matching_totp_step,
     otpauth_uri,
     personal_org_name,
     sign_in_delay,
     slug_from_name,
+    sso_joins,
     totp_code,
     totp_step,
 )
@@ -84,11 +85,23 @@ def test_an_address_of_the_wrong_shape_is_refused(email: str) -> None:
         check_email(email)
 
 
-def test_the_platforms_own_addresses_are_refused_at_sign_up() -> None:
+def test_the_platforms_own_addresses_are_told_apart() -> None:
     assert is_platform_email("provisioner@platform.tadas.invalid")
+    assert is_platform_email("Smoke@Platform.Tadas.Invalid")
     assert not is_platform_email("provisioner@example.test")
-    with pytest.raises(ValueError, match="belongs to the platform"):
-        check_sign_up("smoke@platform.tadas.invalid", "pw-12345678", "S")
+
+
+def test_the_domain_of_an_address_is_its_part_after_the_at_in_lower_case() -> None:
+    assert email_domain("Ann@Acme.Example") == "acme.example"
+    assert email_domain("a@b@c.test") == "c.test"
+
+
+def test_a_single_sign_on_joins_only_an_address_in_a_verified_domain() -> None:
+    assert sso_joins("ann@acme.example", ("acme.example",))
+    assert sso_joins("Ann@ACME.example", ("Acme.Example", "other.example"))
+    assert not sso_joins("ann@evil.example", ("acme.example",))
+    assert not sso_joins("ann@sub.acme.example", ("acme.example",))
+    assert not sso_joins("ann@acme.example", ())
 
 
 def test_a_slug_nobody_typed_is_the_name_and_a_tail() -> None:

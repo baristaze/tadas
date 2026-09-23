@@ -47,17 +47,20 @@ cloud.
   `environment:<env>`. `TADAS_OPERATOR_TOKEN` carries `read`, and every read runs as
   it. `TADAS_PROVISIONER_TOKEN` carries `write`, and the traffic
   generator alone uses it, to create and remove the tenants a run
-  needs. Each expires within the hour. The file never holds a password
+  needs. Each expires within the hour. The file never holds a sign-in
   or a TOTP secret: an agent never signs in to the operator plane. A
   command refuses a file its group or anyone else can read.
 - A person gets onto the plane once, by the walk-through in
-  `docs/runbooks/operator.md`: sign up, the grant, the second factor,
-  then the token below.
+  `docs/runbooks/operator.md`: the first sign-in, the grant, the second
+  factor, then the token below.
 - `tadas-ops token --env <env> --identity operator` is run by a person
-  in their own terminal. It asks there for the email, the password, and
-  the TOTP code, signs in, mints a `read` token through
+  in their own terminal. It starts a sign-in through the identity
+  provider and prints a code and an address; the person confirms the
+  code in any browser. Then it asks for the TOTP code, verifies it
+  through `POST /v1/auth/second-factor`, mints a `read` token through
   `POST /v1/admin/me/tokens`, and writes it into the file without
-  printing it. `--identity provisioner` copies the token the
+  printing it. On the local stack, `--dev-email <address>` signs in by
+  the local sign-in instead. `--identity provisioner` copies the token the
   `grant-operator.yml` workflow wrote into the secret
   `tadas-<env>-provisioner-token`, under the person's own sign-in
   (`--profile`; staging's sign-in profile by default, and in production
@@ -123,18 +126,46 @@ owner.
 
 `tadas-ops` is the operators' one command. It rides the Python client
 and the operator plane, and it presents an operator token, never a
-password. The one subcommand that talks to something else is
-`stripe-bootstrap`, which talks to the payment processor with the key
-the person holds.
+person's sign-in.
 
 | Subcommand | Does |
 |------------|------|
-| `traffic --env <e> --profile light\|regular\|heavy\|stress [--duration S] [--orgs N] [--report path]` | Drives realistic sessions at the edge and reports requests by route and status, p50, p95, p99, and the error ratio, the working requests and the sign-ins totalled apart. It signs each person in once at the start and out once at the end, and every session that person drives reuses the token; a sign-in the login rate limit refuses waits the window out and asks again, twice at most, and a run that signs nobody in exits 1 and names the limit. Its tenants are made under the provisioner's token, named `ops-<run id>-<n>`, granted Max so no plan bounds the load, and removed when the run ends, a failure included; the report names any it could not remove. Each person a run makes comes with a personal org, which is never deleted, so those stay behind with the people. `--orgs 0` drives the seeded people, locally only. |
-| `stress --scenario ops/stress/<name>.yaml [--duration S]` | The same generator at a profile with a duration, a ramp, and a target the working requests' p95 is held to; reads the signals back after the run. `--duration` shortens the run and moves no target. `.github/workflows/stress.yml` runs one against staging on a dispatch. |
+| `traffic --env <e> --profile light\|regular\|heavy\|stress [--duration S] [--orgs N] [--report path]` | Drives realistic sessions at the edge and reports requests by route and status, p50, p95, p99, and the error ratio, the working requests and the sign-ins totalled apart. It signs each person in once at the start and out once at the end, and every session that person drives reuses the token; a sign-in the login rate limit refuses waits the window out and asks again, twice at most, and a run that signs nobody in exits 1 and names the limit. Its tenants are made under the provisioner's token, named `ops-<run id>-<n>`, and removed when the run ends, a failure included; the report names any it could not remove. Each person a run makes comes with a personal org, which is never deleted, so those stay behind with the people. `--orgs 0` drives the seeded people. Its people sign in by the local sign-in, which only the local stack serves, so a deployed environment refuses the run before it provisions anything. |
+| `stress --scenario ops/stress/<name>.yaml [--duration S]` | The same generator at a profile with a duration, a ramp, and a target the working requests' p95 is held to; reads the signals back after the run. `--duration` shortens the run and moves no target. `.github/workflows/stress.yml` keeps the wiring for a run against staging, which staging refuses while its people have no sign-in without a browser. |
 | `signals check --env <e> --request-id <id>` | Reads the log lines, the metric, the trace, and the error event for one request id. |
 | `size --env <e>` | The platform's size: orgs, users, and the tasks of the last twenty-four hours, with the traffic generator's own tenants left out. |
-| `token --env <e> --identity operator\|provisioner` | Writes an operator token into the env file, never printing it. |
+| `token --env <e> --identity operator\|provisioner [--dev-email a]` | Writes an operator token into the env file, never printing it. |
+| `workos-bootstrap --environment staging\|production [--apply]` | Reconciles a WorkOS environment with `deployment/workos/environments.yaml`; see below. |
 | `stripe-bootstrap --env <e> [--dry-run] [--secret-store aws\|none]` | Makes the payment processor's account match `deployment/stripe/desired-state.json`: the three products, the prices by lookup key, the Billing Portal configuration, and the environment's webhook endpoint. It reads the key from `TADAS_STRIPE_ORG_KEY` and refuses one whose mode is not the environment's. A rerun against a matching account changes nothing and says so. The endpoint's signing secret goes to `tadas/<env>/stripe_webhook_secret` and is never printed. [The runbook](../docs/runbooks/stripe.md) has the steps. |
+
+## The WorkOS bootstrap
+
+`deployment/workos/environments.yaml` is the desired state of each
+WorkOS environment Tadas signs people in through: the application's
+client id, its redirect URIs, its login initiation URI, and its
+webhooks, which are none. `staging` serves the local stack and staging;
+`production` serves production alone.
+
+```bash
+uv run tadas-ops workos-bootstrap --environment staging          # a dry run
+uv run tadas-ops workos-bootstrap --environment staging --apply  # writes
+```
+
+The API key comes from the variable the file names for the environment
+(`WORKOS_API_KEY` for staging, `WORKOS_PRODUCTION_API_KEY` for
+production), and the command never prints it. Production is run by
+whoever holds its key; without the variable the command refuses.
+
+A redirect is present when AuthKit accepts it for the application: the
+command asks `GET /user_management/authorize` with the client id and the
+URI and reads where it is sent. That probe is the truth, because the
+application's redirects live on its Redirects tab in the WorkOS
+dashboard, which no API reads or writes. The API writes one list, the
+environment's; a redirect the probe refuses is added there and probed
+again, and one it still refuses is named as a dashboard step, and the
+command exits 1. The login initiation URI has no API at all, so it is
+printed as a check to make on the same tab. A second run against
+unchanged config says `nothing to change`.
 
 ## The skills
 

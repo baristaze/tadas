@@ -1,6 +1,7 @@
 # Three kinds of secret live under one environment. The platform's own
-# credentials (the four database URLs, the TOTP encryption key) are written
-# here, write-only, and injected into tasks by the execution role.
+# credentials (the four database URLs, the TOTP encryption key, the Sentry
+# DSN, the Slack tokens, the WorkOS API key) are declared here and injected
+# into tasks by the execution role.
 # Application-managed secrets, the ones SecretsInterface reads at runtime,
 # live under "<prefix>app/", which is the value of TADAS_SECRETS_NAME_PREFIX,
 # so a process can never reach its own bootstrap credentials through the
@@ -136,6 +137,34 @@ resource "aws_secretsmanager_secret_version" "sentry_dsn" {
   }
 }
 
+# The Slack app's two credentials: the bot token (xoxb-) the maintenance
+# worker posts with, and the app-level token (xapp-) that opens the Socket
+# Mode connection only the slack service holds. Like the DSN, each is
+# created as "off", which leaves Slack off, and never written again: set the
+# real values once with
+#   aws secretsmanager put-secret-value --secret-id <prefix>slack_bot_token --secret-string <xoxb-...>
+#   aws secretsmanager put-secret-value --secret-id <prefix>slack_app_token --secret-string <xapp-...>
+# A task reads its secret when it starts, so the services roll to pick a new
+# value up (aws ecs update-service --force-new-deployment).
+resource "aws_secretsmanager_secret" "slack" {
+  for_each = toset(["bot", "app"])
+
+  name                    = "${var.prefix}slack_${each.key}_token"
+  recovery_window_in_days = local.recovery_window_in_days
+  tags                    = local.tags
+}
+
+resource "aws_secretsmanager_secret_version" "slack" {
+  for_each = aws_secretsmanager_secret.slack
+
+  secret_id     = each.value.id
+  secret_string = "off"
+
+  lifecycle {
+    ignore_changes = [secret_string]
+  }
+}
+
 # The payment processor's key and the signing secret of the endpoint it
 # delivers to: process credentials, injected at start into the API and the
 # worker, the way the error tracker's DSN is. Terraform creates each as "off",
@@ -156,6 +185,31 @@ resource "aws_secretsmanager_secret_version" "stripe" {
   for_each = aws_secretsmanager_secret.stripe
 
   secret_id     = each.value.id
+  secret_string = "off"
+
+  lifecycle {
+    ignore_changes = [secret_string]
+  }
+}
+
+# The WorkOS API key the API exchanges sign-in codes and sends invitations
+# with: a process credential, injected into the API alone as
+# TADAS_WORKOS_API_KEY, and named outside the application prefix so no
+# process reaches it through the secrets capability. Each environment holds
+# the key of its own WorkOS environment (staging's, production's). Terraform
+# creates it as "off", which the API reads as not configured (it starts, and
+# every sign-in through WorkOS answers 503 until the key is set), and never
+# writes it again: set the real value once with
+#   aws secretsmanager put-secret-value --secret-id <prefix>workos_api_key --secret-string <key>
+# and roll the API so its tasks start with it.
+resource "aws_secretsmanager_secret" "workos_api_key" {
+  name                    = "${var.prefix}workos_api_key"
+  recovery_window_in_days = local.recovery_window_in_days
+  tags                    = local.tags
+}
+
+resource "aws_secretsmanager_secret_version" "workos_api_key" {
+  secret_id     = aws_secretsmanager_secret.workos_api_key.id
   secret_string = "off"
 
   lifecycle {

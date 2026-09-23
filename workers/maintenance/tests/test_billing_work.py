@@ -132,7 +132,7 @@ async def test_the_seat_count_follows_the_members_when_the_item_runs(tmp_path: P
     bought = await checkout(container, ctx, Plan.MAX, 1)
     assert await consumer.handle(await queued(container, bought)) == "applied"
     await container.managers.tenancy.add_member(
-        request(), "acme", "bob@example.test", "pw-1234", "Bob", Role.MEMBER
+        request(), "acme", "bob@example.test", "Bob", Role.MEMBER
     )
     service = await container.managers.tenancy.service_context(request(), ctx.org_id, EMPTY_UUID)
     handler = SyncSeatsHandlerImpl(container.managers.tenancy, container.managers.billing)

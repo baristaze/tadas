@@ -5,7 +5,7 @@ Every command below runs from the repository root.
 
 | File or profile | Adds |
 |-----------------|------|
-| `docker-compose.yml` | Postgres, Valkey, ElasticMQ, MinIO |
+| `docker-compose.yml` | Postgres, Valkey, ElasticMQ (its queues in `elasticmq/elasticmq.conf`), MinIO |
 | `docker-compose.full.yml` | the `api`, `maintenance`, and `portal` containers, built from the working tree |
 | profile `devx` (in `docker-compose.yml`) | pgweb, Valkey Admin, ElasticMQ UI, Prometheus, the OpenTelemetry collector for host processes, Grafana, Jaeger, GlitchTip |
 | `docker-compose.linux.yml` | Linux only, added by the Makefile: the collector on the host's network (see Metrics below) |
@@ -22,7 +22,7 @@ The data services' ports are fixed, since the `TADAS_*_URL` knobs name them.
 
 | Service | From the host | Inside the compose network | Sign-in |
 |---------|---------------|----------------------------|---------|
-| portal | http://localhost:55173 | `portal:8080` | `owner@example.test` (owner) or `bob@example.test` (member) of Acme, or `admin@admin.test` (owner of Fabrikam, admin of Acme), all `tadas-local` (after `make seed`), each with a personal org beside, or an account made at `/sign-up` |
+| portal | http://localhost:55173 | `portal:8080` | at `/login/dev`, by address: `owner@example.test` (owner) or `bob@example.test` (member) of Acme, or `admin@admin.test` (owner of Fabrikam, admin of Acme) (after `make seed`), each with a personal org beside; at `/login`, anyone through WorkOS's staging environment once `TADAS_WORKOS_API_KEY` is set in the shell or `.env` |
 | api | http://127.0.0.1:8000 (`/docs`, `/metrics`, `/healthz`) | `api:8000` | |
 | postgres | `127.0.0.1:55432` | `postgres:5432` | database `tadas`; `tadas_runtime`, `tadas_system`, and `tadas_migration`, each with its name as its password; the master `tadas` / `tadas`; the superuser `postgres` / `postgres` |
 | valkey | `127.0.0.1:56379` | `valkey:6379` | none: user `default`, no password |
@@ -114,9 +114,9 @@ network, where it cannot reach the host processes.
 | Start only the dashboards | `dc up -d pgweb valkey-admin elasticmq-ui prometheus otel-collector grafana jaeger glitchtip` |
 | Stop only the dashboards | `dc stop pgweb valkey-admin elasticmq-ui prometheus otel-collector grafana jaeger glitchtip` |
 | Apply new migrations | `make migrate` |
-| Seed again, or other people | `make seed SEED_EMAIL=me@example.test SEED_MEMBER_EMAIL=you@example.test SEED_ADMIN_EMAIL=both@example.test SEED_PASSWORD=secret SEED_SLUG=mine SEED_SECOND_SLUG=theirs`, or set the `SEED_*` knobs in `.env` |
+| Seed again, or other people | `make seed SEED_EMAIL=me@example.test SEED_MEMBER_EMAIL=you@example.test SEED_ADMIN_EMAIL=both@example.test SEED_SLUG=mine SEED_SECOND_SLUG=theirs`, or set the `SEED_*` knobs in `.env` |
 | Record the README's demo GIF (empties the task list first) | `make demo-gif` |
-| Add one more member to the seeded org | `uv run --package tadas-api tadas-api add-member --slug acme --email carol@example.test --password tadas-local --name Carol` |
+| Add one more member to the seeded org | `uv run --package tadas-api tadas-api add-member --slug acme --email carol@example.test --name Carol`, then sign in as her at `/login/dev` |
 
 ## Data
 
@@ -129,7 +129,26 @@ network, where it cannot reach the host processes.
 | Reset only the database, then migrate and seed | `dc rm -sfv postgres && docker volume rm tadas_postgres && dc up -d --wait postgres && make migrate seed` |
 | Reset only the object store | `dc rm -sfv minio && docker volume rm tadas_minio && dc up -d --wait minio` |
 
-ElasticMQ keeps nothing: `dc restart elasticmq` empties every queue.
+ElasticMQ keeps nothing: `dc restart elasticmq` empties every queue. It
+starts with the queues `elasticmq/elasticmq.conf` declares: `tadas-webhooks`
+and `tadas-slack`, each with a `-dead` queue after five receives, as the
+cloud's queue module declares them.
+
+## Slack
+
+The stack holds no Slack connection and sets no `TADAS_SLACK_*`, so the
+`maintenance` container posts through the in-process twin. Local and
+staging share one Slack app, and Slack spreads its deliveries across every
+open connection, so a bridge left running on a laptop takes deliveries
+meant for staging. To try the real thing, run the bridge by hand, briefly,
+with the tokens exported for that run only:
+
+```bash
+TADAS_SLACK_APP_TOKEN=xapp-... uv run tadas-maintenance slack
+```
+
+It sends each delivery to `tadas-slack`, where the worker takes it. A host
+worker posts to Slack only with `TADAS_SLACK_BOT_TOKEN` set for its run.
 Valkey has no named volume but snapshots on shutdown, so `dc restart valkey`
 keeps its keys; `flushall` above empties it, and `make reset` removes it.
 

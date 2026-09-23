@@ -4,7 +4,7 @@
 logins, the operator's second factor and token, the traffic identity
 between runs, a session's idle lifetime, and the enqueue permission that
 covers a handler's calls (`WORK_ENQUEUE_PERMISSIONS`, held by the
-worker's tests since the first user-caused kind, ADR 0027) hold now and
+worker's tests since the first user-caused kinds) hold now and
 are gone from the list. Each item left names what closes it.
 
 ## Context

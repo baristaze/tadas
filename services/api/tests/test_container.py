@@ -39,9 +39,7 @@ async def test_managers_are_built_once_for_any_number_of_requests(
             # (the gateway refuses before tasks), events.
             for path in ("/healthz", "/readyz", "/v1/tasks", "/v1/events", "/metrics"):
                 await client.get(path)
-            await client.post(
-                "/v1/auth/login", json={"email": "nobody@example.test", "password": "x"}
-            )
+            await client.post("/v1/auth/dev-sign-in", json={"email": "nobody@example.test"})
     assert len(calls) == 1
     # Every router resolves the same frozen object the container built.
     assert app.state.container.managers is container.managers
@@ -64,8 +62,6 @@ def test_add_member_refuses_a_role_no_membership_can_take(
                 "acme",
                 "--email",
                 "a@b.test",
-                "--password",
-                "pw-1234",
                 "--name",
                 "A",
                 "--role",

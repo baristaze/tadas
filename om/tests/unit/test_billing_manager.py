@@ -13,6 +13,8 @@ from contracts.second_factor import TOTP_KEY, SteppingClock, enrolled_operator
 
 from tadas.infra.cache import CacheScope
 from tadas.infra.impl.local import InfraLocalImpl
+from tadas.integrations.identity.absent import IdentityProviderAbsentImpl
+from tadas.integrations.impl.configured import IntegrationsOverImpl
 from tadas.integrations.payments.deliveries import sign
 from tadas.integrations.payments.twin import TWIN_WEBHOOK_SECRET, PaymentsTwinImpl
 from tadas.om.base import new_id, utcnow
@@ -45,7 +47,6 @@ from tadas.om.tenancy.impl.operator import TenancyOperatorManagerImpl, TenancyOp
 from tadas.om.work.types.work_item import WorkKind
 
 APP = AppContext(type=AppType.PORTAL, version="portal@test")
-PASSWORD = "pw-1234"
 SUCCESS, CANCEL = "http://portal.test/billing?done", "http://portal.test/billing?cancelled"
 
 
@@ -64,8 +65,8 @@ class World:
         self.managers: Managers = build_managers(
             self.storage,
             InfraLocalImpl(tmp_path),
-            TenancyOptions(totp_encryption_key=TOTP_KEY),
-            payments=self.twin,
+            TenancyOptions(totp_encryption_key=TOTP_KEY, dev_sign_in=True),
+            integrations=IntegrationsOverImpl(IdentityProviderAbsentImpl(), self.twin),
         )
         self.billing = BillingManagerImpl(
             self.storage.get_billing_storage(),
@@ -79,13 +80,13 @@ class World:
     async def org(self, slug: str) -> OpContext:
         """A fresh org; the context is its owner's."""
         ctx, _ = await self.managers.tenancy.bootstrap(
-            request(), slug.title(), slug, f"owner@{slug}.test", PASSWORD, "Owner"
+            request(), slug.title(), slug, f"owner@{slug}.test", "Owner"
         )
         return ctx
 
     async def signed_in(self, email: str, org_id: UUID) -> OpContext:
         tenancy = self.managers.tenancy
-        login = await tenancy.login(request(), email, PASSWORD)
+        login = await tenancy.dev_sign_in(request(), email)
         identity = await tenancy.authenticate_login(request(), login.token)
         session = await tenancy.exchange_login(identity, org_id)
         return await tenancy.authenticate(request(), session.token)
@@ -157,9 +158,7 @@ async def test_free_is_not_bought_and_only_a_billing_manager_starts_a_checkout(
     ctx = await world.org("acme")
     with pytest.raises(ValidationFailed):
         await world.billing.start_checkout(ctx, Plan.FREE, 1, "Acme", SUCCESS, CANCEL)
-    await world.managers.tenancy.add_member(
-        request(), "acme", "bob@acme.test", PASSWORD, "Bob", Role.MEMBER
-    )
+    await world.managers.tenancy.add_member(request(), "acme", "bob@acme.test", "Bob", Role.MEMBER)
     bob = await world.signed_in("bob@acme.test", ctx.org_id)
     with pytest.raises(NotAuthorized):
         await world.billing.start_checkout(bob, Plan.PRO, 1, "Acme", SUCCESS, CANCEL)
@@ -325,7 +324,7 @@ async def test_removing_a_member_of_a_max_org_asks_for_the_seat_count_in_its_com
     ctx = await world.org("acme")
     await world.buy(ctx, Plan.MAX)
     _, bob, _ = await world.managers.tenancy.add_member(
-        request(), "acme", "bob@acme.test", PASSWORD, "Bob", Role.MEMBER
+        request(), "acme", "bob@acme.test", "Bob", Role.MEMBER
     )
     await world.managers.tenancy.remove_member(ctx, bob.id)
     claimed = await world.storage.get_work_storage().claim_next(
@@ -340,7 +339,7 @@ async def test_removing_a_member_of_a_team_org_asks_for_nothing(world: World) ->
     ctx = await world.org("acme")
     await world.buy(ctx, Plan.TEAM)
     _, bob, _ = await world.managers.tenancy.add_member(
-        request(), "acme", "bob@acme.test", PASSWORD, "Bob", Role.MEMBER
+        request(), "acme", "bob@acme.test", "Bob", Role.MEMBER
     )
     await world.managers.tenancy.remove_member(ctx, bob.id)
     assert (
@@ -434,8 +433,9 @@ class Plane:
             storage.get_tenancy_storage(),
             world.managers.outbox,
             InfraLocalImpl(tmp_path / "plane").get_cache(CacheScope.REALTIME_TICKET),
-            TenancyOptions(totp_encryption_key=TOTP_KEY),
+            TenancyOptions(totp_encryption_key=TOTP_KEY, dev_sign_in=True),
             self.clock,
+            identity_provider=IdentityProviderAbsentImpl(),
             entitlements=world.managers.billing,
         )
         self.operator = TenancyOperatorManagerImpl(
@@ -453,9 +453,9 @@ class Plane:
 
     async def admit(self, role: OperatorRole, email: str) -> OperatorContext:
         await self.tenancy.bootstrap(
-            request(), email, email.split("@")[0], email, PASSWORD, "Op", operator_role=role
+            request(), email, email.split("@")[0], email, "Op", operator_role=role
         )
-        admin, _ = await enrolled_operator(self.tenancy, self.operator, self.clock, email, PASSWORD)
+        admin, _ = await enrolled_operator(self.tenancy, self.operator, self.clock, email)
         return admin
 
 
@@ -479,12 +479,10 @@ async def test_an_operator_adding_a_member_past_the_seats_is_refused(
 ) -> None:
     plane = Plane(world, tmp_path)
     writer = await plane.admit(OperatorRole.WRITE, "root@example.test")
-    org = await plane.operator.create_org(writer, "Team", "team", "ann@team.test", PASSWORD, "Ann")
+    org = await plane.operator.create_org(writer, "Team", "team", "ann@team.test", "Ann")
 
     async def add(n: int) -> None:
-        await plane.operator.add_member(
-            writer, org.id, f"m{n}@team.test", PASSWORD, f"M{n}", Role.MEMBER
-        )
+        await plane.operator.add_member(writer, org.id, f"m{n}@team.test", f"M{n}", Role.MEMBER)
 
     with pytest.raises(PlanLimitReached) as refused:
         await add(1)

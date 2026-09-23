@@ -48,7 +48,7 @@ once. Once it is up:
 
 | What | URL | Sign-in and what it shows |
 |------|-----|---------------------------|
-| Portal | http://localhost:55173 | `owner@example.test` (owner) or `bob@example.test` (member) of Acme, or `admin@admin.test` (owner of Fabrikam, admin of Acme), all `tadas-local`; the three people `make seed` creates. Each also has a personal org, so sign-in shows the org picker; the org chip switches and creates a team org |
+| Portal | http://localhost:55173 | `/login/dev`, the local sign-in by address: `owner@example.test` (owner) or `bob@example.test` (member) of Acme, or `admin@admin.test` (owner of Fabrikam, admin of Acme); the three people `make seed` creates. Each also has a personal org, so sign-in shows the org picker; the org chip switches and creates a team org. `/login` signs in through WorkOS when `TADAS_WORKOS_API_KEY` is set |
 | API | http://127.0.0.1:8000 | Swagger UI at `/docs`, Prometheus metrics at `/metrics` |
 | pgweb | http://localhost:58081 | Postgres: schemas `core`, `activity`, `queue`, `admin`; run SQL |
 | Valkey Admin | http://localhost:58080 | Valkey: keys, metrics, commands; add a connection to host `valkey`, port `6379`, no username or password |
@@ -70,13 +70,13 @@ for hot reload.
 ## The command line
 
 `apps/cli` ships `tadas`: one command at a time, or `listen` for what the
-team does as it happens. It signs in as one of the seeded people above,
-or anyone who signed up, and keeps one session under `~/.config/tadas`;
-`tadas orgs` and `tadas switch <slug>` move it between the orgs a person
-belongs to.
+team does as it happens. It signs in as a person, through WorkOS in the
+browser with a code it shows, or locally as one of the seeded people
+above, and keeps one session under `~/.config/tadas`; `tadas orgs` and
+`tadas switch <slug>` move it between the orgs a person belongs to.
 
 ```bash
-uv run tadas login --email bob@example.test --org acme   # prompts for the password
+uv run tadas login --dev-email bob@example.test --org acme   # the local sign-in; `tadas login` goes through WorkOS
 uv run tadas add "Do groceries"
 uv run tadas ls
 uv run tadas done <id>                        # the short id ls shows; also edit, reopen, rm, mv
@@ -111,11 +111,14 @@ The API is at the same address either way; only the portal's port differs:
 `scripts/dev.sh` serves it from Vite on http://localhost:5173, `make
 stack-up` from nginx on the port in the table above. Sign in as the
 seeded owner and member in two browser windows to see "My Tasks" differ from
-"Team's Tasks" and to watch changes arrive live, as the seeded admin to
-switch between orgs, or create an account at `/sign-up` with an email, a
-name, and a password, which is how a person enters a deployed
-environment: it lands in the person's personal org, and the org chip
-creates a team org from there.
+"Team's Tasks" and to watch changes arrive live, or as the seeded admin
+to switch between orgs, all at `/login/dev`. `/login` is how a person
+enters a deployed environment: WorkOS AuthKit (an email code or link,
+Google, GitHub, or their company's single sign-on), and a first sign-in
+is the sign-up. It lands in the person's personal org, the org chip
+creates a team org from there, and the org's settings invite people to
+it. Locally it needs the WorkOS staging environment's API key in
+`TADAS_WORKOS_API_KEY`.
 
 ### Dashboards
 
@@ -157,10 +160,14 @@ dispatches the `release` workflow, which fast-forwards `release` to
 `release`. [docs/runbooks/deploy.md](docs/runbooks/deploy.md) has the
 steps, the rollback, and the protection to set on the branch.
 
-A deployed environment carries no seed: `make seed` is local. A person
-enters staging or production through sign-up in the portal, which
-creates their identity, their personal org, and its owner membership,
-and is open unless `TADAS_SIGNUP_ENABLED=false`.
+A deployed environment carries no seed: `make seed` is local, and so is
+the sign-in by address. A person enters staging or production by
+signing in at the portal through WorkOS, which creates their identity,
+their personal org, and its owner membership the first time, and joins
+a team org by invitation. `tadas-ops workos-bootstrap` holds each WorkOS
+environment's configuration (the redirects, the sign-in page) to
+`deployment/workos/environments.yaml`; see
+[ops/README.md](ops/README.md).
 
 ## Operate
 
@@ -182,9 +189,9 @@ person follows by hand is a runbook under
   [om/README.md](om/README.md) names the nouns for a reader with no
   code, and each namespace carries a README of its own
 - `infra/` cache, buckets, topics, queues, secrets, observability
-  ([infra/README.md](infra/README.md))
-- `integrations/` the third-party providers, each an interface, a real
-  client, and a twin: the payment processor first
+  ([infra/README.md](infra/README.md)); `integrations/` the third-party
+  providers, each an interface, a real client, and a twin: Slack, the
+  identity provider, WorkOS, and the payment processor, Stripe
   ([integrations/README.md](integrations/README.md))
 - `services/` web services ([services/api/README.md](services/api/README.md));
   `workers/` background roles

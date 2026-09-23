@@ -3,7 +3,7 @@
 from fastapi import APIRouter
 
 from tadas.services.api.realtime import socket
-from tadas.services.api.routers import admin, billing, events, tasks, tenancy
+from tadas.services.api.routers import admin, billing, events, slack, tasks, tenancy
 
 
 def all_routers() -> list[APIRouter]:
@@ -13,5 +13,6 @@ def all_routers() -> list[APIRouter]:
         tasks.router,
         events.router,
         billing.router,
+        slack.router,
         socket.router,
     ]

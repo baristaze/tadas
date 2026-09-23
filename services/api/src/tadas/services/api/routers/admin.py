@@ -26,9 +26,7 @@ from tadas.services.api.types.admin import (
     IssuedTotpSecretView,
     MintOperatorTokenRequest,
     OperatorView,
-    PasswordResetView,
     PlatformSizeView,
-    ResetPasswordRequest,
     TotpConfirmedView,
 )
 from tadas.services.api.types.billing import CompPlanRequest, OperatorBillingView
@@ -76,15 +74,6 @@ async def mint_token(
     caller's entry, an hour at most. Minted only from a sign-in that
     verified a second factor, so a token never mints a token."""
     return await idem.run(201, lambda attempt: service.mint_token(admin, body))
-
-
-@router.post("/password-resets", response_model=PasswordResetView)
-async def reset_password(
-    admin: OperatorCtx, service: AdminService, body: ResetPasswordRequest
-) -> PasswordResetView:
-    """Sets a person's password, the recovery a platform with no verified
-    mailbox has; a write operator signed in with a second factor, audited."""
-    return await service.reset_password(admin, body)
 
 
 @router.get("/size", response_model=PlatformSizeView)

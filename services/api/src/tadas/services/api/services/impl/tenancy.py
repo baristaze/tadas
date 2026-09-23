@@ -6,6 +6,7 @@ from tadas.om.exceptions import ValidationFailed
 from tadas.om.idempotency.types.attempt import Attempt
 from tadas.om.opcontext import IdentityContext, OpContext, RequestContext
 from tadas.om.tenancy import TenancyManagerInterface
+from tadas.om.tenancy.types.issued import IssuedLogin
 from tadas.services.api.services.tenancy import TenancyServiceInterface
 from tadas.services.api.types.common import clamp_limit
 from tadas.services.api.types.tenancy import (
@@ -13,20 +14,30 @@ from tadas.services.api.types.tenancy import (
     ApiKeyPageView,
     ApiKeyView,
     CreateTeamOrgRequest,
+    DeviceSignInView,
+    DeviceTokenRequest,
+    DevSignInRequest,
     ExchangeSessionRequest,
     IdentityView,
+    InvitationPageView,
+    InvitationView,
+    InviteMemberRequest,
     IssuedApiKeyView,
     IssuedLoginView,
     IssuedSessionView,
-    LoginRequest,
     MembershipChoicePageView,
     MembershipChoiceView,
     MembershipPageView,
     MembershipView,
     MeView,
     OrgView,
+    SecondFactorRequest,
     SessionView,
-    SignUpRequest,
+    SignInCallbackRequest,
+    SignInStartRequest,
+    SignInStartView,
+    SsoLinkRequest,
+    SsoLinkView,
     UpdateMembershipRequest,
     UpdateMeRequest,
     UserPageView,
@@ -56,25 +67,56 @@ def decode_cursor(listed: str, cursor: str) -> UUID:
         raise ValidationFailed("the cursor is not one this list issued") from None
 
 
+def login_view(issued: IssuedLogin) -> IssuedLoginView:
+    return IssuedLoginView(
+        token=issued.token,
+        expires_at=issued.expires_at,
+        memberships=[MembershipChoiceView.model_validate(m) for m in issued.memberships],
+    )
+
+
 class TenancyServiceImpl(TenancyServiceInterface):
     def __init__(self, tenancy: TenancyManagerInterface) -> None:
         self._tenancy = tenancy
 
-    async def sign_up(self, rctx: RequestContext, body: SignUpRequest) -> IssuedLoginView:
-        issued = await self._tenancy.sign_up(rctx, body.email, body.password, body.display_name)
-        return IssuedLoginView(
-            token=issued.token,
-            expires_at=issued.expires_at,
-            memberships=[MembershipChoiceView.model_validate(m) for m in issued.memberships],
+    async def start_sign_in(
+        self, rctx: RequestContext, body: SignInStartRequest
+    ) -> SignInStartView:
+        started = await self._tenancy.sign_in_url(
+            rctx,
+            body.redirect_uri,
+            body.state,
+            invitation_token=body.invitation_token,
+            sign_up=body.sign_up,
+        )
+        return SignInStartView(
+            authorization_url=started.authorization_url, code_verifier=started.code_verifier
         )
 
-    async def login(self, rctx: RequestContext, body: LoginRequest) -> IssuedLoginView:
-        issued = await self._tenancy.login(rctx, body.email, body.password, body.totp_code)
-        return IssuedLoginView(
-            token=issued.token,
-            expires_at=issued.expires_at,
-            memberships=[MembershipChoiceView.model_validate(m) for m in issued.memberships],
+    async def finish_sign_in(
+        self, rctx: RequestContext, body: SignInCallbackRequest
+    ) -> IssuedLoginView:
+        issued = await self._tenancy.sign_in_with_code(
+            rctx, body.code, body.invitation_token, code_verifier=body.code_verifier
         )
+        return login_view(issued)
+
+    async def start_device_sign_in(self, rctx: RequestContext) -> DeviceSignInView:
+        started = await self._tenancy.start_device_sign_in(rctx)
+        return DeviceSignInView.model_validate(started, from_attributes=True)
+
+    async def finish_device_sign_in(
+        self, rctx: RequestContext, body: DeviceTokenRequest
+    ) -> IssuedLoginView:
+        return login_view(await self._tenancy.finish_device_sign_in(rctx, body.device_code))
+
+    async def dev_sign_in(self, rctx: RequestContext, body: DevSignInRequest) -> IssuedLoginView:
+        return login_view(await self._tenancy.dev_sign_in(rctx, body.email, body.display_name))
+
+    async def verify_second_factor(
+        self, ictx: IdentityContext, body: SecondFactorRequest
+    ) -> IssuedLoginView:
+        return login_view(await self._tenancy.verify_second_factor(ictx, body.totp_code))
 
     async def exchange_session(
         self, ictx: IdentityContext, body: ExchangeSessionRequest
@@ -161,6 +203,37 @@ class TenancyServiceImpl(TenancyServiceInterface):
 
     async def remove_member(self, ctx: OpContext, user_id: UUID) -> UserView:
         return UserView.model_validate(await self._tenancy.remove_member(ctx, user_id))
+
+    async def get_invitations(
+        self, ctx: OpContext, cursor: str | None, limit: int
+    ) -> InvitationPageView:
+        limit = clamp_limit(limit)
+        after = decode_cursor("invitations", cursor) if cursor else None
+        page = await self._tenancy.get_invitations(ctx, after, limit)
+        return InvitationPageView(
+            items=[InvitationView.model_validate(i) for i in page.items],
+            next_cursor=encode_cursor("invitations", page.items[-1].id) if page.has_more else None,
+        )
+
+    async def invite_member(
+        self, ctx: OpContext, body: InviteMemberRequest, attempt: Attempt
+    ) -> InvitationView:
+        invitation = await self._tenancy.invite_member(ctx, body.email, body.role, attempt)
+        return InvitationView.model_validate(invitation)
+
+    async def resend_invitation(self, ctx: OpContext, invitation_id: UUID) -> InvitationView:
+        return InvitationView.model_validate(
+            await self._tenancy.resend_invitation(ctx, invitation_id)
+        )
+
+    async def revoke_invitation(self, ctx: OpContext, invitation_id: UUID) -> InvitationView:
+        return InvitationView.model_validate(
+            await self._tenancy.revoke_invitation(ctx, invitation_id)
+        )
+
+    async def sso_link(self, ctx: OpContext, body: SsoLinkRequest) -> SsoLinkView:
+        url = await self._tenancy.sso_setup_link(ctx, body.intent, body.return_url)
+        return SsoLinkView(url=url)
 
     async def get_sessions(self, ctx: OpContext, limit: int) -> list[SessionView]:
         sessions = await self._tenancy.get_sessions(ctx, clamp_limit(limit))

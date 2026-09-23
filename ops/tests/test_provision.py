@@ -1,5 +1,5 @@
 """The tenants of a run: created under the provisioner's token and never a
-password, named for the run, and removed when the run ends, a failed run
+sign-in, named for the run, and removed when the run ends, a failed run
 and a failed start included."""
 
 import json
@@ -11,14 +11,20 @@ import pytest
 from tadas.client.client import ApiError
 from tadas.ops.environments import Environment
 from tadas.ops.profiles import Profile
-from tadas.ops.traffic import TokenRefused, is_run_tenant, provision, run_traffic
+from tadas.ops.traffic import (
+    DeployedSignIn,
+    TokenRefused,
+    is_run_tenant,
+    provision,
+    run_traffic,
+)
 
 NOW = "2026-09-20T12:00:00Z"
 
 
-def environment(token: str | None = "opt_write") -> Environment:
+def environment(token: str | None = "opt_write", name: str = "staging") -> Environment:
     return Environment(
-        name="staging",
+        name=name,
         api_url="http://test",
         operator_token=None,
         provisioner_token=token,
@@ -35,9 +41,9 @@ def environment(token: str | None = "opt_write") -> Environment:
 
 
 class OperatorPlane:
-    """The three operator routes a run's tenants go through, and a login that
-    refuses every password, so the run signs no one in and still removes what
-    it made."""
+    """The three operator routes a run's tenants go through, and a local
+    sign-in that is off, so the run signs no one in and still removes what it
+    made."""
 
     def __init__(self, *, refuse_create_after: int | None = None, token: str = "opt_write") -> None:
         self.orgs: dict[str, str] = {}
@@ -50,10 +56,8 @@ class OperatorPlane:
     def __call__(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
         method, path = request.method, request.url.path
-        if path == "/v1/auth/login":
-            return httpx.Response(
-                401, json={"error": {"code": "invalid_credential", "message": "no"}}
-            )
+        if path == "/v1/auth/dev-sign-in":
+            return httpx.Response(404, json={"error": {"code": "not_found", "message": "no"}})
         if request.headers.get("authorization") != f"Bearer {self.token}":
             return httpx.Response(
                 401, json={"error": {"code": "not_authenticated", "message": "no"}}
@@ -115,7 +119,7 @@ async def test_tenants_are_named_for_the_run_under_the_provisioner_token() -> No
     assert all(is_run_tenant(slug) for slug in plane.orgs.values())
     assert len(tenants.people) == 4 and len(tenants.orgs_created) == 2
     assert plane.plans == dict.fromkeys(plane.orgs, "max")
-    assert not any(r.url.path == "/v1/auth/login" for r in plane.requests)
+    assert not any(r.url.path.startswith("/v1/auth/") for r in plane.requests)
 
 
 async def test_a_start_that_fails_part_way_removes_what_it_made() -> None:
@@ -135,20 +139,26 @@ async def test_a_refused_token_names_the_command_that_writes_a_fresh_one() -> No
 async def test_a_run_removes_its_tenants_when_it_ends_even_when_no_one_signed_in() -> None:
     plane = OperatorPlane()
     result = await run_traffic(
-        environment(),
+        environment(name="local"),
         PROFILE,
         duration_seconds=0.3,
         transport=httpx.MockTransport(plane),
         pause_after_failure=0.1,
     )
     assert result.report.sessions.started == 0
-    assert any("was refused at sign-in: 401" in note for note in result.report.notes)
+    assert any("was refused at sign-in: 404" in note for note in result.report.notes)
     assert sorted(plane.deleted) == sorted(plane.orgs)
     assert "removed 2 of the run's 2 org(s)" in result.report.notes
 
 
-async def test_a_cloud_run_never_drives_seeded_people() -> None:
-    with pytest.raises(ValueError, match="has no seeded people"):
-        await run_traffic(
-            environment(), PROFILE, orgs=0, transport=httpx.MockTransport(OperatorPlane())
-        )
+async def test_a_run_on_a_deployed_environment_is_refused_before_it_provisions() -> None:
+    """A deployed environment signs people in through the identity provider,
+    and the run's people sign in by the local sign-in, which it does not
+    serve: nothing is created, and the refusal says why."""
+    plane = OperatorPlane()
+    for orgs in (0, 2):
+        with pytest.raises(DeployedSignIn, match="only the local stack serves"):
+            await run_traffic(
+                environment(), PROFILE, orgs=orgs, transport=httpx.MockTransport(plane)
+            )
+    assert plane.requests == []

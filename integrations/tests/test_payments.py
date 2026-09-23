@@ -14,18 +14,14 @@ import stripe
 from tadas.integrations.exceptions import (
     DeliveryRefused,
     PaymentsUnconfigured,
-    UnsafeProviderConfiguration,
+    UnsafeIntegration,
 )
+from tadas.integrations.impl.configured import payments_for, refuse_unsafe_payments
 from tadas.integrations.payments.deliveries import delivery_of, sign, verified
 from tadas.integrations.payments.stripe import PaymentsStripeImpl, subscription_of
 from tadas.integrations.payments.twin import TWIN_WEBHOOK_SECRET, PaymentsTwinImpl
 from tadas.integrations.payments.types import ORG_METADATA_KEY, delivery_key
-from tadas.integrations.settings import (
-    IntegrationsSettings,
-    build_payments,
-    key_mode,
-    refuse_unsafe_payments,
-)
+from tadas.integrations.settings import IntegrationsSettings, key_mode
 
 SECRET = "whsec_test_only"
 
@@ -157,11 +153,11 @@ def test_an_event_of_another_type_names_nothing_but_itself() -> None:
 
 def test_the_twin_refuses_to_run_outside_a_local_environment() -> None:
     for environment in ("dev", "staging", "production"):
-        with pytest.raises(UnsafeProviderConfiguration):
+        with pytest.raises(UnsafeIntegration):
             PaymentsTwinImpl(environment=environment)
-        with pytest.raises(UnsafeProviderConfiguration):
-            build_payments(settings(environment=environment, billing_backend="twin"))
-    assert build_payments(settings(environment="test")).describe() == "payments=twin"
+        with pytest.raises(UnsafeIntegration):
+            payments_for(settings(billing_backend="twin"), environment)
+    assert payments_for(settings(billing_backend="twin"), "test").describe() == "payments=twin"
 
 
 async def test_the_twins_deliveries_pass_the_check_the_real_ones_do() -> None:
@@ -220,20 +216,18 @@ def test_a_keys_prefix_says_its_mode(key: str, mode: str | None) -> None:
 def test_a_key_whose_mode_is_not_the_environments_is_refused_at_boot(
     environment: str, key: str, refused: bool
 ) -> None:
-    configured = settings(environment=environment, billing_backend="stripe", stripe_org_key=key)
+    configured = settings(billing_backend="stripe", stripe_org_key=key)
     if refused:
-        with pytest.raises(UnsafeProviderConfiguration) as refusal:
-            refuse_unsafe_payments(configured)
+        with pytest.raises(UnsafeIntegration) as refusal:
+            refuse_unsafe_payments(configured, environment)
         assert key not in refusal.value.message
     else:
-        refuse_unsafe_payments(configured)
+        refuse_unsafe_payments(configured, environment)
 
 
 async def test_no_key_leaves_billing_unconfigured_and_every_call_says_so() -> None:
     for off in (None, "", "off"):
-        payments = build_payments(
-            settings(environment="staging", billing_backend="stripe", stripe_org_key=off)
-        )
+        payments = payments_for(settings(billing_backend="stripe", stripe_org_key=off), "staging")
         await payments.start()
         assert payments.configured is False
         with pytest.raises(PaymentsUnconfigured) as refused:

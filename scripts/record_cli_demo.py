@@ -75,11 +75,11 @@ class Api:
     def _client(self, token: str | None = None) -> ApiClient:
         return ApiClient(self.base, app="cli", app_version="cli@demo", token=token)
 
-    async def token(self, email: str, password: str) -> str:
+    async def token(self, email: str) -> str:
         """A session token for the person's team org, what `tadas login --org`
         would keep; every person also has a personal org."""
         async with self._client() as client:
-            login = await client.login(email, password)
+            login = await client.dev_sign_in(email)
             org = next(m.org for m in login.memberships if m.org.kind is OrgKind.team)
             issued = await client.exchange_session(login.token, org.id)
         return issued.token
@@ -320,8 +320,8 @@ def stills(renderer: Renderer, panes: Sequence[Pane], out: str, directory: str) 
 
 async def record(args: argparse.Namespace) -> None:
     api = Api(args.api)
-    owner_token = await api.token(args.owner, args.password)
-    bob_token = await api.token(args.member, args.password)
+    owner_token = await api.token(args.owner)
+    bob_token = await api.token(args.member)
     print(f"cleared {await api.clear_tasks(owner_token)} tasks")
 
     home = tempfile.mkdtemp(prefix="tadas-demo-cli-")
@@ -363,7 +363,6 @@ def main() -> None:
     parser.add_argument("--api", default="http://127.0.0.1:8000")
     parser.add_argument("--owner", default="owner@example.test")
     parser.add_argument("--member", default="bob@example.test")
-    parser.add_argument("--password", default="tadas-local")
     parser.add_argument("--still", action="store_true", help="write a PNG per pane instead")
     parser.add_argument("--stills-dir", help="also write a PNG per pane into this directory")
     asyncio.run(record(parser.parse_args()))

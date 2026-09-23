@@ -17,7 +17,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
-from tadas.integrations.exceptions import PaymentsRefused, UnsafeProviderConfiguration
+from tadas.integrations.exceptions import PaymentsRefused, UnsafeIntegration
 from tadas.integrations.payments import PaymentsInterface
 from tadas.integrations.payments.deliveries import sign, verified
 from tadas.integrations.payments.types import (
@@ -42,7 +42,7 @@ class PaymentsTwinImpl(PaymentsInterface):
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         if environment not in TWIN_ENVIRONMENTS:
-            raise UnsafeProviderConfiguration(
+            raise UnsafeIntegration(
                 f"TADAS_BILLING_BACKEND=twin is refused when TADAS_ENVIRONMENT={environment}"
             )
         self._secret = webhook_secret

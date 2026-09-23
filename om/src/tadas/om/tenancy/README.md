@@ -11,16 +11,22 @@ of the seven kinds of thing [Tadas is made of](../../../../README.md).
   with them: their place to work from the first moment, with a name and
   a slug made for them. Every other org is a **team org**, made on
   purpose. A personal org is otherwise an ordinary org: anyone may be
-  added to it, and it holds tasks the way a team org does.
-- **Identity**: one person across every org: an email, a password
-  kept as a hash, and whether the person is on the operator allowlist
-  and what an operator may do there (read, or write, which includes
-  read).
+  added to it, and it holds tasks the way a team org does. An org that
+  invites people or sets up single sign-on also has an organization at
+  the identity provider, made the first time it is needed.
+- **Identity**: one person across every org: an email, the identity
+  provider's name for them (an issuer and a subject), and whether the
+  person is on the operator allowlist and what an operator may do there
+  (read, or write, which includes read). Tadas keeps no password.
 - **User**: the identity inside one org: the display name and the
   email the team sees.
 - **Membership**: the user's place in the org, with a role.
+- **Invitation**: a person asked to join an org, by email, with a
+  role. The identity provider sends the email with the link; the
+  invitation says who asked, the role, and whether it is pending,
+  accepted, or revoked. A link stops working at its expiry.
 - **Session**: a signed-in visit. A login is a session with no org
-  yet, the one sign-in produces; exchanging it for an org gives a
+  yet, the one a sign-in produces; exchanging it for an org gives a
   session in that org. A live session also proves who the person is,
   so it can list their orgs and be exchanged for a session in another
   one. A session ends at its absolute lifetime or after it sits idle,
@@ -37,30 +43,39 @@ of the seven kinds of thing [Tadas is made of](../../../../README.md).
 
 ## What can happen
 
-- **Sign up.** A person nobody knows yet gives an email, a name, and a
-  password, and nothing about an org. The identity, their personal org,
-  their user in it, and the owner membership land together, and the
-  answer is what a sign-in answers: a login and the one place. The
-  personal org is named after the person and its slug is generated from
-  that name with a random tail. A held email is refused and nothing
-  lands. The email is not verified, by choice. This is how a person
-  enters a deployed environment; the seeding below is local only. A
-  setting closes it, and then it answers as if it did not exist. The
-  password is only this door's: the person and their place are one
-  create (`create_person`) that any other way in calls the same way.
+- **Sign in.** A person signs in at the identity provider (WorkOS
+  AuthKit: an email code or link, Google, GitHub, or their org's single
+  sign-on) and comes back with a code, which the API exchanges there,
+  server-side. The provider vouches for an issuer, a subject, and an
+  email it has verified; an address it has not verified is refused. The
+  identity is found by the issuer and the subject; else by the email,
+  and linked from then on; else it is made. The answer is a login that
+  lists the orgs the person belongs to, their personal org among them,
+  and the login is exchanged for a session in one of them. A person an
+  older release made without a personal org gets it at this sign-in.
+- **Sign up.** There is no separate sign-up: a person nobody knows
+  signs up by signing in. The identity, their personal org, their user
+  in it, and the owner membership land together (`create_person`). The
+  personal org is named after the person and its slug is generated
+  from that name with a random tail.
+- **Sign in from the command line.** A terminal has no browser to come
+  back to, so it asks for a device sign-in: the person confirms a short
+  code at the provider's address, in any browser, and the terminal,
+  asking every few seconds, gets the login.
+- **Confirm the second factor.** An operator with a second factor
+  presents their login and the code from their authenticator, and gets
+  a new login that records it; the operator plane asks for that one. A
+  run of wrong codes for one email makes the next one wait.
+- **Sign in locally.** On a developer's machine and in the tests, a
+  person signs in by their address alone, and is made the first time,
+  for the seed, the demos, and the traffic generator. A deployed
+  environment refuses to start with it on.
 - **Create a team org.** A signed-in person names an org, and a slug
   if they want one; otherwise the slug is made from the name. The org,
   their user in it under the name they carry where they are, and the
   owner membership land together, and the answer is their place in it.
   They move there with the switch below. Only a session creates an org;
   an api key is a program's and belongs to its tenant.
-- **Sign in.** Email and password give a login that lists the orgs the
-  person belongs to, their personal org among them. A person an older
-  release made without one gets it at this sign-in. The login is exchanged for a session in one of
-  them. An unknown email costs the same time as a wrong password, so
-  the answer does not say which emails exist. A run of failed sign-ins
-  for one email makes the next one wait, whether or not anyone holds
-  the email. A person with a second factor sends the code too.
 - **List my orgs, and switch.** A login or a live session lists the
   orgs the person belongs to, a page at a time. Exchanging a live
   session for another org is a switch: the session presented ends in
@@ -70,6 +85,21 @@ of the seven kinds of thing [Tadas is made of](../../../../README.md).
   list their own live sessions in the org and revoke any one of them.
 - **Read and change the profile.** The org, the person's own identity,
   and their display name. The email belongs to the identity.
+- **Invite.** An owner or an admin invites a person by email, with a
+  role no higher than their own; the provider sends the email with the
+  link. A person who is a member already, or whose address has an open
+  invitation, is refused; an expired one is replaced. Signing in
+  through the link makes the person a member with that role. Pending
+  invitations are listed a page at a time, sent again with a fresh
+  expiry, or revoked. This is how a person joins an org in a deployed
+  environment, and the one place a limit on an org's members is
+  checked.
+- **Set up single sign-on.** An owner or an admin of a team org opens
+  the identity provider's admin portal from the org's settings and
+  connects their company's identity provider there, or proves the org's
+  domain. A sign-in through that single sign-on makes the person a
+  member when their address is in a domain the org verified; anyone
+  else joins by invitation. A personal org has no single sign-on.
 - **Manage members.** List the members a page at a time, change a
   member's role, or remove a member. Removing ends the membership,
   hides the user from every list, and revokes their sessions and API
@@ -83,30 +113,33 @@ of the seven kinds of thing [Tadas is made of](../../../../README.md).
 - **Open the live channel.** Issue a socket ticket; redeem it once.
 - **Seed an environment.** Create an org with its first owner, or add
   a person to an org. Both are the platform's own operations, run by
-  `make seed` on a local environment; there is no invitation flow yet.
-  A person either one makes who did not exist before comes with their
-  personal org, in the same commit. The seeding is the platform
-  arranging a laptop, not a tenant adding someone, so it is not bound by
-  the org's seats, and it grants the seeded team Team.
+  `make seed` on a local environment; a deployed one is joined by
+  invitation. A person either one makes who did not exist before comes
+  with their personal org, in the same commit, and signs in with the
+  address.
+  The seeding is the platform arranging a laptop, not a tenant adding
+  someone, so it is not bound by the org's seats, and it grants the
+  seeded team Team. An invitation, and a join through the org's single
+  sign-on, take a seat like any other door.
 - **Operate across orgs.** An operator, admitted from the allowlist,
   can create an org with its owner, add a member (bound by the org's
   seats like any other door), read an org, its
   members, its tasks, and its events, read the platform's size, list
   every org, and delete a team org. A personal org is never deleted.
   A deleted org keeps its row as the record; everything else of it is
-  purged once the retention has passed. A write operator also resets a person's password, which is
-  audited with the operator and the person.
+  purged once the retention has passed.
 - **Grant an operator.** The grant job puts an identity on the
   allowlist, takes it off, or mints the operator token of the
   provisioner or the smoke identity. Each change of the allowlist is
   audited. The platform's own identities live in a reserved domain,
-  which sign-up refuses, and the first grant makes them.
+  which a sign-in refuses, and the first grant makes them.
 - **Enrol a second factor.** An allowlisted person's first sign-in to
   the operator plane reaches two calls and nothing else: mint the
   secret, then confirm it with a first code. From then on the plane
   admits them only on a sign-in that verified a code.
 - **Sweep.** Removed members, revoked or expired keys and sessions,
-  spent tickets, and old runs of failed sign-ins are deleted for good
+  spent tickets, closed or expired invitations, and old runs of wrong
+  second-factor codes are deleted for good
   after the retention, thirty days by default. Erasing a person is this
   purge: the events of this namespace carry ids and never a value.
 
@@ -125,7 +158,8 @@ of the seven kinds of thing [Tadas is made of](../../../../README.md).
   revoking a leaked key ends every access it gave.
 - **Unique among the living.** One slug per living org, one personal
   org per identity, one user per identity in an org, one membership per
-  user in an org. Removing a member or deleting an org frees the name
+  user in an org, one identity per subject of an issuer, one pending
+  invitation per address in an org. Removing a member or deleting an org frees the name
   for reuse.
 - **A personal org stays its person's.** It is not deleted, and its
   person is not removed from it and does not change role in it, so it
@@ -134,6 +168,9 @@ of the seven kinds of thing [Tadas is made of](../../../../README.md).
 - **Secrets are fingerprints.** A session token, an API key, and a
   socket ticket are stored as hashes. The plain value is shown once.
 - **A ticket works once.** A second redemption is refused.
+- **A verified address or nothing.** The identity provider's sign-in
+  counts only with an address it verified; that is what links a person
+  Tadas already knows to the provider's name for them.
 - **The operator plane takes a second factor or a token.** A session
   proves the person, but it is a tenant's credential, and the operator
   plane refuses it. A person's sign-in admits only when it verified a

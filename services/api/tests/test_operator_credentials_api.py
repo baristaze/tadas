@@ -1,14 +1,13 @@
 """The operator plane's credentials over the live app: the second factor an
-operator enrols before the plane admits them, the operator token an agent
-presents instead of a password, the audited password reset, and the grant
-job's command."""
+operator enrols before the plane admits them and verifies on a sign-in, the
+operator token an agent presents instead of a sign-in, and the grant job's
+command."""
 
 import argparse
-from uuid import UUID
 
 import httpx
 import pytest
-from api_support import bearer, code_at, enrol_operator, secret_of, seed_request, sign_in_as
+from api_support import bearer, code_at, dev_login, enrol_operator, secret_of, seed_request
 
 from tadas.om.opcontext import OperatorRole
 from tadas.om.tenancy.rules import email_digest
@@ -26,13 +25,10 @@ async def test_an_operator_enrols_a_second_factor_before_the_plane_admits_them(
         "Root",
         "root",
         "root@example.test",
-        "pw-1234",
         "Root",
         operator_role=OperatorRole.WRITE,
     )
-    first = await client.post(
-        "/v1/auth/login", json={"email": "root@example.test", "password": "pw-1234"}
-    )
+    first = await client.post("/v1/auth/dev-sign-in", json={"email": "root@example.test"})
     enrolling = bearer(first.json()["token"])
     # Allowlisted, no factor yet: every route but the two enrolment ones refuses.
     for path in ("/v1/admin/me", "/v1/admin/orgs", "/v1/admin/size"):
@@ -57,19 +53,30 @@ async def test_an_operator_enrols_a_second_factor_before_the_plane_admits_them(
     required = await client.get("/v1/admin/me", headers=enrolling)
     assert required.status_code == 401, required.text
     assert required.json()["error"]["code"] == "second_factor_required"
-    body = {"email": "root@example.test", "password": "pw-1234"}
-    bad = await client.post("/v1/auth/login", json=body | {"totp_code": "000000"})
+    # The code is verified on a sign-in, which answers with a new one.
+    fresh = bearer(await dev_login(client, "root@example.test"))
+    bad = await client.post("/v1/auth/second-factor", headers=fresh, json={"totp_code": "000000"})
     assert bad.status_code == 401, bad.text
     code = code_at(secret, 1)
-    login = await client.post("/v1/auth/login", json=body | {"totp_code": code})
+    login = await client.post("/v1/auth/second-factor", headers=fresh, json={"totp_code": code})
     assert login.status_code == 200, login.text
     signed_in = bearer(login.json()["token"])
     admitted = await client.get("/v1/admin/me", headers=signed_in)
     assert admitted.status_code == 200 and admitted.json()["operator_role"] == "write"
     again = await client.post("/v1/admin/me/totp", headers=signed_in)
     assert again.status_code == 409, again.text
-    reused = await client.post("/v1/auth/login", json=body | {"totp_code": code})
+    reused = await client.post("/v1/auth/second-factor", headers=fresh, json={"totp_code": code})
     assert reused.status_code == 401, reused.text
+    # A session is no sign-in: the second factor is verified on a login only.
+    org_id = (await client.get("/v1/auth/memberships", headers=fresh)).json()["items"][0]
+    session = await client.post(
+        "/v1/auth/sessions", headers=fresh, json={"org_id": org_id["org"]["id"]}
+    )
+    tenant = bearer(session.json()["token"])
+    on_session = await client.post(
+        "/v1/auth/second-factor", headers=tenant, json={"totp_code": code_at(secret, 2)}
+    )
+    assert on_session.status_code == 401, on_session.text
 
 
 async def test_an_operator_token_is_minted_once_and_admits_with_its_one_permission(
@@ -112,25 +119,6 @@ async def test_an_operator_token_is_minted_once_and_admits_with_its_one_permissi
     assert wider.status_code == 403, wider.text
 
 
-async def test_an_operator_resets_a_password_and_the_reset_is_audited(
-    client: httpx.AsyncClient, container: AppContainer, owner: dict[str, str]
-) -> None:
-    writer, _ = await enrol_operator(client, container, "root@example.test", OperatorRole.WRITE)
-    reader, _ = await enrol_operator(client, container, "sup@example.test", OperatorRole.READ)
-    body = {"email": "ann@example.test", "password": "a-new-password"}
-    refused = await client.post("/v1/admin/password-resets", headers=reader, json=body)
-    assert refused.status_code == 403, refused.text
-    reset = await client.post("/v1/admin/password-resets", headers=writer, json=body)
-    assert reset.status_code == 200, reset.text
-    assert reset.json()["email"] == "ann@example.test" and UUID(reset.json()["identity_id"])
-    old = await client.post(
-        "/v1/auth/login", json={"email": "ann@example.test", "password": "pw-1234"}
-    )
-    assert old.status_code == 401
-    org_id = (await client.get("/v1/orgs/current", headers=owner)).json()["id"]
-    assert await sign_in_as(client, "ann@example.test", "a-new-password", UUID(org_id))
-
-
 def grant_args(**given: object) -> argparse.Namespace:
     return argparse.Namespace(
         **({"permission": None, "disable": False, "mint_token": None, "expires_in": None} | given)
@@ -141,7 +129,7 @@ async def test_the_grant_command_grants_disables_and_mints_into_the_secret_store
     container: AppContainer, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     tenancy = container.managers.tenancy
-    await tenancy.bootstrap(seed_request(), "Acme", "acme", "ann@example.test", "pw-1234", "Ann")
+    await tenancy.bootstrap(seed_request(), "Acme", "acme", "ann@example.test", "Ann")
     settings = container.settings
     await api_main.granted(
         container, settings, grant_args(email="ann@example.test", permission="read")

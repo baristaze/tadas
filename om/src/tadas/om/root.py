@@ -5,7 +5,9 @@ from dataclasses import dataclass
 
 from tadas.infra.cache import CacheScope
 from tadas.infra.root import InfraInterface
-from tadas.integrations.payments import PaymentsInterface
+from tadas.integrations.identity.absent import IdentityProviderAbsentImpl
+from tadas.integrations.impl.configured import absent_payments
+from tadas.integrations.root import IntegrationsInterface
 from tadas.om.billing import BillingManagerInterface, BillingOperatorManagerInterface
 from tadas.om.billing.impl.manager import BillingManagerImpl, BillingOptions
 from tadas.om.billing.impl.operator import BillingOperatorManagerImpl
@@ -15,6 +17,8 @@ from tadas.om.idempotency import IdempotencyManagerInterface
 from tadas.om.idempotency.impl.manager import IdempotencyManagerImpl, IdempotencyOptions
 from tadas.om.outbox import OutboxRelayInterface
 from tadas.om.outbox.impl.relay import OutboxRelayImpl
+from tadas.om.slack import SlackManagerInterface
+from tadas.om.slack.impl.manager import SlackManagerImpl, SlackOptions
 from tadas.om.storage.root import StorageInterface
 from tadas.om.tasks import TasksManagerInterface
 from tadas.om.tasks.impl.manager import TasksManagerImpl, TasksOptions
@@ -31,6 +35,7 @@ class Managers:
     tenancy_operator: TenancyOperatorManagerInterface
     work: WorkManagerInterface
     tasks: TasksManagerInterface
+    slack: SlackManagerInterface
     idempotency: IdempotencyManagerInterface
     events: EventsManagerInterface
     outbox: OutboxRelayInterface
@@ -43,9 +48,14 @@ def build_managers(
     infra: InfraInterface,
     tenancy_options: TenancyOptions | None = None,
     operator_options: TenancyOperatorOptions | None = None,
-    *,
-    payments: PaymentsInterface,
+    integrations: IntegrationsInterface | None = None,
 ) -> Managers:
+    """`integrations` is the root of the hosted services the managers front:
+    the identity provider, which the tenancy manager signs people in and
+    invites them through, and the payment processor, which the billing
+    manager mirrors. None is a process that signs nobody in and holds no
+    processor, and every call that would reach either is refused as
+    unavailable."""
     # The relay every core-role manager hands its outbox rows to. It reaches
     # the work manager through the root below, because a row of kind
     # `work.<kind>` is enqueued there: the work manager needs the tenancy
@@ -62,7 +72,7 @@ def build_managers(
     # its retention. That edge is bound at call time, as the relay's is.
     billing = BillingManagerImpl(
         storage.get_billing_storage(),
-        payments,
+        absent_payments() if integrations is None else integrations.get_payments(),
         outbox,
         lambda: managers.tenancy,
         BillingOptions(),
@@ -73,6 +83,11 @@ def build_managers(
         infra.get_cache(CacheScope.REALTIME_TICKET),
         tenancy_options or TenancyOptions(),
         entitlements=billing,
+        identity_provider=(
+            IdentityProviderAbsentImpl()
+            if integrations is None
+            else integrations.get_identity_provider()
+        ),
     )
     events = EventsManagerImpl(storage.get_event_storage(), tenancy, EventsOptions())
     work = WorkManagerImpl(
@@ -82,10 +97,12 @@ def build_managers(
         infra.get_topics(),
         WorkOptions(),
     )
+    slack = SlackManagerImpl(storage.get_slack_storage(), tenancy, outbox, SlackOptions())
     tasks = TasksManagerImpl(
         storage.get_tasks_storage(),
         tenancy,
         outbox,
+        slack,
         TasksOptions(),
         entitlements=billing,
     )
@@ -103,6 +120,7 @@ def build_managers(
         tenancy_operator=tenancy_operator,
         work=work,
         tasks=tasks,
+        slack=slack,
         idempotency=idempotency,
         events=events,
         outbox=outbox,

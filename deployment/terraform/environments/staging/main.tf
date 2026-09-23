@@ -16,6 +16,9 @@ module "environment" {
   api_domain_name   = var.api_domain_name
   app_domain_name   = var.app_domain_name
   cors_origins      = var.cors_origins
+  # The WorkOS application of this environment's WorkOS environment. A
+  # client id is public; the environment's API key is its secret.
+  workos_client_id  = "client_01M3640D8WBF9KC0P89YW4E72N"
   portal_sentry_dsn = var.portal_sentry_dsn
 
   # The payment processor's account, the Tadas sandbox: test mode, no real money. The process refuses a key
@@ -41,6 +44,8 @@ module "environment" {
   maintenance_desired_count    = 1
   maintenance_cpu              = 256
   maintenance_memory           = 512
+  slack_cpu                    = 256
+  slack_memory                 = 512
 
   # Operations. `autoscaling_enabled` is the one flip: every lever below it
   # is on, so true scales the whole environment, and the flip is a pull
