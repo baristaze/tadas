@@ -155,6 +155,9 @@ jobs:
         run: terraform -chdir=deployment/terraform/modules/static_site init -backend=false -input=false
       - if: matrix.root == 'bootstrap/staging'
         run: terraform -chdir=deployment/terraform/modules/static_site test
+      # The environment plans whole with the company site left out, and with it.
+      - if: matrix.root == 'environments/staging'
+        run: terraform -chdir=deployment/terraform/environments/staging test
       - if: matrix.root == 'environments/staging'
         run: terraform -chdir=deployment/terraform/modules/service init -backend=false -input=false
       - if: matrix.root == 'environments/staging'

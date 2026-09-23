@@ -43,8 +43,9 @@ variable "workos_client_id" {
 }
 
 variable "site_domain_name" {
-  description = "The company site's public name: tadas.fyi, or staging.tadas.fyi for staging. A record in the Cloudflare zone, not a hosted zone here; an issued certificate for it must exist in us-east-1 (the bootstrap root's)."
+  description = "The company site's public name: tadas.fyi, or staging.tadas.fyi for staging. A record in the Cloudflare zone, not a hosted zone here; an issued certificate for it must exist in us-east-1 (the bootstrap root's). Empty leaves the site out and changes nothing else."
   type        = string
+  default     = ""
 }
 
 variable "cors_origins" {

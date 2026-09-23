@@ -35,8 +35,9 @@ variable "app_domain_name" {
 }
 
 variable "site_domain_name" {
-  description = "The company site's public name, from deployment/cloud/environments.json: a record at Cloudflare, with its certificate the bootstrap root's."
+  description = "The company site's public name, from deployment/cloud/environments.json: a record at Cloudflare, with its certificate the bootstrap root's. Empty, the default, leaves the site out; the deploy workflows pass it once SITE_DOMAIN_NAME is set and the certificate is issued."
   type        = string
+  default     = ""
 }
 
 variable "cors_origins" {

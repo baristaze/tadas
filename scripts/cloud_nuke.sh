@@ -216,12 +216,21 @@ if [ "$environment" = "production" ]; then
   fi
 fi
 
+# The company site is optional: the apply names it only when the state
+# holds it, since its certificate may never have been issued.
+if $dry_run; then
+  site_in_state="$site_domain_name"
+else
+  site_bucket="$(terraform -chdir="$root_dir" output -raw site_bucket 2>/dev/null || true)"
+  site_in_state="${site_bucket:+$site_domain_name}"
+fi
+
 root_vars=(
   -var "api_image=$api_image"
   -var "maintenance_image=$maintenance_image"
   -var "api_domain_name=$api_domain_name"
   -var "app_domain_name=$app_domain_name"
-  -var "site_domain_name=$site_domain_name"
+  -var "site_domain_name=$site_in_state"
   -var "alarm_email=$alarm_email"
   -var "destroyable=true"
 )

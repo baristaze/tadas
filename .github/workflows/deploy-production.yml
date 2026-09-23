@@ -195,11 +195,12 @@ jobs:
           ARTIFACTS_BUCKET: ${{ vars.ARTIFACTS_BUCKET }}
           API_DOMAIN_NAME: ${{ vars.API_DOMAIN_NAME }}
           APP_DOMAIN_NAME: ${{ vars.APP_DOMAIN_NAME }}
-          SITE_DOMAIN_NAME: ${{ vars.SITE_DOMAIN_NAME }}
           ALARM_EMAIL: ${{ vars.ALARM_EMAIL }}
         run: |
           missing=""
-          for name in AWS_ROLE_ARN TF_STATE_BUCKET ARTIFACTS_BUCKET API_DOMAIN_NAME APP_DOMAIN_NAME SITE_DOMAIN_NAME ALARM_EMAIL; do
+          # SITE_DOMAIN_NAME is optional: without it the release leaves the
+          # company site out (resolve says so) and releases everything else.
+          for name in AWS_ROLE_ARN TF_STATE_BUCKET ARTIFACTS_BUCKET API_DOMAIN_NAME APP_DOMAIN_NAME ALARM_EMAIL; do
             [ -n "${!name}" ] || missing="${missing:+$missing, }$name"
           done
           if [ -n "$missing" ]; then
@@ -218,6 +219,7 @@ jobs:
     outputs:
       api_image: ${{ steps.images.outputs.api_image }}
       maintenance_image: ${{ steps.images.outputs.maintenance_image }}
+      site_domain_name: ${{ steps.site.outputs.site_domain_name }}
     steps:
       - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
@@ -316,13 +318,32 @@ jobs:
           echo "Portal: \`s3://$ARTIFACTS_BUCKET/builds/portal/$SHA\`, $have, as staging recorded." >> "$GITHUB_STEP_SUMMARY"
       # The site's build holds both environments' pages; the digest staging
       # recorded covers both, and production publishes its own of the two.
+      # The site is optional, by the same rule as staging's: with no
+      # SITE_DOMAIN_NAME, or no issued certificate for it, the release leaves
+      # it out and says so. With both, the commit must carry a site build
+      # staging published, since a plan without the site would take down a
+      # site production already serves.
       - name: the company site build staging kept for this commit
+        id: site
         env:
           ARTIFACTS_BUCKET: ${{ vars.ARTIFACTS_BUCKET }}
+          SITE_DOMAIN_NAME: ${{ vars.SITE_DOMAIN_NAME }}
           SHA: ${{ needs.guard.outputs.sha }}
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
         run: |
+          if [ -z "$SITE_DOMAIN_NAME" ]; then
+            echo "site_domain_name=" >> "$GITHUB_OUTPUT"
+            echo "The company site is left out of this release: the \`production-plan\` environment's \`SITE_DOMAIN_NAME\` is empty (scripts/cloud_create.sh production sets it)." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          issued="$(aws acm list-certificates --region us-east-1 --certificate-statuses ISSUED \
+            --query "CertificateSummaryList[?DomainName=='$SITE_DOMAIN_NAME'].CertificateArn | [0]" --output text)"
+          if [ -z "$issued" ] || [ "$issued" = "None" ]; then
+            echo "site_domain_name=" >> "$GITHUB_OUTPUT"
+            echo "The company site is left out of this release: no issued certificate for \`$SITE_DOMAIN_NAME\` in us-east-1 yet (scripts/cloud_create.sh production, step 3b)." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           found=false
           for attempt in $(seq 1 20); do
             if aws s3api head-object --bucket "$ARTIFACTS_BUCKET" --key "builds/site/$SHA/production/index.html" >/dev/null 2>&1; then
@@ -344,6 +365,7 @@ jobs:
             exit 1
           fi
           echo "Site: \`s3://$ARTIFACTS_BUCKET/builds/site/$SHA\`, $have, as staging recorded." >> "$GITHUB_STEP_SUMMARY"
+          echo "site_domain_name=$SITE_DOMAIN_NAME" >> "$GITHUB_OUTPUT"
 
   plan:
     name: plan production
@@ -370,7 +392,7 @@ jobs:
           TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
           API_DOMAIN_NAME: ${{ vars.API_DOMAIN_NAME }}
           APP_DOMAIN_NAME: ${{ vars.APP_DOMAIN_NAME }}
-          SITE_DOMAIN_NAME: ${{ vars.SITE_DOMAIN_NAME }}
+          SITE_DOMAIN_NAME: ${{ needs.resolve.outputs.site_domain_name }}
           ALARM_EMAIL: ${{ vars.ALARM_EMAIL }}
           # Empty (unset) leaves browser error reporting off, the root default.
           PORTAL_SENTRY_DSN: ${{ vars.PORTAL_SENTRY_DSN }}
@@ -519,6 +541,7 @@ jobs:
       - name: publish the same portal to production
         run: scripts/deploy_static.sh portal deployment/terraform/environments/prod portal-dist
       - name: fetch the company site build staging kept for this commit
+        if: needs.resolve.outputs.site_domain_name != ''
         env:
           ARTIFACTS_BUCKET: ${{ vars.ARTIFACTS_BUCKET }}
           SHA: ${{ needs.guard.outputs.sha }}
@@ -534,6 +557,7 @@ jobs:
             exit 1
           fi
       - name: publish the company site's production build
+        if: needs.resolve.outputs.site_domain_name != ''
         run: scripts/deploy_static.sh site deployment/terraform/environments/prod site-dist/production
       # After the rollout, readiness is asked once more, through the edge: the
       # load balancer probes liveness only, so this is where a new release
@@ -650,11 +674,13 @@ jobs:
             exit 1
           fi
           # A release from before the company site was built has no site
-          # build; the site then stays as the current release published it.
+          # build, and production may have no site yet; either way the site
+          # stays as it is.
           want="$(recorded site)"
-          if [ -z "$want" ]; then
+          site_bucket="$(terraform -chdir=deployment/terraform/environments/prod output -raw site_bucket 2>/dev/null || true)"
+          if [ -z "$want" ] || [ -z "$site_bucket" ]; then
             echo "site=false" >> "$GITHUB_OUTPUT"
-            echo "\`$SHA\` carries no \`deployed/site\`: the site stays as it is." >> "$GITHUB_STEP_SUMMARY"
+            echo "\`$SHA\` carries no \`deployed/site\`, or production serves no site: the site stays as it is." >> "$GITHUB_STEP_SUMMARY"
           else
             aws s3 sync --quiet "s3://$ARTIFACTS_BUCKET/builds/site/$SHA" site-dist
             have="$(scripts/build_digest.sh site-dist)"

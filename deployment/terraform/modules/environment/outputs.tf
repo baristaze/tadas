@@ -19,23 +19,24 @@ output "portal_distribution_id" {
 }
 
 # And the company site's, which the same workflows publish the same way.
+# Empty strings when the environment has no site.
 
 output "site_url" {
   description = "Where the company site answers."
-  value       = module.site.url
+  value       = try(module.site[0].url, "")
 }
 
 output "site_bucket" {
-  value = module.site.bucket_name
+  value = try(module.site[0].bucket_name, "")
 }
 
 output "site_distribution_id" {
-  value = module.site.distribution_id
+  value = try(module.site[0].distribution_id, "")
 }
 
 output "site_distribution_domain_name" {
   description = "What the site's name at Cloudflare is a CNAME to; the create run writes it."
-  value       = module.site.distribution_domain_name
+  value       = try(module.site[0].distribution_domain_name, "")
 }
 
 # What `aws ecs run-task` needs to start a one-off task on the image the

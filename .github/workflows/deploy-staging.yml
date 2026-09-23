@@ -14,7 +14,10 @@
 # The company site calls nothing at runtime, so its links are in its HTML: one
 # build job makes it for every environment (apps/site/dist/staging and
 # apps/site/dist/production), staging publishes its own, and a release
-# publishes the production one this job built.
+# publishes the production one this job built. The site is optional: until
+# SITE_DOMAIN_NAME is set and the site's certificate is issued (both the
+# create run's), everything else deploys as always, the site's build is not
+# kept, the plan leaves the site out, and the run's summary says so.
 #
 # Staging has an AWS account of its own (deployment/cloud/environments.json),
 # and two credentials in it, both through GitHub's OIDC provider and both
@@ -44,7 +47,8 @@
 # (AWS_ROLE_ARN) and the artifacts bucket (ARTIFACTS_BUCKET). `staging` holds
 # its role (AWS_ROLE_ARN), the state bucket (TF_STATE_BUCKET), the artifacts
 # bucket (ARTIFACTS_BUCKET), the three public names (API_DOMAIN_NAME,
-# APP_DOMAIN_NAME, SITE_DOMAIN_NAME), and the address the alarm topic subscribes (ALARM_EMAIL).
+# APP_DOMAIN_NAME, and SITE_DOMAIN_NAME, which alone may be empty), and the
+# address the alarm topic subscribes (ALARM_EMAIL).
 # scripts/cloud_create.sh sets them. Production's environments hold the same
 # names with production's values, and a job here never sees those.
 #
@@ -101,6 +105,7 @@ jobs:
     environment: staging
     outputs:
       configured: ${{ steps.check.outputs.configured }}
+      site_domain_name: ${{ steps.check.outputs.site_domain_name }}
       sha: ${{ steps.sha.outputs.sha }}
     steps:
       # The commit is the one `ci` ran, never the branch tip at the time this
@@ -124,7 +129,13 @@ jobs:
           ALARM_EMAIL: ${{ vars.ALARM_EMAIL }}
         run: |
           missing=""
-          for name in AWS_ROLE_ARN TF_STATE_BUCKET ARTIFACTS_BUCKET API_DOMAIN_NAME APP_DOMAIN_NAME SITE_DOMAIN_NAME ALARM_EMAIL; do
+          # The site's name is optional: without it the site is left out
+          # and everything else deploys.
+          echo "site_domain_name=$SITE_DOMAIN_NAME" >> "$GITHUB_OUTPUT"
+          if [ -z "$SITE_DOMAIN_NAME" ]; then
+            echo "The company site is left out of this deploy: the \`staging\` environment's \`SITE_DOMAIN_NAME\` is empty (scripts/cloud_create.sh staging sets it). Everything else deploys." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          for name in AWS_ROLE_ARN TF_STATE_BUCKET ARTIFACTS_BUCKET API_DOMAIN_NAME APP_DOMAIN_NAME ALARM_EMAIL; do
             [ -n "${!name}" ] || missing="${missing:+$missing, }$name"
           done
           if [ -z "$missing" ]; then
@@ -283,13 +294,15 @@ jobs:
       - name: the build's digest
         id: digest
         run: echo "digest=$(scripts/build_digest.sh apps/site/dist)" >> "$GITHUB_OUTPUT"
+      # Kept only once the site has a name: the create run that sets it is
+      # the one that lets the build role write builds/site/.
       - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
-        if: needs.cloud.outputs.configured == 'true'
+        if: needs.cloud.outputs.configured == 'true' && needs.cloud.outputs.site_domain_name != ''
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
       - name: keep the build by the commit
-        if: needs.cloud.outputs.configured == 'true'
+        if: needs.cloud.outputs.configured == 'true' && needs.cloud.outputs.site_domain_name != ''
         env:
           ARTIFACTS_BUCKET: ${{ vars.ARTIFACTS_BUCKET }}
           SHA: ${{ needs.cloud.outputs.sha }}
@@ -301,6 +314,8 @@ jobs:
     if: needs.cloud.outputs.configured == 'true'
     runs-on: ubuntu-latest
     environment: staging
+    outputs:
+      site: ${{ steps.site.outputs.site_domain_name != '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -313,12 +328,30 @@ jobs:
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
           terraform_wrapper: false
+      # The site joins the plan once it has a name and its certificate is
+      # issued; until then the plan leaves it out and changes nothing else.
+      - name: is the company site ready?
+        id: site
+        env:
+          SITE_DOMAIN_NAME: ${{ needs.cloud.outputs.site_domain_name }}
+        run: |
+          name=""
+          if [ -n "$SITE_DOMAIN_NAME" ]; then
+            issued="$(aws acm list-certificates --region us-east-1 --certificate-statuses ISSUED \
+              --query "CertificateSummaryList[?DomainName=='$SITE_DOMAIN_NAME'].CertificateArn | [0]" --output text)"
+            if [ -n "$issued" ] && [ "$issued" != "None" ]; then
+              name="$SITE_DOMAIN_NAME"
+            else
+              echo "The company site is left out of this deploy: no issued certificate for \`$SITE_DOMAIN_NAME\` in us-east-1 yet (scripts/cloud_create.sh staging, step 3b). Everything else deploys." >> "$GITHUB_STEP_SUMMARY"
+            fi
+          fi
+          echo "site_domain_name=$name" >> "$GITHUB_OUTPUT"
       - name: plan staging
         env:
           TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
           API_DOMAIN_NAME: ${{ vars.API_DOMAIN_NAME }}
           APP_DOMAIN_NAME: ${{ vars.APP_DOMAIN_NAME }}
-          SITE_DOMAIN_NAME: ${{ vars.SITE_DOMAIN_NAME }}
+          SITE_DOMAIN_NAME: ${{ steps.site.outputs.site_domain_name }}
           ALARM_EMAIL: ${{ vars.ALARM_EMAIL }}
           # Empty (unset) leaves browser error reporting off, the root default.
           PORTAL_SENTRY_DSN: ${{ vars.PORTAL_SENTRY_DSN }}
@@ -371,10 +404,12 @@ jobs:
       - name: publish the portal to staging
         run: scripts/deploy_static.sh portal deployment/terraform/environments/staging portal-dist
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        if: steps.site.outputs.site_domain_name != ''
         with:
           name: site
           path: site-dist
       - name: publish the company site to staging
+        if: steps.site.outputs.site_domain_name != ''
         run: scripts/deploy_static.sh site deployment/terraform/environments/staging site-dist/staging
       # After the rollout, readiness is asked once more, through the edge: the
       # load balancer probes liveness only, so this is where a new release
@@ -458,6 +493,7 @@ jobs:
           MAINTENANCE_IMAGE: ${{ needs.images.outputs.maintenance_image }}
           PORTAL_DIGEST: ${{ needs.portal.outputs.digest }}
           SITE_DIGEST: ${{ needs.site.outputs.digest }}
+          SITE: ${{ needs.staging.outputs.site }}
         run: |
           record() {
             gh api -X POST "repos/$REPOSITORY/statuses/$SHA" \
@@ -467,4 +503,5 @@ jobs:
           record tadas-api "${API_IMAGE##*@}"
           record tadas-maintenance "${MAINTENANCE_IMAGE##*@}"
           record portal "$PORTAL_DIGEST"
-          record site "$SITE_DIGEST"
+          # Only a site staging published is one a release may publish.
+          if [ "$SITE" = "true" ]; then record site "$SITE_DIGEST"; fi

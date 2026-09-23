@@ -260,3 +260,50 @@ def test_the_grant_runner_refuses_to_run_without_arguments(tmp_path: Path) -> No
     )
     assert result.returncode == 2
     assert "usage: cloud_grant.sh" in result.stderr
+
+
+def _site_steps(job: dict) -> list[dict]:
+    return [
+        step
+        for step in job["steps"]
+        if "site" in str(step.get("name", ""))
+        or "site" in str(step.get("with", {}).get("name", ""))
+    ]
+
+
+def test_a_deploy_without_a_site_name_deploys_everything_else() -> None:
+    """The company site is optional. A missing SITE_DOMAIN_NAME never makes
+    the cloud 'not configured': the rest plans, applies, and publishes, and
+    every step that keeps, plans, or publishes the site is behind its own
+    condition. Terraform's side, the plan with no site, is the staging
+    root's `terraform test`."""
+    staging = yaml.safe_load((ROOT / ".github" / "workflows" / "deploy-staging.yml").read_text())
+    check = next(s for s in staging["jobs"]["cloud"]["steps"] if s.get("id") == "check")
+    assert "for name in AWS_ROLE_ARN" in check["run"]
+    required = check["run"].split("for name in ", 1)[1].split(";", 1)[0]
+    assert "SITE_DOMAIN_NAME" not in required
+    keep = [
+        s
+        for s in staging["jobs"]["site"]["steps"]
+        if s.get("name") == "keep the build by the commit"
+    ]
+    assert keep and "site_domain_name != ''" in keep[0]["if"]
+    deploy = staging["jobs"]["staging"]
+    plan = next(s for s in deploy["steps"] if s.get("name") == "plan staging")
+    assert plan["env"]["SITE_DOMAIN_NAME"] == "${{ steps.site.outputs.site_domain_name }}"
+    publish = [s for s in _site_steps(deploy) if s.get("id") != "site"]
+    assert publish and all("steps.site.outputs.site_domain_name != ''" in s["if"] for s in publish)
+    assert 'if [ "$SITE" = "true" ]; then record site' in str(staging["jobs"]["record"])
+
+    production = yaml.safe_load(
+        (ROOT / ".github" / "workflows" / "deploy-production.yml").read_text()
+    )
+    guard = str(production["jobs"]["guard"])
+    required = guard.split("for name in AWS_ROLE_ARN", 1)[1].split(";", 1)[0]
+    assert "SITE_DOMAIN_NAME" not in required
+    plan = next(s for s in production["jobs"]["plan"]["steps"] if s.get("id") == "plan")
+    assert plan["env"]["SITE_DOMAIN_NAME"] == "${{ needs.resolve.outputs.site_domain_name }}"
+    publish = _site_steps(production["jobs"]["apply"])
+    assert publish and all(
+        "needs.resolve.outputs.site_domain_name != ''" in s["if"] for s in publish
+    )

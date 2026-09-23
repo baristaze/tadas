@@ -10,6 +10,9 @@
 # CloudFront reads certificates from that region only.
 
 locals {
+  # The company site is made only when it has a name (see the site below).
+  site_enabled = var.site_domain_name != ""
+
   # The environment every process reads, mirrored from .env.example. Every
   # backend is the hosted one, and TADAS_ENVIRONMENT makes the process refuse
   # anything else at boot.
@@ -172,7 +175,12 @@ module "secrets" {
 # record in the Cloudflare zone (the apex in production, staging.tadas.fyi in
 # staging), which only the create run writes. Its certificate is the
 # bootstrap root's, validated by a record that run wrote; this finds it by
-# its name, once issued, and a plan before then fails here, naming it.
+# its name, once issued.
+#
+# The site is optional. With no name (site_domain_name empty), there is no
+# certificate lookup and no site: everything else plans and applies as it
+# would, and the deploy workflows pass an empty name until the create run
+# has set SITE_DOMAIN_NAME and the certificate is issued.
 data "aws_route53_zone" "api" {
   name = var.api_domain_name
 }
@@ -182,6 +190,7 @@ data "aws_route53_zone" "app" {
 }
 
 data "aws_acm_certificate" "site" {
+  count    = local.site_enabled ? 1 : 0
   provider = aws.us_east_1
 
   domain      = var.site_domain_name
@@ -242,12 +251,13 @@ module "portal" {
 
 module "site" {
   source = "../static_site"
+  count  = local.site_enabled ? 1 : 0
 
   name            = "site"
   environment     = var.environment
   bucket_name     = "${var.bucket_prefix}-site"
   domain_name     = var.site_domain_name
-  certificate_arn = data.aws_acm_certificate.site.arn
+  certificate_arn = data.aws_acm_certificate.site[0].arn
   not_found_page  = "/404.html"
   destroyable     = var.destroyable
 }
