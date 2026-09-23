@@ -27,10 +27,25 @@ touches and the ADR that explains why it is shaped that way.
   restore as break-glass to a new instance, the rehearsal and its
   record, and relaying the outbox again when one role comes back
   earlier than the others.
-- [stripe.md](stripe.md): making the payment processor's account
-  match the committed desired state per environment, where the webhook
-  endpoint's signing secret lives, rolling it, and forwarding
-  deliveries to a laptop with `stripe listen`.
+- [providers/](providers/): the three providers Tadas depends on,
+  one page each, written for a person who has never opened their
+  dashboards: the provider's levels and which Tadas setting lives at
+  each, which Tadas environment uses which provider environment, the
+  first-time steps by hand in order, what the bootstrap commands and
+  the deploy do on their own, local development, rotation, what breaks
+  and where to look, and production.
+  - [providers/stripe.md](providers/stripe.md): the payment
+    processor. The sandbox and the live account, the restricted key and
+    its permissions, `tadas-ops stripe-bootstrap` (products, prices,
+    the Billing Portal, the webhook endpoint and its secret), and
+    `stripe listen` on a laptop.
+  - [providers/workos.md](providers/workos.md): the sign-in. The
+    Staging and Production environments, the AuthKit application and
+    its Redirects tab, the API key, `tadas-ops workos-bootstrap`, and
+    the organizations Tadas makes.
+  - [providers/slack.md](providers/slack.md): the Slack app. Its
+    scopes, the two tokens, the one Socket Mode connection staging
+    holds, and why a laptop holds none.
 - [support.md](support.md): how a support investigation runs: a
   tenant names a problem, the supporter takes the org id, runs
   `ops-root-cause`, what it reads and in which order, and what is

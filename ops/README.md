@@ -135,16 +135,16 @@ person's sign-in.
 | `signals check --env <e> --request-id <id>` | Reads the log lines, the metric, the trace, and the error event for one request id. |
 | `size --env <e>` | The platform's size: orgs, users, and the tasks of the last twenty-four hours, with the traffic generator's own tenants left out. |
 | `token --env <e> --identity operator\|provisioner [--dev-email a]` | Writes an operator token into the env file, never printing it. |
-| `workos-bootstrap --environment staging\|production [--apply]` | Reconciles a WorkOS environment with `deployment/workos/environments.yaml`; see below. |
-| `stripe-bootstrap --env <e> [--dry-run] [--secret-store aws\|none]` | Makes the payment processor's account match `deployment/stripe/desired-state.json`: the three products, the prices by lookup key, the Billing Portal configuration, and the environment's webhook endpoint. It reads the key from `TADAS_STRIPE_ORG_KEY` and refuses one whose mode is not the environment's. A rerun against a matching account changes nothing and says so. The endpoint's signing secret goes to `tadas/<env>/stripe_webhook_secret` and is never printed. [The runbook](../docs/runbooks/stripe.md) has the steps. |
+| `workos-bootstrap --environment staging\|production [--apply]` | Checks a WorkOS environment against `deployment/workos/environments.yaml`; see below. [The runbook](../docs/runbooks/providers/workos.md) has the dashboard steps around it. |
+| `stripe-bootstrap --env <e> [--dry-run] [--secret-store aws\|none] [--profile p]` | Makes the payment processor's account match `deployment/stripe/desired-state.json`: the three products, the prices by lookup key, the Billing Portal configuration, and the environment's webhook endpoint. It reads the key from `TADAS_STRIPE_ORG_KEY` and refuses one whose mode is not the environment's. A rerun against a matching account changes nothing and says so. The endpoint's signing secret goes to `tadas/<env>/stripe_webhook_secret` under the person's own sign-in (`--profile`; the environment's sign-in profile by default, and in production `tadas-prod-power`, since `tadas-prod` only reads) and is never printed; an investigate profile is refused. [The runbook](../docs/runbooks/providers/stripe.md) has the steps. |
 
 ## The WorkOS bootstrap
 
 `deployment/workos/environments.yaml` is the desired state of each
 WorkOS environment Tadas signs people in through: the application's
-client id, its redirect URIs, its login initiation URI, and its
-webhooks, which are none. `staging` serves the local stack and staging;
-`production` serves production alone.
+client id and its kind (`client: application`), its redirect URIs, its
+login initiation URI, and its webhooks, which are none. `staging` serves
+the local stack and staging; `production` serves production alone.
 
 ```bash
 uv run tadas-ops workos-bootstrap --environment staging          # a dry run
@@ -160,12 +160,16 @@ A redirect is present when AuthKit accepts it for the application: the
 command asks `GET /user_management/authorize` with the client id and the
 URI and reads where it is sent. That probe is the truth, because the
 application's redirects live on its Redirects tab in the WorkOS
-dashboard, which no API reads or writes. The API writes one list, the
-environment's; a redirect the probe refuses is added there and probed
-again, and one it still refuses is named as a dashboard step, and the
-command exits 1. The login initiation URI has no API at all, so it is
-printed as a check to make on the same tab. A second run against
-unchanged config says `nothing to change`.
+dashboard, which no API reads or writes. So for an application the
+command only probes: a redirect the probe refuses is named as a
+dashboard step, and the command exits 1. It never writes the
+environment's redirect list, which AuthKit does not read for an
+application; it lists what is there and says so. Only a desired state
+that names the environment's own client (`client: environment`) has a
+missing redirect added to that list under `--apply`. The login
+initiation URI has no API at all, so it is printed as a check to make on
+the same tab. A second run against unchanged config says `nothing to
+change`.
 
 ## The skills
 

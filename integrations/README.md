@@ -42,7 +42,7 @@ a serving process. `CatalogStripeImpl` is the real one, under the same
 headers and timeout; `CatalogTwinImpl` keeps the processor's rules that
 matter to a reconcile (one price holds a lookup key, a transfer moves
 it, an endpoint's secret is shown once) and is what the bootstrap's
-tests run against. [The runbook](../docs/runbooks/stripe.md) says how it
+tests run against. [The runbook](../docs/runbooks/providers/stripe.md) says how it
 is run.
 
 ## What a process refuses at boot
@@ -86,7 +86,8 @@ Three impls:
 
 The worker picks one at boot: the real client when a bot token is set,
 the twin in a local process without one, and the off impl otherwise.
-Tests never reach Slack.
+Tests never reach Slack. The app's settings, its scopes, and its two
+tokens are in [the Slack runbook](../docs/runbooks/providers/slack.md).
 
 ## The identity provider
 
@@ -112,6 +113,10 @@ sign-in becomes a person.
 | `TADAS_WORKOS_CLIENT_ID` | The WorkOS application's client id. Not a secret: every authorization URL carries it. Staging's application serves the local stack and staging; production has its own. |
 | `TADAS_WORKOS_API_KEY` | The WorkOS environment's API key, a secret, for the management calls: organizations, invitations, the admin portal. The sign-in's code exchange does not use it: it presents the PKCE verifier the sign-in started with, as the application's public client. Locally from `.env` or the shell; deployed, injected into the API from the secret store (`<prefix>workos_api_key`). Empty or `off` means not configured: the process starts, says so, and every sign-in through WorkOS answers `503`. |
 | `TADAS_WORKOS_BASE_URL`, `TADAS_WORKOS_TIMEOUT_SECONDS` | Where the client calls, and the timeout on every call (10 seconds). |
+
+The WorkOS environments, the application's redirects, and the key are
+set up as [the WorkOS runbook](../docs/runbooks/providers/workos.md)
+says.
 
 ## What every integration holds to
 

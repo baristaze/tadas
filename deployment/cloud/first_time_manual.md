@@ -513,6 +513,41 @@ After the deploy roles work, remove `baris.taze` from `TadasBootstrapAdmins`, so
 
 A bootstrap root is applied by a person before the change that needs it merges. When a pull request changes `deployment/terraform/bootstrap/`, for example to let the deployer read a new secret, apply that root from the pull request's branch under `tadas-<env>-admin` (for production, `tadas-prod-admin`), then merge. A merge whose deploy needs a permission the bootstrap has not granted stops half applied.
 
+## 19a. The providers: Stripe, WorkOS, and Slack
+
+Three providers sit outside AWS: Stripe takes payment, WorkOS signs
+people in, and Slack carries the org's channel. Each is set up by hand
+once, in its own dashboard, and each has a page that walks through it
+for a person who has never opened that dashboard:
+
+- [Stripe](../../docs/runbooks/providers/stripe.md): the sandbox and
+  the live account, the restricted key, `tadas-ops stripe-bootstrap`.
+- [WorkOS](../../docs/runbooks/providers/workos.md): the Staging and
+  Production environments, the application's Redirects tab, the API
+  key, `tadas-ops workos-bootstrap`.
+- [Slack](../../docs/runbooks/providers/slack.md): the one app, its
+  scopes, its two tokens, and the one connection staging holds.
+
+What they share is the order, because the secret that holds each value
+is made by the deploy:
+
+1. The environment's first deploy makes the five secrets, each holding
+   `off`: `tadas/<env>/stripe_org_key`,
+   `tadas/<env>/stripe_webhook_secret`, `tadas/<env>/workos_api_key`,
+   `tadas/<env>/slack_bot_token`, and `tadas/<env>/slack_app_token`.
+   With `off` the environment runs, and says in its logs what is off.
+2. A person writes each value under their own sign-in, `tadas-staging`
+   for staging (in production `tadas-prod-power`, when authorized),
+   with `AWS_ACCESS_KEY_ID` and its siblings unset, as section 18
+   says. `stripe_webhook_secret` is the exception: the Stripe
+   bootstrap writes it.
+3. The next deploy, or a forced new deployment of the service, starts
+   tasks that read the new values. A task reads its secrets only at
+   start.
+
+Do WorkOS before section 20: the first operator signs up through it,
+and without its key every sign-in answers `503`.
+
 ## 20. The first operator
 
 A deployed environment starts with no operator: a grant marks an identity, it does not make one. After the environment's first green deploy, follow `docs/runbooks/operator.md`, which is the same walk-through for every operator: sign in, grant, enrol the second factor, check the fence, and write the token into the ops env file. `docs/runbooks/deploy.md` (Grant an operator) is the reference for the workflow itself.
