@@ -19,6 +19,7 @@ served to it. Exposure is by listing, never by folder.
 - [Idempotency records](om/src/tadas/om/idempotency/README.md): the outcome of a request that may arrive twice
 - [Outbox rows](om/src/tadas/om/outbox/README.md): the note written beside every change
 - [Infrastructure](infra/README.md): cache, buckets, topics, queues, secrets, observability; what each promises and which twin runs where
+- [Integrations](integrations/README.md): the third-party providers, each an interface, a real client, and a twin; payments first
 - [The API process](services/api/README.md): the routes by area, the gateway's guarantees, the subcommands
 - [The maintenance worker](workers/maintenance/README.md): claim, handle, complete; the sweep; liveness
 - [Deployment](deployment/README.md): the two twins and the branch convention
@@ -31,6 +32,7 @@ served to it. Exposure is by listing, never by folder.
 - [Deploy runbook](docs/runbooks/deploy.md): cutting a release, approving a plan, rolling back
 - [Operate runbook](docs/runbooks/operate.md): reading an environment under the investigate profile
 - [Scale runbook](docs/runbooks/scale.md): the one variable that turns autoscaling on
+- [Stripe runbook](docs/runbooks/stripe.md): the payment processor's account made to match the desired state, the webhook secret, and local deliveries
 - [Support runbook](docs/runbooks/support.md): how a support investigation runs
 - [Tenant isolation runbook](docs/runbooks/tenant-isolation.md): the cross-tenant cases and what they catch
 - [The portal](apps/portal/README.md): the browser app
@@ -45,6 +47,7 @@ served to it. Exposure is by listing, never by folder.
 - [Deploy runbook](docs/runbooks/deploy.md): cutting a release, approving a plan, rolling back
 - [Operate runbook](docs/runbooks/operate.md): reading an environment under the investigate profile
 - [Scale runbook](docs/runbooks/scale.md): the one variable that turns autoscaling on
+- [Stripe runbook](docs/runbooks/stripe.md): the payment processor's account made to match the desired state, the webhook secret, and local deliveries
 - [Support runbook](docs/runbooks/support.md): how a support investigation runs
 - [Tenant isolation runbook](docs/runbooks/tenant-isolation.md): the cross-tenant cases and what they catch
 - [Deployment](deployment/README.md): what runs where, locally and in the cloud, and the branch convention

@@ -123,7 +123,9 @@ owner.
 
 `tadas-ops` is the operators' one command. It rides the Python client
 and the operator plane, and it presents an operator token, never a
-password.
+password. The one subcommand that talks to something else is
+`stripe-bootstrap`, which talks to the payment processor with the key
+the person holds.
 
 | Subcommand | Does |
 |------------|------|
@@ -132,6 +134,7 @@ password.
 | `signals check --env <e> --request-id <id>` | Reads the log lines, the metric, the trace, and the error event for one request id. |
 | `size --env <e>` | The platform's size: orgs, users, and the tasks of the last twenty-four hours, with the traffic generator's own tenants left out. |
 | `token --env <e> --identity operator\|provisioner` | Writes an operator token into the env file, never printing it. |
+| `stripe-bootstrap --env <e> [--dry-run] [--secret-store aws\|none]` | Makes the payment processor's account match `deployment/stripe/desired-state.json`: the three products, the prices by lookup key, the Billing Portal configuration, and the environment's webhook endpoint. It reads the key from `TADAS_STRIPE_ORG_KEY` and refuses one whose mode is not the environment's. A rerun against a matching account changes nothing and says so. The endpoint's signing secret goes to `tadas/<env>/stripe_webhook_secret` and is never printed. [The runbook](../docs/runbooks/stripe.md) has the steps. |
 
 ## The skills
 

@@ -1,12 +1,14 @@
-"""`tadas-ops`: traffic, stress, signals check, size, and token, each against
-one named environment. Exit 0 when the run did what was asked, 1 when a
-stress target was missed or a reader found nothing, 2 for a bad invocation
-or a credential the operator plane refused."""
+"""`tadas-ops`: traffic, stress, signals check, size, token, and
+stripe-bootstrap, each against one named environment. Exit 0 when the run
+did what was asked, 1 when a stress target was missed or a reader found
+nothing, 2 for a bad invocation or a credential the operator plane
+refused."""
 
 import argparse
 import asyncio
 import getpass
 import json
+import os
 import sys
 from collections.abc import Callable, Iterable
 from datetime import UTC, datetime, timedelta
@@ -19,6 +21,8 @@ import httpx
 
 from tadas.client.client import ApiClient, ApiError
 from tadas.client.schema import OrgPageView, UserPageView
+from tadas.infra.aws_clients import client_config
+from tadas.integrations.payments.catalog import CatalogStripeImpl
 from tadas.ops.environments import (
     CLOUD_ENVIRONMENTS,
     Environment,
@@ -40,6 +44,16 @@ from tadas.ops.stress import (
     window_start,
     with_duration,
     with_target,
+)
+from tadas.ops.stripe_bootstrap import (
+    ENVIRONMENTS,
+    KEY_VARIABLE,
+    SecretStoreAwsImpl,
+    SecretStoreInterface,
+    SecretStoreNoneImpl,
+    check_key,
+    load_desired,
+    reconcile,
 )
 from tadas.ops.traffic import (
     NO_ONE_SIGNED_IN,
@@ -307,7 +321,9 @@ async def read_provisioner_token(env: Environment, profile: str | None = None) -
         SessionLike,
         aioboto3.Session(profile_name=chosen, region_name=env.aws_region),
     )
-    async with session.client("secretsmanager") as secrets:
+    async with session.client(
+        "secretsmanager", config=client_config(timedelta(seconds=10))
+    ) as secrets:
         answer = await secrets.get_secret_value(SecretId=f"tadas-{env.name}-provisioner-token")
     token = str(answer.get("SecretString") or "")
     if not token:
@@ -379,6 +395,43 @@ async def token_command(
     return OK
 
 
+async def stripe_bootstrap_command(args: argparse.Namespace) -> int:
+    """Makes the processor's account match the committed desired state. The
+    key comes from the process environment and is never printed; the account
+    is the one the definition names for the environment."""
+    root = repository_root()
+    if root is None:
+        raise ValueError("run this from the tadas checkout; it reads deployment/stripe/")
+    key = os.environ.get(KEY_VARIABLE, "").strip()
+    if not key:
+        print(f"set {KEY_VARIABLE} to the account's key for --env {args.env}", file=sys.stderr)
+        return USAGE
+    check_key(args.env, key)
+    desired = load_desired(root)
+    store: SecretStoreInterface = SecretStoreNoneImpl()
+    if args.secret_store == "aws":
+        if args.env not in CLOUD_ENVIRONMENTS:
+            raise ValueError(f"--env {args.env} has no secret store; it has no webhook endpoint")
+        layout = json.loads((root / "deployment" / "cloud" / "environments.json").read_text())
+        store = SecretStoreAwsImpl(
+            sso_profile_of(args.env), str(layout["region"]), timedelta(seconds=10)
+        )
+    catalog = CatalogStripeImpl(
+        api_key=key, account_id=desired.accounts[args.env], timeout=timedelta(seconds=20)
+    )
+    await catalog.start()
+    try:
+        run = await reconcile(desired, args.env, catalog, store, dry_run=args.dry_run)
+    finally:
+        await catalog.close()
+    print(
+        f"{catalog.describe()}, secrets: {store.describe()}{' (dry run)' if args.dry_run else ''}"
+    )
+    for line in run.lines():
+        print(line)
+    return OK
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="tadas-ops")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -437,6 +490,22 @@ def build_parser() -> argparse.ArgumentParser:
         help="provisioner only: the person's own AWS profile that reads the secret; "
         "the environment's sign-in profile when absent (production's needs tadas-prod-power)",
     )
+
+    p_stripe = sub.add_parser(
+        "stripe-bootstrap",
+        help="make the payment processor's account match deployment/stripe/desired-state.json",
+    )
+    p_stripe.add_argument("--env", required=True, choices=list(ENVIRONMENTS))
+    p_stripe.add_argument(
+        "--dry-run", action="store_true", help="say what would change; write nothing"
+    )
+    p_stripe.add_argument(
+        "--secret-store",
+        choices=["aws", "none"],
+        default="aws",
+        help="where the webhook endpoint's signing secret goes: the environment's Secrets "
+        "Manager under its sign-in profile, or nowhere",
+    )
     return parser
 
 
@@ -451,6 +520,8 @@ def main(argv: list[str] | None = None) -> int:
             return asyncio.run(signals_command(args))
         if args.command == "token":
             return asyncio.run(token_command(args))
+        if args.command == "stripe-bootstrap":
+            return asyncio.run(stripe_bootstrap_command(args))
         return asyncio.run(size_command(args))
     except (ValueError, FileNotFoundError) as error:
         print(f"tadas-ops: {error}", file=sys.stderr)
