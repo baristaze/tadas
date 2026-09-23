@@ -1,5 +1,6 @@
 // The current org in the chrome. With more than one place it opens the list
 // and switches; with one it is a label.
+import { Pill } from "../design/kit";
 import { tokens } from "../design/tokens";
 import { useOrgChipVm } from "./useOrgChipVm";
 
@@ -21,6 +22,11 @@ export function OrgChip() {
           {vm.orgName.trim().charAt(0).toUpperCase()}
         </span>
         {vm.orgName}
+        {vm.plan ? (
+          <Pill tone={vm.plan === "Free" ? "plain" : "accent"} title={`This org is on ${vm.plan}`}>
+            {vm.plan}
+          </Pill>
+        ) : null}
         {vm.canSwitch ? (
           <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" style={{ color: tokens.color.muted }}>
             <path d="M3 4.5l3 3 3-3" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />

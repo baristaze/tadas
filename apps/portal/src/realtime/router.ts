@@ -16,8 +16,10 @@ export interface RouteOutcome {
 // list of places the org chip reads; a user is read twice, as a row of
 // the member list and as the name and the email in `me`, so a user push
 // refreshes both; a revoked session is nobody's query, and this session's own
-// revocation arrives as a 4401 close, not as a push.
+// revocation arrives as a 4401 close, not as a push. A billing account is
+// read as the org's plan, with the seats and the active tasks beside it.
 const CARRIED_BY: Readonly<Record<string, readonly QueryKey[]>> = {
+  account: [keys.billing],
   membership: [keys.me, keys.myMemberships.all],
   user: [keys.users.all, keys.me],
   session: [],

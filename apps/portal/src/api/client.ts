@@ -13,8 +13,16 @@ import {
   retryWaitMs,
 } from "./retry";
 
+/** What a `plan_limit_reached` refusal carries: the bound it met and the plan that lifts it. */
+export interface PlanLimit {
+  lever: string;
+  plan: string;
+  limit: number | null;
+  suggested_plan: string | null;
+}
+
 export interface ErrorEnvelope {
-  error: { code: string; message: string; request_id: string };
+  error: { code: string; message: string; request_id: string; plan_limit?: PlanLimit | null };
 }
 
 export class ApiError extends Error {
@@ -23,6 +31,8 @@ export class ApiError extends Error {
   readonly requestId: string | null;
   /** How long the server asked a retry to wait (its `Retry-After`), when it did. */
   readonly retryAfterMs: number | undefined;
+  /** The bound a `plan_limit_reached` refusal met, when the envelope carried one. */
+  readonly planLimit: PlanLimit | null;
 
   constructor(
     status: number,
@@ -30,6 +40,7 @@ export class ApiError extends Error {
     message: string,
     requestId: string | null,
     retryAfterMs?: number,
+    planLimit: PlanLimit | null = null,
   ) {
     super(message);
     this.name = "ApiError";
@@ -37,6 +48,7 @@ export class ApiError extends Error {
     this.code = code;
     this.requestId = requestId;
     this.retryAfterMs = retryAfterMs;
+    this.planLimit = planLimit;
   }
 }
 
@@ -206,6 +218,7 @@ export function createClient(options: ClientOptions): ApiClient {
           parsed.error.message,
           parsed.error.request_id ?? requestId,
           retryAfterMs,
+          parsed.error.plan_limit ?? null,
         );
       }
       throw new ApiError(response.status, "unknown_error", statusMessage(response), requestId, retryAfterMs);

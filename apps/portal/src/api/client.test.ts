@@ -112,6 +112,25 @@ describe("transport client deadline", () => {
     const failure = await client({ fetchImpl }).get("/v1/tasks/x").catch((error: unknown) => error);
     expect(failure).toBeInstanceOf(ApiError);
     expect(failure).toMatchObject({ status: 404, code: "not_found", requestId: "req_1" });
+    expect((failure as ApiError).planLimit).toBeNull();
+  });
+
+  it("carries the bound a plan's refusal met, and nothing else changes", async () => {
+    const planLimit = { lever: "active_tasks", plan: "free", limit: 10, suggested_plan: "pro" };
+    const fetchImpl: typeof fetch = () =>
+      Promise.resolve(
+        jsonResponse(402, {
+          error: {
+            code: "plan_limit_reached",
+            message: "the free plan allows 10 active tasks",
+            request_id: "req_2",
+            plan_limit: planLimit,
+          },
+        }),
+      );
+    const failure = await client({ fetchImpl }).post("/v1/tasks", { title: "x" }).catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(ApiError);
+    expect(failure).toMatchObject({ status: 402, code: "plan_limit_reached", requestId: "req_2", planLimit });
   });
 });
 

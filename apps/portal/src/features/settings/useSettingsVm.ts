@@ -3,6 +3,7 @@ import { errorMessage } from "../../app/errorMessage";
 import { forgetSession } from "../../app/forgetSession";
 import { useApiKeys, useCreateApiKey, useLogout, useMe, useRevokeApiKey, useUsers } from "../../queries/tenancy";
 import { useNoticesStore } from "../../store/notices";
+import { isPlanLimit } from "../../store/upgrade";
 import { apiKeyRows, canManageKeys, memberRows, signedInAs } from "./settingsModel";
 import { signOut } from "./signOut";
 
@@ -38,7 +39,8 @@ export function useSettingsVm() {
       }
       setNewKeyName("");
     } catch (caught) {
-      notify(errorMessage(caught, "The key was not created."));
+      // A plan without keys is answered by the upgrade dialog.
+      if (!isPlanLimit(caught)) notify(errorMessage(caught, "The key was not created."));
     }
   };
 

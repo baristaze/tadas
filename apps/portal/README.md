@@ -30,7 +30,10 @@ Zustand, one realtime channel.
 - Client state lives in Zustand (`src/store/`): the session token, the
   connection status, the transient notices a failed write leaves
   (`notices.ts`, rendered by `src/app/Notices.tsx` over the kit's
-  `Banner`; a view-model never swallows a mutation error), and the
+  `Banner`; a view-model never swallows a mutation error), the upgrade
+  dialog a write refused for a plan's bound opens instead of a notice
+  (`upgrade.ts`, opened from the query cache's one mutation error hook and
+  rendered once by `src/features/billing/UpgradeDialog.tsx`), and the
   preferences kept across visits (`preferences.ts`, the task scope and
   the theme, persisted in local storage). The token is kept in memory and in the
   tab's session storage, so a reload survives and a closed tab forgets;

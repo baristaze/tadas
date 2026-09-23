@@ -1,12 +1,14 @@
 import { Banner, Button, Card, LinkButton, Muted, Page, Table, TextField } from "../../design/kit";
 import { AppNav } from "../../app/AppNav";
 import { tokens } from "../../design/tokens";
+import { SettingsTabs } from "./SettingsTabs";
 import { useSettingsVm } from "./useSettingsVm";
 
 export function SettingsPage() {
   const vm = useSettingsVm();
   return (
     <Page title="Settings" nav={<AppNav />}>
+      <SettingsTabs />
       <div style={{ display: "flex", gap: 16, alignItems: "center" }}>
         {vm.signedInAs ? <Muted>{vm.signedInAs}</Muted> : null}
         <Button tone="plain" onClick={vm.signOut} disabled={vm.signingOut}>

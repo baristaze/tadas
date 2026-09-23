@@ -560,3 +560,70 @@ li:hover .tadas-handle,
   flex: 1 1 auto;
   min-width: 0;
 }
+
+/* A dialog over the page: a dimmed backdrop and a card of its own. */
+.tadas-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgb(0 0 0 / 0.35);
+}
+
+.tadas-dialog {
+  width: min(560px, 100%);
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+  background: var(--tadas-surface);
+  border: 1px solid var(--tadas-border);
+  border-radius: 12px;
+  box-shadow: var(--tadas-shadow-lg);
+  padding: clamp(16px, 4vw, 24px);
+  animation: tadas-pop-in 140ms ease-out both;
+}
+
+/* The plans, one row each: the name, the price, the bounds, the choice. */
+.tadas-plans {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.tadas-plan {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid var(--tadas-border);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+
+.tadas-plan[data-suggested="true"] {
+  border-color: var(--tadas-accent);
+  background: var(--tadas-accent-soft);
+}
+
+.tadas-plan-bounds {
+  color: var(--tadas-muted);
+  font-size: 13px;
+}
+
+/* Label and value pairs on the billing page. */
+.tadas-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 6px 16px;
+  margin: 0;
+}
+
+.tadas-facts dt {
+  color: var(--tadas-muted);
+}
+
+.tadas-facts dd {
+  margin: 0;
+}

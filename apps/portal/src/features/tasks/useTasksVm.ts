@@ -13,6 +13,7 @@ import {
 import { useMe, useUsers } from "../../queries/tenancy";
 import { usePreferencesStore } from "../../store/preferences";
 import { errorMessage } from "../../app/errorMessage";
+import { isPlanLimit } from "../../store/upgrade";
 import { isStale, reorder, STALE_MESSAGE } from "./reorder";
 import {
   canAdd,
@@ -84,7 +85,9 @@ export function useTasksVm() {
   // on an observer drops the first call's callbacks, so a refusal would go
   // unsaid and the row the server wrote unread.
   const fail = (cause: unknown) => {
-    setError(isStale(cause) ? STALE_MESSAGE : errorMessage(cause, "Something went wrong; the list was reloaded."));
+    // A plan's bound is answered by the upgrade dialog, not by a line here.
+    if (isPlanLimit(cause)) setError(null);
+    else setError(isStale(cause) ? STALE_MESSAGE : errorMessage(cause, "Something went wrong; the list was reloaded."));
     refresh();
   };
   const later = (run: () => void) => {
