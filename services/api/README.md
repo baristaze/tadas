@@ -20,8 +20,12 @@ the database, the cache, and the topic bus.
   keys, creating one, revoking one; a ticket for the live channel.
   (`/v1/sessions`, `/v1/api-keys`, `/v1/realtime/tickets`)
 - **Tasks.** Open and done lists a page at a time, one task, create,
-  edit, move, delete. (`/v1/tasks`, `/v1/tasks/{task_id}`,
-  `/v1/tasks/{task_id}/move`)
+  edit, move, delete. A task's due time (`remind_at`, with its offset)
+  is set on the create and set, moved, or cleared (`null`) on the edit.
+  (`/v1/tasks`, `/v1/tasks/{task_id}`, `/v1/tasks/{task_id}/move`)
+- **Slack.** The org's connected channel, any member; a one-time link
+  code, shown once, and the disconnect, an owner or an admin.
+  (`/v1/slack/connection`, `/v1/slack/link-codes`)
 - **Events.** The org's diary after a sequence number. (`/v1/events`)
 - **Realtime.** The live channel, a websocket opened with a
   single-use ticket. (`/v1/realtime`)
