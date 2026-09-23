@@ -20,7 +20,8 @@ scrolls sideways.
 
 `make demo-gif` runs the second line. Other stacks: --api and --portal (the
 portal's build must point at the same API). Chrome: CHROME, or the default
-install path. --still writes a PNG per window instead, to check the layout.
+install path. --theme picks light (the default) or dark. --still writes a PNG
+per window instead, to check the layout.
 """
 
 import argparse
@@ -49,7 +50,7 @@ SCALE = 2  # render at twice the size, then downscale, for crisp text
 FPS = 12
 GAP = 12
 DEBUG_PORT = 49222
-ACCENTS = [(31, 157, 85), (232, 133, 12), (43, 91, 215), (180, 35, 24), (255, 255, 255)]
+ACCENTS = [(26, 143, 77), (201, 106, 5), (82, 80, 214), (197, 47, 42), (255, 255, 255)]
 
 
 def chrome_path() -> str:
@@ -303,7 +304,14 @@ class Window:
 
 
 async def open_window(
-    cdp: Cdp, api: Api, portal: str, name: str, email: str, password: str, zoom: float
+    cdp: Cdp,
+    api: Api,
+    portal: str,
+    name: str,
+    email: str,
+    password: str,
+    zoom: float,
+    theme: str,
 ) -> Window:
     context = (await cdp.send("Target.createBrowserContext"))["browserContextId"]
     target = await cdp.send(
@@ -323,6 +331,10 @@ async def open_window(
         "mobile": False,
     }
     await cdp.send("Emulation.setDeviceMetricsOverride", metrics, window.session)
+    # The portal follows the system's light or dark mode; the recording names
+    # one, so the GIF looks the same on every machine that records it.
+    scheme = {"features": [{"name": "prefers-color-scheme", "value": theme}]}
+    await cdp.send("Emulation.setEmulatedMedia", scheme, window.session)
     await cdp.send("Page.navigate", {"url": f"{portal}/sign-in"}, window.session)
     await window.wait_for("document.readyState === 'complete'")
     stored = json.dumps(json.dumps(await api.session(email, password)))
@@ -455,7 +467,9 @@ async def record(args: argparse.Namespace) -> None:
             cdp = Cdp(ws)
             pump = asyncio.create_task(cdp.pump())
             windows = [
-                await open_window(cdp, api, args.portal, name, email, args.password, args.zoom)
+                await open_window(
+                    cdp, api, args.portal, name, email, args.password, args.zoom, args.theme
+                )
                 for name, email in (("bob", args.member), ("owner", args.owner))
             ]
             bob, owner = windows
@@ -524,6 +538,7 @@ def main() -> None:
     parser.add_argument("--member", default="bob@example.test")
     parser.add_argument("--password", default="tadas-local")
     parser.add_argument("--zoom", type=float, default=0.9, help="browser zoom, e.g. 0.9 for 90%%")
+    parser.add_argument("--theme", choices=["light", "dark"], default="light")
     parser.add_argument("--still", action="store_true", help="write a PNG per window instead")
     asyncio.run(record(parser.parse_args()))
 

@@ -1,0 +1,568 @@
+/* The kit's look, and the states inline styles cannot say: hover, focus,
+   pressed, and the row being dragged. Values come from theme.css. */
+
+/* The page. */
+.tadas-app {
+  min-height: 100vh;
+  background: var(--tadas-bg);
+  color: var(--tadas-text);
+  font-size: 14px;
+}
+
+.tadas-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  padding: 10px clamp(16px, 4vw, 40px);
+  border-bottom: 1px solid var(--tadas-border);
+}
+
+/* The blur sits on a layer of its own: a backdrop-filter on the bar itself
+   would pin the live dot, a fixed child, to the bar instead of the window. */
+.tadas-topbar::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: var(--tadas-topbar);
+  backdrop-filter: saturate(180%) blur(12px);
+  -webkit-backdrop-filter: saturate(180%) blur(12px);
+}
+
+.tadas-topbar-inner,
+.tadas-column {
+  max-width: 880px;
+  margin: 0 auto;
+}
+
+.tadas-page {
+  padding: 32px clamp(16px, 4vw, 40px) 64px;
+}
+
+.tadas-page[data-narrow] {
+  padding-top: 10vh;
+}
+
+.tadas-page[data-narrow] .tadas-column {
+  max-width: 400px;
+}
+
+.tadas-title {
+  font-size: 24px;
+  line-height: 32px;
+  font-weight: 650;
+  margin: 0 0 24px;
+}
+
+.tadas-page[data-narrow] .tadas-title {
+  text-align: center;
+  font-size: 22px;
+}
+
+.tadas-brand {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 24px;
+}
+
+/* A card. */
+.tadas-card {
+  background: var(--tadas-surface);
+  border: 1px solid var(--tadas-border);
+  border-radius: 12px;
+  box-shadow: var(--tadas-shadow-sm);
+  padding: clamp(16px, 4vw, 24px);
+}
+
+.tadas-card-title {
+  font-size: 15px;
+  line-height: 24px;
+  font-weight: 600;
+  margin: 0 0 12px;
+}
+
+/* A button. */
+.tadas-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 6px 14px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 550;
+  line-height: 20px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    box-shadow 120ms ease,
+    transform 80ms ease;
+}
+
+.tadas-button[data-wide] {
+  width: 100%;
+}
+
+.tadas-button[data-tone="accent"] {
+  background: var(--tadas-accent);
+  color: var(--tadas-accent-text);
+  box-shadow: var(--tadas-shadow-sm), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+}
+
+.tadas-button[data-tone="accent"]:not(:disabled):hover {
+  background: var(--tadas-accent-hover);
+}
+
+.tadas-button[data-tone="danger"] {
+  background: var(--tadas-danger);
+  color: #ffffff;
+  box-shadow: var(--tadas-shadow-sm);
+}
+
+.tadas-button[data-tone="danger"]:not(:disabled):hover {
+  background: var(--tadas-danger-hover);
+}
+
+.tadas-button[data-tone="plain"] {
+  background: var(--tadas-surface);
+  color: var(--tadas-text);
+  border-color: var(--tadas-border-strong);
+  box-shadow: var(--tadas-shadow-sm);
+}
+
+.tadas-button[data-tone="plain"]:not(:disabled):hover {
+  background: var(--tadas-surface-subtle);
+}
+
+.tadas-button:not(:disabled):active {
+  transform: translateY(0.5px);
+}
+
+.tadas-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+/* A text link that acts. */
+.tadas-link {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 550;
+  color: var(--tadas-link);
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.tadas-link:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* A field and its label. */
+.tadas-label {
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.tadas-label > span {
+  color: var(--tadas-text);
+  font-weight: 550;
+}
+
+.tadas-field {
+  font: inherit;
+  font-size: 14px;
+  line-height: 20px;
+  min-height: 36px;
+  padding: 7px 10px;
+  border: 1px solid var(--tadas-border-strong);
+  border-radius: 8px;
+  box-shadow: var(--tadas-shadow-sm);
+  width: 100%;
+  min-width: 0;
+}
+
+textarea.tadas-field {
+  resize: vertical;
+}
+
+select.tadas-field {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 32px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M3 4.5l3 3 3-3' fill='none' stroke='%238b8b96' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 12px 12px;
+  cursor: pointer;
+}
+
+/* A notice. */
+.tadas-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  background: var(--tadas-warning-bg);
+  color: var(--tadas-warning-text);
+  border: 1px solid var(--tadas-warning-border);
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.tadas-banner-icon {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.tadas-banner-body {
+  min-width: 0;
+}
+
+.tadas-banner .tadas-link {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* The notices a failed write leaves float over the page, newest last. */
+.tadas-toasts {
+  position: fixed;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 40;
+  display: grid;
+  gap: 8px;
+  width: min(480px, calc(100vw - 32px));
+}
+
+.tadas-toasts .tadas-banner {
+  box-shadow: var(--tadas-shadow-lg);
+  animation: tadas-fade-in 200ms ease-out both;
+}
+
+.tadas-error {
+  color: var(--tadas-danger-text);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+/* A table. */
+.tadas-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.tadas-table th {
+  text-align: left;
+  padding: 8px;
+  border-bottom: 1px solid var(--tadas-border);
+  color: var(--tadas-muted);
+  font-size: 12px;
+  font-weight: 550;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.tadas-table td {
+  padding: 10px 8px;
+  border-bottom: 1px solid var(--tadas-border);
+  vertical-align: middle;
+}
+
+.tadas-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.tadas-table tbody tr:hover td {
+  background: var(--tadas-surface-subtle);
+}
+
+/* A pill. */
+.tadas-pill {
+  display: inline-block;
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+  border: 1px solid var(--tadas-border);
+  background: var(--tadas-surface-subtle);
+  color: var(--tadas-muted);
+}
+
+.tadas-pill[data-tone="accent"] {
+  background: var(--tadas-accent-soft);
+  border-color: transparent;
+  color: var(--tadas-link);
+}
+
+/* A due time that has passed, or whose reminder went out. */
+.tadas-pill[data-tone="danger"] {
+  border-color: var(--tadas-danger);
+  color: var(--tadas-danger-text);
+}
+
+/* The segmented control: a track with the chosen segment raised. */
+.tadas-segmented {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  background: var(--tadas-surface-subtle);
+  border: 1px solid var(--tadas-border);
+  border-radius: 10px;
+}
+
+.tadas-segment {
+  font: inherit;
+  font-size: 13px;
+  font-weight: 550;
+  line-height: 20px;
+  padding: 4px 14px;
+  border: none;
+  border-radius: 7px;
+  cursor: pointer;
+  background: transparent;
+  color: var(--tadas-muted);
+  transition:
+    background-color 120ms ease,
+    color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.tadas-segment:hover {
+  color: var(--tadas-text);
+}
+
+.tadas-segment[aria-checked="true"] {
+  background: var(--tadas-surface);
+  color: var(--tadas-text);
+  box-shadow: var(--tadas-shadow-md);
+}
+
+/* A square button with an icon, labelled for a screen reader. */
+.tadas-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--tadas-muted);
+  cursor: pointer;
+  transition:
+    background-color 120ms ease,
+    color 120ms ease;
+}
+
+.tadas-icon-button:hover {
+  background: var(--tadas-surface-subtle);
+  color: var(--tadas-text);
+}
+
+/* The chrome: the destinations, the org chip and its menu. */
+.tadas-nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.tadas-nav-link {
+  flex-shrink: 0;
+  padding: 5px 10px;
+  border-radius: 7px;
+  color: var(--tadas-muted);
+  font-weight: 550;
+  text-decoration: none;
+  transition:
+    background-color 120ms ease,
+    color 120ms ease;
+}
+
+.tadas-nav-link:hover {
+  color: var(--tadas-text);
+  background: var(--tadas-surface-subtle);
+}
+
+.tadas-nav-link.active {
+  color: var(--tadas-text);
+  background: var(--tadas-surface-subtle);
+}
+
+.tadas-nav-email {
+  margin-left: auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--tadas-muted);
+  font-size: 13px;
+  padding: 0 8px;
+}
+
+/* Half a laptop screen has no room for the address; the settings page shows it. */
+@media (max-width: 600px) {
+  .tadas-nav-email {
+    visibility: hidden;
+    padding: 0;
+    flex: 1 1 0;
+  }
+}
+
+.tadas-org-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  font: inherit;
+  font-weight: 600;
+  color: var(--tadas-text);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 4px 8px 4px 4px;
+  margin-right: 8px;
+  transition: background-color 120ms ease;
+}
+
+.tadas-org-chip:not(:disabled):hover,
+.tadas-org-chip[aria-expanded="true"] {
+  background: var(--tadas-surface-subtle);
+}
+
+.tadas-org-chip:disabled {
+  color: var(--tadas-text);
+}
+
+.tadas-org-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  background: var(--tadas-accent);
+  color: var(--tadas-accent-text);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.tadas-menu {
+  background: var(--tadas-surface);
+  border: 1px solid var(--tadas-border);
+  border-radius: 10px;
+  box-shadow: var(--tadas-shadow-lg);
+  padding: 4px;
+  animation: tadas-pop-in 140ms ease-out both;
+}
+
+.tadas-menu-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+  font: inherit;
+  text-align: left;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  padding: 8px 10px;
+  cursor: pointer;
+  color: var(--tadas-text);
+}
+
+.tadas-menu-item:hover,
+.tadas-menu-item:focus-visible {
+  background: var(--tadas-surface-subtle);
+}
+
+/* The task rows. */
+.tadas-handle {
+  opacity: 0.55;
+  transition: opacity 120ms ease;
+}
+
+li:hover .tadas-handle,
+.tadas-handle:focus-visible {
+  opacity: 1;
+}
+
+.tadas-handle:hover {
+  color: var(--tadas-text);
+}
+
+.tadas-dragging {
+  opacity: 0.4;
+}
+
+/* The live dot: a soft halo while it is live, a slow pulse while it waits. */
+.tadas-dot {
+  box-shadow: 0 0 0 2px var(--tadas-surface);
+  transition: background-color 200ms ease;
+}
+
+.tadas-dot[data-tone="live"] {
+  box-shadow:
+    0 0 0 2px var(--tadas-surface),
+    0 0 0 5px color-mix(in srgb, var(--tadas-live) 22%, transparent);
+}
+
+.tadas-dot[data-tone="pending"] {
+  animation: tadas-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes tadas-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@keyframes tadas-pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tadas-dot[data-tone="pending"],
+  .tadas-menu,
+  .tadas-toasts .tadas-banner {
+    animation: none;
+  }
+}
+
+/* A wide button's content spans it, so a row inside can push to both edges. */
+.tadas-button[data-wide] > * {
+  flex: 1 1 auto;
+  min-width: 0;
+}
