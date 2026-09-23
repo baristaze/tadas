@@ -2,6 +2,7 @@ import { Banner, Button, Card, ErrorText, LinkButton, Muted, Page, Select, Table
 import { AppNav } from "../../app/AppNav";
 import { tokens } from "../../design/tokens";
 import { SettingsTabs } from "./SettingsTabs";
+import { StorageCard } from "./StorageCard";
 import { useInvitationsVm } from "./useInvitationsVm";
 import { useSettingsVm, type SettingsVm } from "./useSettingsVm";
 
@@ -46,6 +47,7 @@ export function SettingsPage() {
         ) : null}
         {invites.error ? <ErrorText>{invites.error}</ErrorText> : null}
       </Card>
+      <StorageCard />
       {invites.mayManage ? (
         <Card title="Pending invitations">
           {invites.loading ? (

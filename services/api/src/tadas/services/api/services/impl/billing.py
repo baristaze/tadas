@@ -8,6 +8,7 @@ from tadas.om.billing.rules import PLAN_LIMITS, PLAN_PRICES, monthly_price_cents
 from tadas.om.billing.types.billing import Billing
 from tadas.om.billing.types.plan import Plan
 from tadas.om.exceptions import ValidationFailed
+from tadas.om.media import MediaManagerInterface
 from tadas.om.opcontext import OpContext, Permission
 from tadas.om.tasks import TasksManagerInterface
 from tadas.om.tenancy import TenancyManagerInterface
@@ -57,19 +58,22 @@ def with_query(url: str, pair: str) -> str:
 
 
 class BillingServiceImpl(BillingServiceInterface):
-    """Composes the billing manager with the two counts a plan reads, the
-    members and the active tasks, each from the namespace that owns it."""
+    """Composes the billing manager with the counts a plan reads, the
+    members, the active tasks, and the files kept, each from the namespace
+    that owns it."""
 
     def __init__(
         self,
         billing: BillingManagerInterface,
         tenancy: TenancyManagerInterface,
         tasks: TasksManagerInterface,
+        media: MediaManagerInterface,
         portal_origins: list[str],
     ) -> None:
         self._billing = billing
         self._tenancy = tenancy
         self._tasks = tasks
+        self._media = media
         self._origins = portal_origins
 
     async def get_billing(self, ctx: OpContext) -> BillingView:
@@ -102,6 +106,7 @@ class BillingServiceImpl(BillingServiceInterface):
     async def _view(self, ctx: OpContext, billing: Billing) -> BillingView:
         account = billing.account
         seats = await self._tenancy.count_members(ctx)
+        usage = await self._media.get_usage(ctx)
         paid = billing.paid_plan
         return BillingView(
             plan=billing.plan,
@@ -115,6 +120,7 @@ class BillingServiceImpl(BillingServiceInterface):
             plan_after=billing.plan_after,
             seats=seats,
             active_tasks=await self._tasks.count_active_tasks(ctx),
+            storage_bytes=usage.total_size_bytes + usage.pending_size_bytes,
             monthly_cents=0 if paid is None else monthly_price_cents(paid, seats),
             can_manage=ctx.has(Permission.MANAGE_BILLING),
             plans=PLANS,

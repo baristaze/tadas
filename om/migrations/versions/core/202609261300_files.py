@@ -1,5 +1,4 @@
-"""The billing swimlane: an org's billing account and the processor's
-deliveries already applied, each under the tenant fence.
+"""The media swimlane's file rows, with their tenant fence.
 
 Revision ID: 202609261300
 Revises: 202609261200
@@ -15,8 +14,8 @@ depends_on = None
 
 
 def upgrade() -> None:
-    run_sql(DatabaseRole.CORE, "202609261300_billing.up.sql")
+    run_sql(DatabaseRole.CORE, "202609261300_files.up.sql")
 
 
 def downgrade() -> None:
-    run_sql(DatabaseRole.CORE, "202609261300_billing.down.sql")
+    run_sql(DatabaseRole.CORE, "202609261300_files.down.sql")

@@ -154,8 +154,8 @@ class TaskStorageContract:
             await seed(storage, org_a, task)
         await bump(storage, org_a, done, status=TaskStatus.DONE)
         await bump(storage, org_a, gone, deleted_at=utcnow(), deleted_by=new_id())
-        assert await storage.count_open_tasks(org_a) == 1
-        assert await storage.count_open_tasks(org_b) == 0
+        assert await storage.count_open_tasks(org_a, team()) == 1
+        assert await storage.count_open_tasks(org_b, team()) == 0
 
     async def test_write_refuses_another_tenant(self, storage: TasksStorageInterface) -> None:
         org_a, org_b = new_id(), new_id()
@@ -187,6 +187,28 @@ class TaskStorageContract:
         assert await storage.read_done_tasks(org_b, team(), None, limit=10) == []
         assert await storage.read_done_tasks(org_b, mine(author), None, limit=10) == []
         assert len(await storage.read_done_tasks(org_a, team(), None, limit=10)) == 3
+
+    async def test_the_open_count_is_the_open_list_of_one_tenant(
+        self, storage: TasksStorageInterface
+    ) -> None:
+        """The open count counts what the open list shows: not a done task, not
+        a deleted one, not another tenant's, and under `mine` not a task that
+        is someone else's."""
+        org_a, org_b = new_id(), new_id()
+        author = new_id()
+        for i in range(3):
+            await seed(storage, org_a, make_task(f"open{i}", created_by=author))
+        await seed(storage, org_a, make_task("theirs"))
+        await seed(storage, org_a, make_task("done", status=TaskStatus.DONE))
+        gone = make_task("deleted")
+        await seed(storage, org_a, gone)
+        await storage.update_task(
+            org_a, gone.model_copy(update={"deleted_at": utcnow(), "version": 2}), 1, ()
+        )
+        assert await storage.count_open_tasks(org_a, team()) == 4
+        assert await storage.count_open_tasks(org_a, mine(author)) == 3
+        assert await storage.count_open_tasks(org_b, team()) == 0
+        assert await storage.count_open_tasks(org_b, mine(author)) == 0
 
     async def test_the_created_count_spans_every_tenant_and_every_state(
         self, storage: TasksStorageInterface

@@ -41,6 +41,8 @@ LOCAL_DEFAULT_SERVES_THE_CLOUD = {
     "database_statement_timeout_seconds_admin": "one pool for every role until a role moves out",
     "buckets_root": "the local buckets backend only",
     "s3_endpoint_url": "the hosted endpoint; only MinIO needs one",
+    "s3_presign_endpoint_url": "the hosted endpoint is the browser's too; only MinIO needs one",
+    "namespaces": "one process serves every namespace until a split names a subset",
     "s3_access_key": "the task role signs; only MinIO needs a key",
     "s3_secret_key": "the task role signs; only MinIO needs a key",
     "sqs_endpoint_url": "the hosted endpoint; only ElasticMQ needs one",
@@ -138,3 +140,33 @@ def test_every_setting_the_cloud_needs_is_wired(environment: Path) -> None:
     fields = ApiSettings.model_fields
     stale = sorted(field for field in LOCAL_DEFAULT_SERVES_THE_CLOUD if field not in fields)
     assert not stale, f"exceptions naming no field: {stale}"
+
+
+def module_blocks(terraform: str) -> dict[str, str]:
+    """Each `module "<name>" { ... }` block of a Terraform file, by name, read
+    by matching braces."""
+    blocks: dict[str, str] = {}
+    for match in re.finditer(r'^module "([a-z_]+)" \{', terraform, flags=re.MULTILINE):
+        depth, end = 0, match.end() - 1
+        for end in range(match.end() - 1, len(terraform)):
+            depth += {"{": 1, "}": -1}.get(terraform[end], 0)
+            if depth == 0:
+                break
+        blocks[match.group(1)] = terraform[match.start() : end + 1]
+    return blocks
+
+
+def test_every_task_of_the_api_image_boots_the_api_sign_in_settings() -> None:
+    """The service and the one-off tasks that run the API's image (migrate,
+    grant) all boot `ApiSettings`, and a deployed environment refuses its
+    sign-in settings left at their local defaults. So each of them is given
+    the one shared set, not the service alone: a task without it fails at
+    boot, and a migrate task that fails stops the release."""
+    environment = repository_root() / "deployment" / "terraform" / "modules" / "environment"
+    blocks = module_blocks((environment / "main.tf").read_text())
+    api_image = {name: block for name, block in blocks.items() if "var.api_image" in block}
+    assert {"api", "migrate", "grant"} <= set(api_image)
+    missing = sorted(
+        name for name, block in api_image.items() if "local.api_sign_in_environment" not in block
+    )
+    assert not missing, f"tasks of the API image without the sign-in settings: {missing}"

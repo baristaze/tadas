@@ -30,6 +30,12 @@ record of what Tadas posted there. This is one of the kinds of thing
   so and posting stops until someone links a channel again.
 - **Add a task from Slack.** `/tadas add <title>` in a connected
   channel creates a task in the org, and does nothing else.
+- **List the tasks in Slack.** `/tadas list`, or `/tadas` alone, in a
+  connected channel shows the person who typed it, and nobody else,
+  the org's first ten open tasks in the list's own order, each with its
+  due time when it has one. When there are more, it says how many and
+  links to the task list in Tadas. It reads the list and changes
+  nothing.
 - **Sweep.** Ended connections, spent codes, and the record of posts
   are erased after the retention, thirty days by default.
 
@@ -41,7 +47,10 @@ record of what Tadas posted there. This is one of the kinds of thing
   people typing the same code link one channel.
 - **A task added from Slack is the linker's.** It is created on the
   org's behalf and attributed to the member whose code linked the
-  channel. To change who that is, link the channel again.
+  channel. To change who that is, link the channel again. The list is
+  read the same way, and shows the whole team's open tasks.
+- **A list from Slack is short.** It reads one page of ten and, only
+  when more follow, a count; never the whole list.
 - **Only an owner or an admin connects or disconnects.** Every member
   sees the connection.
 - **Nothing a person typed is sent to Slack unescaped.** A title that

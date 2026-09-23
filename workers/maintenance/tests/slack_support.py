@@ -12,6 +12,7 @@ from tadas.infra.impl.local import InfraLocalImpl
 from tadas.integrations.identity.absent import IdentityProviderAbsentImpl
 from tadas.integrations.slack.twin import SlackTwinImpl
 from tadas.om.base import new_id, utcnow
+from tadas.om.billing.types.plan import Plan
 from tadas.om.opcontext import AppContext, AppType, OpContext, Role
 from tadas.om.storage.impl.memory import StorageMemoryImpl
 from tadas.om.tasks.types.task import Task
@@ -25,6 +26,7 @@ from tadas.workers.maintenance.slack_inbound import (
 )
 
 TEAM = "TQSHA9YBT"
+PORTAL = "https://app.tadas.test"
 LEASE = timedelta(seconds=30)
 
 
@@ -39,6 +41,12 @@ async def owner_of(container: WorkerContainer, slug: str) -> OpContext:
         request(), slug.title(), slug, f"owner@{slug}.test", "Owner"
     )
     return ctx
+
+
+async def on_team(container: WorkerContainer, owner: OpContext) -> None:
+    """Puts the org of a fresh owner on Team, with the seed's grant: a test
+    of a list longer than Free's ten active tasks is about the list."""
+    await container.managers.billing.grant_seeded_plan(owner, Plan.TEAM)
 
 
 async def member_of(container: WorkerContainer, slug: str, email: str) -> OpContext:
@@ -121,6 +129,7 @@ def inbound(container: WorkerContainer, twin: SlackTwinImpl) -> SlackInboundHand
         container.managers.tasks,
         twin,
         AppContext(type=AppType.SLACK, version="slack@test"),
+        PORTAL,
     )
 
 

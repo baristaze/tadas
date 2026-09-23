@@ -1,6 +1,8 @@
 """Task routes: the open and done lists, get, create, a partial update, move,
-and delete. Each function is one call into the tasks service; the creating
-one runs under the idempotency record."""
+delete, and a task's attachments. Each function is one call into the tasks
+service; the creating ones run under the idempotency record. An attachment's
+bytes, its confirm, and its download are the media routes', by the file's
+id."""
 
 from uuid import UUID
 
@@ -12,6 +14,7 @@ from tadas.services.api.gateway.idempotency import Idem
 from tadas.services.api.gateway.precondition import IfMatch
 from tadas.services.api.gateway.resolve import TasksService
 from tadas.services.api.types.common import LIMIT_DEFAULT
+from tadas.services.api.types.media import AddFileRequest, FilePageView, FileView
 from tadas.services.api.types.tasks import (
     AddTaskRequest,
     MoveTaskRequest,
@@ -64,3 +67,30 @@ async def delete_task(ctx: Ctx, tasks: TasksService, task_id: UUID, if_match: If
     # A DELETE has no body, so the version rides the `If-Match` header, the
     # same precondition the update carries, refused with the same 412.
     return await tasks.delete_task(ctx, task_id, if_match)
+
+
+@router.get("/{task_id}/attachments", response_model=FilePageView)
+async def list_attachments(
+    ctx: Ctx,
+    tasks: TasksService,
+    task_id: UUID,
+    cursor: str | None = None,
+    limit: int = LIMIT_DEFAULT,
+) -> FilePageView:
+    return await tasks.get_attachments(ctx, task_id, cursor, limit)
+
+
+@router.post("/{task_id}/attachments", response_model=FileView, status_code=201)
+async def attach_file(
+    ctx: Ctx, tasks: TasksService, task_id: UUID, body: AddFileRequest, idem: Idem
+) -> Response:
+    return await idem.run(
+        201, lambda attempt: tasks.attach_file(ctx, task_id, body, attempt.target_id)
+    )
+
+
+@router.delete("/{task_id}/attachments/{file_id}", response_model=FileView)
+async def remove_attachment(
+    ctx: Ctx, tasks: TasksService, task_id: UUID, file_id: UUID
+) -> FileView:
+    return await tasks.remove_attachment(ctx, task_id, file_id)

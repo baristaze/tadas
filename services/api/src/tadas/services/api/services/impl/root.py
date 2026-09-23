@@ -8,6 +8,7 @@ from tadas.services.api.services import (
     AdminServiceInterface,
     BillingServiceInterface,
     EventsServiceInterface,
+    MediaServiceInterface,
     RealtimeServiceInterface,
     ServicesInterface,
     SlackServiceInterface,
@@ -18,6 +19,7 @@ from tadas.services.api.services import (
 from tadas.services.api.services.impl.admin import AdminServiceImpl
 from tadas.services.api.services.impl.billing import BillingServiceImpl, WebhooksServiceImpl
 from tadas.services.api.services.impl.events import EventsServiceImpl
+from tadas.services.api.services.impl.media import MediaServiceImpl
 from tadas.services.api.services.impl.realtime import RealtimeServiceImpl
 from tadas.services.api.services.impl.slack import SlackServiceImpl
 from tadas.services.api.services.impl.tasks import TasksServiceImpl
@@ -31,6 +33,7 @@ class ServicesImpl(ServicesInterface):
         tenancy: TenancyServiceInterface,
         admin: AdminServiceInterface,
         events: EventsServiceInterface,
+        media: MediaServiceInterface,
         realtime: RealtimeServiceInterface,
         billing: BillingServiceInterface,
         webhooks: WebhooksServiceInterface,
@@ -40,6 +43,7 @@ class ServicesImpl(ServicesInterface):
         self._tenancy = tenancy
         self._admin = admin
         self._events = events
+        self._media = media
         self._realtime = realtime
         self._billing = billing
         self._webhooks = webhooks
@@ -56,6 +60,9 @@ class ServicesImpl(ServicesInterface):
 
     def get_events_service(self) -> EventsServiceInterface:
         return self._events
+
+    def get_media_service(self) -> MediaServiceInterface:
+        return self._media
 
     def get_realtime_service(self) -> RealtimeServiceInterface:
         return self._realtime
@@ -83,9 +90,10 @@ def build_services(
         tenancy=TenancyServiceImpl(managers.tenancy),
         admin=AdminServiceImpl(managers.tenancy_operator, managers.billing_operator),
         events=EventsServiceImpl(managers.events),
+        media=MediaServiceImpl(managers.media),
         realtime=RealtimeServiceImpl(managers.tenancy, managers.events, infra.get_topics()),
         billing=BillingServiceImpl(
-            managers.billing, managers.tenancy, managers.tasks, portal_origins
+            managers.billing, managers.tenancy, managers.tasks, managers.media, portal_origins
         ),
         webhooks=WebhooksServiceImpl(payments, infra.get_queues()),
         slack=SlackServiceImpl(managers.slack),

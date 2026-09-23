@@ -1,5 +1,6 @@
 """The commands. Command mode does one thing and returns (`add`, `ls`, `edit`,
-`done`, `reopen`, `rm`, `mv`); `listen` stays and prints the team's changes
+`done`, `reopen`, `rm`, `mv`, and a task's files: `attach`, `attachments`,
+`download`, `detach`); `listen` stays and prints the team's changes
 as they happen. Every command is a thin call into the client; the API
 decides, the CLI shows. A verb that changes a task reads it first and sends
 the version it read, so a change that raced another is refused (exit 1) and
@@ -8,6 +9,7 @@ signed in, 4 the API is unreachable."""
 
 import asyncio
 import json
+import mimetypes
 import sys
 import time
 import webbrowser
@@ -24,10 +26,13 @@ import typer
 from tadas.apps.cli import config
 from tadas.apps.cli.listen import listen as run_listener
 from tadas.apps.cli.model import (
+    attachment_table,
     choose_org,
+    human_size,
     org_lines,
     parse_due,
     resolve,
+    resolve_file,
     short_id,
     task_table,
 )
@@ -571,6 +576,91 @@ def mv(
         task = await _task(client, ref)
         anchor = None if top else (await _task(client, after or "")).id
         _show(await client.move_task(task.id, anchor, task.version), "moved", as_json)
+
+    run(go, api)
+
+
+# A task's files
+
+
+@app.command()
+def attach(
+    ref: Ref,
+    path: Annotated[Path, typer.Argument(help="The file to attach.", exists=True, dir_okay=False)],
+    content_type: Annotated[
+        str | None, typer.Option("--type", help="Its type, else guessed from the name.")
+    ] = None,
+    as_json: Json = False,
+    api: Api = None,
+) -> None:
+    """Attach a file to a task. The bytes go straight to the store."""
+    kind = content_type or mimetypes.guess_type(path.name)[0]
+    if kind is None:
+        _fail(f"cannot tell the type of {path.name}; give --type", EXIT_USAGE)
+    data = path.read_bytes()
+
+    async def go(client: ApiClient) -> None:
+        task = await _task(client, ref)
+        file = await client.attach(task.id, path.name, kind, data)
+        if as_json:
+            typer.echo(file.model_dump_json(indent=2))
+        else:
+            typer.echo(f"attached {short_id(file.id)}  {file.name} ({human_size(file.size_bytes)})")
+
+    run(go, api)
+
+
+@app.command()
+def attachments(ref: Ref, as_json: Json = False, api: Api = None) -> None:
+    """List a task's files, oldest first."""
+
+    async def go(client: ApiClient) -> None:
+        task = await _task(client, ref)
+        files = await client.every_attachment(task.id)
+        if as_json:
+            typer.echo(json.dumps([f.model_dump(mode="json") for f in files], indent=2))
+        else:
+            typer.echo(attachment_table(files))
+
+    run(go, api)
+
+
+FileRef = Annotated[str, typer.Argument(help="A file id, or the short id `attachments` shows.")]
+
+
+@app.command()
+def download(
+    ref: Ref,
+    file_ref: FileRef,
+    out: Annotated[
+        Path | None, typer.Option("--out", help="Where to write it, else its own name here.")
+    ] = None,
+    api: Api = None,
+) -> None:
+    """Download one of a task's files."""
+
+    async def go(client: ApiClient) -> Path:
+        task = await _task(client, ref)
+        file = resolve_file(file_ref, await client.every_attachment(task.id))
+        target = out or Path(file.name)
+        target.write_bytes(await client.download(file.id))
+        return target
+
+    typer.echo(f"saved {run(go, api)}")
+
+
+@app.command()
+def detach(ref: Ref, file_ref: FileRef, as_json: Json = False, api: Api = None) -> None:
+    """Remove a file from a task."""
+
+    async def go(client: ApiClient) -> None:
+        task = await _task(client, ref)
+        file = resolve_file(file_ref, await client.every_attachment(task.id))
+        removed = await client.remove_attachment(task.id, file.id)
+        if as_json:
+            typer.echo(removed.model_dump_json(indent=2))
+        else:
+            typer.echo(f"detached {short_id(removed.id)}  {removed.name}")
 
     run(go, api)
 

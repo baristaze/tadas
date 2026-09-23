@@ -10,6 +10,7 @@ import {
   planName,
   renewsText,
   sourceText,
+  storageText,
   usageText,
 } from "./billingModel";
 import { PlanList } from "./PlanList";
@@ -39,7 +40,7 @@ export function BillingPage() {
               <dt>API keys</dt>
               <dd>{billing.limits.api_keys ? "Included" : "Not included"}</dd>
               <dt>Files</dt>
-              <dd>{Math.round(billing.limits.storage_bytes / 1024 ** 3)} GB</dd>
+              <dd>{storageText(billing.storage_bytes, billing.limits.storage_bytes)}</dd>
               <dt>Price</dt>
               <dd>{monthlyText(billing.monthly_cents)}</dd>
             </dl>

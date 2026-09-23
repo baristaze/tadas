@@ -70,8 +70,21 @@ class BucketsInterface(ABC):
 
     @abstractmethod
     async def presign_get(
-        self, org_id: UUID, bucket: Buckets, key: str, ttl: timedelta
-    ) -> str | None: ...
+        self,
+        org_id: UUID,
+        bucket: Buckets,
+        key: str,
+        ttl: timedelta,
+        *,
+        content_type: str | None = None,
+        content_disposition: str | None = None,
+    ) -> str | None:
+        """A link to one object for `ttl`, or None where the store cannot sign
+        (the local impl). `content_type` and `content_disposition`, when
+        given, are signed into the link as the headers the store answers
+        with: a preview is `inline` under the stored type, a download an
+        `attachment` under the file's name."""
+        ...
 
     @abstractmethod
     async def presign_post(

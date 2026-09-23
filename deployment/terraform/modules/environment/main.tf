@@ -36,6 +36,17 @@ locals {
     TADAS_DATABASE_PASSWORD_VERSION = tostring(var.database_password_version)
   }
 
+  # How people sign in, read at boot by every process that runs the API's
+  # image: the service, and the migrate and grant tasks, which boot the same
+  # settings and refuse a sign-in that comes back anywhere but this
+  # environment's own portal. People sign in through the WorkOS application
+  # of this environment.
+  api_sign_in_environment = {
+    TADAS_IDENTITY_PROVIDER     = "workos"
+    TADAS_WORKOS_CLIENT_ID      = var.workos_client_id
+    TADAS_SIGN_IN_REDIRECT_URIS = jsonencode(["https://${var.app_domain_name}/auth/callback"])
+  }
+
   # A serving process connects as the runtime login, and as the system login
   # for the system scope, each with a pool of its own. The master's and the
   # migration login's URLs reach the migrate task alone.
@@ -137,6 +148,12 @@ module "buckets" {
   prefix      = var.bucket_prefix
   buckets     = ["user-file-uploads", "exports"] # tadas.infra.buckets.Buckets
   destroyable = var.destroyable
+  # The portal posts a file straight to the uploads bucket with a form the
+  # API signed, and fetches it back by a signed link.
+  browser_buckets = ["user-file-uploads"]
+  browser_origins = concat(["https://${var.app_domain_name}"], var.cors_origins)
+  # Every key the media namespace writes is <org_id>/media/<purpose>/<id>.
+  object_key_patterns = { "user-file-uploads" = "*/media/*" }
 }
 
 module "secrets" {
@@ -201,6 +218,7 @@ module "portal" {
   domain_name     = var.app_domain_name
   certificate_arn = module.app_certificate.arn
   api_url         = "https://${var.api_domain_name}"
+  store_origins   = module.buckets.origins["user-file-uploads"]
   sentry_dsn      = var.portal_sentry_dsn
   destroyable     = var.destroyable
 }
@@ -232,7 +250,7 @@ module "migrate" {
   environment = var.environment
   command     = ["tadas-api", "migrate", "--all"]
 
-  environment_variables = merge(local.one_off_environment, {
+  environment_variables = merge(local.one_off_environment, local.api_sign_in_environment, {
     TADAS_SERVICE_NAME = "migrate"
   })
 
@@ -256,7 +274,7 @@ module "grant" {
   command     = ["tadas-api", "grant-operator", "--help"]
   policy_arns = [module.secrets.operator_tokens_policy_arn]
 
-  environment_variables = merge(local.one_off_environment, {
+  environment_variables = merge(local.one_off_environment, local.api_sign_in_environment, {
     TADAS_SERVICE_NAME = "grant"
   })
 
@@ -291,13 +309,8 @@ module "api" {
     TADAS_WORKOS_API_KEY      = module.secrets.workos_api_key_secret_arn
   })
 
-  environment_variables = merge(local.process_environment, {
-    TADAS_SERVICE_NAME = "api"
-    # People sign in through the WorkOS application of this environment,
-    # and a sign-in comes back to this environment's portal and nowhere else.
-    TADAS_IDENTITY_PROVIDER      = "workos"
-    TADAS_WORKOS_CLIENT_ID       = var.workos_client_id
-    TADAS_SIGN_IN_REDIRECT_URIS  = jsonencode(["https://${var.app_domain_name}/auth/callback"])
+  environment_variables = merge(local.process_environment, local.api_sign_in_environment, {
+    TADAS_SERVICE_NAME           = "api"
     TADAS_ADMISSION_LIMIT_READS  = tostring(local.admission_limit_reads)
     TADAS_ADMISSION_LIMIT_WRITES = tostring(local.admission_limit_writes)
     TADAS_HOST                   = "0.0.0.0"
@@ -358,6 +371,8 @@ module "maintenance" {
 
   environment_variables = merge(local.process_environment, {
     TADAS_SERVICE_NAME = "maintenance"
+    # `/tadas list` in Slack links to this environment's portal.
+    TADAS_PORTAL_URL = "https://${var.app_domain_name}"
   })
 
   # The serving process answers /healthz on its metrics port from its

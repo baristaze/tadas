@@ -295,6 +295,45 @@ context on keeps the stage the callee needs.
   which a stale assignment must not refuse. Clearing the assignee is
   always allowed, and the portal names a member it no longer lists
   "someone".
+  A task's attachments are files of the `media` namespace with the
+  purpose `task_attachment` and the task as their subject: the tasks
+  manager holds `MediaManagerInterface` and checks the task is live
+  before it starts, lists, or removes one, and forces the purpose and
+  the subject whatever the caller sent. Deleting a task soft-deletes
+  its attachments after the task's own commit, in writes of their own,
+  since no commit holds two namespaces' rows; a failure there is logged
+  and counted (`tasks` / `detach_failed`) and never undoes the delete.
+- `media`: the files a tenant keeps, as references and never bytes, in
+  the `core` role, `org` scope (`File`: the object key, the original
+  name, the extension, the MIME type, the size in bytes, the uploader as
+  `created_by`, a `purpose` enum, `task_attachment` or
+  `voice_dictation`, the subject the purpose names, and a status,
+  `pending` or `stored`). It is horizontal: another namespace composes
+  its manager for its own files and media knows nothing of what the
+  subject is. An upload is bounded before anything is signed
+  (`media.rules.upload_refusal`: the purpose's types, the extension the
+  type carries, a name that is not a path, the purpose's ceiling), lands
+  pending, and moves its bytes by a presigned POST (`issue_upload`,
+  fifteen minutes, the file's type and size as the policy's bounds)
+  straight to `Buckets.USER_FILE_UPLOADS` under
+  `<org_id>/media/<purpose>/<file_id>`; only its starter gets the form.
+  The row turns stored only when `confirm_file` finds the object with
+  `exists`. The size recorded is the declared one, which the policy
+  holds the object to at most. Where the store cannot presign (the local
+  impl), the form comes back with no URL and the bytes go through
+  `PUT /v1/media/files/{id}/content`, held to the same bounds, as a
+  download comes back with no link and reads `GET .../content`. A link
+  signs the headers the store answers with: the stored type, and
+  `inline` for a preview (`?inline=true`) or an `attachment` under the
+  file's name for a download (`media.rules.content_disposition`). Every
+  read is fenced by tenant in the query and by the policy. Usage
+  (`get_usage`) is counted from the live rows per purpose and status,
+  one `GROUP BY` in Postgres and `media.rules.usage_of` in memory, both
+  ending in `usage_from_totals`; it is a manager operation so a plan's
+  limit can be held against it. A removed file stops counting at once;
+  its object and then its row are erased by the sweep after a day
+  (`purge_deleted`, a batch of 100 per tenant per sweep), and an upload
+  pending for a day is erased the same way.
   A due time is the caller's field and `reminded_at` the manager's. A
   write that changes `remind_at` clears `reminded_at` and, when the new
   one is set, lands the reminder's work row in the same commit; the
@@ -345,7 +384,8 @@ context on keeps the stage the callee needs.
   tenant: `redeem_link_code` finds the org from the code, and
   `channel_context` from the channel and hands back the tenant's service
   context with the linking member as the attribution, which is who a
-  task `/tadas add` creates is attributed to. Their storage lookups
+  task `/tadas add` creates is attributed to and who `/tadas list`
+  reads as. Their storage lookups
   (`redeem_link_code`, `read_connection_by_channel`) read in the system
   scope. The tables are `core`, `org`-scoped, and purged by the sweep
   after thirty days.
@@ -690,6 +730,11 @@ backoff that grows with consecutive failures.
   of timing out), `TADAS_VALKEY_TIMEOUT_SECONDS` every Valkey
   request, and `TADAS_OTEL_TIMEOUT_SECONDS` every trace export. The
   Sentry SDK bounds its own transport.
+- A presigned URL names the host a browser reaches the store at, and a
+  signature over a GET covers it, so the S3 impl signs with a second
+  client aimed at `TADAS_S3_PRESIGN_ENDPOINT_URL` when that differs from
+  the endpoint it talks to (the compose containers reach MinIO as
+  `minio:9000` and sign for the host port); signing makes no request.
 
 `InfraConfiguredImpl` picks impls from settings; `InfraLocalImpl` runs
 everything in-process for tests.
@@ -718,12 +763,17 @@ configuration.
 
 ## Processes
 
-- `services/api` (`tadas-api`): the one API process. Gateway (bearer
+- `services/api` (`tadas-api`): the one API process. It mounts the
+  routers of the namespaces `TADAS_NAMESPACES` names, every hosted one
+  (tenancy with the operator plane, tasks, events with the realtime
+  channel, media) when it names none, and refuses to boot on a name it
+  does not host: the first form of a split is the same image with
+  another value. Gateway (bearer
   by prefix, `NotAuthenticated` (401) when none or an invalid one is
   presented, request id, error envelope, rate limits keyed on the
   credential id or, on an unauthenticated route, the client address,
-  admission, edge idempotency), routers for tenancy, tasks, and the
-  operator plane
+  admission, edge idempotency), routers for tenancy, tasks, media, and
+  the operator plane
   under `/v1/admin/*`, health, readiness, and metrics outside `/v1`, and the
   realtime channel at `/v1/realtime` opened with a single-use ticket,
   billing under `/v1/billing`, and the payment processor's deliveries at
@@ -889,7 +939,8 @@ configuration.
   tenant, a batch of `requeue_batch` (100) per tenant per sweep bounded
   in the statement and the rest on the next sweep, the system scope
   first and deleted tenants included, then
-  purge the tenant's soft-deleted tasks, removed
+  purge the tenant's soft-deleted tasks, its removed files and abandoned
+  uploads (the object first, then the row), removed
   members with their ended memberships, revoked api keys, dead sessions,
   and spent socket tickets past their retention (the one hard delete,
   30 days by default), its finished idempotency records and abandoned
@@ -907,8 +958,8 @@ configuration.
   Each namespace purges its own rows and asks tenancy the one question,
   `tenant_expired`, so the whole sweep reads one answer.
   Beside the loop, `serve` consumes the `slack` queue: each delivery
-  the Socket Mode bridge acknowledged is handled (`/tadas add`, `link`,
-  `help`, a mention, the App Home) and deleted, and one whose handling
+  the Socket Mode bridge acknowledged is handled (`/tadas add`, `list`,
+  `link`, `help`, a mention, the App Home) and deleted, and one whose handling
   failed for a reason a retry can change is left for the queue to hand
   back. `slack` is the bridge: one process per environment holding the
   Socket Mode connection with `TADAS_SLACK_APP_TOKEN`, which
@@ -961,9 +1012,20 @@ configuration.
   org at `/orgs/new`, which creates it and switches into it, the
   tasks screen at `/` (My and Team's tasks, open in
   manual order and done newest first, both paged by the server's cursor
-  with Show more, inline edit, drag to reorder), settings at `/settings`
+  with Show more, inline edit, drag to reorder, and in a task's open
+  view its attachments: dropped or picked, posted straight to the store
+  with the form the API signed and confirmed, listed with name, size, and
+  type, previewed inline by the signed inline link (an image as a
+  thumbnail that opens larger, a video and a sound in the browser's
+  player, a PDF in a frame; the rest download-only, and read-only for a
+  viewer), downloaded by the signed link and saved under the file's own
+  name, removed; `src/features/attachments/transfer.ts` is the flow with
+  its effects handed in, and `src/api/store.ts` the one place that
+  reaches the store, with a deadline of its own and no credential of
+  ours), settings at `/settings`
   (members, invitations with resend and revoke, single sign-on for a
-  team org, api keys with Show more, sign-out, which revokes the server
+  team org, the org's storage used, api keys with Show more, sign-out,
+  which revokes the server
   session and empties the query cache with the token), and one realtime
   channel that
   invalidates queries by the entity name inside a push's `kind`, or by
@@ -1046,7 +1108,8 @@ configuration.
   not come back at the same instant. The demo recorders use it; the interval before it existed is
   [ADR 0004](adr/0004-demo-recorder-calls-the-api-directly.md).
 - `apps/cli` (`tadas-cli`, `tadas`): Typer over the Python client. Command
-  mode (`add`, `ls`, `edit`, `done`, `reopen`, `rm`, `mv`) does one call
+  mode (`add`, `ls`, `edit`, `done`, `reopen`, `rm`, `mv`, and a task's
+  files: `attach`, `attachments`, `download`, `detach`) does one call
   and exits with 0, 1 (refused), 2 (usage), 3 (not signed in), or 4
   (unreachable: any failure of the wire, refused, timed out, or reset;
   the API did not decide); a verb that changes a task reads it first and

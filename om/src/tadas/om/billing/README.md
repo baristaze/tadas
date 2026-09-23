@@ -46,9 +46,9 @@ API keys are kept too, and are refused while the org is on a plan without
 them: each answers with the same refusal, and works again the day the org
 is on a plan with keys. A key is never revoked for a plan.
 
-The files bound is part of every plan. Tadas holds no files yet; the
-bound is declared here so the part that comes to hold them reads it from
-the same table.
+The files bound is part of every plan. The billing page shows what the
+org keeps beside it, counted by the media namespace. Nothing is refused
+on it yet: an upload past the bound still lands.
 
 ## Paying
 

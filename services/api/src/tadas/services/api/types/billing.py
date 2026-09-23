@@ -50,6 +50,9 @@ class BillingView(View):
     seats: int
     """The org's active members, which a per-seat plan bills for."""
     active_tasks: int
+    storage_bytes: int
+    """What the org keeps in files, stored and still uploading. Shown beside
+    the plan's storage figure; the plan does not refuse on it yet."""
     monthly_cents: int
     """What the paid plan costs a month at `seats`; zero with none."""
     can_manage: bool

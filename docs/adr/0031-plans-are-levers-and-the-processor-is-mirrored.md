@@ -116,6 +116,6 @@ Every lever reads one account row per check, through
 managers hold. The billing and tenancy managers each ask the other one
 question (the entitlements, and whether a tenant is past its retention),
 so that edge is bound at call time in the root, as the relay's is. The
-storage bound is declared and read by nothing yet; the namespace that
-comes to hold files asks it. A deployed environment serves Free to
+storage bound is shown beside the org's usage and refuses nothing yet;
+the media namespace is the one to ask it, when uploads are held to it. A deployed environment serves Free to
 everyone until its key is set.

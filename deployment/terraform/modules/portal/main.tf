@@ -12,22 +12,36 @@ locals {
   caching_optimized = "658327ea-f89d-4fab-a63d-7e88639e58f6"
 
   # What the page may reach: its own origin, the API over HTTPS and over the
-  # websocket, and the error reporter when one is configured (the DSN is
-  # scheme://key@host/project; only its origin is named). Nothing else, so a
+  # websocket, the object store a signed form or link names, and the error
+  # reporter when one is configured (the DSN is scheme://key@host/project;
+  # only its origin is named). Nothing else, so a
   # script the app did not ship neither runs nor phones home. The build has no
   # inline script or style, so no unsafe directive is needed.
   api_origin           = trimsuffix(var.api_url, "/")
   api_websocket_origin = replace(local.api_origin, "/^http/", "ws")
   sentry_origin        = var.sentry_dsn == "" ? [] : [join("", regex("^(https?://)[^@/]+@([^/]+)", var.sentry_dsn))]
-  connect_src          = concat(["'self'", local.api_origin, local.api_websocket_origin], local.sentry_origin)
-  content_security_policy = join("; ", [
-    "default-src 'self'",
-    "connect-src ${join(" ", local.connect_src)}",
-    "img-src 'self' data:",
-    "frame-ancestors 'none'",
-    "base-uri 'self'",
-    "form-action 'self'",
-  ])
+  connect_src          = concat(["'self'", local.api_origin, local.api_websocket_origin], var.store_origins, local.sentry_origin)
+  # A file's preview loads from the store by a signed inline link: an image,
+  # a video or a sound in the page's player, a PDF in a frame. So the store's
+  # origin joins img-src, and media-src and frame-src name it, when there is
+  # one; with none they are left to default-src.
+  store_src = join("", [for origin in var.store_origins : " ${origin}"])
+  content_security_policy = join("; ", concat(
+    [
+      "default-src 'self'",
+      "connect-src ${join(" ", local.connect_src)}",
+      "img-src 'self' data:${local.store_src}",
+    ],
+    length(var.store_origins) == 0 ? [] : [
+      "media-src 'self'${local.store_src}",
+      "frame-src 'self'${local.store_src}",
+    ],
+    [
+      "frame-ancestors 'none'",
+      "base-uri 'self'",
+      "form-action 'self'",
+    ],
+  ))
 }
 
 resource "aws_s3_bucket" "this" {

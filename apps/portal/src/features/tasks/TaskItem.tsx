@@ -2,6 +2,7 @@ import type { TaskView } from "../../api";
 import { useState, type DragEvent } from "react";
 import { Button, LinkButton, Pill, Select, TextArea, TextField } from "../../design/kit";
 import { tokens } from "../../design/tokens";
+import { Attachments } from "../attachments/Attachments";
 import { remindAtChange, toInputValue } from "./dueModel";
 import type { DropSide, TaskRow } from "./tasksModel";
 import type { TaskEdit } from "./useTasksVm";
@@ -54,6 +55,7 @@ export function TaskItem({
   // A row that mounts after its list did is a task that just arrived: created
   // here, pushed from another tab, moved from the other group, or a new page.
   const [arriving] = useState(() => Date.now() - listMountedAt > 400);
+  const [showingFiles, setShowingFiles] = useState(false);
   const struck = row.done || leaving;
   const indicator = drag?.dropIndicator;
   return (
@@ -132,16 +134,26 @@ export function TaskItem({
             {row.due.text}
           </Pill>
         ) : null}
+        {!canWrite ? (
+          <LinkButton onClick={() => setShowingFiles((open) => !open)}>{showingFiles ? "close" : "files"}</LinkButton>
+        ) : null}
         {canWrite && !leaving ? (
           <LinkButton onClick={editing ? onCancelEdit : onEdit}>{editing ? "close" : "edit"}</LinkButton>
         ) : null}
       </div>
-      {editing ? <EditForm key={task.id} version={task.version} remindAt={task.remind_at ?? null} row={row} saving={saving} assigneeOptions={assigneeOptions} onSave={onSave} onCancel={onCancelEdit} onDelete={onDelete} /> : null}
+      {/* Someone who cannot write reads the files, previews included, without the edit form. */}
+      {!canWrite && showingFiles ? (
+        <div style={{ padding: `${tokens.space.md} 0 ${tokens.space.sm} ${HANDLE_WIDTH + 18 + 16}px` }}>
+          <Attachments taskId={task.id} canWrite={false} />
+        </div>
+      ) : null}
+      {editing ? <EditForm key={task.id} taskId={task.id} version={task.version} remindAt={task.remind_at ?? null} row={row} saving={saving} assigneeOptions={assigneeOptions} onSave={onSave} onCancel={onCancelEdit} onDelete={onDelete} /> : null}
     </li>
   );
 }
 
 function EditForm({
+  taskId,
   version,
   remindAt,
   row,
@@ -151,6 +163,7 @@ function EditForm({
   onCancel,
   onDelete,
 }: {
+  taskId: string;
   version: number;
   remindAt: string | null;
   row: TaskRow;
@@ -191,6 +204,7 @@ function EditForm({
         <TextField label="Due (your local time)" type="datetime-local" value={due} onChange={setDue} />
         {due ? <LinkButton onClick={() => setDue("")}>clear due time</LinkButton> : null}
       </div>
+      <Attachments taskId={taskId} canWrite />
       <div style={{ display: "flex", gap: tokens.space.sm }}>
         {/* The draft names the version it was opened at, so a second submit
             of the same draft would be refused as someone else's change. */}

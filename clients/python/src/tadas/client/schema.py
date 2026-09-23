@@ -12,6 +12,20 @@ class TtlDays(RootModel[int]):
     root: Annotated[int, Field(ge=1, le=90, title='Ttl Days')]
 
 
+class AddFileRequest(BaseModel):
+    """
+    An upload to start: the file's name as the uploader had it, its type,
+    and its size in bytes. The type must be one the purpose accepts and match
+    the name's extension; the size is the most the store will take.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    content_type: Annotated[str, Field(max_length=255, min_length=1, title='Content Type')]
+    name: Annotated[str, Field(max_length=255, min_length=1, title='Name')]
+    size_bytes: Annotated[int, Field(gt=0, title='Size Bytes')]
+
+
 class AddTaskRequest(BaseModel):
     """
     `remind_at` schedules one reminder at that time, pushed to every open
@@ -155,10 +169,53 @@ class ExchangeSessionRequest(BaseModel):
     org_id: Annotated[UUID, Field(title='Org Id')]
 
 
+class FilePurpose(StrEnum):
+    """
+    Which domain context a file came from. The purpose decides the bounds an
+    upload is held to and what `subject_id` names.
+    """
+    task_attachment = 'task_attachment'
+    voice_dictation = 'voice_dictation'
+
+
+class FileStatus(StrEnum):
+    pending = 'pending'
+    stored = 'stored'
+
+
+class FileView(BaseModel):
+    """
+    A file the tenant keeps: its name, type, and size, never its bytes and
+    never where they live. `status` is `pending` until the upload is
+    confirmed, then `stored`.
+    """
+    content_type: Annotated[str, Field(title='Content Type')]
+    created_at: Annotated[AwareDatetime, Field(title='Created At')]
+    created_by: Annotated[UUID, Field(title='Created By')]
+    deleted_at: Annotated[AwareDatetime | None, Field(title='Deleted At')]
+    extension: Annotated[str, Field(title='Extension')]
+    id: Annotated[UUID, Field(title='Id')]
+    name: Annotated[str, Field(title='Name')]
+    purpose: FilePurpose
+    size_bytes: Annotated[int, Field(title='Size Bytes')]
+    status: FileStatus
+    subject_id: Annotated[UUID | None, Field(title='Subject Id')]
+
+
 class InvitationState(StrEnum):
     pending = 'pending'
     accepted = 'accepted'
     revoked = 'revoked'
+
+
+class IssuedDownloadView(BaseModel):
+    """
+    A link to the file's bytes that works until `expires_at`. A null `url`
+    means the store cannot sign one: the bytes come from
+    `GET /v1/media/files/{id}/content`.
+    """
+    expires_at: Annotated[AwareDatetime, Field(title='Expires At')]
+    url: Annotated[str | None, Field(title='Url')]
 
 
 class IssuedSlackLinkCodeView(BaseModel):
@@ -328,6 +385,14 @@ class PlatformSizeView(BaseModel):
     users: Annotated[int, Field(title='Users')]
 
 
+class PurposeUsageView(BaseModel):
+    count: Annotated[int, Field(title='Count')]
+    pending_count: Annotated[int, Field(title='Pending Count')]
+    pending_size_bytes: Annotated[int, Field(title='Pending Size Bytes')]
+    purpose: FilePurpose
+    size_bytes: Annotated[int, Field(title='Size Bytes')]
+
+
 class RedirectView(BaseModel):
     """
     Where the person goes next: the processor's hosted page.
@@ -483,6 +548,18 @@ class StartCheckoutRequest(BaseModel):
     return_url: Annotated[str, Field(max_length=2000, min_length=1, title='Return Url')]
 
 
+class StorageUsageView(BaseModel):
+    """
+    What the org keeps in the store, counted from its files: the stored ones
+    per purpose and in total, and the uploads started and not yet confirmed.
+    A removed file stops counting at once.
+    """
+    pending_size_bytes: Annotated[int, Field(title='Pending Size Bytes')]
+    purposes: Annotated[list[PurposeUsageView], Field(title='Purposes')]
+    total_count: Annotated[int, Field(title='Total Count')]
+    total_size_bytes: Annotated[int, Field(title='Total Size Bytes')]
+
+
 class SubscriptionStatus(StrEnum):
     """
     The processor's statuses, as it spells them.
@@ -576,6 +653,11 @@ class UpdateTaskRequest(BaseModel):
     title: Annotated[Title | None, Field(title='Title')] = None
 
 
+class UploadFieldView(BaseModel):
+    name: Annotated[str, Field(title='Name')]
+    value: Annotated[str, Field(title='Value')]
+
+
 class UserView(BaseModel):
     created_at: Annotated[AwareDatetime, Field(title='Created At')]
     display_name: Annotated[str, Field(title='Display Name')]
@@ -645,6 +727,7 @@ class BillingView(BaseModel):
     plans: Annotated[list[PlanOfferView], Field(title='Plans')]
     seats: Annotated[int, Field(title='Seats')]
     status: SubscriptionStatus | None
+    storage_bytes: Annotated[int, Field(title='Storage Bytes')]
 
 
 class CompPlanRequest(BaseModel):
@@ -656,6 +739,15 @@ class CompPlanRequest(BaseModel):
         extra='forbid',
     )
     plan: Plan | None
+
+
+class FilePageView(BaseModel):
+    """
+    One page of files, oldest first. `next_cursor` fetches the next page and
+    is null on the last one.
+    """
+    items: Annotated[list[FileView], Field(title='Items')]
+    next_cursor: Annotated[str | None, Field(title='Next Cursor')]
 
 
 class HTTPValidationError(BaseModel):
@@ -728,6 +820,20 @@ class IssuedSessionView(BaseModel):
     role: Role
     token: Annotated[str, Field(title='Token')]
     user: UserView
+
+
+class IssuedUploadView(BaseModel):
+    """
+    A form to post the file with, straight to the store: every field, in
+    order, then the file as the last field, named `file`. The signed policy
+    holds the post to the file's type and at most its size, until
+    `expires_at`. A null `url` means the store cannot take a post: the bytes
+    go to `PUT /v1/media/files/{id}/content` instead. Then the upload is
+    confirmed.
+    """
+    expires_at: Annotated[AwareDatetime, Field(title='Expires At')]
+    fields: Annotated[list[UploadFieldView], Field(title='Fields')]
+    url: Annotated[str | None, Field(title='Url')]
 
 
 class MeView(BaseModel):

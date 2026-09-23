@@ -20,6 +20,12 @@ class ApiSettings(StorageSettings, InfraSettings, IntegrationsSettings):
     model_config = SettingsConfigDict(env_prefix="TADAS_", env_file=".env", extra="ignore")
 
     service_name: str = "api"
+    # The namespaces whose routers this process mounts; empty mounts every one
+    # the image hosts (tenancy, tasks, events, media). Naming a subset is how
+    # one namespace becomes a service of its own: the same image, another
+    # value, and no code change. A name the image does not host refuses the
+    # boot.
+    namespaces: list[str] = []
     version: str = "0.1.0"
     host: str = "127.0.0.1"
     port: int = 8000

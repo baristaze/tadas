@@ -1,6 +1,7 @@
 // Pure: what the billing page and the upgrade dialog say. The numbers come
 // from the server's one table of plans; this file only words them.
 import { ApiError, type BillingView, type Plan, type PlanLimit, type PlanLimitsView, type PlanOfferView } from "../../api";
+import { humanSize } from "../attachments/attachmentsModel";
 
 export const PLAN_NAMES: Readonly<Record<Plan, string>> = {
   free: "Free",
@@ -74,6 +75,11 @@ export function boundSentence(limit: PlanLimit): string {
 /** `n of limit`, or `n` with no bound. */
 export function usageText(used: number, bound: number | null): string {
   return bound === null ? `${used}` : `${used} of ${bound}`;
+}
+
+/** The files kept against the plan's figure, `1.2 MB of 1 GB`. */
+export function storageText(used: number, bound: number): string {
+  return `${humanSize(used)} of ${Math.round(bound / 1024 ** 3)} GB`;
 }
 
 export function dateText(iso: string): string {

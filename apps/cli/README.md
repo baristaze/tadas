@@ -1,7 +1,8 @@
 # Tadas CLI
 
 The product from the terminal, in two modes. Command mode does one thing
-and returns: `add`, `ls`, `edit`, `done`, `reopen`, `rm`, `mv`. Realtime
+and returns: `add`, `ls`, `edit`, `done`, `reopen`, `rm`, `mv`, and a
+task's files, `attach`, `attachments`, `download`, `detach`. Realtime
 mode stays: `listen` prints every change the team makes as it happens, one
 line each, over the same channel the portal uses.
 
@@ -15,6 +16,10 @@ uv run tadas add "Call the bank" --remind +2h    # or --remind 2026-10-01T09:00,
 uv run tadas edit 8b949fce --no-remind          # clear the due time; --remind moves it
 uv run tadas ls                               # open tasks; --done, --mine, --json
 uv run tadas done 8b949fce                    # the short id `ls` shows
+uv run tadas attach 8b949fce spec.pdf         # the type from the name, or --type
+uv run tadas attachments 8b949fce             # id, size, type, name
+uv run tadas download 8b949fce 1c2d3e4f       # the file's short id; --out <path>
+uv run tadas detach 8b949fce 1c2d3e4f
 uv run tadas listen                           # the team's tasks, reminders among them; --mine for yours
 ```
 

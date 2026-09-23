@@ -13,6 +13,7 @@ import {
   priceText,
   renewsText,
   sourceText,
+  storageText,
   usageText,
 } from "./billingModel";
 
@@ -39,6 +40,7 @@ function billing(overrides: Partial<BillingView> = {}): BillingView {
     plan_after: null,
     seats: 1,
     active_tasks: 3,
+    storage_bytes: 0,
     monthly_cents: 0,
     can_manage: true,
     plans: PLANS,
@@ -93,6 +95,7 @@ describe("the billing page", () => {
   it("shows usage against the bound, or alone with none", () => {
     expect(usageText(3, 10)).toBe("3 of 10");
     expect(usageText(12, null)).toBe("12");
+    expect(storageText(1536 * 1024, GIB)).toBe("1.5 MB of 1 GB");
     expect(planName("max")).toBe("Max");
     expect(planName(null)).toBe("Free");
   });

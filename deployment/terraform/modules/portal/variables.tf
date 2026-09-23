@@ -23,6 +23,17 @@ variable "api_url" {
   type        = string
 }
 
+variable "store_origins" {
+  description = "The object store's origins the page posts a file to and fetches one from, by a URL the API signed. They join connect-src beside the API."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition     = alltrue([for origin in var.store_origins : can(regex("^https://[^/*]+$", origin))])
+    error_message = "a store origin is https://host, with no path and no wildcard."
+  }
+}
+
 variable "sentry_dsn" {
   description = "The portal's error-reporting DSN; browser DSNs are public by design. Empty turns reporting off. Its origin is the one address beside the API the Content-Security-Policy lets the page reach."
   type        = string

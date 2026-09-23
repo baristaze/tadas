@@ -9,6 +9,8 @@ from tadas.om.events import EventsManagerInterface
 from tadas.om.events.storage import EventStorageInterface
 from tadas.om.idempotency import IdempotencyManagerInterface
 from tadas.om.idempotency.storage import IdempotencyStorageInterface
+from tadas.om.media import MediaManagerInterface
+from tadas.om.media.storage import MediaStorageInterface
 from tadas.om.root import build_managers
 from tadas.om.storage.impl.memory import StorageMemoryImpl
 from tadas.om.storage.impl.postgres import StoragePostgresImpl
@@ -27,6 +29,7 @@ async def test_memory_root_serves_every_storage() -> None:
     assert isinstance(root.get_tenancy_storage(), TenancyStorageInterface)
     assert isinstance(root.get_work_storage(), WorkStorageInterface)
     assert isinstance(root.get_tasks_storage(), TasksStorageInterface)
+    assert isinstance(root.get_media_storage(), MediaStorageInterface)
     assert isinstance(root.get_idempotency_storage(), IdempotencyStorageInterface)
     assert isinstance(root.get_event_storage(), EventStorageInterface)
     assert isinstance(root.get_billing_storage(), BillingStorageInterface)
@@ -87,6 +90,7 @@ def test_business_root_has_a_field_per_manager(tmp_path: Path) -> None:
     assert isinstance(managers.tenancy, TenancyManagerInterface)
     assert isinstance(managers.tenancy_operator, TenancyOperatorManagerInterface)
     assert isinstance(managers.work, WorkManagerInterface)
+    assert isinstance(managers.media, MediaManagerInterface)
     assert isinstance(managers.tasks, TasksManagerInterface)
     assert isinstance(managers.idempotency, IdempotencyManagerInterface)
     assert isinstance(managers.events, EventsManagerInterface)

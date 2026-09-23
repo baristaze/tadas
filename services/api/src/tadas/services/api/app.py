@@ -83,7 +83,7 @@ def create_app(container: AppContainer | None = None) -> FastAPI:
     register_error_handlers(app)
 
     api = APIRouter(prefix=API_PREFIX)
-    for router in all_routers():
+    for router in all_routers(settings.namespaces):
         api.include_router(router)
     app.include_router(api)
     # The processor's deliveries sit outside /v1: their shape is versioned by
