@@ -13,6 +13,9 @@ dependencies = [
     # Pinned exactly: the identity provider's wire shapes are what the twin
     # mirrors and the fixtures record, so an upgrade is a change of its own.
     "workos==10.4.0",
+    # Pinned exactly: the payment processor's API version is the one this
+    # release was built against, and every call names it.
+    "stripe==15.6.1",
 ]
 
 [tool.uv.sources]

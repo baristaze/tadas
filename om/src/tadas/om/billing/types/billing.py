@@ -1,0 +1,33 @@
+"""What the billing manager answers: the plan an org is on and what it
+entitles the org to, with the account behind it."""
+
+from datetime import datetime
+
+from tadas.om.base import Platform
+from tadas.om.billing.types.account import BillingAccount
+from tadas.om.billing.types.plan import Plan, PlanLimits
+
+
+class Entitlements(Platform):
+    """The plan an org is on now and its bounds: what every lever reads."""
+
+    plan: Plan
+    limits: PlanLimits
+
+
+class Billing(Entitlements):
+    """The plan, and where it comes from. `paid_plan` is what the subscription
+    carries, `comped_plan` what an operator granted; `ends_at` is set when a
+    paid plan is set to end, and the org is on `plan_after` from then."""
+
+    paid_plan: Plan | None
+    comped_plan: Plan | None
+    ends_at: datetime | None
+    plan_after: Plan | None
+    account: BillingAccount | None
+
+
+class CheckoutStart(Platform):
+    """Where the person goes to pay."""
+
+    url: str

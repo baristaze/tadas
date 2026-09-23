@@ -127,6 +127,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/admin/orgs/{org_id}/billing": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Org Billing */
+        get: operations["get_org_billing_v1_admin_orgs__org_id__billing_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/orgs/{org_id}/events": {
         parameters: {
             query?: never;
@@ -156,6 +173,27 @@ export interface paths {
         put?: never;
         /** Add Member */
         post: operations["add_member_v1_admin_orgs__org_id__members_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/orgs/{org_id}/plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Comp Plan
+         * @description Grants the org a plan with no payment, or takes the grant back. A put:
+         *     the same body twice leaves the same grant.
+         */
+        put: operations["comp_plan_v1_admin_orgs__org_id__plan_put"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -378,6 +416,98 @@ export interface paths {
         put?: never;
         /** Start Sign In */
         post: operations["start_sign_in_v1_auth_sign_in_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/billing": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Billing */
+        get: operations["get_billing_v1_billing_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/billing/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Cancel
+         * @description The paid plan ends at its period's end; the org keeps it until then.
+         */
+        post: operations["cancel_v1_billing_cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/billing/checkout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start Checkout
+         * @description Makes the org's customer at the processor the first time, which is a
+         *     durable row, so the route runs under the idempotency record.
+         */
+        post: operations["start_checkout_v1_billing_checkout_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/billing/portal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Open Portal */
+        post: operations["open_portal_v1_billing_portal_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/billing/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resume */
+        post: operations["resume_v1_billing_resume_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -873,6 +1003,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/webhooks/stripe": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Stripe Delivery */
+        post: operations["stripe_delivery_webhooks_stripe_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -971,6 +1118,47 @@ export interface components {
             user_id: string;
         };
         /**
+         * BillingView
+         * @description The org's plan now, where it comes from, and what the org uses of it.
+         *     `ends_at` is set when a paid plan is set to end; the org is on
+         *     `plan_after` from then, and keeps everything it has. `can_manage` says
+         *     whether the caller may change the plan: an owner or an admin.
+         */
+        BillingView: {
+            /** Active Tasks */
+            active_tasks: number;
+            /** Can Manage */
+            can_manage: boolean;
+            /** Cancel At Period End */
+            cancel_at_period_end: boolean;
+            comped_plan: components["schemas"]["Plan"] | null;
+            /** Current Period End */
+            current_period_end: string | null;
+            /** Ends At */
+            ends_at: string | null;
+            limits: components["schemas"]["PlanLimitsView"];
+            /** Monthly Cents */
+            monthly_cents: number;
+            paid_plan: components["schemas"]["Plan"] | null;
+            plan: components["schemas"]["Plan"];
+            plan_after: components["schemas"]["Plan"] | null;
+            /** Plans */
+            plans: components["schemas"]["PlanOfferView"][];
+            /** Seats */
+            seats: number;
+            status: components["schemas"]["SubscriptionStatus"] | null;
+            /** Storage Bytes */
+            storage_bytes: number;
+        };
+        /**
+         * CompPlanRequest
+         * @description The plan an operator grants without a payment; null, or free, takes
+         *     the grant back.
+         */
+        CompPlanRequest: {
+            plan: components["schemas"]["Plan"] | null;
+        };
+        /**
          * ConfirmTotpRequest
          * @description The first code from the authenticator, which confirms the secret.
          */
@@ -1011,6 +1199,14 @@ export interface components {
          * @enum {string}
          */
         CredentialKind: "api_key" | "session_token" | "login" | "socket_ticket" | "operator_token" | "internal";
+        /**
+         * DeliveryReceivedView
+         * @description The delivery checked out and is queued; the processor stops retrying.
+         */
+        DeliveryReceivedView: {
+            /** Received */
+            received: boolean;
+        };
         /**
          * DevSignInRequest
          * @description Local and test only: a sign-in by address alone, with no browser round
@@ -1450,6 +1646,23 @@ export interface components {
             /** Expected Version */
             expected_version?: number | null;
         };
+        /** OpenPortalRequest */
+        OpenPortalRequest: {
+            /** Return Url */
+            return_url: string;
+        };
+        /**
+         * OperatorBillingView
+         * @description One org's plan, as the operator plane reads it.
+         */
+        OperatorBillingView: {
+            comped_plan: components["schemas"]["Plan"] | null;
+            /** Ends At */
+            ends_at: string | null;
+            paid_plan: components["schemas"]["Plan"] | null;
+            plan: components["schemas"]["Plan"];
+            status: components["schemas"]["SubscriptionStatus"] | null;
+        };
         /**
          * OperatorEventView
          * @description The same record as an operator reads it, with the two provenance fields
@@ -1555,7 +1768,42 @@ export interface components {
          * Permission
          * @enum {string}
          */
-        Permission: "read" | "write" | "manage_members" | "manage_keys";
+        Permission: "read" | "write" | "manage_members" | "manage_keys" | "manage_billing";
+        /**
+         * Plan
+         * @enum {string}
+         */
+        Plan: "free" | "pro" | "team" | "max";
+        /**
+         * PlanLimitsView
+         * @description A plan's bounds; a null count is no bound.
+         */
+        PlanLimitsView: {
+            /** Active Tasks */
+            active_tasks: number | null;
+            /** Api Keys */
+            api_keys: boolean;
+            /** Members */
+            members: number | null;
+            /** Storage Bytes */
+            storage_bytes: number;
+        };
+        /**
+         * PlanOfferView
+         * @description One plan on offer: its bounds and its monthly price. A per-seat plan's
+         *     `flat_cents` covers up to `included_seats` seats, and past them every
+         *     seat is `per_seat_cents`.
+         */
+        PlanOfferView: {
+            /** Flat Cents */
+            flat_cents: number;
+            /** Included Seats */
+            included_seats: number | null;
+            limits: components["schemas"]["PlanLimitsView"];
+            /** Per Seat Cents */
+            per_seat_cents: number;
+            plan: components["schemas"]["Plan"];
+        };
         /**
          * PlatformSizeView
          * @description How big the platform is, what the first responder to an alarm reads
@@ -1589,6 +1837,14 @@ export interface components {
             purpose: components["schemas"]["FilePurpose"];
             /** Size Bytes */
             size_bytes: number;
+        };
+        /**
+         * RedirectView
+         * @description Where the person goes next: the processor's hosted page.
+         */
+        RedirectView: {
+            /** Url */
+            url: string;
         };
         /**
          * Role
@@ -1754,6 +2010,16 @@ export interface components {
             url: string;
         };
         /**
+         * StartCheckoutRequest
+         * @description `return_url` is the portal page the person comes back to, paid or not;
+         *     it is one of the portal's own origins, or the request is refused.
+         */
+        StartCheckoutRequest: {
+            plan: components["schemas"]["Plan"];
+            /** Return Url */
+            return_url: string;
+        };
+        /**
          * StorageUsageView
          * @description What the org keeps in the store, counted from its files: the stored ones
          *     per purpose and in total, and the uploads started and not yet confirmed.
@@ -1769,6 +2035,12 @@ export interface components {
             /** Total Size Bytes */
             total_size_bytes: number;
         };
+        /**
+         * SubscriptionStatus
+         * @description The processor's statuses, as it spells them.
+         * @enum {string}
+         */
+        SubscriptionStatus: "incomplete" | "incomplete_expired" | "trialing" | "active" | "past_due" | "canceled" | "unpaid" | "paused";
         /**
          * TaskPageView
          * @description One page of a task list. `next_cursor` fetches the next page of the same
@@ -2225,6 +2497,41 @@ export interface operations {
             };
         };
     };
+    get_org_billing_v1_admin_orgs__org_id__billing_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
+            };
+            path: {
+                org_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperatorBillingView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_events_v1_admin_orgs__org_id__events_get: {
         parameters: {
             query?: {
@@ -2328,6 +2635,45 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["UserView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    comp_plan_v1_admin_orgs__org_id__plan_put: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
+            };
+            path: {
+                org_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CompPlanRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperatorBillingView"];
                 };
             };
             /** @description Validation Error */
@@ -2828,6 +3174,180 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SignInStartView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_billing_v1_billing_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BillingView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancel_v1_billing_cancel_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BillingView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    start_checkout_v1_billing_checkout_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
+                "idempotency-key"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StartCheckoutRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RedirectView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    open_portal_v1_billing_portal_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OpenPortalRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RedirectView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    resume_v1_billing_resume_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BillingView"];
                 };
             };
             /** @description Validation Error */
@@ -4161,6 +4681,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["UserPageView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    stripe_delivery_webhooks_stripe_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Stripe-Signature"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeliveryReceivedView"];
                 };
             };
             /** @description Validation Error */

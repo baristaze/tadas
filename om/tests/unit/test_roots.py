@@ -1,6 +1,10 @@
 from pathlib import Path
 
 from tadas.infra.impl.local import InfraLocalImpl
+from tadas.integrations.impl.configured import absent_integrations
+from tadas.integrations.payments.twin import PaymentsTwinImpl
+from tadas.om.billing import BillingManagerInterface, BillingOperatorManagerInterface
+from tadas.om.billing.storage import BillingStorageInterface
 from tadas.om.events import EventsManagerInterface
 from tadas.om.events.storage import EventStorageInterface
 from tadas.om.idempotency import IdempotencyManagerInterface
@@ -28,6 +32,7 @@ async def test_memory_root_serves_every_storage() -> None:
     assert isinstance(root.get_media_storage(), MediaStorageInterface)
     assert isinstance(root.get_idempotency_storage(), IdempotencyStorageInterface)
     assert isinstance(root.get_event_storage(), EventStorageInterface)
+    assert isinstance(root.get_billing_storage(), BillingStorageInterface)
     assert await root.healthcheck() is True
     await root.close()
 
@@ -77,7 +82,11 @@ def test_the_system_login_follows_a_role_to_its_own_database() -> None:
 
 
 def test_business_root_has_a_field_per_manager(tmp_path: Path) -> None:
-    managers = build_managers(StorageMemoryImpl(), InfraLocalImpl(tmp_path))
+    managers = build_managers(
+        StorageMemoryImpl(),
+        InfraLocalImpl(tmp_path),
+        integrations=absent_integrations(PaymentsTwinImpl(environment="test")),
+    )
     assert isinstance(managers.tenancy, TenancyManagerInterface)
     assert isinstance(managers.tenancy_operator, TenancyOperatorManagerInterface)
     assert isinstance(managers.work, WorkManagerInterface)
@@ -85,6 +94,8 @@ def test_business_root_has_a_field_per_manager(tmp_path: Path) -> None:
     assert isinstance(managers.tasks, TasksManagerInterface)
     assert isinstance(managers.idempotency, IdempotencyManagerInterface)
     assert isinstance(managers.events, EventsManagerInterface)
+    assert isinstance(managers.billing, BillingManagerInterface)
+    assert isinstance(managers.billing_operator, BillingOperatorManagerInterface)
 
 
 def test_the_system_scope_is_the_same_value_on_both_sides() -> None:

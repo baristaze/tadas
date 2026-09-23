@@ -8,6 +8,7 @@ import pytest
 from contracts.doubles import Members, context, media_of, no_slack
 from contracts.factories import make_org
 from contracts.outbox_storage import claim_all
+from contracts.plans import ON_TEAM
 
 from tadas.infra.impl.local import InfraLocalImpl
 from tadas.infra.topics import EntityChangedPayload, TopicPayload, Topics
@@ -82,6 +83,7 @@ def manager(
         relay,
         no_slack(),
         TasksOptions(),
+        entitlements=ON_TEAM,
     )
 
 
@@ -434,7 +436,13 @@ async def test_a_write_that_lands_between_the_read_and_the_write_is_refused(
     storage = Interleaved(outbox)
     relay = OutboxRelayImpl(outbox, events_storage, infra.get_topics())
     manager = TasksManagerImpl(
-        storage, members, media_of(outbox, members, relay, infra), relay, no_slack(), TasksOptions()
+        storage,
+        members,
+        media_of(outbox, members, relay, infra),
+        relay,
+        no_slack(),
+        TasksOptions(),
+        entitlements=ON_TEAM,
     )
     org = make_org()
     ann, bob = context(Role.MEMBER, org), context(Role.MEMBER, org)
@@ -463,6 +471,7 @@ async def test_lists_are_clamped(infra: InfraLocalImpl, members: Members) -> Non
         relay,
         no_slack(),
         TasksOptions(max_limit=2),
+        entitlements=ON_TEAM,
     )
     ctx = context(Role.MEMBER)
     for i in range(3):
@@ -531,6 +540,7 @@ async def test_a_failed_relay_leaves_the_row_for_the_sweep(
         relay,
         no_slack(),
         TasksOptions(),
+        entitlements=ON_TEAM,
     )
     ctx = context(Role.MEMBER)
     created = await manager.create_task(ctx, make_task(ctx))
@@ -658,6 +668,7 @@ async def test_the_sweep_purges_only_deleted_tasks_while_the_tenant_lives(
         manager._relay,  # type: ignore[attr-defined]
         no_slack(),
         TasksOptions(retention=timedelta(0)),
+        entitlements=ON_TEAM,
     )
     assert await past.purge_deleted(ctx) == 1
     assert (await manager.get_task(ctx, live.id)).id == live.id

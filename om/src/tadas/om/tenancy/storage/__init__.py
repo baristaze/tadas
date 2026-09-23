@@ -254,6 +254,11 @@ class TenancyStorageInterface(ABC):
         ...
 
     @abstractmethod
+    async def count_members(self, org_id: UUID) -> int:
+        """How many live memberships the tenant holds: the seats its plan counts."""
+        ...
+
+    @abstractmethod
     async def read_membership_for_user(self, org_id: UUID, user_id: UUID) -> Membership | None:
         """The user's live membership, or None when there is none or it ended."""
         ...

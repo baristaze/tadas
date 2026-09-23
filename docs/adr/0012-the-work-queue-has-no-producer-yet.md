@@ -1,7 +1,10 @@
 # ADR 0012: A write that also starts work is built and tested; no write in Tadas starts work yet
 
 **Status**: closed (2026-09-22). Reminders and Slack posts are the first
-producers; see Closed below. The record stays for the interval it covers.
+producers; see Closed below. The seat count of a Max subscription rides
+the same path ([ADR 0031](0031-plans-are-levers-and-the-processor-is-mirrored.md)):
+adding or removing a member lands `work.SYNC_SEATS` beside the change.
+The record stays for the interval it covers.
 
 ## Context
 

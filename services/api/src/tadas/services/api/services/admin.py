@@ -18,6 +18,7 @@ from tadas.services.api.types.admin import (
     PlatformSizeView,
     TotpConfirmedView,
 )
+from tadas.services.api.types.billing import CompPlanRequest, OperatorBillingView
 from tadas.services.api.types.events import OperatorEventView
 from tadas.services.api.types.tasks import TaskPageView
 from tadas.services.api.types.tenancy import OrgPageView, OrgView, UserPageView, UserView
@@ -83,3 +84,13 @@ class AdminServiceInterface(ABC):
 
     @abstractmethod
     async def delete_org(self, admin: OperatorContext, org_id: UUID) -> OrgView: ...
+
+    @abstractmethod
+    async def get_org_billing(
+        self, admin: OperatorContext, org_id: UUID
+    ) -> OperatorBillingView: ...
+
+    @abstractmethod
+    async def comp_plan(
+        self, admin: OperatorContext, org_id: UUID, body: CompPlanRequest
+    ) -> OperatorBillingView: ...

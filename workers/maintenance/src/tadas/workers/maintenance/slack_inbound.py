@@ -35,7 +35,12 @@ from tadas.integrations.slack import (
     SlackRateLimited,
 )
 from tadas.om.base import derived_id, new_id, utcnow
-from tadas.om.exceptions import NotFound, PlatformException, SlackChannelTaken
+from tadas.om.exceptions import (
+    NotFound,
+    PlanLimitReached,
+    PlatformException,
+    SlackChannelTaken,
+)
 from tadas.om.opcontext import AppContext, RequestContext
 from tadas.om.slack import SlackManagerInterface
 from tadas.om.slack.types.connection import SlackConnectionStatus
@@ -185,6 +190,17 @@ def home_view() -> dict[str, Any]:
     }
 
 
+def over_the_plan(refused: PlanLimitReached, portal_url: str) -> str:
+    """The answer to an add the org's plan has no room for: what the plan
+    allows, and a link to where the org is upgraded. Every feature stays; a
+    bound is lifted in Tadas, by an owner or an admin."""
+    plan = refused.plan.title()
+    said = refused.message.replace(f"the {refused.plan} plan", f"the {plan} plan")
+    lifts = f" {refused.suggested_plan.title()} lifts it." if refused.suggested_plan else ""
+    billing = f"<{portal_url.rstrip('/')}/settings/billing|Settings, Billing>"
+    return f"Not added: {said}.{lifts} An owner or an admin can upgrade in Tadas, under {billing}."
+
+
 class SlackInboundHandler:
     """What each kind of delivery does. Holds nothing per delivery."""
 
@@ -271,7 +287,10 @@ class SlackInboundHandler:
             updated_by=ctx.user_id,
             title=title,
         )
-        created = await self._tasks.create_task(ctx, task)
+        try:
+            created = await self._tasks.create_task(ctx, task)
+        except PlanLimitReached as refused:
+            return over_the_plan(refused, self._portal_url)
         answer = f"Added: *{escaped(created.title)}*"
         if connection.status is not SlackConnectionStatus.OK:
             answer += f"\n{INVITE} Then run `/tadas link` again with a new code."

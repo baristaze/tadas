@@ -5,6 +5,8 @@ description = "The Tadas operations package: the traffic generator, the stress t
 requires-python = ">=3.14"
 dependencies = [
     "tadas-client",
+    "tadas-infra",
+    "tadas-integrations",
     "httpx>=0.28.1",
     "pyyaml>=6.0",
     "aioboto3>=15.5",
@@ -15,6 +17,8 @@ tadas-ops = "tadas.ops.main:main"
 
 [tool.uv.sources]
 tadas-client = { workspace = true }
+tadas-infra = { workspace = true }
+tadas-integrations = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

@@ -12,6 +12,7 @@ from tadas.infra.impl.local import InfraLocalImpl
 from tadas.integrations.identity.absent import IdentityProviderAbsentImpl
 from tadas.integrations.slack.twin import SlackTwinImpl
 from tadas.om.base import new_id, utcnow
+from tadas.om.billing.types.plan import Plan
 from tadas.om.opcontext import AppContext, AppType, OpContext, Role
 from tadas.om.storage.impl.memory import StorageMemoryImpl
 from tadas.om.tasks.types.task import Task
@@ -42,6 +43,12 @@ async def owner_of(container: WorkerContainer, slug: str) -> OpContext:
     return ctx
 
 
+async def on_team(container: WorkerContainer, owner: OpContext) -> None:
+    """Puts the org of a fresh owner on Team, with the seed's grant: a test
+    of a list longer than Free's ten active tasks is about the list."""
+    await container.managers.billing.grant_seeded_plan(owner, Plan.TEAM)
+
+
 async def member_of(container: WorkerContainer, slug: str, email: str) -> OpContext:
     tenancy = container.managers.tenancy
     await tenancy.add_member(request(), slug, email, "Member", Role.MEMBER)
@@ -53,6 +60,7 @@ async def member_of(container: WorkerContainer, slug: str, email: str) -> OpCont
         container.infra.get_cache(CacheScope.REALTIME_TICKET),
         TenancyOptions(dev_sign_in=True),
         identity_provider=IdentityProviderAbsentImpl(),
+        entitlements=container.managers.billing,
     )
     login = await signing.dev_sign_in(request(), email)
     identity = await tenancy.authenticate_login(request(), login.token)

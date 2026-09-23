@@ -439,6 +439,11 @@ class TenancyManagerInterface(ABC):
         personal org is never removed from it (PersonalOrgFixed)."""
         ...
 
+    @abstractmethod
+    async def count_members(self, ctx: OpContext) -> int:
+        """How many live members the org has: the seats its plan counts."""
+        ...
+
     # Credentials.
 
     @abstractmethod

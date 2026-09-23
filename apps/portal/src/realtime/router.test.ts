@@ -29,6 +29,8 @@ function pushOf(kind: string) {
 
 /** Every kind the service pushes on the entity_changed topic. */
 const SERVER_KINDS = [
+  "billing.account.created",
+  "billing.account.updated",
   "tasks.task.created",
   "tasks.task.updated",
   "tasks.task.deleted",
@@ -102,6 +104,16 @@ describe("routeEnvelope", () => {
     const outcome = routeEnvelope(queryClient, pushOf("tenancy.user.updated"));
     expect(outcome).toEqual({ invalidated: [keys.users.all, keys.me] });
     expect(seen).toEqual([keys.users.all, keys.me]);
+  });
+
+  it("refreshes the org's plan when its billing account changes", () => {
+    // A checkout paid in another tab, or a cancellation, changes the plan the
+    // chip and the billing page show, on the push.
+    for (const kind of ["billing.account.created", "billing.account.updated"]) {
+      const { queryClient, seen } = recording();
+      expect(routeEnvelope(queryClient, pushOf(kind))).toEqual({ invalidated: [keys.billing] });
+      expect(seen).toEqual([keys.billing]);
+    }
   });
 
   it("invalidates nothing for a revoked session, which no query reads", () => {

@@ -7,6 +7,9 @@ from pydantic import Field
 
 from tadas.infra.observability import current_traceparent
 from tadas.om.base import EMPTY_UUID, Platform, new_id, utcnow
+from tadas.om.billing.rules import effective_plan, refuse_past, seats_metered
+from tadas.om.billing.storage import BillingStorageInterface
+from tadas.om.billing.types.plan import Lever
 from tadas.om.events.storage import EventStorageInterface
 from tadas.om.events.types.event import Event
 from tadas.om.exceptions import (
@@ -50,6 +53,7 @@ from tadas.om.tenancy.types.org import Org
 from tadas.om.tenancy.types.page import OrgPage, UserPage
 from tadas.om.tenancy.types.size import PlatformSize
 from tadas.om.tenancy.types.user import User
+from tadas.om.work.types.work_item import WorkKind, work_row_kind
 
 log = logging.getLogger(__name__)
 
@@ -85,10 +89,15 @@ class TenancyOperatorManagerImpl(TenancyOperatorManagerInterface):
         relay: OutboxRelayInterface,
         options: TenancyOperatorOptions,
         clock: Callable[[], datetime] = utcnow,
+        *,
+        billing: BillingStorageInterface,
     ) -> None:
+        """`billing` is read for the plan of the org an operator adds a member
+        to: the plane is bound by the org's seats like any other door."""
         self._storage = storage
         self._tasks = tasks
         self._events = events
+        self._billing = billing
         self._relay = relay
         self._options = options
         self._totp = TotpSealer(options.totp_encryption_key)
@@ -252,6 +261,7 @@ class TenancyOperatorManagerImpl(TenancyOperatorManagerInterface):
             actor_id=admin.identity_id,
             request=admin,
             max_orgs=self._options.max_orgs_per_identity,
+            admission=lambda: self._seat_for_one_more(admin, org_id),
         )
         if created:
             log.info("operator %s added user %s to org %s", admin.identity_id, user.id, org_id)
@@ -327,6 +337,30 @@ class TenancyOperatorManagerImpl(TenancyOperatorManagerInterface):
         await self._relay.relay(org_id, row)
         log.info("operator %s deleted org %s", admin.identity_id, org_id)
         return deleted
+
+    async def _seat_for_one_more(
+        self, admin: OperatorContext, org_id: UUID
+    ) -> tuple[OutboxRow, ...]:
+        """Refuses a member the org's plan has no seat for, and on a per-seat
+        plan answers the row that asks for the quantity to follow."""
+        plan = effective_plan(await self._billing.read_account(org_id), utcnow())
+        refuse_past(plan, Lever.MEMBERS, await self._storage.count_members(org_id))
+        if not seats_metered(plan):
+            return ()
+        return (
+            OutboxRow(
+                id=new_id(),
+                created_at=utcnow(),
+                org_id=org_id,
+                kind=work_row_kind(WorkKind.SYNC_SEATS),
+                target_id=org_id,
+                payload={},
+                actor_id=admin.identity_id,
+                request_id=admin.request_id,
+                app=admin.app.type.value,
+                traceparent=current_traceparent(),
+            ),
+        )
 
     async def _org(self, org_id: UUID) -> Org:
         """The org named, deleted or not: an operator reads a deleted tenant's

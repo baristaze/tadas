@@ -24,15 +24,29 @@ more process, `slack`, which holds Slack's connection (below).
   the org's channel (a task created, completed, or reminded of),
   records it under the item's key so a rerun posts nothing, parks on a
   rate limit for the time Slack named, and marks the connection broken
-  when Slack refuses the channel for good. The third kind does nothing
-  and keeps the loop honest.
+  when Slack refuses the channel for good. `SYNC_SEATS` reads an org's
+  active members when it runs and holds a Max subscription's quantity to
+  them, with no proration and under a key made of the item and the
+  count, so a retried run is one change. The last kind does nothing and
+  keeps the loop honest.
 - **What Slack sends.** The worker reads the `slack` queue: `/tadas`
   commands, mentions, and the App Home opening, each already
   acknowledged to Slack. `/tadas add` creates a task in the channel's
   org, `/tadas list` (or `/tadas` alone) answers the person who typed it
   with the org's first ten open tasks, a count of the rest, and a link
   to the portal at `TADAS_PORTAL_URL`, `/tadas link` spends a link code,
-  and anything else answers with the usage. A delivery that fails stays on the queue and comes back.
+  and anything else answers with the usage. A task past the org's plan
+  is not added, and the reply names the plan and where to upgrade. A
+  delivery that fails stays on the queue and comes back.
+- **Apply the payment processor's deliveries.** Beside the claim loop,
+  the worker long-polls the inbound queue the webhook route fills. For
+  each delivery it finds the org the delivery names, mints that org's
+  service context, and applies the delivery: the subscription is read
+  from the processor again, and the delivery's mark lands in the
+  account's commit, so a copy changes nothing. A message is deleted once
+  it is applied, or once it can never be (no org named, or the org is
+  gone); any other failure leaves it to come back after its visibility,
+  and the queue dead-letters it past its receives.
 - **Renew the lease and fence itself.** While an item runs, the worker
   renews its lease. A renewal refused because the lease was lost
   cancels the running task at once, since another worker holds the
@@ -49,8 +63,8 @@ more process, `slack`, which holds Slack's connection (below).
     removed files and uploads never confirmed (the object in the store
     first, then the row, a batch of a hundred per org per sweep),
     removed members with their ended memberships, revoked keys, dead
-    sessions, spent tickets, finished idempotency records, and settled
-    work items. Under an org deleted longer ago than the retention,
+    sessions, spent tickets, finished idempotency records, the payment
+    processor's delivery marks, and settled work items. Under an org deleted longer ago than the retention,
     every row goes, its event stream included, and the org row stays as
     the record. Each namespace
     purges its own rows and asks tenancy the one question, whether the

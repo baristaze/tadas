@@ -1,5 +1,6 @@
-// The current org in the chrome. It opens a menu: the other places to switch
-// to, when there are any, and a new team org.
+// The current org in the chrome, with the plan it is on. It opens a menu: the
+// other places to switch to, when there are any, and a new team org.
+import { Pill } from "../design/kit";
 import { tokens } from "../design/tokens";
 import { placeNote } from "./orgChipModel";
 import { useOrgChipVm } from "./useOrgChipVm";
@@ -24,6 +25,11 @@ export function OrgChip() {
         {vm.orgName}
         {vm.personal ? (
           <span style={{ color: tokens.color.muted, fontWeight: 400, fontSize: tokens.font.size.sm }}>personal</span>
+        ) : null}
+        {vm.plan ? (
+          <Pill tone={vm.plan === "Free" ? "plain" : "accent"} title={`This org is on ${vm.plan}`}>
+            {vm.plan}
+          </Pill>
         ) : null}
         <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" style={{ color: tokens.color.muted }}>
           <path d="M3 4.5l3 3 3-3" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />

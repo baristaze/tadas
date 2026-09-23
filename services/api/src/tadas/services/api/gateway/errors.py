@@ -12,10 +12,11 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from tadas.infra.exceptions import InfraException
-from tadas.om.exceptions import PlatformException, SignInDelayed
+from tadas.om.exceptions import PlanLimitReached, PlatformException, SignInDelayed
 from tadas.services.api.gateway.envelope import INTERNAL_ERROR, error_response
 from tadas.services.api.gateway.observability import request_id_of
 from tadas.services.api.gateway.ratelimit import RateLimited
+from tadas.services.api.types.common import PlanLimitDetail
 
 log = logging.getLogger(__name__)
 
@@ -25,9 +26,14 @@ raises is presented under `http_error` with its own status."""
 
 
 def envelope(
-    request: Request, status: int, code: str, message: str, headers: dict[str, str] | None = None
+    request: Request,
+    status: int,
+    code: str,
+    message: str,
+    headers: dict[str, str] | None = None,
+    plan_limit: PlanLimitDetail | None = None,
 ) -> JSONResponse:
-    return error_response(request_id_of(request.scope), status, code, message, headers)
+    return error_response(request_id_of(request.scope), status, code, message, headers, plan_limit)
 
 
 def presented(
@@ -53,7 +59,13 @@ def presented(
             exc_info=exc,
         )
         return envelope(request, exc.http_status, exc.code, INTERNAL_ERROR[1], headers)
-    return envelope(request, exc.http_status, exc.code, exc.message, headers)
+    detail = None
+    if isinstance(exc, PlanLimitReached):
+        # The refusal is a lever: it names what would lift it.
+        detail = PlanLimitDetail(
+            lever=exc.lever, plan=exc.plan, limit=exc.limit, suggested_plan=exc.suggested_plan
+        )
+    return envelope(request, exc.http_status, exc.code, exc.message, headers, detail)
 
 
 def register_error_handlers(app: FastAPI) -> None:

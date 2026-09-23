@@ -143,6 +143,20 @@ class TaskStorageContract:
         assert await storage.read_open_tasks(org_b, team(), None, limit=10) == []
         assert await storage.read_open_places(org_b, exclude=None, after=None, limit=10) == []
 
+    async def test_the_open_count_is_the_tenants_live_open_tasks(
+        self, storage: TasksStorageInterface
+    ) -> None:
+        """The active tasks a plan bounds: open and not deleted, in this
+        tenant; a done one, a deleted one, and another tenant's are not."""
+        org_a, org_b = new_id(), new_id()
+        open_task, done, gone = make_task("Open"), make_task("Done"), make_task("Gone")
+        for task in (open_task, done, gone):
+            await seed(storage, org_a, task)
+        await bump(storage, org_a, done, status=TaskStatus.DONE)
+        await bump(storage, org_a, gone, deleted_at=utcnow(), deleted_by=new_id())
+        assert await storage.count_open_tasks(org_a, team()) == 1
+        assert await storage.count_open_tasks(org_b, team()) == 0
+
     async def test_write_refuses_another_tenant(self, storage: TasksStorageInterface) -> None:
         org_a, org_b = new_id(), new_id()
         task = make_task()

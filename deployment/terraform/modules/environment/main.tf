@@ -26,6 +26,8 @@ locals {
     TADAS_SECRETS_NAME_PREFIX = module.secrets.application_prefix
     TADAS_AWS_REGION          = var.region
     TADAS_LOG_JSON            = "true"
+    TADAS_BILLING_BACKEND     = "stripe"
+    TADAS_STRIPE_ACCOUNT_ID   = var.stripe_account_id
     TADAS_DATABASE_POOL_SIZE  = tostring(var.database_pool_size)
     # Read by no code. A rotation (database_password_version raised) changes
     # the task definition through this line, so every service rolls and its
@@ -52,6 +54,11 @@ locals {
     TADAS_DATABASE_URL        = module.secrets.database_url_secret_arn
     TADAS_DATABASE_SYSTEM_URL = module.secrets.database_system_url_secret_arn
     TADAS_SENTRY_DSN          = module.secrets.sentry_dsn_secret_arn
+    # Both processes call the payment processor, and only the API receives
+    # its deliveries; the worker holds the signing secret too, one set of
+    # process secrets being simpler than a set per service.
+    TADAS_STRIPE_ORG_KEY        = module.secrets.stripe_org_key_secret_arn
+    TADAS_STRIPE_WEBHOOK_SECRET = module.secrets.stripe_webhook_secret_arn
   }
 
   # The revision before this release injected the master's URL as
@@ -66,11 +73,12 @@ locals {
     TADAS_DATABASE_POOL_SIZE = "2"
   })
 
-  # The API's admission bounds follow its pool, as the settings' defaults
-  # do (48 and 16 over 12): four reads in flight per connection, and a
-  # third as many writes.
-  admission_limit_reads  = 4 * var.database_pool_size
-  admission_limit_writes = ceil(4 * var.database_pool_size / 3)
+  # The API's admission bounds follow its pool, generously: a burst waits on
+  # a checkout, which has a bound of its own, and only a flood is refused.
+  # Thirty-two reads in flight per connection and half as many writes, which
+  # no demo, traffic run, or person clicking fast comes near.
+  admission_limit_reads  = 32 * var.database_pool_size
+  admission_limit_writes = 16 * var.database_pool_size
 
   process_policies = [
     module.queue.policy_arn,

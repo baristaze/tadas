@@ -93,5 +93,8 @@ async def test_the_absent_provider_refuses_every_call() -> None:
             await call
     root = absent_integrations()
     await root.start()
-    assert root.describe() == [root.get_identity_provider().describe()]
+    assert root.describe() == [
+        root.get_identity_provider().describe(),
+        root.get_payments().describe(),
+    ]
     await root.close()

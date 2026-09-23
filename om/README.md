@@ -59,6 +59,22 @@ happen. It works once and it expires in minutes. It stands for the
 session or the API key that asked for it, so it opens nothing they
 could not open themselves.
 
+## The plan
+
+A **plan** is what an org is entitled to: how many members, whether it
+may have API keys, how many active tasks, and how much room for files.
+Every org is on one, Free to begin with. The plan belongs to the org,
+never to a person: the owner pays for the team.
+
+A **billing account** is the org's place at the payment processor: its
+customer there, and Tadas's copy of the subscription the org pays for.
+The processor owns the money; Tadas owns what a plan lets the org have,
+and copies what the processor holds whenever it says something changed.
+An operator can also grant an org a plan with no payment.
+
+A **delivery mark** says that one message from the processor has been
+applied, so the same message arriving again changes nothing.
+
 ## The work
 
 A **task** is one item on the list: a title, notes, who it is assigned
@@ -130,6 +146,11 @@ a second task.
   assigned to a user. A task added from Slack is created by the user
   whose code linked the channel.
 - A Slack connection belongs to the org, and a channel to one org.
+- An org is on one plan. The plan bounds its members, its API keys,
+  and its active tasks; meeting a bound is a refusal that offers the
+  plan that lifts it, and nothing is ever taken away. The billing
+  account and its delivery marks belong to the org like everything
+  else.
 - Files belong to the org. Each is uploaded by a user, for a purpose;
   an attachment names the task it is on, and goes when the task goes.
 - Every change to a task or a file, and every change to a user, a membership, a
@@ -147,6 +168,7 @@ a second task.
 - [Tasks](src/tadas/om/tasks/README.md)
 - [Files](src/tadas/om/media/README.md)
 - [Slack connections, link codes, and posts](src/tadas/om/slack/README.md)
+- [Plans, billing accounts, and delivery marks](src/tadas/om/billing/README.md)
 - [Events](src/tadas/om/events/README.md)
 - [Work items](src/tadas/om/work/README.md)
 - [Idempotency records](src/tadas/om/idempotency/README.md)

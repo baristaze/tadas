@@ -42,12 +42,14 @@ class TasksManagerInterface(ABC):
 
     @abstractmethod
     async def create_task(self, ctx: OpContext, task: Task) -> Task:
-        """A new task is open and goes to the top of the open list."""
+        """A new task is open and goes to the top of the open list. An org at
+        its plan's bound of active tasks is refused (`PlanLimitReached`)."""
         ...
 
     @abstractmethod
     async def update_task(self, ctx: OpContext, task: Task, expected_version: int) -> Task:
-        """A task reopened from done goes back to the top of the open list. The
+        """A task reopened from done goes back to the top of the open list, and
+        is refused like a create when the org is at its bound. The
         entity supplies the fields a caller may change; the provenance and the
         task's `MANAGER_OWNED_FIELDS` stay as stored. `expected_version` is the
         version the caller read, never one read here: the write lands only
@@ -91,6 +93,12 @@ class TasksManagerInterface(ABC):
     async def remove_attachment(self, ctx: OpContext, task_id: UUID, file_id: UUID) -> File:
         """Soft-deletes one attachment of a live task. A file that is not this
         task's attachment is `NotFound`, as one that never existed is."""
+        ...
+
+    @abstractmethod
+    async def count_active_tasks(self, ctx: OpContext) -> int:
+        """How many of the org's tasks are open and not deleted: what the
+        plan's active-task bound counts."""
         ...
 
     @abstractmethod

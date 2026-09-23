@@ -86,6 +86,8 @@ TABLE_SCOPES: dict[str, TableScope] = {
     "work_items": TableScope(ScopeKind.ORG),
     "events": TableScope(ScopeKind.ORG),
     "event_cursors": TableScope(ScopeKind.ORG),
+    "billing_accounts": TableScope(ScopeKind.ORG),
+    "billing_deliveries": TableScope(ScopeKind.ORG),
     "slack_connections": TableScope(ScopeKind.ORG),
     "slack_link_codes": TableScope(ScopeKind.ORG),
     "slack_posts": TableScope(ScopeKind.ORG),

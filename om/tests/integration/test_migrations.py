@@ -205,6 +205,8 @@ async def test_the_backfill_gives_every_person_one_personal_org(
     await downgrade(DatabaseRole.CORE, migrated[DatabaseRole.CORE], BEFORE_BACKFILL)
     await upgrade(DatabaseRole.CORE, migrated[DatabaseRole.CORE])
     assert await storage.count_orgs() == before + 3
+    # The rest of the chain again, so the suite goes on at the head.
+    await upgrade(DatabaseRole.CORE, migrated[DatabaseRole.CORE])
     assert await check(DatabaseRole.CORE, migrated[DatabaseRole.CORE]) == []
     engine = create_async_engine(migrated[DatabaseRole.CORE])
     try:

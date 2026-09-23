@@ -59,3 +59,31 @@ class DeviceExpired(ProviderRefused):
     """The device code expired before the person confirmed it."""
 
     code = "expired_token"
+
+
+class PaymentsUnconfigured(ProviderUnavailable):
+    """This environment holds no credential for the payment processor. The
+    plans still apply; nobody can buy one here."""
+
+    code = "billing_unavailable"
+
+
+class PaymentsRefused(InfraException):
+    """The processor answered, and refused: a credential without the
+    permission the call needs, a price it does not know, a request it calls
+    invalid. The message names the operation and the processor's error code,
+    never a payload or a key."""
+
+    http_status = 502
+    code = "payments_refused"
+
+    def __init__(self, operation: str, reason: str) -> None:
+        super().__init__(f"the payment processor refused {operation}: {reason}")
+
+
+class DeliveryRefused(InfraException):
+    """An inbound delivery whose signature, timestamp, or body did not check
+    out. Nothing is queued for it."""
+
+    http_status = 400
+    code = "webhook_signature_invalid"

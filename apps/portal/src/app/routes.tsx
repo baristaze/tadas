@@ -1,4 +1,5 @@
 import { createBrowserRouter, Navigate, Outlet, useLocation } from "react-router-dom";
+import { BillingPage } from "../features/billing/BillingPage";
 import { NewOrgPage } from "../features/new_org/NewOrgPage";
 import { SettingsPage } from "../features/settings/SettingsPage";
 import { CallbackPage } from "../features/sign_in/CallbackPage";
@@ -39,6 +40,7 @@ export const router = createBrowserRouter([
     children: [
       { path: "/", element: <TasksPage /> },
       { path: "/settings", element: <SettingsPage /> },
+      { path: "/settings/billing", element: <BillingPage /> },
       { path: "/orgs/new", element: <NewOrgPage /> },
     ],
   },

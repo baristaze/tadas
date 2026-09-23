@@ -26,7 +26,7 @@ The data services' ports are fixed, since the `TADAS_*_URL` knobs name them.
 | api | http://127.0.0.1:8000 (`/docs`, `/metrics`, `/healthz`) | `api:8000` | |
 | postgres | `127.0.0.1:55432` | `postgres:5432` | database `tadas`; `tadas_runtime`, `tadas_system`, and `tadas_migration`, each with its name as its password; the master `tadas` / `tadas`; the superuser `postgres` / `postgres` |
 | valkey | `127.0.0.1:56379` | `valkey:6379` | none: user `default`, no password |
-| elasticmq (SQS) | http://127.0.0.1:59324 | `elasticmq:9324` | any key |
+| elasticmq (SQS) | http://127.0.0.1:59324 | `elasticmq:9324` | any key; `tadas-webhooks` and its `-dead` queue are declared in `elasticmq/elasticmq.conf` |
 | minio (S3) | http://127.0.0.1:59000 | `minio:9000` | `tadas` / `tadastadas`; `make infra-up` and `make up` create the buckets (`make buckets`), and the app containers sign presigned URLs for the host port |
 | MinIO console | http://localhost:59001 | | `tadas` / `tadastadas` |
 | pgweb (devx) | http://localhost:58081 | | none |

@@ -8,9 +8,10 @@ finished or deleted meanwhile, and a second run of a reminder that went out
 all make that write land nothing, and the item completes without a word."""
 
 import logging
+from typing import ClassVar
 
 from tadas.om.base import utcnow
-from tadas.om.opcontext import OpContext
+from tadas.om.opcontext import OpContext, Permission
 from tadas.om.tasks import TasksManagerInterface
 from tadas.om.work.types.handler import WorkHandlerInterface, WorkParked
 from tadas.om.work.types.work_item import TaskReminderPayload, WorkItem
@@ -19,6 +20,9 @@ log = logging.getLogger(__name__)
 
 
 class TaskReminderHandlerImpl(WorkHandlerInterface):
+    REQUIRES: ClassVar[tuple[Permission, ...]] = (Permission.WRITE,)
+    """`fire_reminder` writes."""
+
     def __init__(self, tasks: TasksManagerInterface) -> None:
         self._tasks = tasks
 

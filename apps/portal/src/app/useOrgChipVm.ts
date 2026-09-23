@@ -1,9 +1,11 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import type { MembershipChoiceView } from "../api";
+import { useBilling } from "../queries/billing";
 import { useMe, useMyMemberships, useSwitchOrg } from "../queries/tenancy";
 import { useNoticesStore } from "../store/notices";
 import { adoptSession } from "./adoptSession";
+import { planName } from "../features/billing/billingModel";
 import { chipChoices } from "./orgChipModel";
 import { switchOrg } from "./switchOrg";
 
@@ -12,6 +14,8 @@ export function useOrgChipVm() {
   const me = useMe();
   const memberships = useMyMemberships();
   const exchange = useSwitchOrg();
+  // The plan badge is a courtesy: the chip works the same when billing fails to load.
+  const billing = useBilling();
   const notify = useNoticesStore((s) => s.notify);
   const [open, setOpen] = useState(false);
   const choices = chipChoices(memberships.isPending ? undefined : memberships.data, me.data?.org.id);
@@ -29,6 +33,7 @@ export function useOrgChipVm() {
 
   return {
     orgName: me.data?.org.name ?? "Tadas",
+    plan: billing.data ? planName(billing.data.plan) : null,
     personal: me.data?.org.kind === "personal",
     role: me.data?.role,
     canOpen: me.data !== undefined,

@@ -7,6 +7,7 @@ from uuid import UUID
 import pytest
 from contracts.factories import make_user
 from contracts.outbox_storage import claim_all
+from contracts.plans import ON_TEAM, GrantedEverywhere
 from contracts.second_factor import (
     TOTP_KEY,
     SteppingClock,
@@ -174,6 +175,7 @@ def make_manager(
         options or TenancyOptions(dev_sign_in=True, totp_encryption_key=TOTP_KEY),
         clock or SteppingClock(),
         identity_provider=IdentityProviderAbsentImpl(),
+        entitlements=ON_TEAM,
     )
 
 
@@ -208,6 +210,7 @@ def operator(
         relay,
         TenancyOperatorOptions(totp_encryption_key=TOTP_KEY),
         clock,
+        billing=GrantedEverywhere(),
     )
 
 
@@ -671,6 +674,7 @@ async def test_removing_a_member_revokes_their_credentials_and_announces_each(
         infra.get_cache(CacheScope.REALTIME_TICKET),
         TenancyOptions(dev_sign_in=True),
         identity_provider=IdentityProviderAbsentImpl(),
+        entitlements=ON_TEAM,
     )
     _, org = await manager.bootstrap(request(), "Acme", "acme", "ann@example.test", "Ann")
     owner = await sign_in(manager, "ann@example.test", org.id)
@@ -716,6 +720,7 @@ async def test_no_event_about_a_user_carries_who_they_are(
         infra.get_cache(CacheScope.REALTIME_TICKET),
         TenancyOptions(dev_sign_in=True),
         identity_provider=IdentityProviderAbsentImpl(),
+        entitlements=ON_TEAM,
     )
     _, org = await manager.bootstrap(request(), "Acme", "acme", "ann@example.test", "Ann")
     owner = await sign_in(manager, "ann@example.test", org.id)
@@ -903,6 +908,7 @@ async def test_revoking_a_session_announces_it_on_the_bus_without_its_token(
         infra.get_cache(CacheScope.REALTIME_TICKET),
         TenancyOptions(dev_sign_in=True),
         identity_provider=IdentityProviderAbsentImpl(),
+        entitlements=ON_TEAM,
     )
     published: list[TopicPayload] = []
 
@@ -1090,6 +1096,7 @@ async def test_a_process_without_the_totp_key_refuses_to_enrol(
         EventStorageMemoryImpl(),
         OutboxRelayImpl(outbox, EventStorageMemoryImpl(), infra.get_topics()),
         TenancyOperatorOptions(),
+        billing=GrantedEverywhere(),
     )
     await seed_operator(manager, "root@example.test")
     with pytest.raises(Unavailable):
@@ -1163,6 +1170,7 @@ async def test_the_grant_job_puts_an_identity_on_the_allowlist_and_audits_it(
         infra.get_cache(CacheScope.REALTIME_TICKET),
         TenancyOptions(dev_sign_in=True),
         identity_provider=IdentityProviderAbsentImpl(),
+        entitlements=ON_TEAM,
     )
     with pytest.raises(NotFound):
         await manager.grant_operator(request(), "ann@example.test", OperatorRole.READ)
@@ -2107,6 +2115,7 @@ async def test_a_switch_ends_the_session_it_was_presented_with_in_the_same_write
         infra.get_cache(CacheScope.REALTIME_TICKET),
         TenancyOptions(dev_sign_in=True),
         identity_provider=IdentityProviderAbsentImpl(),
+        entitlements=ON_TEAM,
     )
     _, acme = await manager.bootstrap(request(), "Acme", "acme", "ann@example.test", "Ann")
     await manager.bootstrap(request(), "Beta", "beta", "bea@example.test", "Bea")

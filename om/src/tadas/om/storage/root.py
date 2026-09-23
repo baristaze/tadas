@@ -2,6 +2,7 @@
 
 from abc import ABC, abstractmethod
 
+from tadas.om.billing.storage import BillingStorageInterface
 from tadas.om.events.storage import EventStorageInterface
 from tadas.om.idempotency.storage import IdempotencyStorageInterface
 from tadas.om.media.storage import MediaStorageInterface
@@ -33,6 +34,9 @@ class StorageInterface(ABC):
 
     @abstractmethod
     def get_outbox_storage(self) -> OutboxStorageInterface: ...
+
+    @abstractmethod
+    def get_billing_storage(self) -> BillingStorageInterface: ...
 
     @abstractmethod
     def get_slack_storage(self) -> SlackStorageInterface: ...

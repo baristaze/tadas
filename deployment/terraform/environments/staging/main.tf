@@ -21,6 +21,10 @@ module "environment" {
   workos_client_id  = "client_01M3640D8WBF9KC0P89YW4E72N"
   portal_sentry_dsn = var.portal_sentry_dsn
 
+  # The payment processor's account, the Tadas sandbox: test mode, no real money. The process refuses a key
+  # whose mode is not this environment's.
+  stripe_account_id = "acct_1UIfVX45a2t9JoiY"
+
   # Scale: size XS, the demo posture (deployment/cloud/README.md prices
   # every size). Everything below is what makes this environment the smaller
   # one. The pool is sized to the instance at the autoscaling ceilings, so

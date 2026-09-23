@@ -5,11 +5,15 @@ holds connections."""
 from abc import ABC, abstractmethod
 
 from tadas.integrations.identity import IdentityProviderInterface
+from tadas.integrations.payments import PaymentsInterface
 
 
 class IntegrationsInterface(ABC):
     @abstractmethod
     def get_identity_provider(self) -> IdentityProviderInterface: ...
+
+    @abstractmethod
+    def get_payments(self) -> PaymentsInterface: ...
 
     @abstractmethod
     def describe(self) -> list[str]:

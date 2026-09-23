@@ -6,6 +6,7 @@ from pathlib import Path
 from uuid import UUID
 
 import pytest
+from contracts.plans import ON_TEAM
 from contracts.second_factor import TOTP_KEY, SteppingClock
 
 from tadas.infra.cache import CacheScope
@@ -97,6 +98,7 @@ def build(
         ),
         SteppingClock(),
         identity_provider=twin or IdentityProviderAbsentImpl(),
+        entitlements=ON_TEAM,
     )
 
 

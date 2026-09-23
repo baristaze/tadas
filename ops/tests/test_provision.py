@@ -47,6 +47,7 @@ class OperatorPlane:
 
     def __init__(self, *, refuse_create_after: int | None = None, token: str = "opt_write") -> None:
         self.orgs: dict[str, str] = {}
+        self.plans: dict[str, str] = {}
         self.deleted: list[str] = []
         self.requests: list[httpx.Request] = []
         self.refuse_create_after = refuse_create_after
@@ -76,7 +77,13 @@ class OperatorPlane:
                 "created_at": NOW,
             }
             return httpx.Response(201, json={**org, "deleted_at": None})
+        if method == "PUT" and path.endswith("/plan"):
+            org_id = path.split("/")[-2]
+            self.plans[org_id] = body["plan"]
+            plan = {"plan": body["plan"], "paid_plan": None, "comped_plan": body["plan"]}
+            return httpx.Response(200, json={**plan, "status": None, "ends_at": None})
         if method == "POST" and path.endswith("/members"):
+            assert self.plans.get(path.split("/")[-2]) == "max", "a member joins after the grant"
             user = {
                 "id": str(uuid4()),
                 "email": body["email"],
@@ -111,6 +118,7 @@ async def test_tenants_are_named_for_the_run_under_the_provisioner_token() -> No
     assert sorted(plane.orgs.values()) == ["ops-r1-1", "ops-r1-2"]
     assert all(is_run_tenant(slug) for slug in plane.orgs.values())
     assert len(tenants.people) == 4 and len(tenants.orgs_created) == 2
+    assert plane.plans == dict.fromkeys(plane.orgs, "max")
     assert not any(r.url.path.startswith("/v1/auth/") for r in plane.requests)
 
 

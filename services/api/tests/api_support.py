@@ -2,7 +2,8 @@
 
 import asyncio
 import base64
-from collections.abc import Coroutine
+from collections.abc import AsyncIterator, Coroutine
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
@@ -13,6 +14,8 @@ import httpx
 from tadas.infra.impl.local import InfraLocalImpl
 from tadas.integrations.root import IntegrationsInterface
 from tadas.om.base import new_id, utcnow
+from tadas.om.billing.types.account import BillingAccount
+from tadas.om.billing.types.plan import Plan
 from tadas.om.opcontext import AppContext, AppType, OperatorRole, RequestContext, Role
 from tadas.om.storage.impl.memory import StorageMemoryImpl
 from tadas.om.storage.root import StorageInterface
@@ -49,6 +52,7 @@ def build_container(
     settings = ApiSettings.model_validate(
         {
             "_env_file": None,
+            "billing_backend": "twin",
             "environment": "test",
             "totp_encryption_key": TOTP_KEY,
             "dev_sign_in_enabled": True,
@@ -85,11 +89,36 @@ async def sign_in_as(client: httpx.AsyncClient, email: str, org_id: UUID) -> dic
     }
 
 
-async def sign_in(client: httpx.AsyncClient, container: AppContainer) -> dict[str, str]:
-    """Bootstraps an org, signs its owner in, and returns the tenant headers."""
+async def on_plan(container: AppContainer, org_id: UUID, plan: Plan) -> None:
+    """Puts an org on a plan straight into storage, as an operator's grant
+    would: most tests are about something else than a plan's bounds."""
+    now = utcnow()
+    await container.storage.get_billing_storage().create_account(
+        org_id,
+        BillingAccount(
+            id=new_id(),
+            created_at=now,
+            updated_at=now,
+            created_by=org_id,
+            updated_by=org_id,
+            comped_plan=plan,
+        ),
+        (),
+    )
+
+
+async def sign_in(
+    client: httpx.AsyncClient, container: AppContainer, plan: Plan | None = Plan.TEAM
+) -> dict[str, str]:
+    """Bootstraps an org, signs its owner in, and returns the tenant headers.
+    The org is on Team, whose api keys and tasks no test meets a bound of,
+    unless the test names another plan, or None for the Free every org
+    starts on."""
     _, org = await container.managers.tenancy.bootstrap(
         seed_request(), "Acme", "acme", OWNER["email"], OWNER["name"]
     )
+    if plan is not None:
+        await on_plan(container, org.id, plan)
     return await sign_in_as(client, OWNER["email"], org.id)
 
 
@@ -180,6 +209,24 @@ async def enrol_operator(
     )
     assert login.status_code == 200, login.text
     return bearer(login.json()["token"]), secret
+
+
+SMALL_BUDGET = 5
+"""A rate limit's budget in a test that spends it: the settings' own is
+sized for a crowd behind one address, far past what a test should send."""
+
+
+@asynccontextmanager
+async def client_over(container: AppContainer) -> AsyncIterator[httpx.AsyncClient]:
+    """The app over a container a test built with settings of its own, inside
+    its lifespan, and a client of it."""
+    from tadas.services.api.app import create_app
+
+    app = create_app(container)
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            yield client
 
 
 def run[T](coro: Coroutine[Any, Any, T]) -> T:

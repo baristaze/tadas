@@ -19,6 +19,9 @@ export const keys = {
     all: ["api_key"] as const,
     list: (limit: number) => ["api_key", "list", limit] as const,
   },
+  // The org's plan and its usage. The server pushes `billing.account.*`,
+  // whose entity (`account`) the router's table maps here.
+  billing: ["billing"] as const,
   // Files: a task's attachments and the org's usage, both refreshed by a
   // `media.file.*` push, since the entity is `file`.
   files: {

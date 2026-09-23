@@ -103,7 +103,7 @@ class FakeSession:
         self.xray = FakeXRay()
         self.opened: list[str] = []
 
-    def client(self, service_name: str):
+    def client(self, service_name: str, **_: object):
         self.opened.append(service_name)
         fake = {"logs": self.logs, "cloudwatch": self.cloudwatch, "xray": self.xray}[service_name]
 

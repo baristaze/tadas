@@ -53,6 +53,7 @@ async def sign_in(container: WorkerContainer) -> OpContext:
         container.infra.get_cache(CacheScope.REALTIME_TICKET),
         TenancyOptions(dev_sign_in=True),
         identity_provider=IdentityProviderAbsentImpl(),
+        entitlements=container.managers.billing,
     )
     login = await signing.dev_sign_in(request(), "ann@example.test")
     identity = await tenancy.authenticate_login(request(), login.token)

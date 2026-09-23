@@ -125,9 +125,10 @@ migrate: ## Make the database logins, then apply every role's migration chain to
 # The SEED_* values come from .env (or .env.example); override any of them
 # there or on the command line, e.g. `make seed SEED_EMAIL=me@example.test`.
 # The admin owns the second org and joins the first as an admin: one person
-# with two memberships, each under a different role.
+# with two memberships, each under a different role. The first org is a
+# team of three, so the seed grants it Team; the second stays on Free.
 seed: ## Create two local orgs with an owner, a member, and an admin of both to sign in as; a no-op once they exist
-	uv run --package tadas-api tadas-api bootstrap --if-absent \
+	uv run --package tadas-api tadas-api bootstrap --if-absent --plan team \
 		--org "$(SEED_ORG)" --slug "$(SEED_SLUG)" --name "$(SEED_NAME)" \
 		--email "$(SEED_EMAIL)"
 	uv run --package tadas-api tadas-api add-member --slug "$(SEED_SLUG)" \
