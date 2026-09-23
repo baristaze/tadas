@@ -6,7 +6,7 @@ from tadas.om.opcontext import CredentialKind, OperatorRole, Role
 from tadas.om.tenancy.types.api_key import ApiKey
 from tadas.om.tenancy.types.identity import Identity
 from tadas.om.tenancy.types.membership import Membership
-from tadas.om.tenancy.types.org import Org
+from tadas.om.tenancy.types.org import Org, OrgKind
 from tadas.om.tenancy.types.session import Session
 from tadas.om.tenancy.types.socket_ticket import SocketTicket
 from tadas.om.tenancy.types.user import User
@@ -23,6 +23,13 @@ def make_org(name: str = "Acme") -> Org:
         created_by=org_id,
         updated_by=org_id,
         slug=f"{name.lower()}-{org_id.hex[-12:]}",  # the random tail; the head is the millisecond
+    )
+
+
+def make_personal_org(identity_id: UUID, name: str = "Dee") -> Org:
+    """A person's personal org: the kind, and the person it belongs to."""
+    return make_org(name).model_copy(
+        update={"kind": OrgKind.PERSONAL, "personal_identity_id": identity_id}
     )
 
 

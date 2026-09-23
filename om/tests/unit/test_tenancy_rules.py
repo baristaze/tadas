@@ -5,13 +5,18 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from tadas.om.tenancy.rules import (
+    MAX_SLUG_LENGTH,
+    SLUG_PATTERN,
     check_email,
+    check_org,
     check_sign_up,
     email_digest,
     is_platform_email,
     matching_totp_step,
     otpauth_uri,
+    personal_org_name,
     sign_in_delay,
+    slug_from_name,
     totp_code,
     totp_step,
 )
@@ -83,4 +88,31 @@ def test_the_platforms_own_addresses_are_refused_at_sign_up() -> None:
     assert is_platform_email("provisioner@platform.tadas.invalid")
     assert not is_platform_email("provisioner@example.test")
     with pytest.raises(ValueError, match="belongs to the platform"):
-        check_sign_up("smoke@platform.tadas.invalid", "pw-12345678", "S", "Smoke", "smoke")
+        check_sign_up("smoke@platform.tadas.invalid", "pw-12345678", "S")
+
+
+def test_a_slug_nobody_typed_is_the_name_and_a_tail() -> None:
+    assert slug_from_name("Dee's Bakery", "abcd1234") == "dee-s-bakery-abcd1234"
+    assert slug_from_name("  Café Zürich  ", "x") == "cafe-zurich-x"
+    assert slug_from_name("!!!", "abcd1234") == "org-abcd1234"
+    long = slug_from_name("a" * 60, "abcd1234")
+    assert len(long) == MAX_SLUG_LENGTH and SLUG_PATTERN.fullmatch(long)
+    assert SLUG_PATTERN.fullmatch(slug_from_name("a-" * 30, "abcd1234"))
+
+
+def test_a_personal_org_is_named_after_its_person() -> None:
+    assert personal_org_name(" Dee ") == "Dee"
+    assert personal_org_name("  ") == "Personal"
+
+
+@pytest.mark.parametrize(
+    ("name", "slug"), [("", None), ("  ", "ok"), ("Cafe", "Cafe"), ("Cafe", "b" * 49)]
+)
+def test_a_team_org_has_a_name_and_a_well_formed_slug(name: str, slug: str | None) -> None:
+    with pytest.raises(ValueError):
+        check_org(name, slug)
+
+
+def test_a_team_org_may_leave_its_slug_to_the_name() -> None:
+    check_org("Cafe", None)
+    check_org("Cafe", "cafe-2")
