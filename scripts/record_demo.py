@@ -43,7 +43,7 @@ import websockets
 from PIL import Image
 
 from tadas.client.client import ApiClient
-from tadas.client.types import TaskScope, TaskStatus
+from tadas.client.types import OrgKind, TaskScope, TaskStatus
 
 WIDTH, HEIGHT = 420, 840  # each window in the GIF: portrait, height twice the width
 SCALE = 2  # render at twice the size, then downscale, for crisp text
@@ -76,10 +76,11 @@ class Api:
         return ApiClient(self.base, app="portal", app_version="portal@demo", token=token)
 
     async def session(self, email: str, password: str) -> dict[str, Any]:
-        """What the portal keeps in session storage once someone has signed in."""
+        """What the portal keeps in session storage once someone has signed in
+        and chosen the seeded team; every person also has a personal org."""
         async with self._client() as client:
             login = await client.login(email, password)
-            org = login.memberships[0].org
+            org = next(m.org for m in login.memberships if m.org.kind is OrgKind.team)
             issued = await client.exchange_session(login.token, org.id)
         return {"state": {"token": issued.token, "orgSlug": org.slug}, "version": 0}
 

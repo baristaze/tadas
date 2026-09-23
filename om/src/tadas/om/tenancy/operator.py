@@ -101,9 +101,9 @@ class TenancyOperatorManagerInterface(ABC):
         owner_name: str,
         attempt: Attempt | None = None,
     ) -> Org:
-        """An org with its owner, the way `bootstrap` seeds one: the owner's
-        identity is created, or kept with its password when the email is
-        known. A taken slug is `Conflict`. `attempt`, when given, is the
+        """A team org with its owner, the way `bootstrap` seeds one: the
+        owner's identity is created with its personal org, or kept with its
+        password when the email is known. A taken slug is `Conflict`. `attempt`, when given, is the
         attempt a retried request runs under: the org is created on its id,
         and an org already written under that id is the rerun of this create
         and is returned as stored."""
@@ -136,7 +136,7 @@ class TenancyOperatorManagerInterface(ABC):
         attempt: Attempt | None = None,
     ) -> User:
         """A person in the org, the way `add-member` seeds one: the identity is
-        created if the email is new, and a person who is already a member is
+        created with its personal org if the email is new, and a person who is already a member is
         returned as they are. The owner role and the service role are refused
         by name: the one owner is the one `create_org` minted. The rows record
         the operator's identity as their maker, since an operator has no user
@@ -172,5 +172,6 @@ class TenancyOperatorManagerInterface(ABC):
         principals stop resolving at once and every socket of the tenant closes.
         Its users, credentials, and work stay for the sweep: queued work fails
         on its next claim, and the purge takes the tenant's rows once the
-        retention has passed."""
+        retention has passed. A personal org is refused (PersonalOrgFixed): it
+        is its person's place for as long as the person exists."""
         ...

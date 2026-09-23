@@ -104,12 +104,14 @@ export function TextField({
   onChange,
   type = "text",
   autoComplete,
+  placeholder,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   type?: "text" | "email" | "password" | "datetime-local";
   autoComplete?: string;
+  placeholder?: string;
 }) {
   return (
     <label className="tadas-label">
@@ -118,6 +120,7 @@ export function TextField({
         type={type}
         value={value}
         autoComplete={autoComplete}
+        placeholder={placeholder}
         onChange={(event) => onChange(event.target.value)}
         className="tadas-field"
       />

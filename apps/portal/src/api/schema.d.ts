@@ -424,6 +424,23 @@ export interface paths {
         patch: operations["update_membership_v1_memberships__user_id__patch"];
         trace?: never;
     };
+    "/v1/orgs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Org */
+        post: operations["create_org_v1_orgs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/orgs/current": {
         parameters: {
             query?: never;
@@ -708,6 +725,18 @@ export interface components {
             owner_password: string;
             /** Slug */
             slug: string;
+        };
+        /**
+         * CreateTeamOrgRequest
+         * @description A team org the caller makes and owns. `slug` is lower-case letters and
+         *     digits joined by hyphens; left out, one is made from the name. A taken
+         *     slug is 409.
+         */
+        CreateTeamOrgRequest: {
+            /** Name */
+            name: string;
+            /** Slug */
+            slug?: string | null;
         };
         /**
          * CredentialKind
@@ -1025,6 +1054,13 @@ export interface components {
             operator_role: components["schemas"]["OperatorRole"];
         };
         /**
+         * OrgKind
+         * @description What an org is for. Every person has exactly one personal org, made
+         *     with them; every other org is a team org, made on purpose.
+         * @enum {string}
+         */
+        OrgKind: "personal" | "team";
+        /**
          * OrgPageView
          * @description One page of every org, by id, for the operator plane; `next_cursor` as
          *     on `UserPageView`.
@@ -1035,7 +1071,12 @@ export interface components {
             /** Next Cursor */
             next_cursor: string | null;
         };
-        /** OrgView */
+        /**
+         * OrgView
+         * @description `kind` says what the org is for: every person has one `personal` org,
+         *     made with them, which is never deleted and never changes hands; every
+         *     other org is a `team` org.
+         */
         OrgView: {
             /**
              * Created At
@@ -1049,6 +1090,7 @@ export interface components {
              * Format: uuid
              */
             id: string;
+            kind: components["schemas"]["OrgKind"];
             /** Name */
             name: string;
             /** Slug */
@@ -1135,21 +1177,28 @@ export interface components {
         };
         /**
          * SignUpRequest
-         * @description A new person, their first org, and their password. The answer is a
-         *     sign-in's (`IssuedLoginView`), so the client goes on through the same
-         *     choice and exchange. `org_slug` is lower-case letters and digits joined
-         *     by hyphens; a held email and a taken slug are both 409. No email is
-         *     verified.
+         * @description A new person and their password. The person's personal org is made
+         *     with them, named and slugged for them, so a sign-up names no org. The
+         *     answer is a sign-in's (`IssuedLoginView`), so the client goes on through
+         *     the same choice and exchange; a held email is 409. No email is verified.
+         *     `org_name` and `org_slug` are what a sign-up named before and are
+         *     ignored; the release after this one refuses them.
          */
         SignUpRequest: {
             /** Display Name */
             display_name: string;
             /** Email */
             email: string;
-            /** Org Name */
-            org_name: string;
-            /** Org Slug */
-            org_slug: string;
+            /**
+             * Org Name
+             * @deprecated
+             */
+            org_name?: string | null;
+            /**
+             * Org Slug
+             * @deprecated
+             */
+            org_slug?: string | null;
             /** Password */
             password: string;
         };
@@ -2398,6 +2447,44 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MembershipView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_org_v1_orgs_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
+                "idempotency-key"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateTeamOrgRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MembershipChoiceView"];
                 };
             };
             /** @description Validation Error */

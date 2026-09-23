@@ -3,7 +3,7 @@ import { ApiError, type IssuedSessionView } from "../api";
 import { chipChoices } from "./orgChipModel";
 import { switchOrg, type SwitchEffects } from "./switchOrg";
 
-const org = (id: string, name: string) => ({ id, name, slug: id, created_at: "2026-09-01T00:00:00Z" });
+const org = (id: string, name: string) => ({ id, name, slug: id, kind: "team" as const, created_at: "2026-09-01T00:00:00Z" });
 const user = { id: "u", email: "ann@example.test", display_name: "Ann", created_at: "2026-09-01T00:00:00Z" };
 const issued: IssuedSessionView = {
   token: "ses_new",

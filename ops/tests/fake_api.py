@@ -17,7 +17,14 @@ ORG_ID = UUID("0199a4c0-0000-7000-8000-00000000000a")
 OWNER_ID = UUID("0199a4c0-0000-7000-8000-0000000000aa")
 NOW = datetime(2026, 9, 20, 12, 0, tzinfo=UTC).isoformat()
 
-ORG = {"id": str(ORG_ID), "name": "Acme", "slug": "acme", "created_at": NOW, "deleted_at": None}
+ORG = {
+    "id": str(ORG_ID),
+    "name": "Acme",
+    "slug": "acme",
+    "kind": "team",
+    "created_at": NOW,
+    "deleted_at": None,
+}
 USER = {
     "id": str(OWNER_ID),
     "email": "owner@example.test",

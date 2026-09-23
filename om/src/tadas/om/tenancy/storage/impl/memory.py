@@ -170,6 +170,18 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
                 lambda other: other.slug == org.slug and other.deleted_at is None,
                 "uq_orgs_slug",
             )
+        # uq_orgs_personal_identity_id: one living personal org per person.
+        if org.personal and org.deleted_at is None:
+            self._require_free(
+                self._every(self._orgs),
+                org,
+                lambda other: (
+                    other.personal
+                    and other.personal_identity_id == org.personal_identity_id
+                    and other.deleted_at is None
+                ),
+                "uq_orgs_personal_identity_id",
+            )
 
     async def create_org_with_owner(
         self,
@@ -178,24 +190,37 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
         user: User,
         membership: Membership,
         identity: Identity | None = None,
+        personal: tuple[Org, User, Membership] | None = None,
     ) -> None:
         # Every check, then every write: the twin of one commit.
         async with self._lock:
             if identity is not None:
                 self._require_email_free(identity)
-            self._require_slug_free(org)
-            self._require_live_identity_free(org_id, user)
-            self._require_membership_free(org_id, membership)
-            for table, entity in ((self._orgs, org), (self._users, user)):
-                if entity.id in table:
-                    raise UniqueKeyTaken(f"{entity.id} is already written")
-            if membership.id in self._memberships:
-                raise UniqueKeyTaken(f"{membership.id} is already written")
+            if personal is not None:
+                self._require_tenant_free(personal[0].id, *personal)
+            self._require_tenant_free(org_id, org, user, membership)
             if identity is not None:
                 self._identities[identity.id] = identity
-            self._put(self._orgs, org_id, org)
-            self._put(self._users, org_id, user)
-            self._put(self._memberships, org_id, membership)
+            if personal is not None:
+                self._put_tenant(personal[0].id, *personal)
+            self._put_tenant(org_id, org, user, membership)
+
+    def _require_tenant_free(
+        self, org_id: UUID, org: Org, user: User, membership: Membership
+    ) -> None:
+        self._require_slug_free(org)
+        self._require_live_identity_free(org_id, user)
+        self._require_membership_free(org_id, membership)
+        for table, entity in ((self._orgs, org), (self._users, user)):
+            if entity.id in table:
+                raise UniqueKeyTaken(f"{entity.id} is already written")
+        if membership.id in self._memberships:
+            raise UniqueKeyTaken(f"{membership.id} is already written")
+
+    def _put_tenant(self, org_id: UUID, org: Org, user: User, membership: Membership) -> None:
+        self._put(self._orgs, org_id, org)
+        self._put(self._users, org_id, user)
+        self._put(self._memberships, org_id, membership)
 
     async def create_member(
         self,
@@ -204,16 +229,21 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
         membership: Membership,
         outbox_rows: tuple[OutboxRow, ...],
         identity: Identity | None = None,
+        personal: tuple[Org, User, Membership] | None = None,
     ) -> None:
         async with self._lock:
             if identity is not None:
                 self._require_email_free(identity)
+            if personal is not None:
+                self._require_tenant_free(personal[0].id, *personal)
             self._require_live_identity_free(org_id, user)
             self._require_membership_free(org_id, membership)
             if user.id in self._users or membership.id in self._memberships:
                 raise UniqueKeyTaken(f"{user.id} or {membership.id} is already written")
             if identity is not None:
                 self._identities[identity.id] = identity
+            if personal is not None:
+                self._put_tenant(personal[0].id, *personal)
             self._put(self._users, org_id, user, outbox_rows)
             self._put(self._memberships, org_id, membership)
 

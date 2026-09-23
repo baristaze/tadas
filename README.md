@@ -48,7 +48,7 @@ once. Once it is up:
 
 | What | URL | Sign-in and what it shows |
 |------|-----|---------------------------|
-| Portal | http://localhost:55173 | `owner@example.test` (owner) or `bob@example.test` (member) of Acme, or `admin@admin.test` (owner of Fabrikam, admin of Acme), all `tadas-local`; the three people `make seed` creates. The admin is in two orgs, so the org picker and the org chip show |
+| Portal | http://localhost:55173 | `owner@example.test` (owner) or `bob@example.test` (member) of Acme, or `admin@admin.test` (owner of Fabrikam, admin of Acme), all `tadas-local`; the three people `make seed` creates. Each also has a personal org, so sign-in shows the org picker; the org chip switches and creates a team org |
 | API | http://127.0.0.1:8000 | Swagger UI at `/docs`, Prometheus metrics at `/metrics` |
 | pgweb | http://localhost:58081 | Postgres: schemas `core`, `activity`, `queue`, `admin`; run SQL |
 | Valkey Admin | http://localhost:58080 | Valkey: keys, metrics, commands; add a connection to host `valkey`, port `6379`, no username or password |
@@ -76,7 +76,7 @@ or anyone who signed up, and keeps one session under `~/.config/tadas`;
 belongs to.
 
 ```bash
-uv run tadas login --email bob@example.test   # prompts for the password
+uv run tadas login --email bob@example.test --org acme   # prompts for the password
 uv run tadas add "Do groceries"
 uv run tadas ls
 uv run tadas done <id>                        # the short id ls shows; also edit, reopen, rm, mv
@@ -112,8 +112,10 @@ The API is at the same address either way; only the portal's port differs:
 stack-up` from nginx on the port in the table above. Sign in as the
 seeded owner and member in two browser windows to see "My Tasks" differ from
 "Team's Tasks" and to watch changes arrive live, as the seeded admin to
-switch between two orgs, or create an account at `/sign-up`, which is how
-a person enters a deployed environment.
+switch between orgs, or create an account at `/sign-up` with an email, a
+name, and a password, which is how a person enters a deployed
+environment: it lands in the person's personal org, and the org chip
+creates a team org from there.
 
 ### Dashboards
 
@@ -157,8 +159,8 @@ steps, the rollback, and the protection to set on the branch.
 
 A deployed environment carries no seed: `make seed` is local. A person
 enters staging or production through sign-up in the portal, which
-creates their identity, their first org, and its owner membership, and
-is open unless `TADAS_SIGNUP_ENABLED=false`.
+creates their identity, their personal org, and its owner membership,
+and is open unless `TADAS_SIGNUP_ENABLED=false`.
 
 ## Operate
 

@@ -1,18 +1,31 @@
 """Every role's migrated schema agrees with the ORM metadata, the latest
 revision of every role downgrades and upgrades again, the logins are safe to
-make twice, and a data migration passes the fence it runs under."""
+make twice, a data migration passes the fence it runs under, and the personal
+org backfill gives every person one."""
 
 import pytest
 from contracts.event_storage import make_event
+from contracts.factories import (
+    make_identity,
+    make_membership,
+    make_org,
+    make_personal_org,
+    make_user,
+)
 from sqlalchemy import Connection
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from tadas.om.base import new_id
 from tadas.om.events.storage.impl.postgres import EventStoragePostgresImpl
+from tadas.om.opcontext import Role
 from tadas.om.storage.impl.pg_base import LoginSessions
 from tadas.om.storage.migrate import backfill, check, downgrade, ensure_logins_at, head, upgrade
 from tadas.om.storage.roles import DatabaseRole
 from tadas.om.storage.settings import MigrationSettings
+from tadas.om.tenancy.rules import MAX_SLUG_LENGTH, SLUG_PATTERN
+from tadas.om.tenancy.storage.impl.postgres import TenancyStoragePostgresImpl
+from tadas.om.tenancy.types.identity import Identity
+from tadas.om.tenancy.types.issued import OrgMembership
 
 pytestmark = pytest.mark.integration
 
@@ -106,5 +119,94 @@ async def test_a_backfill_that_misses_rows_fails_and_keeps_the_fence(
                 )
             await connection.rollback()
             assert await connection.run_sync(forced) is True
+    finally:
+        await engine.dispose()
+
+
+# The personal org backfill.
+
+
+BACKFILL = "202609250001"
+"""The revision that gives every existing person their personal org; the
+one before it adds the columns."""
+
+
+async def person_without_a_place(
+    storage: TenancyStoragePostgresImpl, email: str, name: str | None
+) -> Identity:
+    """A person the way the release before the personal org made one: an
+    identity, and a team org they own when they have a name."""
+    identity = make_identity(email)
+    if name is None:
+        await storage.write_identity(identity)
+        return identity
+    org = make_org(name)
+    owner = make_user(identity.id, email).model_copy(update={"display_name": name})
+    await storage.create_org_with_owner(
+        org.id, org, owner, make_membership(owner.id, Role.OWNER), identity
+    )
+    return identity
+
+
+def fenced(connection: Connection) -> list[bool]:
+    return list(
+        connection.exec_driver_sql(
+            "SELECT relforcerowsecurity FROM pg_class WHERE oid IN"
+            " ('core.orgs'::regclass, 'core.users'::regclass, 'core.memberships'::regclass)"
+        ).scalars()
+    )
+
+
+async def test_the_backfill_gives_every_person_one_personal_org(
+    pg_sessions: LoginSessions, migrated: dict[DatabaseRole, str]
+) -> None:
+    """People of two tenants and none, one who has a personal org already, and
+    a platform identity: the backfill makes one personal org for each person
+    who has none, in their name, with their user and the owner membership, and
+    none for the platform. A second run finds nobody, and the fence is back."""
+    storage = TenancyStoragePostgresImpl(pg_sessions)
+    ann = await person_without_a_place(storage, "ann@example.test", "Ann")
+    bob = await person_without_a_place(storage, "bob@example.test", "Bob Ó'Brien")
+    nameless = await person_without_a_place(storage, "cid@example.test", None)
+    platform = await person_without_a_place(storage, "smoke@platform.tadas.invalid", None)
+    dee = make_identity("dee@example.test")
+    home = make_personal_org(dee.id)
+    dee_user = make_user(dee.id, "dee@example.test")
+    await storage.create_org_with_owner(
+        home.id, home, dee_user, make_membership(dee_user.id, Role.OWNER), dee
+    )
+    before = await storage.count_orgs()
+
+    await downgrade(DatabaseRole.CORE, migrated[DatabaseRole.CORE], "-1")
+    await upgrade(DatabaseRole.CORE, migrated[DatabaseRole.CORE], BACKFILL)
+
+    async def personal(identity: Identity) -> list[OrgMembership]:
+        places = await storage.read_memberships_by_identity(identity.id, 10)
+        return [p for p in places if p.org.personal]
+
+    for identity, org_name, shown in (
+        (ann, "Ann", "Ann"),
+        (bob, "Bob Ó'Brien", "Bob Ó'Brien"),
+        (nameless, "Personal", "cid"),
+    ):
+        [place] = await personal(identity)
+        assert place.org.name == org_name and place.user.display_name == shown
+        assert place.role is Role.OWNER and place.org.personal_identity_id == identity.id
+        assert SLUG_PATTERN.fullmatch(place.org.slug) and len(place.org.slug) <= MAX_SLUG_LENGTH
+        assert place.org.created_by == place.user.id == place.user.created_by
+    assert (await personal(bob))[0].org.slug.startswith("bob-")
+    assert [p.org.id for p in await personal(dee)] == [home.id]
+    assert await storage.read_memberships_by_identity(platform.id, 10) == []
+    assert await storage.count_orgs() == before + 3
+
+    # Idempotent: run again, and nobody is left to do.
+    await downgrade(DatabaseRole.CORE, migrated[DatabaseRole.CORE], "-1")
+    await upgrade(DatabaseRole.CORE, migrated[DatabaseRole.CORE], BACKFILL)
+    assert await storage.count_orgs() == before + 3
+    assert await check(DatabaseRole.CORE, migrated[DatabaseRole.CORE]) == []
+    engine = create_async_engine(migrated[DatabaseRole.CORE])
+    try:
+        async with engine.connect() as connection:
+            assert await connection.run_sync(fenced) == [True, True, True]
     finally:
         await engine.dispose()

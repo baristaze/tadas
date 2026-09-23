@@ -197,9 +197,15 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
         user: User,
         membership: Membership,
         identity: Identity | None = None,
+        personal: tuple[Org, User, Membership] | None = None,
     ) -> None:
         await self._create_together(
-            org_id, (Orgs, org), (Users, user), (Memberships, membership), identity=identity
+            org_id,
+            (Orgs, org),
+            (Users, user),
+            (Memberships, membership),
+            identity=identity,
+            personal=personal,
         )
 
     async def create_member(
@@ -209,6 +215,7 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
         membership: Membership,
         outbox_rows: tuple[OutboxRow, ...],
         identity: Identity | None = None,
+        personal: tuple[Org, User, Membership] | None = None,
     ) -> None:
         await self._create_together(
             org_id,
@@ -216,6 +223,7 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
             (Memberships, membership),
             *((OutboxRows, row) for row in outbox_rows),
             identity=identity,
+            personal=personal,
         )
 
     async def _create_together(
@@ -223,23 +231,35 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
         org_id: UUID,
         *rows: tuple[type[Any], Identifiable],
         identity: Identity | None = None,
+        personal: tuple[Org, User, Membership] | None = None,
     ) -> None:
         """The rows land in one commit or not at all; every table is in the
         core role, which the session's role routing holds. The identity, when
         given, is written in the same commit: inserted when new, updated when
-        it exists (the global table has no tenant to check). A violated key is
-        UniqueKeyTaken, never a driver error."""
+        it exists (the global table has no tenant to check). A new person's
+        personal org, when given, lands first under its own tenant, then the
+        scope is set again to `org_id` for the rest, so each statement is
+        fenced by the tenant it touches, as a switch's two sessions are. A
+        violated key is UniqueKeyTaken, never a driver error."""
         row_type = rows[0][0]
-        async with self._session_for(row_type, org_id=org_id) as session:
+        first_org_id = org_id if personal is None else personal[0].id
+        async with self._session_for(row_type, org_id=first_org_id) as session:
             if identity is not None:
                 existing = await session.get(Identities, identity.id)
                 if existing is None:
                     session.add(to_row(identity, Identities))
                 else:
                     apply_row(existing, identity)
-            for table, entity in rows:
-                session.add(to_row(entity, table, org_id=org_id))
             try:
+                if personal is not None:
+                    tenant, owner, owns = personal
+                    session.add(to_row(tenant, Orgs, org_id=tenant.id))
+                    session.add(to_row(owner, Users, org_id=tenant.id))
+                    session.add(to_row(owns, Memberships, org_id=tenant.id))
+                    await session.flush()
+                    await set_scope(session, org_id, None, None)
+                for table, entity in rows:
+                    session.add(to_row(entity, table, org_id=org_id))
                 await session.commit()
             except IntegrityError as error:
                 await session.rollback()

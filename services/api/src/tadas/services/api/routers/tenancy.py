@@ -1,5 +1,5 @@
 """Tenancy routes: sign up, sign in, choose or switch a tenant, read the
-principal, manage members, sessions, and api keys. Every function is one call
+principal, create an org, manage members, sessions, and api keys. Every function is one call
 into the tenancy service."""
 
 from uuid import UUID
@@ -15,6 +15,7 @@ from tadas.services.api.types.tenancy import (
     AddApiKeyRequest,
     ApiKeyPageView,
     ApiKeyView,
+    CreateTeamOrgRequest,
     ExchangeSessionRequest,
     IdentityView,
     IssuedApiKeyView,
@@ -22,6 +23,7 @@ from tadas.services.api.types.tenancy import (
     IssuedSessionView,
     LoginRequest,
     MembershipChoicePageView,
+    MembershipChoiceView,
     MembershipPageView,
     MembershipView,
     MeView,
@@ -95,6 +97,16 @@ async def my_identity(ctx: Ctx, tenancy: TenancyService) -> IdentityView:
 @router.get("/orgs/current", response_model=OrgView)
 async def current_org(ctx: Ctx, tenancy: TenancyService) -> OrgView:
     return await tenancy.get_org(ctx)
+
+
+# A team org the caller makes and owns, answered with the caller's place in
+# it; the switch there is the exchange. The idempotency marker is the
+# caller's in the tenant they call from, and the org is created on its id.
+@router.post("/orgs", response_model=MembershipChoiceView, status_code=201)
+async def create_org(
+    ctx: Ctx, tenancy: TenancyService, body: CreateTeamOrgRequest, idem: Idem
+) -> Response:
+    return await idem.run(201, lambda attempt: tenancy.create_org(ctx, body, attempt))
 
 
 @router.get("/users", response_model=UserPageView)

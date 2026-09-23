@@ -46,7 +46,7 @@ const me: MeView = {
   role: "owner",
   permissions: ["read", "write", "manage_keys"],
   user: { id: "u1", email: "owner@example.test", display_name: "Owner", created_at: "2026-09-01T00:00:00Z" },
-  org: { id: "o1", name: "Acme", slug: "acme", created_at: "2026-09-01T00:00:00Z", deleted_at: null },
+  org: { id: "o1", name: "Acme", slug: "acme", kind: "team", created_at: "2026-09-01T00:00:00Z", deleted_at: null },
 };
 
 const keyOf = (id: string, name: string): ApiKeyView => ({

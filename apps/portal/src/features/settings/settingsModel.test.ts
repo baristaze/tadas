@@ -17,7 +17,7 @@ const key = (overrides: Partial<ApiKeyView>): ApiKeyView => ({
 
 const me: MeView = {
   user: { id: "u1", email: "a@b.c", display_name: "Ann", created_at: "2026-09-01T00:00:00Z" },
-  org: { id: "o1", name: "Acme", slug: "acme", created_at: "2026-09-01T00:00:00Z" },
+  org: { id: "o1", name: "Acme", slug: "acme", kind: "team", created_at: "2026-09-01T00:00:00Z" },
   role: "owner",
   permissions: ["read", "write", "manage_members", "manage_keys"],
   app: "portal",

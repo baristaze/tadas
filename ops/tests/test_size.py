@@ -14,7 +14,14 @@ RUN_ORG = "0199a4c0-0000-7000-8000-00000000000b"
 
 
 def org(org_id: str, slug: str) -> dict[str, object]:
-    return {"id": org_id, "name": slug, "slug": slug, "created_at": NOW, "deleted_at": None}
+    return {
+        "id": org_id,
+        "name": slug,
+        "slug": slug,
+        "kind": "team",
+        "created_at": NOW,
+        "deleted_at": None,
+    }
 
 
 def operator_api(request: httpx.Request) -> httpx.Response:

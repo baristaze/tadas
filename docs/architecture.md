@@ -139,11 +139,30 @@ context on keeps the stage the callee needs.
   expired ones are purged like a tenant's dead sessions; api keys are
   purged once revoked or expired. Exchanging a login for an org that is
   gone, or a membership that has ended, is `NotAuthorized` (403), not a
-  sign-in failure: the login itself still stands. Sign-up
-  (`sign_up`, on the request stage) lands the new identity, its org, the
-  owner's user, and the owner membership in one commit
-  (`create_org_with_owner`, always with a new identity, so a raced email
-  meets the unique key) and answers as a login does. `POST
+  sign-in failure: the login itself still stands. Every person has
+  exactly one personal org (`Org.kind`, `personal` or `team`, and
+  `personal_identity_id`, the person; a partial unique index keeps one
+  living personal org per identity, and a check constraint ties the two
+  columns). Sign-up (`sign_up`, on the request stage) asks for an email,
+  a name, and a password, and lands the new identity, its personal org
+  (named after the person, the slug generated from the name with a
+  random tail), the person's user, and the owner membership in one
+  commit (`creates.create_person` over `create_org_with_owner`, always
+  with a new identity, so a raced email meets the unique key) and
+  answers as a login does. `create_person` takes the identity as its
+  caller built it, so a door other than the password can call it. Every
+  other create that makes an identity (the seeding's `bootstrap` and
+  `add-member`, the operator plane's create and add) lands the new
+  person's personal org in the same commit as its own tenant, each
+  statement under its own tenant's scope, as a switch does; a sign-in
+  of a person an older release made gives them theirs. A personal org
+  is never deleted, and its person is never removed from it or given
+  another role (`PersonalOrgFixed`, 409). `POST /v1/orgs` makes a team
+  org for the caller from a session, under an Idempotency-Key, and
+  answers with the caller's place in it; the switch there is the
+  exchange. Migration `202609250001` gives every existing person their
+  personal org in SQL, under a lifted fence, in one bounded pass that
+  refuses to leave anyone behind. `POST
   /v1/auth/signup` has its own rate limit per client address, no
   Idempotency-Key (the marker is kept per tenant and principal, and
   sign-up has neither), and `TADAS_SIGNUP_ENABLED` (true by default),
@@ -816,9 +835,11 @@ everything in-process for tests.
   request that filled it; an item that carries none starts a trace of its
   own, which is what a process with no tracer configured does anyway.
 - `apps/portal` (`@tadas/portal`): React, Vite, TanStack Query,
-  Zustand; sign-in and sign-up (`/sign-up`), the picker when a person
-  has several orgs, an org chip in the chrome that switches the tab's
-  one session (the old tenant's cache dropped, the socket reopened), the
+  Zustand; sign-in and sign-up (`/sign-up`: email, name, password), the
+  picker when a person has several orgs, the personal one first, an org
+  chip in the chrome that switches the tab's one session (the old
+  tenant's cache dropped, the socket reopened) and opens the new team
+  org at `/orgs/new`, which creates it and switches into it, the
   tasks screen at `/` (My and Team's tasks, open in
   manual order and done newest first, both paged by the server's cursor
   with Show more, inline edit, drag to reorder), settings at `/settings`
