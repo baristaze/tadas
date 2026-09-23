@@ -21,7 +21,7 @@ from tadas.client.types import TaskStatus, TaskView
 from tadas.om.opcontext import Role
 
 CLOCK = datetime(2026, 9, 18, 9, 30, 0)
-CAROL = {"email": "carol@example.test", "password": "pw-9999"}
+CAROL = {"email": "carol@example.test"}
 
 Failure = tuple[Callable[[httpx.Request], bool], Exception | int]
 
@@ -55,8 +55,8 @@ def is_users_read(request: httpx.Request) -> bool:
 
 
 def test_every_change_becomes_one_line(stack: Stack) -> None:
-    owner = stack.session_token(OWNER["email"], OWNER["password"])
-    bob = stack.session_token(BOB["email"], BOB["password"])
+    owner = stack.session_token(OWNER["email"])
+    bob = stack.session_token(BOB["email"])
     out, err = io.StringIO(), io.StringIO()
 
     async def scripted(
@@ -124,7 +124,7 @@ def test_every_change_becomes_one_line(stack: Stack) -> None:
 
 
 def test_a_deleted_task_seen_before_the_listener_started_still_has_a_title(stack: Stack) -> None:
-    owner = stack.session_token(OWNER["email"], OWNER["password"])
+    owner = stack.session_token(OWNER["email"])
     out = io.StringIO()
 
     async def scripted(
@@ -168,8 +168,8 @@ def test_a_read_that_fails_every_attempt_skips_the_change_and_keeps_listening(
     or with a 5xx on every attempt the client makes is this change's failure,
     told on stderr, and the next change to the task shows its state. An actor
     who cannot be looked up is told as someone."""
-    owner = stack.session_token(OWNER["email"], OWNER["password"])
-    bob = stack.session_token(BOB["email"], BOB["password"])
+    owner = stack.session_token(OWNER["email"])
+    bob = stack.session_token(BOB["email"])
     out, err = io.StringIO(), io.StringIO()
     # The client sends a read again on a wire failure and on an unavailable
     # answer, so a change is skipped only once every attempt has failed.
@@ -204,9 +204,7 @@ def test_a_read_that_fails_every_attempt_skips_the_change_and_keeps_listening(
             yield await latest()  # the read answers 503
             await as_owner.update_task(first.id, version=first.version, status=TaskStatus.done)
             yield await latest()  # read fine, told
-            await add_member(
-                stack.container, stack.org_id, CAROL["email"], CAROL["password"], Role.MEMBER
-            )
+            await add_member(stack.container, stack.org_id, CAROL["email"], Role.MEMBER)
             async with stack.client(stack.session_token(**CAROL)) as as_carol:
                 await as_carol.create_task("Onboard")
             yield await latest()  # the members read for the new actor times out
@@ -240,7 +238,7 @@ def test_a_read_that_fails_every_attempt_skips_the_change_and_keeps_listening(
 def test_a_read_refused_with_401_ends_the_listener(stack: Stack) -> None:
     """A dead credential is not a change's failure: it ends the listener,
     which the command turns into exit 3."""
-    owner = stack.session_token(OWNER["email"], OWNER["password"])
+    owner = stack.session_token(OWNER["email"])
 
     async def scripted(
         client: ApiClient,
@@ -273,8 +271,8 @@ def test_a_read_that_answers_404_keeps_the_title_for_the_delete_that_follows(
     """A task edited and deleted inside one read's latency: the read of the
     edit answers 404, and the delete that follows still has the title and is
     still Ann's, so `--mine` prints it."""
-    owner = stack.session_token(OWNER["email"], OWNER["password"])
-    bob = stack.session_token(BOB["email"], BOB["password"])
+    owner = stack.session_token(OWNER["email"])
+    bob = stack.session_token(BOB["email"])
     out = io.StringIO()
     flaky = Flaky(stack, [(is_task_read, 404)])
 
