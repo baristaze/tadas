@@ -9,7 +9,7 @@ variables {
   name            = "site"
   environment     = "test"
   bucket_name     = "tadas-test-site"
-  domain_name     = "www.example.test"
+  domain_name     = "example.test"
   certificate_arn = "arn:aws:acm:us-east-1:123456789012:certificate/test"
   not_found_page  = "/404.html"
 }

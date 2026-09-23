@@ -8,11 +8,11 @@ const page = (name: string) => readFileSync(new URL(`../${name}`, import.meta.ur
 test("each deployed build links to its own environment's app", () => {
   expect(linksFor("staging", environments)).toEqual({
     app: "https://app.staging.tadas.fyi",
-    site: "https://www.staging.tadas.fyi",
+    site: "https://staging.tadas.fyi",
     github: "https://github.com/baristaze/tadas",
   });
   expect(linksFor("production", environments).app).toBe("https://app.tadas.fyi");
-  expect(linksFor("production", environments).site).toBe("https://www.tadas.fyi");
+  expect(linksFor("production", environments).site).toBe("https://tadas.fyi");
 });
 
 test("a build for no known environment is refused", () => {

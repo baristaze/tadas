@@ -43,7 +43,7 @@ variable "workos_client_id" {
 }
 
 variable "site_domain_name" {
-  description = "The company site's public name, e.g. www.tadas.fyi, or www.staging.tadas.fyi for staging. A hosted zone of that name must exist in the account."
+  description = "The company site's public name: tadas.fyi, or staging.tadas.fyi for staging. A record in the Cloudflare zone, not a hosted zone here; an issued certificate for it must exist in us-east-1 (the bootstrap root's)."
   type        = string
 }
 

@@ -33,6 +33,11 @@ output "site_distribution_id" {
   value = module.site.distribution_id
 }
 
+output "site_distribution_domain_name" {
+  description = "What the site's name at Cloudflare is a CNAME to; the create run writes it."
+  value       = module.site.distribution_domain_name
+}
+
 # What `aws ecs run-task` needs to start a one-off task on the image the
 # apply just rolled out: the cluster, the task definition and its container
 # (the command override names it), and the network (the private subnets,

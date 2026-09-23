@@ -35,7 +35,7 @@ variable "app_domain_name" {
 }
 
 variable "site_domain_name" {
-  description = "The company site's public name. It gets a hosted zone of its own, delegated from the domain's zone at Cloudflare."
+  description = "The company site's public name: a record in the domain's zone at Cloudflare, not a zone of its own. Its certificate, in us-east-1, is made here."
   type        = string
 }
 

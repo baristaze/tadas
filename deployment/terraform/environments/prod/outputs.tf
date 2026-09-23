@@ -35,6 +35,10 @@ output "site_distribution_id" {
   value = module.environment.site_distribution_id
 }
 
+output "site_distribution_domain_name" {
+  value = module.environment.site_distribution_domain_name
+}
+
 # What `aws ecs run-task` needs to start a one-off task (the migration, an
 # operator grant) on the image the apply just rolled out.
 

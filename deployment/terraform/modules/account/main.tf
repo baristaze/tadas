@@ -451,10 +451,34 @@ resource "aws_ce_anomaly_subscription" "owner" {
 # records, once.
 
 resource "aws_route53_zone" "this" {
-  for_each = toset([var.api_domain_name, var.app_domain_name, var.site_domain_name])
+  for_each = toset([var.api_domain_name, var.app_domain_name])
 
   name    = each.key
   comment = "Tadas ${var.environment}: ${each.key}, delegated from the domain's zone at Cloudflare"
+}
+
+# The company site's certificate.
+#
+# The site's name is not delegated: it is the domain's apex in production and
+# staging.tadas.fyi in staging, and neither can be. The apex is Cloudflare's
+# own zone apex, and a delegation of staging.tadas.fyi would hide the
+# app.staging and api.staging delegations beneath it. So the name is a record
+# in the Cloudflare zone, and so is its certificate's validation record,
+# which only the create run can write: it holds the Cloudflare token, and no
+# deploy does. The certificate is therefore made here, in the root the
+# create run applies; the run writes the validation record and waits for the
+# certificate to be issued, and the environment root finds it by its name.
+
+resource "aws_acm_certificate" "site" {
+  provider = aws.us_east_1
+
+  domain_name       = var.site_domain_name
+  validation_method = "DNS"
+  tags              = { "tadas:environment" = var.environment }
+
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 # Service-linked roles. A fresh account has none, and ECS, RDS, ElastiCache,

@@ -235,9 +235,10 @@ check_account
 run terraform -chdir="$root_dir" destroy -input=false -auto-approve "${root_vars[@]}"
 
 say "== 5. What remains"
-say "- the bootstrap root, whole: the zones $api_domain_name, $app_domain_name, and $site_domain_name and their delegation at Cloudflare, the registry and its images, the roles, the budget, and the anomaly monitor"
+say "- the bootstrap root, whole: the zones $api_domain_name and $app_domain_name and their delegation at Cloudflare, the site's certificate for $site_domain_name, the registry and its images, the roles, the budget, and the anomaly monitor"
 say "- the state prefix $root/ and plans/$root/ in s3://$state_bucket (empty the prefix by hand if the environment is not coming back)"
 say "- the portal and site builds under builds/ in s3://$artifacts_bucket"
+say "- $site_domain_name and its certificate's validation record at Cloudflare: the site's CNAME now points at a distribution that is gone; delete it there by hand if the environment is not coming back"
 if [ "$environment" = "production" ]; then
   say "- the database's final snapshot tadas-production-final, and its automated backups"
 fi

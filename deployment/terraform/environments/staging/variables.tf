@@ -35,7 +35,7 @@ variable "app_domain_name" {
 }
 
 variable "site_domain_name" {
-  description = "The company site's public name, from deployment/cloud/environments.json; its hosted zone is the bootstrap root's."
+  description = "The company site's public name, from deployment/cloud/environments.json: a record at Cloudflare, with its certificate the bootstrap root's."
   type        = string
 }
 

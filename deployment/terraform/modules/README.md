@@ -28,7 +28,7 @@ Three kinds of root live under this folder:
 | Module          | Declares                                                        |
 |-----------------|-----------------------------------------------------------------|
 | `environment`   | One environment whole: every module below, wired                |
-| `account`       | One environment's account before its first deploy: the registry, the state bucket, the OIDC provider, the task boundary, the investigate role, the budget and anomaly monitor, one hosted zone per public name |
+| `account`       | One environment's account before its first deploy: the registry, the state bucket, the OIDC provider, the task boundary, the investigate role, the budget and anomaly monitor, a hosted zone for the API's name and one for the app's, and the company site's certificate |
 | `deploy_role`   | One environment's deploy role: its OIDC trust and its fences     |
 | `investigate_role` | One environment's read-only role: ReadOnlyAccess plus the signal reads, fenced off secrets, data, the database, the other environment, and IAM |
 | `network`       | VPC, public and private subnets, NAT, the security groups        |
@@ -41,7 +41,7 @@ Three kinds of root live under this folder:
 | `load_balancer` | The load balancer at the API's domain name: HTTPS, HTTP redirects |
 | `static_site`   | A static site's private bucket and its CloudFront distribution at one domain name, under the security headers; called twice, for the portal and for the company site |
 | `certificate`   | A DNS-validated ACM certificate for one name                    |
-| `domain_records`| The API's, the portal's, and the company site's alias records   |
+| `domain_records`| The API's and the portal's alias records                        |
 | `service`       | One process: log groups, roles, task definition with an ADOT collector sidecar, service, and its autoscaling target and policy behind the switch |
 | `task`          | One one-off task (the migration, the operator grant): its log group, roles, and task definition, run by `aws ecs run-task` |
 | `alarms`        | The default alarm set to one SNS topic: the edge, the database, each service's task count |
@@ -126,31 +126,41 @@ state bucket, or the trust that issues the roles.
 
 ## Domains
 
-Each environment has three public names, and each name is the apex of a
-Route 53 hosted zone of its own in the environment's account:
+Each environment has three public names:
 
-| Input | staging | production |
-|-------|---------|------------|
-| `api_domain_name` | `api.staging.tadas.fyi` | `api.tadas.fyi` |
-| `app_domain_name` | `app.staging.tadas.fyi` | `app.tadas.fyi` |
-| `site_domain_name` | `www.staging.tadas.fyi` | `www.tadas.fyi` |
+| Input | staging | production | Where it lives |
+|-------|---------|------------|----------------|
+| `api_domain_name` | `api.staging.tadas.fyi` | `api.tadas.fyi` | a Route 53 zone of its own, delegated from Cloudflare |
+| `app_domain_name` | `app.staging.tadas.fyi` | `app.tadas.fyi` | a Route 53 zone of its own, delegated from Cloudflare |
+| `site_domain_name` | `staging.tadas.fyi` | `tadas.fyi` | a CNAME in the Cloudflare zone, DNS only |
 
 The names are written once, in `deployment/cloud/environments.json`. The
-bootstrap root makes the three zones. The domain itself is registered at
-Cloudflare, which keeps its zone, so `scripts/cloud_create.sh` delegates
-each name there with NS records naming its zone's servers. The create
-script also sets the names as the `API_DOMAIN_NAME`, `APP_DOMAIN_NAME`, and
-`SITE_DOMAIN_NAME` variables of the environment's GitHub environments, and the deploy
-workflows pass them in. The environment root finds each zone by its name.
-Terraform does the rest: a DNS-validated certificate per name (the
-portal's and the site's in us-east-1, where CloudFront reads them), the
+domain itself is registered at Cloudflare, which keeps its zone. The
+bootstrap root makes a zone for the API's name and one for the app's,
+and `scripts/cloud_create.sh` delegates each there with NS records
+naming its zone's servers. The create script also sets the three names
+as the `API_DOMAIN_NAME`, `APP_DOMAIN_NAME`, and `SITE_DOMAIN_NAME`
+variables of the environment's GitHub environments, and the deploy
+workflows pass them in. The environment root finds each zone by its
+name. Terraform does the rest for those two: a DNS-validated certificate
+per name (the portal's in us-east-1, where CloudFront reads them), the
 alias records, and the API's CORS origin, which is always the app's name.
 
-The domain's own apex, `tadas.fyi`, is the one name that cannot be
-delegated: it is the apex of the zone Cloudflare keeps, and an NS record
-cannot sit there. It is not managed here. At Cloudflare it redirects to
-`https://www.tadas.fyi`, a rule a person sets once
-([first-time manual, 18b](../../cloud/first_time_manual.md)).
+The company site's name cannot be delegated. In production it is the
+domain's apex, the apex of Cloudflare's own zone, where an NS record
+cannot sit; in staging a delegation of `staging.tadas.fyi` would hide
+the `app.staging` and `api.staging` delegations beneath it. So its
+records are in the Cloudflare zone, and only the create run writes
+there, since no deploy holds the Cloudflare token. The `account`
+module (the bootstrap root) requests the site's certificate in
+us-east-1; the create run writes its validation record at Cloudflare and
+waits for it to be issued. The environment root reads the issued
+certificate by the site's name (`data "aws_acm_certificate"`), so a plan
+before it is issued stops there. A deploy makes the distribution, and
+the next create run writes the site's name as a CNAME to it, DNS only,
+so CloudFront serves TLS with its own certificate; at the apex Cloudflare
+flattens the CNAME. The order and which run writes which record are in
+the [first-time manual, 18a](../../cloud/first_time_manual.md).
 
 ## The portal and the company site
 

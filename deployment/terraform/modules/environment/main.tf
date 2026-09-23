@@ -162,11 +162,17 @@ module "secrets" {
   destroyable               = var.destroyable
 }
 
-# Three public names, each at the apex of a Route 53 zone of its own that the
+# Two public names, each at the apex of a Route 53 zone of its own that the
 # account's bootstrap root made and delegated from Cloudflare: the API at the
-# load balancer, the portal and the company site each at a CloudFront
-# distribution. Each gets a DNS-validated certificate; the two CloudFront
-# ones are in us-east-1, the only region CloudFront reads certificates from.
+# load balancer, the portal at CloudFront. Each gets a DNS-validated
+# certificate; the portal's is in us-east-1, the only region CloudFront reads
+# certificates from.
+#
+# The company site's name is the third, and it is not delegated: it is a
+# record in the Cloudflare zone (the apex in production, staging.tadas.fyi in
+# staging), which only the create run writes. Its certificate is the
+# bootstrap root's, validated by a record that run wrote; this finds it by
+# its name, once issued, and a plan before then fails here, naming it.
 data "aws_route53_zone" "api" {
   name = var.api_domain_name
 }
@@ -175,8 +181,12 @@ data "aws_route53_zone" "app" {
   name = var.app_domain_name
 }
 
-data "aws_route53_zone" "site" {
-  name = var.site_domain_name
+data "aws_acm_certificate" "site" {
+  provider = aws.us_east_1
+
+  domain      = var.site_domain_name
+  statuses    = ["ISSUED"]
+  most_recent = true
 }
 
 module "api_certificate" {
@@ -194,15 +204,6 @@ module "app_certificate" {
   environment = var.environment
   domain_name = var.app_domain_name
   zone_id     = data.aws_route53_zone.app.zone_id
-}
-
-module "site_certificate" {
-  source    = "../certificate"
-  providers = { aws = aws.us_east_1 }
-
-  environment = var.environment
-  domain_name = var.site_domain_name
-  zone_id     = data.aws_route53_zone.site.zone_id
 }
 
 module "load_balancer" {
@@ -246,7 +247,7 @@ module "site" {
   environment     = var.environment
   bucket_name     = "${var.bucket_prefix}-site"
   domain_name     = var.site_domain_name
-  certificate_arn = module.site_certificate.arn
+  certificate_arn = data.aws_acm_certificate.site.arn
   not_found_page  = "/404.html"
   destroyable     = var.destroyable
 }
@@ -262,11 +263,6 @@ module "domain_records" {
   load_balancer_zone_id    = module.load_balancer.zone_id
   distribution_domain_name = module.portal.distribution_domain_name
   distribution_zone_id     = module.portal.distribution_zone_id
-
-  site_zone_id                  = data.aws_route53_zone.site.zone_id
-  site_domain_name              = var.site_domain_name
-  site_distribution_domain_name = module.site.distribution_domain_name
-  site_distribution_zone_id     = module.site.distribution_zone_id
 }
 
 # The two one-off tasks, both on the API image. The migrate task is the one

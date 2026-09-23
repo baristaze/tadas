@@ -22,7 +22,8 @@ locals {
 data "aws_partition" "current" {}
 
 module "account" {
-  source = "../../modules/account"
+  source    = "../../modules/account"
+  providers = { aws = aws, aws.us_east_1 = aws.us_east_1 }
 
   environment       = "staging"
   other_environment = "production"
@@ -65,7 +66,7 @@ module "deploy_role" {
   promote_images = false
 
   dns_record_patterns = flatten([
-    for name in [local.staging.api_domain_name, local.staging.app_domain_name, local.staging.site_domain_name] : [name, "*.${name}"]
+    for name in [local.staging.api_domain_name, local.staging.app_domain_name] : [name, "*.${name}"]
   ])
 
   task_boundary_policy_arn = module.account.task_boundary_policy_arn

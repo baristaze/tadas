@@ -28,3 +28,19 @@ provider "aws" {
     }
   }
 }
+
+# CloudFront reads certificates from us-east-1 only: the company site's is
+# made there.
+provider "aws" {
+  alias  = "us_east_1"
+  region = "us-east-1"
+
+  allowed_account_ids = [local.staging.account_id]
+
+  default_tags {
+    tags = {
+      "tadas:managed-by"  = "terraform"
+      "tadas:environment" = "staging"
+    }
+  }
+}
