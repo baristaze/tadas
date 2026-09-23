@@ -48,6 +48,18 @@ output "sentry_dsn_secret_arn" {
   depends_on  = [aws_secretsmanager_secret_version.sentry_dsn]
 }
 
+output "slack_bot_token_secret_arn" {
+  description = "Injected into the maintenance service as TADAS_SLACK_BOT_TOKEN; \"off\" until set, which leaves posting to Slack off."
+  value       = aws_secretsmanager_secret.slack["bot"].arn
+  depends_on  = [aws_secretsmanager_secret_version.slack]
+}
+
+output "slack_app_token_secret_arn" {
+  description = "Injected into the slack service as TADAS_SLACK_APP_TOKEN; \"off\" until set, which leaves the Socket Mode connection closed."
+  value       = aws_secretsmanager_secret.slack["app"].arn
+  depends_on  = [aws_secretsmanager_secret_version.slack]
+}
+
 output "operator_token_secret_names" {
   description = "The two token secrets by kind (provisioner, smoke); empty until the grant task mints one."
   value       = { for kind, secret in aws_secretsmanager_secret.operator_token : kind => secret.name }
