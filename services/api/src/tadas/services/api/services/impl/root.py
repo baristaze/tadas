@@ -6,6 +6,7 @@ from tadas.om.root import Managers
 from tadas.services.api.services import (
     AdminServiceInterface,
     EventsServiceInterface,
+    MediaServiceInterface,
     RealtimeServiceInterface,
     ServicesInterface,
     TasksServiceInterface,
@@ -13,6 +14,7 @@ from tadas.services.api.services import (
 )
 from tadas.services.api.services.impl.admin import AdminServiceImpl
 from tadas.services.api.services.impl.events import EventsServiceImpl
+from tadas.services.api.services.impl.media import MediaServiceImpl
 from tadas.services.api.services.impl.realtime import RealtimeServiceImpl
 from tadas.services.api.services.impl.tasks import TasksServiceImpl
 from tadas.services.api.services.impl.tenancy import TenancyServiceImpl
@@ -25,12 +27,14 @@ class ServicesImpl(ServicesInterface):
         tenancy: TenancyServiceInterface,
         admin: AdminServiceInterface,
         events: EventsServiceInterface,
+        media: MediaServiceInterface,
         realtime: RealtimeServiceInterface,
     ) -> None:
         self._tasks = tasks
         self._tenancy = tenancy
         self._admin = admin
         self._events = events
+        self._media = media
         self._realtime = realtime
 
     def get_tasks_service(self) -> TasksServiceInterface:
@@ -45,6 +49,9 @@ class ServicesImpl(ServicesInterface):
     def get_events_service(self) -> EventsServiceInterface:
         return self._events
 
+    def get_media_service(self) -> MediaServiceInterface:
+        return self._media
+
     def get_realtime_service(self) -> RealtimeServiceInterface:
         return self._realtime
 
@@ -57,5 +64,6 @@ def build_services(managers: Managers, infra: InfraInterface) -> ServicesInterfa
         tenancy=TenancyServiceImpl(managers.tenancy),
         admin=AdminServiceImpl(managers.tenancy_operator),
         events=EventsServiceImpl(managers.events),
+        media=MediaServiceImpl(managers.media),
         realtime=RealtimeServiceImpl(managers.tenancy, managers.events, infra.get_topics()),
     )

@@ -46,6 +46,8 @@ def build_loop(container: WorkerContainer, lane: str | None = None) -> WorkerLoo
         outbox=container.managers.outbox,
         purges={
             "tasks": container.managers.tasks.purge_deleted,
+            # A deleted file's object, then its row; an abandoned upload's too.
+            "media": container.managers.media.purge_deleted,
             "tenancy": container.managers.tenancy.purge_deleted,
             "idempotency": container.managers.idempotency.purge,
             "events": container.managers.events.purge_expired,

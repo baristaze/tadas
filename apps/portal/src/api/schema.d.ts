@@ -389,6 +389,109 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/media/files/{file_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get File */
+        get: operations["get_file_v1_media_files__file_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/media/files/{file_id}/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Confirm File */
+        post: operations["confirm_file_v1_media_files__file_id__confirm_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/media/files/{file_id}/content": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Content */
+        get: operations["get_content_v1_media_files__file_id__content_get"];
+        /** Put Content */
+        put: operations["put_content_v1_media_files__file_id__content_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/media/files/{file_id}/download": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Issue Download */
+        get: operations["issue_download_v1_media_files__file_id__download_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/media/files/{file_id}/upload": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Issue Upload */
+        post: operations["issue_upload_v1_media_files__file_id__upload_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/media/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Usage */
+        get: operations["get_usage_v1_media_usage_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/memberships": {
         parameters: {
             query?: never;
@@ -529,6 +632,41 @@ export interface paths {
         patch: operations["update_task_v1_tasks__task_id__patch"];
         trace?: never;
     };
+    "/v1/tasks/{task_id}/attachments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Attachments */
+        get: operations["list_attachments_v1_tasks__task_id__attachments_get"];
+        put?: never;
+        /** Attach File */
+        post: operations["attach_file_v1_tasks__task_id__attachments_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/tasks/{task_id}/attachments/{file_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove Attachment */
+        delete: operations["remove_attachment_v1_tasks__task_id__attachments__file_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/tasks/{task_id}/move": {
         parameters: {
             query?: never;
@@ -574,6 +712,20 @@ export interface components {
             role: components["schemas"]["Role"];
             /** Ttl Days */
             ttl_days?: number | null;
+        };
+        /**
+         * AddFileRequest
+         * @description An upload to start: the file's name as the uploader had it, its type,
+         *     and its size in bytes. The type must be one the purpose accepts and match
+         *     the name's extension; the size is the most the store will take.
+         */
+        AddFileRequest: {
+            /** Content Type */
+            content_type: string;
+            /** Name */
+            name: string;
+            /** Size Bytes */
+            size_bytes: number;
         };
         /**
          * AddMemberRequest
@@ -713,6 +865,66 @@ export interface components {
              */
             org_id: string;
         };
+        /**
+         * FilePageView
+         * @description One page of files, oldest first. `next_cursor` fetches the next page and
+         *     is null on the last one.
+         */
+        FilePageView: {
+            /** Items */
+            items: components["schemas"]["FileView"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+        };
+        /**
+         * FilePurpose
+         * @description Which domain context a file came from. The purpose decides the bounds an
+         *     upload is held to and what `subject_id` names.
+         * @enum {string}
+         */
+        FilePurpose: "task_attachment" | "voice_dictation";
+        /**
+         * FileStatus
+         * @enum {string}
+         */
+        FileStatus: "pending" | "stored";
+        /**
+         * FileView
+         * @description A file the tenant keeps: its name, type, and size, never its bytes and
+         *     never where they live. `status` is `pending` until the upload is
+         *     confirmed, then `stored`.
+         */
+        FileView: {
+            /** Content Type */
+            content_type: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Created By
+             * Format: uuid
+             */
+            created_by: string;
+            /** Deleted At */
+            deleted_at: string | null;
+            /** Extension */
+            extension: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            purpose: components["schemas"]["FilePurpose"];
+            /** Size Bytes */
+            size_bytes: number;
+            status: components["schemas"]["FileStatus"];
+            /** Subject Id */
+            subject_id: string | null;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -750,6 +962,21 @@ export interface components {
             api_key: components["schemas"]["ApiKeyView"];
             /** Key */
             key: string | null;
+        };
+        /**
+         * IssuedDownloadView
+         * @description A link to the file's bytes that works until `expires_at`. A null `url`
+         *     means the store cannot sign one: the bytes come from
+         *     `GET /v1/media/files/{id}/content`.
+         */
+        IssuedDownloadView: {
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /** Url */
+            url: string | null;
         };
         /**
          * IssuedLoginView
@@ -814,6 +1041,26 @@ export interface components {
         IssuedTotpSecretView: {
             /** Otpauth Uri */
             otpauth_uri: string | null;
+        };
+        /**
+         * IssuedUploadView
+         * @description A form to post the file with, straight to the store: every field, in
+         *     order, then the file as the last field, named `file`. The signed policy
+         *     holds the post to the file's type and at most its size, until
+         *     `expires_at`. A null `url` means the store cannot take a post: the bytes
+         *     go to `PUT /v1/media/files/{id}/content` instead. Then the upload is
+         *     confirmed.
+         */
+        IssuedUploadView: {
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /** Fields */
+            fields: components["schemas"]["UploadFieldView"][];
+            /** Url */
+            url: string | null;
         };
         /**
          * LoginRequest
@@ -1037,6 +1284,18 @@ export interface components {
             /** Users */
             users: number;
         };
+        /** PurposeUsageView */
+        PurposeUsageView: {
+            /** Count */
+            count: number;
+            /** Pending Count */
+            pending_count: number;
+            /** Pending Size Bytes */
+            pending_size_bytes: number;
+            purpose: components["schemas"]["FilePurpose"];
+            /** Size Bytes */
+            size_bytes: number;
+        };
         /**
          * ResetPasswordRequest
          * @description The person, by email, and the password they sign in with from now on.
@@ -1095,6 +1354,22 @@ export interface components {
             org_slug: string;
             /** Password */
             password: string;
+        };
+        /**
+         * StorageUsageView
+         * @description What the org keeps in the store, counted from its files: the stored ones
+         *     per purpose and in total, and the uploads started and not yet confirmed.
+         *     A removed file stops counting at once.
+         */
+        StorageUsageView: {
+            /** Pending Size Bytes */
+            pending_size_bytes: number;
+            /** Purposes */
+            purposes: components["schemas"]["PurposeUsageView"][];
+            /** Total Count */
+            total_count: number;
+            /** Total Size Bytes */
+            total_size_bytes: number;
         };
         /**
          * TaskPageView
@@ -1200,6 +1475,13 @@ export interface components {
             status?: components["schemas"]["TaskStatus"] | null;
             /** Title */
             title?: string | null;
+        };
+        /** UploadFieldView */
+        UploadFieldView: {
+            /** Name */
+            name: string;
+            /** Value */
+            value: string;
         };
         /**
          * UserPageView
@@ -2188,6 +2470,253 @@ export interface operations {
             };
         };
     };
+    get_file_v1_media_files__file_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
+            };
+            path: {
+                file_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FileView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    confirm_file_v1_media_files__file_id__confirm_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
+            };
+            path: {
+                file_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FileView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_content_v1_media_files__file_id__content_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
+            };
+            path: {
+                file_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_content_v1_media_files__file_id__content_put: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
+            };
+            path: {
+                file_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/octet-stream": string;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FileView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    issue_download_v1_media_files__file_id__download_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
+            };
+            path: {
+                file_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssuedDownloadView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    issue_upload_v1_media_files__file_id__upload_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
+            };
+            path: {
+                file_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssuedUploadView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_usage_v1_media_usage_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StorageUsageView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_memberships_v1_memberships_get: {
         parameters: {
             query?: {
@@ -2610,6 +3139,120 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TaskView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_attachments_v1_tasks__task_id__attachments_get: {
+        parameters: {
+            query?: {
+                cursor?: string | null;
+                limit?: number;
+            };
+            header?: {
+                authorization?: string | null;
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
+            };
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FilePageView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    attach_file_v1_tasks__task_id__attachments_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
+                "idempotency-key"?: string | null;
+            };
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AddFileRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FileView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_attachment_v1_tasks__task_id__attachments__file_id__delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
+            };
+            path: {
+                task_id: string;
+                file_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FileView"];
                 };
             };
             /** @description Validation Error */
