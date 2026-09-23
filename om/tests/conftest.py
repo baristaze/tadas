@@ -12,9 +12,10 @@ from collections.abc import AsyncIterator
 import pytest
 from sqlalchemy import text
 from sqlalchemy.engine import make_url
-from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import create_async_engine
 
-from tadas.om.storage.impl.pg_base import LoginSessions, SessionFactory
+from tadas.om.storage.impl.pg_base import LoginSessions
+from tadas.om.storage.impl.postgres import login_sessions
 from tadas.om.storage.migrate import VERSION_TABLE, ensure_logins_at, upgrade_all
 from tadas.om.storage.roles import DatabaseRole
 from tadas.om.storage.settings import LOCAL_HOSTS, MigrationSettings
@@ -44,22 +45,17 @@ def migrated(migration_settings: MigrationSettings) -> dict[DatabaseRole, str]:
 async def pg_sessions(
     migration_settings: MigrationSettings, migrated: dict[DatabaseRole, str]
 ) -> AsyncIterator[LoginSessions]:
-    """The session factories a storage root builds: every role under the
-    runtime login, and under the system login beside it."""
-    engines: dict[str, AsyncEngine] = {}
-
-    def factories(urls: dict[DatabaseRole, str]) -> dict[DatabaseRole, SessionFactory]:
-        found: dict[DatabaseRole, SessionFactory] = {}
-        for role in DatabaseRole:
-            if urls[role] not in engines:
-                engines[urls[role]] = create_async_engine(urls[role])
-            found[role] = async_sessionmaker(engines[urls[role]], expire_on_commit=False)
-        return found
-
-    yield LoginSessions(
-        factories(migration_settings.role_urls()),
-        factories(migration_settings.system_role_urls()),
+    """The session factories a storage root builds, built the way it builds
+    them: every role under the runtime login and under the system login beside
+    it, each pool under the bounds the settings name, so every contract case
+    over Postgres runs with the pool size, the checkout bound, and the
+    statement deadline a deployed process holds."""
+    sessions, engines = login_sessions(
+        migration_settings.role_urls(),
+        migration_settings.role_pools(),
+        system_urls=migration_settings.system_role_urls(),
     )
+    yield sessions
     for engine in engines.values():
         await engine.dispose()
 
