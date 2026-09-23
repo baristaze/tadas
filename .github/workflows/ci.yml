@@ -152,9 +152,9 @@ jobs:
       - run: terraform -chdir=deployment/terraform/${{ matrix.root }} init -backend=false -input=false
       - run: terraform -chdir=deployment/terraform/${{ matrix.root }} validate
       - if: matrix.root == 'bootstrap/staging'
-        run: terraform -chdir=deployment/terraform/modules/portal init -backend=false -input=false
+        run: terraform -chdir=deployment/terraform/modules/static_site init -backend=false -input=false
       - if: matrix.root == 'bootstrap/staging'
-        run: terraform -chdir=deployment/terraform/modules/portal test
+        run: terraform -chdir=deployment/terraform/modules/static_site test
       - if: matrix.root == 'environments/staging'
         run: terraform -chdir=deployment/terraform/modules/service init -backend=false -input=false
       - if: matrix.root == 'environments/staging'

@@ -34,6 +34,11 @@ variable "app_domain_name" {
   type        = string
 }
 
+variable "site_domain_name" {
+  description = "The company site's public name, from deployment/cloud/environments.json; its hosted zone is the bootstrap root's."
+  type        = string
+}
+
 variable "cors_origins" {
   description = "Browser origins the API accepts besides the portal's, which is always allowed."
   type        = list(string)

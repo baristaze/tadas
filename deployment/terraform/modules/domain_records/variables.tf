@@ -31,3 +31,20 @@ variable "distribution_domain_name" {
 variable "distribution_zone_id" {
   type = string
 }
+
+variable "site_zone_id" {
+  description = "The zone whose apex is site_domain_name."
+  type        = string
+}
+
+variable "site_domain_name" {
+  type = string
+}
+
+variable "site_distribution_domain_name" {
+  type = string
+}
+
+variable "site_distribution_zone_id" {
+  type = string
+}

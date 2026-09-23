@@ -16,6 +16,7 @@ module "environment" {
   maintenance_image = var.maintenance_image
   api_domain_name   = var.api_domain_name
   app_domain_name   = var.app_domain_name
+  site_domain_name  = var.site_domain_name
   cors_origins      = var.cors_origins
   # The WorkOS application of this environment's WorkOS environment. A
   # client id is public; the environment's API key is its secret.

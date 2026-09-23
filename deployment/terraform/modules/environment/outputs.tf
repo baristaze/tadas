@@ -18,6 +18,21 @@ output "portal_distribution_id" {
   value = module.portal.distribution_id
 }
 
+# And the company site's, which the same workflows publish the same way.
+
+output "site_url" {
+  description = "Where the company site answers."
+  value       = module.site.url
+}
+
+output "site_bucket" {
+  value = module.site.bucket_name
+}
+
+output "site_distribution_id" {
+  value = module.site.distribution_id
+}
+
 # What `aws ecs run-task` needs to start a one-off task on the image the
 # apply just rolled out: the cluster, the task definition and its container
 # (the command override names it), and the network (the private subnets,

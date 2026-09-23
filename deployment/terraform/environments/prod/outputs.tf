@@ -20,6 +20,21 @@ output "portal_distribution_id" {
   value = module.environment.portal_distribution_id
 }
 
+# And the company site's.
+
+output "site_url" {
+  description = "Where the company site answers."
+  value       = module.environment.site_url
+}
+
+output "site_bucket" {
+  value = module.environment.site_bucket
+}
+
+output "site_distribution_id" {
+  value = module.environment.site_distribution_id
+}
+
 # What `aws ecs run-task` needs to start a one-off task (the migration, an
 # operator grant) on the image the apply just rolled out.
 

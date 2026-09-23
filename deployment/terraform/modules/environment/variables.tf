@@ -42,6 +42,11 @@ variable "workos_client_id" {
   type        = string
 }
 
+variable "site_domain_name" {
+  description = "The company site's public name, e.g. www.tadas.fyi, or www.staging.tadas.fyi for staging. A hosted zone of that name must exist in the account."
+  type        = string
+}
+
 variable "cors_origins" {
   description = "Browser origins the API accepts besides the portal's, which is always allowed."
   type        = list(string)

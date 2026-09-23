@@ -145,17 +145,21 @@ module "secrets" {
   destroyable               = var.destroyable
 }
 
-# Two public names, each at the apex of a Route 53 zone of its own that the
+# Three public names, each at the apex of a Route 53 zone of its own that the
 # account's bootstrap root made and delegated from Cloudflare: the API at the
-# load balancer, the portal at CloudFront. Each gets a DNS-validated
-# certificate; the portal's is in us-east-1, the only region CloudFront reads
-# certificates from.
+# load balancer, the portal and the company site each at a CloudFront
+# distribution. Each gets a DNS-validated certificate; the two CloudFront
+# ones are in us-east-1, the only region CloudFront reads certificates from.
 data "aws_route53_zone" "api" {
   name = var.api_domain_name
 }
 
 data "aws_route53_zone" "app" {
   name = var.app_domain_name
+}
+
+data "aws_route53_zone" "site" {
+  name = var.site_domain_name
 }
 
 module "api_certificate" {
@@ -175,6 +179,15 @@ module "app_certificate" {
   zone_id     = data.aws_route53_zone.app.zone_id
 }
 
+module "site_certificate" {
+  source    = "../certificate"
+  providers = { aws = aws.us_east_1 }
+
+  environment = var.environment
+  domain_name = var.site_domain_name
+  zone_id     = data.aws_route53_zone.site.zone_id
+}
+
 module "load_balancer" {
   source = "../load_balancer"
 
@@ -185,15 +198,38 @@ module "load_balancer" {
   certificate_arn    = module.api_certificate.arn
 }
 
+# The portal and the company site are the same kind of thing, static files
+# behind CloudFront, so they are one module called twice. The portal calls the
+# API, reads its runtime config, and routes client paths; the site calls
+# nothing and answers a missing path with its own not-found page.
 module "portal" {
-  source = "../portal"
+  source = "../static_site"
 
+  name            = "portal"
   environment     = var.environment
   bucket_name     = "${var.bucket_prefix}-portal"
   domain_name     = var.app_domain_name
   certificate_arn = module.app_certificate.arn
   api_url         = "https://${var.api_domain_name}"
   sentry_dsn      = var.portal_sentry_dsn
+  client_routes   = true
+  runtime_config = {
+    apiUrl      = "https://${var.api_domain_name}"
+    sentryDsn   = var.portal_sentry_dsn
+    environment = var.environment
+  }
+  destroyable = var.destroyable
+}
+
+module "site" {
+  source = "../static_site"
+
+  name            = "site"
+  environment     = var.environment
+  bucket_name     = "${var.bucket_prefix}-site"
+  domain_name     = var.site_domain_name
+  certificate_arn = module.site_certificate.arn
+  not_found_page  = "/404.html"
   destroyable     = var.destroyable
 }
 
@@ -208,6 +244,11 @@ module "domain_records" {
   load_balancer_zone_id    = module.load_balancer.zone_id
   distribution_domain_name = module.portal.distribution_domain_name
   distribution_zone_id     = module.portal.distribution_zone_id
+
+  site_zone_id                  = data.aws_route53_zone.site.zone_id
+  site_domain_name              = var.site_domain_name
+  site_distribution_domain_name = module.site.distribution_domain_name
+  site_distribution_zone_id     = module.site.distribution_zone_id
 }
 
 # The two one-off tasks, both on the API image. The migrate task is the one

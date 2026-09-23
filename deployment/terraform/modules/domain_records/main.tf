@@ -1,5 +1,5 @@
-# The two public names of an environment: the API at its load balancer, the
-# portal at its CloudFront distribution. Alias records, so they follow those
+# The three public names of an environment: the API at its load balancer, the
+# portal and the company site each at its CloudFront distribution. Alias records, so they follow those
 # targets' addresses and cost no queries.
 
 resource "aws_route53_record" "api" {
@@ -24,6 +24,20 @@ resource "aws_route53_record" "app" {
   alias {
     name                   = var.distribution_domain_name
     zone_id                = var.distribution_zone_id
+    evaluate_target_health = false
+  }
+}
+
+resource "aws_route53_record" "site" {
+  for_each = toset(["A", "AAAA"])
+
+  zone_id = var.site_zone_id
+  name    = var.site_domain_name
+  type    = each.key
+
+  alias {
+    name                   = var.site_distribution_domain_name
+    zone_id                = var.site_distribution_zone_id
     evaluate_target_health = false
   }
 }
