@@ -4,6 +4,8 @@ from tadas.om.events.storage import EventStorageInterface
 from tadas.om.events.storage.impl.memory import EventStorageMemoryImpl
 from tadas.om.idempotency.storage import IdempotencyStorageInterface
 from tadas.om.idempotency.storage.impl.memory import IdempotencyStorageMemoryImpl
+from tadas.om.media.storage import MediaStorageInterface
+from tadas.om.media.storage.impl.memory import MediaStorageMemoryImpl
 from tadas.om.outbox.storage import OutboxStorageInterface
 from tadas.om.outbox.storage.impl.memory import OutboxStorageMemoryImpl
 from tadas.om.storage.root import StorageInterface
@@ -25,6 +27,7 @@ class StorageMemoryImpl(StorageInterface):
         self._tenancy = TenancyStorageMemoryImpl(self._outbox, self._idempotency)
         self._work = WorkStorageMemoryImpl()
         self._tasks = TasksStorageMemoryImpl(self._outbox)
+        self._media = MediaStorageMemoryImpl(self._outbox)
         self._events = EventStorageMemoryImpl()
 
     def get_tenancy_storage(self) -> TenancyStorageInterface:
@@ -35,6 +38,9 @@ class StorageMemoryImpl(StorageInterface):
 
     def get_tasks_storage(self) -> TasksStorageInterface:
         return self._tasks
+
+    def get_media_storage(self) -> MediaStorageInterface:
+        return self._media
 
     def get_idempotency_storage(self) -> IdempotencyStorageInterface:
         return self._idempotency

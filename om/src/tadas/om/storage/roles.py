@@ -22,6 +22,7 @@ TABLE_ROLES: dict[str, DatabaseRole] = {
     "socket_tickets": DatabaseRole.CORE,
     "work_items": DatabaseRole.QUEUE,
     "tasks": DatabaseRole.CORE,
+    "files": DatabaseRole.CORE,
     "idempotency_records": DatabaseRole.CORE,
     "events": DatabaseRole.ACTIVITY,
     "event_cursors": DatabaseRole.ACTIVITY,
