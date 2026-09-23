@@ -554,3 +554,47 @@ def test_switch_needs_a_kept_session(stack: Stack) -> None:
     out = stack.tadas("switch", "acme")  # TADAS_TOKEN is the environment's, not the CLI's
     assert out.exit_code == 3, out.output
     assert "no kept session to switch" in out.output
+
+
+def test_a_file_is_attached_listed_downloaded_and_detached(
+    stack: Stack, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The whole round over the in-process API, whose local store cannot sign a
+    form: the client moves the bytes through the API instead, held to the
+    same bounds."""
+    added = stack.tadas("add", "Read the spec", "--json")
+    task_id = json.loads(added.output)["id"]
+    spec = tmp_path / "spec.pdf"
+    spec.write_bytes(b"%PDF-1.7 the spec")
+    attached = stack.tadas("attach", task_id[-8:], str(spec))
+    assert attached.exit_code == 0, attached.output
+    assert attached.output.endswith("  spec.pdf (17 B)\n")
+    file_short = attached.output.split()[1]
+
+    listed = stack.tadas("attachments", task_id[-8:])
+    assert listed.exit_code == 0, listed.output
+    header, line = listed.output.splitlines()
+    assert header.split() == ["ID", "SIZE", "TYPE", "NAME"]
+    assert line.split() == [file_short, "17", "B", "application/pdf", "spec.pdf"]
+
+    monkeypatch.chdir(tmp_path)
+    out = tmp_path / "copy.pdf"
+    fetched = stack.tadas("download", task_id[-8:], file_short, "--out", str(out))
+    assert fetched.exit_code == 0, fetched.output
+    assert out.read_bytes() == b"%PDF-1.7 the spec"
+
+    detached = stack.tadas("detach", task_id[-8:], file_short)
+    assert detached.exit_code == 0 and detached.output == f"detached {file_short}  spec.pdf\n"
+    assert stack.tadas("attachments", task_id, "--json").output.strip() == "[]"
+
+
+def test_a_file_of_a_type_no_task_takes_is_refused(stack: Stack, tmp_path: Path) -> None:
+    task_id = json.loads(stack.tadas("add", "Refuse it", "--json").output)["id"]
+    page = tmp_path / "page.html"
+    page.write_text("<html></html>")
+    refused = stack.tadas("attach", task_id, str(page))
+    assert refused.exit_code == 1, refused.output
+    assert "cannot be of type text/html" in refused.output
+    unknown = tmp_path / "blob.nokind"
+    unknown.write_bytes(b"x")
+    assert stack.tadas("attach", task_id, str(unknown)).exit_code == 2

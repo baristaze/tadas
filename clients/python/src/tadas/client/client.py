@@ -16,9 +16,13 @@ import truststore
 
 from tadas.client.types import (
     EventView,
+    FilePageView,
+    FileView,
+    IssuedDownloadView,
     IssuedLoginView,
     IssuedSessionView,
     IssuedTicketView,
+    IssuedUploadView,
     MembershipChoicePageView,
     MembershipChoiceView,
     MeView,
@@ -28,6 +32,7 @@ from tadas.client.types import (
     PlatformSizeView,
     Role,
     SessionView,
+    StorageUsageView,
     TaskPageView,
     TaskScope,
     TaskStatus,
@@ -244,6 +249,8 @@ class ApiClient:
         token: str | Unset | None = UNSET,
         idempotency_key: str | None = None,
         if_match: int | None = None,
+        content: bytes | None = None,
+        raw: bool = False,
     ) -> Any:
         """The one call every operation goes through, and the one place a
         request is sent again. Raises `ApiError` on any non-2xx; a 401 clears
@@ -266,6 +273,8 @@ class ApiClient:
                     token=token,
                     idempotency_key=idempotency_key,
                     if_match=if_match,
+                    content=content,
+                    raw=raw,
                 )
             except ApiError as error:
                 if attempt == bound or error.status not in RETRYABLE_STATUSES:
@@ -288,10 +297,14 @@ class ApiClient:
         token: str | Unset | None = UNSET,
         idempotency_key: str | None = None,
         if_match: int | None = None,
+        content: bytes | None = None,
+        raw: bool = False,
     ) -> Any:
         """One attempt: the headers this client puts on every call, the send,
         and the answer turned into a view or a typed error. `if_match` is the
-        version a write names, sent as the entity tag `If-Match` carries."""
+        version a write names, sent as the entity tag `If-Match` carries.
+        `content` is a body of bytes rather than JSON, and `raw` answers the
+        body's bytes rather than parsing it: a file's content, both ways."""
         headers: dict[str, str] = {}
         bearer = self.token if isinstance(token, Unset) else token
         if bearer:
@@ -300,12 +313,18 @@ class ApiClient:
             headers[IDEMPOTENCY_HEADER] = idempotency_key
         if if_match is not None:
             headers["If-Match"] = f'"{if_match}"'
-        response = await self._http.request(method, path, json=json, params=params, headers=headers)
+        if content is not None:
+            headers["Content-Type"] = "application/octet-stream"
+        response = await self._http.request(
+            method, path, json=json, params=params, headers=headers, content=content
+        )
         # A delayed refusal belongs to the bearer sent, never a newer sign-in.
         if response.status_code == 401 and isinstance(token, Unset) and self.token == bearer:
             self.token = None
         if response.is_error:
             raise _error_of(response)
+        if raw:
+            return response.content
         if not response.content:
             return None
         try:
@@ -494,6 +513,111 @@ class ApiClient:
         return TaskView.model_validate(
             await self.request("DELETE", f"/v1/tasks/{task_id}", if_match=version)
         )
+
+    # A task's attachments, and the files behind them
+
+    async def attachments(
+        self, task_id: UUID, *, cursor: str | None = None, limit: int = LIMIT_MAX
+    ) -> FilePageView:
+        params: dict[str, Any] = {"limit": limit}
+        if cursor:
+            params["cursor"] = cursor
+        page = await self.request("GET", f"/v1/tasks/{task_id}/attachments", params=params)
+        return FilePageView.model_validate(page)
+
+    async def every_attachment(self, task_id: UUID, limit: int = LIMIT_MAX) -> list[FileView]:
+        """A task's stored attachments, oldest first, following the cursor to the end."""
+        files: list[FileView] = []
+        cursor: str | None = None
+        while True:
+            page = await self.attachments(task_id, cursor=cursor, limit=limit)
+            files.extend(page.items)
+            if page.next_cursor is None:
+                return files
+            cursor = page.next_cursor
+
+    async def start_attachment(
+        self,
+        task_id: UUID,
+        name: str,
+        content_type: str,
+        size_bytes: int,
+        *,
+        idempotency_key: str | None = None,
+    ) -> FileView:
+        """A pending attachment: the upload may begin. Always under an
+        idempotency key, so a retry lands one file."""
+        body = {"name": name, "content_type": content_type, "size_bytes": size_bytes}
+        started = await self.request(
+            "POST",
+            f"/v1/tasks/{task_id}/attachments",
+            json=body,
+            idempotency_key=idempotency_key or str(uuid4()),
+        )
+        return FileView.model_validate(started)
+
+    async def issue_upload(self, file_id: UUID) -> IssuedUploadView:
+        form = await self.request("POST", f"/v1/media/files/{file_id}/upload")
+        return IssuedUploadView.model_validate(form)
+
+    async def put_content(self, file_id: UUID, data: bytes) -> FileView:
+        """The bytes through the API, for a store that cannot take a form post."""
+        put = await self.request("PUT", f"/v1/media/files/{file_id}/content", content=data)
+        return FileView.model_validate(put)
+
+    async def confirm_file(self, file_id: UUID) -> FileView:
+        return FileView.model_validate(
+            await self.request("POST", f"/v1/media/files/{file_id}/confirm")
+        )
+
+    async def issue_download(self, file_id: UUID) -> IssuedDownloadView:
+        link = await self.request("GET", f"/v1/media/files/{file_id}/download")
+        return IssuedDownloadView.model_validate(link)
+
+    async def content(self, file_id: UUID) -> bytes:
+        return cast(
+            bytes, await self.request("GET", f"/v1/media/files/{file_id}/content", raw=True)
+        )
+
+    async def remove_attachment(self, task_id: UUID, file_id: UUID) -> FileView:
+        removed = await self.request("DELETE", f"/v1/tasks/{task_id}/attachments/{file_id}")
+        return FileView.model_validate(removed)
+
+    async def storage_usage(self) -> StorageUsageView:
+        return StorageUsageView.model_validate(await self.request("GET", "/v1/media/usage"))
+
+    async def attach(self, task_id: UUID, name: str, content_type: str, data: bytes) -> FileView:
+        """The whole upload: start it, post the bytes straight to the store with
+        the form the API signed (or through the API when the store cannot take
+        a post), then confirm. The post to the store carries no credential of
+        ours: the form is the credential, and it holds the post to this file's
+        type and size."""
+        started = await self.start_attachment(task_id, name, content_type, len(data))
+        form = await self.issue_upload(started.id)
+        if form.url is None:
+            await self.put_content(started.id, data)
+        else:
+            async with httpx.AsyncClient(timeout=self.timeout, verify=trust_store()) as store:
+                posted = await store.post(
+                    form.url,
+                    data={field.name: field.value for field in form.fields},
+                    files={"file": (name, data, content_type)},
+                )
+            if posted.is_error:
+                raise ApiError(posted.status_code, "upload_refused", posted.text[:200], None)
+        return await self.confirm_file(started.id)
+
+    async def download(self, file_id: UUID) -> bytes:
+        """A stored file's bytes: by the signed link, or through the API when
+        the store cannot sign one."""
+        link = await self.issue_download(file_id)
+        if link.url is None:
+            return await self.content(file_id)
+        async with httpx.AsyncClient(timeout=self.timeout, verify=trust_store()) as store:
+            fetched = await store.get(link.url)
+        if fetched.is_error:
+            raise ApiError(fetched.status_code, "download_refused", fetched.text[:200], None)
+        return fetched.content
 
     # Events and the channel
 
