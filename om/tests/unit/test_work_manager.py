@@ -20,6 +20,7 @@ from tadas.om.opcontext import (
 )
 from tadas.om.root import Managers, build_managers
 from tadas.om.storage.impl.memory import StorageMemoryImpl
+from tadas.om.tenancy.impl.manager import TenancyOptions
 from tadas.om.work.impl.manager import DEAD_LETTER_KIND, WorkOptions
 from tadas.om.work.types.work_item import WorkKind, WorkStatus
 
@@ -45,16 +46,14 @@ def storage() -> StorageMemoryImpl:
 
 @pytest.fixture
 def managers(infra: InfraLocalImpl, storage: StorageMemoryImpl) -> Managers:
-    return build_managers(storage, infra)
+    return build_managers(storage, infra, TenancyOptions(dev_sign_in=True))
 
 
 @pytest.fixture
 async def ctx(managers: Managers) -> OpContext:
     tenancy = managers.tenancy
-    _, org = await tenancy.bootstrap(
-        request(APP), "Acme", "acme", "ann@example.test", "pw-1234", "Ann"
-    )
-    login = await tenancy.login(request(APP), "ann@example.test", "pw-1234")
+    _, org = await tenancy.bootstrap(request(APP), "Acme", "acme", "ann@example.test", "Ann")
+    login = await tenancy.dev_sign_in(request(APP), "ann@example.test")
     identity = await tenancy.authenticate_login(request(APP), login.token)
     issued = await tenancy.exchange_login(identity, org.id)
     return await tenancy.authenticate(request(APP), issued.token)
@@ -450,16 +449,14 @@ async def test_a_claim_in_a_deleted_org_fails_the_item_and_moves_on(
     tenancy = managers.tenancy
     orphan = make_item().model_copy(update={"created_by": ctx.user_id})
     await managers.work.enqueue(ctx, orphan)
-    _, beta = await tenancy.bootstrap(
-        request(APP), "Beta", "beta", "bob@example.test", "pw-1234", "Bob"
-    )
+    _, beta = await tenancy.bootstrap(request(APP), "Beta", "beta", "bob@example.test", "Bob")
     bob = await tenancy.authenticate(
         request(APP),
         (
             await tenancy.exchange_login(
                 await tenancy.authenticate_login(
                     request(APP),
-                    (await tenancy.login(request(APP), "bob@example.test", "pw-1234")).token,
+                    (await tenancy.dev_sign_in(request(APP), "bob@example.test")).token,
                 ),
                 beta.id,
             )
@@ -472,7 +469,6 @@ async def test_a_claim_in_a_deleted_org_fails_the_item_and_moves_on(
         "Ops",
         "ops",
         "root@example.test",
-        "pw-1234",
         "Root",
         operator_role=OperatorRole.WRITE,
     )

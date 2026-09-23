@@ -15,6 +15,8 @@ from tadas.infra.observability import (
 )
 from tadas.infra.root import InfraInterface
 from tadas.infra.trust import install_trust_store
+from tadas.integrations.impl.configured import IntegrationsConfiguredImpl, absent_integrations
+from tadas.integrations.root import IntegrationsInterface
 from tadas.om.root import Managers, TenancyOperatorOptions, TenancyOptions, build_managers
 from tadas.om.storage.impl.memory import StorageMemoryImpl
 from tadas.om.storage.impl.postgres import StoragePostgresImpl
@@ -69,6 +71,9 @@ def tenancy_options(settings: ApiSettings) -> TenancyOptions:
         sign_in_delay_cap=timedelta(seconds=settings.sign_in_delay_cap_seconds),
         operator_token_ttl=timedelta(seconds=settings.operator_token_max_lifetime_seconds),
         totp_encryption_key=totp_key(settings),
+        sign_in_redirect_uris=tuple(settings.sign_in_redirect_uris),
+        dev_sign_in=settings.dev_sign_in_enabled,
+        invitation_ttl_days=settings.invitation_lifetime_days,
     )
 
 
@@ -84,10 +89,6 @@ def rate_limit_options(settings: ApiSettings) -> RateLimitOptions:
         login=RateLimit(
             limit=settings.login_rate_limit,
             window=timedelta(seconds=settings.login_rate_window_seconds),
-        ),
-        signup=RateLimit(
-            limit=settings.signup_rate_limit,
-            window=timedelta(seconds=settings.signup_rate_window_seconds),
         ),
     )
 
@@ -114,6 +115,7 @@ class AppContainer:
         settings: ApiSettings,
         storage: StorageInterface,
         infra: InfraInterface,
+        integrations: IntegrationsInterface,
         managers: Managers,
         services: ServicesInterface,
         rate_limits: RateLimitOptions,
@@ -121,13 +123,21 @@ class AppContainer:
         self.settings = settings
         self.storage = storage
         self.infra = infra
+        self.integrations = integrations
         self.managers = managers
         self.services = services
         self.rate_limits = rate_limits
 
     @classmethod
     def build(cls, settings: ApiSettings) -> AppContainer:
-        return cls.over(settings, postgres_storage(settings), InfraConfiguredImpl(settings))
+        return cls.over(
+            settings,
+            postgres_storage(settings),
+            InfraConfiguredImpl(settings),
+            IntegrationsConfiguredImpl(
+                settings, settings.environment, settings.is_cloud_environment
+            ),
+        )
 
     @classmethod
     def for_tests(
@@ -135,26 +145,49 @@ class AppContainer:
         storage: StorageInterface,
         infra: InfraInterface,
         settings: ApiSettings | None = None,
+        integrations: IntegrationsInterface | None = None,
     ) -> AppContainer:
         settings = settings or ApiSettings.model_validate(
-            {"_env_file": None, "environment": "test"}
+            {"_env_file": None, "environment": "test", "dev_sign_in_enabled": True}
         )
-        return cls.over(settings, storage, infra)
+        return cls.over(settings, storage, infra, integrations or absent_integrations())
 
     @classmethod
     def over(
-        cls, settings: ApiSettings, storage: StorageInterface, infra: InfraInterface
+        cls,
+        settings: ApiSettings,
+        storage: StorageInterface,
+        infra: InfraInterface,
+        integrations: IntegrationsInterface,
     ) -> AppContainer:
         """Managers, then services, over whichever roots the caller chose."""
         managers = build_managers(
-            storage, infra, tenancy_options(settings), operator_options(settings)
+            storage,
+            infra,
+            tenancy_options(settings),
+            operator_options(settings),
+            integrations,
         )
         services = build_services(managers, infra)
-        return cls(settings, storage, infra, managers, services, rate_limit_options(settings))
+        return cls(
+            settings,
+            storage,
+            infra,
+            integrations,
+            managers,
+            services,
+            rate_limit_options(settings),
+        )
 
     async def start(self) -> None:
         await self.infra.start()
-        log.info("%s started with %s", self.settings.service_name, ", ".join(self.infra.describe()))
+        await self.integrations.start()
+        chosen = [*self.infra.describe(), *self.integrations.describe()]
+        log.info("%s started with %s", self.settings.service_name, ", ".join(chosen))
+        if not self.integrations.get_identity_provider().configured:
+            log.warning("no identity provider: every sign-in through one answers 503")
+        if self.settings.dev_sign_in_enabled:
+            log.warning("the local sign-in by address alone is on")
         if self.settings.totp_encryption_key is None:
             log.warning(
                 "no TOTP encryption key: the operator plane refuses every enrolment "
@@ -162,5 +195,6 @@ class AppContainer:
             )
 
     async def close(self) -> None:
+        await self.integrations.close()
         await self.infra.close()
         await self.storage.close()

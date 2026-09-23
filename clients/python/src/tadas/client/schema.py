@@ -34,8 +34,8 @@ class ConfirmTotpRequest(BaseModel):
 class CreateOrgRequest(BaseModel):
     """
     An org with its owner, as `bootstrap` seeds one. The owner's identity
-    is created with the password, or kept with its own when the email is
-    known already.
+    is created with its personal org when the email is new; the owner signs
+    in through the identity provider with the address.
     """
     model_config = ConfigDict(
         extra='forbid',
@@ -43,7 +43,6 @@ class CreateOrgRequest(BaseModel):
     name: Annotated[str, Field(max_length=200, min_length=1, title='Name')]
     owner_email: Annotated[str, Field(min_length=1, title='Owner Email')]
     owner_name: Annotated[str, Field(max_length=200, min_length=1, title='Owner Name')]
-    owner_password: Annotated[str, Field(min_length=1, title='Owner Password')]
     slug: Annotated[str, Field(max_length=100, min_length=1, title='Slug')]
 
 
@@ -73,6 +72,50 @@ class CredentialKind(StrEnum):
     internal = 'internal'
 
 
+class DevSignInRequest(BaseModel):
+    """
+    Local and test only: a sign-in by address alone, with no browser round
+    trip, for the seed, the demos, the traffic generator, and the tests. A
+    person nobody knew is made, with their personal org. A deployed
+    environment never serves it: the route answers 404 there, and the
+    process refuses to start with it on.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    display_name: Annotated[str | None, Field(max_length=200, title='Display Name')] = ''
+    email: Annotated[str, Field(max_length=320, min_length=3, title='Email')]
+
+
+class DeviceSignInView(BaseModel):
+    """
+    The start of a sign-in for a device with no browser, the command
+    line. The person opens `verification_uri_complete` (or
+    `verification_uri` and types `user_code`) in any browser; the device
+    keeps `device_code` to itself and asks `POST /v1/auth/device/token`
+    with it every `interval` seconds, for at most `expires_in` seconds.
+    """
+    device_code: Annotated[str, Field(title='Device Code')]
+    expires_in: Annotated[int, Field(title='Expires In')]
+    interval: Annotated[int, Field(title='Interval')]
+    user_code: Annotated[str, Field(title='User Code')]
+    verification_uri: Annotated[str, Field(title='Verification Uri')]
+    verification_uri_complete: Annotated[str, Field(title='Verification Uri Complete')]
+
+
+class DeviceTokenRequest(BaseModel):
+    """
+    The device code a device sign-in started with. The answer is a
+    sign-in's once the person confirmed it; before that, 400
+    `sign_in_pending` (or `sign_in_slow_down`: ask less often), and 401
+    `sign_in_refused` when they declined or it expired.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    device_code: Annotated[str, Field(max_length=500, min_length=1, title='Device Code')]
+
+
 class EventView(BaseModel):
     """
     One record of the tenant's append-only stream, paged by `after_seq`.
@@ -99,6 +142,12 @@ class ExchangeSessionRequest(BaseModel):
     org_id: Annotated[UUID, Field(title='Org Id')]
 
 
+class InvitationState(StrEnum):
+    pending = 'pending'
+    accepted = 'accepted'
+    revoked = 'revoked'
+
+
 class IssuedTicketView(BaseModel):
     """
     Carries the freshly minted socket ticket in the clear, once; redeeming
@@ -114,25 +163,6 @@ class IssuedTotpSecretView(BaseModel):
     authenticator app reads. A replay carries none.
     """
     otpauth_uri: Annotated[str | None, Field(title='Otpauth Uri')]
-
-
-class TotpCode(RootModel[str]):
-    root: Annotated[str, Field(max_length=6, min_length=6, title='Totp Code')]
-
-
-class LoginRequest(BaseModel):
-    """
-    An email and a password, and the code from an authenticator when the
-    identity has a second factor enrolled. A tenant's sign-in needs none; the
-    operator plane admits an enrolled operator only on a sign-in that
-    verified one. A code used once is refused.
-    """
-    model_config = ConfigDict(
-        extra='forbid',
-    )
-    email: Annotated[str, Field(title='Email')]
-    password: Annotated[str, Field(title='Password')]
-    totp_code: Annotated[TotpCode | None, Field(title='Totp Code')] = None
 
 
 class ExpiresIn(RootModel[int]):
@@ -216,14 +246,6 @@ class OrgView(BaseModel):
     slug: Annotated[str, Field(title='Slug')]
 
 
-class PasswordResetView(BaseModel):
-    """
-    Whose password was reset; the reset is audited with the operator.
-    """
-    email: Annotated[str, Field(title='Email')]
-    identity_id: Annotated[UUID, Field(title='Identity Id')]
-
-
 class Permission(StrEnum):
     read = 'read'
     write = 'write'
@@ -245,23 +267,25 @@ class PlatformSizeView(BaseModel):
     users: Annotated[int, Field(title='Users')]
 
 
-class ResetPasswordRequest(BaseModel):
-    """
-    The person, by email, and the password they sign in with from now on.
-    """
-    model_config = ConfigDict(
-        extra='forbid',
-    )
-    email: Annotated[str, Field(min_length=1, title='Email')]
-    password: Annotated[str, Field(max_length=200, min_length=8, title='Password')]
-
-
 class Role(StrEnum):
     owner = 'owner'
     admin = 'admin'
     member = 'member'
     viewer = 'viewer'
     service = 'service'
+
+
+class SecondFactorRequest(BaseModel):
+    """
+    The code from an authenticator, presented with a sign-in credential.
+    The answer is a new sign-in that records the verified code, which the
+    operator plane asks of an enrolled operator. A code used once is
+    refused.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    totp_code: Annotated[str, Field(max_length=6, min_length=6, title='Totp Code')]
 
 
 class SessionView(BaseModel):
@@ -275,31 +299,79 @@ class SessionView(BaseModel):
     revoked_at: Annotated[AwareDatetime | None, Field(title='Revoked At')]
 
 
-class OrgName(RootModel[str]):
-    root: Annotated[str, Field(deprecated=True, max_length=200, title='Org Name')]
+class InvitationToken(RootModel[str]):
+    root: Annotated[str, Field(max_length=500, title='Invitation Token')]
 
 
-class OrgSlug(RootModel[str]):
-    root: Annotated[str, Field(deprecated=True, max_length=48, title='Org Slug')]
-
-
-class SignUpRequest(BaseModel):
+class SignInCallbackRequest(BaseModel):
     """
-    A new person and their password. The person's personal org is made
-    with them, named and slugged for them, so a sign-up names no org. The
-    answer is a sign-in's (`IssuedLoginView`), so the client goes on through
-    the same choice and exchange; a held email is 409. No email is verified.
-    `org_name` and `org_slug` are what a sign-up named before and are
-    ignored; the release after this one refuses them.
+    The code the browser brought back to the callback, and the verifier
+    the sign-in's start answered with, which the API exchanges with the
+    identity provider, server-side. The answer is a
+    sign-in's (`IssuedLoginView`); a person nobody knew is signed up by it,
+    with their personal org.
     """
     model_config = ConfigDict(
         extra='forbid',
     )
-    display_name: Annotated[str, Field(max_length=200, min_length=1, title='Display Name')]
-    email: Annotated[str, Field(max_length=320, min_length=3, title='Email')]
-    org_name: Annotated[OrgName | None, Field(deprecated=True, title='Org Name')] = None
-    org_slug: Annotated[OrgSlug | None, Field(deprecated=True, title='Org Slug')] = None
-    password: Annotated[str, Field(max_length=200, min_length=8, title='Password')]
+    code: Annotated[str, Field(max_length=500, min_length=1, title='Code')]
+    code_verifier: Annotated[str, Field(max_length=128, min_length=43, title='Code Verifier')]
+    invitation_token: Annotated[InvitationToken | None, Field(title='Invitation Token')] = None
+
+
+class SignInStartRequest(BaseModel):
+    """
+    The start of a sign-in at the identity provider. `redirect_uri` is where
+    the browser comes back with a code: this environment's portal callback,
+    and nothing else. `state` is the caller's own random value, kept by the
+    tab that started the sign-in and compared when the browser comes back,
+    which binds the round trip to that tab; it may carry nothing else.
+    `invitation_token` is the one an invitation's link carried, and
+    `sign_up` opens the provider on its sign-up screen.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    invitation_token: Annotated[InvitationToken | None, Field(title='Invitation Token')] = None
+    redirect_uri: Annotated[str, Field(max_length=2000, min_length=1, title='Redirect Uri')]
+    sign_up: Annotated[bool | None, Field(title='Sign Up')] = False
+    state: Annotated[str, Field(max_length=200, min_length=16, title='State')]
+
+
+class SignInStartView(BaseModel):
+    """
+    Where the browser goes next, the identity provider's sign-in, and the
+    PKCE verifier the tab keeps beside its state and sends back with the
+    code. The provider holds only the verifier's digest, so a code is worth
+    nothing to anyone who does not hold it.
+    """
+    authorization_url: Annotated[str, Field(title='Authorization Url')]
+    code_verifier: Annotated[str, Field(title='Code Verifier')]
+
+
+class Intent(StrEnum):
+    sso = 'sso'
+    domain_verification = 'domain_verification'
+
+
+class SsoLinkRequest(BaseModel):
+    """
+    What the identity provider's admin portal opens on: the single sign-on
+    connection (`sso`) or the org's domains (`domain_verification`), and the
+    page of this environment's portal it links back to.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    intent: Annotated[Intent, Field(title='Intent')]
+    return_url: Annotated[str, Field(max_length=2000, min_length=1, title='Return Url')]
+
+
+class SsoLinkView(BaseModel):
+    """
+    A short-lived link to the admin portal; open it at once.
+    """
+    url: Annotated[str, Field(title='Url')]
 
 
 class TaskScope(StrEnum):
@@ -411,7 +483,6 @@ class AddMemberRequest(BaseModel):
     )
     display_name: Annotated[str, Field(max_length=200, min_length=1, title='Display Name')]
     email: Annotated[str, Field(min_length=1, title='Email')]
-    password: Annotated[str, Field(min_length=1, title='Password')]
     role: Role
 
 
@@ -431,14 +502,40 @@ class HTTPValidationError(BaseModel):
 
 class IdentityView(BaseModel):
     """
-    The person behind the caller's user; never carries the password hash.
-    `operator_role` is the allowlist entry: null for a person who is not an
-    operator.
+    The person behind the caller's user. `operator_role` is the allowlist
+    entry: null for a person who is not an operator.
     """
     created_at: Annotated[AwareDatetime, Field(title='Created At')]
     email: Annotated[str, Field(title='Email')]
     id: Annotated[UUID, Field(title='Id')]
     operator_role: OperatorRole | None
+
+
+class InvitationView(BaseModel):
+    """
+    A person asked to join the org. The identity provider sent the email
+    with the link; `expires_at` is when the link stops working, after which
+    the invitation is sent again or replaced.
+    """
+    created_at: Annotated[AwareDatetime, Field(title='Created At')]
+    created_by: Annotated[UUID, Field(title='Created By')]
+    email: Annotated[str, Field(title='Email')]
+    expires_at: Annotated[AwareDatetime, Field(title='Expires At')]
+    id: Annotated[UUID, Field(title='Id')]
+    role: Role
+    state: InvitationState
+
+
+class InviteMemberRequest(BaseModel):
+    """
+    The address to invite and the role the person gets, at most the
+    caller's own.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    email: Annotated[str, Field(max_length=320, min_length=3, title='Email')]
+    role: Role
 
 
 class IssuedApiKeyView(BaseModel):
@@ -539,6 +636,15 @@ class ApiKeyPageView(BaseModel):
     `UserPageView`.
     """
     items: Annotated[list[ApiKeyView], Field(title='Items')]
+    next_cursor: Annotated[str | None, Field(title='Next Cursor')]
+
+
+class InvitationPageView(BaseModel):
+    """
+    One page of the org's pending invitations, newest first; `next_cursor`
+    as on `UserPageView`.
+    """
+    items: Annotated[list[InvitationView], Field(title='Items')]
     next_cursor: Annotated[str | None, Field(title='Next Cursor')]
 
 

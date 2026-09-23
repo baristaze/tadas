@@ -26,6 +26,13 @@ class Orgs(IdentifiableMixin, NamedMixin, TrackableMixin, SoftDeletableMixin, Ba
             unique=True,
             postgresql_where=text("kind = 'personal' AND deleted_at IS NULL"),
         ),
+        # One org per organization at the identity provider.
+        Index(
+            "uq_orgs_provider_org_id",
+            "provider_org_id",
+            unique=True,
+            postgresql_where=text("provider_org_id IS NOT NULL AND deleted_at IS NULL"),
+        ),
         # A personal org names its person, and a team org names none.
         CheckConstraint(
             "(kind = 'personal') = (personal_identity_id IS NOT NULL)",
@@ -37,3 +44,4 @@ class Orgs(IdentifiableMixin, NamedMixin, TrackableMixin, SoftDeletableMixin, Ba
     # every org it makes is a team org.
     kind: Mapped[str] = mapped_column(server_default=text("'team'"))
     personal_identity_id: Mapped[UUID | None]
+    provider_org_id: Mapped[str | None]

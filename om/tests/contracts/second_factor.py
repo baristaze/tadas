@@ -11,6 +11,7 @@ from tadas.om.opcontext import AppContext, AppType, OperatorContext, RequestCont
 from tadas.om.tenancy.impl.manager import TenancyManagerImpl
 from tadas.om.tenancy.impl.operator import TenancyOperatorManagerImpl
 from tadas.om.tenancy.rules import TOTP_STEP, totp_code, totp_step
+from tadas.om.tenancy.types.issued import IssuedLogin
 
 TOTP_KEY = "dGFkYXMtdGVzdHMtdG90cC1rZXktdGhpcnR5LXR3byE="
 """A Fernet-shaped key (URL-safe base64 of 32 bytes), for tests only."""
@@ -48,26 +49,34 @@ async def enrolled_operator(
     operator: TenancyOperatorManagerImpl,
     clock: SteppingClock,
     email: str,
-    password: str,
 ) -> tuple[OperatorContext, bytes]:
     """An allowlisted identity through its first sign-in to the plane: admitted
     to enrol, a secret minted and confirmed with a first code, then signed in
     again with a second code and admitted with its entry. Returns that stage
     and the secret, for a test that signs in again."""
-    login = await manager.login(operator_request(), email, password)
+    login = await manager.dev_sign_in(operator_request(), email)
     enrolling = await manager.admit_operator(
         await manager.authenticate_login(operator_request(), login.token)
     )
     secret = secret_of((await operator.enrol_totp(enrolling)).otpauth_uri)
     await operator.confirm_totp(enrolling, clock.code(secret))
-    return await signed_in_operator(manager, clock, email, password, secret), secret
+    return await signed_in_operator(manager, clock, email, secret), secret
 
 
 async def signed_in_operator(
-    manager: TenancyManagerImpl, clock: SteppingClock, email: str, password: str, secret: bytes
+    manager: TenancyManagerImpl, clock: SteppingClock, email: str, secret: bytes
 ) -> OperatorContext:
-    """An enrolled operator signing in with a fresh code."""
-    login = await manager.login(operator_request(), email, password, clock.code(secret))
+    """An enrolled operator signing in, then verifying a fresh code."""
+    login = await second_factor(manager, email, clock.code(secret))
     return await manager.admit_operator(
         await manager.authenticate_login(operator_request(), login.token)
+    )
+
+
+async def second_factor(manager: TenancyManagerImpl, email: str, code: str) -> IssuedLogin:
+    """A sign-in by address, then its second factor: the login the operator
+    gate admits an enrolled operator on."""
+    login = await manager.dev_sign_in(operator_request(), email)
+    return await manager.verify_second_factor(
+        await manager.authenticate_login(operator_request(), login.token), code
     )

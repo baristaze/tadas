@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import delete, func, or_, select, update
+from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,6 +18,7 @@ from tadas.om.storage.utils.translation import apply_row, to_model, to_row
 from tadas.om.tenancy.storage import TenancyStorageInterface
 from tadas.om.tenancy.storage.tables.api_keys import ApiKeys
 from tadas.om.tenancy.storage.tables.identities import Identities
+from tadas.om.tenancy.storage.tables.invitations import Invitations
 from tadas.om.tenancy.storage.tables.memberships import Memberships
 from tadas.om.tenancy.storage.tables.orgs import Orgs
 from tadas.om.tenancy.storage.tables.sessions import Sessions
@@ -26,6 +27,7 @@ from tadas.om.tenancy.storage.tables.socket_tickets import SocketTickets
 from tadas.om.tenancy.storage.tables.users import Users
 from tadas.om.tenancy.types.api_key import ApiKey
 from tadas.om.tenancy.types.identity import Identity
+from tadas.om.tenancy.types.invitation import Invitation, InvitationState
 from tadas.om.tenancy.types.issued import OrgMembership
 from tadas.om.tenancy.types.membership import Membership
 from tadas.om.tenancy.types.org import Org
@@ -44,6 +46,12 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
 
     async def read_identity_by_email_digest(self, email_digest: str) -> Identity | None:
         stmt = select(Identities).where(Identities.email_digest == email_digest)
+        async with self._session_for(stmt, org_id=EMPTY_UUID) as session:
+            row = (await session.execute(stmt)).scalar_one_or_none()
+            return None if row is None else to_model(row, Identity)
+
+    async def read_identity_by_issuer_subject(self, issuer: str, subject: str) -> Identity | None:
+        stmt = select(Identities).where(Identities.issuer == issuer, Identities.subject == subject)
         async with self._session_for(stmt, org_id=EMPTY_UUID) as session:
             row = (await session.execute(stmt)).scalar_one_or_none()
             return None if row is None else to_model(row, Identity)
@@ -216,6 +224,7 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
         outbox_rows: tuple[OutboxRow, ...],
         identity: Identity | None = None,
         personal: tuple[Org, User, Membership] | None = None,
+        invitation: Invitation | None = None,
     ) -> None:
         await self._create_together(
             org_id,
@@ -224,6 +233,7 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
             *((OutboxRows, row) for row in outbox_rows),
             identity=identity,
             personal=personal,
+            invitation=invitation,
         )
 
     async def _create_together(
@@ -232,6 +242,7 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
         *rows: tuple[type[Any], Identifiable],
         identity: Identity | None = None,
         personal: tuple[Org, User, Membership] | None = None,
+        invitation: Invitation | None = None,
     ) -> None:
         """The rows land in one commit or not at all; every table is in the
         core role, which the session's role routing holds. The identity, when
@@ -239,8 +250,10 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
         it exists (the global table has no tenant to check). A new person's
         personal org, when given, lands first under its own tenant, then the
         scope is set again to `org_id` for the rest, so each statement is
-        fenced by the tenant it touches, as a switch's two sessions are. A
-        violated key is UniqueKeyTaken, never a driver error."""
+        fenced by the tenant it touches, as a switch's two sessions are. The
+        invitation, when given, is the tenant's existing row, updated in the
+        same commit; one that is not in the tenant lands nothing. A violated
+        key is UniqueKeyTaken, never a driver error."""
         row_type = rows[0][0]
         first_org_id = org_id if personal is None else personal[0].id
         async with self._session_for(row_type, org_id=first_org_id) as session:
@@ -260,6 +273,12 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
                     await set_scope(session, org_id, None, None)
                 for table, entity in rows:
                     session.add(to_row(entity, table, org_id=org_id))
+                if invitation is not None:
+                    stored = await session.get(Invitations, invitation.id)
+                    if stored is None or stored.org_id != org_id:
+                        await session.rollback()
+                        raise NotFound(f"invitation {invitation.id} is not in {org_id}")
+                    apply_row(stored, invitation)
                 await session.commit()
             except IntegrityError as error:
                 await session.rollback()
@@ -647,13 +666,81 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
                 .returning(SocketTickets.id)
             )
             purged += len((await session.execute(tickets)).scalars().all())
+            invitations = (
+                delete(Invitations)
+                .where(
+                    Invitations.org_id == org_id,
+                    or_(
+                        and_(
+                            Invitations.state != InvitationState.PENDING.value,
+                            Invitations.updated_at < before,
+                        ),
+                        Invitations.expires_at < before,
+                    ),
+                )
+                .returning(Invitations.id)
+            )
+            purged += len((await session.execute(invitations)).scalars().all())
             await session.commit()
         return purged
+
+    async def read_invitation(self, org_id: UUID, invitation_id: UUID) -> Invitation | None:
+        stmt = select(Invitations).where(
+            Invitations.org_id == org_id, Invitations.id == invitation_id
+        )
+        async with self._session_for(stmt, org_id=org_id) as session:
+            row = (await session.execute(stmt)).scalar_one_or_none()
+            return None if row is None else to_model(row, Invitation)
+
+    async def read_invitation_by_provider_id(
+        self, org_id: UUID, provider_invitation_id: str
+    ) -> Invitation | None:
+        stmt = select(Invitations).where(
+            Invitations.org_id == org_id,
+            Invitations.provider_invitation_id == provider_invitation_id,
+        )
+        async with self._session_for(stmt, org_id=org_id) as session:
+            row = (await session.execute(stmt)).scalar_one_or_none()
+            return None if row is None else to_model(row, Invitation)
+
+    async def read_pending_invitation(self, org_id: UUID, email: str) -> Invitation | None:
+        stmt = select(Invitations).where(
+            Invitations.org_id == org_id,
+            Invitations.email == email,
+            Invitations.state == InvitationState.PENDING.value,
+        )
+        async with self._session_for(stmt, org_id=org_id) as session:
+            row = (await session.execute(stmt)).scalar_one_or_none()
+            return None if row is None else to_model(row, Invitation)
+
+    async def read_invitations(
+        self, org_id: UUID, after: UUID | None, limit: int
+    ) -> list[Invitation]:
+        # Mirrors `is_after_newest_first`: by id descending, strictly before the cursor.
+        stmt = (
+            select(Invitations)
+            .where(
+                Invitations.org_id == org_id,
+                Invitations.state == InvitationState.PENDING.value,
+            )
+            .order_by(Invitations.id.desc())
+            .limit(limit)
+        )
+        if after is not None:
+            stmt = stmt.where(Invitations.id < after)
+        async with self._session_for(stmt, org_id=org_id) as session:
+            result = await session.execute(stmt)
+            return [to_model(row, Invitation) for row in result.scalars()]
+
+    async def write_invitation(
+        self, org_id: UUID, invitation: Invitation, outbox_rows: tuple[OutboxRow, ...] = ()
+    ) -> None:
+        await self._upsert(Invitations, org_id, invitation, outbox_rows)
 
     async def purge_tenant(self, org_id: UUID) -> int:
         purged = 0
         async with self._session_for(Users, org_id=org_id) as session:
-            for table in (Users, Memberships, ApiKeys, Sessions, SocketTickets):
+            for table in (Users, Memberships, ApiKeys, Sessions, SocketTickets, Invitations):
                 stmt = delete(table).where(table.org_id == org_id).returning(table.id)
                 purged += len((await session.execute(stmt)).scalars().all())
             await session.commit()

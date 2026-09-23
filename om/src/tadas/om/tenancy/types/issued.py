@@ -54,3 +54,12 @@ class IssuedTotpSecret(Platform):
     authenticator app reads; only the sealed secret is kept."""
 
     otpauth_uri: str
+
+
+class SignInStart(Platform):
+    """Where the browser goes to sign in, and the PKCE verifier the caller
+    keeps beside its state and hands back with the code. The provider holds
+    only the verifier's digest, so a code is worth nothing without it."""
+
+    authorization_url: str
+    code_verifier: str

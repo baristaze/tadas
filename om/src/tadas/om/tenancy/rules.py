@@ -1,5 +1,6 @@
 """Pure rules of the tenancy namespace: credential parsing, hashing, the
-role cap, the TOTP code, and where a list cursor cuts. Values in, values out;
+role cap, the TOTP code, who a single sign-on admits, and where a list
+cursor cuts. Values in, values out;
 no clock, no storage, no settings. Both storage impls call the cursor rules;
 the relational one spells them in SQL and names the rule it mirrors."""
 
@@ -70,7 +71,7 @@ within the hour whoever minted it."""
 
 PLATFORM_EMAIL_DOMAIN = "platform.tadas.invalid"
 """The domain of the identities no person signs in as: the provisioner and
-the smoke identity. A sign-up with an address in it is refused, so nobody
+the smoke identity. A sign-in with an address in it is refused, so nobody
 can take one of them before the grant job makes it. `.invalid` never
 resolves, so no mailbox stands behind it either."""
 
@@ -126,37 +127,6 @@ def otpauth_uri(secret: bytes, account: str, issuer: str) -> str:
     )
 
 
-def hash_password(password: str, salt: bytes) -> str:
-    digest = hashlib.scrypt(password.encode(), salt=salt, n=2**14, r=8, p=1)
-    return f"scrypt${salt.hex()}${digest.hex()}"
-
-
-DUMMY_PASSWORD_HASH = (
-    "scrypt$000102030405060708090a0b0c0d0e0f$"
-    "6e4b2a03fcd2540436bfc7373ac964ddf9c36b407915201ad5a06f53bf74600c"
-    "fe8d883942761592340c6a42909826638155e1d2c649d6b4d773967e17439de9"
-)
-"""A stored hash to verify against when the email is unknown, so a miss
-costs the same scrypt as a wrong password and the response time does not
-say which emails exist. The outcome of that verification is discarded; a
-sign-in with an unknown email is refused whatever it says."""
-
-
-def verify_password(password: str, stored: str) -> bool:
-    try:
-        scheme, salt_hex, _digest = stored.split("$", 2)
-    except ValueError:
-        return False
-    if scheme != "scrypt":
-        return False
-    candidate = hash_password(password, bytes.fromhex(salt_hex))
-    return hmac.compare_digest(candidate, stored)
-
-
-MIN_PASSWORD_LENGTH = 8
-"""The shortest password a sign-up accepts. A sign-in checks no length: a
-password set before this rule, or by the seeding, still signs in."""
-
 MAX_SLUG_LENGTH = 48
 """The longest slug an org may have."""
 
@@ -171,24 +141,26 @@ PERSONAL_ORG_NAME = "Personal"
 """The name of a personal org whose person gave no name."""
 
 
-def check_sign_up(email: str, password: str, display_name: str) -> None:
-    """The shape of a sign-up, refused with ValueError naming the field. A
-    sign-up asks nothing about an org: the person's personal org is made with
-    them, named and slugged for them. There is no email verification: an
-    address with one `@` and a dot after it is the whole check, a choice and
-    not an oversight (the sign-up is the door a deployed environment has, and
-    a demo needs no mailbox). It has two costs, both accepted: a held address
-    answers as a conflict, so anyone can tell which addresses have an
-    account, and anyone can sign up with an address that is not theirs. And
-    with no verified address there is no account recovery by mail: an
-    operator resets a forgotten password, and the reset is audited."""
-    check_email(email)
-    if is_platform_email(email):
-        raise ValueError("that address belongs to the platform")
-    if len(password) < MIN_PASSWORD_LENGTH:
-        raise ValueError(f"a password has at least {MIN_PASSWORD_LENGTH} characters")
-    if not display_name.strip():
-        raise ValueError("a display name is required")
+def pkce_challenge(verifier: str) -> str:
+    """The S256 challenge of a PKCE verifier (RFC 7636): the SHA-256 of the
+    verifier, URL-safe base64 with no padding."""
+    digest = hashlib.sha256(verifier.encode()).digest()
+    return base64.urlsafe_b64encode(digest).decode().rstrip("=")
+
+
+def email_domain(email: str) -> str:
+    """The part of an address after its `@`, in lower case: what an org's
+    verified domain is compared with."""
+    return email.rpartition("@")[2].lower()
+
+
+def sso_joins(email: str, verified_domains: tuple[str, ...]) -> bool:
+    """Whether a sign-in through an org's single sign-on makes the person a
+    member of it: only when their address is in a domain the org has proved
+    it owns at the identity provider. The org's own identity provider vouched
+    for the person and the org holds the domain, so the org is where they
+    belong; anyone else joins by invitation."""
+    return email_domain(email) in {domain.lower() for domain in verified_domains}
 
 
 def check_org(name: str, slug: str | None) -> None:

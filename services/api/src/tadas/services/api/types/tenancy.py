@@ -1,10 +1,12 @@
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import Field
 
 from tadas.om.opcontext import CredentialKind, OperatorRole, Permission, Role
 from tadas.om.tenancy.rules import MAX_API_KEY_TTL
+from tadas.om.tenancy.types.invitation import InvitationState
 from tadas.om.tenancy.types.org import OrgKind
 from tadas.services.api.types.common import RequestBody, View
 
@@ -30,9 +32,8 @@ class UserView(View):
 
 
 class IdentityView(View):
-    """The person behind the caller's user; never carries the password hash.
-    `operator_role` is the allowlist entry: null for a person who is not an
-    operator."""
+    """The person behind the caller's user. `operator_role` is the allowlist
+    entry: null for a person who is not an operator."""
 
     id: UUID
     email: str
@@ -61,30 +62,89 @@ class MembershipChoiceView(View):
     role: Role
 
 
-class LoginRequest(RequestBody):
-    """An email and a password, and the code from an authenticator when the
-    identity has a second factor enrolled. A tenant's sign-in needs none; the
-    operator plane admits an enrolled operator only on a sign-in that
-    verified one. A code used once is refused."""
+class SignInStartRequest(RequestBody):
+    """The start of a sign-in at the identity provider. `redirect_uri` is where
+    the browser comes back with a code: this environment's portal callback,
+    and nothing else. `state` is the caller's own random value, kept by the
+    tab that started the sign-in and compared when the browser comes back,
+    which binds the round trip to that tab; it may carry nothing else.
+    `invitation_token` is the one an invitation's link carried, and
+    `sign_up` opens the provider on its sign-up screen."""
 
-    email: str
-    password: str
-    totp_code: str | None = Field(default=None, min_length=6, max_length=6)
+    redirect_uri: str = Field(min_length=1, max_length=2000)
+    state: str = Field(min_length=16, max_length=200)
+    invitation_token: str | None = Field(default=None, max_length=500)
+    sign_up: bool = False
 
 
-class SignUpRequest(RequestBody):
-    """A new person and their password. The person's personal org is made
-    with them, named and slugged for them, so a sign-up names no org. The
-    answer is a sign-in's (`IssuedLoginView`), so the client goes on through
-    the same choice and exchange; a held email is 409. No email is verified.
-    `org_name` and `org_slug` are what a sign-up named before and are
-    ignored; the release after this one refuses them."""
+class SignInStartView(View):
+    """Where the browser goes next, the identity provider's sign-in, and the
+    PKCE verifier the tab keeps beside its state and sends back with the
+    code. The provider holds only the verifier's digest, so a code is worth
+    nothing to anyone who does not hold it."""
+
+    secret_fields = frozenset({"code_verifier"})
+
+    authorization_url: str
+    code_verifier: str
+
+
+class SignInCallbackRequest(RequestBody):
+    """The code the browser brought back to the callback, and the verifier
+    the sign-in's start answered with, which the API exchanges with the
+    identity provider, server-side. The answer is a
+    sign-in's (`IssuedLoginView`); a person nobody knew is signed up by it,
+    with their personal org."""
+
+    code: str = Field(min_length=1, max_length=500)
+    code_verifier: str = Field(min_length=43, max_length=128)
+    invitation_token: str | None = Field(default=None, max_length=500)
+
+
+class DeviceSignInView(View):
+    """The start of a sign-in for a device with no browser, the command
+    line. The person opens `verification_uri_complete` (or
+    `verification_uri` and types `user_code`) in any browser; the device
+    keeps `device_code` to itself and asks `POST /v1/auth/device/token`
+    with it every `interval` seconds, for at most `expires_in` seconds."""
+
+    secret_fields = frozenset({"device_code"})
+
+    device_code: str
+    user_code: str
+    verification_uri: str
+    verification_uri_complete: str
+    expires_in: int
+    interval: int
+
+
+class DeviceTokenRequest(RequestBody):
+    """The device code a device sign-in started with. The answer is a
+    sign-in's once the person confirmed it; before that, 400
+    `sign_in_pending` (or `sign_in_slow_down`: ask less often), and 401
+    `sign_in_refused` when they declined or it expired."""
+
+    device_code: str = Field(min_length=1, max_length=500)
+
+
+class DevSignInRequest(RequestBody):
+    """Local and test only: a sign-in by address alone, with no browser round
+    trip, for the seed, the demos, the traffic generator, and the tests. A
+    person nobody knew is made, with their personal org. A deployed
+    environment never serves it: the route answers 404 there, and the
+    process refuses to start with it on."""
 
     email: str = Field(min_length=3, max_length=320)
-    password: str = Field(min_length=8, max_length=200)
-    display_name: str = Field(min_length=1, max_length=200)
-    org_name: str | None = Field(default=None, max_length=200, deprecated=True)
-    org_slug: str | None = Field(default=None, max_length=48, deprecated=True)
+    display_name: str = Field(default="", max_length=200)
+
+
+class SecondFactorRequest(RequestBody):
+    """The code from an authenticator, presented with a sign-in credential.
+    The answer is a new sign-in that records the verified code, which the
+    operator plane asks of an enrolled operator. A code used once is
+    refused."""
+
+    totp_code: str = Field(min_length=6, max_length=6)
 
 
 class CreateTeamOrgRequest(RequestBody):
@@ -207,3 +267,48 @@ class IssuedApiKeyView(View):
 
     key: str | None
     api_key: ApiKeyView
+
+
+class InvitationView(View):
+    """A person asked to join the org. The identity provider sent the email
+    with the link; `expires_at` is when the link stops working, after which
+    the invitation is sent again or replaced."""
+
+    id: UUID
+    email: str
+    role: Role
+    state: InvitationState
+    expires_at: datetime
+    created_at: datetime
+    created_by: UUID
+
+
+class InviteMemberRequest(RequestBody):
+    """The address to invite and the role the person gets, at most the
+    caller's own."""
+
+    email: str = Field(min_length=3, max_length=320)
+    role: Role
+
+
+class InvitationPageView(View):
+    """One page of the org's pending invitations, newest first; `next_cursor`
+    as on `UserPageView`."""
+
+    items: list[InvitationView]
+    next_cursor: str | None
+
+
+class SsoLinkRequest(RequestBody):
+    """What the identity provider's admin portal opens on: the single sign-on
+    connection (`sso`) or the org's domains (`domain_verification`), and the
+    page of this environment's portal it links back to."""
+
+    intent: Literal["sso", "domain_verification"]
+    return_url: str = Field(min_length=1, max_length=2000)
+
+
+class SsoLinkView(View):
+    """A short-lived link to the admin portal; open it at once."""
+
+    url: str

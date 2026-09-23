@@ -4,10 +4,13 @@ from datetime import timedelta
 from pathlib import Path
 from uuid import UUID
 
+from tadas.infra.cache import CacheScope
 from tadas.infra.impl.local import InfraLocalImpl
+from tadas.integrations.identity.absent import IdentityProviderAbsentImpl
 from tadas.om.base import new_id, utcnow
 from tadas.om.opcontext import AppContext, AppType, OpContext, RequestContext
 from tadas.om.storage.impl.memory import StorageMemoryImpl
+from tadas.om.tenancy.impl.manager import TenancyManagerImpl, TenancyOptions
 from tadas.om.work.types.handler import WorkHandlerInterface
 from tadas.om.work.types.work_item import WorkItem, WorkKind
 from tadas.workers.maintenance.container import WorkerContainer
@@ -40,11 +43,18 @@ def request() -> RequestContext:
 
 
 async def sign_in(container: WorkerContainer) -> OpContext:
+    """A session in a seeded org. The worker signs nobody in, so the sign-in
+    runs through a manager over the same storage with the local sign-in on."""
     tenancy = container.managers.tenancy
-    _, org = await tenancy.bootstrap(
-        request(), "Acme", "acme", "ann@example.test", "pw-1234", "Ann"
+    _, org = await tenancy.bootstrap(request(), "Acme", "acme", "ann@example.test", "Ann")
+    signing = TenancyManagerImpl(
+        container.storage.get_tenancy_storage(),
+        container.managers.outbox,
+        container.infra.get_cache(CacheScope.REALTIME_TICKET),
+        TenancyOptions(dev_sign_in=True),
+        identity_provider=IdentityProviderAbsentImpl(),
     )
-    login = await tenancy.login(request(), "ann@example.test", "pw-1234")
+    login = await signing.dev_sign_in(request(), "ann@example.test")
     identity = await tenancy.authenticate_login(request(), login.token)
     issued = await tenancy.exchange_login(identity, org.id)
     return await tenancy.authenticate(request(), issued.token)
