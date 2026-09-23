@@ -2,14 +2,14 @@
 out.
 
 Revision ID: 202609251700
-Revises: 202609240000
+Revises: 202609250001
 """
 
 from tadas.om.storage.migrate import run_sql
 from tadas.om.storage.roles import DatabaseRole
 
 revision = "202609251700"
-down_revision = "202609240000"
+down_revision = "202609250001"
 branch_labels = None
 depends_on = None
 
