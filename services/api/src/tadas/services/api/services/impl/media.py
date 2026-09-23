@@ -40,14 +40,16 @@ class MediaServiceImpl(MediaServiceInterface):
     async def confirm_file(self, ctx: OpContext, file_id: UUID) -> FileView:
         return file_view(await self._media.confirm_file(ctx, file_id))
 
-    async def issue_download(self, ctx: OpContext, file_id: UUID) -> IssuedDownloadView:
-        link = await self._media.issue_download(ctx, file_id)
+    async def issue_download(
+        self, ctx: OpContext, file_id: UUID, inline: bool
+    ) -> IssuedDownloadView:
+        link = await self._media.issue_download(ctx, file_id, inline=inline)
         return IssuedDownloadView(url=link.url, expires_at=link.expires_at)
 
-    async def get_content(self, ctx: OpContext, file_id: UUID) -> FileContentResponse:
+    async def get_content(self, ctx: OpContext, file_id: UUID, inline: bool) -> FileContentResponse:
         file = await self._media.get_file(ctx, file_id)
         data = await self._media.get_content(ctx, file_id)
-        return FileContentResponse(file.name, file.content_type, data)
+        return FileContentResponse(file.name, file.content_type, data, inline=inline)
 
     async def get_usage(self, ctx: OpContext) -> StorageUsageView:
         usage = await self._media.get_usage(ctx)

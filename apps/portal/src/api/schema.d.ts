@@ -448,7 +448,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Issue Download */
+        /**
+         * Issue Download
+         * @description `inline=true` is a preview the page shows; otherwise the link saves the
+         *     file under its own name.
+         */
         get: operations["issue_download_v1_media_files__file_id__download_get"];
         put?: never;
         post?: never;
@@ -2591,7 +2595,9 @@ export interface operations {
     };
     get_content_v1_media_files__file_id__content_get: {
         parameters: {
-            query?: never;
+            query?: {
+                inline?: boolean;
+            };
             header?: {
                 authorization?: string | null;
                 "x-app"?: string | null;
@@ -2665,7 +2671,9 @@ export interface operations {
     };
     issue_download_v1_media_files__file_id__download_get: {
         parameters: {
-            query?: never;
+            query?: {
+                inline?: boolean;
+            };
             header?: {
                 authorization?: string | null;
                 "x-app"?: string | null;

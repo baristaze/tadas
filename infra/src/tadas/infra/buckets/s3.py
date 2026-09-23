@@ -135,13 +135,25 @@ class BucketsS3Impl(BucketsInterface):
             await s3.delete_object(Bucket=self._bucket(bucket), Key=object_key(org_id, key))
 
     async def presign_get(
-        self, org_id: UUID, bucket: Buckets, key: str, ttl: timedelta
+        self,
+        org_id: UUID,
+        bucket: Buckets,
+        key: str,
+        ttl: timedelta,
+        *,
+        content_type: str | None = None,
+        content_disposition: str | None = None,
     ) -> str | None:
+        params: dict[str, Any] = {"Bucket": self._bucket(bucket), "Key": object_key(org_id, key)}
+        if content_type is not None:
+            params["ResponseContentType"] = content_type
+        if content_disposition is not None:
+            params["ResponseContentDisposition"] = content_disposition
         with translated("s3", "presign_get"):
             s3 = self._signing_client()
             return await s3.generate_presigned_url(
                 "get_object",
-                Params={"Bucket": self._bucket(bucket), "Key": object_key(org_id, key)},
+                Params=params,
                 ExpiresIn=int(ttl.total_seconds()),
             )
 

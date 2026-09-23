@@ -286,7 +286,10 @@ context on keeps the stage the callee needs.
   holds the object to at most. Where the store cannot presign (the local
   impl), the form comes back with no URL and the bytes go through
   `PUT /v1/media/files/{id}/content`, held to the same bounds, as a
-  download comes back with no link and reads `GET .../content`. Every
+  download comes back with no link and reads `GET .../content`. A link
+  signs the headers the store answers with: the stored type, and
+  `inline` for a preview (`?inline=true`) or an `attachment` under the
+  file's name for a download (`media.rules.content_disposition`). Every
   read is fenced by tenant in the query and by the policy. Usage
   (`get_usage`) is counted from the live rows per purpose and status,
   one `GROUP BY` in Postgres and `media.rules.usage_of` in memory, both

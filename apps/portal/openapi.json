@@ -4478,6 +4478,16 @@
             }
           },
           {
+            "in": "query",
+            "name": "inline",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Inline",
+              "type": "boolean"
+            }
+          },
+          {
             "in": "header",
             "name": "authorization",
             "required": false,
@@ -4656,6 +4666,7 @@
     },
     "/v1/media/files/{file_id}/download": {
       "get": {
+        "description": "`inline=true` is a preview the page shows; otherwise the link saves the\nfile under its own name.",
         "operationId": "issue_download_v1_media_files__file_id__download_get",
         "parameters": [
           {
@@ -4666,6 +4677,16 @@
               "format": "uuid",
               "title": "File Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "inline",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Inline",
+              "type": "boolean"
             }
           },
           {

@@ -63,9 +63,13 @@ class MediaManagerInterface(ABC):
         ...
 
     @abstractmethod
-    async def issue_download(self, ctx: OpContext, file_id: UUID) -> DownloadLink:
-        """A short-lived link to a stored file's object. A link with no URL
-        means the store cannot presign: the bytes come from `get_content`."""
+    async def issue_download(
+        self, ctx: OpContext, file_id: UUID, *, inline: bool = False
+    ) -> DownloadLink:
+        """A short-lived link to a stored file's object, answered under its
+        stored type: `inline` for a preview the page shows, else an
+        attachment saved under the file's name. A link with no URL means the
+        store cannot presign: the bytes come from `get_content`."""
         ...
 
     @abstractmethod

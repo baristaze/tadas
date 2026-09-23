@@ -5,7 +5,7 @@ from tadas.infra.buckets import Buckets, BucketsInterface
 from tadas.om.base import Platform, utcnow
 from tadas.om.exceptions import NotAuthorized, NotFound, TenantMismatch, ValidationFailed
 from tadas.om.media.manager import MediaManagerInterface
-from tadas.om.media.rules import extension_of, object_key, upload_refusal
+from tadas.om.media.rules import content_disposition, extension_of, object_key, upload_refusal
 from tadas.om.media.storage import MediaStorageInterface
 from tadas.om.media.types.file import File, FilePurpose, FileStatus
 from tadas.om.media.types.page import FilePage
@@ -142,10 +142,19 @@ class MediaManagerImpl(MediaManagerInterface):
         )
         return FilePage(items=tuple(rows[:limit]), has_more=len(rows) > limit)
 
-    async def issue_download(self, ctx: OpContext, file_id: UUID) -> DownloadLink:
+    async def issue_download(
+        self, ctx: OpContext, file_id: UUID, *, inline: bool = False
+    ) -> DownloadLink:
         file = await self._stored(ctx, file_id)
         ttl = self._options.download_ttl
-        url = await self._buckets.presign_get(ctx.org_id, BUCKET, file.key, ttl)
+        url = await self._buckets.presign_get(
+            ctx.org_id,
+            BUCKET,
+            file.key,
+            ttl,
+            content_type=file.content_type,
+            content_disposition=content_disposition(file.name, inline),
+        )
         return DownloadLink(url=url, expires_at=utcnow() + ttl)
 
     async def get_content(self, ctx: OpContext, file_id: UUID) -> bytes:

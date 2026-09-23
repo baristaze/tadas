@@ -253,7 +253,12 @@ async def test_a_presigned_url_names_the_host_a_browser_reaches() -> None:
     org = new_id()
     try:
         link = await buckets.presign_get(
-            org, Buckets.USER_FILE_UPLOADS, "a.png", timedelta(minutes=1)
+            org,
+            Buckets.USER_FILE_UPLOADS,
+            "a.png",
+            timedelta(minutes=1),
+            content_type="image/png",
+            content_disposition="inline",
         )
         form = await buckets.presign_post(
             org, Buckets.USER_FILE_UPLOADS, "a.png", "image/png", 10, timedelta(minutes=1)
@@ -261,4 +266,7 @@ async def test_a_presigned_url_names_the_host_a_browser_reaches() -> None:
     finally:
         await buckets.close()
     assert link is not None and link.startswith("http://127.0.0.1:59000/t-user-file-uploads/")
+    # The headers the store answers with are signed into the link.
+    assert "response-content-disposition=inline" in link
+    assert "response-content-type=image%2Fpng" in link
     assert form is not None and form.url.startswith("http://127.0.0.1:59000/t-user-file-uploads")

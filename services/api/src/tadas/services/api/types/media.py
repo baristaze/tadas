@@ -1,11 +1,10 @@
 from datetime import datetime
-from urllib.parse import quote
 from uuid import UUID
 
 from pydantic import Field
 from starlette.responses import Response
 
-from tadas.om.media.rules import MAX_NAME_LENGTH
+from tadas.om.media.rules import MAX_NAME_LENGTH, content_disposition
 from tadas.om.media.types.file import FilePurpose, FileStatus
 from tadas.services.api.types.common import RequestBody, View
 
@@ -93,17 +92,18 @@ class StorageUsageView(View):
 
 
 class FileContentResponse(Response):
-    """A file's bytes on the wire: its own type, and a download under its own
-    name. `nosniff`, so a browser never reads the bytes as another type."""
+    """A file's bytes on the wire: its own type, shown inline for a preview or
+    saved under its own name. `nosniff`, so a browser never reads the bytes
+    as another type."""
 
     media_type = "application/octet-stream"
 
-    def __init__(self, name: str, content_type: str, data: bytes) -> None:
+    def __init__(self, name: str, content_type: str, data: bytes, *, inline: bool = False) -> None:
         super().__init__(
             content=data,
             media_type=content_type,
             headers={
-                "Content-Disposition": f"attachment; filename*=UTF-8''{quote(name)}",
+                "Content-Disposition": content_disposition(name, inline),
                 "X-Content-Type-Options": "nosniff",
             },
         )

@@ -6,6 +6,7 @@ SQL once more, and the contract cases hold the two spellings together."""
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
+from urllib.parse import quote
 from uuid import UUID
 
 from tadas.om.media.types.file import File, FilePurpose, FileStatus
@@ -50,12 +51,17 @@ _AUDIO = {
     "audio/mp4": frozenset({"m4a", "mp4"}),
     "audio/wav": frozenset({"wav"}),
 }
+_VIDEO = {
+    "video/mp4": frozenset({"mp4", "m4v"}),
+    "video/webm": frozenset({"webm"}),
+    "video/quicktime": frozenset({"mov"}),
+}
 
 BOUNDS: Mapping[FilePurpose, UploadBounds] = {
     # No type a browser renders as a page (HTML, SVG): a file is data, and the
     # store's origin is not the portal's, but nothing needs one either.
     FilePurpose.TASK_ATTACHMENT: UploadBounds(
-        max_bytes=25 * 1024 * 1024, types={**_IMAGES, **_DOCUMENTS}
+        max_bytes=100 * 1024 * 1024, types={**_IMAGES, **_DOCUMENTS, **_AUDIO, **_VIDEO}
     ),
     FilePurpose.VOICE_DICTATION: UploadBounds(max_bytes=10 * 1024 * 1024, types=_AUDIO),
 }
@@ -112,6 +118,15 @@ def object_key(purpose: FilePurpose, file_id: UUID) -> str:
     prefix the bucket impl adds. Every key starts with `media/`, which is the
     prefix the deployed task role is granted and no more."""
     return f"media/{purpose.value}/{file_id}"
+
+
+def content_disposition(name: str, inline: bool) -> str:
+    """How the store or the API presents a file's bytes: `inline`, for a
+    preview the page shows, or an `attachment` saved under the file's own
+    name, spelled for any character a name holds (RFC 6266)."""
+    if inline:
+        return "inline"
+    return f"attachment; filename*=UTF-8''{quote(name)}"
 
 
 def is_purgeable(file: File, deleted_before: datetime, pending_before: datetime) -> bool:

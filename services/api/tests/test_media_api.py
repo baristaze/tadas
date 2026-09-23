@@ -85,6 +85,11 @@ async def test_a_task_attachment_goes_up_is_listed_comes_down_and_is_removed(
     assert content.status_code == 200 and content.content == PDF
     assert content.headers["content-type"] == "application/pdf"
     assert content.headers["content-disposition"] == "attachment; filename*=UTF-8''plan.pdf"
+    preview = await client.get(
+        f"/v1/media/files/{stored['id']}/content", headers=owner, params={"inline": "true"}
+    )
+    assert preview.headers["content-disposition"] == "inline"
+    assert preview.headers["content-type"] == "application/pdf"
 
     removed = await client.delete(f"/v1/tasks/{task_id}/attachments/{stored['id']}", headers=owner)
     assert removed.status_code == 200 and removed.json()["deleted_at"] is not None
@@ -114,7 +119,7 @@ async def test_a_retried_start_lands_one_file(
         ("page.html", "text/html", 10),
         ("image.svg", "image/svg+xml", 10),
         ("plan.png", "application/pdf", 10),
-        ("plan.pdf", "application/pdf", 25 * 1024 * 1024 + 1),
+        ("plan.pdf", "application/pdf", 100 * 1024 * 1024 + 1),
         ("a/b.pdf", "application/pdf", 10),
     ],
 )

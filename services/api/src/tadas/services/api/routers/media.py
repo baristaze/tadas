@@ -59,8 +59,12 @@ async def confirm_file(ctx: Ctx, media: MediaService, file_id: UUID) -> FileView
 
 
 @router.get("/files/{file_id}/download", response_model=IssuedDownloadView)
-async def issue_download(ctx: Ctx, media: MediaService, file_id: UUID) -> IssuedDownloadView:
-    return await media.issue_download(ctx, file_id)
+async def issue_download(
+    ctx: Ctx, media: MediaService, file_id: UUID, inline: bool = False
+) -> IssuedDownloadView:
+    """`inline=true` is a preview the page shows; otherwise the link saves the
+    file under its own name."""
+    return await media.issue_download(ctx, file_id, inline)
 
 
 @router.get(
@@ -69,5 +73,7 @@ async def issue_download(ctx: Ctx, media: MediaService, file_id: UUID) -> Issued
     status_code=200,
     responses={200: {"content": {"application/octet-stream": {}}}},
 )
-async def get_content(ctx: Ctx, media: MediaService, file_id: UUID) -> FileContentResponse:
-    return await media.get_content(ctx, file_id)
+async def get_content(
+    ctx: Ctx, media: MediaService, file_id: UUID, inline: bool = False
+) -> FileContentResponse:
+    return await media.get_content(ctx, file_id, inline)

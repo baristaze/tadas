@@ -134,7 +134,7 @@ async def test_an_upload_starts_pending_under_the_managers_key(media: MediaManag
         ("plan.exe", "application/pdf", 10, "ends in .pdf"),
         ("../plan.pdf", "application/pdf", 10, "not a path"),
         ("plan.pdf", "application/pdf", 0, "at least one byte"),
-        ("plan.pdf", "application/pdf", 25 * 1024 * 1024 + 1, "at most"),
+        ("plan.pdf", "application/pdf", 100 * 1024 * 1024 + 1, "at most"),
         ("", "application/pdf", 10, "1 to 255"),
     ],
 )

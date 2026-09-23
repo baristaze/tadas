@@ -136,6 +136,16 @@ async def test_a_file_goes_up_to_the_store_and_comes_down_by_its_link(
     async with httpx.AsyncClient(timeout=10) as client:
         fetched = await client.get(link.url)
     assert fetched.status_code == 200 and fetched.content == PDF
+    assert fetched.headers["content-disposition"] == "attachment; filename*=UTF-8''plan.pdf"
+    preview = await media.issue_download(ctx, stored.id, inline=True)
+    assert preview.url is not None
+    async with httpx.AsyncClient(timeout=10) as client:
+        shown = await client.get(preview.url, headers={"Range": "bytes=0-7"})
+    # A preview is shown in the page under its type, and a player's range
+    # request is answered in part.
+    assert shown.status_code == 206 and shown.content == PDF[:8]
+    assert shown.headers["content-disposition"] == "inline"
+    assert shown.headers["content-type"] == "application/pdf"
     usage = await media.get_usage(ctx)
     assert (usage.total_count, usage.total_size_bytes) == (1, len(PDF))
     other = context(Role.OWNER, make_org())

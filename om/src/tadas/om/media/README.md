@@ -32,7 +32,9 @@ are the first.
 - **Confirm.** The upload is done: Tadas looks for the file in the
   store, and only when it is there does the file become stored.
 - **List** a subject's stored files, oldest first, a page at a time.
-- **Download.** A link that works for a few minutes, for this one file.
+- **Preview and download.** A link that works for a few minutes, for
+  this one file: shown in the page for a preview, under the file's own
+  type, or saved under the file's own name for a download.
 - **Remove.** The file is hidden at once and stops counting toward the
   storage used.
 - **Sweep.** A removed file is erased from the store, then its record,
@@ -48,7 +50,8 @@ are the first.
 - **An upload is bounded before it starts.** Each purpose names the
   types it accepts and the largest file it takes. The type must be one
   of those, the name's extension must fit the type, and the name is a
-  name, not a path. A task attachment is at most 25 MB; a voice
+  name, not a path. A task attachment (an image, a document, a sound, or a video) is at
+  most 100 MB; a voice
   dictation at most 10 MB. The numbers are illustrative.
 - **The store holds the upload to its bounds.** The form names the type
   and the size, and the store refuses a file of another type or a

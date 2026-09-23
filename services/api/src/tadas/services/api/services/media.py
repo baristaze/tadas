@@ -27,10 +27,12 @@ class MediaServiceInterface(ABC):
     async def confirm_file(self, ctx: OpContext, file_id: UUID) -> FileView: ...
 
     @abstractmethod
-    async def issue_download(self, ctx: OpContext, file_id: UUID) -> IssuedDownloadView: ...
+    async def issue_download(
+        self, ctx: OpContext, file_id: UUID, inline: bool
+    ) -> IssuedDownloadView: ...
 
     @abstractmethod
-    async def get_content(self, ctx: OpContext, file_id: UUID) -> FileContentResponse:
+    async def get_content(self, ctx: OpContext, file_id: UUID, inline: bool) -> FileContentResponse:
         """The bytes through the API, for a store that cannot sign a link."""
         ...
 
