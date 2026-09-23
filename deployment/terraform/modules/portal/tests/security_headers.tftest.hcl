@@ -73,6 +73,11 @@ run "names_the_object_store_a_signed_url_points_at" {
     condition     = strcontains(aws_cloudfront_response_headers_policy.security.security_headers_config[0].content_security_policy[0].content_security_policy, "connect-src 'self' https://api.example.test wss://api.example.test https://tadas-test-user-file-uploads.s3.us-east-2.amazonaws.com;")
     error_message = "the page posts files to the store, so its origin joins connect-src, and nothing broader"
   }
+
+  assert {
+    condition     = aws_cloudfront_response_headers_policy.security.security_headers_config[0].content_security_policy[0].content_security_policy == "default-src 'self'; connect-src 'self' https://api.example.test wss://api.example.test https://tadas-test-user-file-uploads.s3.us-east-2.amazonaws.com; img-src 'self' data: https://tadas-test-user-file-uploads.s3.us-east-2.amazonaws.com; media-src 'self' https://tadas-test-user-file-uploads.s3.us-east-2.amazonaws.com; frame-src 'self' https://tadas-test-user-file-uploads.s3.us-east-2.amazonaws.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+    error_message = "a preview loads from the store: its origin joins img-src, media-src, and frame-src, and nothing else changes"
+  }
 }
 
 run "refuses_a_store_origin_with_a_wildcard" {

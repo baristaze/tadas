@@ -18,7 +18,13 @@ Zustand, one realtime channel.
 - A task's files are `src/features/attachments/`, shown in the task's
   open view: dropped or picked, started on the API, posted straight to
   the store, confirmed, listed with name, size, and type, downloaded and
-  saved under the file's own name, removed. The flows
+  saved under the file's own name, removed. Each file with a preview
+  shows it inline, through the store's short-lived inline link: an image
+  as a thumbnail that opens larger in the page, a video and a sound in
+  the browser's player, a PDF in a frame; anything else (text, documents,
+  archives) is download-only, and download stays beside every preview.
+  Someone who cannot write opens a task's files read-only with its
+  `files` link. The flows
   (`transfer.ts`) take their effects as arguments and run in a test
   without React. Where the store cannot take a form, the bytes go
   through the API instead. The settings page shows the org's storage

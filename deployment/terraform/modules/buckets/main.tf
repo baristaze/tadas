@@ -82,7 +82,8 @@ resource "aws_s3_bucket_lifecycle_configuration" "this" {
 }
 
 # A browser posts a presigned form to a browser bucket and follows a presigned
-# link from it, from the portal's origin: the two methods, from those origins
+# link from it (a download, or a preview: an image, a video in ranges, a
+# sound, a PDF), from the portal's origin: the two methods, from those origins
 # only. The form and the link carry the authority; this only lets the page
 # read the answer.
 resource "aws_s3_bucket_cors_configuration" "this" {
@@ -94,7 +95,8 @@ resource "aws_s3_bucket_cors_configuration" "this" {
     allowed_methods = ["POST", "GET"]
     allowed_origins = var.browser_origins
     allowed_headers = ["*"]
-    expose_headers  = ["ETag"]
+    # A player reads a video in ranges; the page may read how much it got.
+    expose_headers  = ["ETag", "Accept-Ranges", "Content-Range", "Content-Length"]
     max_age_seconds = 3000
   }
 }

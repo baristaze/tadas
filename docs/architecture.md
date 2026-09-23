@@ -848,7 +848,10 @@ everything in-process for tests.
   with Show more, inline edit, drag to reorder, and in a task's open
   view its attachments: dropped or picked, posted straight to the store
   with the form the API signed and confirmed, listed with name, size, and
-  type, downloaded by the signed link and saved under the file's own
+  type, previewed inline by the signed inline link (an image as a
+  thumbnail that opens larger, a video and a sound in the browser's
+  player, a PDF in a frame; the rest download-only, and read-only for a
+  viewer), downloaded by the signed link and saved under the file's own
   name, removed; `src/features/attachments/transfer.ts` is the flow with
   its effects handed in, and `src/api/store.ts` the one place that
   reaches the store, with a deadline of its own and no credential of

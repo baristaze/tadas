@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { FileView } from "../../api";
-import { attachmentRow, contentTypeOf, extensionOf, humanSize, usageLine } from "./attachmentsModel";
+import { attachmentRow, contentTypeOf, extensionOf, humanSize, previewKind, usageLine } from "./attachmentsModel";
 
 function file(overrides: Partial<FileView> = {}): FileView {
   return {
@@ -45,8 +45,20 @@ describe("attachments model", () => {
       size: "1.5 KB",
       kind: "DOCX",
       contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      preview: null,
     });
     expect(attachmentRow(file({ extension: "", content_type: "text/plain" })).kind).toBe("plain");
+  });
+
+  it("previews an image, a video, a sound, and a PDF, and nothing else", () => {
+    expect(["image/png", "video/mp4", "audio/webm", "application/pdf", "text/plain", "application/zip"].map(previewKind)).toEqual([
+      "image",
+      "video",
+      "audio",
+      "pdf",
+      null,
+      null,
+    ]);
   });
 
   it("says the storage line in the singular and the plural", () => {

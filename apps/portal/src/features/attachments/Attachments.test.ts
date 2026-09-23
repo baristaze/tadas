@@ -7,8 +7,8 @@ import type { AttachmentsVm } from "./useAttachmentsVm";
 const vm: AttachmentsVm = {
   loading: false,
   rows: [
-    { id: "f1", name: "plan.pdf", size: "1.5 KB", kind: "PDF", contentType: "application/pdf" },
-    { id: "f2", name: "photo.png", size: "2.0 MB", kind: "PNG", contentType: "image/png" },
+    { id: "f1", name: "plan.zip", size: "1.5 KB", kind: "ZIP", contentType: "application/zip", preview: null },
+    { id: "f2", name: "photo.png", size: "2.0 MB", kind: "PNG", contentType: "image/png", preview: "image" },
   ],
   hasMore: false,
   uploading: [{ key: "k1", name: "big.zip", size: "20.0 MB" }],
@@ -18,6 +18,9 @@ const vm: AttachmentsVm = {
   destroy: vi.fn(async () => undefined),
 };
 vi.mock("./useAttachmentsVm", () => ({ useAttachmentsVm: () => vm }));
+vi.mock("./FilePreview", () => ({
+  FilePreview: ({ fileId, kind }: { fileId: string; kind: string }) => createElement("figure", { "data-file": fileId }, kind),
+}));
 
 const { Attachments } = await import("./Attachments");
 
@@ -35,7 +38,7 @@ const buttons = (label: string) =>
 it("lists each file with its name, size, and type, and the uploads in flight", async () => {
   await act(async () => root.render(createElement(Attachments, { taskId: "t1", canWrite: true })));
   const text = container.textContent ?? "";
-  for (const part of ["plan.pdf", "1.5 KB", "PDF", "photo.png", "2.0 MB", "PNG", "big.zip", "uploading 20.0 MB"]) {
+  for (const part of ["plan.zip", "1.5 KB", "ZIP", "photo.png", "2.0 MB", "PNG", "big.zip", "uploading 20.0 MB"]) {
     expect(text).toContain(part);
   }
   buttons("download")[1]!.click();
@@ -58,4 +61,10 @@ it("offers no picker and no remove to someone who cannot write", async () => {
   expect(container.querySelector('input[type="file"]')).toBeNull();
   expect(buttons("remove")).toEqual([]);
   expect(buttons("download")).toHaveLength(2);
+});
+
+it("shows a preview for a file that has one, and none for one that does not", async () => {
+  await act(async () => root.render(createElement(Attachments, { taskId: "t1", canWrite: false })));
+  const figures = [...container.querySelectorAll("figure")];
+  expect(figures.map((f) => [f.dataset.file, f.textContent])).toEqual([["f2", "image"]]);
 });

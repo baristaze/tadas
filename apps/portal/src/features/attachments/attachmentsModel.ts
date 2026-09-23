@@ -39,6 +39,19 @@ export function contentTypeOf(name: string, browserType: string): string {
   return BY_EXTENSION[extensionOf(name)] ?? "application/octet-stream";
 }
 
+/** How a file is shown in the page: an image as a thumbnail, a video and a
+ * sound with the browser's player, a PDF in a frame. Anything else is
+ * download-only. */
+export type PreviewKind = "image" | "video" | "audio" | "pdf";
+
+export function previewKind(contentType: string): PreviewKind | null {
+  if (contentType.startsWith("image/")) return "image";
+  if (contentType.startsWith("video/")) return "video";
+  if (contentType.startsWith("audio/")) return "audio";
+  if (contentType === "application/pdf") return "pdf";
+  return null;
+}
+
 export interface AttachmentRow {
   id: string;
   name: string;
@@ -47,6 +60,7 @@ export interface AttachmentRow {
   kind: string;
   /** The whole type, for the title. */
   contentType: string;
+  preview: PreviewKind | null;
 }
 
 export function attachmentRow(file: FileView): AttachmentRow {
@@ -57,6 +71,7 @@ export function attachmentRow(file: FileView): AttachmentRow {
     size: humanSize(file.size_bytes),
     kind,
     contentType: file.content_type,
+    preview: previewKind(file.content_type),
   };
 }
 

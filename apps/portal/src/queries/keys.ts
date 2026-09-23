@@ -25,6 +25,9 @@ export const keys = {
     all: ["file"] as const,
     ofTask: (taskId: string) => ["file", "task", taskId] as const,
     usage: ["file", "usage"] as const,
+    // Outside "file": a file's bytes never change, so a push about the list
+    // has no reason to sign its previews again.
+    preview: (fileId: string) => ["file_preview", fileId] as const,
   },
   tasks: {
     all: ["task"] as const,
