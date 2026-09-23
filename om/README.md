@@ -72,7 +72,8 @@ screen and in the org's Slack channel.
 
 A **Slack connection** is the one Slack channel an org posts to:
 reminders, new tasks, and finished ones appear there, and
-`/tadas add <title>` typed there adds a task. An owner or an admin
+`/tadas add <title>` typed there adds a task, and `/tadas list` shows
+the first open ones to whoever typed it. An owner or an admin
 connects it with a **link code**, a short code Tadas shows once and
 that works once.
 
