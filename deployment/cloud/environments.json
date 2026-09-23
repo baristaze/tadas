@@ -13,7 +13,8 @@
       "bootstrap_root": "bootstrap/staging",
       "environment_root": "environments/staging",
       "api_domain_name": "api.staging.tadas.fyi",
-      "app_domain_name": "app.staging.tadas.fyi"
+      "app_domain_name": "app.staging.tadas.fyi",
+      "site_domain_name": "www.staging.tadas.fyi"
     },
     "production": {
       "account_id": "557092275199",
@@ -23,7 +24,8 @@
       "bootstrap_root": "bootstrap/prod",
       "environment_root": "environments/prod",
       "api_domain_name": "api.tadas.fyi",
-      "app_domain_name": "app.tadas.fyi"
+      "app_domain_name": "app.tadas.fyi",
+      "site_domain_name": "www.tadas.fyi"
     }
   }
 }
