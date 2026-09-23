@@ -56,6 +56,13 @@ class CredentialKind(StrEnum):
     internal = 'internal'
 
 
+class DeliveryReceivedView(BaseModel):
+    """
+    The delivery checked out and is queued; the processor stops retrying.
+    """
+    received: Annotated[bool, Field(title='Received')]
+
+
 class EventView(BaseModel):
     """
     One record of the tenant's append-only stream, paged by `after_seq`.
@@ -140,6 +147,13 @@ class MoveTaskRequest(BaseModel):
     expected_version: Annotated[ExpectedVersion | None, Field(title='Expected Version')] = None
 
 
+class OpenPortalRequest(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    return_url: Annotated[str, Field(max_length=2000, min_length=1, title='Return Url')]
+
+
 class OperatorEventView(BaseModel):
     """
     The same record as an operator reads it, with the two provenance fields
@@ -197,6 +211,37 @@ class Permission(StrEnum):
     write = 'write'
     manage_members = 'manage_members'
     manage_keys = 'manage_keys'
+    manage_billing = 'manage_billing'
+
+
+class Plan(StrEnum):
+    free = 'free'
+    pro = 'pro'
+    team = 'team'
+    max = 'max'
+
+
+class PlanLimitsView(BaseModel):
+    """
+    A plan's bounds; a null count is no bound.
+    """
+    active_tasks: Annotated[int | None, Field(title='Active Tasks')]
+    api_keys: Annotated[bool, Field(title='Api Keys')]
+    members: Annotated[int | None, Field(title='Members')]
+    storage_bytes: Annotated[int, Field(title='Storage Bytes')]
+
+
+class PlanOfferView(BaseModel):
+    """
+    One plan on offer: its bounds and its monthly price. A per-seat plan's
+    `flat_cents` covers up to `included_seats` seats, and past them every
+    seat is `per_seat_cents`.
+    """
+    flat_cents: Annotated[int, Field(title='Flat Cents')]
+    included_seats: Annotated[int | None, Field(title='Included Seats')]
+    limits: PlanLimitsView
+    per_seat_cents: Annotated[int, Field(title='Per Seat Cents')]
+    plan: Plan
 
 
 class PlatformSizeView(BaseModel):
@@ -211,6 +256,13 @@ class PlatformSizeView(BaseModel):
     tasks_last_24h: Annotated[int, Field(title='Tasks Last 24H')]
     tenants: Annotated[int, Field(title='Tenants')]
     users: Annotated[int, Field(title='Users')]
+
+
+class RedirectView(BaseModel):
+    """
+    Where the person goes next: the processor's hosted page.
+    """
+    url: Annotated[str, Field(title='Url')]
 
 
 class ResetPasswordRequest(BaseModel):
@@ -259,6 +311,32 @@ class SignUpRequest(BaseModel):
     org_name: Annotated[str, Field(max_length=200, min_length=1, title='Org Name')]
     org_slug: Annotated[str, Field(max_length=48, min_length=1, title='Org Slug')]
     password: Annotated[str, Field(max_length=200, min_length=8, title='Password')]
+
+
+class StartCheckoutRequest(BaseModel):
+    """
+    `return_url` is the portal page the person comes back to, paid or not;
+    it is one of the portal's own origins, or the request is refused.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    plan: Plan
+    return_url: Annotated[str, Field(max_length=2000, min_length=1, title='Return Url')]
+
+
+class SubscriptionStatus(StrEnum):
+    """
+    The processor's statuses, as it spells them.
+    """
+    incomplete = 'incomplete'
+    incomplete_expired = 'incomplete_expired'
+    trialing = 'trialing'
+    active = 'active'
+    past_due = 'past_due'
+    canceled = 'canceled'
+    unpaid = 'unpaid'
+    paused = 'paused'
 
 
 class TaskScope(StrEnum):
@@ -384,6 +462,40 @@ class ApiKeyView(BaseModel):
     user_id: Annotated[UUID, Field(title='User Id')]
 
 
+class BillingView(BaseModel):
+    """
+    The org's plan now, where it comes from, and what the org uses of it.
+    `ends_at` is set when a paid plan is set to end; the org is on
+    `plan_after` from then, and keeps everything it has. `can_manage` says
+    whether the caller may change the plan: an owner or an admin.
+    """
+    active_tasks: Annotated[int, Field(title='Active Tasks')]
+    can_manage: Annotated[bool, Field(title='Can Manage')]
+    cancel_at_period_end: Annotated[bool, Field(title='Cancel At Period End')]
+    comped_plan: Plan | None
+    current_period_end: Annotated[AwareDatetime | None, Field(title='Current Period End')]
+    ends_at: Annotated[AwareDatetime | None, Field(title='Ends At')]
+    limits: PlanLimitsView
+    monthly_cents: Annotated[int, Field(title='Monthly Cents')]
+    paid_plan: Plan | None
+    plan: Plan
+    plan_after: Plan | None
+    plans: Annotated[list[PlanOfferView], Field(title='Plans')]
+    seats: Annotated[int, Field(title='Seats')]
+    status: SubscriptionStatus | None
+
+
+class CompPlanRequest(BaseModel):
+    """
+    The plan an operator grants without a payment; null, or free, takes
+    the grant back.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    plan: Plan | None
+
+
 class HTTPValidationError(BaseModel):
     detail: Annotated[list[ValidationError] | None, Field(title='Detail')] = None
 
@@ -461,6 +573,17 @@ class MintOperatorTokenRequest(BaseModel):
     )
     expires_in: Annotated[ExpiresIn | None, Field(title='Expires In')] = None
     permission: OperatorRole
+
+
+class OperatorBillingView(BaseModel):
+    """
+    One org's plan, as the operator plane reads it.
+    """
+    comped_plan: Plan | None
+    ends_at: Annotated[AwareDatetime | None, Field(title='Ends At')]
+    paid_plan: Plan | None
+    plan: Plan
+    status: SubscriptionStatus | None
 
 
 class OrgPageView(BaseModel):

@@ -180,6 +180,147 @@
         "title": "ApiKeyView",
         "type": "object"
       },
+      "BillingView": {
+        "description": "The org's plan now, where it comes from, and what the org uses of it.\n`ends_at` is set when a paid plan is set to end; the org is on\n`plan_after` from then, and keeps everything it has. `can_manage` says\nwhether the caller may change the plan: an owner or an admin.",
+        "properties": {
+          "active_tasks": {
+            "title": "Active Tasks",
+            "type": "integer"
+          },
+          "can_manage": {
+            "title": "Can Manage",
+            "type": "boolean"
+          },
+          "cancel_at_period_end": {
+            "title": "Cancel At Period End",
+            "type": "boolean"
+          },
+          "comped_plan": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Plan"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "current_period_end": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Period End"
+          },
+          "ends_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ends At"
+          },
+          "limits": {
+            "$ref": "#/components/schemas/PlanLimitsView"
+          },
+          "monthly_cents": {
+            "title": "Monthly Cents",
+            "type": "integer"
+          },
+          "paid_plan": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Plan"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "plan": {
+            "$ref": "#/components/schemas/Plan"
+          },
+          "plan_after": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Plan"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "plans": {
+            "items": {
+              "$ref": "#/components/schemas/PlanOfferView"
+            },
+            "title": "Plans",
+            "type": "array"
+          },
+          "seats": {
+            "title": "Seats",
+            "type": "integer"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SubscriptionStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "plan",
+          "limits",
+          "paid_plan",
+          "comped_plan",
+          "status",
+          "current_period_end",
+          "cancel_at_period_end",
+          "ends_at",
+          "plan_after",
+          "seats",
+          "active_tasks",
+          "monthly_cents",
+          "can_manage",
+          "plans"
+        ],
+        "title": "BillingView",
+        "type": "object"
+      },
+      "CompPlanRequest": {
+        "additionalProperties": false,
+        "description": "The plan an operator grants without a payment; null, or free, takes\nthe grant back.",
+        "properties": {
+          "plan": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Plan"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "plan"
+        ],
+        "title": "CompPlanRequest",
+        "type": "object"
+      },
       "ConfirmTotpRequest": {
         "additionalProperties": false,
         "description": "The first code from the authenticator, which confirms the secret.",
@@ -251,6 +392,20 @@
         ],
         "title": "CredentialKind",
         "type": "string"
+      },
+      "DeliveryReceivedView": {
+        "description": "The delivery checked out and is queued; the processor stops retrying.",
+        "properties": {
+          "received": {
+            "title": "Received",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "received"
+        ],
+        "title": "DeliveryReceivedView",
+        "type": "object"
       },
       "EventView": {
         "description": "One record of the tenant's append-only stream, paged by `after_seq`.\n`kind` is \"<namespace>.<entity>.<action>\", or an audit kind; the payload\nstays inside, an event is a record and not a second read path. The rename\nfrom `entity`/`entity_id`/`action` stayed under `/v1` (ADR 0006).",
@@ -746,6 +901,81 @@
         "title": "MoveTaskRequest",
         "type": "object"
       },
+      "OpenPortalRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "return_url": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Return Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "return_url"
+        ],
+        "title": "OpenPortalRequest",
+        "type": "object"
+      },
+      "OperatorBillingView": {
+        "description": "One org's plan, as the operator plane reads it.",
+        "properties": {
+          "comped_plan": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Plan"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "ends_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ends At"
+          },
+          "paid_plan": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Plan"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "plan": {
+            "$ref": "#/components/schemas/Plan"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SubscriptionStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "plan",
+          "paid_plan",
+          "comped_plan",
+          "status",
+          "ends_at"
+        ],
+        "title": "OperatorBillingView",
+        "type": "object"
+      },
       "OperatorEventView": {
         "description": "The same record as an operator reads it, with the two provenance fields\na tenant's own feed leaves out: the request that produced it and the app\nit came from, which is what a support investigation correlates on.",
         "properties": {
@@ -923,10 +1153,103 @@
           "read",
           "write",
           "manage_members",
-          "manage_keys"
+          "manage_keys",
+          "manage_billing"
         ],
         "title": "Permission",
         "type": "string"
+      },
+      "Plan": {
+        "enum": [
+          "free",
+          "pro",
+          "team",
+          "max"
+        ],
+        "title": "Plan",
+        "type": "string"
+      },
+      "PlanLimitsView": {
+        "description": "A plan's bounds; a null count is no bound.",
+        "properties": {
+          "active_tasks": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Tasks"
+          },
+          "api_keys": {
+            "title": "Api Keys",
+            "type": "boolean"
+          },
+          "members": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Members"
+          },
+          "storage_bytes": {
+            "title": "Storage Bytes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "members",
+          "api_keys",
+          "active_tasks",
+          "storage_bytes"
+        ],
+        "title": "PlanLimitsView",
+        "type": "object"
+      },
+      "PlanOfferView": {
+        "description": "One plan on offer: its bounds and its monthly price. A per-seat plan's\n`flat_cents` covers up to `included_seats` seats, and past them every\nseat is `per_seat_cents`.",
+        "properties": {
+          "flat_cents": {
+            "title": "Flat Cents",
+            "type": "integer"
+          },
+          "included_seats": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Included Seats"
+          },
+          "limits": {
+            "$ref": "#/components/schemas/PlanLimitsView"
+          },
+          "per_seat_cents": {
+            "title": "Per Seat Cents",
+            "type": "integer"
+          },
+          "plan": {
+            "$ref": "#/components/schemas/Plan"
+          }
+        },
+        "required": [
+          "plan",
+          "limits",
+          "flat_cents",
+          "included_seats",
+          "per_seat_cents"
+        ],
+        "title": "PlanOfferView",
+        "type": "object"
       },
       "PlatformSizeView": {
         "description": "How big the platform is, what the first responder to an alarm reads\nbefore it escalates: live tenants and users, and the tasks created and\nevents produced in the last twenty-four hours, a window that starts at\n`since` and ends at the read.",
@@ -961,6 +1284,20 @@
           "since"
         ],
         "title": "PlatformSizeView",
+        "type": "object"
+      },
+      "RedirectView": {
+        "description": "Where the person goes next: the processor's hosted page.",
+        "properties": {
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "title": "RedirectView",
         "type": "object"
       },
       "ResetPasswordRequest": {
@@ -1085,6 +1422,42 @@
         ],
         "title": "SignUpRequest",
         "type": "object"
+      },
+      "StartCheckoutRequest": {
+        "additionalProperties": false,
+        "description": "`return_url` is the portal page the person comes back to, paid or not;\nit is one of the portal's own origins, or the request is refused.",
+        "properties": {
+          "plan": {
+            "$ref": "#/components/schemas/Plan"
+          },
+          "return_url": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Return Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "plan",
+          "return_url"
+        ],
+        "title": "StartCheckoutRequest",
+        "type": "object"
+      },
+      "SubscriptionStatus": {
+        "description": "The processor's statuses, as it spells them.",
+        "enum": [
+          "incomplete",
+          "incomplete_expired",
+          "trialing",
+          "active",
+          "past_due",
+          "canceled",
+          "unpaid",
+          "paused"
+        ],
+        "title": "SubscriptionStatus",
+        "type": "string"
       },
       "TaskPageView": {
         "description": "One page of a task list. `next_cursor` fetches the next page of the same\nlist, open or done, and is null on the last page. The page size is\nclamped, and a list the clamp cut still says a page follows.",
@@ -2184,6 +2557,97 @@
         ]
       }
     },
+    "/v1/admin/orgs/{org_id}/billing": {
+      "get": {
+        "operationId": "get_org_billing_v1_admin_orgs__org_id__billing_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Org Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app-version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Version"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperatorBillingView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Org Billing",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
     "/v1/admin/orgs/{org_id}/events": {
       "get": {
         "operationId": "list_events_v1_admin_orgs__org_id__events_get",
@@ -2529,6 +2993,108 @@
           }
         },
         "summary": "Add Member",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/v1/admin/orgs/{org_id}/plan": {
+      "put": {
+        "description": "Grants the org a plan with no payment, or takes the grant back. A put:\nthe same body twice leaves the same grant.",
+        "operationId": "comp_plan_v1_admin_orgs__org_id__plan_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Org Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app-version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Version"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompPlanRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperatorBillingView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Comp Plan",
         "tags": [
           "admin"
         ]
@@ -3564,6 +4130,451 @@
         "summary": "Sign Up",
         "tags": [
           "tenancy"
+        ]
+      }
+    },
+    "/v1/billing": {
+      "get": {
+        "operationId": "get_billing_v1_billing_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app-version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Version"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BillingView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Billing",
+        "tags": [
+          "billing"
+        ]
+      }
+    },
+    "/v1/billing/cancel": {
+      "post": {
+        "description": "The paid plan ends at its period's end; the org keeps it until then.",
+        "operationId": "cancel_v1_billing_cancel_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app-version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Version"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BillingView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Cancel",
+        "tags": [
+          "billing"
+        ]
+      }
+    },
+    "/v1/billing/checkout": {
+      "post": {
+        "description": "Makes the org's customer at the processor the first time, which is a\ndurable row, so the route runs under the idempotency record.",
+        "operationId": "start_checkout_v1_billing_checkout_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app-version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Version"
+            }
+          },
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 255,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartCheckoutRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RedirectView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Start Checkout",
+        "tags": [
+          "billing"
+        ]
+      }
+    },
+    "/v1/billing/portal": {
+      "post": {
+        "operationId": "open_portal_v1_billing_portal_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app-version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Version"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OpenPortalRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RedirectView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Open Portal",
+        "tags": [
+          "billing"
+        ]
+      }
+    },
+    "/v1/billing/resume": {
+      "post": {
+        "operationId": "resume_v1_billing_resume_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app-version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Version"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BillingView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Resume",
+        "tags": [
+          "billing"
         ]
       }
     },
@@ -5321,6 +6332,55 @@
         "summary": "List Users",
         "tags": [
           "tenancy"
+        ]
+      }
+    },
+    "/webhooks/stripe": {
+      "post": {
+        "operationId": "stripe_delivery_webhooks_stripe_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Stripe-Signature",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Stripe-Signature"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeliveryReceivedView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Stripe Delivery",
+        "tags": [
+          "webhooks"
         ]
       }
     }
