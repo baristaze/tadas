@@ -1,5 +1,5 @@
 import { useRef, useState, type DragEvent } from "react";
-import { LinkButton, Muted } from "../../design/kit";
+import { LinkButton, Muted, Pill } from "../../design/kit";
 import { tokens } from "../../design/tokens";
 import { useAttachmentsVm } from "./useAttachmentsVm";
 
@@ -70,9 +70,7 @@ export function Attachments({ taskId, canWrite }: { taskId: string; canWrite: bo
               {row.name}
             </span>
             <Muted style={{ flexShrink: 0, fontSize: tokens.font.size.sm }}>{row.size}</Muted>
-            <span title={row.contentType} style={{ flexShrink: 0, fontSize: tokens.font.size.sm, color: tokens.color.muted }}>
-              {row.kind}
-            </span>
+            <Pill title={row.contentType}>{row.kind}</Pill>
             <LinkButton onClick={() => void vm.download(row.id)}>{vm.busyId === row.id ? "…" : "download"}</LinkButton>
             {canWrite ? <LinkButton onClick={() => void vm.destroy(row.id)}>remove</LinkButton> : null}
           </li>
