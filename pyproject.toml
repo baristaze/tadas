@@ -12,6 +12,7 @@ package = false
 members = [
     "om",
     "infra",
+    "integrations",
     "services/api",
     "workers/maintenance",
     "clients/python",
@@ -22,6 +23,7 @@ members = [
 [tool.uv.sources]
 tadas-om = { workspace = true }
 tadas-infra = { workspace = true }
+tadas-integrations = { workspace = true }
 tadas-api = { workspace = true }
 tadas-maintenance = { workspace = true }
 tadas-client = { workspace = true }
@@ -55,6 +57,7 @@ asyncio_default_fixture_loop_scope = "function"
 testpaths = [
     "om/tests",
     "infra/tests",
+    "integrations/tests",
     "services/api/tests",
     "workers/maintenance/tests",
     "clients/python/tests",
@@ -104,6 +107,7 @@ tenantless = [
     "TenancyStorageInterface.read_api_key_by_digest",
     "TenancyStorageInterface.read_identity",
     "TenancyStorageInterface.read_identity_by_email_digest",
+    "TenancyStorageInterface.read_identity_by_issuer_subject",
     "TenancyStorageInterface.read_memberships_by_identity",
     "TenancyStorageInterface.read_org_by_slug",
     "TenancyStorageInterface.read_orgs",

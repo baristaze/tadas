@@ -1,0 +1,25 @@
+[project]
+name = "tadas-integrations"
+version = "0.1.0"
+description = "Tadas integrations: the hosted services the platform depends on, each an interface with a real client and a twin."
+requires-python = ">=3.14"
+dependencies = [
+    "tadas-infra",
+    "pydantic>=2.13",
+    "pydantic-settings>=2.15",
+    "httpx>=0.28.1",
+    # Pinned exactly: the identity provider's wire shapes are what the twin
+    # mirrors and the fixtures record, so an upgrade is a change of its own.
+    "workos==10.4.0",
+]
+
+[tool.uv.sources]
+tadas-infra = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+# A subpackage of the shared root `tadas`, with no tadas/__init__.py (ADR 0001).
+packages = ["src/tadas"]

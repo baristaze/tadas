@@ -27,6 +27,7 @@ SOURCE_ROOTS = (
     "apps/cli/src",
     "services/api/src",
     "infra/src",
+    "integrations/src",
     "workers/maintenance/src",
 )
 
