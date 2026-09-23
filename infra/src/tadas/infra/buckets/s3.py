@@ -21,7 +21,13 @@ MAX_KEYS_PER_CALL = 1000
 
 class BucketsS3Impl(BucketsInterface):
     """One client, opened by `start()` and closed by `close()` through the
-    holder; every call borrows it."""
+    holder; every call borrows it.
+
+    A presigned URL names the host the browser will reach, and a signature
+    over a GET covers that host, so a store the process reaches at one
+    address and a browser at another (MinIO inside the compose network, at a
+    host port outside it) signs with a second client aimed at the browser's
+    address. Signing makes no request, so that client never connects."""
 
     def __init__(
         self,
@@ -31,6 +37,7 @@ class BucketsS3Impl(BucketsInterface):
         region: str,
         bucket_prefix: str,
         timeout: timedelta,
+        presign_endpoint_url: str | None = None,
     ) -> None:
         self._endpoint_url = endpoint_url
         self._region = region
@@ -41,10 +48,21 @@ class BucketsS3Impl(BucketsInterface):
                 "s3", endpoint_url=endpoint_url, region_name=region, config=config
             ),
         )
+        self._signer: AwsClientHolder | None = None
+        if presign_endpoint_url is not None and presign_endpoint_url != endpoint_url:
+            self._signer = AwsClientHolder(
+                "s3 signer",
+                lambda: session.client(
+                    "s3", endpoint_url=presign_endpoint_url, region_name=region, config=config
+                ),
+            )
         self._bucket_prefix = bucket_prefix
 
     def _client(self) -> Any:
         return self._holder.client()
+
+    def _signing_client(self) -> Any:
+        return (self._signer or self._holder).client()
 
     def _bucket(self, bucket: Buckets) -> str:
         return f"{self._bucket_prefix}-{bucket.value}"
@@ -120,7 +138,7 @@ class BucketsS3Impl(BucketsInterface):
         self, org_id: UUID, bucket: Buckets, key: str, ttl: timedelta
     ) -> str | None:
         with translated("s3", "presign_get"):
-            s3 = self._client()
+            s3 = self._signing_client()
             return await s3.generate_presigned_url(
                 "get_object",
                 Params={"Bucket": self._bucket(bucket), "Key": object_key(org_id, key)},
@@ -142,7 +160,7 @@ class BucketsS3Impl(BucketsInterface):
         if max_bytes <= 0:
             raise ValueError(f"an upload is bounded by a positive size, not {max_bytes}")
         with translated("s3", "presign_post"):
-            s3 = self._client()
+            s3 = self._signing_client()
             post = await s3.generate_presigned_post(
                 Bucket=self._bucket(bucket),
                 Key=object_key(org_id, key),
@@ -160,6 +178,10 @@ class BucketsS3Impl(BucketsInterface):
 
     async def start(self) -> None:
         await self._holder.open()
+        if self._signer is not None:
+            await self._signer.open()
 
     async def close(self) -> None:
+        if self._signer is not None:
+            await self._signer.close()
         await self._holder.close()

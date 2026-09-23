@@ -14,6 +14,9 @@ x-app-env: &app-env
   TADAS_VALKEY_URL: valkey://valkey:6379/0
   TADAS_BUCKETS_BACKEND: s3
   TADAS_S3_ENDPOINT_URL: http://minio:9000
+  # A presigned URL is followed by the browser, on the host, so it names the
+  # host port; the containers still talk to minio:9000.
+  TADAS_S3_PRESIGN_ENDPOINT_URL: http://127.0.0.1:59000
   TADAS_S3_ACCESS_KEY: tadas
   TADAS_S3_SECRET_KEY: tadastadas
   TADAS_QUEUES_BACKEND: sqs

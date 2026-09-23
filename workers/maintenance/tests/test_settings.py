@@ -42,6 +42,7 @@ LOCAL_DEFAULT_SERVES_THE_CLOUD = {
     "database_statement_timeout_seconds_admin": "one pool for every role until a role moves out",
     "buckets_root": "the local buckets backend only",
     "s3_endpoint_url": "the hosted endpoint; only MinIO needs one",
+    "s3_presign_endpoint_url": "the hosted endpoint is the browser's too; only MinIO needs one",
     "s3_access_key": "the task role signs; only MinIO needs a key",
     "s3_secret_key": "the task role signs; only MinIO needs a key",
     "sqs_endpoint_url": "the hosted endpoint; only ElasticMQ needs one",

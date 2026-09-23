@@ -27,7 +27,7 @@ The data services' ports are fixed, since the `TADAS_*_URL` knobs name them.
 | postgres | `127.0.0.1:55432` | `postgres:5432` | database `tadas`; `tadas_runtime`, `tadas_system`, and `tadas_migration`, each with its name as its password; the master `tadas` / `tadas`; the superuser `postgres` / `postgres` |
 | valkey | `127.0.0.1:56379` | `valkey:6379` | none: user `default`, no password |
 | elasticmq (SQS) | http://127.0.0.1:59324 | `elasticmq:9324` | any key |
-| minio (S3) | http://127.0.0.1:59000 | `minio:9000` | `tadas` / `tadastadas` |
+| minio (S3) | http://127.0.0.1:59000 | `minio:9000` | `tadas` / `tadastadas`; `make infra-up` and `make up` create the buckets (`make buckets`), and the app containers sign presigned URLs for the host port |
 | MinIO console | http://localhost:59001 | | `tadas` / `tadastadas` |
 | pgweb (devx) | http://localhost:58081 | | none |
 | Valkey Admin (devx) | http://localhost:58080 | | none; see below |
@@ -127,7 +127,7 @@ network, where it cannot reach the host processes.
 | Clear the cache and rate limits (sessions live in Postgres) | `dc exec valkey valkey-cli flushall` |
 | List the SQS queues | `curl -s 'http://127.0.0.1:59324/?Action=ListQueues'` |
 | Reset only the database, then migrate and seed | `dc rm -sfv postgres && docker volume rm tadas_postgres && dc up -d --wait postgres && make migrate seed` |
-| Reset only the object store | `dc rm -sfv minio && docker volume rm tadas_minio && dc up -d --wait minio` |
+| Reset only the object store | `dc rm -sfv minio && docker volume rm tadas_minio && dc up -d --wait minio && make buckets` |
 
 ElasticMQ keeps nothing: `dc restart elasticmq` empties every queue.
 Valkey has no named volume but snapshots on shutdown, so `dc restart valkey`

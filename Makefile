@@ -32,7 +32,7 @@ SCRAPE_PORT ?= $(TADAS_COLLECTOR_SCRAPE_PORT)
 # `make arch-check ARCH_CHECK="python3 ../swe_guidelines/checkers/arch_check.py"`.
 ARCH_CHECK ?= uvx --python "$(shell cat .python-version)" --from "git+https://github.com/baristaze/swe_guidelines@v0.32.0\#subdirectory=checkers" arch-check
 
-.PHONY: help setup up down reset urls infra-up devx-up stack-up infra-down infra-reset collector-scrape migrate seed demo-gif demo-cli-gif migrate-check benchmark-boot check lint format-check typecheck arch-check test-unit test-integration test-telemetry traffic openapi
+.PHONY: help setup up down reset urls infra-up buckets devx-up stack-up infra-down infra-reset collector-scrape migrate seed demo-gif demo-cli-gif migrate-check benchmark-boot check lint format-check typecheck arch-check test-unit test-integration test-telemetry traffic openapi
 
 # This Makefile alone, never $(MAKEFILE_LIST): the includes above put
 # .env.example and .env in that list, and grep prefixes every match with the
@@ -50,6 +50,7 @@ setup: ## Install every Python and TypeScript dependency
 # to rerun and keeps data. `down` keeps data; `reset` wipes it and starts over.
 up: .env ## Everything: stack, migrations, seed, app containers, dashboards; keeps data
 	$(COMPOSE) up -d --wait
+	$(MAKE) --no-print-directory buckets
 	$(MAKE) --no-print-directory migrate seed
 	$(COMPOSE_FULL) --profile devx up -d --build --wait
 	@$(MAKE) --no-print-directory urls
@@ -82,6 +83,12 @@ urls: ## Print the local URLs and the seeded sign-ins
 
 infra-up: ## Start Postgres, the cache, the queue, and the object store
 	$(COMPOSE) up -d --wait
+	$(MAKE) --no-print-directory buckets
+
+# One bucket per member of tadas.infra.buckets.Buckets, named <prefix>-<bucket>
+# as the S3 impl names them; the cloud's are Terraform's. MinIO ships `mc`.
+buckets: ## Create the object store's buckets in MinIO, if they are missing
+	$(COMPOSE) exec -T minio sh -c 'mc alias set local http://127.0.0.1:9000 tadas tadastadas >/dev/null && mc mb --ignore-existing local/tadas-user-file-uploads local/tadas-exports'
 
 devx-up: ## The local stack plus developer dashboards (pgweb, Valkey Admin, ElasticMQ UI, Prometheus and its collector, Grafana, Jaeger, GlitchTip)
 	$(COMPOSE) --profile devx up -d --wait

@@ -226,3 +226,39 @@ async def test_an_s3_limit_past_one_call_continues_within_itself(
         await s3_buckets.put(org, Buckets.EXPORTS, key, b"x", "text/plain")
     assert await s3_buckets.list(org, Buckets.EXPORTS, "k/", limit=4) == keys[:4]
     assert await s3_buckets.list(org, Buckets.EXPORTS, "k/", limit=10, after="k/0") == keys[1:]
+
+
+def test_an_empty_presign_endpoint_is_the_endpoint_itself() -> None:
+    settings = InfraSettings.model_validate(
+        {"_env_file": None, "s3_presign_endpoint_url": "", "s3_endpoint_url": "http://s:9000"}
+    )
+    assert settings.s3_presign_endpoint_url is None
+
+
+async def test_a_presigned_url_names_the_host_a_browser_reaches() -> None:
+    """The process talks to one address and a browser to another: the URL a
+    browser follows names the browser's, and the signing makes no request."""
+    session = aioboto3.Session(
+        aws_access_key_id="k", aws_secret_access_key="s", region_name="us-east-1"
+    )
+    buckets = BucketsS3Impl(
+        session,
+        endpoint_url="http://minio:9000",
+        region="us-east-1",
+        bucket_prefix="t",
+        timeout=timedelta(seconds=1),
+        presign_endpoint_url="http://127.0.0.1:59000",
+    )
+    await buckets.start()
+    org = new_id()
+    try:
+        link = await buckets.presign_get(
+            org, Buckets.USER_FILE_UPLOADS, "a.png", timedelta(minutes=1)
+        )
+        form = await buckets.presign_post(
+            org, Buckets.USER_FILE_UPLOADS, "a.png", "image/png", 10, timedelta(minutes=1)
+        )
+    finally:
+        await buckets.close()
+    assert link is not None and link.startswith("http://127.0.0.1:59000/t-user-file-uploads/")
+    assert form is not None and form.url.startswith("http://127.0.0.1:59000/t-user-file-uploads")
