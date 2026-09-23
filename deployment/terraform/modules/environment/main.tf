@@ -350,6 +350,8 @@ module "maintenance" {
 
   environment_variables = merge(local.process_environment, {
     TADAS_SERVICE_NAME = "maintenance"
+    # `/tadas list` in Slack links to this environment's portal.
+    TADAS_PORTAL_URL = "https://${var.app_domain_name}"
   })
 
   # The serving process answers /healthz on its metrics port from its
