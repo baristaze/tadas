@@ -175,12 +175,18 @@ each run does:
    uv run tadas-ops signals check --env <environment> --request-id "$id"
    ```
 
-10. The first person: the environment carries no seed (`make seed` is
-   local), so open the portal and sign up at `/sign-up` with an email,
-   a name, and a password. That creates the identity and its personal
-   org, with the person as its owner; a team org is made from the org
-   chip after. Sign-up stays open unless
-   `TADAS_SIGNUP_ENABLED=false`, which makes the route answer 404.
+10. Sign-in: write the WorkOS environment's API key once
+   (`aws secretsmanager put-secret-value --secret-id tadas/<environment>/workos_api_key
+   --secret-string <key>`, then roll the API), and hold the WorkOS
+   configuration to the repository's with `WORKOS_API_KEY=<key> uv run
+   tadas-ops workos-bootstrap --environment <workos environment>
+   --apply` (ops/README.md). Until the key is set, the API starts and
+   every sign-in answers `503`.
+11. The first person: the environment carries no seed (`make seed` is
+   local), so open the portal and sign in at `/login` through WorkOS.
+   A first sign-in creates the identity and its personal org, with the
+   person as its owner; a team org is made from the org chip after, and
+   its settings invite the rest.
 
 A bootstrap root is never applied by a deploy run; every deploy role
 denies the calls that would change the registry, its replication, the
@@ -267,8 +273,8 @@ Production's runs use `--ref release -f environment=production`.
   steps are in `deployment/cloud/first_time_manual.md`, section 20;
   until then the plane admits the enrolment alone), and writes a `read` token into the env file in
   their own terminal: `uv run tadas-ops token --env <env> --identity
-  operator`. It asks for the password and the TOTP code there; no agent
-  ever holds either.
+  operator`. It asks the person to confirm a sign-in in their browser
+  and for the TOTP code there; no agent ever holds either.
 - **The provisioner** is granted `write` and has its token minted with
   `mint_token=provisioner` right before a traffic run, since a token
   lasts an hour; `uv run tadas-ops token --env <env> --identity

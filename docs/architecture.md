@@ -69,10 +69,10 @@ passing the stage they hold. A manager operation takes `OpContext`, which
 is its scope, and says nothing narrower; a function that forwards the
 context on keeps the stage the callee needs.
 
-- `tenancy`: orgs, identities, users, memberships, sessions, api keys,
-  socket tickets; sign-in, tenant-scoped session tokens, role-capped api
-  keys, the operator allowlist, and the service contexts workers run
-  under. Permissions are a function of role, one table in
+- `tenancy`: orgs, identities, users, memberships, invitations,
+  sessions, api keys, socket tickets; sign-in through the identity
+  provider, tenant-scoped session tokens, role-capped api keys, the
+  operator allowlist, and the service contexts workers run under. Permissions are a function of role, one table in
   `tenancy.types.role`; the ladder beside it ranks the person roles
   (viewer, member, admin, owner) and a unit test holds it to the table, so
   a role at most another holds a subset of its permissions. The service
@@ -118,10 +118,40 @@ context on keeps the stage the callee needs.
   every read, out of reach of a role change, and never a live user
   without a membership. A user or a membership another tenant owns is
   answered there the way one that never existed is, over both impls, so
-  the refusal says nothing about what exists under someone else. A sign-in verifies the
-  password against a fixed dummy hash when the email is unknown, so the
-  response time does not say which emails exist, and runs scrypt off the
-  event loop. Sessions and api keys are listed newest first and filtered
+  the refusal says nothing about what exists under someone else. Sign-in
+  is the identity provider's (ADR 0027): the manager holds
+  `IdentityProviderInterface` from `integrations/`, WorkOS or its twin,
+  and `sign_in_with_code` exchanges the code the portal's callback
+  brought back, server-side, with the PKCE verifier `sign_in_url`
+  answered (the tab keeps it beside its state), for an issuer, a
+  subject, and a verified email. The identity is found by the pair
+  (`read_identity_by_issuer_subject`, a system-scope lookup, unique
+  `(issuer, subject)` where the subject is set), else by the email
+  digest and linked, else made with its personal org; an unverified
+  address is `EmailNotVerified` (401). `sign_in_url` builds the
+  provider's URL for a redirect the environment names as its own
+  (`TenancyOptions.sign_in_redirect_uris`, a deployed environment's one
+  https callback, refused otherwise) and the caller's `state`. The
+  device sign-in (`start_device_sign_in`, `finish_device_sign_in`,
+  `SignInPending`, 400, while the person has not confirmed) serves the
+  command line. `verify_second_factor` takes a login and a TOTP code and
+  answers a new login that records it, behind the per-email delay.
+  `dev_sign_in` signs in by address alone and is `NotFound` unless the
+  options turn it on, which the API's settings refuse outside `local`
+  and `test` (ADR 0028). Tadas keeps no password: the column
+  `identities.password_hash` stays one release, nullable and deferred,
+  for the release before, and the one after drops it. Invitations
+  (`core.invitations`, org-scoped; one pending invitation per address
+  in an org, the provider's id unique) are sent by the provider through
+  the org's organization there, made once by its external id and kept
+  on `orgs.provider_org_id`; `invite_member` is the one operation that
+  sends one, capped at the caller's role, and a sign-in that accepted
+  one lands the membership and the accepted row in one commit
+  (`create_member` with the invitation). A sign-in through an org's
+  single sign-on lands a member's place only when the address is in a
+  domain the org verified at the provider (`rules.sso_joins`); a
+  personal org has none. `sso_setup_link` answers the provider's admin
+  portal link for a team org's member manager. Sessions and api keys are listed newest first and filtered
   at the storage (live at the instant asked; a member's own keys), so a
   page of dead rows never hides a live one. Members, memberships, api
   keys, and the operator's org list answer a page (`UserPage`,
@@ -143,14 +173,12 @@ context on keeps the stage the callee needs.
   exactly one personal org (`Org.kind`, `personal` or `team`, and
   `personal_identity_id`, the person; a partial unique index keeps one
   living personal org per identity, and a check constraint ties the two
-  columns). Sign-up (`sign_up`, on the request stage) asks for an email,
-  a name, and a password, and lands the new identity, its personal org
+  columns). A first sign-in lands the new identity, its personal org
   (named after the person, the slug generated from the name with a
   random tail), the person's user, and the owner membership in one
-  commit (`creates.create_person` over `create_org_with_owner`, always
-  with a new identity, so a raced email meets the unique key) and
-  answers as a login does. `create_person` takes the identity as its
-  caller built it, so a door other than the password can call it. Every
+  commit (`creates.create_person` over `create_org_with_owner`, so a
+  raced email or subject meets the unique key and the loser reads the
+  winner's identity) and answers as every sign-in does. Every
   other create that makes an identity (the seeding's `bootstrap` and
   `add-member`, the operator plane's create and add) lands the new
   person's personal org in the same commit as its own tenant, each
@@ -162,15 +190,11 @@ context on keeps the stage the callee needs.
   answers with the caller's place in it; the switch there is the
   exchange. Migration `202609250001` gives every existing person their
   personal org in SQL, under a lifted fence, in one bounded pass that
-  refuses to leave anyone behind. `POST
-  /v1/auth/signup` has its own rate limit per client address, no
-  Idempotency-Key (the marker is kept per tenant and principal, and
-  sign-up has neither), and `TADAS_SIGNUP_ENABLED` (true by default),
-  which, false, makes it answer the router's own 404. With no email
-  verification, sign-up has two accepted costs: a held address answers
-  `409`, so anyone can test which addresses have an account, and anyone
-  can claim an address that is not theirs. With no verified address
-  there is no account recovery either. An exchange
+  refuses to leave anyone behind. The sign-in routes
+  (`/v1/auth/sign-in`, `/callback`, `/device`, `/device/token`,
+  `/dev-sign-in`, `/second-factor`) share the login rate limit per
+  client address and carry no Idempotency-Key (the marker is kept per
+  tenant and principal, and none exists yet). An exchange
   presented with a session is a switch: `replace_session` revokes it and
   lands the new one in one transaction, each statement under its own
   tenant's scope, with the revocation's outbox row, so the old socket
@@ -470,6 +494,22 @@ that commits in between would be put back by a copy still carrying
 membership, listed but unable to sign in and past every sweep. Both
 storage bases refuse it with `RowDeleted`, a `Conflict`; there is no
 restore in this domain, and the caller reads the row again.
+
+## Integrations (`integrations/`)
+
+The `tadas-integrations` distribution holds the hosted services the
+platform depends on, each an interface with a real client and a twin,
+and a root the container asks for them (`IntegrationsInterface`). Today
+it is one: the identity provider (`identity/`), with WorkOS's SDK
+(`workos`, pinned) behind `IdentityProviderWorkOSImpl`, the in-memory
+`IdentityProviderTwinImpl` the tests run against, and the absent provider
+of a process that signs nobody in (the worker, or an API without its
+key), which answers every call as unavailable. `IntegrationsSettings`
+(`TADAS_IDENTITY_PROVIDER`, `TADAS_WORKOS_CLIENT_ID`,
+`TADAS_WORKOS_API_KEY`) is mixed into the API's settings, and the
+configured root refuses the twin in a deployed environment. Every
+provider error is translated into a leaf of infra's exception family,
+and the tenancy manager translates the sign-in ones into its own.
 
 ## Infrastructure (`infra/`)
 
@@ -789,7 +829,11 @@ everything in-process for tests.
   request that filled it; an item that carries none starts a trace of its
   own, which is what a process with no tracer configured does anyway.
 - `apps/portal` (`@tadas/portal`): React, Vite, TanStack Query,
-  Zustand; sign-in and sign-up (`/sign-up`: email, name, password), the
+  Zustand; sign-in at `/login`, which starts WorkOS AuthKit at once (it
+  is the initiate-login address) with a random `state` the tab keeps in
+  its session storage, and `/auth/callback`, which refuses a state the
+  tab did not keep and hands the code to the API; the local sign-in at
+  `/login/dev` when the runtime config says so; the
   picker when a person has several orgs, the personal one first, an org
   chip in the chrome that switches the tab's one session (the old
   tenant's cache dropped, the socket reopened) and opens the new team
@@ -797,7 +841,8 @@ everything in-process for tests.
   tasks screen at `/` (My and Team's tasks, open in
   manual order and done newest first, both paged by the server's cursor
   with Show more, inline edit, drag to reorder), settings at `/settings`
-  (members, api keys with Show more, sign-out, which revokes the server
+  (members, invitations with resend and revoke, single sign-on for a
+  team org, api keys with Show more, sign-out, which revokes the server
   session and empties the query cache with the token), and one realtime
   channel that
   invalidates queries by the entity name inside a push's `kind`, or by
@@ -889,7 +934,9 @@ everything in-process for tests.
   end of the list; `listen` prints every task change as one line (who did
   what to which task) as it arrives on the channel, `--mine` for the
   caller's own; a task read that fails is told on stderr and the change
-  skipped, the channel is not ended by it. `login` keeps a session token
+  skipped, the channel is not ended by it. `login` signs in with the
+  provider's device sign-in through the API (a code to confirm in any
+  browser), or with `--dev-email` on a local stack, and keeps a session token
   under `TADAS_HOME`; `logout` revokes it at the API that issued it and
   forgets the file whatever the API answers; `TADAS_TOKEN` (a session
   token or an api key) and `TADAS_API_URL` win over it. The rules of what is shown live in `model.py`, pure and unit
