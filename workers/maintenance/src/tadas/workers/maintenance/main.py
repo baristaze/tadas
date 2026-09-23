@@ -85,6 +85,7 @@ def build_inbound(container: WorkerContainer) -> SlackInboundConsumer:
         container.managers.tasks,
         container.slack,
         AppContext(type=AppType.SLACK, version=f"slack@{settings.worker_id}"),
+        settings.portal_url,
     )
     options = InboundOptions(
         visibility=timedelta(seconds=settings.slack_inbound_visibility_seconds)

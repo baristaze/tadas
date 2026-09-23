@@ -60,7 +60,7 @@ served to it. Exposure is by listing, never by folder.
 - [Tasks](om/src/tadas/om/tasks/README.md): the to-do items and their rules
 - [Files](om/src/tadas/om/media/README.md): the files kept with the work, their bounds, and the storage used
 - [Tasks](om/src/tadas/om/tasks/README.md): the to-do items and their rules, due times among them
-- [Slack](om/src/tadas/om/slack/README.md): connecting a Slack channel, what it posts, and `/tadas add`
+- [Slack](om/src/tadas/om/slack/README.md): connecting a Slack channel, what it posts, `/tadas add`, and `/tadas list`
 - [Events](om/src/tadas/om/events/README.md): the org's diary
 - [Work items](om/src/tadas/om/work/README.md): background jobs
 - [Idempotency records](om/src/tadas/om/idempotency/README.md): why a repeated request does one thing

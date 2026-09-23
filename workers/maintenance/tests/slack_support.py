@@ -25,6 +25,7 @@ from tadas.workers.maintenance.slack_inbound import (
 )
 
 TEAM = "TQSHA9YBT"
+PORTAL = "https://app.tadas.test"
 LEASE = timedelta(seconds=30)
 
 
@@ -120,6 +121,7 @@ def inbound(container: WorkerContainer, twin: SlackTwinImpl) -> SlackInboundHand
         container.managers.tasks,
         twin,
         AppContext(type=AppType.SLACK, version="slack@test"),
+        PORTAL,
     )
 
 

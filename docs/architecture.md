@@ -345,7 +345,8 @@ context on keeps the stage the callee needs.
   tenant: `redeem_link_code` finds the org from the code, and
   `channel_context` from the channel and hands back the tenant's service
   context with the linking member as the attribution, which is who a
-  task `/tadas add` creates is attributed to. Their storage lookups
+  task `/tadas add` creates is attributed to and who `/tadas list`
+  reads as. Their storage lookups
   (`redeem_link_code`, `read_connection_by_channel`) read in the system
   scope. The tables are `core`, `org`-scoped, and purged by the sweep
   after thirty days.
@@ -882,8 +883,8 @@ everything in-process for tests.
   Each namespace purges its own rows and asks tenancy the one question,
   `tenant_expired`, so the whole sweep reads one answer.
   Beside the loop, `serve` consumes the `slack` queue: each delivery
-  the Socket Mode bridge acknowledged is handled (`/tadas add`, `link`,
-  `help`, a mention, the App Home) and deleted, and one whose handling
+  the Socket Mode bridge acknowledged is handled (`/tadas add`, `list`,
+  `link`, `help`, a mention, the App Home) and deleted, and one whose handling
   failed for a reason a retry can change is left for the queue to hand
   back. `slack` is the bridge: one process per environment holding the
   Socket Mode connection with `TADAS_SLACK_APP_TOKEN`, which

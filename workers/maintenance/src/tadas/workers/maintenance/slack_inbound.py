@@ -11,7 +11,8 @@ dead-letter queue after a few returns.
 Handling twice is harmless. A task `/tadas add` creates takes an id derived
 from the delivery's key and the time it was received, so the second create
 meets the row already there. A link code works once. The replies are text
-for the person who typed, and a second one says the same thing again."""
+for the person who typed, and a second one says the same thing again;
+`/tadas list` reads and changes nothing."""
 
 import asyncio
 import contextlib
@@ -39,7 +40,9 @@ from tadas.om.opcontext import AppContext, RequestContext
 from tadas.om.slack import SlackManagerInterface
 from tadas.om.slack.types.connection import SlackConnectionStatus
 from tadas.om.tasks import TasksManagerInterface
-from tadas.om.tasks.types.task import Task
+from tadas.om.tasks.types.filter import TaskFilter
+from tadas.om.tasks.types.task import Task, TaskScope
+from tadas.workers.maintenance.slack_posts import escaped
 
 log = logging.getLogger(__name__)
 
@@ -48,6 +51,9 @@ SLACK_NAMESPACE = uuid.UUID("5a1ac000-7ada-5000-8000-000000000000")
 
 TITLE_LIMIT = 500
 """The longest title a task takes, as the API's own limit."""
+
+LIST_LIMIT = 10
+"""How many open tasks `/tadas list` shows; the rest are a count and a link."""
 
 
 class InboundDelivery(BaseModel):
@@ -73,6 +79,7 @@ def delivery_key(envelope_type: str, envelope_id: str, payload: dict[str, Any]) 
 
 class Verb(StrEnum):
     HELP = "help"
+    LIST = "list"
     LINK = "link"
     ADD = "add"
     UNKNOWN = "unknown"
@@ -85,12 +92,15 @@ class Command:
 
 
 def parse_command(text: str) -> Command:
-    """`/tadas <verb> <argument>`: `add <title>`, `link <code>`, `help`. An
-    empty command is help; a verb it does not know, or `add` and `link` with
-    nothing after them, is unknown, which answers with the usage too."""
+    """`/tadas <verb> <argument>`: `list`, `add <title>`, `link <code>`,
+    `help`. An empty command is `list`, the question asked most; a verb it
+    does not know, or `add` and `link` with nothing after them, is unknown,
+    which answers with the usage."""
     verb, _, rest = text.strip().partition(" ")
     verb, rest = verb.lower(), rest.strip()
-    if verb in ("", "help"):
+    if verb in ("", "list"):
+        return Command(Verb.LIST)
+    if verb == "help":
         return Command(Verb.HELP)
     if verb == "add" and rest:
         return Command(Verb.ADD, rest)
@@ -102,6 +112,8 @@ def parse_command(text: str) -> Command:
 USAGE = "\n".join(
     [
         "*Tadas* keeps your team's to-do list.",
+        "• `/tadas list` shows the org's first ten open tasks, only to you; `/tadas`"
+        " alone does the same",
         "• `/tadas add <title>` adds a task to the org this channel is connected to",
         "• `/tadas link <code>` connects this channel to an org: an owner or an admin"
         " gets the code in Tadas, under Settings, Slack",
@@ -120,6 +132,37 @@ INVITE = "@tadas is not in this channel yet, so it cannot post here: type `/invi
 CONNECTED = (
     ":link: This channel is connected to Tadas. Reminders and task updates will appear here."
 )
+
+
+def due_text(task: Task) -> str:
+    """The due time as Slack shows it: in the reader's own time zone, with the
+    UTC time as the fallback a client that cannot localize prints."""
+    if task.remind_at is None:
+        return ""
+    at = task.remind_at
+    fallback = at.strftime("%Y-%m-%d %H:%M UTC")
+    return f"<!date^{int(at.timestamp())}^{{date_short_pretty}} {{time}}|{fallback}>"
+
+
+def task_line(task: Task) -> str:
+    """One task of the list: its title, escaped, and its due time when set."""
+    line = f"• {escaped(task.title)}"
+    due = due_text(task)
+    return f"{line}  _due {due}_" if due else line
+
+
+def list_answer(tasks: tuple[Task, ...], more: int, portal_url: str) -> str:
+    """The reply to `/tadas list`: the tasks in the list's own order, and how
+    many more there are with a link to the rest."""
+    link = f"<{portal_url.rstrip('/')}/|Tadas>"
+    if not tasks:
+        return f"No open tasks. Add one with `/tadas add <title>`, or open {link}."
+    lines = ["*Open tasks*", *(task_line(task) for task in tasks)]
+    if more > 0:
+        lines.append(f"…and {more} more in {link}")
+    else:
+        lines.append(f"Open {link} to work on them.")
+    return "\n".join(lines)
 
 
 def home_view() -> dict[str, Any]:
@@ -151,11 +194,13 @@ class SlackInboundHandler:
         tasks: TasksManagerInterface,
         client: SlackInterface,
         app: AppContext,
+        portal_url: str,
     ) -> None:
         self._slack = slack
         self._tasks = tasks
         self._client = client
         self._app = app
+        self._portal_url = portal_url
 
     async def handle(self, delivery: InboundDelivery) -> None:
         if delivery.type == "slash_commands":
@@ -176,6 +221,8 @@ class SlackInboundHandler:
         command = parse_command(str(payload.get("text", "")))
         if command.verb in (Verb.HELP, Verb.UNKNOWN):
             await self._client.respond(response_url, USAGE)
+        elif command.verb is Verb.LIST:
+            await self._client.respond(response_url, await self._list(team_id, channel_id))
         elif command.verb is Verb.LINK:
             answer = await self._link(
                 command.argument, team_id, channel_id, str(payload.get("user_id", ""))
@@ -225,10 +272,28 @@ class SlackInboundHandler:
             title=title,
         )
         created = await self._tasks.create_task(ctx, task)
-        answer = f"Added: *{created.title}*"
+        answer = f"Added: *{escaped(created.title)}*"
         if connection.status is not SlackConnectionStatus.OK:
             answer += f"\n{INVITE} Then run `/tadas link` again with a new code."
         return answer
+
+    async def _list(self, team_id: str, channel_id: str) -> str:
+        """The org's first open tasks, read as the member who linked the
+        channel, as `/tadas add` writes: one bounded page, and a count only
+        when a page follows."""
+        found = await self._slack.channel_context(self._request(), team_id, channel_id)
+        if found is None:
+            return NOT_CONNECTED
+        ctx, _ = found
+        criterion = TaskFilter(scope=TaskScope.TEAM, user_id=ctx.user_id)
+        page = await self._tasks.get_open_tasks(ctx, criterion, None, LIST_LIMIT)
+        more = 0
+        if page.has_more:
+            # A task closed between the two reads can make the count fall to
+            # the page; a page that said another follows still says "more".
+            total = await self._tasks.count_open_tasks(ctx, criterion)
+            more = max(total - len(page.items), 1)
+        return list_answer(page.items, more, self._portal_url)
 
     async def _event(self, event: dict[str, Any]) -> None:
         kind = event.get("type")

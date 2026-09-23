@@ -24,6 +24,12 @@ class TasksManagerInterface(ABC):
         ...
 
     @abstractmethod
+    async def count_open_tasks(self, ctx: OpContext, criterion: TaskFilter) -> int:
+        """How many open tasks the filter shows, the number beside a page of
+        `get_open_tasks`; the filter's user is the caller, as there."""
+        ...
+
+    @abstractmethod
     async def get_done_tasks(
         self, ctx: OpContext, criterion: TaskFilter, before: TaskCursor | None, limit: int
     ) -> TaskPage:
