@@ -79,6 +79,15 @@ class TasksStoragePostgresImpl(PgStorageBase, TasksStorageInterface):
             result = await session.execute(stmt)
             return [to_model(row, Task) for row in result.scalars()]
 
+    async def count_open_tasks(self, org_id: UUID, criterion: TaskFilter) -> int:
+        stmt = (
+            select(func.count())
+            .select_from(Tasks)
+            .where(_live(org_id, TaskStatus.OPEN), _visible(criterion))
+        )
+        async with self._session_for(stmt, org_id=org_id) as session:
+            return (await session.execute(stmt)).scalar_one()
+
     async def read_done_tasks(
         self, org_id: UUID, criterion: TaskFilter, before: TaskCursor | None, limit: int
     ) -> list[Task]:

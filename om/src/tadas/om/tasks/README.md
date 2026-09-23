@@ -22,6 +22,8 @@ six kinds of thing [Tadas is made of](../../../../README.md).
 - **List the open tasks**, in the order the team arranged them, top
   first, a page at a time.
 - **List the done tasks**, newest first, a page at a time.
+- **Count the open tasks** a filter shows, without reading them: what a
+  short list, like Slack's, says about the rest.
 - **Read one task.**
 - **Edit**: the title, the notes, the assignee, the status. A task
   reopened from done goes back to the top of the open list.
