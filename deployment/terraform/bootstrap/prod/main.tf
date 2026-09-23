@@ -43,8 +43,9 @@ module "account" {
   other_environment = "staging"
   state_key_prefix  = "environments/prod"
 
-  api_domain_name = local.production.api_domain_name
-  app_domain_name = local.production.app_domain_name
+  api_domain_name  = local.production.api_domain_name
+  app_domain_name  = local.production.app_domain_name
+  site_domain_name = local.production.site_domain_name
 
   sign_in_role_name = local.production.sso_role_name
 
@@ -74,7 +75,7 @@ module "deploy_role" {
   promote_images     = true
 
   dns_record_patterns = flatten([
-    for name in [local.production.api_domain_name, local.production.app_domain_name] : [name, "*.${name}"]
+    for name in [local.production.api_domain_name, local.production.app_domain_name, local.production.site_domain_name] : [name, "*.${name}"]
   ])
 
   task_boundary_policy_arn = module.account.task_boundary_policy_arn
@@ -220,7 +221,7 @@ resource "aws_iam_role_policy" "plan_fences" {
 }
 
 # The two writes staging's account may make here, and only these: an image
-# into a repository this root made, and a portal build under builds/portal/
+# into a repository this root made, and a static build under builds/
 # of the artifacts bucket, which holds no state.
 # Neither lets staging read anything in production, and replication never
 # creates a repository, so every one keeps the settings declared above.
@@ -250,14 +251,14 @@ resource "aws_ecr_registry_policy" "this" {
 # exists, and staging's root makes it only after this bucket does.
 data "aws_iam_policy_document" "artifacts_bucket" {
   statement {
-    sid = "StagingReplicatesItsPortalBuildsIn"
+    sid = "StagingReplicatesItsBuildsIn"
     actions = [
       "s3:ObjectOwnerOverrideToBucketOwner",
       "s3:ReplicateDelete",
       "s3:ReplicateObject",
       "s3:ReplicateTags",
     ]
-    resources = ["${module.account.artifacts_bucket_arn}/builds/portal/*"]
+    resources = ["${module.account.artifacts_bucket_arn}/builds/*"]
 
     principals {
       type        = "AWS"
@@ -288,7 +289,7 @@ data "aws_iam_policy_document" "artifacts_bucket" {
     }
   }
 
-  # Only replication writes a portal build here. A direct write or delete
+  # Only replication writes a static build here. A direct write or delete
   # under the prefix is refused to every principal, the administrator
   # included, so a released build is never replaced in place. A second
   # version replicated from a changed source still lands; the digest staging
@@ -297,7 +298,7 @@ data "aws_iam_policy_document" "artifacts_bucket" {
     sid       = "NoDirectWriteToAKeptBuild"
     effect    = "Deny"
     actions   = ["s3:PutObject", "s3:DeleteObject", "s3:DeleteObjectVersion"]
-    resources = ["${module.account.artifacts_bucket_arn}/builds/portal/*"]
+    resources = ["${module.account.artifacts_bucket_arn}/builds/*"]
 
     principals {
       type        = "*"

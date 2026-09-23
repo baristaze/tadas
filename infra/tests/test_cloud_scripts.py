@@ -66,6 +66,9 @@ def test_create_staging_dry_run_prints_every_step_and_writes_nothing(tmp_path: P
     assert f"cloudflare GET /zones?name={ENVIRONMENTS['domain']}" in out
     assert f"NS {STAGING['api_domain_name']} -> " in out
     assert f"NS {STAGING['app_domain_name']} -> " in out
+    assert f"NS {STAGING['site_domain_name']} -> " in out
+    site_name = STAGING["site_domain_name"]
+    assert f"+ gh variable set SITE_DOMAIN_NAME --env staging --body {site_name}" in out
     assert "[profile tadas-staging-investigate]" in out
     assert "role_arn = <investigate_role_arn>" in out
     assert "source_profile = tadas-staging" in out
@@ -106,6 +109,9 @@ def test_create_production_dry_run_sets_two_environments_and_waits_for_replicati
     assert "replicate_to_production" not in out
     assert "+ gh variable set AWS_ROLE_ARN --env production-plan --body <plan_role_arn>" in out
     assert "+ gh variable set AWS_ROLE_ARN --env production --body <deploy_role_arn>" in out
+    assert f"NS {PRODUCTION['site_domain_name']} -> " in out
+    site_name = PRODUCTION["site_domain_name"]
+    assert f"+ gh variable set SITE_DOMAIN_NAME --env production-plan --body {site_name}" in out
     for github_environment in ["production-plan", "production"]:
         policy = f"environments/{github_environment}/deployment-branch-policies -f name=release"
         assert policy in out

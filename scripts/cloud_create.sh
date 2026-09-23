@@ -9,14 +9,14 @@
 # Each environment has an AWS account of its own, and
 # deployment/cloud/environments.json names it: the account id, the
 # administrator profile that bootstraps it, the Identity Center profile an
-# operator signs in with, the region, and the environment's two public
-# names. This script reads everything from there and refuses to act in any
+# operator signs in with, the region, and the environment's three public
+# names (the API, the portal, the company site). This script reads everything from there and refuses to act in any
 # other account.
 #
 # What it does, in order: checks the profile is the environment's
 # administrator and the account is the environment's, and checks the GitHub
 # login; applies the environment's bootstrap root with local state and moves
-# that state into the bucket it made; delegates the two public names from
+# that state into the bucket it made; delegates the three public names from
 # the domain's zone at Cloudflare to the zones the root made; writes the
 # investigate profile, chained from the Identity Center profile; creates the
 # GitHub environments and sets their variables from the root's outputs;
@@ -91,6 +91,7 @@ bootstrap_root="deployment/terraform/$(config ".environments.$environment.bootst
 environment_root="deployment/terraform/$(config ".environments.$environment.environment_root")"
 api_domain_name="$(config ".environments.$environment.api_domain_name")"
 app_domain_name="$(config ".environments.$environment.app_domain_name")"
+site_domain_name="$(config ".environments.$environment.site_domain_name")"
 state_bucket="tadas-state-$account_id"
 artifacts_bucket="tadas-artifacts-$account_id"
 
@@ -256,7 +257,7 @@ cloudflare() {
 
 if $dry_run; then
   say "+ cloudflare GET /zones?name=$domain"
-  for name in "$api_domain_name" "$app_domain_name"; do
+  for name in "$api_domain_name" "$app_domain_name" "$site_domain_name"; do
     say "+ cloudflare GET /zones/<zone id>/dns_records?type=NS&name=$name"
     say "+ cloudflare POST /zones/<zone id>/dns_records NS $name -> <each name server of $name>, and DELETE any other NS record there"
   done
@@ -265,7 +266,7 @@ else
   say "+ cloudflare GET /zones?name=$domain"
   zone_id="$(cloudflare GET "/zones?name=$domain" | jq -er '.result[0].id')" \
     || refuse "Cloudflare holds no zone named $domain that the token can read"
-  for name in "$api_domain_name" "$app_domain_name"; do
+  for name in "$api_domain_name" "$app_domain_name" "$site_domain_name"; do
     wanted="$(printf '%s' "$name_servers" | jq -r --arg name "$name" '.[$name][]')"
     say "+ cloudflare GET /zones/$zone_id/dns_records?type=NS&name=$name"
     existing="$(cloudflare GET "/zones/$zone_id/dns_records?type=NS&name=$name&per_page=100")"
@@ -287,6 +288,13 @@ else
       fi
     done
   done
+fi
+
+if [ "$environment" = "production" ]; then
+  # The domain's own apex is the one public name that cannot be delegated:
+  # it is the apex of the zone Cloudflare keeps. The token edits DNS only,
+  # and the redirect is a rule, so this is a person's step.
+  say "The apex $domain is not delegated: it redirects to https://$site_domain_name at Cloudflare, set once by hand (deployment/cloud/first_time_manual.md, 18b)."
 fi
 
 say "== 4. The investigate profile, chained from the Identity Center profile"
@@ -362,6 +370,7 @@ case "$environment" in
       "ARTIFACTS_BUCKET=$artifacts_bucket" \
       "API_DOMAIN_NAME=$api_domain_name" \
       "APP_DOMAIN_NAME=$app_domain_name" \
+      "SITE_DOMAIN_NAME=$site_domain_name" \
       "ALARM_EMAIL=$alarm_email"
     ;;
   production)
@@ -383,6 +392,7 @@ case "$environment" in
       "ARTIFACTS_BUCKET=$artifacts_bucket" \
       "API_DOMAIN_NAME=$api_domain_name" \
       "APP_DOMAIN_NAME=$app_domain_name" \
+      "SITE_DOMAIN_NAME=$site_domain_name" \
       "ALARM_EMAIL=$alarm_email"
     set_variables production \
       "AWS_ROLE_ARN=$deploy_role" \

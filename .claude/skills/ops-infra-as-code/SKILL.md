@@ -87,10 +87,11 @@ is read; this skill touches no application credential.
    AWS_PROFILE=tadas-<env>-investigate terraform plan -lock=false -out=/dev/null \
      -var "api_image=<in state>" -var "maintenance_image=<in state>" \
      -var "alarm_email=$ALARM_EMAIL" \
-     -var "api_domain_name=<api host>" -var "app_domain_name=<app host>"
+     -var "api_domain_name=<api host>" -var "app_domain_name=<app host>" \
+     -var "site_domain_name=<site host>"
    ```
 
-   The account and the two hosts are the environment's entry in
+   The account and the three hosts are the environment's entry in
    `deployment/cloud/environments.json`. The `-var` values are the ones
    the deploy workflow passes
    (`.github/workflows/deploy-<staging | production>.yml`); the images

@@ -34,6 +34,11 @@ variable "app_domain_name" {
   type        = string
 }
 
+variable "site_domain_name" {
+  description = "The company site's public name. It gets a hosted zone of its own, delegated from the domain's zone at Cloudflare."
+  type        = string
+}
+
 variable "sign_in_role_name" {
   description = "The Identity Center permission set a person signs in to this account with, and the investigate role trusts: PowerUserAccess in staging, a read-only set in production."
   type        = string

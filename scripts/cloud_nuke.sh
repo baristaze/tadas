@@ -80,6 +80,7 @@ admin_profile="$(config ".environments.$environment.admin_profile")"
 root="$(config ".environments.$environment.environment_root")"
 api_domain_name="$(config ".environments.$environment.api_domain_name")"
 app_domain_name="$(config ".environments.$environment.app_domain_name")"
+site_domain_name="$(config ".environments.$environment.site_domain_name")"
 state_bucket="tadas-state-$account_id"
 artifacts_bucket="tadas-artifacts-$account_id"
 
@@ -220,6 +221,7 @@ root_vars=(
   -var "maintenance_image=$maintenance_image"
   -var "api_domain_name=$api_domain_name"
   -var "app_domain_name=$app_domain_name"
+  -var "site_domain_name=$site_domain_name"
   -var "alarm_email=$alarm_email"
   -var "destroyable=true"
 )
@@ -233,13 +235,13 @@ check_account
 run terraform -chdir="$root_dir" destroy -input=false -auto-approve "${root_vars[@]}"
 
 say "== 5. What remains"
-say "- the bootstrap root, whole: the zones $api_domain_name and $app_domain_name and their delegation at Cloudflare, the registry and its images, the roles, the budget, and the anomaly monitor"
+say "- the bootstrap root, whole: the zones $api_domain_name, $app_domain_name, and $site_domain_name and their delegation at Cloudflare, the registry and its images, the roles, the budget, and the anomaly monitor"
 say "- the state prefix $root/ and plans/$root/ in s3://$state_bucket (empty the prefix by hand if the environment is not coming back)"
-say "- the portal builds under builds/portal/ in s3://$artifacts_bucket"
+say "- the portal and site builds under builds/ in s3://$artifacts_bucket"
 if [ "$environment" = "production" ]; then
   say "- the database's final snapshot tadas-production-final, and its automated backups"
 fi
 if [ "$environment" = "staging" ]; then
-  say "- production's copies of what staging built: its images and portal builds, in production's account"
+  say "- production's copies of what staging built: its images and static builds, in production's account"
 fi
 say "- $HOME/.config/tadas/ops/$environment.env, and the investigate profile in $HOME/.aws/config"

@@ -49,7 +49,7 @@ variable "state_bucket" {
 }
 
 variable "artifacts_bucket" {
-  description = "This account's artifacts bucket: the portal build kept by commit."
+  description = "This account's artifacts bucket: the static builds kept by commit."
   type        = string
 }
 

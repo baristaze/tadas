@@ -8,7 +8,7 @@
 # credential in another account, and nothing in production trusts it. The
 # two bootstrap roots call this module, add the roles their own deploy
 # workflow assumes, and wire the one direction anything crosses: staging's
-# images and portal builds replicate into production.
+# images and static builds replicate into production.
 
 data "aws_caller_identity" "current" {}
 data "aws_partition" "current" {}
@@ -110,10 +110,11 @@ resource "aws_s3_bucket_public_access_block" "state" {
 
 # Artifacts.
 #
-# What a build keeps by commit, the portal build under builds/portal/<sha>/,
-# lives here and never beside the state. Staging's copy replicates into
-# production's, so the one write staging's account may make in production's
-# lands in a bucket that holds no state.
+# What a build keeps by commit, the portal build under builds/portal/<sha>/
+# and the company site's under builds/site/<sha>/, lives here and never
+# beside the state. Staging's copy replicates into production's, so the one
+# write staging's account may make in production's lands in a bucket that
+# holds no state.
 
 resource "aws_s3_bucket" "artifacts" {
   bucket = "tadas-artifacts-${local.account}"
@@ -142,11 +143,11 @@ resource "aws_s3_bucket_lifecycle_configuration" "artifacts" {
   bucket = aws_s3_bucket.artifacts.id
 
   rule {
-    id     = "portal-builds"
+    id     = "builds"
     status = "Enabled"
 
     filter {
-      prefix = "builds/portal/"
+      prefix = "builds/"
     }
 
     expiration {
@@ -450,7 +451,7 @@ resource "aws_ce_anomaly_subscription" "owner" {
 # records, once.
 
 resource "aws_route53_zone" "this" {
-  for_each = toset([var.api_domain_name, var.app_domain_name])
+  for_each = toset([var.api_domain_name, var.app_domain_name, var.site_domain_name])
 
   name    = each.key
   comment = "Tadas ${var.environment}: ${each.key}, delegated from the domain's zone at Cloudflare"
