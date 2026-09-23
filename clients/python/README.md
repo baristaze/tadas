@@ -13,7 +13,12 @@ else in Python calls `/v1/*`.
   envelope parsed into `ApiError` with the request id, an idempotency key
   on every creating call, a 401 that clears the token, and the operating
   system's trust store. Request bodies are built by the operation methods
-  from keyword arguments; the API validates them.
+  from keyword arguments; the API validates them. A file's bytes go to
+  the object store and come from it through the URL the API signed
+  (`attach`, `download`), on a plain `httpx` client with the same
+  timeout and nothing of ours on it, since the form or the link is the
+  credential; where the store cannot sign, they go through the API's
+  content route instead.
 - The retry lives here and nowhere above it: the base URL, the credential,
   the timeout, the count (`retries`, default 2) and the first delay
   (`backoff_seconds`, default 0.25) all arrive through the constructor, so

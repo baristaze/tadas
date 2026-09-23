@@ -1,8 +1,13 @@
+import logging
 from datetime import datetime, timedelta
 from uuid import UUID
 
+from tadas.infra.observability import OUTCOMES
 from tadas.om.base import PROVENANCE_FIELDS, Platform, utcnow
 from tadas.om.exceptions import NotFound, PreconditionFailed, TenantMismatch, ValidationFailed
+from tadas.om.media import MediaManagerInterface
+from tadas.om.media.types.file import File, FilePurpose
+from tadas.om.media.types.page import FilePage
 from tadas.om.opcontext import OpContext, Permission
 from tadas.om.outbox import OutboxRelayInterface
 from tadas.om.outbox.types.row import OutboxRow, outbox_row
@@ -23,6 +28,8 @@ from tadas.om.work.types.work_item import (
     work_row_kind,
 )
 
+log = logging.getLogger(__name__)
+
 NEIGHBOURS = 1
 """How many open places a placement reads: the top one for a task placed on
 top, the one after the anchor for a move. The rules decide from that place
@@ -40,12 +47,14 @@ class TasksManagerImpl(TasksManagerInterface):
         self,
         storage: TasksStorageInterface,
         tenancy: TenancyManagerInterface,
+        media: MediaManagerInterface,
         relay: OutboxRelayInterface,
         slack: SlackManagerInterface,
         options: TasksOptions,
     ) -> None:
         self._storage = storage
         self._tenancy = tenancy
+        self._media = media
         self._relay = relay
         self._slack = slack
         self._options = options
@@ -58,6 +67,11 @@ class TasksManagerImpl(TasksManagerInterface):
         limit = self._clamp(limit)
         rows = await self._storage.read_open_tasks(ctx.org_id, criterion, after, limit + 1)
         return self._page(rows, limit)
+
+    async def count_open_tasks(self, ctx: OpContext, criterion: TaskFilter) -> int:
+        ctx.require(Permission.READ)
+        self._own(ctx, criterion)
+        return await self._storage.count_open_tasks(ctx.org_id, criterion)
 
     async def get_done_tasks(
         self, ctx: OpContext, criterion: TaskFilter, before: TaskCursor | None, limit: int
@@ -195,7 +209,43 @@ class TasksManagerImpl(TasksManagerInterface):
             }
         )
         await self._write(ctx, deleted, expected_version, "deleted")
+        await self._detach_all(ctx, task_id)
         return deleted
+
+    async def attach_file(self, ctx: OpContext, task_id: UUID, file: File) -> File:
+        ctx.require(Permission.WRITE)
+        await self.get_task(ctx, task_id)  # a live task of this tenant, or NotFound
+        attached = file.model_copy(
+            update={"purpose": FilePurpose.TASK_ATTACHMENT, "subject_id": task_id}
+        )
+        return await self._media.create_file(ctx, attached)
+
+    async def get_attachments(
+        self, ctx: OpContext, task_id: UUID, after: UUID | None, limit: int
+    ) -> FilePage:
+        await self.get_task(ctx, task_id)
+        return await self._media.get_files(ctx, FilePurpose.TASK_ATTACHMENT, task_id, after, limit)
+
+    async def remove_attachment(self, ctx: OpContext, task_id: UUID, file_id: UUID) -> File:
+        ctx.require(Permission.WRITE)
+        await self.get_task(ctx, task_id)
+        file = await self._media.get_file(ctx, file_id)
+        if file.purpose is not FilePurpose.TASK_ATTACHMENT or file.subject_id != task_id:
+            raise NotFound(f"file {file_id} is not attached to task {task_id}")
+        return await self._media.delete_file(ctx, file_id)
+
+    async def _detach_all(self, ctx: OpContext, task_id: UUID) -> None:
+        """The attachments go after the task, in writes of their own: the task
+        is another namespace's row, so no commit holds both. The task's delete
+        has committed by now and is the answer; a failure here is logged and
+        counted, never raised, and the files it left stay out of every list,
+        since a deleted task lists nothing, while they still count toward the
+        tenant's usage."""
+        try:
+            await self._media.delete_subject_files(ctx, FilePurpose.TASK_ATTACHMENT, task_id)
+        except Exception:
+            log.exception("the attachments of deleted task %s were left live", task_id)
+            OUTCOMES.labels(subsystem="tasks", outcome="detach_failed").inc()
 
     async def fire_reminder(
         self, ctx: OpContext, task_id: UUID, remind_at: datetime

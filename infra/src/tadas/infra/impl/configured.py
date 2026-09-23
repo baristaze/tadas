@@ -101,6 +101,7 @@ class InfraConfiguredImpl(InfraInterface):
                 region=settings.aws_region,
                 bucket_prefix=settings.s3_bucket_prefix,
                 timeout=aws_timeout,
+                presign_endpoint_url=settings.s3_presign_endpoint_url,
             )
         else:
             self._buckets = BucketsLocalImpl(settings.buckets_root)

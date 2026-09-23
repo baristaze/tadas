@@ -13,6 +13,8 @@ served to it. Exposure is by listing, never by folder.
 - [Decisions](docs/adr/): the architecture decision records, one file per decision
 - [What Tadas is made of](om/README.md): the nouns and how they relate, for a reader with no code
 - [Tenancy](om/src/tadas/om/tenancy/README.md): orgs (every person's one personal org, and the team orgs they make), identities, users, memberships, sessions, API keys, socket tickets, the role ladder, sign-in through the identity provider (a first sign-in is the sign-up; the device sign-in; the local sign-in), invitations, single sign-on, and the switch between orgs
+- [Tasks](om/src/tadas/om/tasks/README.md): the to-do items, the fractional position, the version every write names, and a task's attachments
+- [Files](om/src/tadas/om/media/README.md): files as references, the bounded upload straight to the store, the confirm, the purpose, the storage used, and the sweep
 - [Tasks](om/src/tadas/om/tasks/README.md): the to-do items, the fractional position, the version every write names, and the due time and its one reminder
 - [Slack](om/src/tadas/om/slack/README.md): the one channel an org connects, the one-time link code, and the record of every post
 - [Events](om/src/tadas/om/events/README.md): the org's diary and its gapless sequence
@@ -56,8 +58,10 @@ served to it. Exposure is by listing, never by folder.
 
 - [What Tadas is made of](om/README.md): the nouns and how they relate, for a reader with no code
 - [Tenancy](om/src/tadas/om/tenancy/README.md): orgs (your personal org and the team orgs), people, roles, invitations, single sign-on, and credentials
+- [Tasks](om/src/tadas/om/tasks/README.md): the to-do items and their rules
+- [Files](om/src/tadas/om/media/README.md): the files kept with the work, their bounds, and the storage used
 - [Tasks](om/src/tadas/om/tasks/README.md): the to-do items and their rules, due times among them
-- [Slack](om/src/tadas/om/slack/README.md): connecting a Slack channel, what it posts, and `/tadas add`
+- [Slack](om/src/tadas/om/slack/README.md): connecting a Slack channel, what it posts, `/tadas add`, and `/tadas list`
 - [Events](om/src/tadas/om/events/README.md): the org's diary
 - [Work items](om/src/tadas/om/work/README.md): background jobs
 - [Idempotency records](om/src/tadas/om/idempotency/README.md): why a repeated request does one thing

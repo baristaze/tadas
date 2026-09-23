@@ -72,9 +72,16 @@ screen and in the org's Slack channel.
 
 A **Slack connection** is the one Slack channel an org posts to:
 reminders, new tasks, and finished ones appear there, and
-`/tadas add <title>` typed there adds a task. An owner or an admin
+`/tadas add <title>` typed there adds a task, and `/tadas list` shows
+the first open ones to whoever typed it. An owner or an admin
 connects it with a **link code**, a short code Tadas shows once and
 that works once.
+
+A **file** is something a person keeps with the work: a document, a
+picture, a recording. Tadas keeps a record of the file (its name, its
+type, its size, who uploaded it, and why it is there) and keeps the
+bytes themselves in a separate store, never in the record. A file on a
+task is an **attachment**. The org's files add up to its storage used.
 
 ## What the platform writes for itself
 
@@ -123,7 +130,9 @@ a second task.
   assigned to a user. A task added from Slack is created by the user
   whose code linked the channel.
 - A Slack connection belongs to the org, and a channel to one org.
-- Every change to a task, and every change to a user, a membership, a
+- Files belong to the org. Each is uploaded by a user, for a purpose;
+  an attachment names the task it is on, and goes when the task goes.
+- Every change to a task or a file, and every change to a user, a membership, a
   session, or an API key that the org's screens act on (a member added,
   changed, or removed, a credential revoked), writes an outbox row, which
   becomes an event in the org's diary, which reaches every screen of the
@@ -136,6 +145,7 @@ a second task.
 
 - [Orgs, identities, users, memberships, sessions, API keys, and socket tickets](src/tadas/om/tenancy/README.md)
 - [Tasks](src/tadas/om/tasks/README.md)
+- [Files](src/tadas/om/media/README.md)
 - [Slack connections, link codes, and posts](src/tadas/om/slack/README.md)
 - [Events](src/tadas/om/events/README.md)
 - [Work items](src/tadas/om/work/README.md)

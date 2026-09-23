@@ -5,6 +5,7 @@ from uuid import UUID
 
 from tadas.om.opcontext import OpContext
 from tadas.om.tasks.types.task import TaskScope, TaskStatus
+from tadas.services.api.types.media import AddFileRequest, FilePageView, FileView
 from tadas.services.api.types.tasks import (
     AddTaskRequest,
     MoveTaskRequest,
@@ -49,3 +50,19 @@ class TasksServiceInterface(ABC):
     async def delete_task(self, ctx: OpContext, task_id: UUID, if_match: int | None) -> TaskView:
         """The version as on the update: the `If-Match` header."""
         ...
+
+    @abstractmethod
+    async def attach_file(
+        self, ctx: OpContext, task_id: UUID, body: AddFileRequest, file_id: UUID
+    ) -> FileView:
+        """`file_id` is minted by the gateway before the idempotency marker, as
+        a task's id is on the create."""
+        ...
+
+    @abstractmethod
+    async def get_attachments(
+        self, ctx: OpContext, task_id: UUID, cursor: str | None, limit: int
+    ) -> FilePageView: ...
+
+    @abstractmethod
+    async def remove_attachment(self, ctx: OpContext, task_id: UUID, file_id: UUID) -> FileView: ...

@@ -1,11 +1,21 @@
 """The pure rules: describing a change, the mine filter, short ids."""
 
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
 
-from tadas.apps.cli.model import describe, is_mine, resolve, short_id, task_table
-from tadas.client.types import TaskStatus, TaskView
+from tadas.apps.cli.model import (
+    attachment_table,
+    describe,
+    human_size,
+    is_mine,
+    resolve,
+    resolve_file,
+    short_id,
+    task_table,
+)
+from tadas.client.types import FilePurpose, FileStatus, FileView, TaskStatus, TaskView
 
 ME, BOB = uuid4(), uuid4()
 NAMES = {ME: "Ann", BOB: "Bob"}
@@ -151,6 +161,42 @@ def test_org_lines_sort_by_name_and_mark_the_current_org() -> None:
     assert lines == "  acme    Acme (owner)\n* z-team  Zeta (member)"
     mine = org_lines([membership("ann-1x2y", "Ann", "owner", "personal")], None)
     assert mine == "  ann-1x2y  Ann (owner, personal)"
+
+
+def a_file(name: str, size: int) -> FileView:
+    return FileView(
+        id=uuid4(),
+        name=name,
+        extension=name.rpartition(".")[2],
+        content_type="application/pdf",
+        size_bytes=size,
+        purpose=FilePurpose.task_attachment,
+        subject_id=uuid4(),
+        status=FileStatus.stored,
+        created_at=datetime.now(UTC),
+        created_by=uuid4(),
+        deleted_at=None,
+    )
+
+
+def test_a_size_reads_in_the_unit_a_person_reads() -> None:
+    assert [human_size(n) for n in (0, 1023, 1024, 1536, 25 * 1024 * 1024)] == [
+        "0 B",
+        "1023 B",
+        "1.0 KB",
+        "1.5 KB",
+        "25.0 MB",
+    ]
+
+
+def test_the_attachment_table_and_its_short_ids() -> None:
+    files = [a_file("a.pdf", 10), a_file("b.pdf", 2048)]
+    lines = attachment_table(files).splitlines()
+    assert lines[0].split() == ["ID", "SIZE", "TYPE", "NAME"]
+    assert lines[2].split() == [short_id(files[1].id), "2.0", "KB", "application/pdf", "b.pdf"]
+    assert resolve_file(short_id(files[0].id), files) is files[0]
+    with pytest.raises(LookupError, match="no attachment"):
+        resolve_file("zzzzzzzz", files)
 
 
 def test_a_due_time_is_relative_or_a_date_in_the_terminals_zone() -> None:

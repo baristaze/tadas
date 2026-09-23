@@ -13,6 +13,8 @@ from tadas.om.events.storage import EventStorageInterface
 from tadas.om.events.storage.impl.postgres import EventStoragePostgresImpl
 from tadas.om.idempotency.storage import IdempotencyStorageInterface
 from tadas.om.idempotency.storage.impl.postgres import IdempotencyStoragePostgresImpl
+from tadas.om.media.storage import MediaStorageInterface
+from tadas.om.media.storage.impl.postgres import MediaStoragePostgresImpl
 from tadas.om.outbox.storage import OutboxStorageInterface
 from tadas.om.outbox.storage.impl.postgres import OutboxStoragePostgresImpl
 from tadas.om.slack.storage import SlackStorageInterface
@@ -108,6 +110,7 @@ class StoragePostgresImpl(StorageInterface):
         self._tenancy = TenancyStoragePostgresImpl(sessions)
         self._work = WorkStoragePostgresImpl(sessions)
         self._tasks = TasksStoragePostgresImpl(sessions)
+        self._media = MediaStoragePostgresImpl(sessions)
         self._idempotency = IdempotencyStoragePostgresImpl(sessions)
         self._events = EventStoragePostgresImpl(sessions)
         self._outbox = OutboxStoragePostgresImpl(sessions)
@@ -121,6 +124,9 @@ class StoragePostgresImpl(StorageInterface):
 
     def get_tasks_storage(self) -> TasksStorageInterface:
         return self._tasks
+
+    def get_media_storage(self) -> MediaStorageInterface:
+        return self._media
 
     def get_idempotency_storage(self) -> IdempotencyStorageInterface:
         return self._idempotency

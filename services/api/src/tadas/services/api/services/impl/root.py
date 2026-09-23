@@ -6,6 +6,7 @@ from tadas.om.root import Managers
 from tadas.services.api.services import (
     AdminServiceInterface,
     EventsServiceInterface,
+    MediaServiceInterface,
     RealtimeServiceInterface,
     ServicesInterface,
     SlackServiceInterface,
@@ -14,6 +15,7 @@ from tadas.services.api.services import (
 )
 from tadas.services.api.services.impl.admin import AdminServiceImpl
 from tadas.services.api.services.impl.events import EventsServiceImpl
+from tadas.services.api.services.impl.media import MediaServiceImpl
 from tadas.services.api.services.impl.realtime import RealtimeServiceImpl
 from tadas.services.api.services.impl.slack import SlackServiceImpl
 from tadas.services.api.services.impl.tasks import TasksServiceImpl
@@ -27,6 +29,7 @@ class ServicesImpl(ServicesInterface):
         tenancy: TenancyServiceInterface,
         admin: AdminServiceInterface,
         events: EventsServiceInterface,
+        media: MediaServiceInterface,
         realtime: RealtimeServiceInterface,
         slack: SlackServiceInterface,
     ) -> None:
@@ -34,6 +37,7 @@ class ServicesImpl(ServicesInterface):
         self._tenancy = tenancy
         self._admin = admin
         self._events = events
+        self._media = media
         self._realtime = realtime
         self._slack = slack
 
@@ -48,6 +52,9 @@ class ServicesImpl(ServicesInterface):
 
     def get_events_service(self) -> EventsServiceInterface:
         return self._events
+
+    def get_media_service(self) -> MediaServiceInterface:
+        return self._media
 
     def get_realtime_service(self) -> RealtimeServiceInterface:
         return self._realtime
@@ -64,6 +71,7 @@ def build_services(managers: Managers, infra: InfraInterface) -> ServicesInterfa
         tenancy=TenancyServiceImpl(managers.tenancy),
         admin=AdminServiceImpl(managers.tenancy_operator),
         events=EventsServiceImpl(managers.events),
+        media=MediaServiceImpl(managers.media),
         realtime=RealtimeServiceImpl(managers.tenancy, managers.events, infra.get_topics()),
         slack=SlackServiceImpl(managers.slack),
     )

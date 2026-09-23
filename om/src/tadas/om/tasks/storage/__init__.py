@@ -24,6 +24,13 @@ class TasksStorageInterface(ABC):
         ...
 
     @abstractmethod
+    async def count_open_tasks(self, org_id: UUID, criterion: TaskFilter) -> int:
+        """How many open tasks the filter shows (tasks.rules.is_visible): a
+        number, never the rows, for a caller that shows a page and says how
+        many more there are."""
+        ...
+
+    @abstractmethod
     async def read_done_tasks(
         self, org_id: UUID, criterion: TaskFilter, before: TaskCursor | None, limit: int
     ) -> list[Task]:

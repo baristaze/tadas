@@ -64,6 +64,9 @@ class InfraSettings(BaseSettings):
     buckets_backend: Literal["local", "s3"] = "local"
     buckets_root: Path = Path(".local/buckets")
     s3_endpoint_url: str | None = None
+    # The address a browser reaches the store at, when it is not the one this
+    # process uses: a presigned URL names it. Empty, the two are one.
+    s3_presign_endpoint_url: str | None = None
     s3_access_key: str | None = None
     s3_secret_key: str | None = None
     s3_bucket_prefix: str = "tadas"
@@ -92,6 +95,12 @@ class InfraSettings(BaseSettings):
     log_json: bool = False
     otel_endpoint: str | None = None
     sentry_dsn: str | None = None
+
+    @field_validator("s3_presign_endpoint_url")
+    @classmethod
+    def _presign_endpoint_empty_is_none(cls, value: str | None) -> str | None:
+        """Empty, as `.env.example` leaves it, means the endpoint itself."""
+        return value or None
 
     @field_validator("sentry_dsn")
     @classmethod

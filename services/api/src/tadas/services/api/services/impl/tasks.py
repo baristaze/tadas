@@ -4,13 +4,16 @@ from uuid import UUID
 
 from tadas.om.base import utcnow
 from tadas.om.exceptions import ValidationFailed
+from tadas.om.media.types.file import File, FilePurpose
 from tadas.om.opcontext import OpContext
 from tadas.om.tasks import TasksManagerInterface
 from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor, TaskFilter
 from tadas.om.tasks.types.page import TaskPage
 from tadas.om.tasks.types.task import Task, TaskScope, TaskStatus
+from tadas.services.api.services.impl.media import file_view
 from tadas.services.api.services.tasks import TasksServiceInterface
 from tadas.services.api.types.common import clamp_limit
+from tadas.services.api.types.media import AddFileRequest, FilePageView, FileView
 from tadas.services.api.types.tasks import (
     AddTaskRequest,
     MoveTaskRequest,
@@ -42,6 +45,18 @@ def decode_cursor(status: TaskStatus, cursor: str) -> OpenTaskCursor | TaskCurso
         return TaskCursor(updated_at=datetime.fromisoformat(mark), id=UUID(task_id))
     except ValueError:
         raise ValidationFailed("the cursor is not one this list issued") from None
+
+
+def decode_file_cursor(cursor: str) -> UUID:
+    """An attachment page's cursor is the id the previous page ended on."""
+    try:
+        return UUID(base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4)).decode())
+    except ValueError:
+        raise ValidationFailed("the cursor is not one this list issued") from None
+
+
+def encode_file_cursor(file_id: UUID) -> str:
+    return base64.urlsafe_b64encode(str(file_id).encode()).decode().rstrip("=")
 
 
 def expected_version(named: int | None) -> int:
@@ -126,3 +141,34 @@ class TasksServiceImpl(TasksServiceInterface):
     async def delete_task(self, ctx: OpContext, task_id: UUID, if_match: int | None) -> TaskView:
         expected = expected_version(if_match)
         return TaskView.model_validate(await self._tasks.delete_task(ctx, task_id, expected))
+
+    async def attach_file(
+        self, ctx: OpContext, task_id: UUID, body: AddFileRequest, file_id: UUID
+    ) -> FileView:
+        now = utcnow()
+        file = File(
+            id=file_id,
+            name=body.name,
+            created_at=now,
+            updated_at=now,
+            created_by=ctx.user_id,
+            updated_by=ctx.user_id,
+            content_type=body.content_type,
+            size_bytes=body.size_bytes,
+            purpose=FilePurpose.TASK_ATTACHMENT,
+            subject_id=task_id,
+        )
+        return file_view(await self._tasks.attach_file(ctx, task_id, file))
+
+    async def get_attachments(
+        self, ctx: OpContext, task_id: UUID, cursor: str | None, limit: int
+    ) -> FilePageView:
+        after = decode_file_cursor(cursor) if cursor else None
+        page = await self._tasks.get_attachments(ctx, task_id, after, clamp_limit(limit))
+        return FilePageView(
+            items=[file_view(f) for f in page.items],
+            next_cursor=encode_file_cursor(page.items[-1].id) if page.has_more else None,
+        )
+
+    async def remove_attachment(self, ctx: OpContext, task_id: UUID, file_id: UUID) -> FileView:
+        return file_view(await self._tasks.remove_attachment(ctx, task_id, file_id))

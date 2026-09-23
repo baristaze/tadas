@@ -29,8 +29,10 @@ more process, `slack`, which holds Slack's connection (below).
 - **What Slack sends.** The worker reads the `slack` queue: `/tadas`
   commands, mentions, and the App Home opening, each already
   acknowledged to Slack. `/tadas add` creates a task in the channel's
-  org, `/tadas link` spends a link code, anything else answers with the
-  usage. A delivery that fails stays on the queue and comes back.
+  org, `/tadas list` (or `/tadas` alone) answers the person who typed it
+  with the org's first ten open tasks, a count of the rest, and a link
+  to the portal at `TADAS_PORTAL_URL`, `/tadas link` spends a link code,
+  and anything else answers with the usage. A delivery that fails stays on the queue and comes back.
 - **Renew the lease and fence itself.** While an item runs, the worker
   renews its lease. A renewal refused because the lease was lost
   cancels the running task at once, since another worker holds the
@@ -44,6 +46,8 @@ more process, `slack`, which holds Slack's connection (below).
     default, `requeue_batch`), bounded in the statement; the rest wait
     for the next sweep.
   - **Purge** each namespace's rows past its retention: deleted tasks,
+    removed files and uploads never confirmed (the object in the store
+    first, then the row, a batch of a hundred per org per sweep),
     removed members with their ended memberships, revoked keys, dead
     sessions, spent tickets, finished idempotency records, and settled
     work items. Under an org deleted longer ago than the retention,

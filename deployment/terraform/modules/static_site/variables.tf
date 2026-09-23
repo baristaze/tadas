@@ -19,7 +19,7 @@ variable "bucket_name" {
 }
 
 variable "domain_name" {
-  description = "The site's domain name, e.g. app.tadas.fyi or www.tadas.fyi."
+  description = "The site's domain name, e.g. app.tadas.fyi or tadas.fyi."
   type        = string
 }
 
@@ -32,6 +32,17 @@ variable "api_url" {
   description = "The API's base URL the page calls, e.g. https://api.tadas.fyi; the Content-Security-Policy lets the page reach it over HTTPS and the websocket. Empty for a page that calls no API."
   type        = string
   default     = ""
+}
+
+variable "store_origins" {
+  description = "The object store's origins the page posts a file to and fetches one from, by a URL the API signed. They join connect-src beside the API, and img-src, media-src, and frame-src for a preview. Empty for a page that holds no files."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition     = alltrue([for origin in var.store_origins : can(regex("^https://[^/*]+$", origin))])
+    error_message = "a store origin is https://host, with no path and no wildcard."
+  }
 }
 
 variable "sentry_dsn" {

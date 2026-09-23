@@ -5,7 +5,8 @@ from typing import Any
 from uuid import UUID
 
 import pytest
-from contracts.factories import make_org, make_user
+from contracts.doubles import Members, context, media_of, no_slack
+from contracts.factories import make_org
 from contracts.outbox_storage import claim_all
 
 from tadas.infra.impl.local import InfraLocalImpl
@@ -16,67 +17,16 @@ from tadas.om.events.impl.manager import EventsManagerImpl, EventsOptions
 from tadas.om.events.storage.impl.memory import EventStorageMemoryImpl
 from tadas.om.exceptions import NotAuthorized, NotFound, PreconditionFailed, ValidationFailed
 from tadas.om.opcontext import (
-    AppContext,
-    AppType,
-    CredentialKind,
     OpContext,
-    RequestContext,
     Role,
-    build_context,
 )
 from tadas.om.outbox.impl.relay import OutboxOptions, OutboxRelayImpl
 from tadas.om.outbox.storage.impl.memory import OutboxStorageMemoryImpl
 from tadas.om.outbox.types.row import OutboxRow, outbox_row
-from tadas.om.slack import SlackManagerInterface
-from tadas.om.slack.types.connection import SlackConnection
 from tadas.om.tasks.impl.manager import TasksManagerImpl, TasksOptions
 from tadas.om.tasks.storage.impl.memory import TasksStorageMemoryImpl
 from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor, TaskFilter
 from tadas.om.tasks.types.task import Task, TaskScope, TaskStatus
-from tadas.om.tenancy import TenancyManagerInterface
-from tadas.om.tenancy.types.org import Org
-from tadas.om.tenancy.types.role import permissions_of
-from tadas.om.tenancy.types.user import User
-
-APP = AppContext(type=AppType.PORTAL, version="portal@test")
-
-
-class Members(TenancyManagerInterface):
-    """Just enough tenancy for the assignee check and for the sweep's question:
-    the users of one org, and whether the tenant is past its retention. A
-    partial double: only `get_user` and `tenant_expired` are reached, and any
-    other method fails loudly as unimplemented, so the abstract set is cleared
-    below."""
-
-    def __init__(self) -> None:
-        self.users: dict[UUID, User] = {}
-        self.expired = False
-
-    async def get_user(self, ctx: OpContext, user_id: UUID) -> User:
-        user = self.users.get(user_id)
-        if user is None:
-            raise NotFound(f"user {user_id} not found")
-        return user
-
-    async def tenant_expired(self, ctx: OpContext) -> bool:
-        return self.expired
-
-
-Members.__abstractmethods__ = frozenset()
-
-
-def context(role: Role, org: Org | None = None, members: Members | None = None) -> OpContext:
-    user = make_user(new_id())
-    if members is not None:
-        members.users[user.id] = user
-    return build_context(
-        RequestContext(request_id=new_id(), app=APP),
-        user_id=user.id,
-        org_id=(org or make_org()).id,
-        role=role,
-        permissions=permissions_of(role),
-        credential_kind=CredentialKind.SESSION_TOKEN,
-    )
 
 
 def make_task(ctx: OpContext, title: str = "Ship it", assignee_id: UUID | None = None) -> Task:
@@ -126,22 +76,13 @@ def manager(
 ) -> TasksManagerImpl:
     relay = OutboxRelayImpl(outbox, events_storage, infra.get_topics())
     return TasksManagerImpl(
-        TasksStorageMemoryImpl(outbox), members, relay, no_slack(), TasksOptions()
+        TasksStorageMemoryImpl(outbox),
+        members,
+        media_of(outbox, members, relay, infra),
+        relay,
+        no_slack(),
+        TasksOptions(),
     )
-
-
-class NoSlack(SlackManagerInterface):
-    """A partial double: an org with no Slack channel connected."""
-
-    async def get_connection(self, ctx: OpContext) -> SlackConnection | None:
-        return None
-
-
-NoSlack.__abstractmethods__ = frozenset()
-
-
-def no_slack() -> SlackManagerInterface:
-    return NoSlack()  # pyright: ignore[reportAbstractUsage] (a partial double)
 
 
 def _row(ctx: OpContext, task: Task) -> OutboxRow:
@@ -492,7 +433,9 @@ async def test_a_write_that_lands_between_the_read_and_the_write_is_refused(
     outbox = OutboxStorageMemoryImpl()
     storage = Interleaved(outbox)
     relay = OutboxRelayImpl(outbox, events_storage, infra.get_topics())
-    manager = TasksManagerImpl(storage, members, relay, no_slack(), TasksOptions())
+    manager = TasksManagerImpl(
+        storage, members, media_of(outbox, members, relay, infra), relay, no_slack(), TasksOptions()
+    )
     org = make_org()
     ann, bob = context(Role.MEMBER, org), context(Role.MEMBER, org)
     created = await manager.create_task(ann, make_task(ann))
@@ -512,10 +455,12 @@ async def test_a_write_that_lands_between_the_read_and_the_write_is_refused(
 async def test_lists_are_clamped(infra: InfraLocalImpl, members: Members) -> None:
     outbox = OutboxStorageMemoryImpl()
     events_storage = EventStorageMemoryImpl()
+    relay = OutboxRelayImpl(outbox, events_storage, infra.get_topics())
     manager = TasksManagerImpl(
         TasksStorageMemoryImpl(outbox),
         members,
-        OutboxRelayImpl(outbox, events_storage, infra.get_topics()),
+        media_of(outbox, members, relay, infra),
+        relay,
         no_slack(),
         TasksOptions(max_limit=2),
     )
@@ -580,7 +525,12 @@ async def test_a_failed_relay_leaves_the_row_for_the_sweep(
     outbox = OutboxStorageMemoryImpl()
     relay = OutboxRelayImpl(outbox, events_storage, DownTopics())
     manager = TasksManagerImpl(
-        TasksStorageMemoryImpl(outbox), members, relay, no_slack(), TasksOptions()
+        TasksStorageMemoryImpl(outbox),
+        members,
+        media_of(outbox, members, relay, infra),
+        relay,
+        no_slack(),
+        TasksOptions(),
     )
     ctx = context(Role.MEMBER)
     created = await manager.create_task(ctx, make_task(ctx))
@@ -704,6 +654,7 @@ async def test_the_sweep_purges_only_deleted_tasks_while_the_tenant_lives(
     past = TasksManagerImpl(
         manager._storage,  # type: ignore[attr-defined]
         members,
+        manager._media,  # type: ignore[attr-defined]
         manager._relay,  # type: ignore[attr-defined]
         no_slack(),
         TasksOptions(retention=timedelta(0)),
