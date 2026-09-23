@@ -103,3 +103,27 @@ class TasksStorageMemoryImpl(MemoryStorageBase, TasksStorageInterface):
                     )
             for task, _, outbox_rows in updates:
                 self._put(self._tasks, org_id, task, outbox_rows)
+
+    async def mark_reminded(
+        self,
+        org_id: UUID,
+        task_id: UUID,
+        remind_at: datetime,
+        reminded_at: datetime,
+        outbox_rows: tuple[OutboxRow, ...],
+    ) -> Task | None:
+        async with self._lock:
+            task = self._get(self._tasks, org_id, task_id)
+            if (
+                task is None
+                or task.status != TaskStatus.OPEN
+                or task.deleted_at is not None
+                or task.remind_at != remind_at
+                or task.reminded_at is not None
+            ):
+                return None
+            written = task.model_copy(
+                update={"reminded_at": reminded_at, "version": task.version + 1}
+            )
+            self._put(self._tasks, org_id, written, outbox_rows)
+            return written

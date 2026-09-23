@@ -1,3 +1,4 @@
+from datetime import datetime
 from enum import StrEnum
 from typing import ClassVar
 from uuid import UUID
@@ -18,10 +19,10 @@ class TaskScope(StrEnum):
 
 
 class Task(Identifiable, Trackable, SoftDeletable):
-    MANAGER_OWNED_FIELDS: ClassVar[tuple[str, ...]] = ("position", "version")
+    MANAGER_OWNED_FIELDS: ClassVar[tuple[str, ...]] = ("position", "version", "reminded_at")
     """A place in the open list is set by the create, the move, and the
-    reopen; the version by every write. An update the caller shaped keeps
-    both as stored."""
+    reopen; the version by every write; when the reminder went out by the
+    reminder itself. An update the caller shaped keeps all three as stored."""
 
     title: str
     notes: str = ""
@@ -34,3 +35,10 @@ class Task(Identifiable, Trackable, SoftDeletable):
     # and the write lands only when the stored row still has the version the
     # caller names beside the entity. A caller that names another is stale.
     version: int = 1
+    # When the team wants to hear about the task again. Setting it schedules
+    # one reminder at that time; moving or clearing it leaves the scheduled
+    # one stale, and a stale reminder never goes out.
+    remind_at: datetime | None = None
+    # When the reminder for the current `remind_at` went out; None while it
+    # has not. A new `remind_at` clears it.
+    reminded_at: datetime | None = None

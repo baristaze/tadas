@@ -27,6 +27,8 @@ from tadas.om.opcontext import (
 from tadas.om.outbox.impl.relay import OutboxOptions, OutboxRelayImpl
 from tadas.om.outbox.storage.impl.memory import OutboxStorageMemoryImpl
 from tadas.om.outbox.types.row import OutboxRow, outbox_row
+from tadas.om.slack import SlackManagerInterface
+from tadas.om.slack.types.connection import SlackConnection
 from tadas.om.tasks.impl.manager import TasksManagerImpl, TasksOptions
 from tadas.om.tasks.storage.impl.memory import TasksStorageMemoryImpl
 from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor, TaskFilter
@@ -123,7 +125,23 @@ def manager(
     outbox: OutboxStorageMemoryImpl,
 ) -> TasksManagerImpl:
     relay = OutboxRelayImpl(outbox, events_storage, infra.get_topics())
-    return TasksManagerImpl(TasksStorageMemoryImpl(outbox), members, relay, TasksOptions())
+    return TasksManagerImpl(
+        TasksStorageMemoryImpl(outbox), members, relay, no_slack(), TasksOptions()
+    )
+
+
+class NoSlack(SlackManagerInterface):
+    """A partial double: an org with no Slack channel connected."""
+
+    async def get_connection(self, ctx: OpContext) -> SlackConnection | None:
+        return None
+
+
+NoSlack.__abstractmethods__ = frozenset()
+
+
+def no_slack() -> SlackManagerInterface:
+    return NoSlack()  # pyright: ignore[reportAbstractUsage] (a partial double)
 
 
 def _row(ctx: OpContext, task: Task) -> OutboxRow:
@@ -243,7 +261,7 @@ async def test_update_keeps_the_manager_owned_fields_and_takes_the_callers_versi
     ctx = context(Role.MEMBER)
     first = await manager.create_task(ctx, make_task(ctx, "first"))
     second = await manager.create_task(ctx, make_task(ctx, "second"))
-    assert Task.MANAGER_OWNED_FIELDS == ("position", "version")
+    assert Task.MANAGER_OWNED_FIELDS == ("position", "version", "reminded_at")
     forged = first.model_copy(update={"title": "renamed", "position": -1e9, "version": 99})
     updated = await manager.update_task(ctx, forged, first.version)
     assert updated.title == "renamed"
@@ -474,7 +492,7 @@ async def test_a_write_that_lands_between_the_read_and_the_write_is_refused(
     outbox = OutboxStorageMemoryImpl()
     storage = Interleaved(outbox)
     relay = OutboxRelayImpl(outbox, events_storage, infra.get_topics())
-    manager = TasksManagerImpl(storage, members, relay, TasksOptions())
+    manager = TasksManagerImpl(storage, members, relay, no_slack(), TasksOptions())
     org = make_org()
     ann, bob = context(Role.MEMBER, org), context(Role.MEMBER, org)
     created = await manager.create_task(ann, make_task(ann))
@@ -498,6 +516,7 @@ async def test_lists_are_clamped(infra: InfraLocalImpl, members: Members) -> Non
         TasksStorageMemoryImpl(outbox),
         members,
         OutboxRelayImpl(outbox, events_storage, infra.get_topics()),
+        no_slack(),
         TasksOptions(max_limit=2),
     )
     ctx = context(Role.MEMBER)
@@ -560,7 +579,9 @@ async def test_a_failed_relay_leaves_the_row_for_the_sweep(
 
     outbox = OutboxStorageMemoryImpl()
     relay = OutboxRelayImpl(outbox, events_storage, DownTopics())
-    manager = TasksManagerImpl(TasksStorageMemoryImpl(outbox), members, relay, TasksOptions())
+    manager = TasksManagerImpl(
+        TasksStorageMemoryImpl(outbox), members, relay, no_slack(), TasksOptions()
+    )
     ctx = context(Role.MEMBER)
     created = await manager.create_task(ctx, make_task(ctx))
     assert await manager.get_task(ctx, created.id) == created
@@ -684,6 +705,7 @@ async def test_the_sweep_purges_only_deleted_tasks_while_the_tenant_lives(
         manager._storage,  # type: ignore[attr-defined]
         members,
         manager._relay,  # type: ignore[attr-defined]
+        no_slack(),
         TasksOptions(retention=timedelta(0)),
     )
     assert await past.purge_deleted(ctx) == 1

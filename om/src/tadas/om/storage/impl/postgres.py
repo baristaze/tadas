@@ -15,6 +15,8 @@ from tadas.om.idempotency.storage import IdempotencyStorageInterface
 from tadas.om.idempotency.storage.impl.postgres import IdempotencyStoragePostgresImpl
 from tadas.om.outbox.storage import OutboxStorageInterface
 from tadas.om.outbox.storage.impl.postgres import OutboxStoragePostgresImpl
+from tadas.om.slack.storage import SlackStorageInterface
+from tadas.om.slack.storage.impl.postgres import SlackStoragePostgresImpl
 from tadas.om.storage.impl.pg_base import LoginSessions, SessionFactory
 from tadas.om.storage.roles import DatabaseRole
 from tadas.om.storage.root import StorageInterface
@@ -109,6 +111,7 @@ class StoragePostgresImpl(StorageInterface):
         self._idempotency = IdempotencyStoragePostgresImpl(sessions)
         self._events = EventStoragePostgresImpl(sessions)
         self._outbox = OutboxStoragePostgresImpl(sessions)
+        self._slack = SlackStoragePostgresImpl(sessions)
 
     def get_tenancy_storage(self) -> TenancyStorageInterface:
         return self._tenancy
@@ -127,6 +130,9 @@ class StoragePostgresImpl(StorageInterface):
 
     def get_outbox_storage(self) -> OutboxStorageInterface:
         return self._outbox
+
+    def get_slack_storage(self) -> SlackStorageInterface:
+        return self._slack
 
     async def healthcheck(self) -> bool:
         """A connect and a `SELECT 1` on every engine, each under the bounds its

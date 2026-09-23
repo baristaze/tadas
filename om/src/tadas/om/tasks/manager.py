@@ -1,6 +1,7 @@
 """The tasks swimlane: the to-do items a team creates, works, and closes."""
 
 from abc import ABC, abstractmethod
+from datetime import datetime
 from uuid import UUID
 
 from tadas.om.opcontext import OpContext
@@ -60,6 +61,18 @@ class TasksManagerInterface(ABC):
         """The soft delete. `expected_version` is the one the caller read, as
         on `update_task`: a delete that raced an edit is refused, and an edit
         that raced a delete finds the task gone and cannot bring it back."""
+        ...
+
+    @abstractmethod
+    async def fire_reminder(
+        self, ctx: OpContext, task_id: UUID, remind_at: datetime
+    ) -> Task | None:
+        """The reminder the task's due time scheduled, when it comes due: marks
+        the task reminded and announces it (`tasks.task.reminded`), and asks
+        for the Slack post when the org has a channel connected, all in one
+        write conditioned on the task still being open and due at `remind_at`
+        and not yet reminded. None when it no longer is, which is a reminder
+        gone stale: nothing is written and nothing is announced."""
         ...
 
     @abstractmethod

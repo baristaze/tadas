@@ -1,3 +1,4 @@
+from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import Index
@@ -28,3 +29,5 @@ class Tasks(IdentifiableMixin, TrackableMixin, SoftDeletableMixin, Base):
     # The compare-and-set column. The server default is for a row an older
     # build inserts during a rollout; the object model always sends a value.
     version: Mapped[int] = mapped_column(server_default="1")
+    remind_at: Mapped[datetime | None]
+    reminded_at: Mapped[datetime | None]
