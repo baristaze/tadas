@@ -1,9 +1,31 @@
-// A minimal component kit over the tokens. Components render; nothing here decides.
+// A minimal component kit over the tokens and kit.css. Components render;
+// nothing here decides.
 import type { CSSProperties, ReactNode } from "react";
 import { tokens } from "../tokens";
 
-/** A page: one centered column. `narrow` is the sign-in and sign-up width,
- * a single column of fields; the side padding shrinks with a narrow window. */
+/** The product's mark: a check in the accent square, and the name. */
+export function BrandMark({ size = 28, withName = true }: { size?: number; withName?: boolean }) {
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: tokens.space.sm }}>
+      <svg width={size} height={size} viewBox="0 0 28 28" aria-hidden="true">
+        <rect width="28" height="28" rx="8" fill={tokens.color.accent} />
+        <path
+          d="M8.5 14.5l3.8 3.8 7.2-8.1"
+          fill="none"
+          stroke={tokens.color.accentText}
+          strokeWidth="2.6"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+      {withName ? <span style={{ fontWeight: 650, fontSize: tokens.font.size.lg, letterSpacing: "-0.01em" }}>Tadas</span> : null}
+    </span>
+  );
+}
+
+/** A page: one centered column under the chrome's bar. `narrow` is the
+ * sign-in and sign-up width, a single column of fields under the mark; the
+ * side padding shrinks with a narrow window. */
 export function Page({
   title,
   nav,
@@ -16,50 +38,32 @@ export function Page({
   children: ReactNode;
 }) {
   return (
-    <main
-      style={{
-        minHeight: "100vh",
-        background: tokens.color.bg,
-        color: tokens.color.text,
-        fontFamily: tokens.font.family,
-        fontSize: tokens.font.size.md,
-        padding: `${narrow ? "12vh" : tokens.space.xl} clamp(${tokens.space.md}, 4vw, ${tokens.space.xl})`,
-      }}
-    >
-      <div style={{ maxWidth: narrow ? 400 : 880, margin: "0 auto" }}>
-        {nav}
-        <h1
-          style={{
-            fontSize: tokens.font.size.xl,
-            margin: 0,
-            marginBottom: tokens.space.lg,
-            textAlign: narrow ? "center" : undefined,
-          }}
-        >
-          {title}
-        </h1>
-        {/* minmax(0, 1fr): a row that never wraps shrinks with the column instead of widening it. */}
-        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: tokens.space.lg }}>{children}</div>
-      </div>
-    </main>
+    <div className="tadas-app">
+      {nav ? (
+        <header className="tadas-topbar">
+          <div className="tadas-topbar-inner">{nav}</div>
+        </header>
+      ) : null}
+      <main className="tadas-page" data-narrow={narrow || undefined}>
+        <div className="tadas-column">
+          {narrow ? (
+            <div className="tadas-brand">
+              <BrandMark size={36} withName={false} />
+            </div>
+          ) : null}
+          <h1 className="tadas-title">{title}</h1>
+          {/* minmax(0, 1fr): a row that never wraps shrinks with the column instead of widening it. */}
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: tokens.space.lg }}>{children}</div>
+        </div>
+      </main>
+    </div>
   );
 }
 
 export function Card({ title, children }: { title?: string; children: ReactNode }) {
   return (
-    <section
-      style={{
-        background: tokens.color.surface,
-        border: `1px solid ${tokens.color.border}`,
-        borderRadius: tokens.radius.md,
-        padding: `clamp(${tokens.space.md}, 4vw, ${tokens.space.lg})`,
-      }}
-    >
-      {title ? (
-        <h2 style={{ fontSize: tokens.font.size.lg, margin: 0, marginBottom: tokens.space.md }}>
-          {title}
-        </h2>
-      ) : null}
+    <section className="tadas-card">
+      {title ? <h2 className="tadas-card-title">{title}</h2> : null}
       {children}
     </section>
   );
@@ -80,26 +84,14 @@ export function Button({
   tone?: "accent" | "danger" | "plain";
   wide?: boolean;
 }) {
-  const background =
-    tone === "accent" ? tokens.color.accent : tone === "danger" ? tokens.color.danger : "transparent";
-  const color = tone === "plain" ? tokens.color.text : tokens.color.accentText;
   return (
     <button
       type={type}
       onClick={onClick}
       disabled={disabled}
       className="tadas-button"
-      style={{
-        width: wide ? "100%" : undefined,
-        background,
-        color,
-        border: tone === "plain" ? `1px solid ${tokens.color.border}` : "none",
-        borderRadius: tokens.radius.sm,
-        padding: `${tokens.space.sm} ${tokens.space.md}`,
-        cursor: disabled ? "not-allowed" : "pointer",
-        opacity: disabled ? 0.6 : 1,
-        font: "inherit",
-      }}
+      data-tone={tone}
+      data-wide={wide || undefined}
     >
       {children}
     </button>
@@ -120,20 +112,14 @@ export function TextField({
   autoComplete?: string;
 }) {
   return (
-    <label style={{ display: "grid", gap: tokens.space.xs, fontSize: tokens.font.size.sm }}>
-      <span style={{ color: tokens.color.muted }}>{label}</span>
+    <label className="tadas-label">
+      <span>{label}</span>
       <input
         type={type}
         value={value}
         autoComplete={autoComplete}
         onChange={(event) => onChange(event.target.value)}
-        style={{
-          font: "inherit",
-          fontSize: tokens.font.size.md,
-          padding: tokens.space.sm,
-          border: `1px solid ${tokens.color.border}`,
-          borderRadius: tokens.radius.sm,
-        }}
+        className="tadas-field"
       />
     </label>
   );
@@ -141,16 +127,13 @@ export function TextField({
 
 export function Banner({ children }: { children: ReactNode }) {
   return (
-    <div
-      role="status"
-      style={{
-        background: tokens.color.warningBg,
-        color: tokens.color.warningText,
-        borderRadius: tokens.radius.sm,
-        padding: `${tokens.space.sm} ${tokens.space.md}`,
-      }}
-    >
-      {children}
+    <div role="status" className="tadas-banner">
+      <svg className="tadas-banner-icon" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+        <circle cx="8" cy="8" r="6.75" fill="none" stroke="currentColor" strokeWidth="1.5" />
+        <path d="M8 4.75v3.75" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+        <circle cx="8" cy="11" r="0.9" fill="currentColor" />
+      </svg>
+      <div className="tadas-banner-body">{children}</div>
     </div>
   );
 }
@@ -158,7 +141,7 @@ export function Banner({ children }: { children: ReactNode }) {
 /** What went wrong, in the danger colour, announced to a screen reader. */
 export function ErrorText({ children }: { children: ReactNode }) {
   return (
-    <span role="alert" style={{ color: tokens.color.danger, fontSize: tokens.font.size.sm }}>
+    <span role="alert" className="tadas-error">
       {children}
     </span>
   );
@@ -170,22 +153,11 @@ export function Muted({ children, style }: { children: ReactNode; style?: CSSPro
 
 export function Table({ headers, rows }: { headers: string[]; rows: ReactNode[][] }) {
   return (
-    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: tokens.font.size.sm }}>
+    <table className="tadas-table">
       <thead>
         <tr>
           {headers.map((header) => (
-            <th
-              key={header}
-              style={{
-                textAlign: "left",
-                padding: tokens.space.sm,
-                borderBottom: `1px solid ${tokens.color.border}`,
-                color: tokens.color.muted,
-                fontWeight: 500,
-              }}
-            >
-              {header}
-            </th>
+            <th key={header}>{header}</th>
           ))}
         </tr>
       </thead>
@@ -193,12 +165,7 @@ export function Table({ headers, rows }: { headers: string[]; rows: ReactNode[][
         {rows.map((cells, index) => (
           <tr key={index}>
             {cells.map((cell, cellIndex) => (
-              <td
-                key={cellIndex}
-                style={{ padding: tokens.space.sm, borderBottom: `1px solid ${tokens.color.border}` }}
-              >
-                {cell}
-              </td>
+              <td key={cellIndex}>{cell}</td>
             ))}
           </tr>
         ))}
@@ -217,20 +184,7 @@ export function Pill({
   tone?: "plain" | "accent";
 }) {
   return (
-    <span
-      title={title}
-      style={{
-        display: "inline-block",
-        flexShrink: 0,
-        fontSize: tokens.font.size.sm,
-        color: tone === "accent" ? tokens.color.accent : tokens.color.muted,
-        background: tone === "accent" ? tokens.color.surface : tokens.color.bg,
-        border: `1px solid ${tone === "accent" ? tokens.color.accent : tokens.color.border}`,
-        borderRadius: 999,
-        padding: `0 ${tokens.space.sm}`,
-        whiteSpace: "nowrap",
-      }}
-    >
+    <span title={title} className="tadas-pill" data-tone={tone}>
       {children}
     </span>
   );
@@ -238,20 +192,7 @@ export function Pill({
 
 export function LinkButton({ children, onClick }: { children: ReactNode; onClick: () => void }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      style={{
-        flexShrink: 0,
-        background: "none",
-        border: "none",
-        padding: 0,
-        color: tokens.color.accent,
-        font: "inherit",
-        fontSize: tokens.font.size.sm,
-        cursor: "pointer",
-      }}
-    >
+    <button type="button" onClick={onClick} className="tadas-link">
       {children}
     </button>
   );
@@ -269,16 +210,7 @@ export function SegmentedControl<T extends string>({
   onChange: (value: T) => void;
 }) {
   return (
-    <div
-      role="radiogroup"
-      aria-label={label}
-      style={{
-        display: "inline-flex",
-        border: `1px solid ${tokens.color.border}`,
-        borderRadius: tokens.radius.sm,
-        overflow: "hidden",
-      }}
-    >
+    <div role="radiogroup" aria-label={label} className="tadas-segmented">
       {options.map((option) => {
         const selected = option.value === value;
         return (
@@ -288,15 +220,7 @@ export function SegmentedControl<T extends string>({
             role="radio"
             aria-checked={selected}
             onClick={() => onChange(option.value)}
-            style={{
-              font: "inherit",
-              fontSize: tokens.font.size.sm,
-              padding: `${tokens.space.xs} ${tokens.space.md}`,
-              border: "none",
-              cursor: "pointer",
-              background: selected ? tokens.color.accent : tokens.color.surface,
-              color: selected ? tokens.color.accentText : tokens.color.text,
-            }}
+            className="tadas-segment"
           >
             {option.label}
           </button>
@@ -305,15 +229,6 @@ export function SegmentedControl<T extends string>({
     </div>
   );
 }
-
-const fieldStyle: CSSProperties = {
-  font: "inherit",
-  fontSize: tokens.font.size.md,
-  padding: tokens.space.sm,
-  border: `1px solid ${tokens.color.border}`,
-  borderRadius: tokens.radius.sm,
-  background: tokens.color.surface,
-};
 
 export function TextArea({
   label,
@@ -325,14 +240,9 @@ export function TextArea({
   onChange: (value: string) => void;
 }) {
   return (
-    <label style={{ display: "grid", gap: tokens.space.xs, fontSize: tokens.font.size.sm }}>
-      <span style={{ color: tokens.color.muted }}>{label}</span>
-      <textarea
-        value={value}
-        rows={3}
-        onChange={(event) => onChange(event.target.value)}
-        style={{ ...fieldStyle, resize: "vertical" }}
-      />
+    <label className="tadas-label">
+      <span>{label}</span>
+      <textarea value={value} rows={3} onChange={(event) => onChange(event.target.value)} className="tadas-field" />
     </label>
   );
 }
@@ -349,9 +259,9 @@ export function Select({
   onChange: (value: string) => void;
 }) {
   return (
-    <label style={{ display: "grid", gap: tokens.space.xs, fontSize: tokens.font.size.sm }}>
-      <span style={{ color: tokens.color.muted }}>{label}</span>
-      <select value={value} onChange={(event) => onChange(event.target.value)} style={fieldStyle}>
+    <label className="tadas-label">
+      <span>{label}</span>
+      <select value={value} onChange={(event) => onChange(event.target.value)} className="tadas-field">
         {options.map((option) => (
           <option key={option.value} value={option.value}>
             {option.label}
@@ -359,5 +269,22 @@ export function Select({
         ))}
       </select>
     </label>
+  );
+}
+
+/** A square button that shows an icon; the label is what a screen reader says. */
+export function IconButton({
+  label,
+  onClick,
+  children,
+}: {
+  label: string;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button type="button" aria-label={label} title={label} onClick={onClick} className="tadas-icon-button">
+      {children}
+    </button>
   );
 }
