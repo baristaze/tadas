@@ -116,7 +116,7 @@ export function TextField({
   label: string;
   value: string;
   onChange: (value: string) => void;
-  type?: "text" | "email" | "password";
+  type?: "text" | "email" | "password" | "datetime-local";
   autoComplete?: string;
 }) {
   return (
@@ -214,8 +214,9 @@ export function Pill({
 }: {
   children: ReactNode;
   title?: string;
-  tone?: "plain" | "accent";
+  tone?: "plain" | "accent" | "danger";
 }) {
+  const edge = tone === "accent" ? tokens.color.accent : tone === "danger" ? tokens.color.danger : null;
   return (
     <span
       title={title}
@@ -223,9 +224,9 @@ export function Pill({
         display: "inline-block",
         flexShrink: 0,
         fontSize: tokens.font.size.sm,
-        color: tone === "accent" ? tokens.color.accent : tokens.color.muted,
-        background: tone === "accent" ? tokens.color.surface : tokens.color.bg,
-        border: `1px solid ${tone === "accent" ? tokens.color.accent : tokens.color.border}`,
+        color: edge ?? tokens.color.muted,
+        background: edge ? tokens.color.surface : tokens.color.bg,
+        border: `1px solid ${edge ?? tokens.color.border}`,
         borderRadius: 999,
         padding: `0 ${tokens.space.sm}`,
         whiteSpace: "nowrap",

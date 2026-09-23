@@ -5,7 +5,15 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, createElement, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { ApiError, type ApiKeyPageView, type ApiKeyView, type MeView, type UserPageView } from "../../api";
+import {
+  ApiError,
+  type ApiKeyPageView,
+  type ApiKeyView,
+  type MeView,
+  type SlackConnectionView,
+  type SlackStatusView,
+  type UserPageView,
+} from "../../api";
 import { useNoticesStore } from "../../store/notices";
 import { useSettingsVm, type SettingsVm } from "./useSettingsVm";
 
@@ -88,6 +96,7 @@ beforeEach(() => {
     items: [keyOf("k1", "first"), keyOf("k2", "second")],
     next_cursor: null,
   } satisfies ApiKeyPageView);
+  net.reads.set("/v1/slack/connection", { connection: null } satisfies SlackStatusView);
   useNoticesStore.setState({ notices: [] });
 });
 
@@ -119,4 +128,57 @@ it("says a created key whose secret was lost, instead of showing nothing", async
   expect(useNoticesStore.getState().notices.map((n) => n.message)).toEqual([
     'The key "ci" was created, but its secret was lost on the way back; revoke it and create another.',
   ]);
+});
+
+const linked: SlackConnectionView = {
+  id: "c1",
+  team_id: "T1",
+  channel_id: "C0123",
+  status: "ok",
+  broken_reason: null,
+  created_by: "u1",
+  created_at: "2026-09-22T10:00:00Z",
+  updated_at: "2026-09-22T10:00:00Z",
+};
+
+it("shows a member the Slack state and nothing to act on", async () => {
+  net.reads.set("/v1/me", { ...me, role: "member", permissions: ["read", "write"] });
+  net.reads.set("/v1/slack/connection", { connection: linked } satisfies SlackStatusView);
+  await mount();
+  for (let turn = 0; turn < 20 && vm().slack.loading; turn += 1) await tick();
+  expect(vm().slack.summary.line).toBe("Connected to channel C0123.");
+  expect(vm().slack.canManage).toBe(false);
+});
+
+it("issues a code for an owner and says a refusal", async () => {
+  net.reads.set("/v1/me", { ...me, permissions: [...me.permissions, "manage_members"] });
+  await mount();
+  for (let turn = 0; turn < 20 && vm().slack.loading; turn += 1) await tick();
+  expect(vm().slack.canManage).toBe(true);
+  expect(vm().slack.summary.connectLabel).toBe("Connect Slack");
+  await act(async () => void vm().slack.connect());
+  expect(net.writes.map((w) => w.path)).toEqual(["/v1/slack/link-codes"]);
+  await act(async () => net.writes[0]!.resolve({ code: "ABCD-EFGH", expires_at: "2026-09-22T10:10:00Z" }));
+  expect(vm().slack.code?.command).toBe("/tadas link ABCD-EFGH");
+
+  // A second ask the server refuses is said, and the code in hand stays.
+  await act(async () => void vm().slack.connect());
+  await act(async () => net.writes[1]!.reject(new ApiError(403, "forbidden", "only an owner or an admin may link Slack", "req-2")));
+  expect(useNoticesStore.getState().notices.map((n) => n.message)).toEqual([
+    "Only an owner or an admin may link Slack.",
+  ]);
+  expect(vm().slack.code?.command).toBe("/tadas link ABCD-EFGH");
+});
+
+it("disconnects and says the channel is gone", async () => {
+  net.reads.set("/v1/me", { ...me, permissions: [...me.permissions, "manage_members"] });
+  net.reads.set("/v1/slack/connection", { connection: linked } satisfies SlackStatusView);
+  await mount();
+  for (let turn = 0; turn < 20 && vm().slack.loading; turn += 1) await tick();
+  expect(vm().slack.connected).toBe(true);
+  await act(async () => void vm().slack.disconnect());
+  expect(net.writes.map((w) => w.path)).toEqual(["/v1/slack/connection"]);
+  await act(async () => net.writes[0]!.resolve({ connection: null }));
+  expect(vm().slack.connected).toBe(false);
+  expect(vm().slack.summary.line).toBe("Not connected.");
 });

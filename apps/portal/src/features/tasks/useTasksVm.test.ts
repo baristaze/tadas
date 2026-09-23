@@ -65,6 +65,8 @@ const taskOf = (id: string, title: string): TaskView => ({
   version: 1,
   created_by: "u1",
   deleted_at: null,
+  remind_at: null,
+  reminded_at: null,
   created_at: "2026-09-20T10:00:00Z",
   updated_at: "2026-09-20T10:00:00Z",
 });
@@ -161,4 +163,46 @@ it("says the first delete was refused even after a second delete started", async
     net.writes[1]!.resolve({ ...beta, deleted_at: "2026-09-20T10:02:00Z" });
   });
   expect(vm().error).toBe(STALE_MESSAGE);
+});
+
+it("sends a due time only when the edit names one, and null to clear it", async () => {
+  await mount();
+  const base = { version: 1, title: "Alpha", notes: "", assigneeId: null };
+  await act(async () => void vm().save(alpha, base));
+  expect(net.writes[0]!.body).not.toHaveProperty("remind_at");
+  await act(async () => void net.writes[0]!.resolve({ ...alpha, version: 2 }));
+  await act(async () => void vm().save(alpha, { ...base, version: 2, remindAt: "2026-09-23T09:00:00+02:00" }));
+  expect(net.writes[1]!.body).toMatchObject({ remind_at: "2026-09-23T09:00:00+02:00" });
+  expect(net.writes[1]!.ifMatch).toBe(2);
+  await act(async () => void net.writes[1]!.resolve({ ...alpha, version: 3 }));
+  await act(async () => void vm().save(alpha, { ...base, version: 3, remindAt: null }));
+  expect(net.writes[2]!.body).toMatchObject({ remind_at: null });
+  await act(async () => void net.writes[2]!.resolve({ ...alpha, version: 4 }));
+});
+
+it("says a due time edit was refused when the task changed since", async () => {
+  await mount();
+  await act(async () =>
+    void vm().save(alpha, { version: 1, title: "Alpha", notes: "", assigneeId: null, remindAt: null }),
+  );
+  await act(async () => void net.writes[0]!.reject(refused()));
+  expect(vm().error).toMatch(/changed while you were editing/);
+});
+
+it("adds a task with the due time the add form holds, and without one when it is empty", async () => {
+  await mount();
+  await act(async () => {
+    vm().setTitle("Call the bank");
+    vm().setDue("2026-09-23T09:00");
+  });
+  await act(async () => void vm().add());
+  const body = net.writes[0]!.body as { title: string; remind_at?: string };
+  expect(body.title).toBe("Call the bank");
+  expect(body.remind_at).toMatch(/^2026-09-23T09:00:00[+-]\d{2}:\d{2}$/);
+  expect(vm().due).toBe("");
+  await act(async () => void net.writes[0]!.resolve({ ...taskOf("t3", "Call the bank"), remind_at: body.remind_at }));
+  await act(async () => vm().setTitle("No due time"));
+  await act(async () => void vm().add());
+  expect(net.writes[1]!.body).not.toHaveProperty("remind_at");
+  await act(async () => void net.writes[1]!.resolve(taskOf("t4", "No due time")));
 });
