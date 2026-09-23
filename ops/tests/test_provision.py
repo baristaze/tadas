@@ -64,7 +64,13 @@ class OperatorPlane:
                 return httpx.Response(409, json={"error": {"code": "conflict", "message": "taken"}})
             org_id = str(uuid4())
             self.orgs[org_id] = body["slug"]
-            org = {"id": org_id, "name": body["name"], "slug": body["slug"], "created_at": NOW}
+            org = {
+                "id": org_id,
+                "name": body["name"],
+                "slug": body["slug"],
+                "kind": "team",
+                "created_at": NOW,
+            }
             return httpx.Response(201, json={**org, "deleted_at": None})
         if method == "POST" and path.endswith("/members"):
             user = {
@@ -84,6 +90,7 @@ class OperatorPlane:
                     "id": org_id,
                     "name": slug,
                     "slug": slug,
+                    "kind": "team",
                     "created_at": NOW,
                     "deleted_at": NOW,
                 },

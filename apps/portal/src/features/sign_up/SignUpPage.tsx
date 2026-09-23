@@ -23,8 +23,10 @@ export function SignUpPage() {
             onChange={vm.setPassword}
             autoComplete="new-password"
           />
-          <TextField label="Organization" value={vm.orgName} onChange={vm.setOrgName} autoComplete="organization" />
-          <TextField label="Short name (in links and the command line)" value={vm.orgSlug} onChange={vm.setOrgSlug} />
+          <Muted style={{ fontSize: tokens.font.size.sm }}>
+            You start in a personal organization of your own. Create one for a team any time from the
+            organization menu.
+          </Muted>
           {vm.error ? (
             <ErrorText>
               {vm.error} {vm.offerSignIn ? <LinkButton onClick={vm.goToSignIn}>Sign in</LinkButton> : null}

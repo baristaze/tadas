@@ -51,17 +51,22 @@ Zustand, one realtime channel.
   ping interval comes from
   `deployment/realtime-timeouts.json`.
 - One tenant at a time. A person enters through sign-in (`/sign-in`) or
-  sign-up (`/sign-up`: email, name, password, the org and its short
-  name), and both answer with the person's places: one goes straight in,
-  several show a picker, none says so. The exchange turns the choice into
+  sign-up (`/sign-up`: email, name, password; nothing about an org, since
+  the person's personal org comes with them), and both answer with the
+  person's places: one goes straight in, several show a picker with the
+  personal org first, none says so. The exchange turns the choice into
   the one session the tab holds. The org chip in the chrome
-  (`src/app/OrgChip.tsx`) shows the current org and, with more than one
-  place, opens the list and switches: the exchange is presented with the
-  current session, which the server ends in the same write, and
-  `adoptSession` then drops the old tenant (`forgetSession`: the token
-  and every cached answer) before the new session is set. The token
-  change reopens the realtime socket; a late 4401 from the old socket
-  signs nothing out, since it belongs to a token the tab no longer holds.
+  (`src/app/OrgChip.tsx`) shows the current org, marks a personal one,
+  and opens a menu: the other places to switch to, and a new team org
+  (`/orgs/new`, `src/features/new_org/`: a name and an optional short
+  name, which the server makes from the name when it is left empty). A
+  switch presents the current session to the exchange, which the server
+  ends in the same write, and `adoptSession` then drops the old tenant
+  (`forgetSession`: the token and every cached answer) before the new
+  session is set. A new team org is created under an idempotency key and
+  then switched into the same way. The token change reopens the realtime
+  socket; a late 4401 from the old socket signs nothing out, since it
+  belongs to a token the tab no longer holds.
 - Design tokens and the kit live in `src/design/`; the operator console,
   when it is built (ADR 0010), imports them from here. A colour or a
   shadow token is a CSS custom property, and `theme.css` gives each its

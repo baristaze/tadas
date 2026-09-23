@@ -7,6 +7,7 @@ import base64
 import hashlib
 import hmac
 import re
+import unicodedata
 from datetime import datetime, timedelta
 from urllib.parse import quote
 from uuid import UUID
@@ -157,22 +158,30 @@ MIN_PASSWORD_LENGTH = 8
 password set before this rule, or by the seeding, still signs in."""
 
 MAX_SLUG_LENGTH = 48
-"""The longest slug a sign-up accepts."""
+"""The longest slug an org may have."""
 
 SLUG_PATTERN = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
-"""A sign-up's slug: lower-case letters and digits in runs joined by single hyphens."""
+"""A slug: lower-case letters and digits in runs joined by single hyphens."""
+
+SLUG_SUFFIX_LENGTH = 8
+"""The random tail of a slug nobody typed: eight of the 36 lower-case letters
+and digits, so two orgs of one name part on it and never on a retry."""
+
+PERSONAL_ORG_NAME = "Personal"
+"""The name of a personal org whose person gave no name."""
 
 
-def check_sign_up(email: str, password: str, display_name: str, org_name: str, slug: str) -> None:
-    """The shape of a sign-up, refused with ValueError naming the field. There
-    is no email verification: an address with one `@` and a dot after it is
-    the whole check, a choice and not an oversight (the sign-up is the door a
-    deployed environment has, and a demo needs no mailbox). It has two costs,
-    both accepted: a held address answers as a conflict, so anyone can tell
-    which addresses have an account, and anyone can sign up with an address
-    that is not theirs. And with no verified address there is no account
-    recovery by mail: an operator resets a forgotten password, and the reset
-    is audited."""
+def check_sign_up(email: str, password: str, display_name: str) -> None:
+    """The shape of a sign-up, refused with ValueError naming the field. A
+    sign-up asks nothing about an org: the person's personal org is made with
+    them, named and slugged for them. There is no email verification: an
+    address with one `@` and a dot after it is the whole check, a choice and
+    not an oversight (the sign-up is the door a deployed environment has, and
+    a demo needs no mailbox). It has two costs, both accepted: a held address
+    answers as a conflict, so anyone can tell which addresses have an
+    account, and anyone can sign up with an address that is not theirs. And
+    with no verified address there is no account recovery by mail: an
+    operator resets a forgotten password, and the reset is audited."""
     check_email(email)
     if is_platform_email(email):
         raise ValueError("that address belongs to the platform")
@@ -180,13 +189,35 @@ def check_sign_up(email: str, password: str, display_name: str, org_name: str, s
         raise ValueError(f"a password has at least {MIN_PASSWORD_LENGTH} characters")
     if not display_name.strip():
         raise ValueError("a display name is required")
-    if not org_name.strip():
+
+
+def check_org(name: str, slug: str | None) -> None:
+    """The shape of a new team org, refused with ValueError naming the field:
+    a name, and a slug when the person typed one."""
+    if not name.strip():
         raise ValueError("an organization name is required")
-    if len(slug) > MAX_SLUG_LENGTH or not SLUG_PATTERN.fullmatch(slug):
+    if slug is not None and (len(slug) > MAX_SLUG_LENGTH or not SLUG_PATTERN.fullmatch(slug)):
         raise ValueError(
             f"a slug is lower-case letters and digits joined by hyphens, "
             f"at most {MAX_SLUG_LENGTH} characters"
         )
+
+
+def personal_org_name(display_name: str) -> str:
+    """A personal org is named after its person, or "Personal" when the
+    person gave no name."""
+    return display_name.strip() or PERSONAL_ORG_NAME
+
+
+def slug_from_name(name: str, suffix: str) -> str:
+    """The slug an org gets when nobody typed one: the name in lower-case
+    ASCII letters and digits, every other run one hyphen, cut to leave room,
+    then the random `suffix`. A name with nothing to keep gives "org". The
+    portal suggests the same stem for a name the person types."""
+    folded = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode().lower()
+    stem = re.sub(r"[^a-z0-9]+", "-", folded).strip("-")
+    stem = stem[: MAX_SLUG_LENGTH - len(suffix) - 1].rstrip("-") or "org"
+    return f"{stem}-{suffix}"
 
 
 def role_at_most(requested: Role, ceiling: Role) -> bool:

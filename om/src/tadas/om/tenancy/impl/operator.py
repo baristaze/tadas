@@ -11,7 +11,13 @@ from tadas.infra.observability import current_traceparent
 from tadas.om.base import EMPTY_UUID, Platform, new_id, utcnow
 from tadas.om.events.storage import EventStorageInterface
 from tadas.om.events.types.event import Event
-from tadas.om.exceptions import Conflict, NotAuthorized, NotFound, ValidationFailed
+from tadas.om.exceptions import (
+    Conflict,
+    NotAuthorized,
+    NotFound,
+    PersonalOrgFixed,
+    ValidationFailed,
+)
 from tadas.om.idempotency.types.attempt import Attempt
 from tadas.om.opcontext import (
     CredentialKind,
@@ -341,6 +347,8 @@ class TenancyOperatorManagerImpl(TenancyOperatorManagerInterface):
         org = await self._storage.read_org(org_id)
         if org is None or org.deleted_at is not None:
             raise NotFound(f"org {org_id} not found")
+        if org.personal:
+            raise PersonalOrgFixed("a personal org is not deleted; it is its person's place")
         now = utcnow()
         deleted = org.model_copy(
             update={

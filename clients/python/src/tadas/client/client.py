@@ -322,22 +322,14 @@ class ApiClient:
 
     # Tenancy
 
-    async def sign_up(
-        self, email: str, password: str, display_name: str, org_name: str, org_slug: str
-    ) -> IssuedLoginView:
-        """A new person and their first org; answered as a sign-in is. Sent
-        once: it carries no idempotency key, and a retry would meet the email
-        the first attempt took."""
+    async def sign_up(self, email: str, password: str, display_name: str) -> IssuedLoginView:
+        """A new person, who comes with their personal org; answered as a
+        sign-in is. Sent once: it carries no idempotency key, and a retry would
+        meet the email the first attempt took."""
         body = await self.request(
             "POST",
             "/v1/auth/signup",
-            json={
-                "email": email,
-                "password": password,
-                "display_name": display_name,
-                "org_name": org_name,
-                "org_slug": org_slug,
-            },
+            json={"email": email, "password": password, "display_name": display_name},
             token=None,
         )
         return IssuedLoginView.model_validate(body)
@@ -353,6 +345,20 @@ class ApiClient:
             "POST", "/v1/auth/sessions", json={"org_id": str(org_id)}, token=login_token
         )
         return IssuedSessionView.model_validate(body)
+
+    async def create_org(
+        self, name: str, slug: str | None = None, *, idempotency_key: str | None = None
+    ) -> MembershipChoiceView:
+        """A team org the signed-in person makes and owns; the answer is their
+        place in it, which `switch` takes. A creating call, so it always
+        carries an idempotency key."""
+        body: dict[str, object] = {"name": name}
+        if slug is not None:
+            body["slug"] = slug
+        answer = await self.request(
+            "POST", "/v1/orgs", json=body, idempotency_key=idempotency_key or str(uuid4())
+        )
+        return MembershipChoiceView.model_validate(answer)
 
     async def memberships(
         self, *, cursor: str | None = None, limit: int = LIMIT_MAX

@@ -1,4 +1,5 @@
 import { createBrowserRouter, Outlet } from "react-router-dom";
+import { NewOrgPage } from "../features/new_org/NewOrgPage";
 import { SettingsPage } from "../features/settings/SettingsPage";
 import { SignInPage } from "../features/sign_in/SignInPage";
 import { SignUpPage } from "../features/sign_up/SignUpPage";
@@ -26,6 +27,7 @@ export const router = createBrowserRouter([
     children: [
       { path: "/", element: <TasksPage /> },
       { path: "/settings", element: <SettingsPage /> },
+      { path: "/orgs/new", element: <NewOrgPage /> },
     ],
   },
 ]);

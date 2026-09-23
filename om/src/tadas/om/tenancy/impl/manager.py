@@ -17,6 +17,7 @@ from tadas.om.exceptions import (
     NotAnOperator,
     NotAuthorized,
     NotFound,
+    PersonalOrgFixed,
     SecondFactorRequired,
     SignInDelayed,
     UniqueKeyTaken,
@@ -41,8 +42,11 @@ from tadas.om.tenancy.impl.creates import (
     MAX_ORGS_PER_IDENTITY,
     add_member_to,
     create_org_with_owner,
+    create_person,
     new_identity,
     owner_rows,
+    refuse_one_more,
+    slug_suffix,
     user_payload,
     users_of,
 )
@@ -54,6 +58,7 @@ from tadas.om.tenancy.rules import (
     MAX_OPERATOR_TOKEN_TTL,
     PREFIX_FOR_KIND,
     capped_role,
+    check_org,
     check_sign_up,
     credential_kind_of,
     email_digest,
@@ -63,6 +68,7 @@ from tadas.om.tenancy.rules import (
     matching_totp_step,
     role_at_most,
     sign_in_delay,
+    slug_from_name,
     verify_password,
 )
 from tadas.om.tenancy.storage import TenancyStorageInterface
@@ -278,38 +284,25 @@ class TenancyManagerImpl(TenancyManagerInterface):
         return ctx, user, created
 
     async def sign_up(
-        self,
-        rctx: RequestContext,
-        email: str,
-        password: str,
-        display_name: str,
-        org_name: str,
-        org_slug: str,
+        self, rctx: RequestContext, email: str, password: str, display_name: str
     ) -> IssuedLogin:
         try:
-            check_sign_up(email, password, display_name, org_name, org_slug)
+            check_sign_up(email, password, display_name)
         except ValueError as error:
             raise ValidationFailed(str(error)) from None
         if await self._storage.read_identity_by_email_digest(email_digest(email)) is not None:
             raise Conflict("an account with this email exists; sign in instead")
-        if await self._storage.read_org_by_slug(org_slug) is not None:
-            raise Conflict(f"org slug {org_slug!r} is taken")
         # scrypt runs off the event loop, as a sign-in's check does.
         password_hash = await asyncio.to_thread(hash_password, password, secrets.token_bytes(16))
-        now = utcnow()
         # Always a new identity, never the one an email already names: a
         # sign-up that raced another for the email meets the unique key and
-        # lands nothing, instead of adding an org to someone else's identity.
-        identity = new_identity(email, password_hash, now)
-        org, user, membership = owner_rows(
-            new_id(), org_name.strip(), org_slug, identity, display_name.strip(), now
-        )
-        # One commit: the identity, the org, the owner's user, and the owner's
-        # membership. A key taken meanwhile (the email, the slug) is
+        # lands nothing, instead of adding a place to someone else's identity.
+        identity = new_identity(email, password_hash, utcnow())
+        # One commit: the identity, the personal org, the person's user in
+        # it, and the owner membership. An email taken meanwhile is
         # UniqueKeyTaken, a Conflict, and nothing lands.
-        await self._storage.create_org_with_owner(org.id, org, user, membership, identity)
-        owner = OrgMembership(org=org, user=user, role=membership.role)
-        return await self._issue_login(identity, (owner,))
+        personal = await create_person(self._storage, identity, display_name)
+        return await self._issue_login(identity, (personal,))
 
     async def login(
         self, rctx: RequestContext, email: str, password: str, totp_code: str | None = None
@@ -351,8 +344,29 @@ class TenancyManagerImpl(TenancyManagerInterface):
             second_factor_at = now
         if run is not None:
             await self._storage.clear_failed_sign_ins(digest)
-        memberships = await self._memberships_of(identity.id)
+        memberships = await self._with_personal(identity, await self._memberships_of(identity.id))
         return await self._issue_login(identity, memberships, second_factor_at)
+
+    async def _with_personal(
+        self, identity: Identity, memberships: tuple[OrgMembership, ...]
+    ) -> tuple[OrgMembership, ...]:
+        """The places a sign-in answers with, the personal org among them. A
+        person the release before this one made has none yet, whether the
+        backfill ran before it or not, so the sign-in makes it: every person
+        who signs in has a place to work. Two sign-ins that race to make it
+        meet the unique key, and the loser reads the winner's."""
+        if any(m.org.personal for m in memberships):
+            return memberships
+        if len(memberships) >= self._options.max_orgs_per_identity:
+            # A place past the bound would make every read of this person's
+            # places refuse; a person at the bound has places to work.
+            return memberships
+        name = memberships[0].user.display_name if memberships else ""
+        try:
+            await create_person(self._storage, identity, name, new=False)
+        except UniqueKeyTaken:
+            pass
+        return await self._memberships_of(identity.id)
 
     async def _second_factor_holds(self, identity: Identity, code: str) -> bool:
         """The code matches the identity's enrolled secret in the window around
@@ -755,6 +769,42 @@ class TenancyManagerImpl(TenancyManagerInterface):
             raise NotFound(f"org {ctx.org_id} not found")
         return org
 
+    async def create_org(
+        self, ctx: OpContext, name: str, slug: str | None, attempt: Attempt | None = None
+    ) -> OrgMembership:
+        ctx.require(Permission.READ)
+        # A person makes an org, not a program: an api key belongs to the
+        # tenant it was minted in, and a new tenant is not its to make.
+        if ctx.security.credential_kind is not CredentialKind.SESSION_TOKEN:
+            raise NotAuthorized("only a signed-in person creates an org")
+        try:
+            check_org(name, slug)
+        except ValueError as error:
+            raise ValidationFailed(str(error)) from None
+        user = await self._live_user(ctx, ctx.user_id)
+        identity = await self._storage.read_identity(user.identity_id)
+        if identity is None:
+            raise InvalidCredential("the identity is gone")
+        org_id = new_id() if attempt is None else attempt.target_id
+        if attempt is not None and await self._storage.read_org(org_id) is not None:
+            # The rerun of a create that landed: the place as it stands.
+            org, owner, membership = await self._principal_in(org_id, identity.id)
+            return OrgMembership(org=org, user=owner, role=membership.role)
+        name = name.strip()
+        slug = slug or slug_from_name(name, slug_suffix())
+        if await self._storage.read_org_by_slug(slug) is not None:
+            raise Conflict(f"org slug {slug!r} is taken")
+        most = self._options.max_orgs_per_identity
+        refuse_one_more(identity.id, await users_of(self._storage, identity.id, most), most)
+        # The person's name in the new org is the one they carry here.
+        org, owner, membership = owner_rows(
+            org_id, name, slug, identity, user.display_name, utcnow()
+        )
+        # One commit, as every create of a tenant: a slug taken meanwhile is
+        # UniqueKeyTaken, a Conflict, and nothing lands.
+        await self._storage.create_org_with_owner(org.id, org, owner, membership)
+        return OrgMembership(org=org, user=owner, role=membership.role)
+
     async def get_identity(self, ctx: OpContext) -> Identity:
         ctx.require(Permission.READ)
         user = await self._live_user(ctx, ctx.user_id)
@@ -812,6 +862,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
         if user_id == ctx.user_id:
             raise ValidationFailed("a member cannot change their own role")
         membership = await self._live_membership(ctx, user_id)
+        await self._refuse_personal_owner(ctx, user_id, "keeps its owner")
         if not role_at_most(membership.role, ctx.security.role):
             raise NotAuthorized("cannot change the role of a member above your own")
         if not role_at_most(role, ctx.security.role):
@@ -832,6 +883,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
             raise ValidationFailed("a member cannot remove themselves")
         membership = await self._live_membership(ctx, user_id)
         user = await self._live_user(ctx, user_id)
+        await self._refuse_personal_owner(ctx, user_id, "keeps its owner")
         if not role_at_most(membership.role, ctx.security.role):
             raise NotAuthorized("cannot remove a member above your own role")
         now = utcnow()
@@ -1111,6 +1163,17 @@ class TenancyManagerImpl(TenancyManagerInterface):
         if membership is None or membership.deleted_at is not None:
             raise NotFound(f"membership of user {user_id} not found")
         return membership
+
+    async def _refuse_personal_owner(self, ctx: OpContext, user_id: UUID, rule: str) -> None:
+        """A personal org belongs to its person for good: nobody removes them
+        from it or changes their role, so it never changes hands. Anyone else
+        in it is an ordinary member."""
+        org = await self._storage.read_org(ctx.org_id)
+        if org is None or not org.personal:
+            return
+        user = await self._live_user(ctx, user_id)
+        if user.identity_id == org.personal_identity_id:
+            raise PersonalOrgFixed(f"a personal org {rule}")
 
     async def _principal(self, org_id: UUID, user_id: UUID) -> tuple[Org, User, Membership]:
         org = await self._storage.read_org(org_id)

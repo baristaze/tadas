@@ -4,6 +4,8 @@ import type { components } from "./schema";
 type Schemas = components["schemas"];
 
 export type OrgView = Schemas["OrgView"];
+export type OrgKind = Schemas["OrgKind"];
+export type CreateTeamOrgRequest = Schemas["CreateTeamOrgRequest"];
 export type UserView = Schemas["UserView"];
 export type UserPageView = Schemas["UserPageView"];
 export type MeView = Schemas["MeView"];

@@ -24,6 +24,7 @@ from tadas.om.exceptions import (
     NotAnOperator,
     NotAuthorized,
     NotFound,
+    PersonalOrgFixed,
     SecondFactorRequired,
     SignInDelayed,
     Unavailable,
@@ -54,6 +55,7 @@ from tadas.om.tenancy.impl.manager import TenancyManagerImpl, TenancyOptions
 from tadas.om.tenancy.impl.operator import TenancyOperatorManagerImpl, TenancyOperatorOptions
 from tadas.om.tenancy.rules import (
     DUMMY_PASSWORD_HASH,
+    SLUG_PATTERN,
     email_digest,
     hash_password,
     hash_token,
@@ -61,13 +63,19 @@ from tadas.om.tenancy.rules import (
 )
 from tadas.om.tenancy.storage.impl.memory import TenancyStorageMemoryImpl
 from tadas.om.tenancy.types.identity import Identity
+from tadas.om.tenancy.types.issued import OrgMembership
 from tadas.om.tenancy.types.membership import Membership
-from tadas.om.tenancy.types.org import Org
+from tadas.om.tenancy.types.org import Org, OrgKind
 from tadas.om.tenancy.types.role import operator_permissions_of
 from tadas.om.tenancy.types.socket_ticket import SocketPrincipal
 from tadas.om.tenancy.types.user import PERSONAL_FIELDS, User
 
 APP = AppContext(type=AppType.PORTAL, version="portal@test")
+
+
+def team(memberships: tuple[OrgMembership, ...]) -> list[OrgMembership]:
+    """The team orgs among a person's places; the personal one is always there."""
+    return [m for m in memberships if not m.org.personal]
 
 
 def request(app: AppContext = APP) -> RequestContext:
@@ -277,8 +285,10 @@ async def test_bootstrap_login_exchange_authenticate(manager: TenancyManagerImpl
         request(), "Acme", "acme", "ann@example.test", "pw-1234", "Ann"
     )
     login = await manager.login(request(), "ann@example.test", "pw-1234")
-    assert [m.org.id for m in login.memberships] == [org.id]
-    assert login.memberships[0].role is Role.OWNER
+    # The owner nobody had seen before came with a personal org of her own.
+    assert [m.org.id for m in team(login.memberships)] == [org.id]
+    assert [m.role for m in login.memberships] == [Role.OWNER, Role.OWNER]
+    assert [m.org.kind for m in login.memberships if m.org.id != org.id] == [OrgKind.PERSONAL]
 
     issued = await manager.exchange_login(
         await manager.authenticate_login(request(), login.token), org.id
@@ -679,7 +689,9 @@ async def test_removing_a_member_soft_deletes_the_user_and_ends_access(
     )
     with pytest.raises(CredentialExpired):  # revoked with the member
         await manager.authenticate(request(), cid_session.token)
-    assert (await manager.login(request(), "cid@example.test", "pw-1234")).memberships == ()
+    # Removed from the team, Cid keeps the one place nobody removes him from.
+    left = (await manager.login(request(), "cid@example.test", "pw-1234")).memberships
+    assert [m.org.kind for m in left] == [OrgKind.PERSONAL]
     with pytest.raises(NotFound):
         await manager.remove_member(admin, cid.id)
     # The membership ended with the member: no list shows it, no role change reaches it.
@@ -1053,12 +1065,13 @@ async def test_operator_gate_admits_only_operators_signing_in(
         manager, operator, clock, "root@example.test", "pw-1234"
     )
     assert admin.email == "root@example.test" and admin.second_factor
+    # Two team orgs, and the personal org of each of their two owners.
     every = await operator.get_orgs(admin, None, limit=10)
-    assert len(every.items) == 2 and not every.has_more
-    first = await operator.get_orgs(admin, None, limit=1)
-    assert len(first.items) == 1 and first.has_more
-    rest = await operator.get_orgs(admin, first.items[0].id, limit=1)
-    assert rest.items == every.items[1:] and not rest.has_more
+    assert len(every.items) == 4 and not every.has_more
+    first = await operator.get_orgs(admin, None, limit=3)
+    assert len(first.items) == 3 and first.has_more
+    rest = await operator.get_orgs(admin, first.items[-1].id, limit=3)
+    assert rest.items == every.items[3:] and not rest.has_more
 
     # A tenant session proves the identity, but the operator plane never takes
     # a tenant's credential, even from a sign-in that verified a code.
@@ -1222,9 +1235,7 @@ async def test_the_grant_job_puts_an_identity_on_the_allowlist_and_audits_it(
     )
     assert provisioner.operator_role is OperatorRole.WRITE
     with pytest.raises(ValidationFailed):
-        await manager.sign_up(
-            request(), "smoke@platform.tadas.invalid", "pw-12345678", "S", "Smoke", "smoke"
-        )
+        await manager.sign_up(request(), "smoke@platform.tadas.invalid", "pw-12345678", "S")
     token = await manager.grant_operator_token(request(), "provisioner@platform.tadas.invalid")
     assert token.operator_role is OperatorRole.WRITE
     read_only = await manager.grant_operator_token(
@@ -1307,7 +1318,9 @@ async def test_operators_soft_delete_an_org_and_its_principals_stop_resolving(
     assert deleted.updated_at == deleted.deleted_at
     with pytest.raises(InvalidCredential):
         await manager.authenticate(request(), issued.token)
-    assert (await manager.login(request(), "ann@example.test", "pw-1234")).memberships == ()
+    # Ann keeps her personal org, the one place no deletion reaches.
+    left = (await manager.login(request(), "ann@example.test", "pw-1234")).memberships
+    assert [m.org.kind for m in left] == [OrgKind.PERSONAL]
     # The deletion is announced into the tenant's stream, so every socket of
     # the tenant closes, in whichever process holds it; the operator's identity
     # is the actor, since an operator has no user in the tenant.
@@ -1370,7 +1383,8 @@ async def test_resume_and_service_contexts(manager: TenancyManagerImpl) -> None:
     ctx = await sign_in(manager, "ann@example.test", org.id)
 
     contexts = await manager.service_contexts(request())
-    assert len(contexts) == 3, "the system scope, then every tenant"
+    # Two team orgs and the personal org of each owner.
+    assert len(contexts) == 5, "the system scope, then every tenant"
     assert contexts[0].org_id == EMPTY_UUID
     assert all(c.security.role is Role.SERVICE for c in contexts)
     assert all(c.security.credential_kind is CredentialKind.INTERNAL for c in contexts)
@@ -1418,6 +1432,11 @@ async def test_a_claim_for_a_departed_members_item_still_runs_under_their_name(
         await manager.service_context(request(), org.id, ann.id)
 
 
+async def personal_orgs(storage: TenancyStorageMemoryImpl) -> set[UUID]:
+    """The personal orgs the seeding made beside the team orgs."""
+    return {org.id for org in await storage.read_orgs(50) if org.personal}
+
+
 async def test_a_tenant_whose_members_have_all_left_is_still_swept(
     manager: TenancyManagerImpl, storage: TenancyStorageMemoryImpl, infra: InfraLocalImpl
 ) -> None:
@@ -1431,8 +1450,10 @@ async def test_a_tenant_whose_members_have_all_left_is_still_swept(
         org.id, ann.model_copy(update={"deleted_at": now, "deleted_by": ann.id, "updated_at": now})
     )
     contexts = await manager.service_contexts(request())
-    assert [c.org_id for c in contexts] == [EMPTY_UUID, org.id]
-    ctx = contexts[1]
+    personal = await personal_orgs(storage)
+    assert len(personal) == 1
+    assert [c.org_id for c in contexts if c.org_id not in personal] == [EMPTY_UUID, org.id]
+    ctx = next(c for c in contexts if c.org_id == org.id)
     assert ctx.user_id == EMPTY_UUID and ctx.role is Role.SERVICE
     # The context does the sweep's work: the one member who left is purged.
     assert await manager.purge_deleted(ctx) == 0, "retention has not passed"
@@ -1610,7 +1631,11 @@ async def test_add_member_seeds_a_second_person_once(manager: TenancyManagerImpl
     login = await manager.login(
         request(), "bob@example.test", "pw-1234"
     )  # the first password stays
-    assert [(m.org.id, m.role) for m in login.memberships] == [(org.id, Role.MEMBER)]
+    assert [(m.org.id, m.role) for m in team(login.memberships)] == [(org.id, Role.MEMBER)]
+    # Bob was nobody before: he came with his personal org, and owns it.
+    assert [(m.org.name, m.role) for m in login.memberships if m.org.personal] == [
+        ("Bob", Role.OWNER)
+    ]
     with pytest.raises(InvalidCredential):
         await manager.login(request(), "bob@example.test", "other-pw")
 
@@ -1623,7 +1648,7 @@ async def test_add_member_reuses_an_identity_across_orgs(manager: TenancyManager
     )
     assert created
     login = await manager.login(request(), "ann@example.test", "pw-1234")
-    assert sorted(m.role.value for m in login.memberships) == ["owner", "viewer"]
+    assert sorted(m.role.value for m in team(login.memberships)) == ["owner", "viewer"]
 
 
 async def test_add_member_refuses_an_unknown_org(manager: TenancyManagerImpl) -> None:
@@ -1736,6 +1761,7 @@ class DownOnCreateStorage(TenancyStorageMemoryImpl):
         membership: Membership,
         outbox_rows: tuple[OutboxRow, ...],
         identity: Identity | None = None,
+        personal: tuple[Org, User, Membership] | None = None,
     ) -> None:
         raise UniqueKeyTaken("a key is taken")
 
@@ -1869,7 +1895,8 @@ async def test_one_person_joins_at_most_the_bound_of_orgs(
     (two adds that raced) is refused, never cut short, since the org a sign-in
     names could be the row cut off."""
     storage = TenancyStorageMemoryImpl(outbox)
-    manager = make_manager(storage, infra, TenancyOptions(max_orgs_per_identity=2), outbox=outbox)
+    # Three places: the personal org every person has, and two more.
+    manager = make_manager(storage, infra, TenancyOptions(max_orgs_per_identity=3), outbox=outbox)
     _, first = await manager.bootstrap(request(), "A", "a", "ann@example.test", "pw-1234", "Ann")
     _, second = await manager.bootstrap(request(), "B", "b", "ann@example.test", "pw-1234", "Ann")
     await manager.bootstrap(request(), "C", "c", "cid@example.test", "pw-1234", "Cid")
@@ -1883,7 +1910,7 @@ async def test_one_person_joins_at_most_the_bound_of_orgs(
     )
     assert not created and again.email == "ann@example.test"
     login = await manager.login(request(), "ann@example.test", "pw-1234")
-    assert {m.org.id for m in login.memberships} == {first.id, second.id}
+    assert {m.org.id for m in team(login.memberships)} == {first.id, second.id}
 
     # A third user lands past the refusal, the way two racing adds would.
     identity = await storage.read_identity_by_email_digest(email_digest("ann@example.test"))
@@ -1901,61 +1928,61 @@ async def test_one_person_joins_at_most_the_bound_of_orgs(
 # Sign-up, and one tenant at a time.
 
 
-async def test_sign_up_creates_the_person_the_org_and_the_owner_and_signs_them_in(
+async def test_sign_up_creates_the_person_their_personal_org_and_signs_them_in(
     manager: TenancyManagerImpl, storage: TenancyStorageMemoryImpl
 ) -> None:
-    issued = await manager.sign_up(
-        request(), "dee@example.test", "long-enough", "Dee", "Dee's Bakery", "dees-bakery"
-    )
+    issued = await manager.sign_up(request(), "dee@example.test", "long-enough", "Dee")
     # The answer is a sign-in's: the credential that carries no tenant, and the one place.
     assert issued.token.startswith("lgn_")
     [owner] = issued.memberships
-    assert owner.role is Role.OWNER and owner.org.name == "Dee's Bakery"
-    assert owner.org.slug == "dees-bakery"
+    # The personal org: named after the person, a slug nobody typed, hers alone.
+    assert owner.role is Role.OWNER and owner.org.name == "Dee"
+    assert owner.org.kind is OrgKind.PERSONAL and owner.org.personal
+    assert SLUG_PATTERN.fullmatch(owner.org.slug) and owner.org.slug.startswith("dee-")
     assert owner.user.email == "dee@example.test" and owner.user.display_name == "Dee"
     identity = await storage.read_identity_by_email_digest(email_digest("dee@example.test"))
     assert identity is not None and identity.id == owner.user.identity_id
+    assert owner.org.personal_identity_id == identity.id
     assert identity.operator_role is None
+    # The rows are the person's own: the provenance names her user.
+    assert owner.org.created_by == owner.user.id == owner.user.created_by
     # The client goes on through the same exchange a sign-in does.
     ictx = await manager.authenticate_login(request(), issued.token)
     session = await manager.exchange_login(ictx, owner.org.id)
     ctx = await manager.authenticate(request(), session.token)
     assert ctx.org_id == owner.org.id and ctx.security.role is Role.OWNER
     assert ctx.has(Permission.MANAGE_MEMBERS)
-    # And the password it chose signs in later.
+    # And the password it chose signs in later, to the same one place.
     again = await manager.login(request(), "dee@example.test", "long-enough")
     assert [m.org.id for m in again.memberships] == [owner.org.id]
 
 
-async def test_sign_up_refuses_a_held_email_or_a_taken_slug_and_lands_nothing(
+async def test_two_people_of_one_name_get_two_slugs(manager: TenancyManagerImpl) -> None:
+    dee = await manager.sign_up(request(), "dee@example.test", "long-enough", "Dee")
+    other = await manager.sign_up(request(), "dee@example.org", "long-enough", "Dee")
+    assert dee.memberships[0].org.slug != other.memberships[0].org.slug
+
+
+async def test_sign_up_refuses_a_held_email_and_lands_nothing(
     manager: TenancyManagerImpl, storage: TenancyStorageMemoryImpl
 ) -> None:
     await manager.bootstrap(request(), "Acme", "acme", "ann@example.test", "pw-1234", "Ann")
+    orgs = await storage.count_orgs()
     with pytest.raises(Conflict) as refused:
-        await manager.sign_up(
-            request(), "ann@example.test", "long-enough", "Ann", "Ann's Own", "anns-own"
-        )
+        await manager.sign_up(request(), "ann@example.test", "long-enough", "Ann")
     assert refused.value.http_status == 409
-    assert await storage.read_org_by_slug("anns-own") is None
+    assert await storage.count_orgs() == orgs
     # The held identity keeps its password.
     await manager.login(request(), "ann@example.test", "pw-1234")
-    with pytest.raises(Conflict):
-        await manager.sign_up(request(), "dee@example.test", "long-enough", "Dee", "Acme", "acme")
-    assert await storage.read_identity_by_email_digest(email_digest("dee@example.test")) is None
-    assert await storage.count_orgs() == 1
 
 
 @pytest.mark.parametrize(
-    ("email", "password", "display_name", "org_name", "slug"),
+    ("email", "password", "display_name"),
     [
-        ("not-an-email", "long-enough", "Dee", "Bakery", "bakery"),
-        ("dee@localhost", "long-enough", "Dee", "Bakery", "bakery"),
-        ("dee@example.test", "short", "Dee", "Bakery", "bakery"),
-        ("dee@example.test", "long-enough", "  ", "Bakery", "bakery"),
-        ("dee@example.test", "long-enough", "Dee", "", "bakery"),
-        ("dee@example.test", "long-enough", "Dee", "Bakery", "Bakery"),
-        ("dee@example.test", "long-enough", "Dee", "Bakery", "-bakery"),
-        ("dee@example.test", "long-enough", "Dee", "Bakery", "b" * 49),
+        ("not-an-email", "long-enough", "Dee"),
+        ("dee@localhost", "long-enough", "Dee"),
+        ("dee@example.test", "short", "Dee"),
+        ("dee@example.test", "long-enough", "  "),
     ],
 )
 async def test_sign_up_refuses_a_malformed_request(
@@ -1964,11 +1991,9 @@ async def test_sign_up_refuses_a_malformed_request(
     email: str,
     password: str,
     display_name: str,
-    org_name: str,
-    slug: str,
 ) -> None:
     with pytest.raises(ValidationFailed):
-        await manager.sign_up(request(), email, password, display_name, org_name, slug)
+        await manager.sign_up(request(), email, password, display_name)
     assert await storage.count_orgs() == 0
 
 
@@ -1977,23 +2002,217 @@ async def test_a_sign_up_that_raced_another_for_the_email_lands_nothing(
 ) -> None:
     storage = RacedIdentityStorage(outbox)
     manager = make_manager(storage, infra, outbox=outbox)
-    await manager.sign_up(request(), "dee@example.test", "long-enough", "Dee", "Bakery", "bakery")
+    await manager.sign_up(request(), "dee@example.test", "long-enough", "Dee")
     # The read missed the identity the first sign-up wrote; the unique key did not.
     with pytest.raises(Conflict):
-        await manager.sign_up(request(), "dee@example.test", "other-pass", "Dee", "Cafe", "cafe")
-    assert await storage.read_org_by_slug("cafe") is None
+        await manager.sign_up(request(), "dee@example.test", "other-pass", "Dee")
     assert await storage.count_orgs() == 1
 
 
-async def test_a_sign_up_that_raced_another_for_the_slug_leaves_no_identity(
+class RacedPersonalStorage(TenancyStorageMemoryImpl):
+    """Every read of an identity's places misses: a person the sign-in finds
+    with no personal org, while another sign-in is making it."""
+
+    async def read_users_by_identity(
+        self, identity_id: UUID, limit: int
+    ) -> list[tuple[UUID, User]]:
+        return []
+
+
+async def test_a_person_has_one_personal_org_whatever_races_to_make_it(
     infra: InfraLocalImpl, outbox: OutboxStorageMemoryImpl
 ) -> None:
-    storage = RacedSlugStorage(outbox)
+    storage = RacedPersonalStorage(outbox)
     manager = make_manager(storage, infra, outbox=outbox)
-    await manager.sign_up(request(), "dee@example.test", "long-enough", "Dee", "Bakery", "bakery")
+    issued = await manager.sign_up(request(), "dee@example.test", "long-enough", "Dee")
+    [personal] = issued.memberships
+    # The sign-in reads no personal org and tries to make one; the unique key
+    # keeps the one the sign-up made, and the sign-in still answers.
+    await manager.login(request(), "dee@example.test", "long-enough")
+    orgs = await storage.read_orgs(10)
+    assert [o.id for o in orgs if o.personal] == [personal.org.id]
+    identity = await storage.read_identity_by_email_digest(email_digest("dee@example.test"))
+    assert identity is not None
+    other = personal.org.model_copy(update={"id": new_id(), "slug": "dee-again"})
+    with pytest.raises(UniqueKeyTaken):
+        await storage.write_org(other.id, other)
+
+
+async def test_a_person_an_older_release_made_gets_a_personal_org_at_sign_in(
+    manager: TenancyManagerImpl, storage: TenancyStorageMemoryImpl
+) -> None:
+    # An identity and a team org written the way the release before this one
+    # wrote them: no personal org.
+    org, user = await old_release_tenant(storage, "gus@example.test", "Gus", "gus-co")
+    login = await manager.login(request(), "gus@example.test", "pw-1234")
+    kinds = sorted((m.org.kind, m.org.name) for m in login.memberships)
+    assert kinds == [(OrgKind.PERSONAL, "Gus"), (OrgKind.TEAM, org.name)]
+    # Once: the next sign-in finds it.
+    again = await manager.login(request(), "gus@example.test", "pw-1234")
+    assert {m.org.id for m in again.memberships} == {m.org.id for m in login.memberships}
+    assert user.identity_id == next(
+        m.org.personal_identity_id for m in again.memberships if m.org.personal
+    )
+
+
+async def old_release_tenant(
+    storage: TenancyStorageMemoryImpl, email: str, name: str, slug: str
+) -> tuple[Org, User]:
+    now = utcnow()
+    identity = Identity(
+        id=new_id(),
+        created_at=now,
+        updated_at=now,
+        created_by=EMPTY_UUID,
+        updated_by=EMPTY_UUID,
+        email=email,
+        password_hash=hash_password("pw-1234", secrets.token_bytes(16)),
+    )
+    user = make_user(identity.id, email).model_copy(update={"display_name": name})
+    org = Org(
+        id=new_id(),
+        name=f"{name} Co",
+        slug=slug,
+        created_at=now,
+        updated_at=now,
+        created_by=user.id,
+        updated_by=user.id,
+    )
+    membership = Membership(
+        id=new_id(),
+        created_at=now,
+        updated_at=now,
+        created_by=user.id,
+        updated_by=user.id,
+        user_id=user.id,
+        role=Role.OWNER,
+    )
+    await storage.create_org_with_owner(org.id, org, user, membership, identity)
+    return org, user
+
+
+# A team org of one's own.
+
+
+async def signed_up(manager: TenancyManagerImpl, email: str, name: str) -> OpContext:
+    """A person who signed up, in a session in their personal org."""
+    issued = await manager.sign_up(request(), email, "long-enough", name)
+    return await sign_in_with(manager, email, "long-enough", issued.memberships[0].org.id)
+
+
+async def sign_in_with(
+    manager: TenancyManagerImpl, email: str, password: str, org_id: UUID
+) -> OpContext:
+    login = await manager.login(request(), email, password)
+    session = await manager.exchange_login(
+        await manager.authenticate_login(request(), login.token), org_id
+    )
+    return await manager.authenticate(request(), session.token)
+
+
+async def test_a_signed_in_person_creates_a_team_org_and_switches_to_it(
+    manager: TenancyManagerImpl,
+) -> None:
+    dee = await signed_up(manager, "dee@example.test", "Dee")
+    place = await manager.create_org(dee, "Dee's Bakery", None)
+    assert place.org.kind is OrgKind.TEAM and place.org.personal_identity_id is None
+    assert place.org.name == "Dee's Bakery" and place.org.slug.startswith("dee-s-bakery-")
+    assert place.role is Role.OWNER and place.user.display_name == "Dee"
+    assert place.org.created_by == place.user.id
+    # The session stays where it was; the exchange is the switch.
+    assert dee.org_id != place.org.id
+    login = await manager.login(request(), "dee@example.test", "long-enough")
+    assert {m.org.kind for m in login.memberships} == {OrgKind.PERSONAL, OrgKind.TEAM}
+    there = await sign_in_with(manager, "dee@example.test", "long-enough", place.org.id)
+    assert there.org_id == place.org.id and there.security.role is Role.OWNER
+    # A slug the person typed is kept, and a taken one is refused.
+    named = await manager.create_org(dee, "Cafe", "cafe")
+    assert named.org.slug == "cafe"
     with pytest.raises(Conflict):
-        await manager.sign_up(request(), "eve@example.test", "long-enough", "Eve", "B", "bakery")
-    assert await storage.read_identity_by_email_digest(email_digest("eve@example.test")) is None
+        await manager.create_org(dee, "Cafe Two", "cafe")
+
+
+@pytest.mark.parametrize(("name", "slug"), [("  ", None), ("Cafe", "Cafe"), ("Cafe", "-cafe")])
+async def test_a_malformed_team_org_is_refused(
+    manager: TenancyManagerImpl, storage: TenancyStorageMemoryImpl, name: str, slug: str | None
+) -> None:
+    dee = await signed_up(manager, "dee@example.test", "Dee")
+    with pytest.raises(ValidationFailed):
+        await manager.create_org(dee, name, slug)
+    assert await storage.count_orgs() == 1
+
+
+async def test_only_a_session_creates_an_org(manager: TenancyManagerImpl) -> None:
+    dee = await signed_up(manager, "dee@example.test", "Dee")
+    key = await manager.create_api_key(dee, "bot", Role.OWNER)
+    bot = await manager.authenticate(request(), key.key)
+    with pytest.raises(NotAuthorized):
+        await manager.create_org(bot, "Bots", None)
+
+
+async def test_a_rerun_of_a_create_answers_with_the_org_it_made(
+    manager: TenancyManagerImpl, storage: TenancyStorageMemoryImpl
+) -> None:
+    dee = await signed_up(manager, "dee@example.test", "Dee")
+    attempt = Attempt(target_id=new_id(), attempt_id=new_id())
+    first = await manager.create_org(dee, "Bakery", None, attempt)
+    again = await manager.create_org(dee, "Bakery", None, attempt)
+    assert again.org.id == first.org.id == attempt.target_id
+    assert again.user.id == first.user.id
+    assert await storage.count_orgs() == 2
+
+
+async def test_a_team_org_counts_toward_the_bound(
+    storage: TenancyStorageMemoryImpl, infra: InfraLocalImpl
+) -> None:
+    manager = make_manager(storage, infra, TenancyOptions(max_orgs_per_identity=2))
+    dee = await signed_up(manager, "dee@example.test", "Dee")
+    await manager.create_org(dee, "One", None)
+    with pytest.raises(MembershipLimitReached):
+        await manager.create_org(dee, "Two", None)
+
+
+# A personal org stays its person's.
+
+
+async def test_the_person_of_a_personal_org_is_never_removed_or_demoted(
+    manager: TenancyManagerImpl, storage: TenancyStorageMemoryImpl
+) -> None:
+    dee = await signed_up(manager, "dee@example.test", "Dee")
+    # Anyone may be in a personal org; nothing refuses a second person.
+    other = await add_member(storage, dee.org_id, "eve@example.test", Role.OWNER)
+    eve = await sign_in(manager, "eve@example.test", dee.org_id)
+    with pytest.raises(PersonalOrgFixed) as refused:
+        await manager.remove_member(eve, dee.user_id)
+    assert refused.value.http_status == 409
+    with pytest.raises(PersonalOrgFixed):
+        await manager.update_membership_role(eve, dee.user_id, Role.VIEWER)
+    # Another member of it is an ordinary member.
+    changed = await manager.update_membership_role(dee, other.id, Role.MEMBER)
+    assert changed.role is Role.MEMBER
+    await manager.remove_member(dee, other.id)
+    # And the person cannot leave it either: nobody removes themselves.
+    with pytest.raises(ValidationFailed):
+        await manager.remove_member(dee, dee.user_id)
+
+
+async def test_an_operator_never_deletes_a_personal_org(
+    manager: TenancyManagerImpl,
+    operator: TenancyOperatorManagerImpl,
+    clock: SteppingClock,
+    storage: TenancyStorageMemoryImpl,
+) -> None:
+    dee = await signed_up(manager, "dee@example.test", "Dee")
+    await seed_operator(manager, "root@example.test")
+    admin, _ = await enrolled_operator(manager, operator, clock, "root@example.test", "pw-1234")
+    with pytest.raises(PersonalOrgFixed):
+        await operator.delete_org(admin, dee.org_id)
+    org = await storage.read_org(dee.org_id)
+    assert org is not None and org.deleted_at is None
+    # A team org is deleted as ever.
+    team_org = await manager.create_org(dee, "Bakery", None)
+    deleted = await operator.delete_org(admin, team_org.org.id)
+    assert deleted.deleted_at is not None
 
 
 async def test_a_live_session_proves_the_identity_and_a_dead_one_does_not(
@@ -2065,12 +2284,15 @@ async def test_the_memberships_of_an_identity_page_and_skip_the_gone(
     login = await manager.login(request(), "ann@example.test", "pw-1234")
     ictx = await manager.authenticate_login(request(), login.token)
     every = await manager.get_identity_memberships(ictx, None, limit=10)
-    assert {m.org.id for m in every.items} == {org.id for org in orgs} and not every.has_more
+    # Three team orgs, and Ann's personal org.
+    personal = {m.org.id for m in every.items if m.org.personal}
+    assert len(personal) == 1 and not every.has_more
+    assert {m.org.id for m in every.items} - personal == {org.id for org in orgs}
     assert [m.user.id for m in every.items] == sorted(m.user.id for m in every.items)
-    first = await manager.get_identity_memberships(ictx, None, limit=2)
-    assert first.items == every.items[:2] and first.has_more
-    rest = await manager.get_identity_memberships(ictx, first.items[-1].user.id, limit=2)
-    assert rest.items == every.items[2:] and not rest.has_more
+    first = await manager.get_identity_memberships(ictx, None, limit=3)
+    assert first.items == every.items[:3] and first.has_more
+    rest = await manager.get_identity_memberships(ictx, first.items[-1].user.id, limit=3)
+    assert rest.items == every.items[3:] and not rest.has_more
     # A deleted org is not a place anyone holds.
     await manager.bootstrap(
         request(),
@@ -2084,7 +2306,7 @@ async def test_the_memberships_of_an_identity_page_and_skip_the_gone(
     admin = await token_operator(manager, "root@example.test")
     await operator.delete_org(admin, orgs[1].id)
     left = await manager.get_identity_memberships(ictx, None, limit=10)
-    assert {m.org.id for m in left.items} == {orgs[0].id, orgs[2].id}
+    assert {m.org.id for m in left.items} == {orgs[0].id, orgs[2].id} | personal
 
 
 async def test_a_switch_ends_the_session_it_was_presented_with_in_the_same_write(
