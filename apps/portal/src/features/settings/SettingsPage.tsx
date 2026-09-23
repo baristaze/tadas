@@ -1,6 +1,7 @@
 import { Banner, Button, Card, LinkButton, Muted, Page, Table, TextField } from "../../design/kit";
 import { AppNav } from "../../app/AppNav";
 import { tokens } from "../../design/tokens";
+import { StorageCard } from "./StorageCard";
 import { useSettingsVm } from "./useSettingsVm";
 
 export function SettingsPage() {
@@ -21,6 +22,7 @@ export function SettingsPage() {
           <Table headers={["Name", "Email", "Joined"]} rows={vm.members.map((m) => [m.name, m.email, m.joined])} />
         )}
       </Card>
+      <StorageCard />
       {vm.canManageKeys ? (
         <Card title="API keys">
           {vm.issuedKey ? (

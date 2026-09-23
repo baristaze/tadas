@@ -6,6 +6,8 @@ import type { TaskView } from "../../api";
 import { TaskItem } from "./TaskItem";
 import { taskRow } from "./tasksModel";
 
+// The attachments panel reads its own queries; this case is about the draft.
+vi.mock("../attachments/Attachments", () => ({ Attachments: () => null }));
 vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
 const container = document.createElement("div");
 document.body.append(container);

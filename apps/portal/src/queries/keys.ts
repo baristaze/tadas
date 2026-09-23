@@ -19,6 +19,13 @@ export const keys = {
     all: ["api_key"] as const,
     list: (limit: number) => ["api_key", "list", limit] as const,
   },
+  // Files: a task's attachments and the org's usage, both refreshed by a
+  // `media.file.*` push, since the entity is `file`.
+  files: {
+    all: ["file"] as const,
+    ofTask: (taskId: string) => ["file", "task", taskId] as const,
+    usage: ["file", "usage"] as const,
+  },
   tasks: {
     all: ["task"] as const,
     open: (scope: string) => ["task", "open", scope] as const,

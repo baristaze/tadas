@@ -9,7 +9,20 @@ Zustand, one realtime channel.
   everything goes through `src/api/` (the types generated from the
   committed `openapi.json` behind the facade `types.ts`, and the one
   transport client; `src/app/api.ts` holds the one instance). ESLint
-  enforces both. `make openapi` regenerates `schema.d.ts`.
+  enforces both. `make openapi` regenerates `schema.d.ts`. The object
+  store is the one other place a request goes, through a URL the API
+  signed and handed over: `src/api/store.ts` posts a form to it or
+  fetches a link from it, with a deadline of its own and nothing of the
+  API client's (no bearer, no retry), since the form or the link is the
+  credential.
+- A task's files are `src/features/attachments/`, shown in the task's
+  open view: dropped or picked, started on the API, posted straight to
+  the store, confirmed, listed with name, size, and type, downloaded and
+  saved under the file's own name, removed. The flows
+  (`transfer.ts`) take their effects as arguments and run in a test
+  without React. Where the store cannot take a form, the bytes go
+  through the API instead. The settings page shows the org's storage
+  used.
 - The app's one retry is the transport client's, and no other layer has
   one: TanStack Query's is off in `src/app/queryClient.ts`, so a failing
   API sees these attempts and no multiple of them. Only a failure that

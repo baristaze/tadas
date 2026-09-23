@@ -32,6 +32,9 @@ const SERVER_KINDS = [
   "tasks.task.created",
   "tasks.task.updated",
   "tasks.task.deleted",
+  "media.file.created",
+  "media.file.updated",
+  "media.file.deleted",
   "tenancy.api_key.created",
   "tenancy.api_key.deleted",
   "tenancy.membership.updated",
@@ -66,6 +69,14 @@ describe("routeEnvelope", () => {
     expect(envelope).not.toBeNull();
     expect(routeEnvelope(queryClient, envelope!)).toEqual({ invalidated: [keys.apiKeys.all] });
     expect(seen).toEqual([keys.apiKeys.all]);
+  });
+
+  it("refreshes a task's files and the org's usage when a file changes", () => {
+    const { queryClient, seen } = recording();
+    expect(routeEnvelope(queryClient, pushOf("media.file.updated"))).toEqual({ invalidated: [keys.files.all] });
+    expect(seen.every((key) => isPrefixOf(key, keys.files.ofTask("t1")) && isPrefixOf(key, keys.files.usage))).toBe(
+      true,
+    );
   });
 
   it("refreshes who the user is and their places when a membership changes, since the role rides both", () => {
