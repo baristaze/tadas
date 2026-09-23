@@ -270,6 +270,36 @@
         "title": "CreateOrgRequest",
         "type": "object"
       },
+      "CreateTeamOrgRequest": {
+        "additionalProperties": false,
+        "description": "A team org the caller makes and owns. `slug` is lower-case letters and\ndigits joined by hyphens; left out, one is made from the name. A taken\nslug is 409.",
+        "properties": {
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "slug": {
+            "anyOf": [
+              {
+                "maxLength": 48,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slug"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "CreateTeamOrgRequest",
+        "type": "object"
+      },
       "CredentialKind": {
         "enum": [
           "api_key",
@@ -1046,6 +1076,15 @@
         "title": "OperatorView",
         "type": "object"
       },
+      "OrgKind": {
+        "description": "What an org is for. Every person has exactly one personal org, made\nwith them; every other org is a team org, made on purpose.",
+        "enum": [
+          "personal",
+          "team"
+        ],
+        "title": "OrgKind",
+        "type": "string"
+      },
       "OrgPageView": {
         "description": "One page of every org, by id, for the operator plane; `next_cursor` as\non `UserPageView`.",
         "properties": {
@@ -1076,6 +1115,7 @@
         "type": "object"
       },
       "OrgView": {
+        "description": "`kind` says what the org is for: every person has one `personal` org,\nmade with them, which is never deleted and never changes hands; every\nother org is a `team` org.",
         "properties": {
           "created_at": {
             "format": "date-time",
@@ -1099,6 +1139,9 @@
             "title": "Id",
             "type": "string"
           },
+          "kind": {
+            "$ref": "#/components/schemas/OrgKind"
+          },
           "name": {
             "title": "Name",
             "type": "string"
@@ -1112,6 +1155,7 @@
           "id",
           "name",
           "slug",
+          "kind",
           "created_at"
         ],
         "title": "OrgView",
@@ -1294,7 +1338,7 @@
       },
       "SignUpRequest": {
         "additionalProperties": false,
-        "description": "A new person, their first org, and their password. The answer is a\nsign-in's (`IssuedLoginView`), so the client goes on through the same\nchoice and exchange. `org_slug` is lower-case letters and digits joined\nby hyphens; a held email and a taken slug are both 409. No email is\nverified.",
+        "description": "A new person and their password. The person's personal org is made\nwith them, named and slugged for them, so a sign-up names no org. The\nanswer is a sign-in's (`IssuedLoginView`), so the client goes on through\nthe same choice and exchange; a held email is 409. No email is verified.\n`org_name` and `org_slug` are what a sign-up named before and are\nignored; the release after this one refuses them.",
         "properties": {
           "display_name": {
             "maxLength": 200,
@@ -1309,16 +1353,30 @@
             "type": "string"
           },
           "org_name": {
-            "maxLength": 200,
-            "minLength": 1,
-            "title": "Org Name",
-            "type": "string"
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "deprecated": true,
+            "title": "Org Name"
           },
           "org_slug": {
-            "maxLength": 48,
-            "minLength": 1,
-            "title": "Org Slug",
-            "type": "string"
+            "anyOf": [
+              {
+                "maxLength": 48,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "deprecated": true,
+            "title": "Org Slug"
           },
           "password": {
             "maxLength": 200,
@@ -1330,9 +1388,7 @@
         "required": [
           "email",
           "password",
-          "display_name",
-          "org_name",
-          "org_slug"
+          "display_name"
         ],
         "title": "SignUpRequest",
         "type": "object"
@@ -4473,7 +4529,11 @@
         "responses": {
           "200": {
             "content": {
-              "application/octet-stream": {}
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
             },
             "description": "Successful Response"
           },
@@ -5149,6 +5209,115 @@
           }
         },
         "summary": "Update Membership",
+        "tags": [
+          "tenancy"
+        ]
+      }
+    },
+    "/v1/orgs": {
+      "post": {
+        "operationId": "create_org_v1_orgs_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app-version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Version"
+            }
+          },
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 255,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateTeamOrgRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MembershipChoiceView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Org",
         "tags": [
           "tenancy"
         ]

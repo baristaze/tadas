@@ -277,15 +277,18 @@ async def test_requeue_stale_runs_per_tenant_under_a_maintenance_context(
     )
 
     contexts = await managers.work.maintenance_contexts(request())
-    assert [c.org_id for c in contexts] == [EMPTY_UUID, ctx.org_id]
+    # The system scope, the tenant, and its owner's personal org.
+    assert [c.org_id for c in contexts][:1] == [EMPTY_UUID] and len(contexts) == 3
+    assert ctx.org_id in [c.org_id for c in contexts]
     assert all(c.security.role is Role.SERVICE for c in contexts)
     assert await managers.work.requeue_stale(contexts[0], limit=100) == 0, (
         "nothing queued under the system"
     )
+    tenant = next(c for c in contexts if c.org_id == ctx.org_id)
     # The sweep's batch bounds one pass; the next pass takes the rest.
-    assert await managers.work.requeue_stale(contexts[1], limit=1) == 1
-    assert await managers.work.requeue_stale(contexts[1], limit=1) == 1
-    assert await managers.work.requeue_stale(contexts[1], limit=100) == 0
+    assert await managers.work.requeue_stale(tenant, limit=1) == 1
+    assert await managers.work.requeue_stale(tenant, limit=1) == 1
+    assert await managers.work.requeue_stale(tenant, limit=100) == 0
 
     again = await managers.work.claim(request(), "default", [WorkKind.NOOP], "w2", LEASE)
     assert again is not None and again[1].attempts == 2 and again[1].id != exhausted.id

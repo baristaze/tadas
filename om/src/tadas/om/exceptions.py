@@ -126,6 +126,14 @@ class NotAnOperator(TenancyException, NotAuthorized):
     """The identity is not on the operator allowlist."""
 
 
+class PersonalOrgFixed(TenancyException, Conflict):
+    """A personal org stays its person's: it is not deleted, and its person
+    is not removed from it and does not change role in it, so it never
+    changes hands."""
+
+    code = "personal_org_fixed"
+
+
 class SecondFactorRequired(TenancyException, NotAuthenticated):
     """An operator with an enrolled second factor presented a sign-in that
     verified no code. The operator plane never admits a password alone."""

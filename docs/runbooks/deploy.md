@@ -176,8 +176,10 @@ each run does:
    ```
 
 10. The first person: the environment carries no seed (`make seed` is
-   local), so open the portal and sign up at `/sign-up`. That creates
-   the identity, the first org, and its owner. Sign-up stays open unless
+   local), so open the portal and sign up at `/sign-up` with an email,
+   a name, and a password. That creates the identity and its personal
+   org, with the person as its owner; a team org is made from the org
+   chip after. Sign-up stays open unless
    `TADAS_SIGNUP_ENABLED=false`, which makes the route answer 404.
 
 A bootstrap root is never applied by a deploy run; every deploy role

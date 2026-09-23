@@ -404,7 +404,8 @@ async def test_operator_routes_need_an_operator_sign_in(
     admin, _ = await enrol_operator(client, container, "root@example.test", OperatorRole.WRITE)
     admitted = await client.get("/v1/admin/orgs", headers=admin)
     assert admitted.status_code == 200
-    assert sorted(o["slug"] for o in admitted.json()["items"]) == ["acme", "root"]
+    teams = [o["slug"] for o in admitted.json()["items"] if o["kind"] == "team"]
+    assert sorted(teams) == ["acme", "root"]
 
 
 async def test_operators_delete_an_org(

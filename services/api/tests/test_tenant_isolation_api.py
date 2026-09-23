@@ -291,7 +291,9 @@ async def test_a_sign_in_is_not_exchangeable_for_another_tenant(
         "/v1/auth/login", json={"email": "owner@acme.test", "password": PASSWORD}
     )
     assert login.status_code == 200, login.text
-    assert [m["org"]["id"] for m in login.json()["memberships"]] == [str(caller.org_id)]
+    places = login.json()["memberships"]
+    assert [m["org"]["id"] for m in places if m["org"]["kind"] == "team"] == [str(caller.org_id)]
+    assert [m["org"]["kind"] for m in places].count("personal") == 1, "and A's own place"
     bearer = {"Authorization": f"Bearer {login.json()['token']}"}
     crossed = await client.post(
         "/v1/auth/sessions", json={"org_id": str(other.org_id)}, headers=bearer
