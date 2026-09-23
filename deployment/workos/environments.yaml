@@ -10,10 +10,18 @@
 #
 # The client id is the application's, and it is not a secret. The API key
 # is: the command reads it from the variable named here and never prints it.
+#
+# `client: application` says the client id is an AuthKit application's (the
+# "Tadas App"), not the environment's own client. An application's redirects
+# and its login initiation URI live on its Redirects tab in the dashboard,
+# which no API writes, so the command only probes them and names what the
+# dashboard needs. It never writes the environment's redirect list, which
+# AuthKit does not read for an application.
 
 staging:
   api_key_variable: WORKOS_API_KEY
   client_id: client_01M3640D8WBF9KC0P89YW4E72N
+  client: application
   redirect_uris:
     - http://localhost:55173/auth/callback
     - http://localhost:5173/auth/callback
@@ -25,6 +33,7 @@ staging:
 production:
   api_key_variable: WORKOS_PRODUCTION_API_KEY
   client_id: client_01M363XVP5FGF2P45FHK9B7MJD
+  client: application
   redirect_uris:
     - https://app.tadas.fyi/auth/callback
   login_initiation_uri: https://app.tadas.fyi/login

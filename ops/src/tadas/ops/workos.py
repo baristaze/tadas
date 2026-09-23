@@ -1,19 +1,25 @@
 """`tadas-ops workos-bootstrap`: reconciles one WorkOS environment with the
 desired state committed in `deployment/workos/environments.yaml`. A dry run
-by default; `--apply` writes. Rerun against unchanged config, it changes
-nothing and says so.
+by default; `--apply` writes what the API can write. Rerun against unchanged
+config, it changes nothing and says so.
 
-A redirect URI is present when AuthKit accepts it for the application:
-`GET /user_management/authorize` with the application's client id and the
-URI answers with a redirect that is not to `/redirect-uri-invalid`. That
-probe is the truth, because the application's redirects live on its own
-Redirects tab in the WorkOS dashboard, which no API reads or writes. The API
-writes one list, the environment's (`/user_management/redirect_uris`); the
-command reports it, adds a missing URI to it, and probes again. A URI the
-probe still refuses is one only the dashboard can add, and the command says
-so and exits 1. The login initiation URI has no API at all: it is printed as
-a check to make on the same tab. No webhook is reconciled: the sign-in and
-the invitations need none.
+A redirect URI is present when AuthKit accepts it for the client: `GET
+/user_management/authorize` with the client id and the URI answers with a
+redirect that is not to `/redirect-uri-invalid`. That probe is the truth.
+
+Where a missing redirect is added depends on the kind of client the desired
+state names. An AuthKit application (`client: application`, what Tadas signs
+in through) keeps its redirects on its own Redirects tab in the WorkOS
+dashboard, which no API reads or writes; AuthKit does not read the
+environment's list for it. So for an application the command only probes,
+and names each missing URI as a dashboard step; it never writes the
+environment's list, since an entry there would change nothing. The
+environment's own client (`client: environment`) is the one the API can
+serve: a missing URI is added to the environment's list
+(`/user_management/redirect_uris`) and probed again. Either way a URI the
+probe still refuses fails the run (exit 1). The login initiation URI has no
+API at all: it is printed as a check to make on the Redirects tab. No
+webhook is reconciled: the sign-in and the invitations need none.
 
 The API key comes from the variable the desired state names for the
 environment, and never appears in anything this prints."""
@@ -23,7 +29,7 @@ import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlsplit
 
 import httpx
@@ -35,6 +41,7 @@ WORKOS_API = "https://api.workos.com"
 TIMEOUT_SECONDS = 10.0
 INVALID_REDIRECT_PATH = "/redirect-uri-invalid"
 OK, FAILED, USAGE = 0, 1, 2
+CLIENT_KINDS = ("application", "environment")
 
 
 @dataclass(frozen=True)
@@ -42,6 +49,7 @@ class Desired:
     environment: str
     api_key_variable: str
     client_id: str
+    client: Literal["application", "environment"]
     redirect_uris: tuple[str, ...]
     login_initiation_uri: str
     webhooks: tuple[str, ...]
@@ -60,10 +68,21 @@ def load_desired(path: Path, environment: str) -> Desired:
         names = ", ".join(sorted(loaded)) if isinstance(loaded, dict) else "none"
         raise ValueError(f"{path} names no WorkOS environment {environment!r} (it names {names})")
     entry = loaded[environment]
+    client = str(entry.get("client", "application"))
+    if client == "application":
+        kind: Literal["application", "environment"] = "application"
+    elif client == "environment":
+        kind = "environment"
+    else:
+        raise ValueError(
+            f"{path}: client of {environment!r} is {client!r}; "
+            f"it is one of {', '.join(CLIENT_KINDS)}"
+        )
     return Desired(
         environment=environment,
         api_key_variable=str(entry["api_key_variable"]),
         client_id=str(entry["client_id"]),
+        client=kind,
         redirect_uris=tuple(str(u) for u in entry["redirect_uris"]),
         login_initiation_uri=str(entry["login_initiation_uri"]),
         webhooks=tuple(str(w) for w in entry.get("webhooks") or ()),
@@ -148,18 +167,25 @@ async def reconcile(desired: Desired, workos: WorkOS, *, apply: bool) -> Outcome
     outcome = Outcome(lines=[])
     listed = await workos.environment_redirects()
     say = outcome.lines.append
-    say(f"WorkOS {desired.environment}, application {desired.client_id}")
-    say(
-        f"environment list: {len(listed)} redirect URI(s)"
-        + (f": {', '.join(listed)}" if listed else "")
-    )
+    say(f"WorkOS {desired.environment}, {desired.client} client {desired.client_id}")
+    listing = f": {', '.join(listed)}" if listed else ""
+    if desired.client == "application":
+        # Reported, never written: AuthKit reads the application's own
+        # Redirects tab, so an entry here is harmless and changes nothing.
+        say(
+            f"environment list: {len(listed)} redirect URI(s){listing} "
+            "(AuthKit does not read it for an application; nothing here is written)"
+        )
+    else:
+        say(f"environment list: {len(listed)} redirect URI(s){listing}")
     for uri in desired.redirect_uris:
         if await workos.accepts(desired.client_id, uri):
             say(f"redirect {uri}: present")
             continue
-        if uri in listed:
-            # The environment's list holds it and AuthKit still refuses it:
-            # a write through the API cannot help.
+        if desired.client == "application" or uri in listed:
+            # Only the dashboard adds it: the application's redirects have no
+            # API, and an environment list that holds it and is still refused
+            # cannot be helped by a write.
             outcome.missing += 1
             say(f"redirect {uri}: missing (dashboard): {dashboard(desired)}")
             continue
@@ -185,10 +211,14 @@ async def reconcile(desired: Desired, workos: WorkOS, *, apply: bool) -> Outcome
 
 
 def dashboard(desired: Desired) -> str:
+    if desired.client == "application":
+        return (
+            f"add it on the Redirects tab of application {desired.client_id} in the WorkOS "
+            "dashboard; no API writes an application's redirects"
+        )
     return (
-        f"add it on the Redirects tab of application {desired.client_id} in the WorkOS "
-        "dashboard; the API writes only the environment's list, which AuthKit does not "
-        "read for this application"
+        f"add it for client {desired.client_id} in the WorkOS dashboard; the environment's "
+        "list holds it and AuthKit still refuses it"
     )
 
 
