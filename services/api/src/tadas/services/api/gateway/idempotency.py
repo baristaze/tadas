@@ -1,9 +1,10 @@
 """Edge idempotency: a creating POST accepts an Idempotency-Key. The outcome
 is recorded per tenant and per user under the key, on the same durable
 primitive the queue handlers dedupe on, and replayed on a retry. Only an
-outcome a retry cannot change is recorded: a refusal is replayed, a failure
-and a 429 release the marker so the retry runs again on the same id (a 429
-is an answer about now, not about the request): the release
+outcome a retry cannot change is recorded: a refusal is replayed, a failure,
+a 429, and a 402 release the marker so the retry runs again on the same id
+(a 429 and a plan's bound are answers about now, not about the request): the
+release
 keeps the marker with its digest and its id and clears only the attempt, so
 a retry after a failure that came once the row had landed finds the row
 instead of creating a second one. A key seen with a different request is
@@ -150,8 +151,10 @@ class Idempotency:
             view = await handler(Attempt(target_id=record.target_id, attempt_id=attempt_id))
         except PlatformException as error:
             # A 429 is a refusal only for now: replayed, it would be the
-            # answer for good, and the client's only exit a new key.
-            if error.http_status >= 500 or error.http_status == 429:
+            # answer for good, and the client's only exit a new key. So is a
+            # 402, a plan's bound: the org may be on another plan a moment
+            # later, and the retry of the same create should then land.
+            if error.http_status >= 500 or error.http_status in (402, 429):
                 await self._release(attempt_id)
             else:
                 # A refusal is an outcome a retry cannot change: stored and replayed.
@@ -200,7 +203,7 @@ class Idempotency:
         """The error envelope as the handler would have sent it, so a retry sees
         the same refusal the first attempt saw."""
         error = ErrorBody(code=code, message=message, request_id=self._request_id)
-        return ErrorResponse(error=error).model_dump_json()
+        return ErrorResponse(error=error).model_dump_json(exclude_none=True)
 
     def _with_request_id(self, body: str) -> str:
         """The stored refusal with this request's id in its envelope; a body that

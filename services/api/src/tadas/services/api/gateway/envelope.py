@@ -6,7 +6,7 @@ from uuid import UUID
 
 from fastapi.responses import JSONResponse
 
-from tadas.services.api.types.common import ErrorBody, ErrorResponse
+from tadas.services.api.types.common import ErrorBody, ErrorResponse, PlanLimitDetail
 
 INTERNAL_ERROR = ("internal_error", "internal error")
 """The code and message a client sees for any failure it cannot act on."""
@@ -18,6 +18,10 @@ def error_response(
     code: str,
     message: str,
     headers: dict[str, str] | None = None,
+    plan_limit: PlanLimitDetail | None = None,
 ) -> JSONResponse:
-    body = ErrorResponse(error=ErrorBody(code=code, message=message, request_id=request_id))
-    return JSONResponse(status_code=status, content=body.model_dump(mode="json"), headers=headers)
+    body = ErrorResponse(
+        error=ErrorBody(code=code, message=message, request_id=request_id, plan_limit=plan_limit)
+    )
+    content = body.model_dump(mode="json", exclude_none=plan_limit is None)
+    return JSONResponse(status_code=status, content=content, headers=headers)

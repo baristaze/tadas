@@ -71,6 +71,7 @@ LOCAL_DEFAULT_SERVES_THE_CLOUD = {
     "admission_limit_reads": "the local bound is the bound until a replica is measured",
     "admission_limit_writes": "the local bound is the bound until a replica is measured",
     "admission_retry_after_seconds": "the local wait is the wait",
+    "stripe_timeout_seconds": "the local default is the tuning",
 }
 
 

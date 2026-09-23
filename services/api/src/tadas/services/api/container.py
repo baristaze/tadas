@@ -15,6 +15,8 @@ from tadas.infra.observability import (
 )
 from tadas.infra.root import InfraInterface
 from tadas.infra.trust import install_trust_store
+from tadas.integrations.payments import PaymentsInterface
+from tadas.integrations.settings import build_payments
 from tadas.om.root import Managers, TenancyOperatorOptions, TenancyOptions, build_managers
 from tadas.om.storage.impl.memory import StorageMemoryImpl
 from tadas.om.storage.impl.postgres import StoragePostgresImpl
@@ -117,10 +119,12 @@ class AppContainer:
         managers: Managers,
         services: ServicesInterface,
         rate_limits: RateLimitOptions,
+        payments: PaymentsInterface,
     ) -> None:
         self.settings = settings
         self.storage = storage
         self.infra = infra
+        self.payments = payments
         self.managers = managers
         self.services = services
         self.rate_limits = rate_limits
@@ -135,26 +139,51 @@ class AppContainer:
         storage: StorageInterface,
         infra: InfraInterface,
         settings: ApiSettings | None = None,
+        payments: PaymentsInterface | None = None,
     ) -> AppContainer:
         settings = settings or ApiSettings.model_validate(
             {"_env_file": None, "environment": "test"}
         )
-        return cls.over(settings, storage, infra)
+        return cls.over(settings, storage, infra, payments)
 
     @classmethod
     def over(
-        cls, settings: ApiSettings, storage: StorageInterface, infra: InfraInterface
+        cls,
+        settings: ApiSettings,
+        storage: StorageInterface,
+        infra: InfraInterface,
+        payments: PaymentsInterface | None = None,
     ) -> AppContainer:
-        """Managers, then services, over whichever roots the caller chose."""
+        """Managers, then services, over whichever roots the caller chose. The
+        payments client is the one the settings name unless the caller hands
+        one in (a test that drives the twin)."""
+        payments = payments or build_payments(settings)
         managers = build_managers(
-            storage, infra, tenancy_options(settings), operator_options(settings)
+            storage,
+            infra,
+            tenancy_options(settings),
+            operator_options(settings),
+            payments=payments,
         )
-        services = build_services(managers, infra)
-        return cls(settings, storage, infra, managers, services, rate_limit_options(settings))
+        services = build_services(managers, infra, payments, settings.cors_origins)
+        return cls(
+            settings,
+            storage,
+            infra,
+            managers,
+            services,
+            rate_limit_options(settings),
+            payments,
+        )
 
     async def start(self) -> None:
         await self.infra.start()
-        log.info("%s started with %s", self.settings.service_name, ", ".join(self.infra.describe()))
+        await self.payments.start()
+        log.info(
+            "%s started with %s",
+            self.settings.service_name,
+            ", ".join([*self.infra.describe(), self.payments.describe()]),
+        )
         if self.settings.totp_encryption_key is None:
             log.warning(
                 "no TOTP encryption key: the operator plane refuses every enrolment "
@@ -162,5 +191,6 @@ class AppContainer:
             )
 
     async def close(self) -> None:
+        await self.payments.close()
         await self.infra.close()
         await self.storage.close()

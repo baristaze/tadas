@@ -1,6 +1,8 @@
 from datetime import timedelta
 from uuid import UUID
 
+from tadas.om.billing import BillingOperatorManagerInterface
+from tadas.om.billing.types.billing import Billing
 from tadas.om.idempotency.types.attempt import Attempt
 from tadas.om.opcontext import OperatorContext, OperatorPermission, OperatorRole
 from tadas.om.tasks.types.task import TaskStatus
@@ -22,6 +24,7 @@ from tadas.services.api.types.admin import (
     ResetPasswordRequest,
     TotpConfirmedView,
 )
+from tadas.services.api.types.billing import CompPlanRequest, OperatorBillingView
 from tadas.services.api.types.common import clamp_limit
 from tadas.services.api.types.events import OperatorEventView
 from tadas.services.api.types.tasks import TaskPageView, TaskView
@@ -33,8 +36,11 @@ class AdminServiceImpl(AdminServiceInterface):
     tenant's own lists mint, so a page of a tenant's members or tasks is read
     the same way from either plane."""
 
-    def __init__(self, tenancy: TenancyOperatorManagerInterface) -> None:
+    def __init__(
+        self, tenancy: TenancyOperatorManagerInterface, billing: BillingOperatorManagerInterface
+    ) -> None:
         self._tenancy = tenancy
+        self._billing = billing
 
     async def get_orgs(self, admin: OperatorContext, cursor: str | None, limit: int) -> OrgPageView:
         limit = clamp_limit(limit)
@@ -138,3 +144,21 @@ class AdminServiceImpl(AdminServiceInterface):
 
     async def delete_org(self, admin: OperatorContext, org_id: UUID) -> OrgView:
         return OrgView.model_validate(await self._tenancy.delete_org(admin, org_id))
+
+    async def get_org_billing(self, admin: OperatorContext, org_id: UUID) -> OperatorBillingView:
+        return operator_billing(await self._billing.get_billing(admin, org_id))
+
+    async def comp_plan(
+        self, admin: OperatorContext, org_id: UUID, body: CompPlanRequest
+    ) -> OperatorBillingView:
+        return operator_billing(await self._billing.comp_plan(admin, org_id, body.plan))
+
+
+def operator_billing(billing: Billing) -> OperatorBillingView:
+    return OperatorBillingView(
+        plan=billing.plan,
+        paid_plan=billing.paid_plan,
+        comped_plan=billing.comped_plan,
+        status=billing.account.status if billing.account else None,
+        ends_at=billing.ends_at,
+    )

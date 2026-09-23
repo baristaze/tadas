@@ -7,10 +7,11 @@ from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import SettingsConfigDict
 
 from tadas.infra.impl.settings import InfraSettings
+from tadas.integrations.settings import IntegrationsSettings
 from tadas.om.storage.settings import StorageSettings
 
 
-class ApiSettings(StorageSettings, InfraSettings):
+class ApiSettings(StorageSettings, InfraSettings, IntegrationsSettings):
     model_config = SettingsConfigDict(env_prefix="TADAS_", env_file=".env", extra="ignore")
 
     service_name: str = "api"

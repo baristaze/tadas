@@ -11,7 +11,7 @@ from uuid import UUID
 
 import httpx
 import pytest
-from api_support import OWNER, add_member, build_container, run, seed_request, sign_in_as
+from api_support import OWNER, add_member, build_container, on_plan, run, seed_request, sign_in_as
 from httpx import ASGITransport
 from starlette.testclient import TestClient, WebSocketTestSession
 from starlette.types import Message, Scope
@@ -21,6 +21,7 @@ from uvicorn.protocols.utils import ClientDisconnected
 from tadas.infra.exceptions import BackendFailed
 from tadas.infra.topics import Topics
 from tadas.om.base import utcnow
+from tadas.om.billing.types.plan import Plan
 from tadas.om.opcontext import OpContext, Role
 from tadas.om.tenancy.rules import hash_token
 from tadas.services.api.app import create_app
@@ -274,6 +275,7 @@ def test_revoking_an_api_key_closes_the_socket_it_opened(tmp_path: Path) -> None
             seed_request(), "Acme", "acme", OWNER["email"], OWNER["password"], OWNER["name"]
         )
     )
+    run(on_plan(container, org.id, Plan.TEAM))
     with TestClient(create_app(container)) as tc:
         owner = sign_in(tc, OWNER["email"], OWNER["password"], org.id)
         issued = tc.post("/v1/api-keys", headers=owner, json={"name": "ci", "role": "member"})

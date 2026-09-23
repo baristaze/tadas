@@ -11,6 +11,7 @@ from api_support import (
     add_member,
     build_container,
     enrol_operator,
+    on_plan,
     run,
     seed_request,
     sign_in_as,
@@ -18,6 +19,7 @@ from api_support import (
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
+from tadas.om.billing.types.plan import Plan
 from tadas.om.idempotency.impl.manager import IdempotencyOptions
 from tadas.om.opcontext import OperatorRole, Role
 from tadas.services.api.app import create_app
@@ -428,6 +430,7 @@ def test_realtime_channel_delivers_tenant_events(tmp_path: Path) -> None:
             seed_request(), "Acme", "acme", OWNER["email"], OWNER["password"], OWNER["name"]
         )
     )
+    run(on_plan(container, org.id, Plan.TEAM))
     app = create_app(container)
     with TestClient(app) as tc:
         login = tc.post(

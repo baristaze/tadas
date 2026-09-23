@@ -13,6 +13,8 @@ import httpx
 
 from tadas.infra.impl.local import InfraLocalImpl
 from tadas.om.base import new_id, utcnow
+from tadas.om.billing.types.account import BillingAccount
+from tadas.om.billing.types.plan import Plan
 from tadas.om.opcontext import AppContext, AppType, OperatorRole, RequestContext, Role
 from tadas.om.storage.impl.memory import StorageMemoryImpl
 from tadas.om.storage.root import StorageInterface
@@ -68,11 +70,36 @@ async def sign_in_as(
     }
 
 
-async def sign_in(client: httpx.AsyncClient, container: AppContainer) -> dict[str, str]:
-    """Bootstraps an org, signs its owner in, and returns the tenant headers."""
+async def on_plan(container: AppContainer, org_id: UUID, plan: Plan) -> None:
+    """Puts an org on a plan straight into storage, as an operator's grant
+    would: most tests are about something else than a plan's bounds."""
+    now = utcnow()
+    await container.storage.get_billing_storage().create_account(
+        org_id,
+        BillingAccount(
+            id=new_id(),
+            created_at=now,
+            updated_at=now,
+            created_by=org_id,
+            updated_by=org_id,
+            comped_plan=plan,
+        ),
+        (),
+    )
+
+
+async def sign_in(
+    client: httpx.AsyncClient, container: AppContainer, plan: Plan | None = Plan.TEAM
+) -> dict[str, str]:
+    """Bootstraps an org, signs its owner in, and returns the tenant headers.
+    The org is on Team, whose api keys and tasks no test meets a bound of,
+    unless the test names another plan, or None for the Free every org
+    starts on."""
     _, org = await container.managers.tenancy.bootstrap(
         seed_request(), "Acme", "acme", OWNER["email"], OWNER["password"], OWNER["name"]
     )
+    if plan is not None:
+        await on_plan(container, org.id, plan)
     return await sign_in_as(client, OWNER["email"], OWNER["password"], org.id)
 
 

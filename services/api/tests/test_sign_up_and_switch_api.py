@@ -6,9 +6,10 @@ from uuid import UUID
 
 import httpx
 import pytest
-from api_support import OWNER, build_container, enrol_operator, seed_request, sign_in_as
+from api_support import OWNER, build_container, enrol_operator, on_plan, seed_request, sign_in_as
 from httpx import ASGITransport
 
+from tadas.om.billing.types.plan import Plan
 from tadas.om.opcontext import OperatorRole, Role
 from tadas.om.tenancy.rules import email_digest
 from tadas.services.api.app import create_app
@@ -129,6 +130,8 @@ async def two_orgs(client: httpx.AsyncClient, container: AppContainer) -> tuple[
     )
     beta = await container.storage.get_tenancy_storage().read_org_by_slug("beta")
     assert beta is not None
+    for org_id in (acme.id, beta.id):
+        await on_plan(container, org_id, Plan.TEAM)
     return str(acme.id), str(beta.id)
 
 

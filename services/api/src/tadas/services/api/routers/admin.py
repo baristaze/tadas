@@ -31,6 +31,7 @@ from tadas.services.api.types.admin import (
     ResetPasswordRequest,
     TotpConfirmedView,
 )
+from tadas.services.api.types.billing import CompPlanRequest, OperatorBillingView
 from tadas.services.api.types.common import LIMIT_DEFAULT
 from tadas.services.api.types.events import OperatorEventView
 from tadas.services.api.types.tasks import TaskPageView
@@ -161,3 +162,19 @@ async def list_events(
     limit: int = LIMIT_DEFAULT,
 ) -> list[OperatorEventView]:
     return await service.get_events(admin, org_id, after_seq, limit)
+
+
+@router.get("/orgs/{org_id}/billing", response_model=OperatorBillingView)
+async def get_org_billing(
+    admin: OperatorCtx, service: AdminService, org_id: UUID
+) -> OperatorBillingView:
+    return await service.get_org_billing(admin, org_id)
+
+
+@router.put("/orgs/{org_id}/plan", response_model=OperatorBillingView)
+async def comp_plan(
+    admin: OperatorCtx, service: AdminService, org_id: UUID, body: CompPlanRequest
+) -> OperatorBillingView:
+    """Grants the org a plan with no payment, or takes the grant back. A put:
+    the same body twice leaves the same grant."""
+    return await service.comp_plan(admin, org_id, body)

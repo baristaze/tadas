@@ -266,6 +266,11 @@ async def test_the_creates_run_under_the_operators_idempotency_record(
     assert taken.status_code == 409, taken.text
     assert taken.json()["error"]["code"] == "conflict"
     org_id = UUID(first.json()["id"])
+    # A new org is on Free, one seat; the operator grants it Team first.
+    granted = await client.put(
+        f"/v1/admin/orgs/{org_id}/plan", headers=writer, json={"plan": "team"}
+    )
+    assert granted.status_code == 200 and granted.json()["plan"] == "team", granted.text
 
     member = {
         "email": "bob@example.test",
