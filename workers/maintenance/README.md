@@ -30,6 +30,8 @@ replica told its lane.
     default, `requeue_batch`), bounded in the statement; the rest wait
     for the next sweep.
   - **Purge** each namespace's rows past its retention: deleted tasks,
+    removed files and uploads never confirmed (the object in the store
+    first, then the row, a batch of a hundred per org per sweep),
     removed members with their ended memberships, revoked keys, dead
     sessions, spent tickets, finished idempotency records, and settled
     work items. Under an org deleted longer ago than the retention,

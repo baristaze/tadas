@@ -5,6 +5,11 @@ under `/v1`, the live channel, and the operational routes outside
 `/v1`. Every replica is the same process; replicas share nothing but
 the database, the cache, and the topic bus.
 
+By default it mounts every namespace's routes. `TADAS_NAMESPACES`
+names a subset (`["media"]`, say), which is how one namespace becomes
+a service of its own: the same image with another value, and no code
+change. A name the image does not host refuses the boot.
+
 ## Routes, by area
 
 - **Sign-in.** Sign in with email and password, and the code from an
@@ -22,6 +27,15 @@ the database, the cache, and the topic bus.
 - **Tasks.** Open and done lists a page at a time, one task, create,
   edit, move, delete. (`/v1/tasks`, `/v1/tasks/{task_id}`,
   `/v1/tasks/{task_id}/move`)
+- **Attachments.** A task's files a page at a time, starting an
+  upload of one, removing one. (`/v1/tasks/{task_id}/attachments`,
+  `/v1/tasks/{task_id}/attachments/{file_id}`)
+- **Files.** A file; the form that posts its bytes straight to the
+  store, or the bytes through the API where the store cannot take a
+  form; the confirm once the upload is done; the link a download
+  follows, or the bytes through the API; and the org's storage used.
+  (`/v1/media/files/{file_id}`, `.../upload`, `.../content`,
+  `.../confirm`, `.../download`, `/v1/media/usage`)
 - **Events.** The org's diary after a sequence number. (`/v1/events`)
 - **Realtime.** The live channel, a websocket opened with a
   single-use ticket. (`/v1/realtime`)

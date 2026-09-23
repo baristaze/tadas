@@ -51,6 +51,12 @@ to, and whether it is open or done. Open tasks sit in the order the
 team arranged them; done tasks are listed newest first. A task
 remembers who created it and who last changed it.
 
+A **file** is something a person keeps with the work: a document, a
+picture, a recording. Tadas keeps a record of the file (its name, its
+type, its size, who uploaded it, and why it is there) and keeps the
+bytes themselves in a separate store, never in the record. A file on a
+task is an **attachment**. The org's files add up to its storage used.
+
 ## What the platform writes for itself
 
 The things above are what people see and touch. The four below are how
@@ -92,7 +98,9 @@ a second task.
   of them.
 - Tasks belong to the org. Each is created by a user and may be
   assigned to a user.
-- Every change to a task, and every change to a user, a membership, a
+- Files belong to the org. Each is uploaded by a user, for a purpose;
+  an attachment names the task it is on, and goes when the task goes.
+- Every change to a task or a file, and every change to a user, a membership, a
   session, or an API key that the org's screens act on (a member added,
   changed, or removed, a credential revoked), writes an outbox row, which
   becomes an event in the org's diary, which reaches every screen of the
@@ -105,6 +113,7 @@ a second task.
 
 - [Orgs, identities, users, memberships, sessions, API keys, and socket tickets](src/tadas/om/tenancy/README.md)
 - [Tasks](src/tadas/om/tasks/README.md)
+- [Files](src/tadas/om/media/README.md)
 - [Events](src/tadas/om/events/README.md)
 - [Work items](src/tadas/om/work/README.md)
 - [Idempotency records](src/tadas/om/idempotency/README.md)
