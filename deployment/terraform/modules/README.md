@@ -155,8 +155,13 @@ there, since no deploy holds the Cloudflare token. The `account`
 module (the bootstrap root) requests the site's certificate in
 us-east-1; the create run writes its validation record at Cloudflare and
 waits for it to be issued. The environment root reads the issued
-certificate by the site's name (`data "aws_acm_certificate"`), so a plan
-before it is issued stops there. A deploy makes the distribution, and
+certificate by the site's name (`data "aws_acm_certificate"`). The site
+is optional: `site_domain_name` defaults to empty, and with no name the
+`site` module and the certificate lookup have no instance, so the rest
+plans and applies unchanged. The deploy workflows pass the name only once
+`SITE_DOMAIN_NAME` is set and the certificate is issued, and say so when
+they leave it out; `terraform test` in `environments/staging` plans the
+environment both ways. A deploy makes the distribution, and
 the next create run writes the site's name as a CNAME to it, DNS only,
 so CloudFront serves TLS with its own certificate; at the apex Cloudflare
 flattens the CNAME. The order and which run writes which record are in
@@ -260,6 +265,7 @@ CI runs `terraform fmt -check -recursive` over this folder,
 `terraform test` in `modules/static_site` (the portal's security headers,
 and the site's policy, its missing config and routes, and its not-found
 page), in
-`modules/service` (the autoscaling switch), and in `modules/dashboard`
-(the body's shape), all offline under a mock provider. `infra/tests/test_dashboard_parity.py` holds the dashboard
+`modules/service` (the autoscaling switch), in `modules/dashboard`
+(the body's shape), and in `environments/staging` (the environment plans
+whole with the company site left out, and with it), all offline under a mock provider. `infra/tests/test_dashboard_parity.py` holds the dashboard
 template's panel titles equal to the local Grafana dashboard's.

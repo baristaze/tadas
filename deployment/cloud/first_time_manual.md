@@ -481,12 +481,21 @@ Nothing else needs it; CI never does. Making the token and running the create ru
 - **The API and the portal** (`api.`, `app.`, each under `staging.` for staging) are delegated to Route 53: one NS record per name server of the zone the bootstrap root made, and any stale NS record at that name deleted.
 - **The company site** is `tadas.fyi` in production and `staging.tadas.fyi` in staging. Neither can be delegated. The apex is the Cloudflare zone's own apex, where an NS record cannot sit, and a delegation of `staging.tadas.fyi` would hide the `app.staging` and `api.staging` delegations beneath it. So the site's names are records in the Cloudflare zone, **DNS only** (not proxied), so CloudFront serves TLS with its own certificate:
   1. The bootstrap root requests the site's certificate in us-east-1. The run writes its validation record at Cloudflare as a CNAME, then waits until ACM has issued it (step 3b).
-  2. A deploy makes the site's distribution, with the issued certificate. The environment root finds the certificate by the site's name, and a plan before it is issued stops there, naming it.
+  2. A deploy makes the site's distribution, with the issued certificate. The environment root finds the certificate by the site's name.
   3. The next create run finds the distribution by its alias and writes the site's name as a CNAME to the distribution's domain (step 3c). At the apex Cloudflare flattens the CNAME into addresses. Until then the step says there is no distribution yet.
 
   If the site's name already holds an `A`, `AAAA`, or `NS` record at Cloudflare, the run refuses and names it, since what that record serves is a person's call. Remove it by hand if the site is to serve there, then run again.
 
-So a new environment runs the create run twice: once before its first deploy, and once after it, for the site's CNAME. The same holds when the site came to an existing environment. For staging: the create run from the pull request's branch before it merges (certificate, validation record, `SITE_DOMAIN_NAME` on the GitHub environments), the merge (the deploy makes the distribution and publishes the site), then the create run again (the CNAME). Until `SITE_DOMAIN_NAME` is set, a deploy says the cloud is not configured and skips it. For production: the create run before the first release that carries the site, the release, then the create run again. Production's first run also lets staging's replication write the site's builds into production's artifacts bucket, so that release takes a commit staging built after it, the same rule as the first release.
+The site is optional, so none of this holds up a deploy. Until the environment's `SITE_DOMAIN_NAME` is set and the site's certificate is issued, a deploy (and a release, and the fast rollback) plans, applies, and publishes everything else exactly as always, leaves the site out, and says so in the run's summary.
+
+So the site takes two create runs, and a deploy between them. When the site comes to an environment that already runs, as it did to staging:
+
+1. The change that brings the site merges. Its deploy leaves the site out and says why.
+2. The create run (`scripts/cloud_create.sh staging` under `tadas-staging-admin`): the certificate, its validation record, the wait until it is issued, the grants to keep and replicate the site's builds, and `SITE_DOMAIN_NAME` on the GitHub environments. It dispatches a deploy of `main`.
+3. That deploy, once green, has made the site's distribution and published the site.
+4. The create run again: step 3c writes the site's CNAME, and the site answers at its name.
+
+For production the same four happen around releases: the change is already released, then the create run (`scripts/cloud_create.sh production` under `tadas-prod-admin`), then a release, then the create run again. Production's run also lets staging's replication write the site's builds into production's artifacts bucket, so that release takes a commit staging built after it, the same rule as the first release. A new environment follows its first-time order (section 19) and runs the create run once more after its first green deploy, for the CNAME.
 
 The records the Terraform does not hold stay at Cloudflare when an environment is destroyed; the nuke lists them.
 

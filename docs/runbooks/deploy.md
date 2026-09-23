@@ -73,7 +73,7 @@ declared:
 
 | GitHub environment | Variables |
 |--------------------|-----------|
-| `staging` | `AWS_ROLE_ARN` (the staging deploy role), `TF_STATE_BUCKET`, `API_DOMAIN_NAME`, `APP_DOMAIN_NAME`, `SITE_DOMAIN_NAME`, `ALARM_EMAIL`, and optionally `PORTAL_SENTRY_DSN` (the product's one tracker project, the same DSN production's environment carries) |
+| `staging` | `AWS_ROLE_ARN` (the staging deploy role), `TF_STATE_BUCKET`, `API_DOMAIN_NAME`, `APP_DOMAIN_NAME`, `ALARM_EMAIL`, and optionally `SITE_DOMAIN_NAME` (the company site, left out of every deploy until it is set and its certificate is issued) and `PORTAL_SENTRY_DSN` (the product's one tracker project, the same DSN production's environment carries) |
 | `production-plan` | the same names: `AWS_ROLE_ARN` is the plan role |
 | `production` | `AWS_ROLE_ARN` (the production deploy role), `TF_STATE_BUCKET` |
 
