@@ -13,6 +13,8 @@ from tadas.om.media import MediaManagerInterface
 from tadas.om.media.impl.manager import MediaManagerImpl, MediaOptions
 from tadas.om.outbox import OutboxRelayInterface
 from tadas.om.outbox.impl.relay import OutboxRelayImpl
+from tadas.om.slack import SlackManagerInterface
+from tadas.om.slack.impl.manager import SlackManagerImpl, SlackOptions
 from tadas.om.storage.root import StorageInterface
 from tadas.om.tasks import TasksManagerInterface
 from tadas.om.tasks.impl.manager import TasksManagerImpl, TasksOptions
@@ -30,6 +32,7 @@ class Managers:
     work: WorkManagerInterface
     tasks: TasksManagerInterface
     media: MediaManagerInterface
+    slack: SlackManagerInterface
     idempotency: IdempotencyManagerInterface
     events: EventsManagerInterface
     outbox: OutboxRelayInterface
@@ -73,11 +76,13 @@ def build_managers(
         outbox,
         MediaOptions(),
     )
+    slack = SlackManagerImpl(storage.get_slack_storage(), tenancy, outbox, SlackOptions())
     tasks = TasksManagerImpl(
         storage.get_tasks_storage(),
         tenancy,
         media,
         outbox,
+        slack,
         TasksOptions(),
     )
     idempotency = IdempotencyManagerImpl(storage.get_idempotency_storage(), IdempotencyOptions())
@@ -94,6 +99,7 @@ def build_managers(
         work=work,
         tasks=tasks,
         media=media,
+        slack=slack,
         idempotency=idempotency,
         events=events,
         outbox=outbox,

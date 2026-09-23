@@ -2,6 +2,7 @@
 // edits the list makes before the server answers.
 import type { InfiniteData } from "@tanstack/react-query";
 import type { MeView, TaskPageView, TaskView, UserView } from "../../api";
+import { dueBadge, type DueBadge } from "./dueModel";
 
 /** How long a task takes to fade out of one group and into the other. */
 export const MOTION_MS = 1000;
@@ -16,6 +17,8 @@ export interface TaskRow {
   assigneeId: string | null;
   createdBy: string;
   assignee: string | null;
+  /** The due time's badge, or null when the task has none. */
+  due: DueBadge | null;
 }
 
 export function canWrite(me: MeView | undefined): boolean {
@@ -31,7 +34,12 @@ export function nameOf(userId: string, users: ReadonlyMap<string, UserView>, meI
   return users.get(userId)?.display_name ?? "someone";
 }
 
-export function taskRow(task: TaskView, users: ReadonlyMap<string, UserView>, meId: string | null): TaskRow {
+export function taskRow(
+  task: TaskView,
+  users: ReadonlyMap<string, UserView>,
+  meId: string | null,
+  now: Date = new Date(),
+): TaskRow {
   return {
     id: task.id,
     title: task.title,
@@ -40,6 +48,7 @@ export function taskRow(task: TaskView, users: ReadonlyMap<string, UserView>, me
     assigneeId: task.assignee_id ?? null,
     createdBy: nameOf(task.created_by, users, meId),
     assignee: task.assignee_id ? nameOf(task.assignee_id, users, meId) : null,
+    due: dueBadge(task, now),
   };
 }
 

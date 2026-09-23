@@ -9,6 +9,7 @@ from tadas.services.api.services import (
     MediaServiceInterface,
     RealtimeServiceInterface,
     ServicesInterface,
+    SlackServiceInterface,
     TasksServiceInterface,
     TenancyServiceInterface,
 )
@@ -16,6 +17,7 @@ from tadas.services.api.services.impl.admin import AdminServiceImpl
 from tadas.services.api.services.impl.events import EventsServiceImpl
 from tadas.services.api.services.impl.media import MediaServiceImpl
 from tadas.services.api.services.impl.realtime import RealtimeServiceImpl
+from tadas.services.api.services.impl.slack import SlackServiceImpl
 from tadas.services.api.services.impl.tasks import TasksServiceImpl
 from tadas.services.api.services.impl.tenancy import TenancyServiceImpl
 
@@ -29,6 +31,7 @@ class ServicesImpl(ServicesInterface):
         events: EventsServiceInterface,
         media: MediaServiceInterface,
         realtime: RealtimeServiceInterface,
+        slack: SlackServiceInterface,
     ) -> None:
         self._tasks = tasks
         self._tenancy = tenancy
@@ -36,6 +39,7 @@ class ServicesImpl(ServicesInterface):
         self._events = events
         self._media = media
         self._realtime = realtime
+        self._slack = slack
 
     def get_tasks_service(self) -> TasksServiceInterface:
         return self._tasks
@@ -55,6 +59,9 @@ class ServicesImpl(ServicesInterface):
     def get_realtime_service(self) -> RealtimeServiceInterface:
         return self._realtime
 
+    def get_slack_service(self) -> SlackServiceInterface:
+        return self._slack
+
 
 def build_services(managers: Managers, infra: InfraInterface) -> ServicesInterface:
     """In-process impls only: the remote impl of each interface is the typed
@@ -66,4 +73,5 @@ def build_services(managers: Managers, infra: InfraInterface) -> ServicesInterfa
         events=EventsServiceImpl(managers.events),
         media=MediaServiceImpl(managers.media),
         realtime=RealtimeServiceImpl(managers.tenancy, managers.events, infra.get_topics()),
+        slack=SlackServiceImpl(managers.slack),
     )

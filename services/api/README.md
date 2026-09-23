@@ -41,6 +41,12 @@ change. A name the image does not host refuses the boot.
   follows, or the bytes through the API; and the org's storage used.
   (`/v1/media/files/{file_id}`, `.../upload`, `.../content`,
   `.../confirm`, `.../download`, `/v1/media/usage`)
+  edit, move, delete. A task's due time (`remind_at`, with its offset)
+  is set on the create and set, moved, or cleared (`null`) on the edit.
+  (`/v1/tasks`, `/v1/tasks/{task_id}`, `/v1/tasks/{task_id}/move`)
+- **Slack.** The org's connected channel, any member; a one-time link
+  code, shown once, and the disconnect, an owner or an admin.
+  (`/v1/slack/connection`, `/v1/slack/link-codes`)
 - **Events.** The org's diary after a sequence number. (`/v1/events`)
 - **Realtime.** The live channel, a websocket opened with a
   single-use ticket. (`/v1/realtime`)

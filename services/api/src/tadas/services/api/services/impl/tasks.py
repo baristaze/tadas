@@ -112,6 +112,7 @@ class TasksServiceImpl(TasksServiceInterface):
             title=body.title,
             notes=body.notes,
             assignee_id=body.assignee_id,
+            remind_at=body.remind_at,
         )
         return TaskView.model_validate(await self._tasks.create_task(ctx, task))
 
@@ -120,13 +121,13 @@ class TasksServiceImpl(TasksServiceInterface):
     ) -> TaskView:
         expected = expected_version(if_match)
         current = await self._tasks.get_task(ctx, task_id)
-        # Only the assignee can be cleared; a null title, notes, or status is
-        # ignored. The version is the caller's, never the stored one, and it
+        # Only the assignee and the due time can be cleared; a null title,
+        # notes, or status is ignored. The version is the caller's, never the stored one, and it
         # travels beside the entity: the manager conditions the write on it.
         changes = {
             name: value
             for name, value in body.model_dump(exclude_unset=True).items()
-            if value is not None or name == "assignee_id"
+            if value is not None or name in ("assignee_id", "remind_at")
         }
         # model_copy does not validate; a copy that carries caller input does.
         changed = Task.model_validate({**current.model_dump(), **changes})

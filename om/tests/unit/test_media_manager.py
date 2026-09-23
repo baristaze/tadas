@@ -7,7 +7,7 @@ from pathlib import Path
 from uuid import UUID
 
 import pytest
-from contracts.doubles import Members, context, media_of
+from contracts.doubles import Members, context, media_of, no_slack
 from contracts.factories import make_org
 
 from tadas.infra.buckets import Buckets
@@ -63,7 +63,9 @@ def tasks(
     relay: OutboxRelayImpl,
     media: MediaManagerImpl,
 ) -> TasksManagerImpl:
-    return TasksManagerImpl(TasksStorageMemoryImpl(outbox), members, media, relay, TasksOptions())
+    return TasksManagerImpl(
+        TasksStorageMemoryImpl(outbox), members, media, relay, no_slack(), TasksOptions()
+    )
 
 
 def a_file(
@@ -394,7 +396,7 @@ async def test_a_task_delete_stands_when_its_attachments_cannot_follow(
         MediaOptions(),  # type: ignore[attr-defined]
     )
     tasks = TasksManagerImpl(
-        TasksStorageMemoryImpl(outbox), members, failing, relay, TasksOptions()
+        TasksStorageMemoryImpl(outbox), members, failing, relay, no_slack(), TasksOptions()
     )
     ctx = context(Role.MEMBER)
     task = await tasks.create_task(ctx, make_task(ctx))

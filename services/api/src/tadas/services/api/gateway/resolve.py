@@ -14,6 +14,7 @@ from tadas.services.api.services import (
     MediaServiceInterface,
     RealtimeServiceInterface,
     ServicesInterface,
+    SlackServiceInterface,
     TasksServiceInterface,
     TenancyServiceInterface,
 )
@@ -54,9 +55,14 @@ def realtime_service(connection: HTTPConnection) -> RealtimeServiceInterface:
     return services_of(connection).get_realtime_service()
 
 
+def slack_service(connection: HTTPConnection) -> SlackServiceInterface:
+    return services_of(connection).get_slack_service()
+
+
 TasksService = Annotated[TasksServiceInterface, Depends(tasks_service)]
 TenancyService = Annotated[TenancyServiceInterface, Depends(tenancy_service)]
 AdminService = Annotated[AdminServiceInterface, Depends(admin_service)]
 EventsService = Annotated[EventsServiceInterface, Depends(events_service)]
 MediaService = Annotated[MediaServiceInterface, Depends(media_service)]
 RealtimeService = Annotated[RealtimeServiceInterface, Depends(realtime_service)]
+SlackService = Annotated[SlackServiceInterface, Depends(slack_service)]

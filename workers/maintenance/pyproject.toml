@@ -1,11 +1,12 @@
 [project]
 name = "tadas-maintenance"
 version = "0.1.0"
-description = "The Tadas maintenance worker: the claim loop and the sweep, ready for real kinds."
+description = "The Tadas maintenance worker: the claim loop, the sweep, and the Slack socket bridge."
 requires-python = ">=3.14"
 dependencies = [
     "tadas-om",
     "tadas-infra",
+    "tadas-integrations",
     "pydantic-settings>=2.15",
 ]
 
@@ -15,6 +16,7 @@ tadas-maintenance = "tadas.workers.maintenance.entry:main"
 [tool.uv.sources]
 tadas-om = { workspace = true }
 tadas-infra = { workspace = true }
+tadas-integrations = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

@@ -40,3 +40,7 @@ export type IssuedDownloadView = Schemas["IssuedDownloadView"];
 export type StorageUsageView = Schemas["StorageUsageView"];
 export type Role = Schemas["Role"];
 export type Permission = Schemas["Permission"];
+export type SlackConnectionView = Schemas["SlackConnectionView"];
+export type SlackConnectionStatus = Schemas["SlackConnectionStatus"];
+export type SlackStatusView = Schemas["SlackStatusView"];
+export type IssuedSlackLinkCodeView = Schemas["IssuedSlackLinkCodeView"];

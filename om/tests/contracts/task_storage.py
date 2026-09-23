@@ -19,6 +19,7 @@ from tadas.om.tasks.types.task import Task, TaskScope, TaskStatus
 CROSS_TENANT_CASES: frozenset[str] = frozenset(
     {
         "create_task",
+        "mark_reminded",
         "purge_deleted",
         "purge_tenant",
         "read_done_tasks",
@@ -476,3 +477,28 @@ class TaskStorageContract:
             (0.0, first.id),
             (1.0, second.id),
         ]
+
+    async def test_a_reminder_is_marked_once_and_only_while_it_is_due(
+        self, storage: TasksStorageInterface
+    ) -> None:
+        """The reminder's compare-and-set: it lands while the task is open,
+        living, due at the time the reminder carries, and not yet reminded,
+        and never for another tenant; a second run of it lands nothing."""
+        org, other = new_id(), new_id()
+        due = utcnow().replace(microsecond=0)
+        task = make_task().model_copy(update={"remind_at": due})
+        await storage.create_task(org, task, (make_row(org, task),))
+        assert await storage.mark_reminded(other, task.id, due, utcnow(), ()) is None
+        moved = due + timedelta(minutes=5)
+        assert await storage.mark_reminded(org, task.id, moved, utcnow(), ()) is None
+        now = utcnow()
+        marked = await storage.mark_reminded(
+            org, task.id, due, now, (make_row(org, task, "reminded"),)
+        )
+        assert marked is not None
+        assert marked.reminded_at == now and marked.version == task.version + 1
+        assert await storage.read_task(org, task.id) == marked
+        assert await storage.mark_reminded(org, task.id, due, utcnow(), ()) is None
+        done = make_task(status=TaskStatus.DONE).model_copy(update={"remind_at": due})
+        await storage.create_task(org, done, (make_row(org, done),))
+        assert await storage.mark_reminded(org, done.id, due, utcnow(), ()) is None

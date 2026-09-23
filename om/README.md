@@ -57,7 +57,17 @@ could not open themselves.
 A **task** is one item on the list: a title, notes, who it is assigned
 to, and whether it is open or done. Open tasks sit in the order the
 team arranged them; done tasks are listed newest first. A task
-remembers who created it and who last changed it.
+remembers who created it and who last changed it. It can carry a
+**due time**: when it comes, the team gets one reminder, on every open
+screen and in the org's Slack channel.
+
+## Slack
+
+A **Slack connection** is the one Slack channel an org posts to:
+reminders, new tasks, and finished ones appear there, and
+`/tadas add <title>` typed there adds a task. An owner or an admin
+connects it with a **link code**, a short code Tadas shows once and
+that works once.
 
 A **file** is something a person keeps with the work: a document, a
 picture, a recording. Tadas keeps a record of the file (its name, its
@@ -87,7 +97,9 @@ without its announcement, and no announcement is made of a change that
 did not happen.
 
 A **work item** is a job for later: something the platform does in the
-background on behalf of a person who asked once. It waits in a queue.
+background on behalf of a person who asked once, such as the reminder a
+due time scheduled or a post to Slack. It waits in a queue, some of it
+until a set time.
 A worker claims it, holds it for a short lease, does it, and marks it
 done. If the worker dies, the lease runs out and another worker picks
 the job up.
@@ -107,7 +119,9 @@ a second task.
   it is done as that user in that org. A socket ticket stands for one
   of them.
 - Tasks belong to the org. Each is created by a user and may be
-  assigned to a user.
+  assigned to a user. A task added from Slack is created by the user
+  whose code linked the channel.
+- A Slack connection belongs to the org, and a channel to one org.
 - Files belong to the org. Each is uploaded by a user, for a purpose;
   an attachment names the task it is on, and goes when the task goes.
 - Every change to a task or a file, and every change to a user, a membership, a
@@ -124,6 +138,7 @@ a second task.
 - [Orgs, identities, users, memberships, sessions, API keys, and socket tickets](src/tadas/om/tenancy/README.md)
 - [Tasks](src/tadas/om/tasks/README.md)
 - [Files](src/tadas/om/media/README.md)
+- [Slack connections, link codes, and posts](src/tadas/om/slack/README.md)
 - [Events](src/tadas/om/events/README.md)
 - [Work items](src/tadas/om/work/README.md)
 - [Idempotency records](src/tadas/om/idempotency/README.md)

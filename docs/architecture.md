@@ -215,7 +215,7 @@ context on keeps the stage the callee needs.
   stream and counted on the outcome counter. Done or failed items are
   purged by the sweep after the work retention (30 days).
 - `tasks`: the to-do items (`Task`: title, notes, status, position,
-  version), listed by a `TaskFilter` (team or mine) and paged by a
+  version, and the due time `remind_at` with `reminded_at` beside it), listed by a `TaskFilter` (team or mine) and paged by a
   cursor, `OpenTaskCursor` over (position, id) for the open list and
   `TaskCursor` over (updated_at, id) for the done one, all passed
   unchanged from the manager to storage; the visibility, cursor, and
@@ -298,6 +298,33 @@ context on keeps the stage the callee needs.
   its object and then its row are erased by the sweep after a day
   (`purge_deleted`, a batch of 100 per tenant per sweep), and an upload
   pending for a day is erased the same way.
+  A due time is the caller's field and `reminded_at` the manager's. A
+  write that changes `remind_at` clears `reminded_at` and, when the new
+  one is set, lands the reminder's work row in the same commit; the
+  reminder that comes due is `fire_reminder`, one conditional write
+  (`mark_reminded`: open, living, still due at the time the item
+  carries, not yet reminded) that moves the version on and lands the
+  announcement, so a moved, cleared, finished, or already reminded due
+  time writes nothing and announces nothing.
+
+- `slack`: the org's one Slack connection (`SlackConnection`: the
+  workspace and channel, who linked it, and `status`, `ok` or `broken`
+  with the refusal that broke it), the one-time link codes
+  (`SlackLinkCode`, kept as a SHA-256 digest, redeemed in one
+  conditional write, ten minutes long), and the record of each post
+  (`SlackPost`, unique per org on the posting item's key). A connection
+  is unique among the living twice, one per org and one org per
+  channel, as partial unique indexes, so a channel another org holds is
+  refused (`SlackChannelTaken`, a `Conflict`). Issuing a code and
+  disconnecting need `MANAGE_MEMBERS`. Two operations take the request
+  stage, because a Slack command arrives with a channel or a code and no
+  tenant: `redeem_link_code` finds the org from the code, and
+  `channel_context` from the channel and hands back the tenant's service
+  context with the linking member as the attribution, which is who a
+  task `/tadas add` creates is attributed to. Their storage lookups
+  (`redeem_link_code`, `read_connection_by_channel`) read in the system
+  scope. The tables are `core`, `org`-scoped, and purged by the sweep
+  after thirty days.
 - `idempotency`: the durable outcome of a request the caller may retry,
   one record per (tenant, user, key); the gateway begins it before a
   creating request and finishes it with the outcome. The record carries
@@ -399,9 +426,14 @@ context on keeps the stage the callee needs.
   The relay reaches the work manager through a provider the business
   root binds, because the work manager needs the tenancy manager, which
   needs the relay; the graph the root hands back is still whole.
-  No core write in Tadas starts work today: the `work.<kind>` path is
-  exercised by the tests that hold it, and the first domain kind will
-  ride it.
+  Three kinds ride it ([ADR 0012](adr/0012-the-work-queue-has-no-producer-yet.md),
+  closed): a task written with a new due time lands a `work.TASK_REMINDER`
+  row, a task created or completed in an org with a working Slack
+  connection a `work.SLACK_POST` row, and the reminder's own write, when
+  it goes out, lands `tasks.task.reminded` and a `work.SLACK_POST` row
+  beside it. A kind whose payload is a `ScheduledPayload` names
+  `not_before`, and the relayed enqueue makes the item available then,
+  so a reminder a week out waits in the queue and no timer holds it.
   Tadas relays in the request path, the step the guideline names as the
   one a system takes when push latency earns it, and pays the round
   trips it names for a push that arrives in milliseconds; the sweep
@@ -773,8 +805,11 @@ everything in-process for tests.
   `tadas-api serve | migrate | bootstrap | add-member | openapi`
   (`bootstrap` and `add-member` are what `make seed` runs; both produce
   the context the seeding then runs under).
-- `workers/maintenance` (`tadas-maintenance`): the claim loop for kind
-  `NOOP` on one lane (`TADAS_WORKER_LANE`, or `serve --lane`), lease
+- `workers/maintenance` (`tadas-maintenance`): the claim loop for the
+  kinds `TASK_REMINDER`, `SLACK_POST`, and `NOOP` on one lane
+  (`TADAS_WORKER_LANE`, or `serve --lane`); a handler that raises
+  `WorkParked` has its item deferred for the time it names, no attempt
+  spent, and a Slack rate limit is that case; lease
   renewal and self-fencing (a renewal refused with `LeaseLost` cancels
   the running task at once, because another worker holds the item now;
   a renewal that fails for any other reason is retried once, each
@@ -806,7 +841,19 @@ everything in-process for tests.
   reads one would leave it forever; the org row stays as the record.
   Each namespace purges its own rows and asks tenancy the one question,
   `tenant_expired`, so the whole sweep reads one answer.
-  `tadas-maintenance serve | health`.
+  Beside the loop, `serve` consumes the `slack` queue: each delivery
+  the Socket Mode bridge acknowledged is handled (`/tadas add`, `link`,
+  `help`, a mention, the App Home) and deleted, and one whose handling
+  failed for a reason a retry can change is left for the queue to hand
+  back. `slack` is the bridge: one process per environment holding the
+  Socket Mode connection with `TADAS_SLACK_APP_TOKEN`, which
+  acknowledges each delivery before anything else and queues it under a
+  UUID v5 key over the provider and the delivery id, dropping Slack's
+  retries by that key; with no app token it holds no connection. The
+  Slack client is the one of `integrations/` the container picks at
+  boot: the Web API with `TADAS_SLACK_BOT_TOKEN`, the twin locally
+  without one, and the off impl in a deployed process without one.
+  `tadas-maintenance serve | slack | health`.
   The serving process answers `/metrics` and `/healthz` on
   `TADAS_METRICS_PORT` (9464) from one thread: `/healthz` asks the
   loop for its last beat, on its event loop, so a blocked loop fails
@@ -1146,9 +1193,9 @@ page; this section says what exists.
   (`deployment/local/grafana/dashboards/tadas-overview.json`), and
   `infra/tests/test_dashboard_parity.py` holds the titles equal.
   `modules/alarms` declares the SNS topic `tadas-<env>-alarms`, the
-  email subscription from `alarm_email`, and seven alarms: the load
+  email subscription from `alarm_email`, and eight alarms: the load
   balancer's 5xx ratio, its unhealthy targets, its p95, the database's
-  CPU and free storage, and each of the two services running below its
+  CPU and free storage, and each of the three services running below its
   desired count. [runbooks/operate.md](runbooks/operate.md) reads them.
 - **Scale-out.** Every service declares an autoscaling target and a
   CPU target-tracking policy in `modules/service`, created only when

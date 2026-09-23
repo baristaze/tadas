@@ -616,6 +616,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/slack/connection": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Connection */
+        get: operations["get_connection_v1_slack_connection_get"];
+        put?: never;
+        post?: never;
+        /** Disconnect */
+        delete: operations["disconnect_v1_slack_connection_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/slack/link-codes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Issue Link Code */
+        post: operations["issue_link_code_v1_slack_link_codes_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/tasks": {
         parameters: {
             query?: never;
@@ -763,7 +798,12 @@ export interface components {
             password: string;
             role: components["schemas"]["Role"];
         };
-        /** AddTaskRequest */
+        /**
+         * AddTaskRequest
+         * @description `remind_at` schedules one reminder at that time, pushed to every open
+         *     screen of the org and posted to its Slack channel when one is connected.
+         *     It carries its offset; a time without one is refused.
+         */
         AddTaskRequest: {
             /** Assignee Id */
             assignee_id?: string | null;
@@ -772,6 +812,8 @@ export interface components {
              * @default
              */
             notes: string;
+            /** Remind At */
+            remind_at?: string | null;
             /** Title */
             title: string;
         };
@@ -1054,6 +1096,21 @@ export interface components {
             /** Token */
             token: string;
             user: components["schemas"]["UserView"];
+        };
+        /**
+         * IssuedSlackLinkCodeView
+         * @description A one-time code, typed into a Slack channel as `/tadas link <code>`. It
+         *     works once, until `expires_at`, and is shown here only: the platform keeps
+         *     its digest.
+         */
+        IssuedSlackLinkCodeView: {
+            /** Code */
+            code: string | null;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
         };
         /**
          * IssuedTicketView
@@ -1409,6 +1466,54 @@ export interface components {
             password: string;
         };
         /**
+         * SlackConnectionStatus
+         * @enum {string}
+         */
+        SlackConnectionStatus: "ok" | "broken";
+        /**
+         * SlackConnectionView
+         * @description The Slack channel the org is connected to. `status` is `broken` when
+         *     Slack refused a post for good (`broken_reason` says which refusal); the
+         *     channel is linked again to mend it. `created_by` is the member whose code
+         *     linked it, whom a task added from the channel is attributed to.
+         */
+        SlackConnectionView: {
+            /** Broken Reason */
+            broken_reason: string | null;
+            /** Channel Id */
+            channel_id: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Created By
+             * Format: uuid
+             */
+            created_by: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            status: components["schemas"]["SlackConnectionStatus"];
+            /** Team Id */
+            team_id: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /**
+         * SlackStatusView
+         * @description Whether the org has a channel connected, and which.
+         */
+        SlackStatusView: {
+            connection: components["schemas"]["SlackConnectionView"] | null;
+        };
+        /**
          * StorageUsageView
          * @description What the org keeps in the store, counted from its files: the stored ones
          *     per purpose and in total, and the uploads started and not yet confirmed.
@@ -1472,6 +1577,10 @@ export interface components {
             notes: string;
             /** Position */
             position: number;
+            /** Remind At */
+            remind_at?: string | null;
+            /** Reminded At */
+            reminded_at?: string | null;
             status: components["schemas"]["TaskStatus"];
             /** Title */
             title: string;
@@ -1519,12 +1628,16 @@ export interface components {
          *     `precondition_failed` when another write landed since, so the caller reads
          *     again and decides over the current task. An update that names no version
          *     is refused with 422 `validation_failed`, since it would overwrite blind.
+         *     An explicit null `remind_at` clears the due time; a new one reschedules
+         *     the reminder, and the one scheduled before it never goes out.
          */
         UpdateTaskRequest: {
             /** Assignee Id */
             assignee_id?: string | null;
             /** Notes */
             notes?: string | null;
+            /** Remind At */
+            remind_at?: string | null;
             status?: components["schemas"]["TaskStatus"] | null;
             /** Title */
             title?: string | null;
@@ -3045,6 +3158,106 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SessionView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_connection_v1_slack_connection_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SlackStatusView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    disconnect_v1_slack_connection_delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SlackStatusView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    issue_link_code_v1_slack_link_codes_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
+                "idempotency-key"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssuedSlackLinkCodeView"];
                 };
             };
             /** @description Validation Error */

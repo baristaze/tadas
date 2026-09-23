@@ -25,6 +25,7 @@ from contracts import (
     idempotency_storage,
     media_storage,
     outbox_storage,
+    slack_storage,
     task_storage,
     tenancy_storage,
     work_storage,
@@ -61,6 +62,8 @@ STORAGE_EXCEPTIONS: frozenset[tuple[str, str]] = frozenset(
         ("WorkStorageInterface", "purge_items"),
         ("OutboxStorageInterface", "claim_pending"),
         ("OutboxStorageInterface", "purge_done"),
+        ("SlackStorageInterface", "read_connection_by_channel"),
+        ("SlackStorageInterface", "redeem_link_code"),
     }
 )
 
@@ -69,6 +72,7 @@ CROSS_TENANT_CASES: dict[str, frozenset[str]] = {
     "IdempotencyStorageInterface": idempotency_storage.CROSS_TENANT_CASES,
     "MediaStorageInterface": media_storage.CROSS_TENANT_CASES,
     "OutboxStorageInterface": outbox_storage.CROSS_TENANT_CASES,
+    "SlackStorageInterface": slack_storage.CROSS_TENANT_CASES,
     "TasksStorageInterface": task_storage.CROSS_TENANT_CASES,
     "TenancyStorageInterface": tenancy_storage.CROSS_TENANT_CASES,
     "WorkStorageInterface": work_storage.CROSS_TENANT_CASES,
@@ -112,6 +116,10 @@ REQUEST_TRANSITIONS: frozenset[tuple[str, str]] = frozenset(
         ("TenancyManagerInterface", "grant_operator_token"),
         ("WorkManagerInterface", "claim"),
         ("WorkManagerInterface", "maintenance_contexts"),
+        # A Slack command arrives with a channel or a code and no tenant; each
+        # finds the tenant from what Slack sent, as a webhook's lookup does.
+        ("SlackManagerInterface", "redeem_link_code"),
+        ("SlackManagerInterface", "channel_context"),
     }
 )
 

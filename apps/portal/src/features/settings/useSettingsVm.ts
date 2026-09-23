@@ -1,10 +1,21 @@
 import { useMemo, useState } from "react";
 import { errorMessage } from "../../app/errorMessage";
 import { forgetSession } from "../../app/forgetSession";
+import { useDisconnectSlack, useIssueSlackLinkCode, useSlackStatus } from "../../queries/slack";
 import { useApiKeys, useCreateApiKey, useLogout, useMe, useRevokeApiKey, useUsers } from "../../queries/tenancy";
 import { useNoticesStore } from "../../store/notices";
 import { apiKeyRows, canManageKeys, memberRows, signedInAs } from "./settingsModel";
 import { signOut } from "./signOut";
+import {
+  canManageSlack,
+  clockOf,
+  codeStillPending,
+  INVITE_COMMAND,
+  issuedCode,
+  linkCommand,
+  slackSummary,
+  type IssuedCode,
+} from "./slackModel";
 
 export function useSettingsVm() {
   const me = useMe();
@@ -17,6 +28,11 @@ export function useSettingsVm() {
   const notify = useNoticesStore((s) => s.notify);
   const [newKeyName, setNewKeyName] = useState("");
   const [issuedKey, setIssuedKey] = useState<string | null>(null);
+  const slack = useSlackStatus();
+  const issueCode = useIssueSlackLinkCode();
+  const disconnect = useDisconnectSlack();
+  const mayManageSlack = canManageSlack(me.data);
+  const [slackCode, setSlackCode] = useState<IssuedCode | null>(null);
 
   const members = useMemo(() => memberRows(users.data ?? []), [users.data]);
   const keys = useMemo(() => apiKeyRows(apiKeys.data ?? [], new Date()), [apiKeys.data]);
@@ -53,6 +69,30 @@ export function useSettingsVm() {
     }
   };
 
+  // A code is shown until it is used (the connection's push refreshes the
+  // status, and the status moves on from where it stood), or dismissed.
+  const connectSlack = async () => {
+    try {
+      const issued = await issueCode.mutateAsync();
+      const code = issuedCode(issued, slack.data);
+      if (code === null) notify("A code was issued, but it was lost on the way back; ask for another.");
+      setSlackCode(code);
+    } catch (caught) {
+      notify(errorMessage(caught, "No code was issued."));
+    }
+  };
+
+  const disconnectSlack = async () => {
+    try {
+      await disconnect.mutateAsync();
+      setSlackCode(null);
+    } catch (caught) {
+      notify(errorMessage(caught, "Slack was not disconnected."));
+    }
+  };
+
+  const shownCode = slackCode && codeStillPending(slackCode, slack.data) ? slackCode : null;
+
   // The server session is revoked, then the token and the cache go; the
   // realtime channel closes with the token. A sign-out finishes here even
   // when the server cannot be reached.
@@ -77,6 +117,23 @@ export function useSettingsVm() {
     createApiKey,
     creating: createKey.isPending,
     revokeApiKey,
+    slack: {
+      loading: slack.isPending,
+      error: slack.error,
+      summary: slackSummary(slack.data),
+      connected: Boolean(slack.data?.connection),
+      canManage: mayManageSlack,
+      code: shownCode && {
+        invite: INVITE_COMMAND,
+        command: linkCommand(shownCode.code),
+        expiresAt: clockOf(shownCode.expiresAt),
+      },
+      dismissCode: () => setSlackCode(null),
+      connect: connectSlack,
+      connecting: issueCode.isPending,
+      disconnect: disconnectSlack,
+      disconnecting: disconnect.isPending,
+    },
     signOut: leave,
     signingOut: logout.isPending,
   };

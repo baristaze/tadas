@@ -5,7 +5,7 @@ Every command below runs from the repository root.
 
 | File or profile | Adds |
 |-----------------|------|
-| `docker-compose.yml` | Postgres, Valkey, ElasticMQ, MinIO |
+| `docker-compose.yml` | Postgres, Valkey, ElasticMQ (its queues in `elasticmq/elasticmq.conf`), MinIO |
 | `docker-compose.full.yml` | the `api`, `maintenance`, and `portal` containers, built from the working tree |
 | profile `devx` (in `docker-compose.yml`) | pgweb, Valkey Admin, ElasticMQ UI, Prometheus, the OpenTelemetry collector for host processes, Grafana, Jaeger, GlitchTip |
 | `docker-compose.linux.yml` | Linux only, added by the Makefile: the collector on the host's network (see Metrics below) |
@@ -129,7 +129,26 @@ network, where it cannot reach the host processes.
 | Reset only the database, then migrate and seed | `dc rm -sfv postgres && docker volume rm tadas_postgres && dc up -d --wait postgres && make migrate seed` |
 | Reset only the object store | `dc rm -sfv minio && docker volume rm tadas_minio && dc up -d --wait minio && make buckets` |
 
-ElasticMQ keeps nothing: `dc restart elasticmq` empties every queue.
+ElasticMQ keeps nothing: `dc restart elasticmq` empties every queue. It
+starts with the queues `elasticmq/elasticmq.conf` declares: `tadas-webhooks`
+and `tadas-slack`, each with a `-dead` queue after five receives, as the
+cloud's queue module declares them.
+
+## Slack
+
+The stack holds no Slack connection and sets no `TADAS_SLACK_*`, so the
+`maintenance` container posts through the in-process twin. Local and
+staging share one Slack app, and Slack spreads its deliveries across every
+open connection, so a bridge left running on a laptop takes deliveries
+meant for staging. To try the real thing, run the bridge by hand, briefly,
+with the tokens exported for that run only:
+
+```bash
+TADAS_SLACK_APP_TOKEN=xapp-... uv run tadas-maintenance slack
+```
+
+It sends each delivery to `tadas-slack`, where the worker takes it. A host
+worker posts to Slack only with `TADAS_SLACK_BOT_TOKEN` set for its run.
 Valkey has no named volume but snapshots on shutdown, so `dc restart valkey`
 keeps its keys; `flushall` above empties it, and `make reset` removes it.
 

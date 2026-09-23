@@ -11,13 +11,15 @@ uv run tadas login --email bob@example.test --org acme   # prompts for the passw
 uv run tadas orgs                             # the orgs you belong to; * marks the session's, "personal" your own
 uv run tadas switch beta                      # move the session to another org; the old one ends
 uv run tadas add "Migrate DB" --assignee me
+uv run tadas add "Call the bank" --remind +2h    # or --remind 2026-10-01T09:00, in local time
+uv run tadas edit 8b949fce --no-remind          # clear the due time; --remind moves it
 uv run tadas ls                               # open tasks; --done, --mine, --json
 uv run tadas done 8b949fce                    # the short id `ls` shows
 uv run tadas attach 8b949fce spec.pdf         # the type from the name, or --type
 uv run tadas attachments 8b949fce             # id, size, type, name
 uv run tadas download 8b949fce 1c2d3e4f       # the file's short id; --out <path>
 uv run tadas detach 8b949fce 1c2d3e4f
-uv run tadas listen                           # the team's tasks; --mine for yours
+uv run tadas listen                           # the team's tasks, reminders among them; --mine for yours
 ```
 
 ## Conventions

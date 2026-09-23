@@ -20,6 +20,8 @@ from tadas.om.opcontext import (
 )
 from tadas.om.outbox.impl.relay import OutboxRelayImpl
 from tadas.om.outbox.storage.impl.memory import OutboxStorageMemoryImpl
+from tadas.om.slack import SlackManagerInterface
+from tadas.om.slack.types.connection import SlackConnection
 from tadas.om.tenancy import TenancyManagerInterface
 from tadas.om.tenancy.types.org import Org
 from tadas.om.tenancy.types.role import permissions_of
@@ -76,3 +78,17 @@ def media_of(
     return MediaManagerImpl(
         MediaStorageMemoryImpl(outbox), infra.get_buckets(), members, relay, MediaOptions()
     )
+
+
+class NoSlack(SlackManagerInterface):
+    """A partial double: an org with no Slack channel connected."""
+
+    async def get_connection(self, ctx: OpContext) -> SlackConnection | None:
+        return None
+
+
+NoSlack.__abstractmethods__ = frozenset()
+
+
+def no_slack() -> SlackManagerInterface:
+    return NoSlack()  # pyright: ignore[reportAbstractUsage] (a partial double)

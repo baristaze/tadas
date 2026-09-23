@@ -64,6 +64,8 @@ LOCAL_DEFAULT_SERVES_THE_CLOUD = {
     "worker_heartbeat_seconds": "the local default is the tuning",
     "worker_sweep_seconds": "the local default is the tuning",
     "worker_poll_seconds": "the local default is the tuning",
+    "slack_timeout_seconds": "the local default is the tuning",
+    "slack_inbound_visibility_seconds": "the local default is the tuning",
 }
 
 

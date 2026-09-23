@@ -177,3 +177,13 @@ class IdempotencyAttemptLost(IdempotencyException, Conflict):
     pending lease passed, and only the holder may finish or release it."""
 
     code = "idempotency_attempt_lost"
+
+
+class SlackException(PlatformException): ...
+
+
+class SlackChannelTaken(SlackException, Conflict):
+    """The channel is connected to another org. A channel speaks for one org;
+    the other org disconnects it first."""
+
+    code = "slack_channel_taken"

@@ -12,6 +12,7 @@ import json
 import mimetypes
 import sys
 from collections.abc import Callable, Coroutine
+from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Annotated, Any, NoReturn
@@ -27,6 +28,7 @@ from tadas.apps.cli.model import (
     choose_org,
     human_size,
     org_lines,
+    parse_due,
     resolve,
     resolve_file,
     short_id,
@@ -130,6 +132,18 @@ def _run[T](coroutine: Coroutine[Any, Any, T], *, signed_in: bool = False) -> T:
 def _fail(message: str, code: int) -> NoReturn:
     typer.echo(message, err=True)
     raise typer.Exit(code)
+
+
+REMIND_HELP = "A due time to be reminded at: +30m, +2h, +1d, or 2026-10-01T09:00 (local time)."
+
+
+def _due(text: str) -> datetime:
+    """The due time a person typed, or a usage error that says the forms."""
+    now = datetime.now().astimezone()
+    try:
+        return parse_due(text, now, now.tzinfo or UTC)
+    except ValueError as error:
+        _fail(str(error), EXIT_USAGE)
 
 
 def _show(task: TaskView, verb: str, as_json: bool) -> None:
@@ -364,16 +378,19 @@ def add(
     title: Annotated[str, typer.Argument(help="What to do.")],
     notes: Annotated[str, typer.Option(help="Details, kept with the task.")] = "",
     assignee: Annotated[str | None, typer.Option(help="`me`, an email, or a name.")] = None,
+    remind: Annotated[str | None, typer.Option(help=REMIND_HELP)] = None,
     as_json: Json = False,
     api: Api = None,
 ) -> None:
     """Create a task at the top of the open list."""
+    remind_at = _due(remind) if remind else None
 
     async def go(client: ApiClient) -> None:
         assignee_id = (await _user(client, assignee)).id if assignee else None
-        _show(
-            await client.create_task(title, notes=notes, assignee_id=assignee_id), "added", as_json
+        created = await client.create_task(
+            title, notes=notes, assignee_id=assignee_id, remind_at=remind_at
         )
+        _show(created, "added", as_json)
 
     run(go, api)
 
@@ -385,14 +402,28 @@ def edit(
     notes: Annotated[str | None, typer.Option(help="New notes.")] = None,
     assignee: Annotated[str | None, typer.Option(help="`me`, an email, or a name.")] = None,
     unassign: Annotated[bool, typer.Option("--unassign", help="Clear the assignee.")] = False,
+    remind: Annotated[str | None, typer.Option(help=REMIND_HELP)] = None,
+    no_remind: Annotated[bool, typer.Option("--no-remind", help="Clear the due time.")] = False,
     as_json: Json = False,
     api: Api = None,
 ) -> None:
-    """Change a task's title, notes, or assignee."""
+    """Change a task's title, notes, assignee, or due time."""
     if assignee and unassign:
         _fail("--assignee and --unassign exclude each other", EXIT_USAGE)
-    if title is None and notes is None and assignee is None and not unassign:
-        _fail("nothing to change; give --title, --notes, --assignee, or --unassign", EXIT_USAGE)
+    if remind and no_remind:
+        _fail("--remind and --no-remind exclude each other", EXIT_USAGE)
+    nothing = title is None and notes is None and assignee is None and remind is None
+    if nothing and not (unassign or no_remind):
+        _fail(
+            "nothing to change; give --title, --notes, --assignee, --unassign, --remind,"
+            " or --no-remind",
+            EXIT_USAGE,
+        )
+    remind_at: datetime | Unset | None = UNSET
+    if no_remind:
+        remind_at = None
+    elif remind:
+        remind_at = _due(remind)
 
     async def go(client: ApiClient) -> None:
         task = await _task(client, ref)
@@ -402,7 +433,12 @@ def edit(
         elif assignee:
             assignee_id = (await _user(client, assignee)).id
         updated = await client.update_task(
-            task.id, version=task.version, title=title, notes=notes, assignee_id=assignee_id
+            task.id,
+            version=task.version,
+            title=title,
+            notes=notes,
+            assignee_id=assignee_id,
+            remind_at=remind_at,
         )
         _show(updated, "edited", as_json)
 

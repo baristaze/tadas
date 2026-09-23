@@ -5,7 +5,7 @@ from typing import Any
 from uuid import UUID
 
 import pytest
-from contracts.doubles import Members, context, media_of
+from contracts.doubles import Members, context, media_of, no_slack
 from contracts.factories import make_org
 from contracts.outbox_storage import claim_all
 
@@ -80,6 +80,7 @@ def manager(
         members,
         media_of(outbox, members, relay, infra),
         relay,
+        no_slack(),
         TasksOptions(),
     )
 
@@ -201,7 +202,7 @@ async def test_update_keeps_the_manager_owned_fields_and_takes_the_callers_versi
     ctx = context(Role.MEMBER)
     first = await manager.create_task(ctx, make_task(ctx, "first"))
     second = await manager.create_task(ctx, make_task(ctx, "second"))
-    assert Task.MANAGER_OWNED_FIELDS == ("position", "version")
+    assert Task.MANAGER_OWNED_FIELDS == ("position", "version", "reminded_at")
     forged = first.model_copy(update={"title": "renamed", "position": -1e9, "version": 99})
     updated = await manager.update_task(ctx, forged, first.version)
     assert updated.title == "renamed"
@@ -433,7 +434,7 @@ async def test_a_write_that_lands_between_the_read_and_the_write_is_refused(
     storage = Interleaved(outbox)
     relay = OutboxRelayImpl(outbox, events_storage, infra.get_topics())
     manager = TasksManagerImpl(
-        storage, members, media_of(outbox, members, relay, infra), relay, TasksOptions()
+        storage, members, media_of(outbox, members, relay, infra), relay, no_slack(), TasksOptions()
     )
     org = make_org()
     ann, bob = context(Role.MEMBER, org), context(Role.MEMBER, org)
@@ -460,6 +461,7 @@ async def test_lists_are_clamped(infra: InfraLocalImpl, members: Members) -> Non
         members,
         media_of(outbox, members, relay, infra),
         relay,
+        no_slack(),
         TasksOptions(max_limit=2),
     )
     ctx = context(Role.MEMBER)
@@ -527,6 +529,7 @@ async def test_a_failed_relay_leaves_the_row_for_the_sweep(
         members,
         media_of(outbox, members, relay, infra),
         relay,
+        no_slack(),
         TasksOptions(),
     )
     ctx = context(Role.MEMBER)
@@ -653,6 +656,7 @@ async def test_the_sweep_purges_only_deleted_tasks_while_the_tenant_lives(
         members,
         manager._media,  # type: ignore[attr-defined]
         manager._relay,  # type: ignore[attr-defined]
+        no_slack(),
         TasksOptions(retention=timedelta(0)),
     )
     assert await past.purge_deleted(ctx) == 1
