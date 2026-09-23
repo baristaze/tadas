@@ -7,6 +7,7 @@ from uuid import UUID
 import pytest
 from contracts.factories import make_org, make_user
 from contracts.outbox_storage import claim_all
+from contracts.plans import ON_TEAM
 
 from tadas.infra.impl.local import InfraLocalImpl
 from tadas.infra.topics import EntityChangedPayload, TopicPayload, Topics
@@ -123,7 +124,9 @@ def manager(
     outbox: OutboxStorageMemoryImpl,
 ) -> TasksManagerImpl:
     relay = OutboxRelayImpl(outbox, events_storage, infra.get_topics())
-    return TasksManagerImpl(TasksStorageMemoryImpl(outbox), members, relay, TasksOptions())
+    return TasksManagerImpl(
+        TasksStorageMemoryImpl(outbox), members, relay, TasksOptions(), entitlements=ON_TEAM
+    )
 
 
 def _row(ctx: OpContext, task: Task) -> OutboxRow:
@@ -474,7 +477,7 @@ async def test_a_write_that_lands_between_the_read_and_the_write_is_refused(
     outbox = OutboxStorageMemoryImpl()
     storage = Interleaved(outbox)
     relay = OutboxRelayImpl(outbox, events_storage, infra.get_topics())
-    manager = TasksManagerImpl(storage, members, relay, TasksOptions())
+    manager = TasksManagerImpl(storage, members, relay, TasksOptions(), entitlements=ON_TEAM)
     org = make_org()
     ann, bob = context(Role.MEMBER, org), context(Role.MEMBER, org)
     created = await manager.create_task(ann, make_task(ann))
@@ -499,6 +502,7 @@ async def test_lists_are_clamped(infra: InfraLocalImpl, members: Members) -> Non
         members,
         OutboxRelayImpl(outbox, events_storage, infra.get_topics()),
         TasksOptions(max_limit=2),
+        entitlements=ON_TEAM,
     )
     ctx = context(Role.MEMBER)
     for i in range(3):
@@ -560,7 +564,9 @@ async def test_a_failed_relay_leaves_the_row_for_the_sweep(
 
     outbox = OutboxStorageMemoryImpl()
     relay = OutboxRelayImpl(outbox, events_storage, DownTopics())
-    manager = TasksManagerImpl(TasksStorageMemoryImpl(outbox), members, relay, TasksOptions())
+    manager = TasksManagerImpl(
+        TasksStorageMemoryImpl(outbox), members, relay, TasksOptions(), entitlements=ON_TEAM
+    )
     ctx = context(Role.MEMBER)
     created = await manager.create_task(ctx, make_task(ctx))
     assert await manager.get_task(ctx, created.id) == created
@@ -685,6 +691,7 @@ async def test_the_sweep_purges_only_deleted_tasks_while_the_tenant_lives(
         members,
         manager._relay,  # type: ignore[attr-defined]
         TasksOptions(retention=timedelta(0)),
+        entitlements=ON_TEAM,
     )
     assert await past.purge_deleted(ctx) == 1
     assert (await manager.get_task(ctx, live.id)).id == live.id

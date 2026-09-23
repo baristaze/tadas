@@ -10,6 +10,9 @@ from pydantic import Field
 from tadas.infra.cache import CacheInterface
 from tadas.infra.observability import current_traceparent
 from tadas.om.base import EMPTY_UUID, Platform, new_id, utcnow
+from tadas.om.billing.manager import EntitlementsInterface
+from tadas.om.billing.rules import refuse_past, seats_metered
+from tadas.om.billing.types.plan import Lever
 from tadas.om.exceptions import (
     Conflict,
     CredentialExpired,
@@ -83,6 +86,7 @@ from tadas.om.tenancy.types.role import operator_permissions_of, permissions_of
 from tadas.om.tenancy.types.session import Session
 from tadas.om.tenancy.types.socket_ticket import SocketPrincipal, SocketTicket
 from tadas.om.tenancy.types.user import User
+from tadas.om.work.types.work_item import WorkKind, work_row_kind
 
 TICKET_USED_KEY = "ticket-used:"
 """The cache remembers a redeemed ticket so a replay is refused without a
@@ -189,11 +193,16 @@ class TenancyManagerImpl(TenancyManagerInterface):
         cache: CacheInterface,
         options: TenancyOptions,
         clock: Callable[[], datetime] = utcnow,
+        *,
+        entitlements: EntitlementsInterface,
     ) -> None:
+        """`entitlements` is what the plan levers ask: an api key and a
+        per-seat plan's seat count read the org's plan from it."""
         self._storage = storage
         self._relay = relay
         self._cache = cache
         self._options = options
+        self._entitlements = entitlements
         self._totp = TotpSealer(options.totp_encryption_key)
         # The TOTP time step is read from this clock, so a test can step it.
         self._clock = clock
@@ -518,7 +527,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
             org_id, api_key = found
             self._check_api_key(api_key)
             org, user, membership = await self._principal(org_id, api_key.user_id)
-            return build_context(
+            ctx = build_context(
                 rctx,
                 user_id=user.id,
                 org_id=org.id,
@@ -528,6 +537,11 @@ class TenancyManagerImpl(TenancyManagerInterface):
                 teams=membership.teams,
                 credential_id=api_key.id,
             )
+            # A key of an org whose plan has none is kept and refused, never
+            # revoked: it says why, and it works again the day the org is on
+            # a plan with keys.
+            await self._refuse_without_keys(ctx)
+            return ctx
         raise InvalidCredential("this route accepts a session token or an api key")
 
     async def admit_operator(self, ictx: IdentityContext) -> OperatorContext:
@@ -852,6 +866,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
             }
         )
         row = outbox_row(ctx, "tenancy.user.deleted", removed.id, user_payload(removed))
+        rows = (row, *await self._seat_rows(ctx))
 
         def revocation(kind: str, credential_id: UUID) -> OutboxRow:
             return outbox_row(ctx, kind, credential_id, {"user_id": str(user_id)})
@@ -861,16 +876,32 @@ class TenancyManagerImpl(TenancyManagerInterface):
         # with every credential; a success leaves no credential of theirs, so
         # no key stays listed and no session stays live.
         revocations = await self._storage.remove_member(
-            ctx.org_id, removed, ended, (row,), revocation
+            ctx.org_id, removed, ended, rows, revocation
         )
         # The removal is announced first, so a socket of theirs closes because
         # their membership ended, not because a credential was revoked; then
         # each revocation, as the record it is. Every row is durable already:
         # whatever a crash leaves unrelayed, the sweep relays.
-        await self._relay.relay(ctx.org_id, row)
-        for revoked in revocations:
-            await self._relay.relay(ctx.org_id, revoked)
+        for landed in (*rows, *revocations):
+            await self._relay.relay(ctx.org_id, landed)
         return removed
+
+    async def count_members(self, ctx: OpContext) -> int:
+        ctx.require(Permission.READ)
+        return await self._storage.count_members(ctx.org_id)
+
+    async def _seat_rows(self, ctx: OpContext) -> tuple[OutboxRow, ...]:
+        """The row that asks for a per-seat subscription's quantity to follow a
+        change of members, when the org's plan is per seat; none otherwise.
+        It rides the change's own commit, as work that follows a write does."""
+        entitlements = await self._entitlements.get_entitlements(ctx)
+        if not seats_metered(entitlements.plan):
+            return ()
+        return (outbox_row(ctx, work_row_kind(WorkKind.SYNC_SEATS), ctx.org_id, {}),)
+
+    async def _refuse_without_keys(self, ctx: OpContext) -> None:
+        entitlements = await self._entitlements.get_entitlements(ctx)
+        refuse_past(entitlements.plan, Lever.API_KEYS, 0)
 
     # Credentials.
 
@@ -936,6 +967,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
             raise ValidationFailed(
                 f"an api key lives between one second and {self._options.api_key_ttl.days} days"
             )
+        await self._refuse_without_keys(ctx)
         now = utcnow()
         key = mint_token(CredentialKind.API_KEY)
         api_key = ApiKey(

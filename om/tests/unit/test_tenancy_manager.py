@@ -9,6 +9,7 @@ from uuid import UUID
 import pytest
 from contracts.factories import make_user
 from contracts.outbox_storage import claim_all
+from contracts.plans import ON_TEAM, GrantedEverywhere
 from contracts.second_factor import TOTP_KEY, SteppingClock, enrolled_operator, secret_of
 
 from tadas.infra.cache import CacheInterface, CacheScope
@@ -163,6 +164,7 @@ def make_manager(
         cache or infra.get_cache(CacheScope.REALTIME_TICKET),
         options or TenancyOptions(totp_encryption_key=TOTP_KEY),
         clock or SteppingClock(),
+        entitlements=ON_TEAM,
     )
 
 
@@ -197,6 +199,7 @@ def operator(
         relay,
         TenancyOperatorOptions(totp_encryption_key=TOTP_KEY),
         clock,
+        billing=GrantedEverywhere(),
     )
 
 
@@ -697,7 +700,11 @@ async def test_removing_a_member_revokes_their_credentials_and_announces_each(
 ) -> None:
     relay = SpyRelay(OutboxRelayImpl(outbox, EventStorageMemoryImpl(), infra.get_topics()))
     manager = TenancyManagerImpl(
-        storage, relay, infra.get_cache(CacheScope.REALTIME_TICKET), TenancyOptions()
+        storage,
+        relay,
+        infra.get_cache(CacheScope.REALTIME_TICKET),
+        TenancyOptions(),
+        entitlements=ON_TEAM,
     )
     _, org = await manager.bootstrap(
         request(), "Acme", "acme", "ann@example.test", "pw-1234", "Ann"
@@ -740,7 +747,11 @@ async def test_no_event_about_a_user_carries_who_they_are(
     email or the name."""
     relay = SpyRelay(OutboxRelayImpl(outbox, EventStorageMemoryImpl(), infra.get_topics()))
     manager = TenancyManagerImpl(
-        storage, relay, infra.get_cache(CacheScope.REALTIME_TICKET), TenancyOptions()
+        storage,
+        relay,
+        infra.get_cache(CacheScope.REALTIME_TICKET),
+        TenancyOptions(),
+        entitlements=ON_TEAM,
     )
     _, org = await manager.bootstrap(
         request(), "Acme", "acme", "ann@example.test", "pw-1234", "Ann"
@@ -935,7 +946,11 @@ async def test_revoking_a_session_announces_it_on_the_bus_without_its_token(
     event is a record, not a credential: its snapshot has no token hash."""
     relay = SpyRelay(OutboxRelayImpl(outbox, EventStorageMemoryImpl(), infra.get_topics()))
     manager = TenancyManagerImpl(
-        storage, relay, infra.get_cache(CacheScope.REALTIME_TICKET), TenancyOptions()
+        storage,
+        relay,
+        infra.get_cache(CacheScope.REALTIME_TICKET),
+        TenancyOptions(),
+        entitlements=ON_TEAM,
     )
     published: list[TopicPayload] = []
 
@@ -1127,6 +1142,7 @@ async def test_a_process_without_the_totp_key_refuses_to_enrol(
         EventStorageMemoryImpl(),
         OutboxRelayImpl(outbox, EventStorageMemoryImpl(), infra.get_topics()),
         TenancyOperatorOptions(),
+        billing=GrantedEverywhere(),
     )
     await seed_operator(manager, "root@example.test")
     with pytest.raises(Unavailable):
@@ -1195,7 +1211,11 @@ async def test_the_grant_job_puts_an_identity_on_the_allowlist_and_audits_it(
 ) -> None:
     relay = SpyRelay(OutboxRelayImpl(outbox, EventStorageMemoryImpl(), infra.get_topics()))
     manager = TenancyManagerImpl(
-        storage, relay, infra.get_cache(CacheScope.REALTIME_TICKET), TenancyOptions()
+        storage,
+        relay,
+        infra.get_cache(CacheScope.REALTIME_TICKET),
+        TenancyOptions(),
+        entitlements=ON_TEAM,
     )
     with pytest.raises(NotFound):
         await manager.grant_operator(request(), "ann@example.test", OperatorRole.READ)
@@ -1251,6 +1271,7 @@ async def test_an_operator_resets_a_password_and_the_reset_is_audited(
         relay,
         TenancyOperatorOptions(totp_encryption_key=TOTP_KEY),
         clock,
+        billing=GrantedEverywhere(),
     )
     await manager.bootstrap(request(), "Acme", "acme", "ann@example.test", "pw-1234", "Ann")
     await seed_operator(manager, "root@example.test")
@@ -2092,7 +2113,11 @@ async def test_a_switch_ends_the_session_it_was_presented_with_in_the_same_write
 ) -> None:
     relay = SpyRelay(OutboxRelayImpl(outbox, EventStorageMemoryImpl(), infra.get_topics()))
     manager = TenancyManagerImpl(
-        storage, relay, infra.get_cache(CacheScope.REALTIME_TICKET), TenancyOptions()
+        storage,
+        relay,
+        infra.get_cache(CacheScope.REALTIME_TICKET),
+        TenancyOptions(),
+        entitlements=ON_TEAM,
     )
     _, acme = await manager.bootstrap(
         request(), "Acme", "acme", "ann@example.test", "pw-1234", "Ann"

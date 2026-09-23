@@ -5,6 +5,10 @@ from dataclasses import dataclass
 
 from tadas.infra.cache import CacheScope
 from tadas.infra.root import InfraInterface
+from tadas.integrations.payments import PaymentsInterface
+from tadas.om.billing import BillingManagerInterface, BillingOperatorManagerInterface
+from tadas.om.billing.impl.manager import BillingManagerImpl, BillingOptions
+from tadas.om.billing.impl.operator import BillingOperatorManagerImpl
 from tadas.om.events import EventsManagerInterface
 from tadas.om.events.impl.manager import EventsManagerImpl, EventsOptions
 from tadas.om.idempotency import IdempotencyManagerInterface
@@ -30,6 +34,8 @@ class Managers:
     idempotency: IdempotencyManagerInterface
     events: EventsManagerInterface
     outbox: OutboxRelayInterface
+    billing: BillingManagerInterface
+    billing_operator: BillingOperatorManagerInterface
 
 
 def build_managers(
@@ -37,6 +43,8 @@ def build_managers(
     infra: InfraInterface,
     tenancy_options: TenancyOptions | None = None,
     operator_options: TenancyOperatorOptions | None = None,
+    *,
+    payments: PaymentsInterface,
 ) -> Managers:
     # The relay every core-role manager hands its outbox rows to. It reaches
     # the work manager through the root below, because a row of kind
@@ -49,11 +57,22 @@ def build_managers(
         infra.get_topics(),
         lambda: managers.work,
     )
+    # Billing and tenancy ask each other one question each: tenancy asks an
+    # org's entitlements, and billing's sweep asks whether a tenant is past
+    # its retention. That edge is bound at call time, as the relay's is.
+    billing = BillingManagerImpl(
+        storage.get_billing_storage(),
+        payments,
+        outbox,
+        lambda: managers.tenancy,
+        BillingOptions(),
+    )
     tenancy = TenancyManagerImpl(
         storage.get_tenancy_storage(),
         outbox,
         infra.get_cache(CacheScope.REALTIME_TICKET),
         tenancy_options or TenancyOptions(),
+        entitlements=billing,
     )
     events = EventsManagerImpl(storage.get_event_storage(), tenancy, EventsOptions())
     work = WorkManagerImpl(
@@ -68,6 +87,7 @@ def build_managers(
         tenancy,
         outbox,
         TasksOptions(),
+        entitlements=billing,
     )
     idempotency = IdempotencyManagerImpl(storage.get_idempotency_storage(), IdempotencyOptions())
     tenancy_operator = TenancyOperatorManagerImpl(
@@ -76,6 +96,7 @@ def build_managers(
         storage.get_event_storage(),
         outbox,
         operator_options or TenancyOperatorOptions(),
+        billing=storage.get_billing_storage(),
     )
     managers = Managers(
         tenancy=tenancy,
@@ -85,5 +106,9 @@ def build_managers(
         idempotency=idempotency,
         events=events,
         outbox=outbox,
+        billing=billing,
+        billing_operator=BillingOperatorManagerImpl(
+            storage.get_billing_storage(), storage.get_tenancy_storage(), outbox
+        ),
     )
     return managers

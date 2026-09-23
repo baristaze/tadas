@@ -47,6 +47,12 @@ class TasksStorageInterface(ABC):
     async def read_task(self, org_id: UUID, task_id: UUID) -> Task | None: ...
 
     @abstractmethod
+    async def count_open_tasks(self, org_id: UUID) -> int:
+        """How many of the tenant's tasks are open and not deleted: the active
+        tasks a plan bounds."""
+        ...
+
+    @abstractmethod
     async def count_created_since(self, since: datetime) -> int:
         """Global: how many tasks were created at or after `since`, across every
         tenant and whatever became of them since; the traffic the operator

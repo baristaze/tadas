@@ -7,6 +7,7 @@ from contracts.work_storage import make_item
 
 from tadas.infra.impl.local import InfraLocalImpl
 from tadas.infra.topics import EntityChangedPayload, TopicPayload, Topics, WorkAvailablePayload
+from tadas.integrations.payments.twin import PaymentsTwinImpl
 from tadas.om.base import EMPTY_UUID, new_id, utcnow
 from tadas.om.exceptions import LeaseLost, NotFound, ValidationFailed
 from tadas.om.opcontext import (
@@ -45,7 +46,7 @@ def storage() -> StorageMemoryImpl:
 
 @pytest.fixture
 def managers(infra: InfraLocalImpl, storage: StorageMemoryImpl) -> Managers:
-    return build_managers(storage, infra)
+    return build_managers(storage, infra, payments=PaymentsTwinImpl(environment="test"))
 
 
 @pytest.fixture

@@ -55,6 +55,9 @@ class TasksStorageMemoryImpl(MemoryStorageBase, TasksStorageInterface):
     async def read_task(self, org_id: UUID, task_id: UUID) -> Task | None:
         return self._get(self._tasks, org_id, task_id)
 
+    async def count_open_tasks(self, org_id: UUID) -> int:
+        return len(self._live(org_id, TaskStatus.OPEN))
+
     async def count_created_since(self, since: datetime) -> int:
         return sum(1 for task in self._every(self._tasks) if task.created_at >= since)
 

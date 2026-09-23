@@ -10,10 +10,12 @@ from uuid import UUID
 from pydantic import Field
 
 from tadas.om.base import FrozenMapping, Identifiable, Platform, Trackable
+from tadas.om.opcontext import Permission
 
 
 class WorkKind(StrEnum):
     NOOP = "NOOP"  # the maintenance worker's kind: no work beyond the sweep
+    SYNC_SEATS = "SYNC_SEATS"  # a per-seat plan's quantity follows the member count
 
 
 WORK_ROW_PREFIX = "work."
@@ -79,7 +81,23 @@ class NoopPayload(Platform):
     """The NOOP kind carries nothing."""
 
 
+class SyncSeatsPayload(Platform):
+    """The item's target is the org; the count is read when the item runs,
+    never when it was asked for, so items that run late or twice converge
+    on the members the org has then."""
+
+
 WORK_PAYLOADS: dict[WorkKind, type[Platform]] = {
     WorkKind.NOOP: NoopPayload,
+    WorkKind.SYNC_SEATS: SyncSeatsPayload,
 }
 """The payload shape of every kind; enqueue validates the item's payload against it."""
+
+WORK_ENQUEUE_PERMISSIONS: dict[WorkKind, Permission] = {
+    WorkKind.NOOP: Permission.WRITE,
+    WorkKind.SYNC_SEATS: Permission.MANAGE_MEMBERS,
+}
+"""The permission that asks for each kind. The person who asks authorizes
+the whole run once, so the permission has to be as wide as the run: every
+role that holds it holds every permission the kind's handler calls with,
+which the worker's tests hold each handler to."""

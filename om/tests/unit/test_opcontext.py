@@ -5,6 +5,7 @@ does), and five scopes every stage satisfies structurally."""
 from pathlib import Path
 
 import pytest
+from contracts.plans import ON_TEAM
 from pydantic import ValidationError
 
 from tadas.infra.cache import CacheScope
@@ -53,6 +54,7 @@ def manager(tmp_path: Path) -> TenancyManagerImpl:
         relay,
         infra.get_cache(CacheScope.REALTIME_TICKET),
         TenancyOptions(),
+        entitlements=ON_TEAM,
     )
 
 

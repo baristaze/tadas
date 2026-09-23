@@ -310,6 +310,11 @@ class TenancyManagerInterface(ABC):
         each revocation is announced, so their sockets close."""
         ...
 
+    @abstractmethod
+    async def count_members(self, ctx: OpContext) -> int:
+        """How many live members the org has: the seats its plan counts."""
+        ...
+
     # Credentials.
 
     @abstractmethod

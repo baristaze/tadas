@@ -21,6 +21,7 @@ import inspect
 import pkgutil
 
 from contracts import (
+    billing_storage,
     event_storage,
     idempotency_storage,
     outbox_storage,
@@ -64,6 +65,7 @@ STORAGE_EXCEPTIONS: frozenset[tuple[str, str]] = frozenset(
 )
 
 CROSS_TENANT_CASES: dict[str, frozenset[str]] = {
+    "BillingStorageInterface": billing_storage.CROSS_TENANT_CASES,
     "EventStorageInterface": event_storage.CROSS_TENANT_CASES,
     "IdempotencyStorageInterface": idempotency_storage.CROSS_TENANT_CASES,
     "OutboxStorageInterface": outbox_storage.CROSS_TENANT_CASES,
@@ -110,6 +112,9 @@ REQUEST_TRANSITIONS: frozenset[tuple[str, str]] = frozenset(
         ("TenancyManagerInterface", "grant_operator_token"),
         ("WorkManagerInterface", "claim"),
         ("WorkManagerInterface", "maintenance_contexts"),
+        # The org a verified delivery from the payment processor names, before
+        # any stage exists for it: the webhook consumer's lookup.
+        ("BillingManagerInterface", "org_of_delivery"),
     }
 )
 

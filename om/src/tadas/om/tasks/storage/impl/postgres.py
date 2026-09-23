@@ -110,6 +110,11 @@ class TasksStoragePostgresImpl(PgStorageBase, TasksStorageInterface):
             row = (await session.execute(stmt)).scalar_one_or_none()
             return None if row is None else to_model(row, Task)
 
+    async def count_open_tasks(self, org_id: UUID) -> int:
+        stmt = select(func.count()).select_from(Tasks).where(_live(org_id, TaskStatus.OPEN))
+        async with self._session_for(stmt, org_id=org_id) as session:
+            return (await session.execute(stmt)).scalar_one()
+
     async def count_created_since(self, since: datetime) -> int:
         stmt = select(func.count()).select_from(Tasks).where(Tasks.created_at >= since)
         async with self._session_for(stmt, org_id=EMPTY_UUID) as session:

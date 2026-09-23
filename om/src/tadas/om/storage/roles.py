@@ -26,6 +26,8 @@ TABLE_ROLES: dict[str, DatabaseRole] = {
     "events": DatabaseRole.ACTIVITY,
     "event_cursors": DatabaseRole.ACTIVITY,
     "outbox_rows": DatabaseRole.CORE,
+    "billing_accounts": DatabaseRole.CORE,
+    "billing_deliveries": DatabaseRole.CORE,
 }
 
 

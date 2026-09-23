@@ -8,6 +8,7 @@ from pathlib import Path
 from uuid import UUID
 
 import pytest
+from contracts.plans import ON_TEAM, GrantedEverywhere
 from contracts.second_factor import TOTP_KEY, SteppingClock, enrolled_operator
 
 from tadas.infra.cache import CacheScope
@@ -71,6 +72,7 @@ class Plane:
             infra.get_cache(CacheScope.REALTIME_TICKET),
             TenancyOptions(totp_encryption_key=TOTP_KEY),
             self.clock,
+            entitlements=ON_TEAM,
         )
         self.operator = TenancyOperatorManagerImpl(
             self.storage,
@@ -79,6 +81,7 @@ class Plane:
             relay,
             TenancyOperatorOptions(max_limit=3, totp_encryption_key=TOTP_KEY),
             self.clock,
+            billing=GrantedEverywhere(),
         )
 
     async def admit(self, role: OperatorRole, email: str) -> OperatorContext:

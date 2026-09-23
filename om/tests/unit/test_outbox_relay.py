@@ -14,6 +14,7 @@ from opentelemetry.sdk.trace import TracerProvider
 from tadas.infra.impl.local import InfraLocalImpl
 from tadas.infra.observability import OUTCOMES
 from tadas.infra.topics import TopicPayload, Topics
+from tadas.integrations.payments.twin import PaymentsTwinImpl
 from tadas.om.base import EMPTY_UUID, new_id, utcnow
 from tadas.om.events.storage.impl.memory import EventStorageMemoryImpl
 from tadas.om.events.types.event import Event
@@ -53,7 +54,9 @@ async def test_the_row_carries_the_trace_context_of_the_write_or_none(
     """The row names the request that made the write and the trace context of
     that request, as the header the far side links to. With no tracer
     configured the header is empty, and the far side starts its own trace."""
-    managers = build_managers(StorageMemoryImpl(), infra)
+    managers = build_managers(
+        StorageMemoryImpl(), infra, payments=PaymentsTwinImpl(environment="test")
+    )
     ctx = await sign_in(managers)
     task = make_task(created_by=ctx.user_id)
     assert outbox_row(ctx, "tasks.task.created", task.id, snapshot(task)).traceparent is None
@@ -164,7 +167,7 @@ async def test_a_write_that_also_starts_work_rides_a_second_row_the_relay_enqueu
     from the row, and it presents the row's id as the item's idempotency key,
     which is the same on every run: a relay that runs twice leaves one item."""
     storage = StorageMemoryImpl()
-    managers = build_managers(storage, infra)
+    managers = build_managers(storage, infra, payments=PaymentsTwinImpl(environment="test"))
     ctx = await sign_in(managers)
     woken: list[TopicPayload] = []
 

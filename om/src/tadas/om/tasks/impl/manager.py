@@ -2,6 +2,9 @@ from datetime import timedelta
 from uuid import UUID
 
 from tadas.om.base import PROVENANCE_FIELDS, Platform, utcnow
+from tadas.om.billing.manager import EntitlementsInterface
+from tadas.om.billing.rules import refuse_past
+from tadas.om.billing.types.plan import Lever
 from tadas.om.exceptions import NotFound, PreconditionFailed, TenantMismatch, ValidationFailed
 from tadas.om.opcontext import OpContext, Permission
 from tadas.om.outbox import OutboxRelayInterface
@@ -33,11 +36,14 @@ class TasksManagerImpl(TasksManagerInterface):
         tenancy: TenancyManagerInterface,
         relay: OutboxRelayInterface,
         options: TasksOptions,
+        *,
+        entitlements: EntitlementsInterface,
     ) -> None:
         self._storage = storage
         self._tenancy = tenancy
         self._relay = relay
         self._options = options
+        self._entitlements = entitlements
 
     async def get_open_tasks(
         self, ctx: OpContext, criterion: TaskFilter, after: OpenTaskCursor | None, limit: int
@@ -67,6 +73,7 @@ class TasksManagerImpl(TasksManagerInterface):
     async def create_task(self, ctx: OpContext, task: Task) -> Task:
         ctx.require(Permission.WRITE)
         await self._verify(ctx, task)
+        await self._room_for_one_more(ctx)
         # The platform stamps the provenance and the clock, as enqueue does:
         # a caller cannot backdate a task or create one already deleted.
         now = utcnow()
@@ -116,6 +123,7 @@ class TasksManagerImpl(TasksManagerInterface):
             "version": expected_version + 1,
         }
         if current.status == TaskStatus.DONE and task.status == TaskStatus.OPEN:
+            await self._room_for_one_more(ctx)
             changes["position"] = await self._top_position(ctx, exclude=task.id)
         updated = Task.model_validate({**current.model_dump(), **changes})
         await self._write(ctx, updated, expected_version, "updated")
@@ -171,6 +179,10 @@ class TasksManagerImpl(TasksManagerInterface):
         await self._write(ctx, deleted, expected_version, "deleted")
         return deleted
 
+    async def count_active_tasks(self, ctx: OpContext) -> int:
+        ctx.require(Permission.READ)
+        return await self._storage.count_open_tasks(ctx.org_id)
+
     async def purge_deleted(self, ctx: OpContext) -> int:
         ctx.require(Permission.WRITE)
         if await self._tenancy.tenant_expired(ctx):
@@ -179,6 +191,18 @@ class TasksManagerImpl(TasksManagerInterface):
             # the purge below would leave every one of them behind forever.
             return await self._storage.purge_tenant(ctx.org_id)
         return await self._storage.purge_deleted(ctx.org_id, utcnow() - self._options.retention)
+
+    async def _room_for_one_more(self, ctx: OpContext) -> None:
+        """The plan's bound on active tasks, asked before one more is open. It
+        reads the count and then writes, so two creates that race at the
+        bound can both land: a lever and not a fence, and the next create
+        after them is refused."""
+        entitlements = await self._entitlements.get_entitlements(ctx)
+        if entitlements.limits.active_tasks is None:
+            return
+        refuse_past(
+            entitlements.plan, Lever.ACTIVE_TASKS, await self._storage.count_open_tasks(ctx.org_id)
+        )
 
     def _clamp(self, limit: int) -> int:
         """The page size a caller gets, at most `max_limit`."""
