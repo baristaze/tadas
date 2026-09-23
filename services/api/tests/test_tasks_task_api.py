@@ -151,8 +151,8 @@ async def test_move_and_scopes(
     client: httpx.AsyncClient, container: AppContainer, owner: dict[str, str]
 ) -> None:
     org_id = UUID((await client.get("/v1/orgs/current", headers=owner)).json()["id"])
-    bob = await add_member(container, org_id, "bob@example.test", "pw-1234", Role.MEMBER)
-    as_bob = await sign_in_as(client, "bob@example.test", "pw-1234", org_id)
+    bob = await add_member(container, org_id, "bob@example.test", Role.MEMBER)
+    as_bob = await sign_in_as(client, "bob@example.test", org_id)
 
     c = await add(client, owner, "c")
     await add(client, owner, "b")
@@ -273,8 +273,8 @@ async def test_two_updates_from_one_snapshot_one_wins_and_the_other_is_412(
     client: httpx.AsyncClient, container: AppContainer, owner: dict[str, str]
 ) -> None:
     org_id = UUID((await client.get("/v1/orgs/current", headers=owner)).json()["id"])
-    await add_member(container, org_id, "bob@example.test", "pw-1234", Role.MEMBER)
-    as_bob = await sign_in_as(client, "bob@example.test", "pw-1234", org_id)
+    await add_member(container, org_id, "bob@example.test", Role.MEMBER)
+    as_bob = await sign_in_as(client, "bob@example.test", org_id)
     # Both read the task at version 1; Ann's edit lands, Bob's names a version
     # the task is no longer at and is refused with a stable code and nothing
     # changed. Bob reads again and his edit lands over Ann's.

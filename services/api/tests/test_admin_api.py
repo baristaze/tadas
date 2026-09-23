@@ -13,7 +13,6 @@ from api_support import OWNER, enrol_operator, sign_in_as
 from tadas.om.opcontext import OperatorRole
 from tadas.services.api.container import AppContainer
 
-PASSWORD = "pw-1234"
 OPERATOR_LOG = "tadas.om.tenancy.impl.operator"
 
 
@@ -74,7 +73,6 @@ def routes(org_id: str) -> list[tuple[str, str, str, dict[str, Any]]]:
                     "name": "Other",
                     "slug": "other",
                     "owner_email": "otto@example.test",
-                    "owner_password": PASSWORD,
                     "owner_name": "Otto",
                 }
             },
@@ -86,7 +84,6 @@ def routes(org_id: str) -> list[tuple[str, str, str, dict[str, Any]]]:
             {
                 "json": {
                     "email": "bob@example.test",
-                    "password": PASSWORD,
                     "display_name": "Bob",
                     "role": "member",
                 }
@@ -201,7 +198,6 @@ async def test_the_org_list_pages_past_one_page(
                 "name": f"Org {index}",
                 "slug": f"org-{index}",
                 "owner_email": f"owner-{index}@example.test",
-                "owner_password": PASSWORD,
                 "owner_name": "Owner",
             },
         )
@@ -249,7 +245,6 @@ async def test_the_creates_run_under_the_operators_idempotency_record(
         "name": "Other",
         "slug": "other",
         "owner_email": "otto@example.test",
-        "owner_password": PASSWORD,
         "owner_name": "Otto",
     }
     headers = {**writer, "Idempotency-Key": "org-1"}
@@ -270,7 +265,6 @@ async def test_the_creates_run_under_the_operators_idempotency_record(
 
     member = {
         "email": "bob@example.test",
-        "password": PASSWORD,
         "display_name": "Bob",
         "role": "admin",
     }
@@ -293,9 +287,9 @@ async def test_the_creates_run_under_the_operators_idempotency_record(
     assert blank.status_code == 422, blank.text
 
     # Both people sign into the org the operator made, with the roles given.
-    otto = await sign_in_as(client, "otto@example.test", PASSWORD, org_id)
+    otto = await sign_in_as(client, "otto@example.test", org_id)
     assert (await client.get("/v1/me", headers=otto)).json()["role"] == "owner"
-    bob = await sign_in_as(client, "bob@example.test", PASSWORD, org_id)
+    bob = await sign_in_as(client, "bob@example.test", org_id)
     assert (await client.get("/v1/me", headers=bob)).json()["role"] == "admin"
     listed = await client.get(f"/v1/admin/orgs/{org_id}/members", headers=writer)
     assert sorted(m["email"] for m in listed.json()["items"]) == [
