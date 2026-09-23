@@ -1,6 +1,7 @@
 # Three kinds of secret live under one environment. The platform's own
-# credentials (the four database URLs, the TOTP encryption key) are written
-# here, write-only, and injected into tasks by the execution role.
+# credentials (the four database URLs, the TOTP encryption key, the Sentry
+# DSN, the WorkOS API key) are declared here and injected into tasks by the
+# execution role.
 # Application-managed secrets, the ones SecretsInterface reads at runtime,
 # live under "<prefix>app/", which is the value of TADAS_SECRETS_NAME_PREFIX,
 # so a process can never reach its own bootstrap credentials through the
@@ -129,6 +130,31 @@ resource "aws_secretsmanager_secret" "sentry_dsn" {
 
 resource "aws_secretsmanager_secret_version" "sentry_dsn" {
   secret_id     = aws_secretsmanager_secret.sentry_dsn.id
+  secret_string = "off"
+
+  lifecycle {
+    ignore_changes = [secret_string]
+  }
+}
+
+# The WorkOS API key the API exchanges sign-in codes and sends invitations
+# with: a process credential, injected into the API alone as
+# TADAS_WORKOS_API_KEY, and named outside the application prefix so no
+# process reaches it through the secrets capability. Each environment holds
+# the key of its own WorkOS environment (staging's, production's). Terraform
+# creates it as "off", which the API reads as not configured (it starts, and
+# every sign-in through WorkOS answers 503 until the key is set), and never
+# writes it again: set the real value once with
+#   aws secretsmanager put-secret-value --secret-id <prefix>workos_api_key --secret-string <key>
+# and roll the API so its tasks start with it.
+resource "aws_secretsmanager_secret" "workos_api_key" {
+  name                    = "${var.prefix}workos_api_key"
+  recovery_window_in_days = local.recovery_window_in_days
+  tags                    = local.tags
+}
+
+resource "aws_secretsmanager_secret_version" "workos_api_key" {
+  secret_id     = aws_secretsmanager_secret.workos_api_key.id
   secret_string = "off"
 
   lifecycle {

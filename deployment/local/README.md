@@ -22,7 +22,7 @@ The data services' ports are fixed, since the `TADAS_*_URL` knobs name them.
 
 | Service | From the host | Inside the compose network | Sign-in |
 |---------|---------------|----------------------------|---------|
-| portal | http://localhost:55173 | `portal:8080` | `owner@example.test` (owner) or `bob@example.test` (member) of Acme, or `admin@admin.test` (owner of Fabrikam, admin of Acme), all `tadas-local` (after `make seed`), each with a personal org beside, or an account made at `/sign-up` |
+| portal | http://localhost:55173 | `portal:8080` | at `/login/dev`, by address: `owner@example.test` (owner) or `bob@example.test` (member) of Acme, or `admin@admin.test` (owner of Fabrikam, admin of Acme) (after `make seed`), each with a personal org beside; at `/login`, anyone through WorkOS's staging environment once `TADAS_WORKOS_API_KEY` is set in the shell or `.env` |
 | api | http://127.0.0.1:8000 (`/docs`, `/metrics`, `/healthz`) | `api:8000` | |
 | postgres | `127.0.0.1:55432` | `postgres:5432` | database `tadas`; `tadas_runtime`, `tadas_system`, and `tadas_migration`, each with its name as its password; the master `tadas` / `tadas`; the superuser `postgres` / `postgres` |
 | valkey | `127.0.0.1:56379` | `valkey:6379` | none: user `default`, no password |
@@ -114,9 +114,9 @@ network, where it cannot reach the host processes.
 | Start only the dashboards | `dc up -d pgweb valkey-admin elasticmq-ui prometheus otel-collector grafana jaeger glitchtip` |
 | Stop only the dashboards | `dc stop pgweb valkey-admin elasticmq-ui prometheus otel-collector grafana jaeger glitchtip` |
 | Apply new migrations | `make migrate` |
-| Seed again, or other people | `make seed SEED_EMAIL=me@example.test SEED_MEMBER_EMAIL=you@example.test SEED_ADMIN_EMAIL=both@example.test SEED_PASSWORD=secret SEED_SLUG=mine SEED_SECOND_SLUG=theirs`, or set the `SEED_*` knobs in `.env` |
+| Seed again, or other people | `make seed SEED_EMAIL=me@example.test SEED_MEMBER_EMAIL=you@example.test SEED_ADMIN_EMAIL=both@example.test SEED_SLUG=mine SEED_SECOND_SLUG=theirs`, or set the `SEED_*` knobs in `.env` |
 | Record the README's demo GIF (empties the task list first) | `make demo-gif` |
-| Add one more member to the seeded org | `uv run --package tadas-api tadas-api add-member --slug acme --email carol@example.test --password tadas-local --name Carol` |
+| Add one more member to the seeded org | `uv run --package tadas-api tadas-api add-member --slug acme --email carol@example.test --name Carol`, then sign in as her at `/login/dev` |
 
 ## Data
 

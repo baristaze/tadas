@@ -48,6 +48,12 @@ output "sentry_dsn_secret_arn" {
   depends_on  = [aws_secretsmanager_secret_version.sentry_dsn]
 }
 
+output "workos_api_key_secret_arn" {
+  description = "Injected into the API as TADAS_WORKOS_API_KEY; \"off\" until set, which leaves sign-in through WorkOS answering 503."
+  value       = aws_secretsmanager_secret.workos_api_key.arn
+  depends_on  = [aws_secretsmanager_secret_version.workos_api_key]
+}
+
 output "operator_token_secret_names" {
   description = "The two token secrets by kind (provisioner, smoke); empty until the grant task mints one."
   value       = { for kind, secret in aws_secretsmanager_secret.operator_token : kind => secret.name }
