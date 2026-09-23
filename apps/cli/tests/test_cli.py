@@ -193,6 +193,23 @@ def test_a_task_that_changed_while_the_command_ran_is_refused_with_exit_1(
     assert capsys.readouterr().err == "refused: the task changed while this ran; run it again\n"
 
 
+def test_a_task_past_the_plans_bound_is_refused_with_exit_1_and_says_who_lifts_it(
+    stack: Stack,
+) -> None:
+    billing = stack.container.storage.get_billing_storage()
+    account = run(billing.read_account(stack.org_id))
+    assert account is not None
+    run(billing.write_account(stack.org_id, account.model_copy(update={"comped_plan": None}), ()))
+    for n in range(10):
+        assert stack.tadas("add", f"task {n}").exit_code == 0
+    refused = stack.tadas("add", "one too many")
+    assert refused.exit_code == 1
+    assert refused.output == (
+        "refused: the free plan allows 10 active tasks; an owner or an admin can change "
+        "the plan in the portal, under Settings, Billing\n"
+    )
+
+
 def test_not_signed_in_is_exit_3(stack: Stack) -> None:
     result = stack.tadas("ls", token=None)
     assert result.exit_code == 3 and "run `tadas login`" in result.output

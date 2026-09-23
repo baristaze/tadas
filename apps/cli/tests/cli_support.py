@@ -10,12 +10,13 @@ from typing import Any
 
 import httpx
 import pytest
-from api_support import OWNER, add_member, build_container, run, seed_request
+from api_support import OWNER, add_member, build_container, on_plan, run, seed_request
 from starlette.testclient import TestClient
 from typer.testing import CliRunner
 
 from tadas.apps.cli import main
 from tadas.client.client import ApiClient
+from tadas.om.billing.types.plan import Plan
 from tadas.om.opcontext import Role
 from tadas.services.api.app import create_app
 from tadas.services.api.container import AppContainer
@@ -92,6 +93,9 @@ def stack(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Stack]:
             seed_request(), "Acme", "acme", OWNER["email"], OWNER["password"], OWNER["name"]
         )
     )
+    # Team: two people and more tasks than Free allows, the case most commands
+    # are about; the plan's own refusal has a test of its own.
+    run(on_plan(container, org.id, Plan.TEAM))
     run(add_member(container, org.id, BOB["email"], BOB["password"], Role.MEMBER))
     monkeypatch.setenv("TADAS_HOME", str(tmp_path / "home"))
     monkeypatch.delenv("TADAS_TOKEN", raising=False)

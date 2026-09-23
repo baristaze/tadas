@@ -105,6 +105,14 @@ def _run[T](coroutine: Coroutine[Any, Any, T], *, signed_in: bool = False) -> T:
             # The task changed between the read this command made and its
             # write; nothing was written, and the command reads afresh.
             _fail("refused: the task changed while this ran; run it again", EXIT_REFUSED)
+        if error.code == "plan_limit_reached":
+            # A plan's bound: the org's owner or an admin lifts it, in the
+            # portal, and the same command then goes through.
+            _fail(
+                f"refused: {error.message}; an owner or an admin can change the plan "
+                "in the portal, under Settings, Billing",
+                EXIT_REFUSED,
+            )
         _fail(f"refused: {error}", EXIT_REFUSED)
     except ChannelRefused as error:
         _fail(f"the channel was refused ({error}); run `tadas login`", EXIT_NOT_SIGNED_IN)
