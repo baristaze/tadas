@@ -53,6 +53,7 @@ LOCAL_DEFAULT_SERVES_THE_CLOUD = {
     "valkey_breaker_failures": "the local bound is the bound",
     "valkey_breaker_cooldown_seconds": "the local cool-down is the cool-down",
     "otel_timeout_seconds": "the local default is the tuning",
+    "stripe_timeout_seconds": "the local default is the tuning",
     "version": "the image carries it",
     "metrics_host": "the collector sidecar shares the task's network namespace; 127.0.0.1 serves",
     "metrics_port": "9464, the port the service module tells the sidecar to scrape",

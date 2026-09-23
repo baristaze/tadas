@@ -7,6 +7,7 @@ from pydantic import Field
 from pydantic_settings import SettingsConfigDict
 
 from tadas.infra.impl.settings import InfraSettings
+from tadas.integrations.settings import IntegrationsSettings
 from tadas.om.storage.settings import StorageSettings
 
 
@@ -14,7 +15,7 @@ def default_worker_id() -> str:
     return f"maintenance-{socket.gethostname()}-{os.getpid()}"
 
 
-class MaintenanceSettings(StorageSettings, InfraSettings):
+class MaintenanceSettings(StorageSettings, InfraSettings, IntegrationsSettings):
     model_config = SettingsConfigDict(env_prefix="TADAS_", env_file=".env", extra="ignore")
 
     service_name: str = "maintenance"
