@@ -1,0 +1,220 @@
+/* The theme: every token's light and dark value, and the page's base.
+   Dark follows the system unless the person picked one in the chrome, which
+   sets data-theme on the root. Every text colour meets WCAG AA (4.5:1) on the
+   surfaces it sits on, in both themes. */
+:root {
+  color-scheme: light;
+  --tadas-bg: #f7f7f8;
+  --tadas-surface: #ffffff;
+  --tadas-surface-subtle: #f2f2f5;
+  --tadas-text: #1a1a1f;
+  --tadas-muted: #62626d;
+  --tadas-border: #e4e4e9;
+  --tadas-border-strong: #cfcfd7;
+  --tadas-accent: #5250d6;
+  --tadas-accent-hover: #4745c4;
+  --tadas-accent-text: #ffffff;
+  --tadas-accent-soft: #eeeefd;
+  --tadas-link: #4a48c9;
+  --tadas-danger: #c52f2a;
+  --tadas-danger-hover: #ad2823;
+  --tadas-danger-text: #b42820;
+  --tadas-warning-bg: #fff6e5;
+  --tadas-warning-text: #7d4a00;
+  --tadas-warning-border: #f5dcae;
+  --tadas-live: #1a8f4d;
+  --tadas-pending: #c96a05;
+  --tadas-tooltip-bg: #1a1a1f;
+  --tadas-tooltip-text: #ffffff;
+  --tadas-focus: #6d6bf0;
+  --tadas-focus-ring: rgba(82, 80, 214, 0.28);
+  --tadas-shadow-sm: 0 1px 2px rgba(16, 16, 24, 0.05);
+  --tadas-shadow-md: 0 1px 2px rgba(16, 16, 24, 0.04), 0 4px 12px rgba(16, 16, 24, 0.06);
+  --tadas-shadow-lg: 0 2px 4px rgba(16, 16, 24, 0.04), 0 12px 32px rgba(16, 16, 24, 0.12);
+  --tadas-topbar: rgba(255, 255, 255, 0.82);
+}
+
+/* The dark values, twice: once for a system in dark mode (unless the person
+   chose light), once for a person who chose dark. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --tadas-bg: #0e0e11;
+    --tadas-surface: #17171b;
+    --tadas-surface-subtle: #202026;
+    --tadas-text: #ececf1;
+    --tadas-muted: #a1a1ad;
+    --tadas-border: #2a2a31;
+    --tadas-border-strong: #3b3b44;
+    --tadas-accent: #5d5be0;
+    --tadas-accent-hover: #6c6aea;
+    --tadas-accent-text: #ffffff;
+    --tadas-accent-soft: #25244a;
+    --tadas-link: #a9a8ff;
+    --tadas-danger: #c9362f;
+    --tadas-danger-hover: #d8443c;
+    --tadas-danger-text: #ff8a80;
+    --tadas-warning-bg: #2d2210;
+    --tadas-warning-text: #f5c46b;
+    --tadas-warning-border: #4a3817;
+    --tadas-live: #34c77b;
+    --tadas-pending: #f0a33a;
+    --tadas-tooltip-bg: #ececf1;
+    --tadas-tooltip-text: #17171b;
+    --tadas-focus: #8d8bff;
+    --tadas-focus-ring: rgba(141, 139, 255, 0.32);
+    --tadas-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --tadas-shadow-md: 0 1px 2px rgba(0, 0, 0, 0.4), 0 4px 12px rgba(0, 0, 0, 0.3);
+    --tadas-shadow-lg: 0 2px 4px rgba(0, 0, 0, 0.4), 0 12px 32px rgba(0, 0, 0, 0.5);
+    --tadas-topbar: rgba(23, 23, 27, 0.82);
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --tadas-bg: #0e0e11;
+  --tadas-surface: #17171b;
+  --tadas-surface-subtle: #202026;
+  --tadas-text: #ececf1;
+  --tadas-muted: #a1a1ad;
+  --tadas-border: #2a2a31;
+  --tadas-border-strong: #3b3b44;
+  --tadas-accent: #5d5be0;
+  --tadas-accent-hover: #6c6aea;
+  --tadas-accent-text: #ffffff;
+  --tadas-accent-soft: #25244a;
+  --tadas-link: #a9a8ff;
+  --tadas-danger: #c9362f;
+  --tadas-danger-hover: #d8443c;
+  --tadas-danger-text: #ff8a80;
+  --tadas-warning-bg: #2d2210;
+  --tadas-warning-text: #f5c46b;
+  --tadas-warning-border: #4a3817;
+  --tadas-live: #34c77b;
+  --tadas-pending: #f0a33a;
+  --tadas-tooltip-bg: #ececf1;
+  --tadas-tooltip-text: #17171b;
+  --tadas-focus: #8d8bff;
+  --tadas-focus-ring: rgba(141, 139, 255, 0.32);
+  --tadas-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --tadas-shadow-md: 0 1px 2px rgba(0, 0, 0, 0.4), 0 4px 12px rgba(0, 0, 0, 0.3);
+  --tadas-shadow-lg: 0 2px 4px rgba(0, 0, 0, 0.4), 0 12px 32px rgba(0, 0, 0, 0.5);
+  --tadas-topbar: rgba(23, 23, 27, 0.82);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--tadas-bg);
+  color: var(--tadas-text);
+  font-family: "Inter Variable", Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  font-feature-settings: "cv11", "ss01";
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+::selection {
+  background: var(--tadas-focus-ring);
+}
+
+h1,
+h2,
+h3 {
+  letter-spacing: -0.011em;
+}
+
+code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.92em;
+  background: var(--tadas-surface-subtle);
+  border: 1px solid var(--tadas-border);
+  border-radius: 4px;
+  padding: 1px 5px;
+  word-break: break-all;
+}
+
+/* One focus ring for everything a keyboard reaches; a pointer never shows it. */
+:focus-visible {
+  outline: 2px solid var(--tadas-focus);
+  outline-offset: 2px;
+}
+
+/* Fields: the surface behind them and the ring on focus. A field's border
+   comes from its own style; focus deepens it. */
+input:not([type="checkbox"]):not([type="radio"]),
+textarea,
+select {
+  background-color: var(--tadas-surface);
+  color: var(--tadas-text);
+  transition:
+    border-color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--tadas-muted);
+  opacity: 1;
+}
+
+input:not([type="checkbox"]):not([type="radio"]):hover,
+textarea:hover,
+select:hover {
+  border-color: var(--tadas-border-strong) !important;
+}
+
+input:not([type="checkbox"]):not([type="radio"]):focus,
+textarea:focus,
+select:focus {
+  outline: none;
+  border-color: var(--tadas-accent) !important;
+  box-shadow: 0 0 0 3px var(--tadas-focus-ring);
+}
+
+/* The task list's box: drawn here so it matches the theme in both modes. */
+input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-block;
+  vertical-align: middle;
+  border: 1.5px solid var(--tadas-border-strong);
+  border-radius: 5px;
+  background: var(--tadas-surface) no-repeat center / 12px 12px;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease;
+}
+
+input[type="checkbox"]:not(:disabled):hover {
+  border-color: var(--tadas-accent);
+}
+
+input[type="checkbox"]:checked {
+  background-color: var(--tadas-accent);
+  border-color: var(--tadas-accent);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 6.2l2.3 2.3 4.7-5' fill='none' stroke='white' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+
+input[type="checkbox"]:disabled {
+  opacity: 0.55;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+  }
+}

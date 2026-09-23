@@ -44,7 +44,25 @@ describe("preferences store", () => {
     const { usePreferencesStore } = await import("./preferences");
     expect(usePreferencesStore.getState().taskScope).toBe("mine");
     usePreferencesStore.getState().setTaskScope("team");
-    expect(JSON.parse(local.getItem(KEY) as string).state).toEqual({ taskScope: "team" });
+    expect(JSON.parse(local.getItem(KEY) as string).state).toEqual({ taskScope: "team", theme: "system" });
+  });
+
+  it("follows the system until a theme is picked, and keeps the pick", async () => {
+    const { usePreferencesStore } = await import("./preferences");
+    expect(usePreferencesStore.getState().theme).toBe("system");
+    usePreferencesStore.getState().setTheme("dark");
+    expect(JSON.parse(local.getItem(KEY) as string).state.theme).toBe("dark");
+  });
+
+  it("reads a stored theme back, and an unknown one as the system's", async () => {
+    local.setItem(KEY, JSON.stringify({ state: { taskScope: "team", theme: "light" }, version: 0 }));
+    let { usePreferencesStore } = await import("./preferences");
+    expect(usePreferencesStore.getState().theme).toBe("light");
+    vi.resetModules();
+    local.setItem(KEY, JSON.stringify({ state: { taskScope: "team", theme: "sepia" }, version: 0 }));
+    ({ usePreferencesStore } = await import("./preferences"));
+    expect(usePreferencesStore.getState().theme).toBe("system");
+    expect(usePreferencesStore.getState().taskScope).toBe("team");
   });
 
   it("reads the scope back on the next visit", async () => {

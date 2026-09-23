@@ -1,39 +1,25 @@
-// The bar above every signed-in page: the org chip, the two destinations, and
-// who is signed in. The live channel's state is the dot in the bottom-right corner.
+// The bar above every signed-in page: the org chip, the two destinations, who
+// is signed in, and the theme. The live channel's state is the dot in the
+// bottom-right corner.
 import { NavLink } from "react-router-dom";
-import { Muted } from "../design/kit";
-import { tokens } from "../design/tokens";
 import { useMe } from "../queries/tenancy";
 import { ConnectionDot } from "./ConnectionDot";
 import { OrgChip } from "./OrgChip";
-
-const linkStyle = ({ isActive }: { isActive: boolean }) => ({
-  color: isActive ? tokens.color.text : tokens.color.muted,
-  fontWeight: isActive ? 600 : 400,
-  textDecoration: "none",
-});
+import { ThemeToggle } from "./ThemeToggle";
 
 export function AppNav() {
   const me = useMe();
   return (
-    <nav
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: tokens.space.lg,
-        paddingBottom: tokens.space.md,
-        marginBottom: tokens.space.lg,
-        borderBottom: `1px solid ${tokens.color.border}`,
-      }}
-    >
+    <nav className="tadas-nav">
       <OrgChip />
-      <NavLink to="/" end style={linkStyle}>
+      <NavLink to="/" end className="tadas-nav-link">
         Tasks
       </NavLink>
-      <NavLink to="/settings" style={linkStyle}>
+      <NavLink to="/settings" className="tadas-nav-link">
         Settings
       </NavLink>
-      <Muted style={{ marginLeft: "auto", fontSize: tokens.font.size.sm }}>{me.data?.user.email}</Muted>
+      <span className="tadas-nav-email">{me.data?.user.email}</span>
+      <ThemeToggle />
       <ConnectionDot />
     </nav>
   );
