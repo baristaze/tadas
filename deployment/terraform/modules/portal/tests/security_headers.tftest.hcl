@@ -61,3 +61,26 @@ run "refuses_a_dsn_that_is_not_one" {
 
   expect_failures = [var.sentry_dsn]
 }
+
+run "names_the_object_store_a_signed_url_points_at" {
+  command = plan
+
+  variables {
+    store_origins = ["https://tadas-test-user-file-uploads.s3.us-east-2.amazonaws.com"]
+  }
+
+  assert {
+    condition     = strcontains(aws_cloudfront_response_headers_policy.security.security_headers_config[0].content_security_policy[0].content_security_policy, "connect-src 'self' https://api.example.test wss://api.example.test https://tadas-test-user-file-uploads.s3.us-east-2.amazonaws.com;")
+    error_message = "the page posts files to the store, so its origin joins connect-src, and nothing broader"
+  }
+}
+
+run "refuses_a_store_origin_with_a_wildcard" {
+  command = plan
+
+  variables {
+    store_origins = ["https://*.amazonaws.com"]
+  }
+
+  expect_failures = [var.store_origins]
+}

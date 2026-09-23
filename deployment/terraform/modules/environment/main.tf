@@ -129,6 +129,12 @@ module "buckets" {
   prefix      = var.bucket_prefix
   buckets     = ["user-file-uploads", "exports"] # tadas.infra.buckets.Buckets
   destroyable = var.destroyable
+  # The portal posts a file straight to the uploads bucket with a form the
+  # API signed, and fetches it back by a signed link.
+  browser_buckets = ["user-file-uploads"]
+  browser_origins = concat(["https://${var.app_domain_name}"], var.cors_origins)
+  # Every key the media namespace writes is <org_id>/media/<purpose>/<id>.
+  object_key_patterns = { "user-file-uploads" = "*/media/*" }
 }
 
 module "secrets" {
@@ -193,6 +199,7 @@ module "portal" {
   domain_name     = var.app_domain_name
   certificate_arn = module.app_certificate.arn
   api_url         = "https://${var.api_domain_name}"
+  store_origins   = module.buckets.origins["user-file-uploads"]
   sentry_dsn      = var.portal_sentry_dsn
   destroyable     = var.destroyable
 }
