@@ -1,22 +1,18 @@
 [project]
-name = "tadas-om"
+name = "tadas-integrations"
 version = "0.1.0"
-description = "The Tadas object model: entities, managers, storage, migrations."
+description = "Tadas third-party providers: each one an interface, a real client, and a deterministic twin."
 requires-python = ">=3.14"
 dependencies = [
     "pydantic>=2.13",
     "pydantic-settings>=2.15",
-    "sqlalchemy[asyncio]>=2.0.54",
-    "asyncpg>=0.31",
-    "alembic>=1.20",
     "tadas-infra",
-    "tadas-integrations",
-    "cryptography>=50.0",
+    "stripe==15.6.1",
+    "httpx>=0.28.1",
 ]
 
 [tool.uv.sources]
 tadas-infra = { workspace = true }
-tadas-integrations = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]
