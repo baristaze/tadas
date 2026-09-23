@@ -25,8 +25,10 @@
 # GitHub environments and sets their variables from the root's outputs;
 # writes the operator's env file with its two token lines empty; starts the
 # first deploy through the pipeline, which is how every later commit reaches
-# the cloud; and prints the grants that come after it, the first operator's
-# among them, which the grant-operator workflow runs. It checks the
+# the cloud; prints the provider steps a person takes after that deploy (the
+# Stripe, WorkOS, and Slack values written into the secrets it made); and
+# prints the grants that come after them, the first operator's among them,
+# which the grant-operator workflow runs. It checks the
 # account again before every apply. It prints every command before it runs
 # it, and `--dry-run` prints them without running anything.
 #
@@ -550,6 +552,39 @@ case "$environment" in
     say "  4. scripts/cloud_create.sh production, again, once that release is green: step 3c writes $site_domain_name at Cloudflare."
     ;;
 esac
+
+say "== 7b. The providers, by hand, once that deploy has made their secrets (each holds \"off\" until then)"
+# Printed, never run: each value is a person's to make in the provider's
+# dashboard and to write under their own sign-in. The deploy made the five
+# secrets; a value written before it would be a secret Terraform does not own.
+case "$environment" in
+  staging) writer_profile="$sso_profile" ;;
+  production) writer_profile="tadas-prod-power" ;;
+esac
+cluster="tadas-$environment"
+say "Written under $writer_profile, with AWS_ACCESS_KEY_ID and its siblings unset, one value at a time, read with read -rs so none is shown:"
+secrets="workos_api_key stripe_org_key slack_bot_token slack_app_token"
+# One Slack app serves every environment and staging holds its one
+# connection, so production leaves its app token off.
+[ "$environment" = "production" ] && secrets="workos_api_key stripe_org_key slack_bot_token"
+for secret in $secrets; do
+  say "  aws secretsmanager put-secret-value --profile $writer_profile --region $region --secret-id tadas/$environment/$secret --secret-string \"\$VALUE\""
+done
+say "  WorkOS first: the grants below sign people up through it. Its application's Redirects tab takes https://$app_domain_name/auth/callback and https://$app_domain_name/login by hand; check them with"
+case "$environment" in
+  staging) say "    uv run tadas-ops workos-bootstrap --environment staging   (WORKOS_API_KEY exported, read with read -rs)" ;;
+  production) say "    uv run tadas-ops workos-bootstrap --environment production   (WORKOS_PRODUCTION_API_KEY exported, read with read -rs)" ;;
+esac
+say "  Stripe: with TADAS_STRIPE_ORG_KEY exported, the bootstrap makes the catalog and the endpoint, and writes tadas/$environment/stripe_webhook_secret itself:"
+say "    uv run tadas-ops stripe-bootstrap --env $environment --profile $writer_profile --dry-run, then without --dry-run, then again for \"no changes\""
+if [ "$environment" = "production" ]; then
+  say "  Slack: slack_app_token stays off here while staging holds the app's one Socket Mode connection."
+fi
+say "  Then the tasks read the values at their next start: the next deploy, or now:"
+for service in api maintenance slack; do
+  say "    aws ecs update-service --profile $writer_profile --region $region --cluster $cluster --service $service --force-new-deployment"
+done
+say "  The steps, the key permissions, and the checks: docs/runbooks/providers/{workos,stripe,slack}.md."
 
 case "$environment" in
   staging) grant_branch=main ;;

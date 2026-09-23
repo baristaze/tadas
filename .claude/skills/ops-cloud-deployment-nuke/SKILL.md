@@ -51,8 +51,9 @@ call.
 
 ## Procedure
 
-The processes are `api` and `maintenance`, the ECS services of the
-cluster `tadas-<env>`, as `deployment/README.md` lists them.
+The processes are `api`, `maintenance`, and `slack` (the Slack
+bridge), the ECS services of the cluster `tadas-<env>`, as
+`deployment/README.md` lists them.
 
 1. Verify the administrator profile as Role and credential states.
 2. Production only, two checks, both before the script runs:
@@ -88,7 +89,7 @@ cluster `tadas-<env>`, as `deployment/README.md` lists them.
 
    ```bash
    aws ecs describe-services --cluster tadas-<env> \
-     --services api maintenance --profile <admin_profile>
+     --services api maintenance slack --profile <admin_profile>
    aws s3api list-buckets --query 'Buckets[?starts_with(Name, `tadas-<env>-`)].Name' \
      --profile <admin_profile>
    ```
@@ -127,6 +128,15 @@ cluster `tadas-<env>`, as `deployment/README.md` lists them.
    profiles stay too; the script touches none of them. A resource
    the destroy could not remove is listed with the reason the script
    printed.
+6. Report what stays at the providers, from the script's last step.
+   Nothing there is touched, by the script or by the skill: Stripe's
+   webhook endpoint for the environment's API name (kept for a
+   recreate, which rolls it; deleted by the person if the environment
+   is not coming back), the customers its orgs made, WorkOS's
+   organizations and users, and the Slack app and its channels. The
+   provider keys' values went with the secrets, so a recreate writes
+   them again after its first deploy
+   (`docs/runbooks/providers/`).
 
 ## What it never does
 
@@ -143,6 +153,8 @@ cluster `tadas-<env>`, as `deployment/README.md` lists them.
 - No secret value printed.
 - No console clicks: a resource the CLI cannot remove is reported,
   not clicked away.
+- No write at Stripe, WorkOS, or Slack: what stays there is listed,
+  and removing it is the person's call.
 
 ## Output
 
@@ -168,4 +180,11 @@ cluster `tadas-<env>`, as `deployment/README.md` lists them.
 - Staging only: production's copies of what staging built, in production's account
 - GitHub environment and variables; ~/.config/tadas/ops/<env>.env; the tadas-<env>-investigate profile
 - <resource the destroy could not remove>: <reason>
+
+## At the providers, untouched
+
+- Stripe (<sandbox | live>): the webhook endpoint https://<api name>/webhooks/stripe, <kept for a recreate | for the person to delete>; the customers its orgs made
+- WorkOS (<Staging | Production>): the organizations and users its orgs made; the application's redirects
+- Slack: the app, its tokens, the channels; the connection closed with the slack service
+- Provider keys to write again on a recreate: stripe_org_key, workos_api_key, slack_bot_token, slack_app_token
 ```
