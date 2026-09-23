@@ -44,6 +44,7 @@ class FakeApi:
         fail_on: str | None = None,
         refuse_logins: int = 0,
         retry_after: str | None = None,
+        dev_sign_in: bool = True,
     ) -> None:
         self.tasks: dict[str, dict[str, Any]] = {}
         self.events: list[dict[str, Any]] = []
@@ -57,6 +58,9 @@ class FakeApi:
         """How many of the next logins answer 429, as the per-address rate
         limit does while its window is full. A large count is a window that
         never opens."""
+        self.dev_sign_in = dev_sign_in
+        """False is a stack whose local sign-in is off, answered as a route
+        that does not exist."""
         self.retry_after = retry_after
         """The `Retry-After`, in seconds, those refusals carry; none when the
         answer asks for no particular wait."""
@@ -107,7 +111,7 @@ class FakeApi:
                 422, json={"error": {"code": "validation_failed", "message": "app"}}
             )
         body = json.loads(request.content) if request.content else {}
-        if (method, path) == ("POST", "/v1/auth/login"):
+        if (method, path) == ("POST", "/v1/auth/dev-sign-in"):
             if self.refuse_logins > 0:
                 self.refuse_logins -= 1
                 return httpx.Response(
@@ -115,10 +119,8 @@ class FakeApi:
                     json={"error": {"code": "rate_limited", "message": "rate limit exceeded"}},
                     headers={"retry-after": self.retry_after} if self.retry_after else None,
                 )
-            if body.get("password") != "tadas-local":
-                return httpx.Response(
-                    401, json={"error": {"code": "invalid_credential", "message": "no"}}
-                )
+            if not self.dev_sign_in or "@" not in str(body.get("email", "")):
+                return httpx.Response(404, json={"error": {"code": "not_found", "message": "no"}})
             return httpx.Response(
                 200,
                 json={

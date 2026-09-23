@@ -14,10 +14,14 @@ and it reads the signals back when it ends.
 - **A person signs in once.** The run signs each of its people in at
   the start, one person per worker, and every session that person
   drives reuses that token until the run signs them out at the end.
-  Sign-in verifies a password on purpose, so it is the slowest route
-  the generator calls, and the API counts it against a per-address rate
-  limit of ten a minute; a run that signed in per session measured
-  password hashing and its own throttling.
+  The API counts every sign-in against a per-address rate limit, and a
+  run signs all its people in from one address; a run that signed in
+  per session measured that limit and not the application.
+- **Its people sign in by the local sign-in.** They sign in by address
+  alone, which only the local stack serves. A deployed environment
+  signs people in through the identity provider, in a browser, so a run
+  against staging or production is refused before it provisions
+  anything, and says why.
 - **Sessions are realistic.** Profiles differ by how many orgs and
   members take part, how many run at once, and how long they think
   between requests. `light` is a sanity run; `regular` is a normal day;
@@ -120,6 +124,10 @@ uv run tadas-ops stress --scenario ops/stress/staging.yaml --env staging \
 ```
 
 ## The run on staging from CI
+
+A deployed environment refuses the run today (see above): its people
+have no way to sign in without a browser. What follows is the wiring
+the run keeps for the day they do.
 
 `.github/workflows/stress.yml` runs a scenario against staging on a
 dispatch, never on a push. It takes a scenario name and, optionally, a

@@ -166,12 +166,11 @@ def report_with(p95: float, errors: int, total: int = 100) -> Report:
 
 
 def test_the_target_judges_the_working_requests_and_not_the_sign_ins() -> None:
-    """Sign-in verifies a password on purpose and is the slowest route the
-    generator calls; the run reports it beside the verdict instead of mixing
-    it into the number the target holds."""
+    """A run signs each person in once; the run reports the sign-ins beside
+    the verdict instead of mixing them into the number the target holds."""
     scenario = load_scenario(HERE / "smoke.yaml")  # target: p95 500 ms
     samples = [Sample("/v1/tasks", "GET", 200, 10.0) for _ in range(100)]
-    samples += [Sample("/v1/auth/login", "POST", 200, 2500.0) for _ in range(4)]
+    samples += [Sample("/v1/auth/dev-sign-in", "POST", 200, 2500.0) for _ in range(4)]
     report = Report.of(
         samples,
         environment="local",

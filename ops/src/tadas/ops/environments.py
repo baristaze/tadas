@@ -2,7 +2,7 @@
 reached with, and where its signals are read back from. The operator's token
 carries `read` and is what every read runs as; the provisioner's carries
 `write` and is used only to create and remove the tenants a traffic run
-needs. Neither is a password: an agent never signs in to the operator plane,
+needs. Neither is a sign-in: an agent never signs in to the operator plane,
 it presents a token that expires within the hour (`tadas-ops token` writes
 one). `staging` and `production` are read from an owner-only file outside
 the repository, `~/.config/tadas/ops/<env>.env`; `local` reads the same file
@@ -42,7 +42,6 @@ KEYS = (
     "SEED_SLUG",
     "SEED_EMAIL",
     "SEED_MEMBER_EMAIL",
-    "SEED_PASSWORD",
 )
 """Every key an environment file may set; anything else in it is ignored."""
 
@@ -55,12 +54,12 @@ CLOUD_REGION = "us-west-2"
 @dataclass(frozen=True)
 class SeedPeople:
     """The org and the two people `make seed` creates, which a local run with
-    `--orgs 0` drives instead of provisioning tenants of its own."""
+    `--orgs 0` drives instead of provisioning tenants of its own. They sign
+    in by the local sign-in, by address alone."""
 
     slug: str
     owner_email: str
     member_email: str
-    password: str
 
 
 @dataclass(frozen=True)
@@ -157,7 +156,6 @@ def environment_of(name: str, values: Mapping[str, str]) -> Environment:
             slug=get("SEED_SLUG", "acme") or "acme",
             owner_email=get("SEED_EMAIL", "owner@example.test") or "owner@example.test",
             member_email=get("SEED_MEMBER_EMAIL", "bob@example.test") or "bob@example.test",
-            password=get("SEED_PASSWORD", "tadas-local") or "tadas-local",
         )
     api_url = get("TADAS_API_URL", LOCAL_API_URL if local else None)
     if not api_url:
