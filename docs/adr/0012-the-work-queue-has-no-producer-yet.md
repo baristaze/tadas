@@ -1,6 +1,7 @@
 # ADR 0012: A write that also starts work is built and tested; no write in Tadas starts work yet
 
-**Status**: accepted (2026-09-20)
+**Status**: closed (2026-09-22). Reminders and Slack posts are the first
+producers; see Closed below. The record stays for the interval it covers.
 
 ## Context
 
@@ -61,3 +62,15 @@ over doubles, and the second relay run is part of it, so the property
 that matters is held by something other than a caller's good manners.
 The first feature that needs asynchronous follow-up work is the trigger
 to delete this record, not to add a second enqueue path.
+
+## Closed
+
+The first feature with follow-up work rode the path, as decided, and
+added none of its own. A task's due time schedules a `TASK_REMINDER`
+item, and a task created or completed in an org with a Slack channel
+asks for a `SLACK_POST` item, each as a second outbox row of the task's
+own write, relayed by the relay that was already there. The reminder
+itself lands a third kind of row the same way. A scheduled kind waits
+in the queue until its time: its payload names `not_before`, and the
+relayed enqueue makes the item available then. A work-item key held by
+another tenant stays a conflict.

@@ -13,14 +13,16 @@ served to it. Exposure is by listing, never by folder.
 - [Decisions](docs/adr/): the architecture decision records, one file per decision
 - [What Tadas is made of](om/README.md): the nouns and how they relate, for a reader with no code
 - [Tenancy](om/src/tadas/om/tenancy/README.md): orgs, identities, users, memberships, sessions, API keys, socket tickets, the role ladder, sign-up (how a deployed environment is entered; the seed is local), and the switch between orgs
-- [Tasks](om/src/tadas/om/tasks/README.md): the to-do items, the fractional position, and the version every write names
+- [Tasks](om/src/tadas/om/tasks/README.md): the to-do items, the fractional position, the version every write names, and the due time and its one reminder
+- [Slack](om/src/tadas/om/slack/README.md): the one channel an org connects, the one-time link code, and the record of every post
 - [Events](om/src/tadas/om/events/README.md): the org's diary and its gapless sequence
 - [Work items](om/src/tadas/om/work/README.md): background jobs, the claim, and the lease
 - [Idempotency records](om/src/tadas/om/idempotency/README.md): the outcome of a request that may arrive twice
 - [Outbox rows](om/src/tadas/om/outbox/README.md): the note written beside every change
 - [Infrastructure](infra/README.md): cache, buckets, topics, queues, secrets, observability; what each promises and which twin runs where
+- [Integrations](integrations/README.md): the third-party providers, Slack first: the interface, the real client, the twin, and the errors a caller decides on
 - [The API process](services/api/README.md): the routes by area, the gateway's guarantees, the subcommands
-- [The maintenance worker](workers/maintenance/README.md): claim, handle, complete; the sweep; liveness
+- [The maintenance worker](workers/maintenance/README.md): claim, handle, complete; reminders and Slack posts; what Slack sends; the Socket Mode bridge; the sweep; liveness
 - [Deployment](deployment/README.md): the two twins and the branch convention
 - [The local stack](deployment/local/README.md): every URL and port, one service at a time
 - [Terraform](deployment/terraform/modules/README.md): the roots, the modules, the state, the credentials
@@ -53,7 +55,8 @@ served to it. Exposure is by listing, never by folder.
 
 - [What Tadas is made of](om/README.md): the nouns and how they relate, for a reader with no code
 - [Tenancy](om/src/tadas/om/tenancy/README.md): orgs, people, roles, and credentials
-- [Tasks](om/src/tadas/om/tasks/README.md): the to-do items and their rules
+- [Tasks](om/src/tadas/om/tasks/README.md): the to-do items and their rules, due times among them
+- [Slack](om/src/tadas/om/slack/README.md): connecting a Slack channel, what it posts, and `/tadas add`
 - [Events](om/src/tadas/om/events/README.md): the org's diary
 - [Work items](om/src/tadas/om/work/README.md): background jobs
 - [Idempotency records](om/src/tadas/om/idempotency/README.md): why a repeated request does one thing
