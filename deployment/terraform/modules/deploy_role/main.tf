@@ -462,7 +462,7 @@ resource "aws_iam_role_policy" "graph_data" {
 }
 
 # What the deploy workflow itself needs: the state, the registry, and the
-# portal build kept by commit.
+# static builds kept by commit (the portal's and the company site's).
 
 data "aws_iam_policy_document" "pipeline" {
   statement {
@@ -478,14 +478,14 @@ data "aws_iam_policy_document" "pipeline" {
   }
 
   statement {
-    sid       = "ListThePortalBuilds"
+    sid       = "ListTheBuilds"
     actions   = ["s3:ListBucket"]
     resources = [local.artifacts_bucket_arn]
 
     condition {
       test     = "StringLike"
       variable = "s3:prefix"
-      values   = ["builds/portal/*"]
+      values   = ["builds/*"]
     }
   }
 
@@ -505,9 +505,9 @@ data "aws_iam_policy_document" "pipeline" {
   # Read only: the build role of the environment that builds writes them,
   # so the credential that applies never holds the one that pushes.
   statement {
-    sid       = "PortalBuildsByCommit"
+    sid       = "BuildsByCommit"
     actions   = ["s3:GetObject"]
-    resources = ["${local.artifacts_bucket_arn}/builds/portal/*"]
+    resources = ["${local.artifacts_bucket_arn}/builds/*"]
   }
 
   statement {

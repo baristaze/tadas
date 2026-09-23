@@ -43,3 +43,19 @@ output "name_servers" {
   description = "Each public name to its zone's name servers: the NS records the bootstrap script writes at Cloudflare."
   value       = { for name, zone in aws_route53_zone.this : name => zone.name_servers }
 }
+
+output "site_certificate_arn" {
+  description = "The company site's certificate in us-east-1, issued once its validation record is at Cloudflare."
+  value       = aws_acm_certificate.site.arn
+}
+
+output "site_certificate_validation" {
+  description = "The records that validate the site's certificate: the create run writes each at Cloudflare as a CNAME, DNS only."
+  value = [
+    for option in aws_acm_certificate.site.domain_validation_options : {
+      name  = trimsuffix(option.resource_record_name, ".")
+      type  = option.resource_record_type
+      value = trimsuffix(option.resource_record_value, ".")
+    }
+  ]
+}

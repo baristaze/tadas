@@ -10,6 +10,9 @@
 # CloudFront reads certificates from that region only.
 
 locals {
+  # The company site is made only when it has a name (see the site below).
+  site_enabled = var.site_domain_name != ""
+
   # The environment every process reads, mirrored from .env.example. Every
   # backend is the hosted one, and TADAS_ENVIRONMENT makes the process refuse
   # anything else at boot.
@@ -175,12 +178,32 @@ module "secrets" {
 # load balancer, the portal at CloudFront. Each gets a DNS-validated
 # certificate; the portal's is in us-east-1, the only region CloudFront reads
 # certificates from.
+#
+# The company site's name is the third, and it is not delegated: it is a
+# record in the Cloudflare zone (the apex in production, staging.tadas.fyi in
+# staging), which only the create run writes. Its certificate is the
+# bootstrap root's, validated by a record that run wrote; this finds it by
+# its name, once issued.
+#
+# The site is optional. With no name (site_domain_name empty), there is no
+# certificate lookup and no site: everything else plans and applies as it
+# would, and the deploy workflows pass an empty name until the create run
+# has set SITE_DOMAIN_NAME and the certificate is issued.
 data "aws_route53_zone" "api" {
   name = var.api_domain_name
 }
 
 data "aws_route53_zone" "app" {
   name = var.app_domain_name
+}
+
+data "aws_acm_certificate" "site" {
+  count    = local.site_enabled ? 1 : 0
+  provider = aws.us_east_1
+
+  domain      = var.site_domain_name
+  statuses    = ["ISSUED"]
+  most_recent = true
 }
 
 module "api_certificate" {
@@ -210,9 +233,14 @@ module "load_balancer" {
   certificate_arn    = module.api_certificate.arn
 }
 
+# The portal and the company site are the same kind of thing, static files
+# behind CloudFront, so they are one module called twice. The portal calls the
+# API, reads its runtime config, and routes client paths; the site calls
+# nothing and answers a missing path with its own not-found page.
 module "portal" {
-  source = "../portal"
+  source = "../static_site"
 
+  name            = "portal"
   environment     = var.environment
   bucket_name     = "${var.bucket_prefix}-portal"
   domain_name     = var.app_domain_name
@@ -220,6 +248,25 @@ module "portal" {
   api_url         = "https://${var.api_domain_name}"
   store_origins   = module.buckets.origins["user-file-uploads"]
   sentry_dsn      = var.portal_sentry_dsn
+  client_routes   = true
+  runtime_config = {
+    apiUrl      = "https://${var.api_domain_name}"
+    sentryDsn   = var.portal_sentry_dsn
+    environment = var.environment
+  }
+  destroyable = var.destroyable
+}
+
+module "site" {
+  source = "../static_site"
+  count  = local.site_enabled ? 1 : 0
+
+  name            = "site"
+  environment     = var.environment
+  bucket_name     = "${var.bucket_prefix}-site"
+  domain_name     = var.site_domain_name
+  certificate_arn = data.aws_acm_certificate.site[0].arn
+  not_found_page  = "/404.html"
   destroyable     = var.destroyable
 }
 

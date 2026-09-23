@@ -36,7 +36,7 @@ rather than working around it.
 Everything about the environment's account comes from
 `deployment/cloud/environments.json`: the account id, the region, the
 administrator profile, the Identity Center profile an operator signs in
-with, and the two public names. Read it first and say what it names.
+with, and the three public names. Read it first and say what it names.
 
 The script also needs `OWNER_EMAIL` and `ALARM_EMAIL` (as environment
 variables or as `--owner-email`, `--alarm-email`), and
@@ -99,7 +99,7 @@ the names of what was written and never a value.
 ## Procedure
 
 1. Read `deployment/cloud/environments.json` and name the account, the
-   region, and the two public names. Verify the administrator profile
+   region, and the three public names. Verify the administrator profile
    as Role and credential states. Check the GitHub login.
 2. Run the script, in dry mode first when `--dry-run` was given, or
    when it is the first time this environment is created. The script
@@ -118,10 +118,11 @@ the names of what was written and never a value.
      the state bucket `tadas-state-<account>` with versioning, made on
      the first apply with local state and then adopted as the backend;
      the artifacts bucket `tadas-artifacts-<account>`, which keeps the
-     portal builds and never the state; the registry; the GitHub OIDC provider; the deploy role (staging)
+     portal and site builds and never the state; the registry; the GitHub OIDC provider; the deploy role (staging)
      or the plan and deploy roles (production); the task boundary; the
      investigate role `tadas-investigate-<env>`; the budget and the
-     anomaly monitor; one hosted zone per public name. The monitor
+     anomaly monitor; a hosted zone for the API's name and one for the
+     app's; the company site's certificate in us-east-1. The monitor
      needs Cost Explorer, which only the organization's management
      account turns on; when the account's Cost Explorer does not
      answer, the script leaves the monitor out and says so, and the
@@ -137,7 +138,15 @@ the names of what was written and never a value.
    - The delegation at Cloudflare: each public name gets NS records
      naming its zone's four name servers, and any stale NS record at
      that name is deleted. This is the only write outside AWS and
-     GitHub, and the only one the token is for.
+     GitHub, and the only one the token is for. The company site's
+     name is not delegated: it is a record in the Cloudflare zone
+     (`tadas.fyi`, `staging.tadas.fyi`). The run writes its
+     certificate's validation record there and waits for the
+     certificate (3b), then, once a deploy has made the site's
+     distribution, the name as a CNAME to it, DNS only (3c). On a first
+     run there is no distribution yet, and 3c says so: the person runs
+     the script again after the first green deploy. A name that holds
+     an address record is refused, and the person decides.
    - The investigate profile, `tadas-<env>-investigate`: the role's ARN
      with the Identity Center profile as its `source_profile`.
    - The GitHub environments and their variables: `staging-build` and
@@ -146,7 +155,8 @@ the names of what was written and never a value.
      only, `main` for staging and `release` for both production ones.
      Each holds `AWS_ROLE_ARN`, `TF_STATE_BUCKET`, and `ARTIFACTS_BUCKET`
      for its own account; the plan environment and staging also hold
-     `API_DOMAIN_NAME`, `APP_DOMAIN_NAME`, and `ALARM_EMAIL`. No secret:
+     `API_DOMAIN_NAME`, `APP_DOMAIN_NAME`, `SITE_DOMAIN_NAME`, and
+     `ALARM_EMAIL`. No secret:
      the OIDC trust replaces keys. For staging, the ruleset on `main`:
      a pull request whose checks passed.
    - The first deploy, through the pipeline: the script pushes

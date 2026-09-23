@@ -39,3 +39,12 @@ output "name_servers" {
   description = "Each public name to its zone's name servers, written at Cloudflare as NS records."
   value       = module.account.name_servers
 }
+
+output "site_certificate_arn" {
+  value = module.account.site_certificate_arn
+}
+
+output "site_certificate_validation" {
+  description = "The site certificate's validation records, written at Cloudflare as CNAMEs by the create run."
+  value       = module.account.site_certificate_validation
+}

@@ -22,14 +22,16 @@ locals {
 data "aws_partition" "current" {}
 
 module "account" {
-  source = "../../modules/account"
+  source    = "../../modules/account"
+  providers = { aws = aws, aws.us_east_1 = aws.us_east_1 }
 
   environment       = "staging"
   other_environment = "production"
   state_key_prefix  = "environments/staging"
 
-  api_domain_name = local.staging.api_domain_name
-  app_domain_name = local.staging.app_domain_name
+  api_domain_name  = local.staging.api_domain_name
+  app_domain_name  = local.staging.app_domain_name
+  site_domain_name = local.staging.site_domain_name
 
   sign_in_role_name = local.staging.sso_role_name
 
@@ -60,7 +62,7 @@ module "deploy_role" {
 
   image_repositories = module.account.repository_names
   # Staging builds, but not under this role: the build role below pushes the
-  # images and keeps the portal build, and this one only reads them.
+  # images and keeps the static builds, and this one only reads them.
   promote_images = false
 
   dns_record_patterns = flatten([
@@ -74,7 +76,8 @@ module "deploy_role" {
 #
 # The jobs that build install third-party packages and run their scripts, so
 # they hold a credential that can push what they built and nothing else: the
-# images into the registry and the portal build under builds/portal/. It
+# images into the registry and the static builds under builds/ (the portal's
+# and the company site's). It
 # trusts one subject, the `staging-build` environment on `main`, which no job
 # that applies declares, so a build step never holds the role that applies.
 
@@ -122,7 +125,7 @@ data "aws_iam_policy_document" "build_assume" {
 
 resource "aws_iam_role" "build" {
   name                 = "tadas-build-staging"
-  description          = "Pushes the images and keeps the portal build. Applies nothing."
+  description          = "Pushes the images and keeps the static builds. Applies nothing."
   assume_role_policy   = data.aws_iam_policy_document.build_assume.json
   max_session_duration = 3600
 }
@@ -153,21 +156,21 @@ data "aws_iam_policy_document" "build" {
   }
 
   statement {
-    sid       = "ListThePortalBuilds"
+    sid       = "ListTheBuilds"
     actions   = ["s3:ListBucket"]
     resources = [module.account.artifacts_bucket_arn]
 
     condition {
       test     = "StringLike"
       variable = "s3:prefix"
-      values   = ["builds/portal/*"]
+      values   = ["builds/*"]
     }
   }
 
   statement {
-    sid       = "KeepThePortalBuild"
+    sid       = "KeepTheBuilds"
     actions   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
-    resources = ["${module.account.artifacts_bucket_arn}/builds/portal/*"]
+    resources = ["${module.account.artifacts_bucket_arn}/builds/*"]
   }
 }
 
@@ -181,7 +184,7 @@ resource "aws_iam_role_policy" "build" {
 #
 # Production never reads staging's account. What it releases is a copy in its
 # own: ECR copies every image staging pushes into production's registry,
-# digest for digest, and S3 copies every portal build staging keeps into
+# digest for digest, and S3 copies every static build staging keeps into
 # production's artifacts bucket, which holds no state. Production's bootstrap root grants the two
 # writes; nothing in production trusts anything else from here, and
 # tearing staging down leaves production's copies where they are.
@@ -225,7 +228,7 @@ resource "aws_iam_role" "replication" {
   count = var.replicate_to_production ? 1 : 0
 
   name                 = "tadas-replication-staging"
-  description          = "Copies staging's portal builds into production's artifacts bucket."
+  description          = "Copies staging's static builds into production's artifacts bucket."
   assume_role_policy   = data.aws_iam_policy_document.replication_assume.json
   max_session_duration = 3600
 }
@@ -238,13 +241,13 @@ data "aws_iam_policy_document" "replication" {
   }
 
   statement {
-    sid = "ReadThePortalBuilds"
+    sid = "ReadTheBuilds"
     actions = [
       "s3:GetObjectVersionAcl",
       "s3:GetObjectVersionForReplication",
       "s3:GetObjectVersionTagging",
     ]
-    resources = ["${module.account.artifacts_bucket_arn}/builds/portal/*"]
+    resources = ["${module.account.artifacts_bucket_arn}/builds/*"]
   }
 
   statement {
@@ -255,7 +258,7 @@ data "aws_iam_policy_document" "replication" {
       "s3:ReplicateObject",
       "s3:ReplicateTags",
     ]
-    resources = ["${local.production_artifacts_bucket_arn}/builds/portal/*"]
+    resources = ["${local.production_artifacts_bucket_arn}/builds/*"]
   }
 }
 
@@ -274,11 +277,11 @@ resource "aws_s3_bucket_replication_configuration" "to_production" {
   role   = aws_iam_role.replication[0].arn
 
   rule {
-    id     = "portal-builds"
+    id     = "builds"
     status = "Enabled"
 
     filter {
-      prefix = "builds/portal/"
+      prefix = "builds/"
     }
 
     delete_marker_replication {

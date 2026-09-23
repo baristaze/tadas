@@ -5,7 +5,9 @@ Two branches, two workflows, one approval.
 - `main` is staging. `.github/workflows/deploy-staging.yml` follows every
   green `ci` run on a push to `main` in this repository (or a
   `workflow_dispatch`): it builds the images once, tagged by the commit,
-  keeps the portal build by the commit, and plans and applies staging
+  keeps the portal build and the company site's build by the commit
+  (the site's holds a page per environment, since its links are in its
+  HTML), and plans and applies staging
   with no approval. A merge is the deployment. A pull request never
   deploys, a fork's branch least of all: `ci` runs on every pull
   request, and a `workflow_run` carries this repository's staging role
@@ -15,7 +17,7 @@ Two branches, two workflows, one approval.
   it; nobody commits to `release` and nothing merges into it. A push to
   `release` runs `.github/workflows/deploy-production.yml`: it refuses
   unless `release` is an ancestor of `main`, resolves the digests and
-  the portal build staging made for that commit, from the copies
+  the portal and site builds staging made for that commit, from the copies
   replicated into production's account (a commit with no copy there is
   refused), plans production, waits for a reviewer's approval
   on that plan, and applies exactly it.
@@ -58,7 +60,7 @@ expects the name-only form refuses every job with `AccessDenied`.
 Each role's permissions stop at what its environment owns: names
 beginning `tadas-<environment>`, secrets under `tadas/<environment>/`,
 log groups under `/tadas/<environment>/`, its own keys in its account's
-state bucket, and its environment's two public names. Everything tagged
+state bucket, and its environment's two delegated public names. Everything tagged
 as the other environment is denied too, which holds if a root is ever
 applied in the wrong account. So is any path by which a role could
 widen itself: the deploy roles, the OIDC trust, the replication, a new
@@ -71,7 +73,7 @@ declared:
 
 | GitHub environment | Variables |
 |--------------------|-----------|
-| `staging` | `AWS_ROLE_ARN` (the staging deploy role), `TF_STATE_BUCKET`, `API_DOMAIN_NAME`, `APP_DOMAIN_NAME`, `ALARM_EMAIL`, and optionally `PORTAL_SENTRY_DSN` (the product's one tracker project, the same DSN production's environment carries) |
+| `staging` | `AWS_ROLE_ARN` (the staging deploy role), `TF_STATE_BUCKET`, `API_DOMAIN_NAME`, `APP_DOMAIN_NAME`, `ALARM_EMAIL`, and optionally `SITE_DOMAIN_NAME` (the company site, left out of every deploy until it is set and its certificate is issued) and `PORTAL_SENTRY_DSN` (the product's one tracker project, the same DSN production's environment carries) |
 | `production-plan` | the same names: `AWS_ROLE_ARN` is the plan role |
 | `production` | `AWS_ROLE_ARN` (the production deploy role), `TF_STATE_BUCKET` |
 
@@ -79,8 +81,9 @@ No AWS secret is stored in GitHub: the roles are assumed through OIDC.
 
 Production reads nothing from staging's account. Staging's registry
 replicates every image into production's, digest for digest, and
-staging's artifacts bucket replicates every portal build under
-`builds/portal/` into production's. The state buckets hold state and
+staging's artifacts bucket replicates every static build under
+`builds/` (the portal's under `builds/portal/`, the site's under
+`builds/site/`) into production's. The state buckets hold state and
 nothing else. Production's registry and artifacts bucket grant staging
 those two writes and nothing else.
 
@@ -362,7 +365,7 @@ automated backups. The run applies the root once with
 final snapshot and drops its protection), destroys it, and prints what
 remains: the account's bootstrap root whole (its zones and their
 delegation, the registry and its images, the roles, the budget), the
-state prefix, the portal builds, the profile and the env file. It runs
+state prefix, the static builds, the profile and the env file. It runs
 under the environment's administrator profile and checks the account
 before the apply and the destroy. `--dry-run` prints every command and
 runs none.
@@ -402,7 +405,8 @@ Approve: `apply` applies exactly the saved plan (Terraform refuses it if
 the state moved meanwhile). Inside the apply the migration runs as a
 one-off task on the new API image, then the API rolls, then the worker;
 the apply waits until the new tasks serve; then the portal files staging
-kept for the commit are published. Reject: the run is cancelled and
+kept for the commit are published, and the site's production page from the
+build staging kept beside its own. Reject: the run is cancelled and
 nothing was applied; `release` still points at the commit, so a fix is
 a new `main` commit and another release.
 
@@ -424,13 +428,14 @@ Two paths, and neither moves `release` backwards.
   approval the `rollback` job swaps each service's application image
   back to the digest production ran for that release (its `prod-<sha>`
   tag, compared with staging's `deployed/` statuses), publishes that
-  release's portal build, and reads `/readyz`. It runs no migration
+  release's portal and site builds (a release from before the site has
+  none, and the site then stays as it is), and reads `/readyz`. It runs no migration
   and plans no Terraform, so nothing else the current release declared
   moves; the next apply writes the declared shape again. It marks the
   release it rolled back from with an error `released/production`
   status, so a later rollback never returns to it. The registry keeps
   the last 30 images per repository and, beyond those, the last 10
-  production ran; the artifacts bucket keeps each portal build a year.
+  production ran; the artifacts bucket keeps each static build a year.
 - **A revert through `main`**, the rollback of record and the only one
   for anything older: revert the change, merge it, let staging deploy
   it, and release as always. A revert never removes a migration that

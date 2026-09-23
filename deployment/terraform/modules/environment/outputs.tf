@@ -18,6 +18,27 @@ output "portal_distribution_id" {
   value = module.portal.distribution_id
 }
 
+# And the company site's, which the same workflows publish the same way.
+# Empty strings when the environment has no site.
+
+output "site_url" {
+  description = "Where the company site answers."
+  value       = try(module.site[0].url, "")
+}
+
+output "site_bucket" {
+  value = try(module.site[0].bucket_name, "")
+}
+
+output "site_distribution_id" {
+  value = try(module.site[0].distribution_id, "")
+}
+
+output "site_distribution_domain_name" {
+  description = "What the site's name at Cloudflare is a CNAME to; the create run writes it."
+  value       = try(module.site[0].distribution_domain_name, "")
+}
+
 # What `aws ecs run-task` needs to start a one-off task on the image the
 # apply just rolled out: the cluster, the task definition and its container
 # (the command override names it), and the network (the private subnets,

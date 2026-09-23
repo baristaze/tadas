@@ -14,7 +14,7 @@ commands, the fields, and the way back when a token is gone.
 
 `deployment/cloud/environments.json` names each environment: the
 account id, the region, the administrator profile, the Identity Center
-profile an operator signs in with, and the two public names. Read it;
+profile an operator signs in with, and the three public names. Read it;
 never guess a value it holds.
 
 ## The profiles

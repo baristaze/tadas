@@ -25,7 +25,7 @@ before a change of size, and correct this page when a price moves.
 | dev | none | the laptop, from `deployment/local` | $0 |
 | staging | XS | AWS, `environments/staging/main.tf` | $124 |
 | production | S | AWS, `environments/prod/main.tf` | $139 |
-| bootstrap, per account | n/a | AWS, `bootstrap/<staging \| prod>/`: registry, state, two DNS zones, budget | $2 each |
+| bootstrap, per account | n/a | AWS, `bootstrap/<staging \| prod>/`: registry, state, two DNS zones, the site's certificate, budget | $2 each |
 | **Total** | | | **$267** |
 
 This is the demo posture. There are no customers yet, only demos, so
@@ -45,7 +45,7 @@ size:
 | Three public IPv4 addresses | $11 | The NAT's address and one per zone for the load balancer |
 | Telemetry: Container Insights, the app's metrics, logs, eight alarms, the dashboard | $10 | What an operator reads; this line grows with traffic |
 | The Slack bridge: one task of 0.25 vCPU and 0.5 GB | $9 | Exactly one per environment at every size, since Slack spreads its deliveries across every open connection |
-| Secrets, queues, buckets, the portal's CDN, traces | $2 | At demo traffic most of it is inside the free allowances |
+| Secrets, queues, buckets, the portal's and the site's CDN, traces | $2 | At demo traffic most of it is inside the free allowances |
 
 The telemetry line is the least certain. Each series the app exports
 to CloudWatch costs $0.30 a month. The latency histogram is labelled

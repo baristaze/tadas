@@ -16,7 +16,7 @@ variable "monthly_budget_usd" {
 }
 
 variable "replicate_to_production" {
-  description = "Copy every image and portal build into production's account. scripts/cloud_create.sh sets it true once production's artifacts bucket exists; S3 refuses a replication rule whose destination does not."
+  description = "Copy every image and static build into production's account. scripts/cloud_create.sh sets it true once production's artifacts bucket exists; S3 refuses a replication rule whose destination does not."
   type        = bool
   default     = false
 }

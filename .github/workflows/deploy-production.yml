@@ -1,15 +1,16 @@
 # Production is the `release` branch, moved only by a fast-forward from
 # `main` (release.yml). A push to `release` plans production, waits for a
 # person's approval on that plan, and applies exactly it. Nothing is built
-# here: the images are the digests staging tagged with this commit and the
-# portal is the build staging kept for it, so a release commit staging never
+# here: the images are the digests staging tagged with this commit, and the
+# portal and the company site are the builds staging kept for it (the site's
+# production build, made beside staging's), so a release commit staging never
 # built is refused before anything is planned, and `release` must be an
 # ancestor of `main`, or someone committed to it.
 #
 # Production has an AWS account of its own (deployment/cloud/environments.json)
 # and reads nothing from staging's. What it releases are the copies staging's
 # account replicates into it: every image, digest for digest, into
-# production's registry, and every portal build into production's artifacts
+# production's registry, and every static build into production's artifacts
 # bucket. A commit staging built before the replication was on has no copy
 # here and is refused the same way.
 #
@@ -55,8 +56,8 @@
 # that one: the newest commit of release, before its tip, that carries
 # `released/production`. A person dispatches this workflow on release with
 # that commit as `rollback_to`, and it waits for the same approval. It swaps
-# each service's image back to that release's digest and the portal back to
-# its build, both as staging recorded them, and runs no migration and plans
+# each service's image back to that release's digest and the portal and the
+# site back to their builds, all as staging recorded them, and runs no migration and plans
 # no Terraform, so nothing else the current release declared moves: the
 # previous release runs on the current schema, because every migration is
 # compatible with the release before it. It leaves release where it is; the
@@ -78,7 +79,7 @@ on:
       rollback_to:
         description: >-
           The fast rollback: the previous release, by its full sha, and no
-          other. Its images and its portal come back behind the same approval,
+          other. Its images, its portal, and its site come back behind the same approval,
           with no migration and no plan. Empty deploys release's tip.
         required: false
         default: ""
@@ -197,6 +198,8 @@ jobs:
           ALARM_EMAIL: ${{ vars.ALARM_EMAIL }}
         run: |
           missing=""
+          # SITE_DOMAIN_NAME is optional: without it the release leaves the
+          # company site out (resolve says so) and releases everything else.
           for name in AWS_ROLE_ARN TF_STATE_BUCKET ARTIFACTS_BUCKET API_DOMAIN_NAME APP_DOMAIN_NAME ALARM_EMAIL; do
             [ -n "${!name}" ] || missing="${missing:+$missing, }$name"
           done
@@ -216,6 +219,7 @@ jobs:
     outputs:
       api_image: ${{ steps.images.outputs.api_image }}
       maintenance_image: ${{ steps.images.outputs.maintenance_image }}
+      site_domain_name: ${{ steps.site.outputs.site_domain_name }}
     steps:
       - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
@@ -306,12 +310,62 @@ jobs:
           want="$(gh api "repos/$REPOSITORY/commits/$SHA/statuses" --paginate \
             -q '[.[] | select(.context == "deployed/portal" and .state == "success")] | first | .description // empty')"
           aws s3 sync --quiet "s3://$ARTIFACTS_BUCKET/builds/portal/$SHA" portal-check
-          have="$(scripts/portal_digest.sh portal-check)"
+          have="$(scripts/build_digest.sh portal-check)"
           if [ -z "$want" ] || [ "$have" != "$want" ]; then
             echo "::error::the portal build in production's artifacts bucket digests to $have, and staging recorded '${want}': the copy is not what staging deployed."
             exit 1
           fi
           echo "Portal: \`s3://$ARTIFACTS_BUCKET/builds/portal/$SHA\`, $have, as staging recorded." >> "$GITHUB_STEP_SUMMARY"
+      # The site's build holds both environments' pages; the digest staging
+      # recorded covers both, and production publishes its own of the two.
+      # The site is optional, by the same rule as staging's: with no
+      # SITE_DOMAIN_NAME, or no issued certificate for it, the release leaves
+      # it out and says so. With both, the commit must carry a site build
+      # staging published, since a plan without the site would take down a
+      # site production already serves.
+      - name: the company site build staging kept for this commit
+        id: site
+        env:
+          ARTIFACTS_BUCKET: ${{ vars.ARTIFACTS_BUCKET }}
+          SITE_DOMAIN_NAME: ${{ vars.SITE_DOMAIN_NAME }}
+          SHA: ${{ needs.guard.outputs.sha }}
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          if [ -z "$SITE_DOMAIN_NAME" ]; then
+            echo "site_domain_name=" >> "$GITHUB_OUTPUT"
+            echo "The company site is left out of this release: the \`production-plan\` environment's \`SITE_DOMAIN_NAME\` is empty (scripts/cloud_create.sh production sets it)." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          issued="$(aws acm list-certificates --region us-east-1 --certificate-statuses ISSUED \
+            --query "CertificateSummaryList[?DomainName=='$SITE_DOMAIN_NAME'].CertificateArn | [0]" --output text)"
+          if [ -z "$issued" ] || [ "$issued" = "None" ]; then
+            echo "site_domain_name=" >> "$GITHUB_OUTPUT"
+            echo "The company site is left out of this release: no issued certificate for \`$SITE_DOMAIN_NAME\` in us-east-1 yet (scripts/cloud_create.sh production, step 3b)." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          found=false
+          for attempt in $(seq 1 20); do
+            if aws s3api head-object --bucket "$ARTIFACTS_BUCKET" --key "builds/site/$SHA/production/index.html" >/dev/null 2>&1; then
+              found=true
+              break
+            fi
+            [ "$attempt" = 20 ] || sleep 30
+          done
+          if ! $found; then
+            echo "::error::production's artifacts bucket holds no site build under builds/site/$SHA after ten minutes: staging never built this commit, or built it before the replication into production was on."
+            exit 1
+          fi
+          want="$(gh api "repos/$REPOSITORY/commits/$SHA/statuses" --paginate \
+            -q '[.[] | select(.context == "deployed/site" and .state == "success")] | first | .description // empty')"
+          aws s3 sync --quiet "s3://$ARTIFACTS_BUCKET/builds/site/$SHA" site-check
+          have="$(scripts/build_digest.sh site-check)"
+          if [ -z "$want" ] || [ "$have" != "$want" ]; then
+            echo "::error::the site build in production's artifacts bucket digests to $have, and staging recorded '${want}': the copy is not what staging built."
+            exit 1
+          fi
+          echo "Site: \`s3://$ARTIFACTS_BUCKET/builds/site/$SHA\`, $have, as staging recorded." >> "$GITHUB_STEP_SUMMARY"
+          echo "site_domain_name=$SITE_DOMAIN_NAME" >> "$GITHUB_OUTPUT"
 
   plan:
     name: plan production
@@ -338,6 +392,7 @@ jobs:
           TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
           API_DOMAIN_NAME: ${{ vars.API_DOMAIN_NAME }}
           APP_DOMAIN_NAME: ${{ vars.APP_DOMAIN_NAME }}
+          SITE_DOMAIN_NAME: ${{ needs.resolve.outputs.site_domain_name }}
           ALARM_EMAIL: ${{ vars.ALARM_EMAIL }}
           # Empty (unset) leaves browser error reporting off, the root default.
           PORTAL_SENTRY_DSN: ${{ vars.PORTAL_SENTRY_DSN }}
@@ -357,6 +412,7 @@ jobs:
             -var "alarm_email=$ALARM_EMAIL" \
             -var "api_domain_name=$API_DOMAIN_NAME" \
             -var "app_domain_name=$APP_DOMAIN_NAME" \
+            -var "site_domain_name=$SITE_DOMAIN_NAME" \
             -var "portal_sentry_dsn=$PORTAL_SENTRY_DSN"
           terraform -chdir=deployment/terraform/environments/prod show -no-color tfplan > plan.txt
           plan_key="plans/environments/prod/$SHA-$RUN.tfplan"
@@ -477,13 +533,32 @@ jobs:
           aws s3 sync "s3://$ARTIFACTS_BUCKET/builds/portal/$SHA" portal-dist
           want="$(gh api "repos/$REPOSITORY/commits/$SHA/statuses" --paginate \
             -q '[.[] | select(.context == "deployed/portal" and .state == "success")] | first | .description // empty')"
-          have="$(scripts/portal_digest.sh portal-dist)"
+          have="$(scripts/build_digest.sh portal-dist)"
           if [ -z "$want" ] || [ "$have" != "$want" ]; then
             echo "::error::the portal build fetched for publishing digests to $have, and staging recorded '${want}'; nothing is published."
             exit 1
           fi
       - name: publish the same portal to production
-        run: scripts/deploy_portal.sh deployment/terraform/environments/prod portal-dist
+        run: scripts/deploy_static.sh portal deployment/terraform/environments/prod portal-dist
+      - name: fetch the company site build staging kept for this commit
+        if: needs.resolve.outputs.site_domain_name != ''
+        env:
+          ARTIFACTS_BUCKET: ${{ vars.ARTIFACTS_BUCKET }}
+          SHA: ${{ needs.guard.outputs.sha }}
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          aws s3 sync "s3://$ARTIFACTS_BUCKET/builds/site/$SHA" site-dist
+          want="$(gh api "repos/$REPOSITORY/commits/$SHA/statuses" --paginate \
+            -q '[.[] | select(.context == "deployed/site" and .state == "success")] | first | .description // empty')"
+          have="$(scripts/build_digest.sh site-dist)"
+          if [ -z "$want" ] || [ "$have" != "$want" ]; then
+            echo "::error::the site build fetched for publishing digests to $have, and staging recorded '${want}'; nothing is published."
+            exit 1
+          fi
+      - name: publish the company site's production build
+        if: needs.resolve.outputs.site_domain_name != ''
+        run: scripts/deploy_static.sh site deployment/terraform/environments/prod site-dist/production
       # After the rollout, readiness is asked once more, through the edge: the
       # load balancer probes liveness only, so this is where a new release
       # that cannot reach its storage fails the run. It never replaces a task.
@@ -519,7 +594,7 @@ jobs:
           scripts/cloud_smoke.sh deployment/terraform/environments/prod production "$API_DOMAIN_NAME"
 
   rollback:
-    name: roll back to the previous release, images and portal only
+    name: roll back to the previous release, images and static files only
     needs: guard
     if: needs.guard.outputs.mode == 'rollback'
     runs-on: ubuntu-latest
@@ -547,7 +622,7 @@ jobs:
             exit 1
           fi
       # Release's tip: its root reads the state the current release applied,
-      # for the outputs alone, and its scripts publish the portal.
+      # for the outputs alone, and its scripts publish the portal and the site.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
@@ -568,7 +643,7 @@ jobs:
             -backend-config="use_lockfile=true"
       # The images production ran for that release: the `prod-<commit>` tags
       # its apply added, compared with what staging recorded for the commit.
-      - name: the previous release's images and portal, as staging recorded them
+      - name: the previous release's images, portal, and site, as staging recorded them
         id: previous
         env:
           SHA: ${{ needs.guard.outputs.sha }}
@@ -592,11 +667,28 @@ jobs:
             echo "${name#tadas-}_image=$registry/$name@$digest" >> "$GITHUB_OUTPUT"
           done
           aws s3 sync --quiet "s3://$ARTIFACTS_BUCKET/builds/portal/$SHA" portal-dist
-          have="$(scripts/portal_digest.sh portal-dist)"
+          have="$(scripts/build_digest.sh portal-dist)"
           want="$(recorded portal)"
           if [ -z "$want" ] || [ "$have" != "$want" ]; then
             echo "::error::the previous release's portal build digests to $have, and staging recorded '${want}'; nothing is rolled back."
             exit 1
+          fi
+          # A release from before the company site was built has no site
+          # build, and production may have no site yet; either way the site
+          # stays as it is.
+          want="$(recorded site)"
+          site_bucket="$(terraform -chdir=deployment/terraform/environments/prod output -raw site_bucket 2>/dev/null || true)"
+          if [ -z "$want" ] || [ -z "$site_bucket" ]; then
+            echo "site=false" >> "$GITHUB_OUTPUT"
+            echo "\`$SHA\` carries no \`deployed/site\`, or production serves no site: the site stays as it is." >> "$GITHUB_STEP_SUMMARY"
+          else
+            aws s3 sync --quiet "s3://$ARTIFACTS_BUCKET/builds/site/$SHA" site-dist
+            have="$(scripts/build_digest.sh site-dist)"
+            if [ "$have" != "$want" ]; then
+              echo "::error::the previous release's site build digests to $have, and staging recorded '${want}'; nothing is rolled back."
+              exit 1
+            fi
+            echo "site=true" >> "$GITHUB_OUTPUT"
           fi
       # Each service's running revision, with its application's image swapped
       # for the previous release's digest and everything else as it is: the
@@ -630,7 +722,10 @@ jobs:
           swap maintenance "$MAINTENANCE_IMAGE"
           aws ecs wait services-stable --cluster "$cluster" --services api maintenance
       - name: publish the previous release's portal
-        run: scripts/deploy_portal.sh deployment/terraform/environments/prod portal-dist
+        run: scripts/deploy_static.sh portal deployment/terraform/environments/prod portal-dist
+      - name: publish the previous release's site
+        if: steps.previous.outputs.site == 'true'
+        run: scripts/deploy_static.sh site deployment/terraform/environments/prod site-dist/production
       - name: the previous release is ready
         env:
           SHA: ${{ needs.guard.outputs.sha }}

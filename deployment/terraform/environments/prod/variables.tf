@@ -34,6 +34,12 @@ variable "app_domain_name" {
   type        = string
 }
 
+variable "site_domain_name" {
+  description = "The company site's public name, from deployment/cloud/environments.json: a record at Cloudflare, with its certificate the bootstrap root's. Empty, the default, leaves the site out; the deploy workflows pass it once SITE_DOMAIN_NAME is set and the certificate is issued."
+  type        = string
+  default     = ""
+}
+
 variable "cors_origins" {
   description = "Browser origins the API accepts besides the portal's, which is always allowed."
   type        = list(string)

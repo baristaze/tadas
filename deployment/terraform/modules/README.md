@@ -18,7 +18,7 @@ Three kinds of root live under this folder:
   `deployment/cloud/environments.json` names it. A bootstrap root calls
   the `account` module and adds the roles its deploy workflow assumes,
   each trusting a single subject (the deploy runbook has the table).
-  Staging's also replicates every image and portal build into
+  Staging's also replicates every image and static build into
   production's account; production's grants those two writes and nothing
   else. `scripts/cloud_create.sh` applies it, under the account's
   administrator profile.
@@ -28,7 +28,7 @@ Three kinds of root live under this folder:
 | Module          | Declares                                                        |
 |-----------------|-----------------------------------------------------------------|
 | `environment`   | One environment whole: every module below, wired                |
-| `account`       | One environment's account before its first deploy: the registry, the state bucket, the OIDC provider, the task boundary, the investigate role, the budget and anomaly monitor, one hosted zone per public name |
+| `account`       | One environment's account before its first deploy: the registry, the state bucket, the OIDC provider, the task boundary, the investigate role, the budget and anomaly monitor, a hosted zone for the API's name and one for the app's, and the company site's certificate |
 | `deploy_role`   | One environment's deploy role: its OIDC trust and its fences     |
 | `investigate_role` | One environment's read-only role: ReadOnlyAccess plus the signal reads, fenced off secrets, data, the database, the other environment, and IAM |
 | `network`       | VPC, public and private subnets, NAT, the security groups        |
@@ -39,7 +39,7 @@ Three kinds of root live under this folder:
 | `buckets`       | One private versioned bucket per `Buckets` member, IAM          |
 | `secrets`       | The four database URLs (master, migration, runtime, system), the Sentry DSN, the Slack bot and app tokens, the TOTP encryption key, the two operator token secrets, the application secrets policy |
 | `load_balancer` | The load balancer at the API's domain name: HTTPS, HTTP redirects |
-| `portal`        | The portal's private bucket and the CloudFront distribution at the app's domain name |
+| `static_site`   | A static site's private bucket and its CloudFront distribution at one domain name, under the security headers; called twice, for the portal and for the company site |
 | `certificate`   | A DNS-validated ACM certificate for one name                    |
 | `domain_records`| The API's and the portal's alias records                        |
 | `service`       | One process: log groups, roles, task definition with an ADOT collector sidecar, service, and its autoscaling target and policy behind the switch |
@@ -126,27 +126,58 @@ state bucket, or the trust that issues the roles.
 
 ## Domains
 
-Each environment has two public names, and each name is the apex of a
-Route 53 hosted zone of its own in the environment's account:
+Each environment has three public names:
 
-| Input | staging | production |
-|-------|---------|------------|
-| `api_domain_name` | `api.staging.tadas.fyi` | `api.tadas.fyi` |
-| `app_domain_name` | `app.staging.tadas.fyi` | `app.tadas.fyi` |
+| Input | staging | production | Where it lives |
+|-------|---------|------------|----------------|
+| `api_domain_name` | `api.staging.tadas.fyi` | `api.tadas.fyi` | a Route 53 zone of its own, delegated from Cloudflare |
+| `app_domain_name` | `app.staging.tadas.fyi` | `app.tadas.fyi` | a Route 53 zone of its own, delegated from Cloudflare |
+| `site_domain_name` | `staging.tadas.fyi` | `tadas.fyi` | a CNAME in the Cloudflare zone, DNS only |
 
 The names are written once, in `deployment/cloud/environments.json`. The
-bootstrap root makes the two zones. The domain itself is registered at
-Cloudflare, which keeps its zone, so `scripts/cloud_create.sh` delegates
-each name there with NS records naming its zone's servers. The create
-script also sets the names as the `API_DOMAIN_NAME` and `APP_DOMAIN_NAME`
+domain itself is registered at Cloudflare, which keeps its zone. The
+bootstrap root makes a zone for the API's name and one for the app's,
+and `scripts/cloud_create.sh` delegates each there with NS records
+naming its zone's servers. The create script also sets the three names
+as the `API_DOMAIN_NAME`, `APP_DOMAIN_NAME`, and `SITE_DOMAIN_NAME`
 variables of the environment's GitHub environments, and the deploy
-workflows pass them in. The environment root finds each zone by its name.
-Terraform does the rest: a DNS-validated certificate per name (the
-portal's in us-east-1, where CloudFront reads them), the alias records,
-and the API's CORS origin, which is always the app's name. The domain's
-apex, the company page, is not managed here.
+workflows pass them in. The environment root finds each zone by its
+name. Terraform does the rest for those two: a DNS-validated certificate
+per name (the portal's in us-east-1, where CloudFront reads them), the
+alias records, and the API's CORS origin, which is always the app's name.
 
-## The portal
+The company site's name cannot be delegated. In production it is the
+domain's apex, the apex of Cloudflare's own zone, where an NS record
+cannot sit; in staging a delegation of `staging.tadas.fyi` would hide
+the `app.staging` and `api.staging` delegations beneath it. So its
+records are in the Cloudflare zone, and only the create run writes
+there, since no deploy holds the Cloudflare token. The `account`
+module (the bootstrap root) requests the site's certificate in
+us-east-1; the create run writes its validation record at Cloudflare and
+waits for it to be issued. The environment root reads the issued
+certificate by the site's name (`data "aws_acm_certificate"`). The site
+is optional: `site_domain_name` defaults to empty, and with no name the
+`site` module and the certificate lookup have no instance, so the rest
+plans and applies unchanged. The deploy workflows pass the name only once
+`SITE_DOMAIN_NAME` is set and the certificate is issued, and say so when
+they leave it out; `terraform test` in `environments/staging` plans the
+environment both ways. A deploy makes the distribution, and
+the next create run writes the site's name as a CNAME to it, DNS only,
+so CloudFront serves TLS with its own certificate; at the apex Cloudflare
+flattens the CNAME. The order and which run writes which record are in
+the [first-time manual, 18a](../../cloud/first_time_manual.md).
+
+## The portal and the company site
+
+Both are static files behind CloudFront, so both are the `static_site`
+module, called twice by `environment`: one module, two parameter sets,
+and the same bucket, origin access control, security headers, and
+distribution for each. What differs is a handful of inputs. The portal
+passes `api_url` and `sentry_dsn` (its Content-Security-Policy lets the
+page reach the API and the error reporter), `runtime_config` (written as
+`/config.json`), and `client_routes = true`. The site passes none of
+those: it reaches its own origin alone, has no config, and passes
+`not_found_page = "/404.html"`, which a missing path gets with a 404.
 
 The portal is static files: a private S3 bucket that only its CloudFront
 distribution can read (origin access control), served at `app_domain_name`.
@@ -158,8 +189,8 @@ connects there directly.
 
 The build carries no environment. Terraform writes `/config.json` per
 environment (`apiUrl`, `sentryDsn`, `environment`). `deploy-staging.yml`
-builds the portal once, publishes it with `scripts/deploy_portal.sh` after
-the apply, and keeps the build by the commit in staging's artifacts bucket
+builds the portal once, publishes it with `scripts/deploy_static.sh portal`
+after the apply, and keeps the build by the commit in staging's artifacts bucket
 (`tadas-artifacts-<account>`, under `builds/portal/<sha>/`). The state
 bucket holds state and nothing else. The artifacts bucket replicates the
 build into production's, and
@@ -169,6 +200,18 @@ reporting on; the deploy workflows pass it from the `PORTAL_SENTRY_DSN`
 variable of the environment's GitHub environment, and an unset one
 leaves reporting off. The `api_url` and `portal_url` outputs are
 where an environment answers.
+
+The company site (`apps/site`) is one page and a not-found page, HTML and
+CSS with no script, served at `site_domain_name`. It calls nothing at
+runtime, so it has no `/config.json`: its links (the app's sign-in, the
+repository) are written into its HTML at build time, from
+`deployment/cloud/environments.json`. `deploy-staging.yml` therefore
+builds it once for both environments (`apps/site/dist/staging` and
+`apps/site/dist/production`), keeps that one build under
+`builds/site/<sha>/`, records its digest as `deployed/site`, and publishes
+the staging page with `scripts/deploy_static.sh site`. A release
+publishes the production page from the same replicated build, after its
+digest matches. The `site_url` output is where the site answers.
 
 ## Telemetry and error reporting
 
@@ -219,7 +262,10 @@ aws secretsmanager put-secret-value \
 
 CI runs `terraform fmt -check -recursive` over this folder,
 `terraform init -backend=false && terraform validate` in every root, and
-`terraform test` in `modules/portal` (the security headers), in
-`modules/service` (the autoscaling switch), and in `modules/dashboard`
-(the body's shape), all offline under a mock provider. `infra/tests/test_dashboard_parity.py` holds the dashboard
+`terraform test` in `modules/static_site` (the portal's security headers,
+and the site's policy, its missing config and routes, and its not-found
+page), in
+`modules/service` (the autoscaling switch), in `modules/dashboard`
+(the body's shape), and in `environments/staging` (the environment plans
+whole with the company site left out, and with it), all offline under a mock provider. `infra/tests/test_dashboard_parity.py` holds the dashboard
 template's panel titles equal to the local Grafana dashboard's.

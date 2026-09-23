@@ -1,15 +1,15 @@
 output "bucket_name" {
-  description = "Where the deploy uploads the built portal."
+  description = "Where the deploy uploads the built site."
   value       = aws_s3_bucket.this.id
 }
 
 output "distribution_id" {
-  description = "Invalidated after each upload of index.html."
+  description = "Invalidated after each upload of the entry points."
   value       = aws_cloudfront_distribution.this.id
 }
 
 output "distribution_domain_name" {
-  description = "The alias target for the portal's domain name."
+  description = "The alias target for the site's domain name."
   value       = aws_cloudfront_distribution.this.domain_name
 }
 
@@ -19,6 +19,6 @@ output "distribution_zone_id" {
 }
 
 output "url" {
-  description = "Where the portal answers."
+  description = "Where the site answers."
   value       = "https://${var.domain_name}"
 }

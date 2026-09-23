@@ -43,3 +43,12 @@ output "name_servers" {
 output "replicating_to_production" {
   value = var.replicate_to_production
 }
+
+output "site_certificate_arn" {
+  value = module.account.site_certificate_arn
+}
+
+output "site_certificate_validation" {
+  description = "The site certificate's validation records, written at Cloudflare as CNAMEs by the create run."
+  value       = module.account.site_certificate_validation
+}

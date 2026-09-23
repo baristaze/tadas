@@ -1,15 +1,18 @@
-# The Content-Security-Policy the distribution sends: the page's own origin,
-# the API over HTTPS and over the websocket, the error reporter when one is
-# configured, and nothing else. Runs offline: `terraform test` in this folder.
+# The portal's Content-Security-Policy: the page's own origin, the API over
+# HTTPS and over the websocket, the error reporter when one is configured,
+# and nothing else. Runs offline: `terraform test` in this folder.
 
 mock_provider "aws" {}
 
 variables {
+  name            = "portal"
   environment     = "test"
   bucket_name     = "tadas-test-portal"
   domain_name     = "app.example.test"
   certificate_arn = "arn:aws:acm:us-east-1:123456789012:certificate/test"
   api_url         = "https://api.example.test"
+  client_routes   = true
+  runtime_config  = { apiUrl = "https://api.example.test", sentryDsn = "", environment = "test" }
 }
 
 run "names_the_page_and_the_api_and_nothing_else" {
@@ -60,6 +63,20 @@ run "refuses_a_dsn_that_is_not_one" {
   }
 
   expect_failures = [var.sentry_dsn]
+}
+
+run "keeps_the_portal_config_and_its_client_routes" {
+  command = plan
+
+  assert {
+    condition     = jsondecode(aws_s3_object.config[0].content).apiUrl == "https://api.example.test" && length(aws_cloudfront_function.spa_routes) == 1
+    error_message = "the portal reads /config.json and routes client paths to index.html"
+  }
+
+  assert {
+    condition     = aws_cloudfront_origin_access_control.this.name == "tadas-test-portal" && aws_cloudfront_function.spa_routes[0].name == "tadas-test-portal-routes"
+    error_message = "the portal's resources keep the names they had"
+  }
 }
 
 run "names_the_object_store_a_signed_url_points_at" {

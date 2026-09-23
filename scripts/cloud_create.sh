@@ -9,15 +9,18 @@
 # Each environment has an AWS account of its own, and
 # deployment/cloud/environments.json names it: the account id, the
 # administrator profile that bootstraps it, the Identity Center profile an
-# operator signs in with, the region, and the environment's two public
-# names. This script reads everything from there and refuses to act in any
-# other account.
+# operator signs in with, the region, and the environment's three public
+# names (the API, the portal, the company site). This script reads
+# everything from there and refuses to act in any other account.
 #
 # What it does, in order: checks the profile is the environment's
 # administrator and the account is the environment's, and checks the GitHub
 # login; applies the environment's bootstrap root with local state and moves
-# that state into the bucket it made; delegates the two public names from
-# the domain's zone at Cloudflare to the zones the root made; writes the
+# that state into the bucket it made; delegates the API's and the portal's
+# names from the domain's zone at Cloudflare to the zones the root made;
+# writes the company site's records in that zone (its certificate's
+# validation record, then, once a deploy has made the site's distribution,
+# the site's name as a CNAME to it); writes the
 # investigate profile, chained from the Identity Center profile; creates the
 # GitHub environments and sets their variables from the root's outputs;
 # writes the operator's env file with its two token lines empty; starts the
@@ -41,7 +44,8 @@
 set -euo pipefail
 
 usage() {
-  sed -n '2,38p' "$0" | sed 's/^# \{0,1\}//' >&2
+  # The header comment, up to the first line that is not one.
+  awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0" >&2
   exit 2
 }
 
@@ -91,6 +95,7 @@ bootstrap_root="deployment/terraform/$(config ".environments.$environment.bootst
 environment_root="deployment/terraform/$(config ".environments.$environment.environment_root")"
 api_domain_name="$(config ".environments.$environment.api_domain_name")"
 app_domain_name="$(config ".environments.$environment.app_domain_name")"
+site_domain_name="$(config ".environments.$environment.site_domain_name")"
 state_bucket="tadas-state-$account_id"
 artifacts_bucket="tadas-artifacts-$account_id"
 
@@ -243,7 +248,7 @@ else
   run terraform -chdir="$bootstrap_root" apply -input=false "${bootstrap_vars[@]}"
 fi
 
-say "== 3. The delegation at Cloudflare: each public name's NS records name its zone here"
+say "== 3. The delegation at Cloudflare: the API's and the portal's NS records name their zones here"
 cloudflare_api=https://api.cloudflare.com/client/v4
 
 # The token goes in a header and never on a printed line.
@@ -256,6 +261,7 @@ cloudflare() {
 
 if $dry_run; then
   say "+ cloudflare GET /zones?name=$domain"
+  zone_id="<zone id>"
   for name in "$api_domain_name" "$app_domain_name"; do
     say "+ cloudflare GET /zones/<zone id>/dns_records?type=NS&name=$name"
     say "+ cloudflare POST /zones/<zone id>/dns_records NS $name -> <each name server of $name>, and DELETE any other NS record there"
@@ -287,6 +293,74 @@ else
       fi
     done
   done
+fi
+
+# One CNAME at a name, DNS only, so CloudFront and ACM see their own names
+# and CloudFront serves TLS with its own certificate. Safe to repeat: a
+# record that is right is left, one that points elsewhere is changed, and a
+# name that holds an address record is refused, since what it serves is a
+# person's call. At the apex Cloudflare flattens the CNAME into addresses.
+cloudflare_cname() {
+  local name="$1" target="$2" existing record_id content proxied others
+  say "+ cloudflare GET /zones/$zone_id/dns_records?name=$name"
+  if $dry_run; then
+    say "+ cloudflare POST or PATCH /zones/$zone_id/dns_records CNAME $name -> $target (DNS only)"
+    return
+  fi
+  existing="$(cloudflare GET "/zones/$zone_id/dns_records?name=$name&per_page=100")"
+  others="$(printf '%s' "$existing" | jq -r '[.result[] | select(.type == "A" or .type == "AAAA" or .type == "NS") | "\(.type) \(.content)"] | join(", ")')"
+  [ -z "$others" ] || refuse "$name holds $others at Cloudflare, and the site's CNAME cannot sit beside it; remove it by hand if the site is to serve there, then run this again"
+  read -r record_id content proxied < <(printf '%s' "$existing" | jq -r '.result[] | select(.type == "CNAME") | "\(.id) \(.content) \(.proxied)"' | head -n 1) || true
+  if [ -z "${record_id:-}" ]; then
+    say "+ cloudflare POST /zones/$zone_id/dns_records CNAME $name -> $target (DNS only)"
+    cloudflare POST "/zones/$zone_id/dns_records" \
+      "$(jq -nc --arg name "$name" --arg target "$target" '{type: "CNAME", name: $name, content: $target, proxied: false, ttl: 300}')" >/dev/null
+  elif [ "${content%.}" = "${target%.}" ] && [ "$proxied" = "false" ]; then
+    say "$name CNAME $target is there already."
+  else
+    say "+ cloudflare PATCH /zones/$zone_id/dns_records/$record_id CNAME $name -> $target (DNS only; it read $content, proxied $proxied)"
+    cloudflare PATCH "/zones/$zone_id/dns_records/$record_id" \
+      "$(jq -nc --arg target "$target" '{content: $target, proxied: false, ttl: 300}')" >/dev/null
+  fi
+}
+
+say "== 3b. The company site's certificate: its validation record at Cloudflare, then its issue"
+# The site's name is a record in this zone, not a delegation: the apex
+# cannot be delegated, and a delegation of staging.<domain> would hide the
+# app.staging and api.staging delegations beneath it. So ACM's validation
+# record goes here too, written by this run, which holds the token.
+if $dry_run; then
+  cloudflare_cname "<each validation record name of $site_domain_name>" "<its value>"
+  say "+ aws acm wait certificate-validated --certificate-arn <site_certificate_arn> --region us-east-1"
+else
+  site_certificate="$(terraform -chdir="$bootstrap_root" output -raw site_certificate_arn)"
+  while read -r name value; do
+    cloudflare_cname "$name" "$value"
+  done < <(terraform -chdir="$bootstrap_root" output -json site_certificate_validation | jq -r '.[] | "\(.name) \(.value)"')
+  status="$(aws acm describe-certificate --certificate-arn "$site_certificate" --region us-east-1 --query Certificate.Status --output text)"
+  if [ "$status" = "ISSUED" ]; then
+    say "The certificate for $site_domain_name is issued."
+  else
+    say "+ aws acm wait certificate-validated --certificate-arn $site_certificate --region us-east-1  (ACM reads the record; minutes, as a rule)"
+    aws acm wait certificate-validated --certificate-arn "$site_certificate" --region us-east-1
+  fi
+fi
+
+say "== 3c. The company site's name at Cloudflare: a CNAME to its distribution, once a deploy has made it"
+# The distribution is the environment root's, which a deploy applies, and
+# its domain is known only after that. So the record is written by the first
+# run of this script after a deploy that made it; every run checks it.
+say "+ aws cloudfront list-distributions  (the one whose alias is $site_domain_name)"
+if $dry_run; then
+  cloudflare_cname "$site_domain_name" "<the distribution's domain>"
+else
+  site_distribution="$(aws cloudfront list-distributions --output text \
+    --query "DistributionList.Items[?Aliases.Items != null && contains(Aliases.Items, '$site_domain_name')].DomainName | [0]")"
+  if [ -z "$site_distribution" ] || [ "$site_distribution" = "None" ]; then
+    say "No distribution serves $site_domain_name yet: the next deploy makes it. Run this script again once that deploy is green, and this step writes $site_domain_name CNAME <its domain>."
+  else
+    cloudflare_cname "$site_domain_name" "$site_distribution"
+  fi
 fi
 
 say "== 4. The investigate profile, chained from the Identity Center profile"
@@ -362,6 +436,7 @@ case "$environment" in
       "ARTIFACTS_BUCKET=$artifacts_bucket" \
       "API_DOMAIN_NAME=$api_domain_name" \
       "APP_DOMAIN_NAME=$app_domain_name" \
+      "SITE_DOMAIN_NAME=$site_domain_name" \
       "ALARM_EMAIL=$alarm_email"
     ;;
   production)
@@ -383,6 +458,7 @@ case "$environment" in
       "ARTIFACTS_BUCKET=$artifacts_bucket" \
       "API_DOMAIN_NAME=$api_domain_name" \
       "APP_DOMAIN_NAME=$app_domain_name" \
+      "SITE_DOMAIN_NAME=$site_domain_name" \
       "ALARM_EMAIL=$alarm_email"
     set_variables production \
       "AWS_ROLE_ARN=$deploy_role" \
@@ -462,6 +538,7 @@ say "== 7. The first deploy, through the pipeline like every other"
 case "$environment" in
   staging)
     run gh workflow run deploy-staging.yml --ref main
+    say "When that deploy is green, run this script again: step 3c finds the site's distribution and writes $site_domain_name at Cloudflare."
     ;;
   production)
     # Replication copies what staging pushes from the moment it is on, and
@@ -470,6 +547,7 @@ case "$environment" in
     say "  1. scripts/cloud_create.sh staging, again: it finds production's bucket and turns the replication on."
     say "  2. A merge to main after that: deploy-staging builds it, and its images and portal build replicate here."
     say "  3. gh workflow run release.yml --ref main: the release, planned, approved in the production environment, applied."
+    say "  4. scripts/cloud_create.sh production, again, once that release is green: step 3c writes $site_domain_name at Cloudflare."
     ;;
 esac
 
