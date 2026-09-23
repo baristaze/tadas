@@ -31,8 +31,8 @@ Zustand, one realtime channel.
   connection status, the transient notices a failed write leaves
   (`notices.ts`, rendered by `src/app/Notices.tsx` over the kit's
   `Banner`; a view-model never swallows a mutation error), and the
-  preferences kept across visits (`preferences.ts`, the task scope,
-  persisted in local storage). The token is kept in memory and in the
+  preferences kept across visits (`preferences.ts`, the task scope and
+  the theme, persisted in local storage). The token is kept in memory and in the
   tab's session storage, so a reload survives and a closed tab forgets;
   never in local storage, which is for preferences only. No feature
   reads a storage directly; a store does.
@@ -68,7 +68,17 @@ Zustand, one realtime channel.
   socket; a late 4401 from the old socket signs nothing out, since it
   belongs to a token the tab no longer holds.
 - Design tokens and the kit live in `src/design/`; the operator console,
-  when it is built (ADR 0010), imports them from here.
+  when it is built (ADR 0010), imports them from here. A colour or a
+  shadow token is a CSS custom property, and `theme.css` gives each its
+  light and its dark value, so an inline style follows the theme with no
+  code of its own. `kit.css` holds what inline styles cannot say (hover,
+  focus, the dragged row). Feature code styles through the tokens and the
+  kit, never a literal colour. Every text colour meets WCAG AA in both
+  themes. The theme follows the system until the person picks one with
+  the toggle in the chrome (system, light, dark, in turn); the pick is a
+  `data-theme` attribute on the root, set before the app renders. The
+  typeface is Inter, bundled with the build (`@fontsource-variable/inter`),
+  so the page loads no font from another origin.
 
 ## Run
 
