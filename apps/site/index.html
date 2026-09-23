@@ -64,12 +64,15 @@
         <figure class="column shot">
           <div class="shot-frame">
             <div class="shot-bar" aria-hidden="true"><span></span><span></span><span></span></div>
-            <img
-              src="../../docs/media/realtime-demo.gif"
-              width="876"
-              height="864"
-              alt="Two Tadas windows side by side, two people on the same team. One adds three tasks, renames one and assigns it, drags it to the top, completes one, and deletes one; each change appears in the other window at once."
-            />
+            <picture>
+              <source srcset="../../docs/media/realtime-demo-dark.gif" media="(prefers-color-scheme: dark)" />
+              <img
+                src="../../docs/media/realtime-demo.gif"
+                width="876"
+                height="864"
+                alt="Two Tadas windows side by side, two people on the same team. One adds three tasks, one with a due time, attaches an image to another and assigns it, and completes a third; each change appears in the other window at once, and the other person opens the image."
+              />
+            </picture>
           </div>
           <figcaption>Two people, two windows, one list. Every change on the left lands on the right as it happens.</figcaption>
         </figure>

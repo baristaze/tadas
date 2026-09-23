@@ -32,7 +32,7 @@ SCRAPE_PORT ?= $(TADAS_COLLECTOR_SCRAPE_PORT)
 # `make arch-check ARCH_CHECK="python3 ../swe_guidelines/checkers/arch_check.py"`.
 ARCH_CHECK ?= uvx --python "$(shell cat .python-version)" --from "git+https://github.com/baristaze/swe_guidelines@v0.32.0\#subdirectory=checkers" arch-check
 
-.PHONY: help setup up down reset urls infra-up buckets devx-up stack-up infra-down infra-reset collector-scrape migrate seed demo-gif demo-cli-gif migrate-check benchmark-boot check lint format-check typecheck arch-check test-unit test-integration test-telemetry traffic openapi
+.PHONY: help setup up down reset urls infra-up buckets devx-up stack-up infra-down infra-reset collector-scrape migrate seed demo-gif demo-gif-dark demo-cli-gif migrate-check benchmark-boot check lint format-check typecheck arch-check test-unit test-integration test-telemetry traffic openapi
 
 # This Makefile alone, never $(MAKEFILE_LIST): the includes above put
 # .env.example and .env in that list, and grep prefixes every match with the
@@ -144,6 +144,10 @@ seed: ## Create two local orgs with an owner, a member, and an admin of both to 
 # Bob's window on the left, the owner's on the right.
 demo-gif: ## Record the README's realtime demo GIF against the running stack
 	uv run --with pillow python scripts/record_demo.py docs/media/realtime-demo.gif
+
+# The same story in the dark theme, for the company site on a dark system.
+demo-gif-dark: ## Record the dark variant of the realtime demo GIF the company site shows
+	uv run --with pillow python scripts/record_demo.py docs/media/realtime-demo-dark.gif --theme dark
 
 # Needs `make up` too. Bob in command mode on the left, the owner on
 # `tadas listen` on the right; records docs/media/cli-demo.gif.
