@@ -11,14 +11,15 @@ the cloud from Terraform. Nothing is clicked into place in either.
 |-------|-------------------|--------------------------|
 | The API process | the `api` container, or a host process with hot reload | a container service behind a load balancer, as many replicas as the size names, rolled one task definition at a time |
 | The maintenance worker | the `maintenance` container, or a host process | a container service of its own, rolled one at a time because it holds leases |
+| The Slack bridge (`tadas-maintenance slack`) | not run; a host process by hand for a short run, since local and staging share one Slack app | exactly one task on the maintenance image, never two, not even during a rollout |
 | The portal | nginx in a container, or Vite on the host | a private bucket behind a CDN, publishing the build staging made |
 | Postgres | one container, four schemas, one per database role | a managed instance with backups and storage that grows on its own |
 | Valkey (cache, topics) | one container | a managed cluster, encrypted in transit |
-| Queues | ElasticMQ over the SQS API | SQS, with a dead-letter queue each |
+| Queues (`webhooks`, `slack`) | ElasticMQ over the SQS API, declared in `local/elasticmq/elasticmq.conf` | SQS, with a dead-letter queue each |
 | Buckets | MinIO over the S3 API | S3, private and versioned |
-| Secrets | the settings object, from `.env` | Secrets Manager |
+| Secrets | the settings object, from `.env` | Secrets Manager, including the Slack app's bot and app tokens |
 | Logs, metrics, traces, errors | Prometheus, Grafana, Jaeger, GlitchTip, under the `devx` profile | CloudWatch, X-Ray, Sentry, through a collector sidecar in every task |
-| Alarms and the dashboard | Grafana's provisioned overview | one CloudWatch dashboard per environment, seven alarms to one topic |
+| Alarms and the dashboard | Grafana's provisioned overview | one CloudWatch dashboard per environment, eight alarms to one topic |
 
 Every process is one image, built in two stages, running as a
 non-root user, with a liveness probe. Liveness decides whether a

@@ -3,6 +3,7 @@ short ids, assignees by name, JSON output, and the exit codes."""
 
 import asyncio
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
@@ -605,3 +606,24 @@ def test_switch_needs_a_kept_session(stack: Stack) -> None:
     out = stack.tadas("switch", "acme")  # TADAS_TOKEN is the environment's, not the CLI's
     assert out.exit_code == 3, out.output
     assert "no kept session to switch" in out.output
+
+
+def test_a_due_time_is_set_moved_and_cleared_from_the_command_line(stack: Stack) -> None:
+    added = stack.tadas("add", "Renew the passport", "--remind", "+2h", "--json")
+    assert added.exit_code == 0, added.output
+    task = json.loads(added.output)
+    assert task["remind_at"] is not None and task["reminded_at"] is None
+    short = task["id"][-8:]
+
+    moved = stack.tadas("edit", short, "--remind", "2031-01-02T09:30+01:00", "--json")
+    assert moved.exit_code == 0, moved.output
+    due = datetime.fromisoformat(json.loads(moved.output)["remind_at"])
+    assert due == datetime(2031, 1, 2, 8, 30, tzinfo=UTC)
+
+    cleared = stack.tadas("edit", short, "--no-remind", "--json")
+    assert cleared.exit_code == 0 and json.loads(cleared.output)["remind_at"] is None
+
+    wrong = stack.tadas("add", "When", "--remind", "tomorrow-ish")
+    assert wrong.exit_code == 2 and "+30m, +2h, +1d" in wrong.output
+    both = stack.tadas("edit", short, "--remind", "+1h", "--no-remind")
+    assert both.exit_code == 2

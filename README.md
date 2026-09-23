@@ -189,8 +189,8 @@ person follows by hand is a runbook under
   [om/README.md](om/README.md) names the nouns for a reader with no
   code, and each namespace carries a README of its own
 - `infra/` cache, buckets, topics, queues, secrets, observability
-  ([infra/README.md](infra/README.md)); `integrations/` the hosted
-  services the platform depends on, each with a real client and a twin:
+  ([infra/README.md](infra/README.md)); `integrations/` the third-party
+  providers, each an interface, a real client, and a twin: Slack, and
   the identity provider, WorkOS ([integrations/README.md](integrations/README.md))
 - `services/` web services ([services/api/README.md](services/api/README.md));
   `workers/` background roles

@@ -1,10 +1,10 @@
-# ADR 0028: A local sign-in by address alone, refused in a deployed environment
+# ADR 0029: A local sign-in by address alone, refused in a deployed environment
 
 **Status**: accepted (2026-09-26)
 
 ## Context
 
-Sign-in is the identity provider's (ADR 0027): a person goes through a
+Sign-in is the identity provider's (ADR 0028): a person goes through a
 hosted page in a browser and comes back with a code. Several callers
 need a person without that round trip. `make seed` makes three people
 the local stack is shown with; the demo recorders sign two of them in

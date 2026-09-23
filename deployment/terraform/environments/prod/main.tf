@@ -43,6 +43,8 @@ module "environment" {
   maintenance_desired_count    = 1
   maintenance_cpu              = 256
   maintenance_memory           = 512
+  slack_cpu                    = 256
+  slack_memory                 = 512
 
   # Operations. `autoscaling_enabled` is the one flip: every lever below it
   # is on, so true scales the whole environment, and the flip is a pull

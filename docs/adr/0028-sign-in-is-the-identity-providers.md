@@ -1,4 +1,4 @@
-# ADR 0027: Sign-in is the identity provider's, and the identity stays Tadas's
+# ADR 0028: Sign-in is the identity provider's, and the identity stays Tadas's
 
 **Status**: accepted (2026-09-26)
 
@@ -109,7 +109,7 @@ AuthKit's hosted page is the part that cannot be twinned faithfully,
 which is the exception the guideline names for a shared development
 tenant: the local stack signs in through the staging environment's
 application, whose redirects include the local portal. Without its key
-the local stack still runs, and the local sign-in (ADR 0028) is its
+the local stack still runs, and the local sign-in (ADR 0029) is its
 door.
 
 **One reconcile command holds WorkOS's configuration.** `tadas-ops

@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import datetime, timedelta
 from uuid import UUID
 
 from tadas.om.base import PROVENANCE_FIELDS, Platform, utcnow
@@ -6,6 +6,8 @@ from tadas.om.exceptions import NotFound, PreconditionFailed, TenantMismatch, Va
 from tadas.om.opcontext import OpContext, Permission
 from tadas.om.outbox import OutboxRelayInterface
 from tadas.om.outbox.types.row import OutboxRow, outbox_row
+from tadas.om.slack import SlackManagerInterface
+from tadas.om.slack.types.connection import SlackConnectionStatus
 from tadas.om.tasks.manager import TasksManagerInterface
 from tadas.om.tasks.rules import is_between, position_after, renumbered, top_position
 from tadas.om.tasks.storage import TasksStorageInterface
@@ -13,6 +15,13 @@ from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor, TaskFilter
 from tadas.om.tasks.types.page import TaskPage
 from tadas.om.tasks.types.task import Task, TaskScope, TaskStatus
 from tadas.om.tenancy import TenancyManagerInterface
+from tadas.om.work.types.work_item import (
+    SlackPostEvent,
+    SlackPostPayload,
+    TaskReminderPayload,
+    WorkKind,
+    work_row_kind,
+)
 
 NEIGHBOURS = 1
 """How many open places a placement reads: the top one for a task placed on
@@ -32,11 +41,13 @@ class TasksManagerImpl(TasksManagerInterface):
         storage: TasksStorageInterface,
         tenancy: TenancyManagerInterface,
         relay: OutboxRelayInterface,
+        slack: SlackManagerInterface,
         options: TasksOptions,
     ) -> None:
         self._storage = storage
         self._tenancy = tenancy
         self._relay = relay
+        self._slack = slack
         self._options = options
 
     async def get_open_tasks(
@@ -81,9 +92,14 @@ class TasksManagerImpl(TasksManagerInterface):
                 "status": TaskStatus.OPEN,
                 "position": await self._top_position(ctx, exclude=task.id),
                 "version": 1,
+                "reminded_at": None,
             }
         )
-        rows = (outbox_row(ctx, "tasks.task.created", created.id, {}),)  # ids only
+        rows = (
+            outbox_row(ctx, "tasks.task.created", created.id, {}),  # ids only
+            *self._reminder_rows(ctx, created),
+            *await self._slack_rows(ctx, created.id, SlackPostEvent.CREATED),
+        )
         if not await self._storage.create_task(ctx.org_id, created, rows):
             # Ids are minted above storage, so the only way to present one twice
             # is a retry, and a retry must not create twice: the insert reported
@@ -93,7 +109,7 @@ class TasksManagerImpl(TasksManagerInterface):
                 # The id is held, and not in this tenant: refused, never a 500.
                 raise TenantMismatch(f"task {created.id} is not in {ctx.org_id}")
             return existing
-        for row in rows:  # a write that also starts work carries a second row here
+        for row in rows:  # the work rows ride the same commit and the same relay
             await self._relay.relay(ctx.org_id, row)
         return created
 
@@ -117,8 +133,18 @@ class TasksManagerImpl(TasksManagerInterface):
         }
         if current.status == TaskStatus.DONE and task.status == TaskStatus.OPEN:
             changes["position"] = await self._top_position(ctx, exclude=task.id)
+        rescheduled = task.remind_at != current.remind_at
+        if rescheduled:
+            # A new due time has not been reminded of; the reminder the old
+            # one scheduled is stale from this write on, whatever it holds.
+            changes["reminded_at"] = None
         updated = Task.model_validate({**current.model_dump(), **changes})
-        await self._write(ctx, updated, expected_version, "updated")
+        work: list[OutboxRow] = []
+        if rescheduled:
+            work.extend(self._reminder_rows(ctx, updated))
+        if current.status == TaskStatus.OPEN and updated.status == TaskStatus.DONE:
+            work.extend(await self._slack_rows(ctx, updated.id, SlackPostEvent.COMPLETED))
+        await self._write(ctx, updated, expected_version, "updated", tuple(work))
         return updated
 
     async def move_task(
@@ -170,6 +196,21 @@ class TasksManagerImpl(TasksManagerInterface):
         )
         await self._write(ctx, deleted, expected_version, "deleted")
         return deleted
+
+    async def fire_reminder(
+        self, ctx: OpContext, task_id: UUID, remind_at: datetime
+    ) -> Task | None:
+        ctx.require(Permission.WRITE)
+        rows = (
+            outbox_row(ctx, "tasks.task.reminded", task_id, {}),
+            *await self._slack_rows(ctx, task_id, SlackPostEvent.REMINDED),
+        )
+        reminded = await self._storage.mark_reminded(ctx.org_id, task_id, remind_at, utcnow(), rows)
+        if reminded is None:
+            return None
+        for row in rows:
+            await self._relay.relay(ctx.org_id, row)
+        return reminded
 
     async def purge_deleted(self, ctx: OpContext) -> int:
         ctx.require(Permission.WRITE)
@@ -271,15 +312,45 @@ class TasksManagerImpl(TasksManagerInterface):
             except NotFound:
                 raise ValidationFailed("the assignee is not a member of this org") from None
 
-    async def _write(self, ctx: OpContext, task: Task, expected_version: int, action: str) -> None:
+    async def _write(
+        self,
+        ctx: OpContext,
+        task: Task,
+        expected_version: int,
+        action: str,
+        work: tuple[OutboxRow, ...] = (),
+    ) -> None:
         """The core row and the rows that announce it land in one storage call,
         conditioned on the version the caller read; the relay then appends the
         event and pushes at once, and the sweep catches what a crash left
         behind. Every push is also a record, so a client that missed the push
         replays by seq. A row carries ids and never a field's value, so the
         relay and the stream hold nothing a person's erasure has to find; a
-        client that hears of a change reads the task."""
-        rows = (outbox_row(ctx, f"tasks.task.{action}", task.id, {}),)
+        client that hears of a change reads the task. The rows of the work the
+        write starts (`work`) land in the same commit."""
+        rows = (outbox_row(ctx, f"tasks.task.{action}", task.id, {}), *work)
         await self._storage.update_task(ctx.org_id, task, expected_version, rows)
         for row in rows:
             await self._relay.relay(ctx.org_id, row)
+
+    @staticmethod
+    def _reminder_rows(ctx: OpContext, task: Task) -> tuple[OutboxRow, ...]:
+        """The work row that schedules the reminder of the task's due time,
+        or none when it has none. The item waits in the queue until then."""
+        if task.remind_at is None:
+            return ()
+        payload = TaskReminderPayload(not_before=task.remind_at)
+        kind = work_row_kind(WorkKind.TASK_REMINDER)
+        return (outbox_row(ctx, kind, task.id, payload.model_dump(mode="json")),)
+
+    async def _slack_rows(
+        self, ctx: OpContext, task_id: UUID, event: SlackPostEvent
+    ) -> tuple[OutboxRow, ...]:
+        """The work row that posts the event to the org's Slack channel, or
+        none when the org has no channel or its channel is broken."""
+        connection = await self._slack.get_connection(ctx)
+        if connection is None or connection.status is not SlackConnectionStatus.OK:
+            return ()
+        payload = SlackPostPayload(event=event)
+        kind = work_row_kind(WorkKind.SLACK_POST)
+        return (outbox_row(ctx, kind, task_id, payload.model_dump(mode="json")),)

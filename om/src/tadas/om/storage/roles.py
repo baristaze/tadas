@@ -27,6 +27,9 @@ TABLE_ROLES: dict[str, DatabaseRole] = {
     "events": DatabaseRole.ACTIVITY,
     "event_cursors": DatabaseRole.ACTIVITY,
     "outbox_rows": DatabaseRole.CORE,
+    "slack_connections": DatabaseRole.CORE,
+    "slack_link_codes": DatabaseRole.CORE,
+    "slack_posts": DatabaseRole.CORE,
 }
 
 

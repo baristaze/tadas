@@ -115,6 +115,15 @@ variable "maintenance_memory" {
   type = number
 }
 
+variable "slack_cpu" {
+  description = "The Slack bridge's CPU units: one task holding one websocket."
+  type        = number
+}
+
+variable "slack_memory" {
+  type = number
+}
+
 # Operations. The alarm address, the one autoscaling switch with the per
 # service levers under it, and the nuke's flag.
 

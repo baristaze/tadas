@@ -29,4 +29,9 @@ export const keys = {
     open: (scope: string) => ["task", "open", scope] as const,
     done: (scope: string) => ["task", "done", scope] as const,
   },
+  // The org's one Slack channel. The server pushes it as
+  // `slack.connection.<action>`, so the key starts with the entity name.
+  slack: {
+    connection: ["connection", "slack"] as const,
+  },
 };

@@ -4,7 +4,7 @@
 #
 # A run is refused today, before it provisions anything: the traffic
 # generator signs its people in by the local sign-in, which a deployed
-# environment does not serve (ADR 0028), and a person there signs in
+# environment does not serve (ADR 0029), and a person there signs in
 # through WorkOS in a browser. The workflow stays as the shape of a run.
 #
 # There is no environment input. Staging is the only environment this

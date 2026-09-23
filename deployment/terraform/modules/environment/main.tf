@@ -1,5 +1,5 @@
 # One environment, whole: the graph every environment instantiates, from the
-# network to the two processes. An environment root is this module called once
+# network to the three processes. An environment root is this module called once
 # with its parameter set and its backend, so there is one place a resource is
 # added and no copy to keep in step. Each application process is one instance
 # of the service module. Production promotes the images staging already ran,
@@ -119,7 +119,7 @@ module "queue" {
 
   environment = var.environment
   prefix      = "tadas-${var.environment}-"
-  queues      = ["webhooks"] # tadas.infra.queues.Queues
+  queues      = ["webhooks", "slack"] # tadas.infra.queues.Queues
 }
 
 module "buckets" {
@@ -340,9 +340,13 @@ module "maintenance" {
   memory             = var.maintenance_memory
   metrics_port       = 9464
   policy_arns        = local.process_policies
-  secrets            = local.process_secrets
 
   rollback_secret_arns = local.rollback_secret_arns
+
+  # The bot token posts to Slack; the worker alone holds it.
+  secrets = merge(local.process_secrets, {
+    TADAS_SLACK_BOT_TOKEN = module.secrets.slack_bot_token_secret_arn
+  })
 
   environment_variables = merge(local.process_environment, {
     TADAS_SERVICE_NAME = "maintenance"
@@ -367,6 +371,54 @@ module "maintenance" {
   }
 }
 
+# The Slack bridge: `tadas-maintenance slack` on the maintenance image holds
+# the Socket Mode connection with the app token, acknowledges each delivery,
+# and sends it to the slack queue, where the maintenance worker takes it.
+# Slack spreads deliveries across every open connection, so exactly one task
+# runs, never two, not even during a rollout: at most 100% and at least 0%,
+# so the old task stops before its replacement starts, and no autoscaling.
+# It serves /healthz and /metrics on 9464 like the worker, and rolls after
+# the API's migration.
+module "slack" {
+  source = "../service"
+
+  name               = "slack"
+  image              = var.maintenance_image
+  command            = ["tadas-maintenance", "slack"]
+  environment        = var.environment
+  cluster_arn        = module.cluster.arn
+  subnet_ids         = module.network.private_subnet_ids
+  security_group_ids = [module.network.app_security_group_id]
+  desired_count      = 1
+  cpu                = var.slack_cpu
+  memory             = var.slack_memory
+  metrics_port       = 9464
+  policy_arns        = local.process_policies
+
+  secrets = merge(local.process_secrets, {
+    TADAS_SLACK_APP_TOKEN = module.secrets.slack_app_token_secret_arn
+  })
+
+  environment_variables = merge(local.process_environment, {
+    TADAS_SERVICE_NAME = "slack"
+  })
+
+  health_check_command = [
+    "CMD-SHELL",
+    "python -c \"import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:9464/healthz').status == 200 else 1)\"",
+  ]
+
+  deployment_maximum_percent         = 100
+  deployment_minimum_healthy_percent = 0
+  rollout_after                      = module.api.rollout_gate
+
+  autoscaling = {
+    enabled    = false
+    max        = 1
+    target_cpu = 60
+  }
+}
+
 # What an operator reads. The dashboard is the cloud twin of the local
 # Grafana one, by panel title; the alarms are the default set, to one topic.
 
@@ -375,7 +427,7 @@ module "dashboard" {
 
   environment              = var.environment
   cluster_name             = module.cluster.name
-  service_names            = [module.api.service_name, module.maintenance.service_name]
+  service_names            = [module.api.service_name, module.maintenance.service_name, module.slack.service_name]
   database_identifier      = module.database.identifier
   load_balancer_arn_suffix = module.load_balancer.arn_suffix
   cache_node_ids           = module.cache.member_clusters
@@ -391,5 +443,5 @@ module "alarms" {
   target_group_arn_suffix  = module.load_balancer.target_group_arn_suffix
   database_identifier      = module.database.identifier
   cluster_name             = module.cluster.name
-  service_names            = [module.api.service_name, module.maintenance.service_name]
+  service_names            = [module.api.service_name, module.maintenance.service_name, module.slack.service_name]
 }

@@ -151,3 +151,19 @@ def test_org_lines_sort_by_name_and_mark_the_current_org() -> None:
     assert lines == "  acme    Acme (owner)\n* z-team  Zeta (member)"
     mine = org_lines([membership("ann-1x2y", "Ann", "owner", "personal")], None)
     assert mine == "  ann-1x2y  Ann (owner, personal)"
+
+
+def test_a_due_time_is_relative_or_a_date_in_the_terminals_zone() -> None:
+    from datetime import UTC, datetime, timedelta, timezone
+
+    from tadas.apps.cli.model import parse_due
+
+    now = datetime(2026, 9, 22, 12, 0, tzinfo=UTC)
+    local = timezone(timedelta(hours=-7))
+    assert parse_due("+30m", now, local) == now + timedelta(minutes=30)
+    assert parse_due("+2h", now, local) == now + timedelta(hours=2)
+    assert parse_due(" +1d ", now, local) == now + timedelta(days=1)
+    assert parse_due("2026-10-01T09:00", now, local) == datetime(2026, 10, 1, 9, tzinfo=local)
+    assert parse_due("2026-10-01 09:00+02:00", now, local).utcoffset() == timedelta(hours=2)
+    with pytest.raises(ValueError, match=r"\+30m"):
+        parse_due("soon", now, local)

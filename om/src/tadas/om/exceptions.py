@@ -213,3 +213,13 @@ class InvitationClosed(TenancyException, Conflict):
     sent again or revoked."""
 
     code = "invitation_closed"
+
+
+class SlackException(PlatformException): ...
+
+
+class SlackChannelTaken(SlackException, Conflict):
+    """The channel is connected to another org. A channel speaks for one org;
+    the other org disconnects it first."""
+
+    code = "slack_channel_taken"

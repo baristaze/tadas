@@ -14,6 +14,8 @@ const task = (id: string, version = 1): TaskView => ({
   updated_at: "2026-09-17T10:00:00Z",
   created_by: "ann",
   deleted_at: null,
+  remind_at: null,
+  reminded_at: null,
   version,
 });
 

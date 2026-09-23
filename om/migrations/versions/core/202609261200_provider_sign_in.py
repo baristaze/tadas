@@ -3,14 +3,14 @@ an org's organization at the provider, the invitations table, and the
 password hash left nullable and unread.
 
 Revision ID: 202609261200
-Revises: 202609250001
+Revises: 202609251701
 """
 
 from tadas.om.storage.migrate import run_sql
 from tadas.om.storage.roles import DatabaseRole
 
 revision = "202609261200"
-down_revision = "202609250001"
+down_revision = "202609251701"
 branch_labels = None
 depends_on = None
 

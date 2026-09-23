@@ -35,6 +35,11 @@ function useTaskPages(status: TaskStatus, scope: TaskScope, pageSize: number) {
   });
 }
 
+/** One task, read outside any list: a reminder push names only the id. */
+export function fetchTask(id: string): Promise<TaskView> {
+  return api.get<TaskView>(`/v1/tasks/${encodeURIComponent(id)}`);
+}
+
 export function useOpenTasks(scope: TaskScope) {
   return useTaskPages("open", scope, OPEN_PAGE_SIZE);
 }

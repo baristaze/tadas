@@ -40,3 +40,7 @@ export type InvitationPageView = Schemas["InvitationPageView"];
 export type InviteMemberRequest = Schemas["InviteMemberRequest"];
 export type SsoLinkRequest = Schemas["SsoLinkRequest"];
 export type SsoLinkView = Schemas["SsoLinkView"];
+export type SlackConnectionView = Schemas["SlackConnectionView"];
+export type SlackConnectionStatus = Schemas["SlackConnectionStatus"];
+export type SlackStatusView = Schemas["SlackStatusView"];
+export type IssuedSlackLinkCodeView = Schemas["IssuedSlackLinkCodeView"];

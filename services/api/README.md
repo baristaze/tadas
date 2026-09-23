@@ -18,7 +18,7 @@ the database, the cache, and the topic bus.
   login, or switch a session, for a session in one org; sign out
   (`/v1/auth/memberships`, `/v1/auth/sessions`, `/v1/auth/logout`).
   Locally and in the tests only, sign in by address alone
-  (`/v1/auth/dev-sign-in`, ADR 0028); a deployed process refuses to
+  (`/v1/auth/dev-sign-in`, ADR 0029); a deployed process refuses to
   start with it on.
 - **Me.** The current org, my user, my identity, and my display name;
   a new team org I own. (`/v1/orgs/current`, `/v1/me`,
@@ -38,8 +38,12 @@ the database, the cache, and the topic bus.
   keys, creating one, revoking one; a ticket for the live channel.
   (`/v1/sessions`, `/v1/api-keys`, `/v1/realtime/tickets`)
 - **Tasks.** Open and done lists a page at a time, one task, create,
-  edit, move, delete. (`/v1/tasks`, `/v1/tasks/{task_id}`,
-  `/v1/tasks/{task_id}/move`)
+  edit, move, delete. A task's due time (`remind_at`, with its offset)
+  is set on the create and set, moved, or cleared (`null`) on the edit.
+  (`/v1/tasks`, `/v1/tasks/{task_id}`, `/v1/tasks/{task_id}/move`)
+- **Slack.** The org's connected channel, any member; a one-time link
+  code, shown once, and the disconnect, an owner or an admin.
+  (`/v1/slack/connection`, `/v1/slack/link-codes`)
 - **Events.** The org's diary after a sequence number. (`/v1/events`)
 - **Realtime.** The live channel, a websocket opened with a
   single-use ticket. (`/v1/realtime`)

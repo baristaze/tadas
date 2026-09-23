@@ -1,7 +1,7 @@
 # Three kinds of secret live under one environment. The platform's own
 # credentials (the four database URLs, the TOTP encryption key, the Sentry
-# DSN, the WorkOS API key) are declared here and injected into tasks by the
-# execution role.
+# DSN, the Slack tokens, the WorkOS API key) are declared here and injected
+# into tasks by the execution role.
 # Application-managed secrets, the ones SecretsInterface reads at runtime,
 # live under "<prefix>app/", which is the value of TADAS_SECRETS_NAME_PREFIX,
 # so a process can never reach its own bootstrap credentials through the
@@ -130,6 +130,34 @@ resource "aws_secretsmanager_secret" "sentry_dsn" {
 
 resource "aws_secretsmanager_secret_version" "sentry_dsn" {
   secret_id     = aws_secretsmanager_secret.sentry_dsn.id
+  secret_string = "off"
+
+  lifecycle {
+    ignore_changes = [secret_string]
+  }
+}
+
+# The Slack app's two credentials: the bot token (xoxb-) the maintenance
+# worker posts with, and the app-level token (xapp-) that opens the Socket
+# Mode connection only the slack service holds. Like the DSN, each is
+# created as "off", which leaves Slack off, and never written again: set the
+# real values once with
+#   aws secretsmanager put-secret-value --secret-id <prefix>slack_bot_token --secret-string <xoxb-...>
+#   aws secretsmanager put-secret-value --secret-id <prefix>slack_app_token --secret-string <xapp-...>
+# A task reads its secret when it starts, so the services roll to pick a new
+# value up (aws ecs update-service --force-new-deployment).
+resource "aws_secretsmanager_secret" "slack" {
+  for_each = toset(["bot", "app"])
+
+  name                    = "${var.prefix}slack_${each.key}_token"
+  recovery_window_in_days = local.recovery_window_in_days
+  tags                    = local.tags
+}
+
+resource "aws_secretsmanager_secret_version" "slack" {
+  for_each = aws_secretsmanager_secret.slack
+
+  secret_id     = each.value.id
   secret_string = "off"
 
   lifecycle {
