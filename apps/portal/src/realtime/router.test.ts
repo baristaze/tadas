@@ -41,6 +41,8 @@ const SERVER_KINDS = [
   "slack.connection.deleted",
   "tenancy.api_key.created",
   "tenancy.api_key.deleted",
+  "tenancy.invitation.created",
+  "tenancy.invitation.updated",
   "tenancy.membership.updated",
   "tenancy.session.revoked",
   "tenancy.user.created",

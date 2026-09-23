@@ -1,5 +1,6 @@
-"""The tenancy service: sign up, sign in, choose a tenant, the principal,
-members, sessions, and api keys. The operations before a principal exists
+"""The tenancy service: sign in through the identity provider, choose a
+tenant, the principal, members and their invitations, single sign-on,
+sessions, and api keys. The operations before a principal exists
 take the stage the gateway reached (the request, then the identity); each
 produces the credential the next request presents."""
 
@@ -13,20 +14,30 @@ from tadas.services.api.types.tenancy import (
     ApiKeyPageView,
     ApiKeyView,
     CreateTeamOrgRequest,
+    DeviceSignInView,
+    DeviceTokenRequest,
+    DevSignInRequest,
     ExchangeSessionRequest,
     IdentityView,
+    InvitationPageView,
+    InvitationView,
+    InviteMemberRequest,
     IssuedApiKeyView,
     IssuedLoginView,
     IssuedSessionView,
-    LoginRequest,
     MembershipChoicePageView,
     MembershipChoiceView,
     MembershipPageView,
     MembershipView,
     MeView,
     OrgView,
+    SecondFactorRequest,
     SessionView,
-    SignUpRequest,
+    SignInCallbackRequest,
+    SignInStartRequest,
+    SignInStartView,
+    SsoLinkRequest,
+    SsoLinkView,
     UpdateMembershipRequest,
     UpdateMeRequest,
     UserPageView,
@@ -36,14 +47,37 @@ from tadas.services.api.types.tenancy import (
 
 class TenancyServiceInterface(ABC):
     @abstractmethod
-    async def sign_up(self, rctx: RequestContext, body: SignUpRequest) -> IssuedLoginView:
-        """Platform-internal: no principal exists yet; the answer is a sign-in's."""
+    async def start_sign_in(
+        self, rctx: RequestContext, body: SignInStartRequest
+    ) -> SignInStartView:
+        """Platform-internal: no principal exists yet; the answer is where the
+        browser goes."""
         ...
 
     @abstractmethod
-    async def login(self, rctx: RequestContext, body: LoginRequest) -> IssuedLoginView:
-        """Platform-internal: no principal exists yet."""
+    async def finish_sign_in(
+        self, rctx: RequestContext, body: SignInCallbackRequest
+    ) -> IssuedLoginView:
+        """Platform-internal: no principal exists yet; the code comes back."""
         ...
+
+    @abstractmethod
+    async def start_device_sign_in(self, rctx: RequestContext) -> DeviceSignInView: ...
+
+    @abstractmethod
+    async def finish_device_sign_in(
+        self, rctx: RequestContext, body: DeviceTokenRequest
+    ) -> IssuedLoginView: ...
+
+    @abstractmethod
+    async def dev_sign_in(self, rctx: RequestContext, body: DevSignInRequest) -> IssuedLoginView:
+        """Platform-internal, local and test only."""
+        ...
+
+    @abstractmethod
+    async def verify_second_factor(
+        self, ictx: IdentityContext, body: SecondFactorRequest
+    ) -> IssuedLoginView: ...
 
     @abstractmethod
     async def exchange_session(
@@ -103,6 +137,27 @@ class TenancyServiceInterface(ABC):
 
     @abstractmethod
     async def remove_member(self, ctx: OpContext, user_id: UUID) -> UserView: ...
+
+    @abstractmethod
+    async def get_invitations(
+        self, ctx: OpContext, cursor: str | None, limit: int
+    ) -> InvitationPageView:
+        """One page of the org's pending invitations; `cursor` as on `get_users`."""
+        ...
+
+    @abstractmethod
+    async def invite_member(
+        self, ctx: OpContext, body: InviteMemberRequest, attempt: Attempt
+    ) -> InvitationView: ...
+
+    @abstractmethod
+    async def resend_invitation(self, ctx: OpContext, invitation_id: UUID) -> InvitationView: ...
+
+    @abstractmethod
+    async def revoke_invitation(self, ctx: OpContext, invitation_id: UUID) -> InvitationView: ...
+
+    @abstractmethod
+    async def sso_link(self, ctx: OpContext, body: SsoLinkRequest) -> SsoLinkView: ...
 
     @abstractmethod
     async def get_sessions(self, ctx: OpContext, limit: int) -> list[SessionView]: ...

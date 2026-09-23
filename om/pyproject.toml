@@ -10,11 +10,13 @@ dependencies = [
     "asyncpg>=0.31",
     "alembic>=1.20",
     "tadas-infra",
+    "tadas-integrations",
     "cryptography>=50.0",
 ]
 
 [tool.uv.sources]
 tadas-infra = { workspace = true }
+tadas-integrations = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

@@ -13,6 +13,7 @@ import pytest
 from contracts.factories import (
     make_api_key,
     make_identity,
+    make_invitation,
     make_membership,
     make_org,
     make_personal_org,
@@ -33,6 +34,7 @@ from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.tenancy.rules import email_digest
 from tadas.om.tenancy.storage import TenancyStorageInterface
 from tadas.om.tenancy.types.api_key import ApiKey
+from tadas.om.tenancy.types.invitation import InvitationState
 from tadas.om.tenancy.types.session import Session
 from tadas.om.tenancy.types.user import User
 
@@ -42,6 +44,11 @@ CROSS_TENANT_CASES: frozenset[str] = frozenset(
         "create_org_with_owner",
         "issue_api_key",
         "purge_deleted",
+        "read_invitation",
+        "read_invitation_by_provider_id",
+        "read_invitations",
+        "read_pending_invitation",
+        "write_invitation",
         "purge_tenant",
         "read_api_key",
         "read_api_keys",
@@ -1466,12 +1473,12 @@ class TenancyStorageContract:
     ) -> None:
         identity = make_identity()
         await storage.write_identity(identity)
-        changed = identity.model_copy(update={"password_hash": "scrypt$01$01"})
+        changed = identity.model_copy(update={"operator_role": OperatorRole.READ})
         row = OutboxRow(
             id=new_id(),
             created_at=utcnow(),
             org_id=EMPTY_UUID,
-            kind="tenancy.identity.password_reset",
+            kind="tenancy.operator.granted",
             target_id=identity.id,
             payload={},
             actor_id=new_id(),
@@ -1591,3 +1598,191 @@ class TenancyStorageContract:
         assert await storage.read_api_key(org.id, expired_key.id) is None
         assert await storage.read_api_key(org.id, live_key.id) == live_key
         assert await storage.purge_deleted(org.id, cut) == 0
+
+    # Invitations: a tenant's rows.
+
+    async def test_an_invitation_round_trips_and_is_found_three_ways(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        org = make_org()
+        await storage.write_org(org.id, org)
+        invitation = make_invitation("ann@example.test")
+        await storage.write_invitation(org.id, invitation)
+        assert await storage.read_invitation(org.id, invitation.id) == invitation
+        found = await storage.read_invitation_by_provider_id(
+            org.id, invitation.provider_invitation_id
+        )
+        assert found == invitation
+        assert await storage.read_pending_invitation(org.id, "ann@example.test") == invitation
+        assert await storage.read_pending_invitation(org.id, "bob@example.test") is None
+        accepted = invitation.model_copy(update={"state": InvitationState.ACCEPTED})
+        await storage.write_invitation(org.id, accepted)
+        assert await storage.read_pending_invitation(org.id, "ann@example.test") is None
+        assert await storage.read_invitation(org.id, invitation.id) == accepted
+
+    async def test_the_invitation_reads_and_writes_are_tenant_scoped(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        org, other = make_org("A"), make_org("B")
+        invitation = make_invitation("ann@example.test")
+        await storage.write_invitation(org.id, invitation)
+        assert await storage.read_invitation(other.id, invitation.id) is None
+        assert (
+            await storage.read_invitation_by_provider_id(
+                other.id, invitation.provider_invitation_id
+            )
+            is None
+        )
+        assert await storage.read_pending_invitation(other.id, "ann@example.test") is None
+        assert await storage.read_invitations(other.id, None, limit=10) == []
+        with pytest.raises(TenantMismatch):
+            await storage.write_invitation(
+                other.id, invitation.model_copy(update={"state": InvitationState.REVOKED})
+            )
+        assert await storage.read_invitation(org.id, invitation.id) == invitation
+
+    async def test_pending_invitations_list_newest_first_after_a_cursor(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        org = make_org()
+        made = [make_invitation(f"p{n}@example.test") for n in range(4)]
+        for invitation in made:
+            await storage.write_invitation(org.id, invitation)
+        closed = made[1].model_copy(update={"state": InvitationState.REVOKED})
+        await storage.write_invitation(org.id, closed)
+        pending = [made[3], made[2], made[0]]
+        assert await storage.read_invitations(org.id, None, limit=10) == pending
+        first = await storage.read_invitations(org.id, None, limit=2)
+        assert first == pending[:2]
+        assert await storage.read_invitations(org.id, first[-1].id, limit=2) == pending[2:]
+
+    async def test_an_invitation_keeps_its_two_unique_keys(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        org, other = make_org("A"), make_org("B")
+        first = make_invitation("ann@example.test")
+        await storage.write_invitation(org.id, first)
+        # One pending invitation per address in a tenant.
+        with pytest.raises(UniqueKeyTaken):
+            await storage.write_invitation(org.id, make_invitation("ann@example.test"))
+        # The address is free in another tenant, and once the first closes.
+        await storage.write_invitation(other.id, make_invitation("ann@example.test"))
+        await storage.write_invitation(
+            org.id, first.model_copy(update={"state": InvitationState.REVOKED})
+        )
+        await storage.write_invitation(org.id, make_invitation("ann@example.test"))
+        # The provider's id names one invitation, across every tenant.
+        with pytest.raises(UniqueKeyTaken):
+            await storage.write_invitation(
+                other.id,
+                make_invitation(
+                    "cat@example.test", provider_invitation_id=first.provider_invitation_id
+                ),
+            )
+
+    async def test_a_member_lands_with_the_invitation_they_accept_or_not_at_all(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        org, other = make_org(), make_org("Other")
+        await storage.write_org(org.id, org)
+        invitation = make_invitation("dan@example.test", Role.ADMIN)
+        await storage.write_invitation(org.id, invitation)
+        newcomer = make_identity("dan@example.test")
+        dan = make_user(newcomer.id, newcomer.email)
+        accepted = invitation.model_copy(
+            update={"state": InvitationState.ACCEPTED, "accepted_user_id": dan.id}
+        )
+        # Another tenant's invitation lands nothing, the member included.
+        with pytest.raises(NotFound):
+            await storage.create_member(
+                other.id,
+                dan,
+                make_membership(dan.id),
+                (make_user_row(other.id, dan),),
+                newcomer,
+                invitation=accepted,
+            )
+        assert await storage.read_identity(newcomer.id) is None
+        assert await storage.read_user(other.id, dan.id) is None
+        await storage.create_member(
+            org.id,
+            dan,
+            make_membership(dan.id, Role.ADMIN),
+            (make_user_row(org.id, dan),),
+            newcomer,
+            invitation=accepted,
+        )
+        assert await storage.read_user(org.id, dan.id) == dan
+        assert await storage.read_invitation(org.id, invitation.id) == accepted
+
+    async def test_purge_takes_closed_and_expired_invitations_and_purge_tenant_all(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        org, other = make_org(), make_org("Other")
+        cut = utcnow()
+        old = cut - timedelta(days=1)
+        revoked = make_invitation("a@example.test").model_copy(
+            update={"state": InvitationState.REVOKED, "updated_at": old}
+        )
+        expired = make_invitation("b@example.test", expires_in=timedelta(days=-2))
+        open_ = make_invitation("c@example.test")
+        just_closed = make_invitation("d@example.test").model_copy(
+            update={"state": InvitationState.ACCEPTED}
+        )
+        for invitation in (revoked, expired, open_, just_closed):
+            await storage.write_invitation(org.id, invitation)
+        theirs = make_invitation("a@example.test").model_copy(
+            update={"state": InvitationState.REVOKED, "updated_at": old}
+        )
+        await storage.write_invitation(other.id, theirs)
+        assert await storage.purge_deleted(org.id, cut) == 2
+        assert await storage.read_invitation(org.id, revoked.id) is None
+        assert await storage.read_invitation(org.id, expired.id) is None
+        assert await storage.read_invitation(org.id, open_.id) == open_
+        assert await storage.read_invitation(org.id, just_closed.id) == just_closed
+        assert await storage.read_invitation(other.id, theirs.id) == theirs
+        assert await storage.purge_tenant(org.id) == 2
+        assert await storage.read_invitation(org.id, open_.id) is None
+        assert await storage.read_invitation(other.id, theirs.id) == theirs
+
+    # The identity provider's link.
+
+    async def test_an_identity_is_found_by_its_issuer_and_subject(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        identity = make_identity().model_copy(
+            update={"issuer": "https://issuer.test", "subject": f"user_{uuid4().hex}"}
+        )
+        await storage.write_identity(identity)
+        assert identity.subject is not None
+        found = await storage.read_identity_by_issuer_subject(
+            "https://issuer.test", identity.subject
+        )
+        assert found == identity
+        assert (
+            await storage.read_identity_by_issuer_subject("https://other.test", identity.subject)
+            is None
+        )
+        assert (
+            await storage.read_identity_by_issuer_subject("https://issuer.test", "nobody") is None
+        )
+
+    async def test_one_identity_per_subject_of_an_issuer(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        subject = f"user_{uuid4().hex}"
+        first = make_identity().model_copy(
+            update={"issuer": "https://issuer.test", "subject": subject}
+        )
+        await storage.write_identity(first)
+        second = make_identity().model_copy(
+            update={"issuer": "https://issuer.test", "subject": subject}
+        )
+        with pytest.raises(UniqueKeyTaken):
+            await storage.write_identity(second)
+        assert await storage.read_identity(second.id) is None
+        # The same subject under another issuer is another person, and an
+        # identity with no subject never collides.
+        await storage.write_identity(second.model_copy(update={"issuer": "https://other.test"}))
+        await storage.write_identity(make_identity())
+        await storage.write_identity(make_identity())

@@ -29,6 +29,11 @@ export const keys = {
     // has no reason to sign its previews again.
     preview: (fileId: string) => ["file_preview", fileId] as const,
   },
+  // A `tenancy.invitation.*` push invalidates these by convention.
+  invitations: {
+    all: ["invitation"] as const,
+    list: (limit: number) => ["invitation", "list", limit] as const,
+  },
   tasks: {
     all: ["task"] as const,
     open: (scope: string) => ["task", "open", scope] as const,

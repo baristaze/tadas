@@ -77,18 +77,12 @@
             "title": "Email",
             "type": "string"
           },
-          "password": {
-            "minLength": 1,
-            "title": "Password",
-            "type": "string"
-          },
           "role": {
             "$ref": "#/components/schemas/Role"
           }
         },
         "required": [
           "email",
-          "password",
           "display_name",
           "role"
         ],
@@ -242,7 +236,7 @@
       },
       "CreateOrgRequest": {
         "additionalProperties": false,
-        "description": "An org with its owner, as `bootstrap` seeds one. The owner's identity\nis created with the password, or kept with its own when the email is\nknown already.",
+        "description": "An org with its owner, as `bootstrap` seeds one. The owner's identity\nis created with its personal org when the email is new; the owner signs\nin through the identity provider with the address.",
         "properties": {
           "name": {
             "maxLength": 200,
@@ -261,11 +255,6 @@
             "title": "Owner Name",
             "type": "string"
           },
-          "owner_password": {
-            "minLength": 1,
-            "title": "Owner Password",
-            "type": "string"
-          },
           "slug": {
             "maxLength": 100,
             "minLength": 1,
@@ -277,7 +266,6 @@
           "name",
           "slug",
           "owner_email",
-          "owner_password",
           "owner_name"
         ],
         "title": "CreateOrgRequest",
@@ -324,6 +312,85 @@
         ],
         "title": "CredentialKind",
         "type": "string"
+      },
+      "DevSignInRequest": {
+        "additionalProperties": false,
+        "description": "Local and test only: a sign-in by address alone, with no browser round\ntrip, for the seed, the demos, the traffic generator, and the tests. A\nperson nobody knew is made, with their personal org. A deployed\nenvironment never serves it: the route answers 404 there, and the\nprocess refuses to start with it on.",
+        "properties": {
+          "display_name": {
+            "default": "",
+            "maxLength": 200,
+            "title": "Display Name",
+            "type": "string"
+          },
+          "email": {
+            "maxLength": 320,
+            "minLength": 3,
+            "title": "Email",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email"
+        ],
+        "title": "DevSignInRequest",
+        "type": "object"
+      },
+      "DeviceSignInView": {
+        "description": "The start of a sign-in for a device with no browser, the command\nline. The person opens `verification_uri_complete` (or\n`verification_uri` and types `user_code`) in any browser; the device\nkeeps `device_code` to itself and asks `POST /v1/auth/device/token`\nwith it every `interval` seconds, for at most `expires_in` seconds.",
+        "properties": {
+          "device_code": {
+            "title": "Device Code",
+            "type": "string"
+          },
+          "expires_in": {
+            "title": "Expires In",
+            "type": "integer"
+          },
+          "interval": {
+            "title": "Interval",
+            "type": "integer"
+          },
+          "user_code": {
+            "title": "User Code",
+            "type": "string"
+          },
+          "verification_uri": {
+            "title": "Verification Uri",
+            "type": "string"
+          },
+          "verification_uri_complete": {
+            "title": "Verification Uri Complete",
+            "type": "string"
+          }
+        },
+        "required": [
+          "device_code",
+          "user_code",
+          "verification_uri",
+          "verification_uri_complete",
+          "expires_in",
+          "interval"
+        ],
+        "title": "DeviceSignInView",
+        "type": "object"
+      },
+      "DeviceTokenRequest": {
+        "additionalProperties": false,
+        "description": "The device code a device sign-in started with. The answer is a\nsign-in's once the person confirmed it; before that, 400\n`sign_in_pending` (or `sign_in_slow_down`: ask less often), and 401\n`sign_in_refused` when they declined or it expired.",
+        "properties": {
+          "device_code": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Device Code",
+            "type": "string"
+          }
+        },
+        "required": [
+          "device_code"
+        ],
+        "title": "DeviceTokenRequest",
+        "type": "object"
       },
       "EventView": {
         "description": "One record of the tenant's append-only stream, paged by `after_seq`.\n`kind` is \"<namespace>.<entity>.<action>\", or an audit kind; the payload\nstays inside, an event is a record and not a second read path. The rename\nfrom `entity`/`entity_id`/`action` stayed under `/v1` (ADR 0006).",
@@ -519,7 +586,7 @@
         "type": "object"
       },
       "IdentityView": {
-        "description": "The person behind the caller's user; never carries the password hash.\n`operator_role` is the allowlist entry: null for a person who is not an\noperator.",
+        "description": "The person behind the caller's user. `operator_role` is the allowlist\nentry: null for a person who is not an operator.",
         "properties": {
           "created_at": {
             "format": "date-time",
@@ -553,6 +620,111 @@
           "created_at"
         ],
         "title": "IdentityView",
+        "type": "object"
+      },
+      "InvitationPageView": {
+        "description": "One page of the org's pending invitations, newest first; `next_cursor`\nas on `UserPageView`.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/InvitationView"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "InvitationPageView",
+        "type": "object"
+      },
+      "InvitationState": {
+        "enum": [
+          "pending",
+          "accepted",
+          "revoked"
+        ],
+        "title": "InvitationState",
+        "type": "string"
+      },
+      "InvitationView": {
+        "description": "A person asked to join the org. The identity provider sent the email\nwith the link; `expires_at` is when the link stops working, after which\nthe invitation is sent again or replaced.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "format": "uuid",
+            "title": "Created By",
+            "type": "string"
+          },
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "role": {
+            "$ref": "#/components/schemas/Role"
+          },
+          "state": {
+            "$ref": "#/components/schemas/InvitationState"
+          }
+        },
+        "required": [
+          "id",
+          "email",
+          "role",
+          "state",
+          "expires_at",
+          "created_at",
+          "created_by"
+        ],
+        "title": "InvitationView",
+        "type": "object"
+      },
+      "InviteMemberRequest": {
+        "additionalProperties": false,
+        "description": "The address to invite and the role the person gets, at most the\ncaller's own.",
+        "properties": {
+          "email": {
+            "maxLength": 320,
+            "minLength": 3,
+            "title": "Email",
+            "type": "string"
+          },
+          "role": {
+            "$ref": "#/components/schemas/Role"
+          }
+        },
+        "required": [
+          "email",
+          "role"
+        ],
+        "title": "InviteMemberRequest",
         "type": "object"
       },
       "IssuedApiKeyView": {
@@ -797,39 +969,6 @@
           "expires_at"
         ],
         "title": "IssuedUploadView",
-        "type": "object"
-      },
-      "LoginRequest": {
-        "additionalProperties": false,
-        "description": "An email and a password, and the code from an authenticator when the\nidentity has a second factor enrolled. A tenant's sign-in needs none; the\noperator plane admits an enrolled operator only on a sign-in that\nverified one. A code used once is refused.",
-        "properties": {
-          "email": {
-            "title": "Email",
-            "type": "string"
-          },
-          "password": {
-            "title": "Password",
-            "type": "string"
-          },
-          "totp_code": {
-            "anyOf": [
-              {
-                "maxLength": 6,
-                "minLength": 6,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Totp Code"
-          }
-        },
-        "required": [
-          "email",
-          "password"
-        ],
-        "title": "LoginRequest",
         "type": "object"
       },
       "MeView": {
@@ -1201,26 +1340,6 @@
         "title": "OrgView",
         "type": "object"
       },
-      "PasswordResetView": {
-        "description": "Whose password was reset; the reset is audited with the operator.",
-        "properties": {
-          "email": {
-            "title": "Email",
-            "type": "string"
-          },
-          "identity_id": {
-            "format": "uuid",
-            "title": "Identity Id",
-            "type": "string"
-          }
-        },
-        "required": [
-          "identity_id",
-          "email"
-        ],
-        "title": "PasswordResetView",
-        "type": "object"
-      },
       "Permission": {
         "enum": [
           "read",
@@ -1298,29 +1417,6 @@
         "title": "PurposeUsageView",
         "type": "object"
       },
-      "ResetPasswordRequest": {
-        "additionalProperties": false,
-        "description": "The person, by email, and the password they sign in with from now on.",
-        "properties": {
-          "email": {
-            "minLength": 1,
-            "title": "Email",
-            "type": "string"
-          },
-          "password": {
-            "maxLength": 200,
-            "minLength": 8,
-            "title": "Password",
-            "type": "string"
-          }
-        },
-        "required": [
-          "email",
-          "password"
-        ],
-        "title": "ResetPasswordRequest",
-        "type": "object"
-      },
       "Role": {
         "enum": [
           "owner",
@@ -1331,6 +1427,23 @@
         ],
         "title": "Role",
         "type": "string"
+      },
+      "SecondFactorRequest": {
+        "additionalProperties": false,
+        "description": "The code from an authenticator, presented with a sign-in credential.\nThe answer is a new sign-in that records the verified code, which the\noperator plane asks of an enrolled operator. A code used once is\nrefused.",
+        "properties": {
+          "totp_code": {
+            "maxLength": 6,
+            "minLength": 6,
+            "title": "Totp Code",
+            "type": "string"
+          }
+        },
+        "required": [
+          "totp_code"
+        ],
+        "title": "SecondFactorRequest",
+        "type": "object"
       },
       "SessionView": {
         "description": "Only the hash of a token is ever kept, so a session view carries no secret.",
@@ -1376,61 +1489,100 @@
         "title": "SessionView",
         "type": "object"
       },
-      "SignUpRequest": {
+      "SignInCallbackRequest": {
         "additionalProperties": false,
-        "description": "A new person and their password. The person's personal org is made\nwith them, named and slugged for them, so a sign-up names no org. The\nanswer is a sign-in's (`IssuedLoginView`), so the client goes on through\nthe same choice and exchange; a held email is 409. No email is verified.\n`org_name` and `org_slug` are what a sign-up named before and are\nignored; the release after this one refuses them.",
+        "description": "The code the browser brought back to the callback, and the verifier\nthe sign-in's start answered with, which the API exchanges with the\nidentity provider, server-side. The answer is a\nsign-in's (`IssuedLoginView`); a person nobody knew is signed up by it,\nwith their personal org.",
         "properties": {
-          "display_name": {
-            "maxLength": 200,
+          "code": {
+            "maxLength": 500,
             "minLength": 1,
-            "title": "Display Name",
+            "title": "Code",
             "type": "string"
           },
-          "email": {
-            "maxLength": 320,
-            "minLength": 3,
-            "title": "Email",
+          "code_verifier": {
+            "maxLength": 128,
+            "minLength": 43,
+            "title": "Code Verifier",
             "type": "string"
           },
-          "org_name": {
+          "invitation_token": {
             "anyOf": [
               {
-                "maxLength": 200,
+                "maxLength": 500,
                 "type": "string"
               },
               {
                 "type": "null"
               }
             ],
-            "deprecated": true,
-            "title": "Org Name"
-          },
-          "org_slug": {
+            "title": "Invitation Token"
+          }
+        },
+        "required": [
+          "code",
+          "code_verifier"
+        ],
+        "title": "SignInCallbackRequest",
+        "type": "object"
+      },
+      "SignInStartRequest": {
+        "additionalProperties": false,
+        "description": "The start of a sign-in at the identity provider. `redirect_uri` is where\nthe browser comes back with a code: this environment's portal callback,\nand nothing else. `state` is the caller's own random value, kept by the\ntab that started the sign-in and compared when the browser comes back,\nwhich binds the round trip to that tab; it may carry nothing else.\n`invitation_token` is the one an invitation's link carried, and\n`sign_up` opens the provider on its sign-up screen.",
+        "properties": {
+          "invitation_token": {
             "anyOf": [
               {
-                "maxLength": 48,
+                "maxLength": 500,
                 "type": "string"
               },
               {
                 "type": "null"
               }
             ],
-            "deprecated": true,
-            "title": "Org Slug"
+            "title": "Invitation Token"
           },
-          "password": {
+          "redirect_uri": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Redirect Uri",
+            "type": "string"
+          },
+          "sign_up": {
+            "default": false,
+            "title": "Sign Up",
+            "type": "boolean"
+          },
+          "state": {
             "maxLength": 200,
-            "minLength": 8,
-            "title": "Password",
+            "minLength": 16,
+            "title": "State",
             "type": "string"
           }
         },
         "required": [
-          "email",
-          "password",
-          "display_name"
+          "redirect_uri",
+          "state"
         ],
-        "title": "SignUpRequest",
+        "title": "SignInStartRequest",
+        "type": "object"
+      },
+      "SignInStartView": {
+        "description": "Where the browser goes next, the identity provider's sign-in, and the\nPKCE verifier the tab keeps beside its state and sends back with the\ncode. The provider holds only the verifier's digest, so a code is worth\nnothing to anyone who does not hold it.",
+        "properties": {
+          "authorization_url": {
+            "title": "Authorization Url",
+            "type": "string"
+          },
+          "code_verifier": {
+            "title": "Code Verifier",
+            "type": "string"
+          }
+        },
+        "required": [
+          "authorization_url",
+          "code_verifier"
+        ],
+        "title": "SignInStartView",
         "type": "object"
       },
       "SlackConnectionStatus": {
@@ -1518,6 +1670,46 @@
           "connection"
         ],
         "title": "SlackStatusView",
+        "type": "object"
+      },
+      "SsoLinkRequest": {
+        "additionalProperties": false,
+        "description": "What the identity provider's admin portal opens on: the single sign-on\nconnection (`sso`) or the org's domains (`domain_verification`), and the\npage of this environment's portal it links back to.",
+        "properties": {
+          "intent": {
+            "enum": [
+              "sso",
+              "domain_verification"
+            ],
+            "title": "Intent",
+            "type": "string"
+          },
+          "return_url": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Return Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "intent",
+          "return_url"
+        ],
+        "title": "SsoLinkRequest",
+        "type": "object"
+      },
+      "SsoLinkView": {
+        "description": "A short-lived link to the admin portal; open it at once.",
+        "properties": {
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "title": "SsoLinkView",
         "type": "object"
       },
       "StorageUsageView": {
@@ -3180,98 +3372,6 @@
         ]
       }
     },
-    "/v1/admin/password-resets": {
-      "post": {
-        "description": "Sets a person's password, the recovery a platform with no verified\nmailbox has; a write operator signed in with a second factor, audited.",
-        "operationId": "reset_password_v1_admin_password_resets_post",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          },
-          {
-            "in": "header",
-            "name": "x-app",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-App"
-            }
-          },
-          {
-            "in": "header",
-            "name": "x-app-version",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-App-Version"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ResetPasswordRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PasswordResetView"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Reset Password",
-        "tags": [
-          "admin"
-        ]
-      }
-    },
     "/v1/admin/size": {
       "get": {
         "operationId": "platform_size_v1_admin_size_get",
@@ -3658,9 +3758,9 @@
         ]
       }
     },
-    "/v1/auth/login": {
+    "/v1/auth/callback": {
       "post": {
-        "operationId": "login_v1_auth_login_post",
+        "operationId": "finish_sign_in_v1_auth_callback_post",
         "parameters": [
           {
             "in": "header",
@@ -3699,7 +3799,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/LoginRequest"
+                "$ref": "#/components/schemas/SignInCallbackRequest"
               }
             }
           },
@@ -3727,7 +3827,222 @@
             "description": "Validation Error"
           }
         },
-        "summary": "Login",
+        "summary": "Finish Sign In",
+        "tags": [
+          "tenancy"
+        ]
+      }
+    },
+    "/v1/auth/dev-sign-in": {
+      "post": {
+        "operationId": "dev_sign_in_v1_auth_dev_sign_in_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-app",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app-version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Version"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DevSignInRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssuedLoginView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Dev Sign In",
+        "tags": [
+          "tenancy"
+        ]
+      }
+    },
+    "/v1/auth/device": {
+      "post": {
+        "operationId": "start_device_sign_in_v1_auth_device_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-app",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app-version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Version"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceSignInView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Start Device Sign In",
+        "tags": [
+          "tenancy"
+        ]
+      }
+    },
+    "/v1/auth/device/token": {
+      "post": {
+        "operationId": "finish_device_sign_in_v1_auth_device_token_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-app",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app-version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Version"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeviceTokenRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssuedLoginView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Finish Device Sign In",
         "tags": [
           "tenancy"
         ]
@@ -3921,6 +4236,97 @@
         ]
       }
     },
+    "/v1/auth/second-factor": {
+      "post": {
+        "operationId": "verify_second_factor_v1_auth_second_factor_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app-version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Version"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SecondFactorRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssuedLoginView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Verify Second Factor",
+        "tags": [
+          "tenancy"
+        ]
+      }
+    },
     "/v1/auth/sessions": {
       "post": {
         "operationId": "exchange_session_v1_auth_sessions_post",
@@ -4012,9 +4418,9 @@
         ]
       }
     },
-    "/v1/auth/signup": {
+    "/v1/auth/sign-in": {
       "post": {
-        "operationId": "sign_up_v1_auth_signup_post",
+        "operationId": "start_sign_in_v1_auth_sign_in_post",
         "parameters": [
           {
             "in": "header",
@@ -4053,7 +4459,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/SignUpRequest"
+                "$ref": "#/components/schemas/SignInStartRequest"
               }
             }
           },
@@ -4064,7 +4470,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/IssuedLoginView"
+                  "$ref": "#/components/schemas/SignInStartView"
                 }
               }
             },
@@ -4081,7 +4487,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "Sign Up",
+        "summary": "Start Sign In",
         "tags": [
           "tenancy"
         ]
@@ -4190,6 +4596,402 @@
         "summary": "List Events",
         "tags": [
           "events"
+        ]
+      }
+    },
+    "/v1/invitations": {
+      "get": {
+        "operationId": "list_invitations_v1_invitations_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app-version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Version"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvitationPageView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Invitations",
+        "tags": [
+          "tenancy"
+        ]
+      },
+      "post": {
+        "operationId": "invite_member_v1_invitations_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app-version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Version"
+            }
+          },
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 255,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InviteMemberRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvitationView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Invite Member",
+        "tags": [
+          "tenancy"
+        ]
+      }
+    },
+    "/v1/invitations/{invitation_id}": {
+      "delete": {
+        "operationId": "revoke_invitation_v1_invitations__invitation_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "invitation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Invitation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app-version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Version"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvitationView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Revoke Invitation",
+        "tags": [
+          "tenancy"
+        ]
+      }
+    },
+    "/v1/invitations/{invitation_id}/resend": {
+      "post": {
+        "operationId": "resend_invitation_v1_invitations__invitation_id__resend_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "invitation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Invitation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app-version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Version"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvitationView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Resend Invitation",
+        "tags": [
+          "tenancy"
         ]
       }
     },
@@ -5583,6 +6385,97 @@
           }
         },
         "summary": "Current Org",
+        "tags": [
+          "tenancy"
+        ]
+      }
+    },
+    "/v1/orgs/current/sso-link": {
+      "post": {
+        "operationId": "sso_link_v1_orgs_current_sso_link_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app-version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Version"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SsoLinkRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SsoLinkView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Sso Link",
         "tags": [
           "tenancy"
         ]

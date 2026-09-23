@@ -1,0 +1,32 @@
+# The desired state of each WorkOS environment Tadas signs people in
+# through. `uv run tadas-ops workos-bootstrap --environment <name>` reads it
+# and reconciles WorkOS with it: a dry run by default, `--apply` to write.
+#
+# A WorkOS environment is not a Tadas environment. `staging` serves the
+# local stack and Tadas's staging; `production` serves production alone.
+# Each Tadas environment still accepts only its own callback: the API's
+# TADAS_SIGN_IN_REDIRECT_URIS names it, and a deployed one refuses anything
+# else.
+#
+# The client id is the application's, and it is not a secret. The API key
+# is: the command reads it from the variable named here and never prints it.
+
+staging:
+  api_key_variable: WORKOS_API_KEY
+  client_id: client_01M3640D8WBF9KC0P89YW4E72N
+  redirect_uris:
+    - http://localhost:55173/auth/callback
+    - http://localhost:5173/auth/callback
+    - https://app.staging.tadas.fyi/auth/callback
+  login_initiation_uri: https://app.staging.tadas.fyi/login
+  # The sign-in and the invitations need no webhook.
+  webhooks: []
+
+production:
+  api_key_variable: WORKOS_PRODUCTION_API_KEY
+  client_id: client_01M363XVP5FGF2P45FHK9B7MJD
+  redirect_uris:
+    - https://app.tadas.fyi/auth/callback
+  login_initiation_uri: https://app.tadas.fyi/login
+  # The sign-in and the invitations need no webhook.
+  webhooks: []

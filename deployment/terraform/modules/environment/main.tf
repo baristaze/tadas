@@ -287,10 +287,16 @@ module "api" {
 
   secrets = merge(local.process_secrets, {
     TADAS_TOTP_ENCRYPTION_KEY = module.secrets.totp_encryption_key_secret_arn
+    TADAS_WORKOS_API_KEY      = module.secrets.workos_api_key_secret_arn
   })
 
   environment_variables = merge(local.process_environment, {
-    TADAS_SERVICE_NAME           = "api"
+    TADAS_SERVICE_NAME = "api"
+    # People sign in through the WorkOS application of this environment,
+    # and a sign-in comes back to this environment's portal and nowhere else.
+    TADAS_IDENTITY_PROVIDER      = "workos"
+    TADAS_WORKOS_CLIENT_ID       = var.workos_client_id
+    TADAS_SIGN_IN_REDIRECT_URIS  = jsonencode(["https://${var.app_domain_name}/auth/callback"])
     TADAS_ADMISSION_LIMIT_READS  = tostring(local.admission_limit_reads)
     TADAS_ADMISSION_LIMIT_WRITES = tostring(local.admission_limit_writes)
     TADAS_HOST                   = "0.0.0.0"

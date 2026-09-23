@@ -1,12 +1,13 @@
-"""Tenancy routes: sign up, sign in, choose or switch a tenant, read the
-principal, create an org, manage members, sessions, and api keys. Every function is one call
-into the tenancy service."""
+"""Tenancy routes: sign in through the identity provider, choose or switch a
+tenant, read the principal, create an org, manage members and their
+invitations, open single sign-on, sessions, and api keys. Every function is
+one call into the tenancy service."""
 
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Response
 
-from tadas.services.api.gateway.auth import Ctx, Identity, Rctx, signup_open
+from tadas.services.api.gateway.auth import Ctx, Identity, Rctx, dev_sign_in_open
 from tadas.services.api.gateway.idempotency import Idem
 from tadas.services.api.gateway.ratelimit import rate_limited
 from tadas.services.api.gateway.resolve import TenancyService
@@ -16,20 +17,30 @@ from tadas.services.api.types.tenancy import (
     ApiKeyPageView,
     ApiKeyView,
     CreateTeamOrgRequest,
+    DeviceSignInView,
+    DeviceTokenRequest,
+    DevSignInRequest,
     ExchangeSessionRequest,
     IdentityView,
+    InvitationPageView,
+    InvitationView,
+    InviteMemberRequest,
     IssuedApiKeyView,
     IssuedLoginView,
     IssuedSessionView,
-    LoginRequest,
     MembershipChoicePageView,
     MembershipChoiceView,
     MembershipPageView,
     MembershipView,
     MeView,
     OrgView,
+    SecondFactorRequest,
     SessionView,
-    SignUpRequest,
+    SignInCallbackRequest,
+    SignInStartRequest,
+    SignInStartView,
+    SsoLinkRequest,
+    SsoLinkView,
     UpdateMembershipRequest,
     UpdateMeRequest,
     UserPageView,
@@ -39,22 +50,58 @@ from tadas.services.api.types.tenancy import (
 router = APIRouter(tags=["tenancy"])
 
 
-# No Idempotency-Key, as on the sign-in: the marker is kept per tenant and
-# principal, and this route has neither. A retry after a lost answer meets
-# the held email (409), and the person signs in with the password they chose.
-# It answers what a sign-in answers, with a sign-in's status.
+# The sign-in routes carry no Idempotency-Key: the marker is kept per tenant
+# and principal, and none exists yet. Each is counted against the
+# per-address sign-in budget. A code is exchanged once, so a retry after a
+# lost answer is refused and the person signs in again.
+@router.post("/auth/sign-in", response_model=SignInStartView, dependencies=[rate_limited("login")])
+async def start_sign_in(
+    rctx: Rctx, tenancy: TenancyService, body: SignInStartRequest
+) -> SignInStartView:
+    return await tenancy.start_sign_in(rctx, body)
+
+
+@router.post("/auth/callback", response_model=IssuedLoginView, dependencies=[rate_limited("login")])
+async def finish_sign_in(
+    rctx: Rctx, tenancy: TenancyService, body: SignInCallbackRequest
+) -> IssuedLoginView:
+    return await tenancy.finish_sign_in(rctx, body)
+
+
+@router.post("/auth/device", response_model=DeviceSignInView, dependencies=[rate_limited("login")])
+async def start_device_sign_in(rctx: Rctx, tenancy: TenancyService) -> DeviceSignInView:
+    return await tenancy.start_device_sign_in(rctx)
+
+
 @router.post(
-    "/auth/signup",
-    response_model=IssuedLoginView,
-    dependencies=[Depends(signup_open), rate_limited("signup")],
+    "/auth/device/token", response_model=IssuedLoginView, dependencies=[rate_limited("login")]
 )
-async def sign_up(rctx: Rctx, tenancy: TenancyService, body: SignUpRequest) -> IssuedLoginView:
-    return await tenancy.sign_up(rctx, body)
+async def finish_device_sign_in(
+    rctx: Rctx, tenancy: TenancyService, body: DeviceTokenRequest
+) -> IssuedLoginView:
+    return await tenancy.finish_device_sign_in(rctx, body)
 
 
-@router.post("/auth/login", response_model=IssuedLoginView, dependencies=[rate_limited("login")])
-async def login(rctx: Rctx, tenancy: TenancyService, body: LoginRequest) -> IssuedLoginView:
-    return await tenancy.login(rctx, body)
+# Local and test only: 404 wherever it is off, as a route that does not
+# exist answers, and a deployed process refuses to start with it on.
+@router.post(
+    "/auth/dev-sign-in",
+    response_model=IssuedLoginView,
+    dependencies=[Depends(dev_sign_in_open), rate_limited("login")],
+)
+async def dev_sign_in(
+    rctx: Rctx, tenancy: TenancyService, body: DevSignInRequest
+) -> IssuedLoginView:
+    return await tenancy.dev_sign_in(rctx, body)
+
+
+@router.post(
+    "/auth/second-factor", response_model=IssuedLoginView, dependencies=[rate_limited("login")]
+)
+async def verify_second_factor(
+    identity: Identity, tenancy: TenancyService, body: SecondFactorRequest
+) -> IssuedLoginView:
+    return await tenancy.verify_second_factor(identity, body)
 
 
 @router.post("/auth/sessions", response_model=IssuedSessionView)
@@ -133,6 +180,41 @@ async def update_membership(
 @router.delete("/memberships/{user_id}", response_model=UserView)
 async def remove_member(ctx: Ctx, tenancy: TenancyService, user_id: UUID) -> UserView:
     return await tenancy.remove_member(ctx, user_id)
+
+
+@router.get("/invitations", response_model=InvitationPageView)
+async def list_invitations(
+    ctx: Ctx, tenancy: TenancyService, cursor: str | None = None, limit: int = LIMIT_DEFAULT
+) -> InvitationPageView:
+    return await tenancy.get_invitations(ctx, cursor, limit)
+
+
+# The identity provider sends the email. The idempotency marker is the
+# caller's, and the invitation is created on its id, so a retry sends one.
+@router.post("/invitations", response_model=InvitationView, status_code=201)
+async def invite_member(
+    ctx: Ctx, tenancy: TenancyService, body: InviteMemberRequest, idem: Idem
+) -> Response:
+    return await idem.run(201, lambda attempt: tenancy.invite_member(ctx, body, attempt))
+
+
+@router.post("/invitations/{invitation_id}/resend", response_model=InvitationView)
+async def resend_invitation(
+    ctx: Ctx, tenancy: TenancyService, invitation_id: UUID
+) -> InvitationView:
+    return await tenancy.resend_invitation(ctx, invitation_id)
+
+
+@router.delete("/invitations/{invitation_id}", response_model=InvitationView)
+async def revoke_invitation(
+    ctx: Ctx, tenancy: TenancyService, invitation_id: UUID
+) -> InvitationView:
+    return await tenancy.revoke_invitation(ctx, invitation_id)
+
+
+@router.post("/orgs/current/sso-link", response_model=SsoLinkView)
+async def sso_link(ctx: Ctx, tenancy: TenancyService, body: SsoLinkRequest) -> SsoLinkView:
+    return await tenancy.sso_link(ctx, body)
 
 
 @router.get("/sessions", response_model=list[SessionView])

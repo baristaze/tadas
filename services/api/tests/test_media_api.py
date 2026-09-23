@@ -187,8 +187,8 @@ async def test_a_viewer_reads_attachments_and_starts_none(
     task_id = await a_task(client, owner)
     stored = await attach(client, owner, task_id)
     org_id = UUID((await client.get("/v1/me", headers=owner)).json()["org"]["id"])
-    await add_member(container, org_id, "vic@example.test", "pw-1234", Role.VIEWER)
-    viewer = await sign_in_as(client, "vic@example.test", "pw-1234", org_id)
+    await add_member(container, org_id, "vic@example.test", Role.VIEWER)
+    viewer = await sign_in_as(client, "vic@example.test", org_id)
     listed = await client.get(f"/v1/tasks/{task_id}/attachments", headers=viewer)
     assert [f["id"] for f in listed.json()["items"]] == [stored["id"]]
     assert (await start(client, viewer, task_id)).status_code == 403
@@ -204,9 +204,9 @@ async def test_another_tenants_file_answers_as_a_missing_one(
     task_id = await a_task(client, owner)
     stored = await attach(client, owner, task_id)
     _, other = await container.managers.tenancy.bootstrap(
-        seed_request(), "Other", "other", "eve@other.test", "pw-1234", "Eve"
+        seed_request(), "Other", "other", "eve@other.test", "Eve"
     )
-    eve = await sign_in_as(client, "eve@other.test", "pw-1234", other.id)
+    eve = await sign_in_as(client, "eve@other.test", other.id)
     own_task = await a_task(client, eve, "Eve's")
     file_id = stored["id"]
     swept: list[tuple[str, str, dict]] = [

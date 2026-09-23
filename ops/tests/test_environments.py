@@ -28,26 +28,24 @@ def owner_only(file: Path, text: str) -> Path:
 def test_env_lines_are_parsed_like_a_dotenv() -> None:
     values = parse_env_file(
         "# comment\nTADAS_API_URL=https://api.example.test/  # trailing\n"
-        "export TADAS_OPERATOR_TOKEN=\"opt_read\"\nSEED_PASSWORD='p w'\nBROKEN\n"
+        "export TADAS_OPERATOR_TOKEN=\"opt_read\"\nSEED_SLUG='a c'\nBROKEN\n"
     )
     assert values == {
         "TADAS_API_URL": "https://api.example.test/",
         "TADAS_OPERATOR_TOKEN": "opt_read",
-        "SEED_PASSWORD": "p w",
+        "SEED_SLUG": "a c",
     }
 
 
 def test_local_with_no_file_reads_the_checkout_and_the_fixed_addresses(tmp_path: Path) -> None:
     root = tmp_path / "repo"
     root.mkdir()
-    (root / ".env.example").write_text(
-        "SEED_SLUG=acme\nSEED_EMAIL=owner@example.test\nSEED_PASSWORD=x\n"
-    )
+    (root / ".env.example").write_text("SEED_SLUG=acme\nSEED_EMAIL=owner@example.test\n")
     (root / ".env").write_text("SEED_EMAIL=me@example.test\n")
     env = load_environment("local", home=tmp_path, root=root, process_env={})
     assert env.api_url == LOCAL_API_URL
     assert env.seed is not None and env.seed.owner_email == "me@example.test"
-    assert env.seed.slug == "acme" and env.seed.password == "x"
+    assert env.seed.slug == "acme"
     assert env.error_tracker_token == LOCAL_ERROR_TRACKER_TOKEN
     assert env.prometheus_url and env.jaeger_url and not env.is_cloud
     assert env.operator_token is None and env.provisioner_token is None

@@ -5,6 +5,8 @@ from dataclasses import dataclass
 
 from tadas.infra.cache import CacheScope
 from tadas.infra.root import InfraInterface
+from tadas.integrations.identity.absent import IdentityProviderAbsentImpl
+from tadas.integrations.root import IntegrationsInterface
 from tadas.om.events import EventsManagerInterface
 from tadas.om.events.impl.manager import EventsManagerImpl, EventsOptions
 from tadas.om.idempotency import IdempotencyManagerInterface
@@ -43,7 +45,12 @@ def build_managers(
     infra: InfraInterface,
     tenancy_options: TenancyOptions | None = None,
     operator_options: TenancyOperatorOptions | None = None,
+    integrations: IntegrationsInterface | None = None,
 ) -> Managers:
+    """`integrations` is the root of the hosted services the managers front:
+    the identity provider, which the tenancy manager signs people in and
+    invites them through. None is a process that signs nobody in, and every
+    call that would reach a provider is refused as unavailable."""
     # The relay every core-role manager hands its outbox rows to. It reaches
     # the work manager through the root below, because a row of kind
     # `work.<kind>` is enqueued there: the work manager needs the tenancy
@@ -60,6 +67,11 @@ def build_managers(
         outbox,
         infra.get_cache(CacheScope.REALTIME_TICKET),
         tenancy_options or TenancyOptions(),
+        identity_provider=(
+            IdentityProviderAbsentImpl()
+            if integrations is None
+            else integrations.get_identity_provider()
+        ),
     )
     events = EventsManagerImpl(storage.get_event_storage(), tenancy, EventsOptions())
     work = WorkManagerImpl(

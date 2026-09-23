@@ -1,0 +1,50 @@
+import type { IssuedLoginView, MembershipChoiceView } from "../../api";
+import { useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { adoptSession } from "../../app/adoptSession";
+import { errorMessage } from "../../app/errorMessage";
+import { useExchangeSession } from "../../queries/tenancy";
+import { useNoticesStore } from "../../store/notices";
+import { chooseOrg, landingPath, type OrgChoice } from "./signInModel";
+
+/** The step every sign-in ends in: the person's places, one goes straight
+ * in, several show the picker, and the exchange turns the choice into the
+ * one session the tab holds. */
+export function useEnterOrg() {
+  const navigate = useNavigate();
+  const notify = useNoticesStore((s) => s.notify);
+  const exchange = useExchangeSession();
+  const [choice, setChoice] = useState<OrgChoice>({ kind: "none" });
+  const [held, setHeld] = useState<{ token: string; returnTo: string } | null>(null);
+
+  const enter = async (token: string, membership: MembershipChoiceView, returnTo: string) => {
+    const issued = await exchange.mutateAsync({ loginToken: token, body: { org_id: membership.org.id } });
+    // A tab already signed in (another org, another person) drops that
+    // session first, so nothing fetched under it is shown under this one.
+    adoptSession(issued);
+    navigate(landingPath(returnTo), { replace: true });
+  };
+
+  /** Goes on with a sign-in; the answer is what to say, or null. */
+  const signedIn = async (issued: IssuedLoginView, returnTo: string): Promise<string | null> => {
+    const next = chooseOrg(issued.memberships);
+    setHeld({ token: issued.token, returnTo });
+    setChoice(next);
+    if (next.kind === "none") return "This account belongs to no organization yet.";
+    if (next.kind === "single") await enter(issued.token, next.membership, returnTo);
+    return null;
+  };
+
+  // Choosing an org can be refused too (the sign-in expired, the API is
+  // away); the refusal is said the way a failed write is.
+  const pick = async (membership: MembershipChoiceView) => {
+    if (!held) return;
+    try {
+      await enter(held.token, membership, held.returnTo);
+    } catch (caught) {
+      notify(errorMessage(caught, "Sign-in failed."));
+    }
+  };
+
+  return { choice, signedIn, pick, entering: exchange.isPending };
+}

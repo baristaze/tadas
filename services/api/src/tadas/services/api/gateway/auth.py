@@ -80,12 +80,12 @@ async def current_context(
 Ctx = Annotated[OpContext, Depends(current_context)]
 
 
-async def signup_open(request: Request) -> None:
-    """The sign-up door, open unless `signup_enabled` is False. Closed, the
-    route answers 404 exactly as a route that does not exist does, before
-    the body is read, by choice: a closed door says nothing about there
-    being one."""
-    if not container_of(request).settings.signup_enabled:
+async def dev_sign_in_open(request: Request) -> None:
+    """The local sign-in's door, open only where `dev_sign_in_enabled` is on,
+    which a deployed environment refuses at boot. Closed, the route answers
+    404 exactly as a route that does not exist does, before the body is
+    read."""
+    if not container_of(request).settings.dev_sign_in_enabled:
         raise NotFound("Not Found")
 
 

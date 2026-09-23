@@ -38,6 +38,7 @@ STORAGE_EXCEPTIONS: frozenset[tuple[str, str]] = frozenset(
     {
         ("TenancyStorageInterface", "read_identity"),
         ("TenancyStorageInterface", "read_identity_by_email_digest"),
+        ("TenancyStorageInterface", "read_identity_by_issuer_subject"),
         ("TenancyStorageInterface", "write_identity"),
         ("TenancyStorageInterface", "write_totp_secret"),
         ("TenancyStorageInterface", "confirm_totp"),
@@ -103,8 +104,11 @@ REQUEST_TRANSITIONS: frozenset[tuple[str, str]] = frozenset(
         # Take `RequestContext`, the weakest stage: nobody is known yet.
         ("TenancyManagerInterface", "bootstrap"),
         ("TenancyManagerInterface", "add_member"),
-        ("TenancyManagerInterface", "sign_up"),
-        ("TenancyManagerInterface", "login"),
+        ("TenancyManagerInterface", "sign_in_url"),
+        ("TenancyManagerInterface", "sign_in_with_code"),
+        ("TenancyManagerInterface", "start_device_sign_in"),
+        ("TenancyManagerInterface", "finish_device_sign_in"),
+        ("TenancyManagerInterface", "dev_sign_in"),
         ("TenancyManagerInterface", "authenticate_login"),
         ("TenancyManagerInterface", "authenticate"),
         ("TenancyManagerInterface", "resume"),
@@ -129,6 +133,7 @@ IDENTITY_TRANSITIONS: frozenset[tuple[str, str]] = frozenset(
         ("TenancyManagerInterface", "exchange_login"),
         ("TenancyManagerInterface", "get_identity_memberships"),
         ("TenancyManagerInterface", "admit_operator"),
+        ("TenancyManagerInterface", "verify_second_factor"),
     }
 )
 

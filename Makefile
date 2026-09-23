@@ -65,8 +65,8 @@ reset: ## Wipe every container and all local data, then `make up`
 
 urls: ## Print the local URLs and the seeded sign-ins
 	@echo ""
-	@echo "  Portal         http://localhost:55173   sign in: $(SEED_EMAIL) or $(SEED_MEMBER_EMAIL) / $(SEED_PASSWORD)"
-	@echo "                 two orgs: $(SEED_ADMIN_EMAIL) / $(SEED_PASSWORD)   owner of $(SEED_SECOND_ORG), admin of $(SEED_ORG)"
+	@echo "  Portal         http://localhost:55173   /login through WorkOS; /login/dev as $(SEED_EMAIL) or $(SEED_MEMBER_EMAIL)"
+	@echo "                 two orgs: $(SEED_ADMIN_EMAIL) at /login/dev   owner of $(SEED_SECOND_ORG), admin of $(SEED_ORG)"
 	@echo "  API docs       http://127.0.0.1:8000/docs"
 	@echo "  pgweb          http://localhost:$(TADAS_PGWEB_PORT)"
 	@echo "  Valkey Admin   http://localhost:$(TADAS_VALKEY_ADMIN_PORT)"
@@ -129,14 +129,14 @@ migrate: ## Make the database logins, then apply every role's migration chain to
 seed: ## Create two local orgs with an owner, a member, and an admin of both to sign in as; a no-op once they exist
 	uv run --package tadas-api tadas-api bootstrap --if-absent \
 		--org "$(SEED_ORG)" --slug "$(SEED_SLUG)" --name "$(SEED_NAME)" \
-		--email "$(SEED_EMAIL)" --password "$(SEED_PASSWORD)"
+		--email "$(SEED_EMAIL)"
 	uv run --package tadas-api tadas-api add-member --slug "$(SEED_SLUG)" \
-		--name "$(SEED_MEMBER_NAME)" --email "$(SEED_MEMBER_EMAIL)" --password "$(SEED_PASSWORD)"
+		--name "$(SEED_MEMBER_NAME)" --email "$(SEED_MEMBER_EMAIL)"
 	uv run --package tadas-api tadas-api bootstrap --if-absent \
 		--org "$(SEED_SECOND_ORG)" --slug "$(SEED_SECOND_SLUG)" --name "$(SEED_ADMIN_NAME)" \
-		--email "$(SEED_ADMIN_EMAIL)" --password "$(SEED_PASSWORD)"
+		--email "$(SEED_ADMIN_EMAIL)"
 	uv run --package tadas-api tadas-api add-member --slug "$(SEED_SLUG)" --role admin \
-		--name "$(SEED_ADMIN_NAME)" --email "$(SEED_ADMIN_EMAIL)" --password "$(SEED_PASSWORD)"
+		--name "$(SEED_ADMIN_NAME)" --email "$(SEED_ADMIN_EMAIL)"
 
 # Needs `make up` (the seeded owner and member, the API on 8000, the portal on
 # 55173). Empties the task list, then records docs/media/realtime-demo.gif:

@@ -1,20 +1,16 @@
-"""Sign-up, the memberships of the signed-in person, and the switch between
-tenants, over the whole API in-process."""
+"""The memberships of the signed-in person, the switch between tenants, and
+a team org of one's own, over the whole API in-process."""
 
-from pathlib import Path
 from uuid import UUID
 
 import httpx
 import pytest
-from api_support import OWNER, build_container, enrol_operator, seed_request, sign_in_as
-from httpx import ASGITransport
+from api_support import OWNER, enrol_operator, seed_request, sign_in_as
 
 from tadas.om.opcontext import OperatorRole, Role
-from tadas.om.tenancy.rules import email_digest
-from tadas.services.api.app import create_app
 from tadas.services.api.container import AppContainer
 
-DEE = {"email": "dee@example.test", "password": "long-enough", "display_name": "Dee"}
+DEE = {"email": "dee@example.test", "display_name": "Dee"}
 
 
 def bearer(token: str) -> dict[str, str]:
@@ -28,109 +24,12 @@ async def enter(client: httpx.AsyncClient, token: str, org_id: str) -> str:
     return session.json()["token"]
 
 
-async def test_sign_up_answers_as_a_sign_in_and_the_exchange_follows(
-    client: httpx.AsyncClient,
-) -> None:
-    signed_up = await client.post("/v1/auth/signup", json=DEE)
-    assert signed_up.status_code == 200, signed_up.text
-    body = signed_up.json()
-    assert body["token"].startswith("lgn_")
-    [owner] = body["memberships"]
-    # The one place is the person's personal org, named and slugged for them.
-    assert owner["role"] == "owner"
-    assert owner["org"]["kind"] == "personal" and owner["org"]["name"] == "Dee"
-    assert owner["org"]["slug"].startswith("dee-")
-    assert owner["user"]["email"] == "dee@example.test"
-    session = await enter(client, body["token"], owner["org"]["id"])
-    me = await client.get("/v1/me", headers=bearer(session))
-    assert me.status_code == 200, me.text
-    assert me.json()["role"] == "owner" and me.json()["org"]["kind"] == "personal"
-    # The password it chose signs in.
-    login = await client.post(
-        "/v1/auth/login", json={"email": DEE["email"], "password": DEE["password"]}
-    )
-    assert login.status_code == 200 and len(login.json()["memberships"]) == 1
-
-
-async def test_an_older_clients_org_fields_are_ignored(client: httpx.AsyncClient) -> None:
-    """A sign-up that still names an org, as the release before this one's
-    portal does, is taken: the fields are ignored and the person lands in their
-    personal org alone."""
-    older = DEE | {"org_name": "Dee's Bakery", "org_slug": "dees-bakery"}
-    signed_up = await client.post("/v1/auth/signup", json=older)
-    assert signed_up.status_code == 200, signed_up.text
-    [only] = signed_up.json()["memberships"]
-    assert only["org"]["kind"] == "personal" and only["org"]["slug"] != "dees-bakery"
-
-
-async def test_sign_up_refuses_a_held_email(
-    client: httpx.AsyncClient, owner: dict[str, str]
-) -> None:
-    held = await client.post("/v1/auth/signup", json=DEE | {"email": OWNER["email"]})
-    assert held.status_code == 409, held.text
-    assert held.json()["error"]["code"] == "conflict"
-    login = await client.post(
-        "/v1/auth/login", json={"email": OWNER["email"], "password": DEE["password"]}
-    )
-    assert login.status_code == 401, "the held identity keeps its password"
-
-
-@pytest.mark.parametrize(
-    "change",
-    [
-        {"password": "short"},
-        {"email": "nobody"},
-        {"display_name": "  "},
-        {"extra": "field"},
-    ],
-)
-async def test_a_malformed_sign_up_is_refused(
-    client: httpx.AsyncClient, change: dict[str, str]
-) -> None:
-    refused = await client.post("/v1/auth/signup", json=DEE | change)
-    assert refused.status_code == 422, refused.text
-    assert refused.json()["error"]["code"] == "validation_failed"
-
-
-async def test_a_closed_sign_up_answers_as_no_route_would(tmp_path: Path) -> None:
-    container = build_container(tmp_path, signup_enabled=False)
-    app = create_app(container)
-    async with app.router.lifespan_context(app):
-        transport = ASGITransport(app=app, raise_app_exceptions=False)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            closed = await client.post("/v1/auth/signup", json=DEE)
-            missing = await client.post("/v1/auth/no-such-route", json=DEE)
-            malformed = await client.post("/v1/auth/signup", json={})
-            for answer in (closed, missing, malformed):
-                assert answer.status_code == 404, answer.text
-                error = answer.json()["error"]
-                assert (error["code"], error["message"]) == ("not_found", "Not Found")
-    storage = container.storage.get_tenancy_storage()
-    assert await storage.read_identity_by_email_digest(email_digest(DEE["email"])) is None
-
-
-async def test_sign_up_is_rate_limited_per_client(
-    client: httpx.AsyncClient, container: AppContainer
-) -> None:
-    budget = container.rate_limits.of("signup").limit
-    for index in range(budget):
-        body = DEE | {"email": f"d{index}@example.test"}
-        assert (await client.post("/v1/auth/signup", json=body)).status_code == 200
-    rejected = await client.post("/v1/auth/signup", json=DEE)
-    assert rejected.status_code == 429
-    assert rejected.json()["error"]["code"] == "rate_limited"
-
-
 async def two_orgs(client: httpx.AsyncClient, container: AppContainer) -> tuple[str, str]:
     """Ann owns Acme and is a member of Beta; returns both org ids."""
     tenancy = container.managers.tenancy
-    _, acme = await tenancy.bootstrap(
-        seed_request(), "Acme", "acme", OWNER["email"], OWNER["password"], OWNER["name"]
-    )
-    await tenancy.bootstrap(seed_request(), "Beta", "beta", "bea@example.test", "pw-1234", "Bea")
-    await tenancy.add_member(
-        seed_request(), "beta", OWNER["email"], OWNER["password"], OWNER["name"], Role.MEMBER
-    )
+    _, acme = await tenancy.bootstrap(seed_request(), "Acme", "acme", OWNER["email"], OWNER["name"])
+    await tenancy.bootstrap(seed_request(), "Beta", "beta", "bea@example.test", "Bea")
+    await tenancy.add_member(seed_request(), "beta", OWNER["email"], OWNER["name"], Role.MEMBER)
     beta = await container.storage.get_tenancy_storage().read_org_by_slug("beta")
     assert beta is not None
     return str(acme.id), str(beta.id)
@@ -140,9 +39,7 @@ async def test_the_memberships_are_read_with_the_sign_in_or_a_session(
     client: httpx.AsyncClient, container: AppContainer
 ) -> None:
     acme, beta = await two_orgs(client, container)
-    login = await client.post(
-        "/v1/auth/login", json={"email": OWNER["email"], "password": OWNER["password"]}
-    )
+    login = await client.post("/v1/auth/dev-sign-in", json={"email": OWNER["email"]})
     token = login.json()["token"]
     by_login = await client.get("/v1/auth/memberships", headers=bearer(token))
     assert by_login.status_code == 200, by_login.text
@@ -178,7 +75,7 @@ async def test_a_switch_ends_the_session_it_was_presented_with(
     client: httpx.AsyncClient, container: AppContainer
 ) -> None:
     acme, beta = await two_orgs(client, container)
-    held = await sign_in_as(client, OWNER["email"], OWNER["password"], UUID(acme))
+    held = await sign_in_as(client, OWNER["email"], UUID(acme))
     held_token = held["Authorization"].removeprefix("Bearer ")
     switched = await enter(client, held_token, beta)
     me = await client.get("/v1/me", headers=bearer(switched))
@@ -217,8 +114,9 @@ async def test_a_session_never_admits_an_operator(
 
 
 async def signed_up_session(client: httpx.AsyncClient) -> dict[str, str]:
-    """Dee signs up and enters her personal org; the tenant headers back."""
-    body = (await client.post("/v1/auth/signup", json=DEE)).json()
+    """Dee signs in for the first time and enters her personal org; the
+    tenant headers back."""
+    body = (await client.post("/v1/auth/dev-sign-in", json=DEE)).json()
     return bearer(await enter(client, body["token"], body["memberships"][0]["org"]["id"]))
 
 
@@ -287,10 +185,8 @@ async def test_the_person_of_a_personal_org_stays_in_it(
     tenancy = container.managers.tenancy
     org = await container.storage.get_tenancy_storage().read_org(UUID(me["org"]["id"]))
     assert org is not None
-    await tenancy.add_member(
-        seed_request(), org.slug, "eve@example.test", "pw-1234", "Eve", Role.OWNER
-    )
-    eve = await sign_in_as(client, "eve@example.test", "pw-1234", org.id)
+    await tenancy.add_member(seed_request(), org.slug, "eve@example.test", "Eve", Role.OWNER)
+    eve = await sign_in_as(client, "eve@example.test", org.id)
     # Even an owner of it neither removes her nor changes her role.
     for refused in (
         await client.delete(f"/v1/memberships/{me['user']['id']}", headers=eve),

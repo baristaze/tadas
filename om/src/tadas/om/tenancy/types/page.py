@@ -5,6 +5,7 @@ a task list answers."""
 
 from tadas.om.base import Platform
 from tadas.om.tenancy.types.api_key import ApiKey
+from tadas.om.tenancy.types.invitation import Invitation
 from tadas.om.tenancy.types.issued import OrgMembership
 from tadas.om.tenancy.types.membership import Membership
 from tadas.om.tenancy.types.org import Org
@@ -36,4 +37,9 @@ class OrgMembershipPage(Platform):
     sign-in lists, a page at a time for a person already signed in."""
 
     items: tuple[OrgMembership, ...]
+    has_more: bool
+
+
+class InvitationPage(Platform):
+    items: tuple[Invitation, ...]
     has_more: bool

@@ -4,8 +4,9 @@ right, both on Team's Tasks. Bob adds, edits and assigns, reorders by the
 handle, completes, and deletes tasks; the owner's window follows live.
 
 It drives a headless Chrome over the DevTools protocol, one isolated browser
-context per person. Each signs in through the API (a session token, the way
-the API tests do) rather than through the form, over the Python client in
+context per person. Each signs in through the API's local sign-in (a session
+token, the way the API tests do) rather than through WorkOS, over the Python
+client in
 `clients/python/` (ADR 0004 records the interval before that client
 existed). The task list is emptied first, then both windows are screencast
 and the frames are composed on one timeline into a GIF.
@@ -75,11 +76,11 @@ class Api:
     def _client(self, token: str | None = None) -> ApiClient:
         return ApiClient(self.base, app="portal", app_version="portal@demo", token=token)
 
-    async def session(self, email: str, password: str) -> dict[str, Any]:
+    async def session(self, email: str) -> dict[str, Any]:
         """What the portal keeps in session storage once someone has signed in
         and chosen the seeded team; every person also has a personal org."""
         async with self._client() as client:
-            login = await client.login(email, password)
+            login = await client.dev_sign_in(email)
             org = next(m.org for m in login.memberships if m.org.kind is OrgKind.team)
             issued = await client.exchange_session(login.token, org.id)
         return {"state": {"token": issued.token, "orgSlug": org.slug}, "version": 0}
@@ -310,7 +311,6 @@ async def open_window(
     portal: str,
     name: str,
     email: str,
-    password: str,
     zoom: float,
     theme: str,
 ) -> Window:
@@ -336,9 +336,9 @@ async def open_window(
     # one, so the GIF looks the same on every machine that records it.
     scheme = {"features": [{"name": "prefers-color-scheme", "value": theme}]}
     await cdp.send("Emulation.setEmulatedMedia", scheme, window.session)
-    await cdp.send("Page.navigate", {"url": f"{portal}/sign-in"}, window.session)
+    await cdp.send("Page.navigate", {"url": f"{portal}/login/dev"}, window.session)
     await window.wait_for("document.readyState === 'complete'")
-    stored = json.dumps(json.dumps(await api.session(email, password)))
+    stored = json.dumps(json.dumps(await api.session(email)))
     scope = json.dumps(json.dumps({"state": {"taskScope": "team"}, "version": 0}))
     # The bearer lives in the tab's session storage, and the portal drops a
     # session it finds in local storage on load; the scope is a preference and
@@ -443,7 +443,7 @@ async def still(window: Window, path: str) -> None:
 async def record(args: argparse.Namespace) -> None:
     api = Api(args.api)
     if not args.still:  # a still shows whatever the list holds; a recording starts empty
-        owner_session = await api.session(args.owner, args.password)
+        owner_session = await api.session(args.owner)
         cleared = await api.clear_tasks(owner_session["state"]["token"])
         print(f"cleared {cleared} tasks")
 
@@ -468,9 +468,7 @@ async def record(args: argparse.Namespace) -> None:
             cdp = Cdp(ws)
             pump = asyncio.create_task(cdp.pump())
             windows = [
-                await open_window(
-                    cdp, api, args.portal, name, email, args.password, args.zoom, args.theme
-                )
+                await open_window(cdp, api, args.portal, name, email, args.zoom, args.theme)
                 for name, email in (("bob", args.member), ("owner", args.owner))
             ]
             bob, owner = windows
@@ -537,7 +535,6 @@ def main() -> None:
     parser.add_argument("--portal", default="http://localhost:55173")
     parser.add_argument("--owner", default="owner@example.test")
     parser.add_argument("--member", default="bob@example.test")
-    parser.add_argument("--password", default="tadas-local")
     parser.add_argument("--zoom", type=float, default=0.9, help="browser zoom, e.g. 0.9 for 90%%")
     parser.add_argument("--theme", choices=["light", "dark"], default="light")
     parser.add_argument("--still", action="store_true", help="write a PNG per window instead")

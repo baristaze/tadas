@@ -25,7 +25,7 @@ def org(org_id: str, slug: str) -> dict[str, object]:
 
 
 def operator_api(request: httpx.Request) -> httpx.Response:
-    assert request.url.path != "/v1/auth/login", "an agent never signs in with a password"
+    assert not request.url.path.startswith("/v1/auth/"), "an agent never signs in"
     assert request.headers["authorization"] == "Bearer opt_read"
     assert request.headers["x-app"] == "admin"
     if request.url.path == "/v1/admin/size":

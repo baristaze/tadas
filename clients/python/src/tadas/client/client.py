@@ -16,9 +16,12 @@ import httpx
 import truststore
 
 from tadas.client.types import (
+    DeviceSignInView,
     EventView,
     FilePageView,
     FileView,
+    InvitationPageView,
+    InvitationView,
     IssuedDownloadView,
     IssuedLoginView,
     IssuedSessionView,
@@ -33,6 +36,8 @@ from tadas.client.types import (
     PlatformSizeView,
     Role,
     SessionView,
+    SignInStartView,
+    SsoLinkView,
     StorageUsageView,
     TaskPageView,
     TaskScope,
@@ -342,23 +347,68 @@ class ApiClient:
 
     # Tenancy
 
-    async def sign_up(self, email: str, password: str, display_name: str) -> IssuedLoginView:
-        """A new person, who comes with their personal org; answered as a
-        sign-in is. Sent once: it carries no idempotency key, and a retry would
-        meet the email the first attempt took."""
-        body = await self.request(
+    async def start_sign_in(
+        self,
+        redirect_uri: str,
+        state: str,
+        *,
+        invitation_token: str | None = None,
+        sign_up: bool = False,
+    ) -> SignInStartView:
+        """Where a browser goes to sign in at the identity provider; it comes
+        back to `redirect_uri` with a code and `state`."""
+        body: dict[str, object] = {"redirect_uri": redirect_uri, "state": state, "sign_up": sign_up}
+        if invitation_token is not None:
+            body["invitation_token"] = invitation_token
+        answer = await self.request("POST", "/v1/auth/sign-in", json=body, token=None)
+        return SignInStartView.model_validate(answer)
+
+    async def finish_sign_in(
+        self, code: str, code_verifier: str, invitation_token: str | None = None
+    ) -> IssuedLoginView:
+        """The code the browser brought back and the verifier `start_sign_in`
+        answered with, exchanged by the API; answered as every sign-in is. A
+        person nobody knew is signed up by it."""
+        body: dict[str, object] = {"code": code, "code_verifier": code_verifier}
+        if invitation_token is not None:
+            body["invitation_token"] = invitation_token
+        answer = await self.request("POST", "/v1/auth/callback", json=body, token=None)
+        return IssuedLoginView.model_validate(answer)
+
+    async def start_device_sign_in(self) -> DeviceSignInView:
+        """A sign-in for a program with no browser of its own: the person
+        confirms the code at the address the answer names, in any browser."""
+        answer = await self.request("POST", "/v1/auth/device", token=None)
+        return DeviceSignInView.model_validate(answer)
+
+    async def finish_device_sign_in(self, device_code: str) -> IssuedLoginView:
+        """Asks once whether the person confirmed the device sign-in. Before
+        they do, an `ApiError` with status 400 and code `sign_in_pending` (or
+        `sign_in_slow_down`); the caller asks again after the interval."""
+        answer = await self.request(
+            "POST", "/v1/auth/device/token", json={"device_code": device_code}, token=None
+        )
+        return IssuedLoginView.model_validate(answer)
+
+    async def dev_sign_in(self, email: str, display_name: str = "") -> IssuedLoginView:
+        """Local and test only: a sign-in by address alone, which a deployed
+        environment answers with 404. A person nobody knew is made, with
+        their personal org."""
+        answer = await self.request(
             "POST",
-            "/v1/auth/signup",
-            json={"email": email, "password": password, "display_name": display_name},
+            "/v1/auth/dev-sign-in",
+            json={"email": email, "display_name": display_name},
             token=None,
         )
-        return IssuedLoginView.model_validate(body)
+        return IssuedLoginView.model_validate(answer)
 
-    async def login(self, email: str, password: str) -> IssuedLoginView:
-        body = await self.request(
-            "POST", "/v1/auth/login", json={"email": email, "password": password}, token=None
+    async def verify_second_factor(self, login_token: str, totp_code: str) -> IssuedLoginView:
+        """A sign-in's second factor: a new sign-in that records the verified
+        code, which the operator plane asks of an enrolled operator."""
+        answer = await self.request(
+            "POST", "/v1/auth/second-factor", json={"totp_code": totp_code}, token=login_token
         )
-        return IssuedLoginView.model_validate(body)
+        return IssuedLoginView.model_validate(answer)
 
     async def exchange_session(self, login_token: str, org_id: UUID) -> IssuedSessionView:
         body = await self.request(
@@ -413,6 +463,48 @@ class ApiClient:
         if not self.token:
             raise ApiError(401, "not_authenticated", "no session to switch from", None)
         return self.token
+
+    async def invitations(
+        self, *, cursor: str | None = None, limit: int = LIMIT_MAX
+    ) -> InvitationPageView:
+        params: dict[str, object] = {"limit": limit}
+        if cursor is not None:
+            params["cursor"] = cursor
+        answer = await self.request("GET", "/v1/invitations", params=params)
+        return InvitationPageView.model_validate(answer)
+
+    async def invite_member(
+        self, email: str, role: Role = Role.member, *, idempotency_key: str | None = None
+    ) -> InvitationView:
+        """The identity provider sends the person the email with the link; a
+        creating call, so it always carries an idempotency key."""
+        answer = await self.request(
+            "POST",
+            "/v1/invitations",
+            json={"email": email, "role": role.value},
+            idempotency_key=idempotency_key or str(uuid4()),
+        )
+        return InvitationView.model_validate(answer)
+
+    async def resend_invitation(self, invitation_id: UUID) -> InvitationView:
+        answer = await self.request("POST", f"/v1/invitations/{invitation_id}/resend")
+        return InvitationView.model_validate(answer)
+
+    async def revoke_invitation(self, invitation_id: UUID) -> InvitationView:
+        answer = await self.request("DELETE", f"/v1/invitations/{invitation_id}")
+        return InvitationView.model_validate(answer)
+
+    async def sso_link(
+        self,
+        return_url: str,
+        intent: Literal["sso", "domain_verification"] = "sso",
+    ) -> SsoLinkView:
+        answer = await self.request(
+            "POST",
+            "/v1/orgs/current/sso-link",
+            json={"intent": intent, "return_url": return_url},
+        )
+        return SsoLinkView.model_validate(answer)
 
     async def logout(self) -> SessionView:
         return SessionView.model_validate(await self.request("POST", "/v1/auth/logout"))
@@ -662,7 +754,6 @@ class ApiClient:
         slug: str,
         *,
         owner_email: str,
-        owner_password: str,
         owner_name: str,
         idempotency_key: str | None = None,
     ) -> OrgView:
@@ -672,7 +763,6 @@ class ApiClient:
             "name": name,
             "slug": slug,
             "owner_email": owner_email,
-            "owner_password": owner_password,
             "owner_name": owner_name,
         }
         created = await self.request(
@@ -685,7 +775,6 @@ class ApiClient:
         org_id: UUID,
         email: str,
         *,
-        password: str,
         display_name: str,
         role: Role = Role.member,
         idempotency_key: str | None = None,
@@ -694,7 +783,6 @@ class ApiClient:
         it always carries an idempotency key."""
         body = {
             "email": email,
-            "password": password,
             "display_name": display_name,
             "role": role.value,
         }

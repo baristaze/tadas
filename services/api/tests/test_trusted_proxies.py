@@ -28,7 +28,7 @@ CLIENT = "203.0.113.9"
 @dataclass
 class Served:
     """The app the way `serve` hands it to uvicorn, proxy handling included,
-    and every rate-limit key the login route counted, in order."""
+    and every rate-limit key the sign-in routes counted, in order."""
 
     app: Any
     keys: list[str] = field(default_factory=list)
@@ -38,8 +38,8 @@ class Served:
         transport = ASGITransport(app=self.app, client=(peer, 40000), raise_app_exceptions=False)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             return await client.post(
-                "/v1/auth/login",
-                json={"email": "nobody@example.test", "password": "x"},
+                "/v1/auth/callback",
+                json={"code": "a-code-nobody-issued", "code_verifier": "v" * 43},
                 headers=headers,
             )
 
@@ -68,12 +68,13 @@ async def served(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AsyncIterat
 
 
 async def test_a_trusted_proxy_names_the_client(served: Served) -> None:
-    assert (await served.login_from(PROXY, CLIENT)).status_code == 401
+    # No provider in this process: the callback answers 503, after it counted.
+    assert (await served.login_from(PROXY, CLIENT)).status_code == 503
     assert served.keys == [f"login:addr:{CLIENT}"]
 
 
 async def test_an_untrusted_peer_cannot_choose_its_address(served: Served) -> None:
-    assert (await served.login_from(OUTSIDER, CLIENT)).status_code == 401
+    assert (await served.login_from(OUTSIDER, CLIENT)).status_code == 503
     assert served.keys == [f"login:addr:{OUTSIDER}"]
 
 

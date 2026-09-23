@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 from datetime import timedelta
 from uuid import UUID
 
+from tadas.integrations.identity import DeviceAuthorization, PortalIntent
 from tadas.om.idempotency.types.attempt import Attempt
 from tadas.om.opcontext import (
     CredentialKind,
@@ -18,6 +19,7 @@ from tadas.om.opcontext import (
 )
 from tadas.om.tenancy.types.api_key import ApiKey
 from tadas.om.tenancy.types.identity import Identity
+from tadas.om.tenancy.types.invitation import Invitation
 from tadas.om.tenancy.types.issued import (
     IssuedApiKey,
     IssuedLogin,
@@ -25,10 +27,17 @@ from tadas.om.tenancy.types.issued import (
     IssuedSession,
     IssuedTicket,
     OrgMembership,
+    SignInStart,
 )
 from tadas.om.tenancy.types.membership import Membership
 from tadas.om.tenancy.types.org import Org
-from tadas.om.tenancy.types.page import ApiKeyPage, MembershipPage, OrgMembershipPage, UserPage
+from tadas.om.tenancy.types.page import (
+    ApiKeyPage,
+    InvitationPage,
+    MembershipPage,
+    OrgMembershipPage,
+    UserPage,
+)
 from tadas.om.tenancy.types.session import Session
 from tadas.om.tenancy.types.socket_ticket import SocketPrincipal
 from tadas.om.tenancy.types.user import User
@@ -52,7 +61,6 @@ class TenancyManagerInterface(ABC):
         org_name: str,
         slug: str,
         email: str,
-        password: str,
         display_name: str,
         *,
         operator_role: OperatorRole | None = None,
@@ -64,7 +72,9 @@ class TenancyManagerInterface(ABC):
         membership exist; the rest of the seeding runs under it. Returns
         that context beside the org. `operator_role` puts the owner's
         identity on the operator allowlist with that role, or widens the
-        entry it has; it never narrows one.
+        entry it has; it never narrows one. The owner holds no credential:
+        they sign in through the identity provider, or locally through the
+        local sign-in, with the address.
         """
         ...
 
@@ -74,54 +84,105 @@ class TenancyManagerInterface(ABC):
         rctx: RequestContext,
         slug: str,
         email: str,
-        password: str,
         display_name: str,
         role: Role,
     ) -> tuple[OpContext, User, bool]:
         """Platform-internal: seeds a person into an existing org, for local and
-        test environments; there is no invitation flow yet.
+        test environments; a person joins a deployed one by invitation.
 
         Produces the context of the org's creator first, and the rest runs
         under it: the identity is created with its personal org if the email
-        is new (an existing identity keeps its password), then the user and the membership, with
-        the role capped at the creator's and the write recorded as theirs. A
-        person who is already a member is left as is. Returns that context
-        beside the user and whether it was created.
+        is new, then the user and the membership, with the role capped at the
+        creator's and the write recorded as theirs. A person who is already a
+        member is left as is. Returns that context beside the user and whether
+        it was created.
         """
         ...
 
     @abstractmethod
-    async def sign_up(
-        self, rctx: RequestContext, email: str, password: str, display_name: str
-    ) -> IssuedLogin:
-        """Platform-internal: a person nobody knows yet creates their identity
-        and is signed in. The identity lands with the person's personal org,
-        their user in it, and the owner membership, in one commit; the sign-up
-        asks nothing about an org, and the personal org's name and slug are
-        made for them. The answer is a sign-in's: the credential that carries
-        no tenant and the memberships (the one), so the client goes on through
-        the same choice and exchange. An email an identity already holds is
-        Conflict, and so is a sign-up that raced another for it, and nothing
-        lands then. No email is verified, by choice: this is the door a
-        deployed environment has, and whether it is open is the caller's
-        setting, not this operation's. The password is this door's; the
-        person and their place are `creates.create_person`'s, which any other
-        door calls the same way."""
+    async def sign_in_url(
+        self,
+        rctx: RequestContext,
+        redirect_uri: str,
+        state: str,
+        *,
+        invitation_token: str | None = None,
+        sign_up: bool = False,
+    ) -> SignInStart:
+        """Platform-internal: where a browser goes to sign in at the identity
+        provider, and the PKCE verifier the caller keeps and hands back with
+        the code. It comes back to `redirect_uri` with a code and `state` as
+        it was handed; the state is the caller's, which binds the round trip
+        to the tab that started it. A redirect this environment does not name as
+        its own is refused (ValidationFailed): a deployed environment never
+        sends a code anywhere else. Unavailable when no provider is
+        configured."""
         ...
 
     @abstractmethod
-    async def login(
-        self, rctx: RequestContext, email: str, password: str, totp_code: str | None = None
+    async def sign_in_with_code(
+        self,
+        rctx: RequestContext,
+        code: str,
+        invitation_token: str | None = None,
+        *,
+        code_verifier: str | None = None,
     ) -> IssuedLogin:
-        """Platform-internal: verifies a sign-in and issues a credential that
-        carries no tenant. A run of failed sign-ins for the email, known or
-        not, makes the next one wait before its password is checked
-        (SignInDelayed). A person with no personal org yet (one an older
-        release made) gets it here, so every sign-in lists one. A `totp_code`,
-        when presented, is checked against the
-        identity's enrolled secret, refused when it was used already, and
-        recorded on the credential as the verified second factor; a tenant
-        sign-in needs none, and the operator gate asks for it."""
+        """Platform-internal: the identity provider's sign-in, finished. The code
+        the browser brought back is exchanged with the provider, server-side,
+        with the verifier the sign-in started with, for the person it vouches
+        for: an issuer, a subject, and a verified
+        email. The identity is found by the issuer and the subject; else by
+        the email, and linked to the subject from then on (a person the
+        seeding, the operator plane, or an older release made); else made,
+        with their personal org, in one commit: a first sign-in is a sign-up.
+        A sign-in that accepted an invitation lands the membership it names,
+        and one through an org's single sign-on lands a membership when the
+        person's address is in a domain the org verified (`sso_joins`). The
+        answer is a login and the places, as every sign-in's.
+
+        SignInRefused for a code the provider will not exchange;
+        EmailNotVerified when the provider has not verified the address;
+        Unavailable when the provider cannot be reached or is not
+        configured."""
+        ...
+
+    @abstractmethod
+    async def start_device_sign_in(self, rctx: RequestContext) -> DeviceAuthorization:
+        """Platform-internal: a sign-in for a device with no browser of its own,
+        the command line. The person confirms the code the answer names at the
+        provider's address, in any browser; the device keeps the device code
+        and finishes with it."""
+        ...
+
+    @abstractmethod
+    async def finish_device_sign_in(self, rctx: RequestContext, device_code: str) -> IssuedLogin:
+        """Platform-internal: asks whether the person confirmed the device
+        sign-in. When they did, it is finished as `sign_in_with_code` finishes
+        a browser's. SignInPending (or SignInSlowDown) while they have not;
+        SignInRefused when they declined or the code expired."""
+        ...
+
+    @abstractmethod
+    async def dev_sign_in(
+        self, rctx: RequestContext, email: str, display_name: str = ""
+    ) -> IssuedLogin:
+        """Platform-internal, local and test only: a sign-in by address alone,
+        for the seed, the demo recorders, the traffic generator, and the tests,
+        which need people without a browser round trip. The identity is found
+        by the email or made with its personal org, as a first sign-in makes
+        one. NotFound unless the process was built with it on, which a deployed
+        environment refuses at boot."""
+        ...
+
+    @abstractmethod
+    async def verify_second_factor(self, ictx: IdentityContext, totp_code: str) -> IssuedLogin:
+        """Platform-internal: a sign-in's second factor. The login presented is
+        answered with a new one that records the verified code, which the
+        operator gate asks for; the code is checked against the identity's
+        enrolled secret and refused when it was used already. A run of wrong
+        codes for the email makes the next one wait (SignInDelayed). Only a
+        login credential is taken (InvalidCredential otherwise)."""
         ...
 
     @abstractmethod
@@ -179,7 +240,7 @@ class TenancyManagerInterface(ABC):
         enrolled operator's did not); an operator with no second factor
         enrolled yet is admitted with `OperatorPermission.ENROL` alone. An
         operator token admits with its one permission, never wider than the
-        entry grants today: the one exception to "a password alone never
+        entry grants today: the one exception to "a sign-in alone never
         admits", since a second factor or the grant job stood behind it."""
         ...
 
@@ -190,10 +251,10 @@ class TenancyManagerInterface(ABC):
         """Platform-internal: the grant job's, on a deployed database as on a
         local one. Puts the identity that holds the email on the operator
         allowlist with that entry, audited under the system scope. No identity
-        holding the email is NotFound, since an operator signs up like any
+        holding the email is NotFound, since an operator signs in like any
         person first; the platform's own identities (the provisioner and the
         smoke identity, in the platform's reserved domain) are made here the
-        first time, with no org and a password nobody is told. A rerun with
+        first time, with no org and no way to sign in. A rerun with
         the same arguments changes nothing. It enrols no second factor: the
         operator does that at the first sign-in to the plane."""
         ...
@@ -288,6 +349,53 @@ class TenancyManagerInterface(ABC):
     @abstractmethod
     async def get_identity(self, ctx: OpContext) -> Identity:
         """The identity behind the caller's user."""
+        ...
+
+    # Invitations and single sign-on.
+
+    @abstractmethod
+    async def invite_member(
+        self, ctx: OpContext, email: str, role: Role, attempt: Attempt | None = None
+    ) -> Invitation:
+        """Asks a person to join the org, by email, with a role capped at the
+        caller's (NotAuthorized above it). The identity provider sends the
+        email with the sign-in link; the org's organization there is made the
+        first time. A person who is a member already is Conflict, and so is an
+        address with an open invitation (send that one again instead); an
+        expired one is replaced. This is the one door into an org for a person
+        of a deployed environment, so a limit on an org's members is checked
+        here, before anything is sent. `attempt` as on `create_api_key`: the
+        invitation is created on its id, and a rerun finds it."""
+        ...
+
+    @abstractmethod
+    async def get_invitations(
+        self, ctx: OpContext, after: UUID | None, limit: int
+    ) -> InvitationPage:
+        """The org's pending invitations, newest first, a page at a time, for a
+        member manager."""
+        ...
+
+    @abstractmethod
+    async def resend_invitation(self, ctx: OpContext, invitation_id: UUID) -> Invitation:
+        """Sends a pending invitation's email again, with a fresh expiry.
+        InvitationClosed for one accepted or revoked."""
+        ...
+
+    @abstractmethod
+    async def revoke_invitation(self, ctx: OpContext, invitation_id: UUID) -> Invitation:
+        """Revokes a pending invitation: its link stops working.
+        InvitationClosed for one accepted or revoked."""
+        ...
+
+    @abstractmethod
+    async def sso_setup_link(self, ctx: OpContext, intent: PortalIntent, return_url: str) -> str:
+        """A short-lived link to the identity provider's admin portal, where
+        an owner or an admin of a team org sets up the org's single sign-on
+        (`sso`) or proves its domain (`domain_verification`) themselves. A
+        personal org has no single sign-on (ValidationFailed), and only a
+        member manager opens it. The org's organization at the provider is
+        made the first time."""
         ...
 
     @abstractmethod

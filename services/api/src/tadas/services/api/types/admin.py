@@ -15,13 +15,12 @@ from tadas.services.api.types.common import RequestBody, View
 
 class CreateOrgRequest(RequestBody):
     """An org with its owner, as `bootstrap` seeds one. The owner's identity
-    is created with the password, or kept with its own when the email is
-    known already."""
+    is created with its personal org when the email is new; the owner signs
+    in through the identity provider with the address."""
 
     name: str = Field(min_length=1, max_length=200)
     slug: str = Field(min_length=1, max_length=100)
     owner_email: str = Field(min_length=1)
-    owner_password: str = Field(min_length=1)
     owner_name: str = Field(min_length=1, max_length=200)
 
 
@@ -31,7 +30,6 @@ class AddMemberRequest(RequestBody):
     minted."""
 
     email: str = Field(min_length=1)
-    password: str = Field(min_length=1)
     display_name: str = Field(min_length=1, max_length=200)
     role: Role
 
@@ -103,17 +101,3 @@ class IssuedOperatorTokenView(View):
     token: str | None
     expires_at: datetime
     permission: OperatorRole
-
-
-class ResetPasswordRequest(RequestBody):
-    """The person, by email, and the password they sign in with from now on."""
-
-    email: str = Field(min_length=1)
-    password: str = Field(min_length=8, max_length=200)
-
-
-class PasswordResetView(View):
-    """Whose password was reset; the reset is audited with the operator."""
-
-    identity_id: UUID
-    email: str

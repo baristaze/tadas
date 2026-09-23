@@ -20,14 +20,14 @@ from tadas.om.opcontext import Role
 from tadas.om.tasks.types.task import Task
 
 
-def test_login_keeps_a_session_and_whoami_reads_it(stack: Stack) -> None:
-    signed = stack.tadas(
-        "login", "--email", OWNER["email"], "--password", OWNER["password"], token=None
-    )
+def test_login_keeps_a_session_and_whoami_reads_it(
+    stack: Stack, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    signed = stack.login(monkeypatch=monkeypatch)
     assert signed.exit_code == 0, signed.output
     # Ann belongs to Acme and to her personal org; with no --org she enters
     # the personal one, the place every person has.
-    assert signed.output.startswith("signed in as Ann at Ann (owner); session kept in ")
+    assert signed.stdout.startswith("signed in as Ann at Ann (owner); session kept in ")
     session = config.load_session()
     assert session is not None and session.org_slug.startswith("ann-")
     assert session.api_url == "http://test"
@@ -42,26 +42,21 @@ def test_login_keeps_a_session_and_whoami_reads_it(stack: Stack) -> None:
     assert stack.tadas("logout", token=None).output == "no session to forget\n"
 
 
-def test_login_naming_an_org_the_person_is_not_in_is_a_usage_error(stack: Stack) -> None:
-    out = stack.tadas(
-        "login",
-        "--email",
-        OWNER["email"],
-        "--password",
-        OWNER["password"],
-        "--org",
-        "nope",
-        token=None,
-    )
+def test_login_naming_an_org_the_person_is_not_in_is_a_usage_error(
+    stack: Stack, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    out = stack.login("--org", "nope", monkeypatch=monkeypatch)
     assert out.exit_code == 2, out.output
     assert "choose an org with --org: acme" in out.output
     assert config.load_session() is None
 
 
-def test_logout_forgets_a_session_the_api_already_revoked(stack: Stack) -> None:
+def test_logout_forgets_a_session_the_api_already_revoked(
+    stack: Stack, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A session revoked elsewhere, or expired, answers 401: there is nothing
     left to revoke, so the file goes and the command succeeds."""
-    stack.tadas("login", "--email", OWNER["email"], "--password", OWNER["password"], token=None)
+    stack.login(monkeypatch=monkeypatch)
     session = config.load_session()
     assert session is not None
 
@@ -77,12 +72,12 @@ def test_logout_forgets_a_session_the_api_already_revoked(stack: Stack) -> None:
 
 
 def test_logout_revokes_the_kept_session_and_leaves_the_environments_token_alone(
-    stack: Stack,
+    stack: Stack, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    stack.tadas("login", "--email", OWNER["email"], "--password", OWNER["password"], token=None)
+    stack.login(monkeypatch=monkeypatch)
     session = config.load_session()
     assert session is not None
-    bob = stack.session_token(BOB["email"], BOB["password"])
+    bob = stack.session_token(BOB["email"])
 
     out = stack.tadas("logout", token=bob)  # TADAS_TOKEN is Bob's; the file is Ann's
     assert out.exit_code == 0 and out.output == "signed out\n"
@@ -175,10 +170,77 @@ def test_logout_forgets_the_session_when_the_api_cannot_be_reached(
     assert config.load_session() is None
 
 
-def test_a_wrong_password_is_refused_with_exit_1(stack: Stack) -> None:
-    result = stack.tadas("login", "--email", OWNER["email"], "--password", "nope", token=None)
-    assert result.exit_code == 1
-    assert "refused: not_authenticated: email or password is wrong" in result.output
+def test_login_waits_for_the_person_to_confirm_the_code(
+    stack: Stack, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With no browser the address is printed and nothing is opened; the CLI
+    asks again after the interval, and the person confirming meanwhile signs
+    it in."""
+    opened: list[str] = []
+    monkeypatch.setattr(main, "open_browser", opened.append)
+    asks: list[float] = []
+
+    async def confirm_on_the_second_wait(seconds: float) -> None:
+        asks.append(seconds)
+        if len(asks) == 2:
+            user_code = next(iter(stack.twin._devices)).rpartition(":")[2]
+            stack.twin.confirm_device(user_code, BOB["email"])
+
+    monkeypatch.setattr(main, "pause", confirm_on_the_second_wait)
+    signed = stack.tadas("login", "--no-browser", "--org", "acme", token=None)
+    assert signed.exit_code == 0, signed.output
+    assert "to sign in, open https://identity.twin.invalid/device?user_code=" in signed.output
+    assert opened == [] and len(asks) == 2
+    session = config.load_session()
+    assert session is not None and session.email == BOB["email"] and session.org_slug == "acme"
+
+
+def test_login_opens_the_browser_on_the_confirmation_page(
+    stack: Stack, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    opened = stack.confirm_as(OWNER["email"], monkeypatch)
+    signed = stack.tadas("login", token=None)
+    assert signed.exit_code == 0, signed.output
+    assert len(opened) == 1 and opened[0].startswith("https://identity.twin.invalid/device?")
+
+
+def test_a_declined_sign_in_is_refused_with_exit_1(
+    stack: Stack, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def decline(url: str) -> None:
+        stack.twin.confirm_device(url.rpartition("user_code=")[2], OWNER["email"], deny=True)
+
+    async def no_wait(seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr(main, "open_browser", decline)
+    monkeypatch.setattr(main, "pause", no_wait)
+    result = stack.tadas("login", token=None)
+    assert result.exit_code == 1, result.output
+    assert "refused: sign_in_refused" in result.output
+    assert config.load_session() is None
+
+
+def test_a_code_nobody_confirms_expires_with_exit_1(
+    stack: Stack, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clock = iter([0.0, 1000.0, 2000.0])
+    monkeypatch.setattr(main, "now", lambda: next(clock))
+
+    async def no_wait(seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr(main, "open_browser", lambda url: None)
+    monkeypatch.setattr(main, "pause", no_wait)
+    result = stack.tadas("login", token=None)
+    assert result.exit_code == 1, result.output
+    assert "the code expired before it was confirmed" in result.output
+
+
+def test_the_local_sign_in_takes_an_address_alone(stack: Stack) -> None:
+    signed = stack.tadas("login", "--dev-email", BOB["email"], "--org", "acme", token=None)
+    assert signed.exit_code == 0, signed.output
+    assert signed.output.startswith("signed in as Bob at Acme (member); session kept in ")
 
 
 def test_a_task_that_changed_while_the_command_ran_is_refused_with_exit_1(
@@ -236,7 +298,7 @@ def test_the_task_verbs_in_sequence(stack: Stack) -> None:
 
     mine = stack.tadas("ls", "--mine")  # assigned to me, or unassigned and created by me
     assert "Review PR #42" in mine.output and "Migrate the DB" in mine.output
-    bobs = stack.tadas("ls", "--mine", token=stack.session_token(BOB["email"], BOB["password"]))
+    bobs = stack.tadas("ls", "--mine", token=stack.session_token(BOB["email"]))
     assert bobs.output.count("\n") == 1  # the header only
 
     review_short = second.output.split()[1]
@@ -256,7 +318,7 @@ def test_the_task_verbs_in_sequence(stack: Stack) -> None:
 def test_ls_lists_past_the_page_the_api_clamps_at(stack: Stack) -> None:
     # 201 open tasks against the API's clamp of 200: `ls` follows the cursor
     # and shows every one, and a short id resolves on the second page too.
-    token = stack.session_token(OWNER["email"], OWNER["password"])
+    token = stack.session_token(OWNER["email"])
     ctx = run(stack.container.managers.tenancy.authenticate(seed_request(), token))
     manager = stack.container.managers.tasks
     now = utcnow()
@@ -300,7 +362,7 @@ def test_short_ids_and_members_that_do_not_resolve(stack: Stack) -> None:
 
 def test_a_member_sees_the_owners_tasks_and_the_api_decides_what_is_allowed(stack: Stack) -> None:
     stack.tadas("add", "Owner's task")
-    bob = stack.session_token(BOB["email"], BOB["password"])
+    bob = stack.session_token(BOB["email"])
     listed = stack.tadas("ls", token=bob)
     assert "Owner's task" in listed.output
     assert stack.tadas("whoami", token=bob).output == "Bob <bob@example.test> at Acme (member)\n"
@@ -396,7 +458,7 @@ def test_a_timeout_the_environment_got_wrong_is_a_usage_error(
         "TADAS_HTTP_TIMEOUT_SECONDS": bad,
     }
     runner = CliRunner()
-    for command in (["ls"], ["listen"], ["login", "--email", "a@b.test", "--password", "pw"]):
+    for command in (["ls"], ["listen"], ["login", "--dev-email", "a@b.test"]):
         result = runner.invoke(main.app, command, env=environment, catch_exceptions=False)
         assert result.exit_code == 2, f"{command}: {result.output}"
         assert result.output.startswith("TADAS_HTTP_TIMEOUT_SECONDS"), result.output
@@ -452,10 +514,8 @@ def test_a_session_that_cannot_be_kept_is_a_usage_error(stack: Stack, tmp_path: 
     blocked.write_text("")
     result = stack.tadas(
         "login",
-        "--email",
+        "--dev-email",
         OWNER["email"],
-        "--password",
-        OWNER["password"],
         token=None,
         env={"TADAS_HOME": str(blocked / "tadas")},
     )
@@ -492,26 +552,15 @@ def test_a_session_that_cannot_be_forgotten_is_a_usage_error(
 def second_org(stack: Stack) -> None:
     """The owner also belongs to Beta, as a member."""
     tenancy = stack.container.managers.tenancy
-    run(tenancy.bootstrap(seed_request(), "Beta", "beta", "bea@example.test", "pw-1234", "Bea"))
-    run(
-        tenancy.add_member(
-            seed_request(), "beta", OWNER["email"], OWNER["password"], OWNER["name"], Role.MEMBER
-        )
-    )
+    run(tenancy.bootstrap(seed_request(), "Beta", "beta", "bea@example.test", "Bea"))
+    run(tenancy.add_member(seed_request(), "beta", OWNER["email"], OWNER["name"], Role.MEMBER))
 
 
-def test_orgs_lists_where_the_person_belongs_and_marks_the_current_one(stack: Stack) -> None:
+def test_orgs_lists_where_the_person_belongs_and_marks_the_current_one(
+    stack: Stack, monkeypatch: pytest.MonkeyPatch
+) -> None:
     second_org(stack)
-    stack.tadas(
-        "login",
-        "--email",
-        OWNER["email"],
-        "--password",
-        OWNER["password"],
-        "--org",
-        "acme",
-        token=None,
-    )
+    stack.login("--org", "acme", monkeypatch=monkeypatch)
     listed = stack.tadas("orgs", token=None)
     assert listed.exit_code == 0, listed.output
     acme, mine, beta = listed.output.splitlines()
@@ -523,18 +572,11 @@ def test_orgs_lists_where_the_person_belongs_and_marks_the_current_one(stack: St
     assert sorted(teams) == ["acme", "beta"]
 
 
-def test_switch_moves_the_kept_session_and_ends_the_old_one(stack: Stack) -> None:
+def test_switch_moves_the_kept_session_and_ends_the_old_one(
+    stack: Stack, monkeypatch: pytest.MonkeyPatch
+) -> None:
     second_org(stack)
-    stack.tadas(
-        "login",
-        "--email",
-        OWNER["email"],
-        "--password",
-        OWNER["password"],
-        "--org",
-        "acme",
-        token=None,
-    )
+    stack.login("--org", "acme", monkeypatch=monkeypatch)
     before = config.load_session()
     assert before is not None
     moved = stack.tadas("switch", "beta", token=None)
@@ -549,8 +591,10 @@ def test_switch_moves_the_kept_session_and_ends_the_old_one(stack: Stack) -> Non
     assert old.exit_code == 3, old.output
 
 
-def test_switch_to_an_org_the_person_is_not_in_is_a_usage_error(stack: Stack) -> None:
-    stack.tadas("login", "--email", OWNER["email"], "--password", OWNER["password"], token=None)
+def test_switch_to_an_org_the_person_is_not_in_is_a_usage_error(
+    stack: Stack, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stack.login(monkeypatch=monkeypatch)
     before = config.load_session()
     out = stack.tadas("switch", "nope", token=None)
     assert out.exit_code == 2, out.output
