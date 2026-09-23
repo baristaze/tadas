@@ -34,6 +34,8 @@ const SERVER_KINDS = [
   "tasks.task.deleted",
   "tenancy.api_key.created",
   "tenancy.api_key.deleted",
+  "tenancy.invitation.created",
+  "tenancy.invitation.updated",
   "tenancy.membership.updated",
   "tenancy.session.revoked",
   "tenancy.user.created",

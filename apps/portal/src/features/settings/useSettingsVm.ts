@@ -3,6 +3,7 @@ import { errorMessage } from "../../app/errorMessage";
 import { forgetSession } from "../../app/forgetSession";
 import { useApiKeys, useCreateApiKey, useLogout, useMe, useRevokeApiKey, useUsers } from "../../queries/tenancy";
 import { useNoticesStore } from "../../store/notices";
+import { noteSignedOut } from "../../store/signInState";
 import { apiKeyRows, canManageKeys, memberRows, signedInAs } from "./settingsModel";
 import { signOut } from "./signOut";
 
@@ -56,9 +57,16 @@ export function useSettingsVm() {
   // The server session is revoked, then the token and the cache go; the
   // realtime channel closes with the token. A sign-out finishes here even
   // when the server cannot be reached.
-  const leave = () => void signOut({ revoke: () => logout.mutateAsync(), forget: forgetSession, report: notify });
+  // `/login` then waits for the person to ask, rather than starting a sign-in
+  // the provider's own session would answer at once.
+  const forget = () => {
+    noteSignedOut();
+    forgetSession();
+  };
+  const leave = () => void signOut({ revoke: () => logout.mutateAsync(), forget, report: notify });
 
   return {
+    me: me.data,
     signedInAs: signedInAs(me.data),
     loading: me.isPending || users.isPending || (mayManageKeys && apiKeys.isPending),
     error: me.error ?? users.error ?? (mayManageKeys ? apiKeys.error : null),

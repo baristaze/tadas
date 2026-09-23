@@ -19,6 +19,11 @@ export const keys = {
     all: ["api_key"] as const,
     list: (limit: number) => ["api_key", "list", limit] as const,
   },
+  // A `tenancy.invitation.*` push invalidates these by convention.
+  invitations: {
+    all: ["invitation"] as const,
+    list: (limit: number) => ["invitation", "list", limit] as const,
+  },
   tasks: {
     all: ["task"] as const,
     open: (scope: string) => ["task", "open", scope] as const,

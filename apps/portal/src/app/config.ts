@@ -16,12 +16,16 @@ export interface RuntimeConfig {
   retryAttempts: number;
   /** The wait before the first extra attempt; it doubles and carries jitter. */
   retryBaseDelayMs: number;
+  /** Whether the local sign-in by address alone (`/login/dev`) is offered.
+   * Only the local stack serves it; a deployed config never names it. */
+  devSignIn: boolean;
 }
 
 export interface BuildEnv {
   VITE_API_URL?: string;
   VITE_SENTRY_DSN?: string;
   VITE_SENTRY_ENVIRONMENT?: string;
+  VITE_DEV_SIGN_IN?: string;
 }
 
 const LOCAL_API = "http://127.0.0.1:8000";
@@ -55,6 +59,7 @@ export function resolveConfig(fetched: unknown, env: BuildEnv, origin: string): 
       requestTimeoutMs: timeoutOrDefault(fetched.requestTimeoutMs),
       retryAttempts: attemptsOrDefault(fetched.retryAttempts),
       retryBaseDelayMs: delayOrDefault(fetched.retryBaseDelayMs),
+      devSignIn: fetched.devSignIn === true,
     };
   }
   return {
@@ -64,6 +69,8 @@ export function resolveConfig(fetched: unknown, env: BuildEnv, origin: string): 
     requestTimeoutMs: DEFAULT_REQUEST_TIMEOUT_MS,
     retryAttempts: DEFAULT_RETRY_ATTEMPTS,
     retryBaseDelayMs: DEFAULT_RETRY_BASE_DELAY_MS,
+    // No config file: the local stack, where the local sign-in is served.
+    devSignIn: env.VITE_DEV_SIGN_IN !== "false",
   };
 }
 
