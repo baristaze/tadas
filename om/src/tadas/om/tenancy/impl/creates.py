@@ -1,13 +1,21 @@
-"""The creates the tenancy namespace has more than one entry point for: an
-org with its owner, and a member of an org. The seeding commands
-(`bootstrap`, `add-member`) reach them through the tenant manager's
-transitions, under a request stage; the operator plane reaches them through
-the operator manager, under an operator; a sign-up reaches the first one with
-a person nobody has seen before. Every path builds the same rows and lands
-them in the same named atomic write, so a tenant seeded from the command line,
-one created over the operator API, and one signed up are indistinguishable
-afterwards. Nothing here constructs a stage or decides who may call: the
-callers authorize, this module verifies, copies, and writes."""
+"""The creates the tenancy namespace has more than one entry point for: a
+person with their personal org, an org with its owner, and a member of an
+org. The seeding commands (`bootstrap`, `add-member`) reach them through the
+tenant manager's transitions, under a request stage; the operator plane
+reaches them through the operator manager, under an operator; a sign-up
+reaches the first one with a person nobody has seen before, and a signed-in
+person reaches the second one for a team org of their own. Every path builds
+the same rows and lands them in the same named atomic write, so a tenant
+seeded from the command line, one created over the operator API, and one a
+person made are indistinguishable afterwards. Nothing here constructs a stage
+or decides who may call: the callers authorize, this module verifies, copies,
+and writes.
+
+A person never exists without a place to work: every path that makes an
+identity lands its personal org, its user there, and the owner membership in
+the same commit as the identity (`personal_rows`). The one exception is the
+platform's own identities, which the grant job makes and no person signs in
+as."""
 
 import secrets
 from collections.abc import Awaitable, Callable, Mapping
@@ -21,11 +29,20 @@ from tadas.om.exceptions import Conflict, MembershipLimitReached, ValidationFail
 from tadas.om.opcontext import OperatorRole, RequestScope, Role
 from tadas.om.outbox import OutboxRelayInterface
 from tadas.om.outbox.types.row import OutboxRow
-from tadas.om.tenancy.rules import check_email, email_digest, hash_password, is_platform_email
+from tadas.om.tenancy.rules import (
+    SLUG_SUFFIX_LENGTH,
+    check_email,
+    email_digest,
+    hash_password,
+    is_platform_email,
+    personal_org_name,
+    slug_from_name,
+)
 from tadas.om.tenancy.storage import TenancyStorageInterface
 from tadas.om.tenancy.types.identity import Identity
+from tadas.om.tenancy.types.issued import OrgMembership
 from tadas.om.tenancy.types.membership import Membership
-from tadas.om.tenancy.types.org import Org
+from tadas.om.tenancy.types.org import Org, OrgKind
 from tadas.om.tenancy.types.role import operator_permissions_of
 from tadas.om.tenancy.types.user import User
 
@@ -76,20 +93,27 @@ def widens_operator_role(identity: Identity, granted: OperatorRole) -> bool:
     return not operator_permissions_of(granted) <= held
 
 
+Tenant = tuple[Org, User, Membership]
+"""An org with its owner's user and the owner membership: the rows every
+create of a tenant lands together."""
+
+
 async def identity_for(
     storage: TenancyStorageInterface,
     email: str,
     password: str,
+    display_name: str,
     operator_role: OperatorRole | None,
     now: datetime,
-) -> tuple[Identity, Identity | None]:
-    """The identity as it should read once the create lands, and the row to
-    write beside the create when it changed: a new identity, or an existing one
-    promoted to the operator role asked for. An existing identity keeps its
-    password, and a role is never narrowed. It is not written here; it lands
-    in the create, so a create refused meanwhile leaves no identity carrying
-    this attempt's password or role, and a retry with another password is not
-    kept out."""
+) -> tuple[Identity, Identity | None, Tenant | None]:
+    """The identity as it should read once the create lands, the row to write
+    beside the create when it changed, and the personal org to land with it:
+    a new identity comes with its personal org, and an existing one promoted
+    to the operator role asked for comes alone. An existing identity keeps its
+    password, and a role is never narrowed. Nothing is written here; it all
+    lands in the create, so a create refused meanwhile leaves no identity
+    carrying this attempt's password or role, and a retry with another
+    password is not kept out."""
     if is_platform_email(email):
         # The provisioner and the smoke identity are the grant job's to make,
         # with no password anyone knows; no create names one.
@@ -100,25 +124,16 @@ async def identity_for(
             check_email(email)
         except ValueError as error:
             raise ValidationFailed(str(error)) from None
-    if identity is None:
-        identity_id = new_id()
-        identity = Identity(
-            id=identity_id,
-            created_at=now,
-            updated_at=now,
-            created_by=identity_id,
-            updated_by=identity_id,
-            email=email,
-            password_hash=hash_password(password, secrets.token_bytes(16)),
-            operator_role=operator_role,
-        )
-        return identity, identity
+        identity = new_identity(email, hash_password(password, secrets.token_bytes(16)), now)
+        if operator_role is not None:
+            identity = identity.model_copy(update={"operator_role": operator_role})
+        return identity, identity, personal_rows(identity, display_name, now)
     if operator_role is not None and widens_operator_role(identity, operator_role):
         identity = identity.model_copy(
             update={"operator_role": operator_role, "updated_at": now, "updated_by": identity.id}
         )
-        return identity, identity
-    return identity, None
+        return identity, identity, None
+    return identity, None, None
 
 
 def new_identity(email: str, password_hash: str, now: datetime) -> Identity:
@@ -136,6 +151,50 @@ def new_identity(email: str, password_hash: str, now: datetime) -> Identity:
     )
 
 
+def slug_suffix() -> str:
+    """The random tail of a slug nobody typed."""
+    alphabet = "abcdefghijklmnopqrstuvwxyz0123456789"
+    return "".join(secrets.choice(alphabet) for _ in range(SLUG_SUFFIX_LENGTH))
+
+
+def personal_rows(
+    identity: Identity, display_name: str, now: datetime
+) -> tuple[Org, User, Membership]:
+    """A person's personal org, their user in it, and the owner membership.
+    The org is named after the person, the slug is generated, and the person
+    types neither. A person with no name (one an older release made and left
+    in no org) is "Personal" there, and their address's local part is the
+    name the org shows for them."""
+    name = personal_org_name(display_name)
+    shown = display_name.strip() or identity.email.partition("@")[0]
+    org, user, membership = owner_rows(
+        new_id(), name, slug_from_name(name, slug_suffix()), identity, shown, now
+    )
+    org = org.model_copy(update={"kind": OrgKind.PERSONAL, "personal_identity_id": identity.id})
+    return org, user, membership
+
+
+async def create_person(
+    storage: TenancyStorageInterface,
+    identity: Identity,
+    display_name: str,
+    *,
+    new: bool = True,
+) -> OrgMembership:
+    """A person nobody has seen before, whole: the identity, their personal
+    org, their user in it, and the owner membership, in one commit. Every way
+    a person comes to exist calls this, the password sign-up and the seeding
+    today, and a first sign-in through an identity provider when one exists:
+    it takes the identity as the caller built it, credential and all, and
+    asks nothing about an org. An email or a personal org taken meanwhile is
+    `UniqueKeyTaken`, and nothing lands. `new=False` is the one other case:
+    a person who exists and has no personal org yet gets one, and the
+    identity is left as it is."""
+    org, user, membership = personal_rows(identity, display_name, utcnow())
+    await storage.create_org_with_owner(org.id, org, user, membership, identity if new else None)
+    return OrgMembership(org=org, user=user, role=membership.role)
+
+
 async def create_org_with_owner(
     storage: TenancyStorageInterface,
     *,
@@ -148,19 +207,22 @@ async def create_org_with_owner(
     max_orgs: int,
     operator_role: OperatorRole | None = None,
 ) -> tuple[Org, User, Membership]:
-    """An org, its owner's user, and the owner membership, in one commit, with
-    the owner's identity created or promoted beside them. A taken slug is a
-    `Conflict`. The org and its rows are the owner's own: the owner is the
-    first actor of the tenant, so the provenance names the owner's user."""
+    """A team org, its owner's user, and the owner membership, in one commit,
+    with the owner's identity created, with its personal org, or promoted
+    beside them. A taken slug is a `Conflict`. The org and its rows are the
+    owner's own: the owner is the first actor of the tenant, so the provenance
+    names the owner's user."""
     if await storage.read_org_by_slug(slug) is not None:
         raise Conflict(f"org slug {slug!r} is taken")
     now = utcnow()
-    identity, to_write = await identity_for(storage, email, password, operator_role, now)
+    identity, to_write, personal = await identity_for(
+        storage, email, password, display_name, operator_role, now
+    )
     refuse_one_more(identity.id, await users_of(storage, identity.id, max_orgs), max_orgs)
     org, user, membership = owner_rows(org_id, org_name, slug, identity, display_name, now)
     # One commit: a slug taken meanwhile leaves no org without its owner,
-    # and no identity without its org.
-    await storage.create_org_with_owner(org.id, org, user, membership, to_write)
+    # and no identity without its orgs.
+    await storage.create_org_with_owner(org.id, org, user, membership, to_write, personal)
     return org, user, membership
 
 
@@ -217,8 +279,8 @@ async def add_member_to(
     max_orgs: int,
     admission: Admission | None = None,
 ) -> tuple[User, bool]:
-    """A person in an org: the identity is created if the email is new (an
-    existing identity keeps its password), then the user and the membership
+    """A person in an org: the identity is created if the email is new, with
+    its personal org (an existing identity keeps its password), then the user and the membership
     land with the row that announces them, in one commit, and the row is
     relayed. A person who is already a live member is returned as they are,
     with False. `actor_id` is who the rows record as their maker: the org's
@@ -232,7 +294,9 @@ async def add_member_to(
     if role is Role.SERVICE:
         raise ValidationFailed("service is not a membership role")
     now = utcnow()
-    identity, to_write = await identity_for(storage, email, password, None, now)
+    identity, to_write, personal = await identity_for(
+        storage, email, password, display_name, None, now
+    )
     users = await users_of(storage, identity.id, max_orgs)
     for member_org_id, existing in users:
         if member_org_id == org_id and existing.deleted_at is None:
@@ -276,7 +340,7 @@ async def add_member_to(
         app=request.app.type.value,
     )
     rows = (row, *riders)
-    await storage.create_member(org_id, user, membership, rows, to_write)
+    await storage.create_member(org_id, user, membership, rows, to_write, personal)
     for landed in rows:
         await relay.relay(org_id, landed)
     return user, True

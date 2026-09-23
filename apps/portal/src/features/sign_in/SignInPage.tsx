@@ -1,5 +1,6 @@
 import { Button, Card, ErrorText, LinkButton, Muted, Page, TextField } from "../../design/kit";
 import { tokens } from "../../design/tokens";
+import { placeNote } from "../../app/orgChipModel";
 import { useSignInVm } from "./useSignInVm";
 
 export function SignInPage() {
@@ -13,7 +14,7 @@ export function SignInPage() {
               <Button key={membership.org.id} tone="plain" wide onClick={() => void vm.pick(membership)}>
                 <span style={{ display: "flex", justifyContent: "space-between", gap: tokens.space.md }}>
                   <span>{membership.org.name}</span>
-                  <Muted>{membership.role}</Muted>
+                  <Muted>{placeNote(membership)}</Muted>
                 </span>
               </Button>
             ))}

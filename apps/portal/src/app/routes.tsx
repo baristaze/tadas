@@ -1,5 +1,6 @@
 import { createBrowserRouter, Outlet } from "react-router-dom";
 import { BillingPage } from "../features/billing/BillingPage";
+import { NewOrgPage } from "../features/new_org/NewOrgPage";
 import { SettingsPage } from "../features/settings/SettingsPage";
 import { SignInPage } from "../features/sign_in/SignInPage";
 import { SignUpPage } from "../features/sign_up/SignUpPage";
@@ -28,6 +29,7 @@ export const router = createBrowserRouter([
       { path: "/", element: <TasksPage /> },
       { path: "/settings", element: <SettingsPage /> },
       { path: "/settings/billing", element: <BillingPage /> },
+      { path: "/orgs/new", element: <NewOrgPage /> },
     ],
   },
 ]);

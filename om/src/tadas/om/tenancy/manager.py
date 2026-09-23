@@ -24,6 +24,7 @@ from tadas.om.tenancy.types.issued import (
     IssuedOperatorToken,
     IssuedSession,
     IssuedTicket,
+    OrgMembership,
 )
 from tadas.om.tenancy.types.membership import Membership
 from tadas.om.tenancy.types.org import Org
@@ -56,7 +57,8 @@ class TenancyManagerInterface(ABC):
         *,
         operator_role: OperatorRole | None = None,
     ) -> tuple[OpContext, Org]:
-        """Platform-internal: seeds a fresh environment with one org and its owner.
+        """Platform-internal: seeds a fresh environment with one team org and its
+        owner; an owner nobody has seen before is made with their personal org.
 
         Produces the owner's context once the identity, org, user, and
         membership exist; the rest of the seeding runs under it. Returns
@@ -80,8 +82,8 @@ class TenancyManagerInterface(ABC):
         test environments; there is no invitation flow yet.
 
         Produces the context of the org's creator first, and the rest runs
-        under it: the identity is created if the email is new (an existing
-        identity keeps its password), then the user and the membership, with
+        under it: the identity is created with its personal org if the email
+        is new (an existing identity keeps its password), then the user and the membership, with
         the role capped at the creator's and the write recorded as theirs. A
         person who is already a member is left as is. Returns that context
         beside the user and whether it was created.
@@ -90,23 +92,21 @@ class TenancyManagerInterface(ABC):
 
     @abstractmethod
     async def sign_up(
-        self,
-        rctx: RequestContext,
-        email: str,
-        password: str,
-        display_name: str,
-        org_name: str,
-        org_slug: str,
+        self, rctx: RequestContext, email: str, password: str, display_name: str
     ) -> IssuedLogin:
-        """Platform-internal: a person nobody knows yet creates their identity,
-        their first org, and the owner membership, in one commit, and is signed
-        in. The answer is a sign-in's: the credential that carries no tenant and
-        the memberships (the one), so the client goes on through the same
-        choice and exchange. An email an identity already holds is Conflict,
-        and so is a taken slug; so is a sign-up that raced another for either,
-        and nothing lands then. No email is verified, by choice: this is the
-        door a deployed environment has, and whether it is open is the
-        caller's setting, not this operation's."""
+        """Platform-internal: a person nobody knows yet creates their identity
+        and is signed in. The identity lands with the person's personal org,
+        their user in it, and the owner membership, in one commit; the sign-up
+        asks nothing about an org, and the personal org's name and slug are
+        made for them. The answer is a sign-in's: the credential that carries
+        no tenant and the memberships (the one), so the client goes on through
+        the same choice and exchange. An email an identity already holds is
+        Conflict, and so is a sign-up that raced another for it, and nothing
+        lands then. No email is verified, by choice: this is the door a
+        deployed environment has, and whether it is open is the caller's
+        setting, not this operation's. The password is this door's; the
+        person and their place are `creates.create_person`'s, which any other
+        door calls the same way."""
         ...
 
     @abstractmethod
@@ -116,7 +116,9 @@ class TenancyManagerInterface(ABC):
         """Platform-internal: verifies a sign-in and issues a credential that
         carries no tenant. A run of failed sign-ins for the email, known or
         not, makes the next one wait before its password is checked
-        (SignInDelayed). A `totp_code`, when presented, is checked against the
+        (SignInDelayed). A person with no personal org yet (one an older
+        release made) gets it here, so every sign-in lists one. A `totp_code`,
+        when presented, is checked against the
         identity's enrolled secret, refused when it was used already, and
         recorded on the credential as the verified second factor; a tenant
         sign-in needs none, and the operator gate asks for it."""
@@ -268,6 +270,22 @@ class TenancyManagerInterface(ABC):
     async def get_org(self, ctx: OpContext) -> Org: ...
 
     @abstractmethod
+    async def create_org(
+        self, ctx: OpContext, name: str, slug: str | None, attempt: Attempt | None = None
+    ) -> OrgMembership:
+        """A team org the caller makes and owns: the org, the caller's user in
+        it under the display name they carry in this one, and the owner
+        membership, in one commit. The slug is generated from the name when
+        `slug` is None; a taken one is Conflict. Only a session makes an org
+        (NotAuthorized for an api key), since a new tenant is a person's and
+        not a program's; a person already in as many orgs as they may join is
+        MembershipLimitReached. The caller's session stays in its tenant: the
+        switch into the new one is the exchange. `attempt` as on
+        `create_api_key`: the org is created on its id, and a rerun finds the
+        org written and answers with the caller's place in it."""
+        ...
+
+    @abstractmethod
     async def get_identity(self, ctx: OpContext) -> Identity:
         """The identity behind the caller's user."""
         ...
@@ -299,7 +317,9 @@ class TenancyManagerInterface(ABC):
 
     @abstractmethod
     async def update_membership_role(self, ctx: OpContext, user_id: UUID, role: Role) -> Membership:
-        """Role-capped at the caller's role, for the target's old role and its new one."""
+        """Role-capped at the caller's role, for the target's old role and its
+        new one. The person of a personal org keeps their role in it
+        (PersonalOrgFixed)."""
         ...
 
     @abstractmethod
@@ -307,7 +327,8 @@ class TenancyManagerInterface(ABC):
         """Soft-deletes the member's user in this org, ends their membership,
         and revokes every live session and api key of theirs, in one
         transaction; no list shows them, no role change reaches them, and
-        each revocation is announced, so their sockets close."""
+        each revocation is announced, so their sockets close. The person of a
+        personal org is never removed from it (PersonalOrgFixed)."""
         ...
 
     @abstractmethod

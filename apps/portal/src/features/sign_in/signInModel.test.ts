@@ -2,8 +2,8 @@ import type { MembershipChoiceView } from "../../api";
 import { describe, expect, it } from "vitest";
 import { checkCredentials, chooseOrg, landingPath } from "./signInModel";
 
-const membership = (name: string): MembershipChoiceView => ({
-  org: { id: name, name, slug: name.toLowerCase(), created_at: "2026-01-01T00:00:00Z" },
+const membership = (name: string, kind: "personal" | "team" = "team"): MembershipChoiceView => ({
+  org: { id: name, name, slug: name.toLowerCase(), kind, created_at: "2026-01-01T00:00:00Z" },
   user: { id: "u", email: "a@b.c", display_name: "A", created_at: "2026-01-01T00:00:00Z" },
   role: "member",
 });
@@ -25,6 +25,11 @@ describe("chooseOrg", () => {
       "Acme",
       "Zeta",
     ]);
+  });
+
+  it("puts the person's personal org first", () => {
+    const several = chooseOrg([membership("Acme"), membership("Zed", "personal")]);
+    expect(several.kind === "several" && several.memberships.map((m) => m.org.name)).toEqual(["Zed", "Acme"]);
   });
 });
 

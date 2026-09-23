@@ -120,13 +120,15 @@ async def test_a_read_operator_reads_and_is_refused_every_write(
         writer, "Acme", "acme", "ann@example.test", PASSWORD, "Ann"
     )
     assert reader.permissions == {OperatorPermission.READ}
-    assert {o.slug for o in (await plane.operator.get_orgs(reader, None, 10)).items} == {
-        "acme",
-        "root",
-        "sup",
-    }
+    first = await plane.operator.get_orgs(reader, None, 10)
+    rest = await plane.operator.get_orgs(reader, first.items[-1].id, 10)
+    assert first.has_more and not rest.has_more
+    every = first.items + rest.items
+    assert {o.slug for o in every if not o.personal} == {"acme", "root", "sup"}
+    # And the personal org of each of the three people who own them.
+    assert len([o for o in every if o.personal]) == 3
     assert (await plane.operator.get_org(reader, org.id)).slug == "acme"
-    assert (await plane.operator.size(reader)).tenants == 3
+    assert (await plane.operator.size(reader)).tenants == 6
     for write in (
         plane.operator.create_org(reader, "Other", "other", "bob@example.test", PASSWORD, "Bob"),
         plane.operator.add_member(reader, org.id, "bob@example.test", PASSWORD, "Bob", Role.MEMBER),
@@ -175,7 +177,12 @@ async def test_create_org_lands_the_rows_bootstrap_lands(
         assert identity.email == owner.email
     # And both owners sign in the same way.
     login = await plane.manager.login(request(), "bob@example.test", PASSWORD)
-    assert [m.org.id for m in login.memberships] == [created.id]
+    assert [m.org.id for m in login.memberships if not m.org.personal] == [created.id]
+    # Each new owner came with a personal org, the same way.
+    personal = [m.org for m in login.memberships if m.org.personal]
+    assert [(o.name, o.personal_identity_id) for o in personal] == [
+        ("Ann", created_owner.identity_id)
+    ]
 
 
 async def test_add_member_lands_the_rows_the_seeding_command_lands(
@@ -411,12 +418,13 @@ async def test_the_size_counts_the_living_and_the_last_day(
     )
     await seed_tasks(plane, org.id, 2, TaskStatus.OPEN)
     size = await plane.operator.size(reader)
-    # The two operators' own orgs count, as does each operator's user in them.
-    assert (size.tenants, size.users) == (3, 4)
+    # The two operators' own orgs count, as does each operator's user in them,
+    # and every person's personal org and their user there.
+    assert (size.tenants, size.users) == (7, 8)
     assert (size.tasks_last_24h, size.events_last_24h) == (2, 3)
     assert before - size.since < utcnow() - size.since  # the window ends at the read
     await plane.operator.delete_org(writer, org.id)
-    assert (await plane.operator.size(reader)).tenants == 2
+    assert (await plane.operator.size(reader)).tenants == 6
 
 
 async def test_the_seeding_path_is_unchanged_by_the_shared_implementation(plane: Plane) -> None:

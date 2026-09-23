@@ -24,13 +24,16 @@ def test_login_keeps_a_session_and_whoami_reads_it(stack: Stack) -> None:
         "login", "--email", OWNER["email"], "--password", OWNER["password"], token=None
     )
     assert signed.exit_code == 0, signed.output
-    assert signed.output.startswith("signed in as Ann at Acme (owner); session kept in ")
+    # Ann belongs to Acme and to her personal org; with no --org she enters
+    # the personal one, the place every person has.
+    assert signed.output.startswith("signed in as Ann at Ann (owner); session kept in ")
     session = config.load_session()
-    assert session is not None and session.org_slug == "acme" and session.api_url == "http://test"
+    assert session is not None and session.org_slug.startswith("ann-")
+    assert session.api_url == "http://test"
     assert (config.home() / "session.json").stat().st_mode & 0o777 == 0o600
 
     who = stack.tadas("whoami", token=None)  # the session file, no TADAS_TOKEN
-    assert who.exit_code == 0 and who.output == "Ann <ann@example.test> at Acme (owner)\n"
+    assert who.exit_code == 0 and who.output == "Ann <ann@example.test> at Ann (owner)\n"
 
     out = stack.tadas("logout", token=None)
     assert out.exit_code == 0 and out.output == "signed out\n"
@@ -527,9 +530,13 @@ def test_orgs_lists_where_the_person_belongs_and_marks_the_current_one(stack: St
     )
     listed = stack.tadas("orgs", token=None)
     assert listed.exit_code == 0, listed.output
-    assert listed.output == "* acme  Acme (owner)\n  beta  Beta (member)\n"
+    acme, mine, beta = listed.output.splitlines()
+    assert acme.startswith("* acme ") and acme.endswith("  Acme (owner)")
+    assert mine.startswith("  ann-") and mine.endswith("  Ann (owner, personal)")
+    assert beta.startswith("  beta ") and beta.endswith("  Beta (member)")
     as_json = stack.tadas("orgs", "--json", token=None)
-    assert sorted(m["org"]["slug"] for m in json.loads(as_json.output)) == ["acme", "beta"]
+    teams = [m["org"]["slug"] for m in json.loads(as_json.output) if m["org"]["kind"] == "team"]
+    assert sorted(teams) == ["acme", "beta"]
 
 
 def test_switch_moves_the_kept_session_and_ends_the_old_one(stack: Stack) -> None:

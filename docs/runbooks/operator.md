@@ -18,11 +18,11 @@ runs on `release` and waits for the deploy's reviewer.
 ## Sign up
 
 Open the environment's app (`https://app.staging.tadas.fyi`) and sign up
-with the email you will operate with, and a password you choose. Nothing
-in the deployment holds one for you, and a deployed environment is
-entered only through sign-up. That makes your identity, your first org,
-and you as its owner: a tenant account, which the grant turns into an
-operator.
+with the email you will operate with, your name, and a password you
+choose. Nothing in the deployment holds one for you, and a deployed
+environment is entered only through sign-up. That makes your identity
+and your personal org, with you as its owner: a tenant account, which
+the grant turns into an operator.
 
 ## The grant
 

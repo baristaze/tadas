@@ -15,6 +15,7 @@ from contracts.factories import (
     make_identity,
     make_membership,
     make_org,
+    make_personal_org,
     make_session,
     make_socket_ticket,
     make_user,
@@ -714,6 +715,107 @@ class TenancyStorageContract:
             free.id, free, again, make_membership(again.id, Role.OWNER), promoted
         )
         assert await storage.read_identity(identity.id) == promoted
+
+    async def test_one_personal_org_per_person_among_the_living(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        identity = make_identity()
+        mine = make_personal_org(identity.id)
+        owner = make_user(identity.id)
+        await storage.create_org_with_owner(
+            mine.id, mine, owner, make_membership(owner.id, Role.OWNER), identity
+        )
+        stored = await storage.read_org(mine.id)
+        assert stored == mine and stored is not None and stored.personal
+        # A second one for the same person is refused, and lands nothing.
+        second = make_personal_org(identity.id)
+        again = make_user(identity.id)
+        with pytest.raises(UniqueKeyTaken):
+            await storage.create_org_with_owner(
+                second.id, second, again, make_membership(again.id, Role.OWNER)
+            )
+        assert await storage.read_org(second.id) is None
+        assert await storage.read_user(second.id, again.id) is None
+        # A team org of the same person is no personal org, and another
+        # person's personal org is theirs.
+        team = make_org("Team")
+        member = make_user(identity.id)
+        await storage.create_org_with_owner(
+            team.id, team, member, make_membership(member.id, Role.OWNER)
+        )
+        other = make_identity()
+        theirs = make_personal_org(other.id, "Eve")
+        eve = make_user(other.id)
+        await storage.create_org_with_owner(
+            theirs.id, theirs, eve, make_membership(eve.id, Role.OWNER), other
+        )
+        # Unique among the living: a deleted one frees the person's key.
+        gone = utcnow()
+        await storage.write_org(
+            mine.id, mine.model_copy(update={"deleted_at": gone, "deleted_by": owner.id})
+        )
+        await storage.create_org_with_owner(
+            second.id, second, again, make_membership(again.id, Role.OWNER)
+        )
+        assert await storage.read_org(second.id) == second
+
+    async def test_a_new_persons_personal_org_lands_with_the_create_or_not_at_all(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        taken = make_org("Taken")
+        first = make_user(make_identity().id)
+        await storage.create_org_with_owner(
+            taken.id, taken, first, make_membership(first.id, Role.OWNER)
+        )
+        # Two tenants in one commit, each under its own fence: a slug taken in
+        # the second leaves nothing of the first, nor the identity.
+        newcomer = make_identity()
+        personal = make_personal_org(newcomer.id)
+        mine = make_user(newcomer.id)
+        own = (personal, mine, make_membership(mine.id, Role.OWNER))
+        clash = make_org("Clash").model_copy(update={"slug": taken.slug})
+        owner = make_user(newcomer.id)
+        with pytest.raises(UniqueKeyTaken):
+            await storage.create_org_with_owner(
+                clash.id, clash, owner, make_membership(owner.id, Role.OWNER), newcomer, own
+            )
+        assert await storage.read_identity(newcomer.id) is None
+        assert await storage.read_org(personal.id) is None
+        assert await storage.read_user(personal.id, mine.id) is None
+        # From a free slug both tenants land, and the identity with them.
+        team = make_org("Team")
+        await storage.create_org_with_owner(
+            team.id, team, owner, make_membership(owner.id, Role.OWNER), newcomer, own
+        )
+        assert await storage.read_identity(newcomer.id) == newcomer
+        assert await storage.read_org(personal.id) == personal
+        assert await storage.read_org(team.id) == team
+        assert await storage.read_user(personal.id, mine.id) == mine
+        assert await storage.read_user(team.id, owner.id) == owner
+        places = await storage.read_memberships_by_identity(newcomer.id, 10)
+        assert {p.org.id for p in places} == {personal.id, team.id}
+        # The same for a member: a new person joins with their personal org.
+        joiner = make_identity()
+        theirs = make_personal_org(joiner.id, "Eve")
+        eve_home = make_user(joiner.id)
+        eve = make_user(joiner.id)
+        eve_own = (theirs, eve_home, make_membership(eve_home.id, Role.OWNER))
+        with pytest.raises(UniqueKeyTaken):
+            await storage.create_member(
+                team.id,
+                eve,
+                make_membership(owner.id),
+                (make_user_row(team.id, eve),),
+                joiner,
+                eve_own,
+            )
+        assert await storage.read_org(theirs.id) is None
+        assert await storage.read_identity(joiner.id) is None
+        await storage.create_member(
+            team.id, eve, make_membership(eve.id), (make_user_row(team.id, eve),), joiner, eve_own
+        )
+        assert await storage.read_org(theirs.id) == theirs
+        assert await storage.read_user(team.id, eve.id) == eve
 
     async def test_create_member_lands_whole_or_not_at_all(
         self, storage: TenancyStorageInterface

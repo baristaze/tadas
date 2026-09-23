@@ -4,6 +4,7 @@ import type {
   AddApiKeyRequest,
   ApiKeyPageView,
   ApiKeyView,
+  CreateTeamOrgRequest,
   ExchangeSessionRequest,
   IssuedApiKeyView,
   IssuedLoginView,
@@ -134,9 +135,9 @@ export function useMyMemberships() {
   };
 }
 
-/** A new person and their first org. Answered as a sign-in is, so the flow
- * goes on to the exchange. Sent once, with no bearer and no idempotency key:
- * a retry would meet the email the first attempt took. */
+/** A new person, who comes with their personal org. Answered as a sign-in
+ * is, so the flow goes on to the exchange. Sent once, with no bearer and no
+ * idempotency key: a retry would meet the email the first attempt took. */
 export function useSignUp() {
   return useMutation({
     mutationFn: (body: SignUpRequest) =>
@@ -168,5 +169,18 @@ export function useExchangeSession() {
 export function useSwitchOrg() {
   return useMutation({
     mutationFn: (orgId: string) => api.post<IssuedSessionView>("/v1/auth/sessions", { org_id: orgId }),
+  });
+}
+
+/** A team org the signed-in person makes and owns, from the tenant they are
+ * in. A creating POST, so it carries an idempotency key and a retry makes
+ * one org. The answer is the person's place in it, which the switch takes;
+ * the list of places is read again, since no push names it. */
+export function useCreateOrg() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: CreateTeamOrgRequest) =>
+      api.post<MembershipChoiceView>("/v1/orgs", body, { idempotencyKey: crypto.randomUUID() }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: keys.myMemberships.all }),
   });
 }

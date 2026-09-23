@@ -1,5 +1,6 @@
 // Pure: validation and the org choice. No React, no fetch.
 import type { MembershipChoiceView } from "../../api";
+import { byPlace } from "../../app/orgChipModel";
 
 export interface CredentialsCheck {
   ok: boolean;
@@ -21,7 +22,7 @@ export function chooseOrg(memberships: MembershipChoiceView[]): OrgChoice {
   const [first] = memberships;
   if (first === undefined) return { kind: "none" };
   if (memberships.length === 1) return { kind: "single", membership: first };
-  return { kind: "several", memberships: [...memberships].sort((a, b) => a.org.name.localeCompare(b.org.name)) };
+  return { kind: "several", memberships: [...memberships].sort(byPlace) };
 }
 
 

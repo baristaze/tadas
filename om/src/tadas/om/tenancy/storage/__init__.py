@@ -138,6 +138,7 @@ class TenancyStorageInterface(ABC):
         user: User,
         membership: Membership,
         identity: Identity | None = None,
+        personal: tuple[Org, User, Membership] | None = None,
     ) -> None:
         """A named atomic create: the org, its first user, and the owner's
         membership land in one commit or not at all, so a slug or an identity
@@ -145,7 +146,9 @@ class TenancyStorageInterface(ABC):
         `identity`, when given, is the owner's identity as it should read once
         the tenant exists (new, or promoted to operator) and lands in the same
         commit: a tenant that is refused leaves no identity carrying a password
-        or a flag nobody asked for."""
+        or a flag nobody asked for. `personal`, when given, is a new owner's
+        personal org with its user and membership, a second tenant landing in
+        the same commit, each under its own tenant's fence."""
         ...
 
     @abstractmethod
@@ -156,12 +159,15 @@ class TenancyStorageInterface(ABC):
         membership: Membership,
         outbox_rows: tuple[OutboxRow, ...],
         identity: Identity | None = None,
+        personal: tuple[Org, User, Membership] | None = None,
     ) -> None:
         """A named atomic create: the user, their membership, and the outbox rows
         land in one commit or not at all. A key taken meanwhile (one live user
         per identity, one membership per user) is `UniqueKeyTaken`, and nothing
         lands, the outbox rows included. `identity`, when given, is the person's
-        new identity and lands in the same commit, for the same reason."""
+        new identity and lands in the same commit, for the same reason, and so
+        does `personal`, the new person's personal org, as on
+        `create_org_with_owner`."""
         ...
 
     @abstractmethod

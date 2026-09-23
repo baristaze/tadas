@@ -47,6 +47,23 @@ class CreateOrgRequest(BaseModel):
     slug: Annotated[str, Field(max_length=100, min_length=1, title='Slug')]
 
 
+class Slug(RootModel[str]):
+    root: Annotated[str, Field(max_length=48, min_length=1, title='Slug')]
+
+
+class CreateTeamOrgRequest(BaseModel):
+    """
+    A team org the caller makes and owns. `slug` is lower-case letters and
+    digits joined by hyphens; left out, one is made from the name. A taken
+    slug is 409.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    name: Annotated[str, Field(max_length=200, min_length=1, title='Name')]
+    slug: Annotated[Slug | None, Field(title='Slug')] = None
+
+
 class CredentialKind(StrEnum):
     api_key = 'api_key'
     session_token = 'session_token'
@@ -190,10 +207,25 @@ class OperatorView(BaseModel):
     operator_role: OperatorRole
 
 
+class OrgKind(StrEnum):
+    """
+    What an org is for. Every person has exactly one personal org, made
+    with them; every other org is a team org, made on purpose.
+    """
+    personal = 'personal'
+    team = 'team'
+
+
 class OrgView(BaseModel):
+    """
+    `kind` says what the org is for: every person has one `personal` org,
+    made with them, which is never deleted and never changes hands; every
+    other org is a `team` org.
+    """
     created_at: Annotated[AwareDatetime, Field(title='Created At')]
     deleted_at: Annotated[AwareDatetime | None, Field(title='Deleted At')] = None
     id: Annotated[UUID, Field(title='Id')]
+    kind: OrgKind
     name: Annotated[str, Field(title='Name')]
     slug: Annotated[str, Field(title='Slug')]
 
@@ -295,21 +327,30 @@ class SessionView(BaseModel):
     revoked_at: Annotated[AwareDatetime | None, Field(title='Revoked At')]
 
 
+class OrgName(RootModel[str]):
+    root: Annotated[str, Field(deprecated=True, max_length=200, title='Org Name')]
+
+
+class OrgSlug(RootModel[str]):
+    root: Annotated[str, Field(deprecated=True, max_length=48, title='Org Slug')]
+
+
 class SignUpRequest(BaseModel):
     """
-    A new person, their first org, and their password. The answer is a
-    sign-in's (`IssuedLoginView`), so the client goes on through the same
-    choice and exchange. `org_slug` is lower-case letters and digits joined
-    by hyphens; a held email and a taken slug are both 409. No email is
-    verified.
+    A new person and their password. The person's personal org is made
+    with them, named and slugged for them, so a sign-up names no org. The
+    answer is a sign-in's (`IssuedLoginView`), so the client goes on through
+    the same choice and exchange; a held email is 409. No email is verified.
+    `org_name` and `org_slug` are what a sign-up named before and are
+    ignored; the release after this one refuses them.
     """
     model_config = ConfigDict(
         extra='forbid',
     )
     display_name: Annotated[str, Field(max_length=200, min_length=1, title='Display Name')]
     email: Annotated[str, Field(max_length=320, min_length=3, title='Email')]
-    org_name: Annotated[str, Field(max_length=200, min_length=1, title='Org Name')]
-    org_slug: Annotated[str, Field(max_length=48, min_length=1, title='Org Slug')]
+    org_name: Annotated[OrgName | None, Field(deprecated=True, title='Org Name')] = None
+    org_slug: Annotated[OrgSlug | None, Field(deprecated=True, title='Org Slug')] = None
     password: Annotated[str, Field(max_length=200, min_length=8, title='Password')]
 
 

@@ -232,8 +232,9 @@ async def test_the_size_is_what_the_first_responder_reads(
     size = await client.get("/v1/admin/size", headers=reader)
     assert size.status_code == 200, size.text
     body = size.json()
-    # The seeded tenant and the operator's own; their two owners.
-    assert (body["tenants"], body["users"]) == (2, 2)
+    # The seeded tenant and the operator's own, and each owner's personal
+    # org; the two owners, once in each.
+    assert (body["tenants"], body["users"]) == (4, 4)
     assert (body["tasks_last_24h"], body["events_last_24h"]) == (3, 4)
     assert body["since"].endswith("Z") or "+" in body["since"]
 

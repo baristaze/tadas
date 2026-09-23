@@ -34,13 +34,19 @@ export function useOrgChipVm() {
   return {
     orgName: me.data?.org.name ?? "Tadas",
     plan: billing.data ? planName(billing.data.plan) : null,
+    personal: me.data?.org.kind === "personal",
     role: me.data?.role,
+    canOpen: me.data !== undefined,
     canSwitch: choices.canSwitch,
     others: choices.others,
     open,
     switching: exchange.isPending,
-    toggle: () => setOpen((value) => choices.canSwitch && !value),
+    toggle: () => setOpen((value) => me.data !== undefined && !value),
     close: () => setOpen(false),
     pick,
+    newOrg: () => {
+      setOpen(false);
+      navigate("/orgs/new");
+    },
   };
 }

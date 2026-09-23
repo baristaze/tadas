@@ -99,7 +99,7 @@ def test_the_table_has_a_header_and_one_line_per_task() -> None:
     assert lines[0].index("ASSIGNEE") == lines[1].index("Bob")
 
 
-def membership(slug: str, name: str, role: str = "member"):
+def membership(slug: str, name: str, role: str = "member", kind: str = "team"):
     from tadas.client.types import MembershipChoiceView
 
     return MembershipChoiceView.model_validate(
@@ -108,6 +108,7 @@ def membership(slug: str, name: str, role: str = "member"):
                 "id": str(uuid4()),
                 "name": name,
                 "slug": slug,
+                "kind": kind,
                 "created_at": "2026-09-18T12:00:00Z",
             },
             "user": {
@@ -135,8 +136,18 @@ def test_choose_org_takes_the_slug_or_the_only_one() -> None:
         choose_org([], None)
 
 
+def test_choose_org_takes_the_personal_org_when_none_is_named() -> None:
+    from tadas.apps.cli.model import choose_org
+
+    acme, mine = membership("acme", "Acme"), membership("ann-1x2y", "Ann", "owner", "personal")
+    assert choose_org([acme, mine], None) == mine
+    assert choose_org([acme, mine], "acme") == acme
+
+
 def test_org_lines_sort_by_name_and_mark_the_current_org() -> None:
     from tadas.apps.cli.model import org_lines
 
     lines = org_lines([membership("z-team", "Zeta"), membership("acme", "Acme", "owner")], "z-team")
     assert lines == "  acme    Acme (owner)\n* z-team  Zeta (member)"
+    mine = org_lines([membership("ann-1x2y", "Ann", "owner", "personal")], None)
+    assert mine == "  ann-1x2y  Ann (owner, personal)"

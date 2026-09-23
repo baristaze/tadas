@@ -1,5 +1,4 @@
-"""The billing swimlane: an org's billing account and the processor's
-deliveries already applied, each under the tenant fence.
+"""An org's kind, personal or team, and the person a personal org belongs to.
 
 Revision ID: 202609250000
 Revises: 202609240000
@@ -15,8 +14,8 @@ depends_on = None
 
 
 def upgrade() -> None:
-    run_sql(DatabaseRole.CORE, "202609250000_billing.up.sql")
+    run_sql(DatabaseRole.CORE, "202609250000_org_kind.up.sql")
 
 
 def downgrade() -> None:
-    run_sql(DatabaseRole.CORE, "202609250000_billing.down.sql")
+    run_sql(DatabaseRole.CORE, "202609250000_org_kind.down.sql")
