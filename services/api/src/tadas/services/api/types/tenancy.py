@@ -5,13 +5,19 @@ from pydantic import Field
 
 from tadas.om.opcontext import CredentialKind, OperatorRole, Permission, Role
 from tadas.om.tenancy.rules import MAX_API_KEY_TTL
+from tadas.om.tenancy.types.org import OrgKind
 from tadas.services.api.types.common import RequestBody, View
 
 
 class OrgView(View):
+    """`kind` says what the org is for: every person has one `personal` org,
+    made with them, which is never deleted and never changes hands; every
+    other org is a `team` org."""
+
     id: UUID
     name: str
     slug: str
+    kind: OrgKind
     created_at: datetime
     deleted_at: datetime | None = None
 
@@ -67,17 +73,27 @@ class LoginRequest(RequestBody):
 
 
 class SignUpRequest(RequestBody):
-    """A new person, their first org, and their password. The answer is a
-    sign-in's (`IssuedLoginView`), so the client goes on through the same
-    choice and exchange. `org_slug` is lower-case letters and digits joined
-    by hyphens; a held email and a taken slug are both 409. No email is
-    verified."""
+    """A new person and their password. The person's personal org is made
+    with them, named and slugged for them, so a sign-up names no org. The
+    answer is a sign-in's (`IssuedLoginView`), so the client goes on through
+    the same choice and exchange; a held email is 409. No email is verified.
+    `org_name` and `org_slug` are what a sign-up named before and are
+    ignored; the release after this one refuses them."""
 
     email: str = Field(min_length=3, max_length=320)
     password: str = Field(min_length=8, max_length=200)
     display_name: str = Field(min_length=1, max_length=200)
-    org_name: str = Field(min_length=1, max_length=200)
-    org_slug: str = Field(min_length=1, max_length=48)
+    org_name: str | None = Field(default=None, max_length=200, deprecated=True)
+    org_slug: str | None = Field(default=None, max_length=48, deprecated=True)
+
+
+class CreateTeamOrgRequest(RequestBody):
+    """A team org the caller makes and owns. `slug` is lower-case letters and
+    digits joined by hyphens; left out, one is made from the name. A taken
+    slug is 409."""
+
+    name: str = Field(min_length=1, max_length=200)
+    slug: str | None = Field(default=None, min_length=1, max_length=48)
 
 
 class IssuedLoginView(View):

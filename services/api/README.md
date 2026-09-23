@@ -7,12 +7,17 @@ the database, the cache, and the topic bus.
 
 ## Routes, by area
 
+- **Sign-up.** A new person with an email, a name, and a password,
+  who comes with their personal org; answered as a sign-in.
+  (`/v1/auth/signup`)
 - **Sign-in.** Sign in with email and password, and the code from an
-  authenticator when a second factor is enrolled; exchange the login
-  for a session in one org; sign out. (`/v1/auth/login`,
+  authenticator when a second factor is enrolled; list my places;
+  exchange the login, or switch a session, for a session in one org;
+  sign out. (`/v1/auth/login`, `/v1/auth/memberships`,
   `/v1/auth/sessions`, `/v1/auth/logout`)
-- **Me.** The current org, my user, my identity, and my display name.
-  (`/v1/orgs/current`, `/v1/me`, `/v1/me/identity`)
+- **Me.** The current org, my user, my identity, and my display name;
+  a new team org I own. (`/v1/orgs/current`, `/v1/me`,
+  `/v1/me/identity`, `/v1/orgs`)
 - **Members.** The org's members and their roles a page at a time,
   a member's role, removing a member. (`/v1/users`, `/v1/memberships`,
   `/v1/memberships/{user_id}`)
@@ -28,7 +33,7 @@ the database, the cache, and the topic bus.
 - **The operator plane.** For an identity on the operator allowlist,
   across every org: create an org with its owner, add a member, read
   an org, its members, its tasks, and its events, list every org a
-  page at a time, delete an org, and read the platform's size: the tenant count, the
+  page at a time, delete a team org (a personal org is refused), and read the platform's size: the tenant count, the
   user count, and the tasks of the last twenty-four hours.
   (`/v1/admin/orgs`, `/v1/admin/orgs/{org_id}`,
   `/v1/admin/orgs/{org_id}/members`, `/v1/admin/orgs/{org_id}/tasks`,

@@ -12,6 +12,7 @@ from tadas.services.api.types.tenancy import (
     AddApiKeyRequest,
     ApiKeyPageView,
     ApiKeyView,
+    CreateTeamOrgRequest,
     ExchangeSessionRequest,
     IdentityView,
     IssuedApiKeyView,
@@ -19,6 +20,7 @@ from tadas.services.api.types.tenancy import (
     IssuedSessionView,
     LoginRequest,
     MembershipChoicePageView,
+    MembershipChoiceView,
     MembershipPageView,
     MembershipView,
     MeView,
@@ -72,6 +74,14 @@ class TenancyServiceInterface(ABC):
 
     @abstractmethod
     async def get_org(self, ctx: OpContext) -> OrgView: ...
+
+    @abstractmethod
+    async def create_org(
+        self, ctx: OpContext, body: CreateTeamOrgRequest, attempt: Attempt
+    ) -> MembershipChoiceView:
+        """A team org the caller owns; the answer is the caller's place in it,
+        the choice the exchange takes to switch there."""
+        ...
 
     @abstractmethod
     async def get_users(self, ctx: OpContext, cursor: str | None, limit: int) -> UserPageView:

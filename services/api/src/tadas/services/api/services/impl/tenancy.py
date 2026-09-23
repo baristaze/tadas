@@ -12,6 +12,7 @@ from tadas.services.api.types.tenancy import (
     AddApiKeyRequest,
     ApiKeyPageView,
     ApiKeyView,
+    CreateTeamOrgRequest,
     ExchangeSessionRequest,
     IdentityView,
     IssuedApiKeyView,
@@ -60,9 +61,7 @@ class TenancyServiceImpl(TenancyServiceInterface):
         self._tenancy = tenancy
 
     async def sign_up(self, rctx: RequestContext, body: SignUpRequest) -> IssuedLoginView:
-        issued = await self._tenancy.sign_up(
-            rctx, body.email, body.password, body.display_name, body.org_name, body.org_slug
-        )
+        issued = await self._tenancy.sign_up(rctx, body.email, body.password, body.display_name)
         return IssuedLoginView(
             token=issued.token,
             expires_at=issued.expires_at,
@@ -123,6 +122,12 @@ class TenancyServiceImpl(TenancyServiceInterface):
 
     async def get_org(self, ctx: OpContext) -> OrgView:
         return OrgView.model_validate(await self._tenancy.get_org(ctx))
+
+    async def create_org(
+        self, ctx: OpContext, body: CreateTeamOrgRequest, attempt: Attempt
+    ) -> MembershipChoiceView:
+        place = await self._tenancy.create_org(ctx, body.name, body.slug, attempt)
+        return MembershipChoiceView.model_validate(place)
 
     async def get_users(self, ctx: OpContext, cursor: str | None, limit: int) -> UserPageView:
         # The public page size is clamped here and again by the manager; the

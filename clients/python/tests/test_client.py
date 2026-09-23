@@ -22,7 +22,7 @@ from tadas.client.client import (
     retry_wait_seconds,
 )
 from tadas.client.realtime import Channel
-from tadas.client.types import Role, TaskStatus
+from tadas.client.types import OrgKind, Role, TaskStatus
 
 TASK = {
     "id": "0199a4c0-0000-7000-8000-000000000001",
@@ -43,6 +43,7 @@ ORG = {
     "id": "0199a4c0-0000-7000-8000-0000000000bb",
     "name": "Acme",
     "slug": "acme",
+    "kind": "team",
     "created_at": "2026-09-18T12:00:00Z",
     "deleted_at": None,
 }
@@ -146,6 +147,7 @@ async def test_the_sign_in_flow_uses_the_credential_it_is_given() -> None:
                     "id": str(uuid4()),
                     "name": "Acme",
                     "slug": "acme",
+                    "kind": "team",
                     "created_at": "2026-09-18T12:00:00Z",
                     "deleted_at": None,
                 },
@@ -188,20 +190,32 @@ async def test_sign_up_carries_no_bearer_and_no_key_and_is_sent_once() -> None:
     recorder = Recorder({"/v1/auth/signup": httpx.Response(503, json={})})
     async with client_over(recorder, token="ses_stale") as client:
         with pytest.raises(ApiError):
-            await client.sign_up("dee@example.test", "long-enough", "Dee", "Bakery", "bakery")
+            await client.sign_up("dee@example.test", "long-enough", "Dee")
     [sent] = recorder.requests
     assert "authorization" not in sent.headers and "idempotency-key" not in sent.headers
+    # A sign-up names no org: the person's personal org comes with them.
     assert json.loads(sent.content) == {
         "email": "dee@example.test",
         "password": "long-enough",
         "display_name": "Dee",
-        "org_name": "Bakery",
-        "org_slug": "bakery",
     }
     recorder.respond["/v1/auth/signup"] = httpx.Response(200, json=LOGIN)
     async with client_over(recorder, token=None) as client:
-        issued = await client.sign_up("dee@example.test", "long-enough", "Dee", "Bakery", "bakery")
+        issued = await client.sign_up("dee@example.test", "long-enough", "Dee")
     assert issued.token == "lgn_1" and issued.memberships[0].org.slug == "acme"
+
+
+async def test_create_org_carries_a_key_and_the_slug_only_when_given() -> None:
+    recorder = Recorder({"/v1/orgs": httpx.Response(201, json=CHOICE)})
+    async with client_over(recorder, token="ses_1") as client:
+        place = await client.create_org("Bakery")
+        await client.create_org("Cafe", "cafe", idempotency_key="k-2")
+    first, second = recorder.requests
+    assert json.loads(first.content) == {"name": "Bakery"}
+    assert first.headers["idempotency-key"]
+    assert json.loads(second.content) == {"name": "Cafe", "slug": "cafe"}
+    assert second.headers["idempotency-key"] == "k-2"
+    assert place.org.kind is OrgKind.team and place.role.value == "owner"
 
 
 async def test_the_memberships_are_read_page_after_page_with_the_session() -> None:
