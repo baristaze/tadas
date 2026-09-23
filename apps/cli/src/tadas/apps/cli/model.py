@@ -3,7 +3,9 @@ how a short id names a task, and which org a slug names. Values in, values
 out; no client, no clock, no terminal, so every rule is unit tested without
 either."""
 
+import re
 from collections.abc import Callable, Sequence
+from datetime import datetime, timedelta, tzinfo
 from uuid import UUID
 
 from tadas.client.types import MembershipChoiceView, TaskStatus, TaskView
@@ -60,6 +62,8 @@ def describe(
         return f"{actor} created a task: {title}"
     if action == "deleted":
         return f"{actor} deleted a task: {title}"
+    if action == "reminded":
+        return f"reminder: {title}"
     if before is None or after is None:
         return f"{actor} updated a task: {title}"
     if before.status != after.status:
@@ -99,3 +103,26 @@ def org_lines(memberships: Sequence[MembershipChoiceView], current: str | None) 
         f"  {m.org.name} ({m.role.value})"
         for m in ordered
     )
+
+
+RELATIVE = re.compile(r"^\+(\d+)([mhd])$")
+UNITS = {"m": "minutes", "h": "hours", "d": "days"}
+
+
+def parse_due(text: str, now: datetime, local: tzinfo) -> datetime:
+    """A due time as a person types it: `+30m`, `+2h`, or `+1d` from `now`;
+    or a date and time, `2026-10-01T09:00` or `2026-10-01 09:00`, in the
+    terminal's own zone unless it names an offset. A ValueError says what
+    was wrong."""
+    text = text.strip()
+    relative = RELATIVE.match(text)
+    if relative:
+        amount, unit = int(relative.group(1)), relative.group(2)
+        return now + timedelta(**{UNITS[unit]: amount})
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        raise ValueError(
+            f"{text!r} is not a due time; give +30m, +2h, +1d, or 2026-10-01T09:00"
+        ) from None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=local)
