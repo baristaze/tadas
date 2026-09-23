@@ -29,7 +29,7 @@ immutable in both registries, but three things were missing:
   staging deployed.
 - **Production verifies before it plans.** `resolve` compares each image
   in production's registry, and a fresh download of the portal build
-  (`scripts/portal_digest.sh`), with the recorded digests. It refuses a
+  (`scripts/build_digest.sh`), with the recorded digests. It refuses a
   missing record or a mismatch. `apply` compares again before it
   publishes.
 - **The fast rollback is `DEL-50`'s: the previous release, and only
