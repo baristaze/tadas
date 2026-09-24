@@ -224,6 +224,16 @@ Still at [api.slack.com/apps/A0C3MMXH2AH](https://api.slack.com/apps/A0C3MMXH2AH
 
 Token rotation cannot be turned off once it is on. That is the intent.
 
+Org-wide deployment (`org_deploy_enabled`) cannot be turned off either,
+and the staging app has it on. So `manifest.staging.json` says `true`:
+a manifest that says `false` is refused on save. The production app is
+made new, so its manifest says `false`, and it stays that way.
+
+Slack then shows a banner: "You've changed the permission scopes your
+app uses. Please reinstall your app via the OAuth flow". Tadas's
+**Add to Slack** (step 6) is that OAuth flow. Nothing else reinstalls
+it, and the old workspace-level install from before is not used.
+
 **Check.** **Event Subscriptions** shows the request URL
 `https://api.staging.tadas.fyi/webhooks/slack/events` with a green
 **Verified**. **Slash Commands** shows `/tadas` with
@@ -234,9 +244,12 @@ scopes. **Socket Mode** is off.
 
 ### 5. Let any workspace install it
 
-**Basic Information** → **Manage Distribution**. Tick the checklist
-(**Remove Hard Coded Information** asks you to confirm the app keeps no
-token in code, which is true), then **Activate Public Distribution**.
+**Basic Information** → **Manage Distribution**. Three of the four rows
+under **Share Your App with Other Workspaces** are green on their own.
+The fourth, **Remove Hard Coded Information**, stays grey until you open
+it and tick its checkbox: it asks you to confirm the app keeps no token
+in code, which is true. Until all four are green, **Activate Public
+Distribution** is disabled. Then click it.
 Without this, only the app's own workspace can install it. Public
 distribution does not list the app in the Slack Marketplace; that is a
 separate submission, and Tadas does not make it.
