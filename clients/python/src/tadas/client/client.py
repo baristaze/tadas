@@ -8,7 +8,7 @@ import asyncio
 import random
 import ssl
 from collections.abc import Callable
-from datetime import datetime
+from datetime import date
 from typing import Any, Literal, cast
 from uuid import UUID, uuid4
 
@@ -556,17 +556,18 @@ class ApiClient:
         *,
         notes: str = "",
         assignee_id: UUID | None = None,
-        remind_at: datetime | None = None,
+        due_on: date | None = None,
         idempotency_key: str | None = None,
     ) -> TaskView:
         """A creating call always carries an idempotency key; a retry with the
-        same key returns the task the first call created. `remind_at` carries
-        its offset."""
+        same key returns the task the first call created. `due_on` is a date,
+        never a time: the reminder goes out at nine in the morning of it, in
+        the time zone of the person the task is for."""
         body: dict[str, Any] = {"title": title, "notes": notes}
         if assignee_id is not None:
             body["assignee_id"] = str(assignee_id)
-        if remind_at is not None:
-            body["remind_at"] = remind_at.isoformat()
+        if due_on is not None:
+            body["due_on"] = due_on.isoformat()
         created = await self.request(
             "POST", "/v1/tasks", json=body, idempotency_key=idempotency_key or str(uuid4())
         )
@@ -581,11 +582,11 @@ class ApiClient:
         notes: str | None = None,
         status: TaskStatus | None = None,
         assignee_id: UUID | Unset | None = UNSET,
-        remind_at: datetime | Unset | None = UNSET,
+        due_on: date | Unset | None = UNSET,
     ) -> TaskView:
         """A partial update: only what the caller passes is sent. `assignee_id=None`
-        unassigns; leaving it out keeps the assignee. `remind_at` is the same:
-        None clears the due time, and leaving it out keeps it. `version` is the task's as
+        unassigns; leaving it out keeps the assignee. `due_on` is the same:
+        None clears the due date, and leaving it out keeps it. `version` is the task's as
         the caller read it, sent in `If-Match`; the API refuses the update with
         412 `precondition_failed` when the task changed since, and the caller
         reads again."""
@@ -598,8 +599,8 @@ class ApiClient:
             body["status"] = status.value
         if not isinstance(assignee_id, Unset):
             body["assignee_id"] = None if assignee_id is None else str(assignee_id)
-        if not isinstance(remind_at, Unset):
-            body["remind_at"] = None if remind_at is None else remind_at.isoformat()
+        if not isinstance(due_on, Unset):
+            body["due_on"] = None if due_on is None else due_on.isoformat()
         return TaskView.model_validate(
             await self.request("PATCH", f"/v1/tasks/{task_id}", json=body, if_match=version)
         )
