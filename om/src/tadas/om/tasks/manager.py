@@ -1,7 +1,7 @@
 """The tasks swimlane: the to-do items a team creates, works, and closes."""
 
 from abc import ABC, abstractmethod
-from datetime import datetime
+from datetime import date
 from uuid import UUID
 
 from tadas.om.media.types.file import File
@@ -9,7 +9,7 @@ from tadas.om.media.types.page import FilePage
 from tadas.om.opcontext import OpContext
 from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor, TaskFilter
 from tadas.om.tasks.types.page import TaskPage
-from tadas.om.tasks.types.task import Task
+from tadas.om.tasks.types.task import DueReminder, Task
 
 
 class TasksManagerInterface(ABC):
@@ -102,13 +102,20 @@ class TasksManagerInterface(ABC):
         ...
 
     @abstractmethod
-    async def fire_reminder(
-        self, ctx: OpContext, task_id: UUID, remind_at: datetime
-    ) -> Task | None:
-        """The reminder the task's due time scheduled, when it comes due: marks
-        the task reminded and announces it (`tasks.task.reminded`), and asks
-        for the Slack post when the org has a channel connected, all in one
-        write conditioned on the task still being open and due at `remind_at`
+    async def get_due_reminder(self, ctx: OpContext, task_id: UUID) -> DueReminder | None:
+        """The reminder the task is waiting for: its due date and the moment
+        the reminder goes out, nine in the morning of that date in the time
+        zone of the person the task is for (`tasks.rules.reminder_time`),
+        read as the task and the person are now. None when the task waits for
+        none: no due date, done, deleted, gone, or reminded already."""
+        ...
+
+    @abstractmethod
+    async def fire_reminder(self, ctx: OpContext, task_id: UUID, due_on: date) -> Task | None:
+        """The reminder of the task's due date, when its moment has come:
+        marks the task reminded and announces it (`tasks.task.reminded`), and
+        asks for the Slack post when the org has a channel connected, all in
+        one write conditioned on the task still being open and due on `due_on`
         and not yet reminded. None when it no longer is, which is a reminder
         gone stale: nothing is written and nothing is announced."""
         ...

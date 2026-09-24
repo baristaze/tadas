@@ -14,7 +14,7 @@ import sys
 import time
 import webbrowser
 from collections.abc import Callable, Coroutine
-from datetime import UTC, datetime
+from datetime import date
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Annotated, Any, NoReturn
@@ -151,14 +151,16 @@ def _fail(message: str, code: int) -> NoReturn:
     raise typer.Exit(code)
 
 
-REMIND_HELP = "A due time to be reminded at: +30m, +2h, +1d, or 2026-10-01T09:00 (local time)."
+DUE_HELP = (
+    "The day it is due, as 2026-10-01. The reminder goes out at nine that morning,"
+    " in the time zone of the person the task is for."
+)
 
 
-def _due(text: str) -> datetime:
-    """The due time a person typed, or a usage error that says the forms."""
-    now = datetime.now().astimezone()
+def _due(text: str) -> date:
+    """The due date a person typed, or a usage error that says the form."""
     try:
-        return parse_due(text, now, now.tzinfo or UTC)
+        return parse_due(text)
     except ValueError as error:
         _fail(str(error), EXIT_USAGE)
 
@@ -458,17 +460,17 @@ def add(
     title: Annotated[str, typer.Argument(help="What to do.")],
     notes: Annotated[str, typer.Option(help="Details, kept with the task.")] = "",
     assignee: Annotated[str | None, typer.Option(help="`me`, an email, or a name.")] = None,
-    remind: Annotated[str | None, typer.Option(help=REMIND_HELP)] = None,
+    due: Annotated[str | None, typer.Option(help=DUE_HELP)] = None,
     as_json: Json = False,
     api: Api = None,
 ) -> None:
     """Create a task at the top of the open list."""
-    remind_at = _due(remind) if remind else None
+    due_on = _due(due) if due else None
 
     async def go(client: ApiClient) -> None:
         assignee_id = (await _user(client, assignee)).id if assignee else None
         created = await client.create_task(
-            title, notes=notes, assignee_id=assignee_id, remind_at=remind_at
+            title, notes=notes, assignee_id=assignee_id, due_on=due_on
         )
         _show(created, "added", as_json)
 
@@ -482,28 +484,27 @@ def edit(
     notes: Annotated[str | None, typer.Option(help="New notes.")] = None,
     assignee: Annotated[str | None, typer.Option(help="`me`, an email, or a name.")] = None,
     unassign: Annotated[bool, typer.Option("--unassign", help="Clear the assignee.")] = False,
-    remind: Annotated[str | None, typer.Option(help=REMIND_HELP)] = None,
-    no_remind: Annotated[bool, typer.Option("--no-remind", help="Clear the due time.")] = False,
+    due: Annotated[str | None, typer.Option(help=DUE_HELP)] = None,
+    no_due: Annotated[bool, typer.Option("--no-due", help="Clear the due date.")] = False,
     as_json: Json = False,
     api: Api = None,
 ) -> None:
-    """Change a task's title, notes, assignee, or due time."""
+    """Change a task's title, notes, assignee, or due date."""
     if assignee and unassign:
         _fail("--assignee and --unassign exclude each other", EXIT_USAGE)
-    if remind and no_remind:
-        _fail("--remind and --no-remind exclude each other", EXIT_USAGE)
-    nothing = title is None and notes is None and assignee is None and remind is None
-    if nothing and not (unassign or no_remind):
+    if due and no_due:
+        _fail("--due and --no-due exclude each other", EXIT_USAGE)
+    nothing = title is None and notes is None and assignee is None and due is None
+    if nothing and not (unassign or no_due):
         _fail(
-            "nothing to change; give --title, --notes, --assignee, --unassign, --remind,"
-            " or --no-remind",
+            "nothing to change; give --title, --notes, --assignee, --unassign, --due, or --no-due",
             EXIT_USAGE,
         )
-    remind_at: datetime | Unset | None = UNSET
-    if no_remind:
-        remind_at = None
-    elif remind:
-        remind_at = _due(remind)
+    due_on: date | Unset | None = UNSET
+    if no_due:
+        due_on = None
+    elif due:
+        due_on = _due(due)
 
     async def go(client: ApiClient) -> None:
         task = await _task(client, ref)
@@ -518,7 +519,7 @@ def edit(
             title=title,
             notes=notes,
             assignee_id=assignee_id,
-            remind_at=remind_at,
+            due_on=due_on,
         )
         _show(updated, "edited", as_json)
 

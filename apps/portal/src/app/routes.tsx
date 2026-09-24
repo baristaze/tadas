@@ -9,10 +9,12 @@ import { TasksPage } from "../features/tasks/TasksPage";
 import { RealtimeProvider } from "../realtime/RealtimeProvider";
 import { RequireAuth } from "./RequireAuth";
 import { RouteError } from "./RouteError";
+import { TimeZoneSync } from "./useTimeZoneSync";
 
 function AuthenticatedShell() {
   return (
     <RequireAuth>
+      <TimeZoneSync />
       <RealtimeProvider>
         <Outlet />
       </RealtimeProvider>

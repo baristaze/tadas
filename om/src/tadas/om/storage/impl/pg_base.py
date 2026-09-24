@@ -232,9 +232,11 @@ class PgStorageBase:
         org_id: UUID,
         entity: Identifiable,
         outbox_rows: tuple[OutboxRow, ...] = (),
+        **extra: Any,
     ) -> bool:
         """The create primitive: insert by id and commit, with the outbox rows in
-        the same commit; False when the id is already written, in which case
+        the same commit; `extra` sets storage-only columns beside the entity's.
+        False when the id is already written, in which case
         nothing changes, the outbox rows included. Ids are minted above storage,
         so an existing id is a retry, and a retry must neither overwrite the row
         nor announce it twice. Only the primary key reports False: any other
@@ -245,7 +247,7 @@ class PgStorageBase:
                 f"{row_type.__tablename__} is not in the outbox's role; no outbox row"
             )
         async with self._session_for(row_type, org_id=org_id) as session:
-            session.add(to_row(entity, row_type, org_id=org_id))
+            session.add(to_row(entity, row_type, org_id=org_id, **extra))
             for outbox_row in outbox_rows:
                 session.add(to_row(outbox_row, OutboxRows, org_id=org_id))
             try:

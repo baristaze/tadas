@@ -140,17 +140,13 @@ CONNECTED = (
 
 
 def due_text(task: Task) -> str:
-    """The due time as Slack shows it: in the reader's own time zone, with the
-    UTC time as the fallback a client that cannot localize prints."""
-    if task.remind_at is None:
-        return ""
-    at = task.remind_at
-    fallback = at.strftime("%Y-%m-%d %H:%M UTC")
-    return f"<!date^{int(at.timestamp())}^{{date_short_pretty}} {{time}}|{fallback}>"
+    """The due date as Slack shows it: the date itself, which reads the same
+    in every time zone."""
+    return "" if task.due_on is None else task.due_on.isoformat()
 
 
 def task_line(task: Task) -> str:
-    """One task of the list: its title, escaped, and its due time when set."""
+    """One task of the list: its title, escaped, and its due date when set."""
     line = f"• {escaped(task.title)}"
     due = due_text(task)
     return f"{line}  _due {due}_" if due else line

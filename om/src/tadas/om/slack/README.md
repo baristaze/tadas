@@ -33,7 +33,7 @@ record of what Tadas posted there. This is one of the kinds of thing
 - **List the tasks in Slack.** `/tadas list`, or `/tadas` alone, in a
   connected channel shows the person who typed it, and nobody else,
   the org's first ten open tasks in the list's own order, each with its
-  due time when it has one. When there are more, it says how many and
+  due date when it has one. When there are more, it says how many and
   links to the task list in Tadas. It reads the list and changes
   nothing.
 - **Sweep.** Ended connections, spent codes, and the record of posts

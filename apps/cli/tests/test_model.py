@@ -199,17 +199,12 @@ def test_the_attachment_table_and_its_short_ids() -> None:
         resolve_file("zzzzzzzz", files)
 
 
-def test_a_due_time_is_relative_or_a_date_in_the_terminals_zone() -> None:
-    from datetime import UTC, datetime, timedelta, timezone
+@pytest.mark.parametrize("text", ["soon", "2026-10-01T09:00", "+1d", "2026-02-30", "20261001"])
+def test_a_due_date_is_a_date_and_never_a_time(text: str) -> None:
+    from datetime import date
 
     from tadas.apps.cli.model import parse_due
 
-    now = datetime(2026, 9, 22, 12, 0, tzinfo=UTC)
-    local = timezone(timedelta(hours=-7))
-    assert parse_due("+30m", now, local) == now + timedelta(minutes=30)
-    assert parse_due("+2h", now, local) == now + timedelta(hours=2)
-    assert parse_due(" +1d ", now, local) == now + timedelta(days=1)
-    assert parse_due("2026-10-01T09:00", now, local) == datetime(2026, 10, 1, 9, tzinfo=local)
-    assert parse_due("2026-10-01 09:00+02:00", now, local).utcoffset() == timedelta(hours=2)
-    with pytest.raises(ValueError, match=r"\+30m"):
-        parse_due("soon", now, local)
+    assert parse_due(" 2026-10-01 ") == date(2026, 10, 1)
+    with pytest.raises(ValueError, match="give one as 2026-10-01"):
+        parse_due(text)

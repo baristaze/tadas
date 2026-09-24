@@ -38,6 +38,7 @@ from tadas.services.api.types.tenancy import (
     SignInStartView,
     SsoLinkRequest,
     SsoLinkView,
+    UpdateIdentityRequest,
     UpdateMembershipRequest,
     UpdateMeRequest,
     UserPageView,
@@ -161,6 +162,9 @@ class TenancyServiceImpl(TenancyServiceInterface):
 
     async def get_identity(self, ctx: OpContext) -> IdentityView:
         return IdentityView.model_validate(await self._tenancy.get_identity(ctx))
+
+    async def update_identity(self, ctx: OpContext, body: UpdateIdentityRequest) -> IdentityView:
+        return IdentityView.model_validate(await self._tenancy.set_time_zone(ctx, body.time_zone))
 
     async def get_org(self, ctx: OpContext) -> OrgView:
         return OrgView.model_validate(await self._tenancy.get_org(ctx))

@@ -351,6 +351,21 @@ class TenancyManagerInterface(ABC):
         """The identity behind the caller's user."""
         ...
 
+    @abstractmethod
+    async def set_time_zone(self, ctx: OpContext, time_zone: str) -> Identity:
+        """Records where the caller is, as an IANA name, on their identity,
+        so it holds in every org they are in. A name that is not one
+        (`tenancy.rules.check_time_zone`) is ValidationFailed."""
+        ...
+
+    @abstractmethod
+    async def get_time_zone(self, ctx: OpContext, user_id: UUID) -> str | None:
+        """The time zone of a user of this org, as their identity holds it:
+        what a reminder's hour is read in. None when the person has sent none,
+        or when the user is not this org's; a member who left keeps theirs
+        while the user row stays."""
+        ...
+
     # Invitations and single sign-on.
 
     @abstractmethod

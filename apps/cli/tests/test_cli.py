@@ -3,7 +3,6 @@ short ids, assignees by name, JSON output, and the exit codes."""
 
 import asyncio
 import json
-from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
@@ -669,22 +668,21 @@ def test_a_file_of_a_type_no_task_takes_is_refused(stack: Stack, tmp_path: Path)
     assert stack.tadas("attach", task_id, str(unknown)).exit_code == 2
 
 
-def test_a_due_time_is_set_moved_and_cleared_from_the_command_line(stack: Stack) -> None:
-    added = stack.tadas("add", "Renew the passport", "--remind", "+2h", "--json")
+def test_a_due_date_is_set_moved_and_cleared_from_the_command_line(stack: Stack) -> None:
+    added = stack.tadas("add", "Renew the passport", "--due", "2030-10-01", "--json")
     assert added.exit_code == 0, added.output
     task = json.loads(added.output)
-    assert task["remind_at"] is not None and task["reminded_at"] is None
+    assert task["due_on"] == "2030-10-01" and task["reminded_at"] is None
     short = task["id"][-8:]
 
-    moved = stack.tadas("edit", short, "--remind", "2031-01-02T09:30+01:00", "--json")
+    moved = stack.tadas("edit", short, "--due", "2031-01-02", "--json")
     assert moved.exit_code == 0, moved.output
-    due = datetime.fromisoformat(json.loads(moved.output)["remind_at"])
-    assert due == datetime(2031, 1, 2, 8, 30, tzinfo=UTC)
+    assert json.loads(moved.output)["due_on"] == "2031-01-02"
 
-    cleared = stack.tadas("edit", short, "--no-remind", "--json")
-    assert cleared.exit_code == 0 and json.loads(cleared.output)["remind_at"] is None
+    cleared = stack.tadas("edit", short, "--no-due", "--json")
+    assert cleared.exit_code == 0 and json.loads(cleared.output)["due_on"] is None
 
-    wrong = stack.tadas("add", "When", "--remind", "tomorrow-ish")
-    assert wrong.exit_code == 2 and "+30m, +2h, +1d" in wrong.output
-    both = stack.tadas("edit", short, "--remind", "+1h", "--no-remind")
+    wrong = stack.tadas("add", "When", "--due", "2030-10-01T09:00")
+    assert wrong.exit_code == 2 and "give one as 2026-10-01" in wrong.output
+    both = stack.tadas("edit", short, "--due", "2030-10-01", "--no-due")
     assert both.exit_code == 2

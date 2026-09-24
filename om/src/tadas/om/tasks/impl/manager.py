@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime, timedelta
+from datetime import date, timedelta
 from uuid import UUID
 
 from tadas.infra.observability import OUTCOMES
@@ -17,11 +17,19 @@ from tadas.om.outbox.types.row import OutboxRow, outbox_row
 from tadas.om.slack import SlackManagerInterface
 from tadas.om.slack.types.connection import SlackConnectionStatus
 from tadas.om.tasks.manager import TasksManagerInterface
-from tadas.om.tasks.rules import is_between, position_after, renumbered, top_position
+from tadas.om.tasks.rules import (
+    earliest_reminder_time,
+    is_between,
+    position_after,
+    reminder_person,
+    reminder_time,
+    renumbered,
+    top_position,
+)
 from tadas.om.tasks.storage import TasksStorageInterface
 from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor, TaskFilter
 from tadas.om.tasks.types.page import TaskPage
-from tadas.om.tasks.types.task import Task, TaskScope, TaskStatus
+from tadas.om.tasks.types.task import DueReminder, Task, TaskScope, TaskStatus
 from tadas.om.tenancy import TenancyManagerInterface
 from tadas.om.work.types.work_item import (
     SlackPostEvent,
@@ -155,14 +163,18 @@ class TasksManagerImpl(TasksManagerInterface):
         if current.status == TaskStatus.DONE and task.status == TaskStatus.OPEN:
             await self._room_for_one_more(ctx)
             changes["position"] = await self._top_position(ctx, exclude=task.id)
-        rescheduled = task.remind_at != current.remind_at
+        rescheduled = task.due_on != current.due_on
         if rescheduled:
-            # A new due time has not been reminded of; the reminder the old
+            # A new due date has not been reminded of; the reminder the old
             # one scheduled is stale from this write on, whatever it holds.
             changes["reminded_at"] = None
         updated = Task.model_validate({**current.model_dump(), **changes})
         work: list[OutboxRow] = []
-        if rescheduled:
+        # A reminder already waiting keeps the morning of the person it read
+        # when it ran; one for the new assignee asks again. The two converge
+        # on the one write that lands (`fire_reminder`).
+        reassigned = updated.assignee_id != current.assignee_id and updated.reminded_at is None
+        if rescheduled or reassigned:
             work.extend(self._reminder_rows(ctx, updated))
         if current.status == TaskStatus.OPEN and updated.status == TaskStatus.DONE:
             work.extend(await self._slack_rows(ctx, updated.id, SlackPostEvent.COMPLETED))
@@ -259,15 +271,27 @@ class TasksManagerImpl(TasksManagerInterface):
             log.exception("the attachments of deleted task %s were left live", task_id)
             OUTCOMES.labels(subsystem="tasks", outcome="detach_failed").inc()
 
-    async def fire_reminder(
-        self, ctx: OpContext, task_id: UUID, remind_at: datetime
-    ) -> Task | None:
+    async def get_due_reminder(self, ctx: OpContext, task_id: UUID) -> DueReminder | None:
+        ctx.require(Permission.READ)
+        task = await self._storage.read_task(ctx.org_id, task_id)
+        if (
+            task is None
+            or task.deleted_at is not None
+            or task.status is not TaskStatus.OPEN
+            or task.due_on is None
+            or task.reminded_at is not None
+        ):
+            return None
+        zone = await self._tenancy.get_time_zone(ctx, reminder_person(task))
+        return DueReminder(due_on=task.due_on, at=reminder_time(task.due_on, zone))
+
+    async def fire_reminder(self, ctx: OpContext, task_id: UUID, due_on: date) -> Task | None:
         ctx.require(Permission.WRITE)
         rows = (
             outbox_row(ctx, "tasks.task.reminded", task_id, {}),
             *await self._slack_rows(ctx, task_id, SlackPostEvent.REMINDED),
         )
-        reminded = await self._storage.mark_reminded(ctx.org_id, task_id, remind_at, utcnow(), rows)
+        reminded = await self._storage.mark_reminded(ctx.org_id, task_id, due_on, utcnow(), rows)
         if reminded is None:
             return None
         for row in rows:
@@ -416,11 +440,13 @@ class TasksManagerImpl(TasksManagerInterface):
 
     @staticmethod
     def _reminder_rows(ctx: OpContext, task: Task) -> tuple[OutboxRow, ...]:
-        """The work row that schedules the reminder of the task's due time,
-        or none when it has none. The item waits in the queue until then."""
-        if task.remind_at is None:
+        """The work row that schedules the reminder of the task's due date,
+        or none when it has none. The item waits in the queue until the
+        first moment any zone's morning of that date comes, and its handler
+        waits the rest from the person's zone (`get_due_reminder`)."""
+        if task.due_on is None:
             return ()
-        payload = TaskReminderPayload(not_before=task.remind_at)
+        payload = TaskReminderPayload(not_before=earliest_reminder_time(task.due_on))
         kind = work_row_kind(WorkKind.TASK_REMINDER)
         return (outbox_row(ctx, kind, task.id, payload.model_dump(mode="json")),)
 

@@ -5,7 +5,7 @@ either."""
 
 import re
 from collections.abc import Callable, Sequence
-from datetime import datetime, timedelta, tzinfo
+from datetime import date
 from uuid import UUID
 
 from tadas.client.types import FileView, MembershipChoiceView, OrgKind, TaskStatus, TaskView
@@ -139,24 +139,16 @@ def org_lines(memberships: Sequence[MembershipChoiceView], current: str | None) 
     )
 
 
-RELATIVE = re.compile(r"^\+(\d+)([mhd])$")
-UNITS = {"m": "minutes", "h": "hours", "d": "days"}
+DUE_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
-def parse_due(text: str, now: datetime, local: tzinfo) -> datetime:
-    """A due time as a person types it: `+30m`, `+2h`, or `+1d` from `now`;
-    or a date and time, `2026-10-01T09:00` or `2026-10-01 09:00`, in the
-    terminal's own zone unless it names an offset. A ValueError says what
-    was wrong."""
+def parse_due(text: str) -> date:
+    """A due date as a person types it: `2026-10-01`, a date and never a
+    time. A ValueError says what was wrong."""
     text = text.strip()
-    relative = RELATIVE.match(text)
-    if relative:
-        amount, unit = int(relative.group(1)), relative.group(2)
-        return now + timedelta(**{UNITS[unit]: amount})
     try:
-        parsed = datetime.fromisoformat(text)
+        if not DUE_DATE.match(text):
+            raise ValueError
+        return date.fromisoformat(text)
     except ValueError:
-        raise ValueError(
-            f"{text!r} is not a due time; give +30m, +2h, +1d, or 2026-10-01T09:00"
-        ) from None
-    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=local)
+        raise ValueError(f"{text!r} is not a due date; give one as 2026-10-01") from None

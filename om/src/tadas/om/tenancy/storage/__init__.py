@@ -62,6 +62,13 @@ class TenancyStorageInterface(ABC):
         ...
 
     @abstractmethod
+    async def write_time_zone(self, identity_id: UUID, time_zone: str, at: datetime) -> bool:
+        """Global table: identities have no tenant. Sets the person's time
+        zone in one statement, and only that column; False when there is no
+        such identity."""
+        ...
+
+    @abstractmethod
     async def confirm_totp(self, identity_id: UUID, step: int, at: datetime) -> bool:
         """Global table: identities have no tenant. Confirms the secret the
         identity holds and records `step` as the last one used, in one

@@ -38,6 +38,7 @@ from tadas.services.api.types.tenancy import (
     SignInStartView,
     SsoLinkRequest,
     SsoLinkView,
+    UpdateIdentityRequest,
     UpdateMembershipRequest,
     UpdateMeRequest,
     UserPageView,
@@ -105,6 +106,11 @@ class TenancyServiceInterface(ABC):
 
     @abstractmethod
     async def get_identity(self, ctx: OpContext) -> IdentityView: ...
+
+    @abstractmethod
+    async def update_identity(
+        self, ctx: OpContext, body: UpdateIdentityRequest
+    ) -> IdentityView: ...
 
     @abstractmethod
     async def get_org(self, ctx: OpContext) -> OrgView: ...

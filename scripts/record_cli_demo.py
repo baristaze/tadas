@@ -1,6 +1,6 @@
 """Records the CLI demo GIF in the root README: two terminal panes side by
 side. On the left Bob (a member `make seed` creates) signs in and runs
-`tadas` one command at a time: a task with a reminder, a task with an image
+`tadas` one command at a time: a task due tomorrow, a task with an image
 attached, the list, a task done. On the right the owner runs `tadas listen`
 and each change shows up a moment later.
 
@@ -26,6 +26,7 @@ well, to check the layout.
 
 import argparse
 import asyncio
+import datetime
 import os
 import re
 import shutil
@@ -192,11 +193,11 @@ def short_id(added: list[str]) -> str:
 
 
 async def story(bob: Pane, cli: Cli, email: str, org: str) -> None:
-    """Bob's session: he signs in, adds a task that reminds him in half an
-    hour, adds another and attaches an image to it, lists the open tasks,
-    and completes the first."""
+    """Bob's session: he signs in, adds a task due tomorrow, adds another and
+    attaches an image to it, lists the open tasks, and completes the first."""
     await command(bob, cli, "login", "--dev-email", email, "--org", org)
-    bank = short_id(await command(bob, cli, "add", "Call the bank", "--remind", "+30m"))
+    tomorrow = (datetime.date.today() + datetime.timedelta(days=1)).isoformat()
+    bank = short_id(await command(bob, cli, "add", "Call the bank", "--due", tomorrow))
     logo = short_id(await command(bob, cli, "add", "New logo"))
     await command(bob, cli, "attach", logo, "logo.png")
     await command(bob, cli, "ls")

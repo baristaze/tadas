@@ -4,7 +4,7 @@ objects the manager received, unchanged."""
 
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import date, datetime
 from uuid import UUID
 
 from tadas.om.outbox.types.row import OutboxRow
@@ -111,15 +111,15 @@ class TasksStorageInterface(ABC):
         self,
         org_id: UUID,
         task_id: UUID,
-        remind_at: datetime,
+        due_on: date,
         reminded_at: datetime,
         outbox_rows: tuple[OutboxRow, ...],
     ) -> Task | None:
         """The reminder's compare-and-set, one conditional write: stamps
         `reminded_at` and moves the version on while the task is open, not
-        deleted, still due at `remind_at`, and not yet reminded, and lands the
+        deleted, still due on `due_on`, and not yet reminded, and lands the
         rows that announce it in the same commit. Returns the task as written,
         or None when any of the four no longer holds, landing nothing: a
-        reminder for a moved, cleared, or finished due time, and a second run
+        reminder for a moved, cleared, or finished due date, and a second run
         of one that went out, write nothing."""
         ...

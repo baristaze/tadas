@@ -2178,3 +2178,24 @@ async def test_two_switches_on_one_session_admit_one(manager: TenancyManagerImpl
     assert len(won) == 1 and len(lost) == 1
     assert isinstance(lost[0], CredentialExpired)
     assert (await manager.authenticate(request(), won[0].token)).org_id == acme.id
+
+
+async def test_a_person_records_their_time_zone_and_the_org_reads_it(
+    manager: TenancyManagerImpl, storage: TenancyStorageMemoryImpl
+) -> None:
+    """The zone is the person's, on their identity: set by them, refused
+    when it is not an IANA name, and read by their org for a reminder's
+    hour. A user of another org, or none, reads as no zone."""
+    ann, org = await manager.bootstrap(request(), "Acme", "acme", "ann@example.test", "Ann")
+    bob = await add_member(storage, org.id, "bob@example.test", Role.MEMBER)
+    assert await manager.get_time_zone(ann, ann.user_id) is None
+    identity = await manager.set_time_zone(ann, "Asia/Tokyo")
+    assert identity.time_zone == "Asia/Tokyo"
+    assert await manager.get_time_zone(ann, ann.user_id) == "Asia/Tokyo"
+    assert await manager.get_time_zone(ann, bob.id) is None
+    with pytest.raises(ValidationFailed):
+        await manager.set_time_zone(ann, "+09:00")
+    assert await manager.get_time_zone(ann, ann.user_id) == "Asia/Tokyo"
+    assert await manager.get_time_zone(ann, new_id()) is None
+    zed, _ = await manager.bootstrap(request(), "Zenith", "zenith", "zed@example.test", "Zed")
+    assert await manager.get_time_zone(zed, ann.user_id) is None, "another org's user"
