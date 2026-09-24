@@ -136,8 +136,8 @@ that bundle (build argument `VITE_API_URL`, default
 `http://127.0.0.1:8000`), so a change to it needs a rebuild, which
 `make stack-up` does. After `make seed`, sign in at `/login/dev` as
 `owner@example.test` (owner) or `bob@example.test` (member), by address
-alone; `/login` signs a person in through WorkOS, once the API holds a
-WorkOS key. See the root README for every local URL.
+alone; `/login` signs a person in through WorkOS, once the API holds the
+Tadas App application's API key. See the root README for every local URL.
 
 ## Configuration
 

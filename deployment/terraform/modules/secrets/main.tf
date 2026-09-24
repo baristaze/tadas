@@ -1,6 +1,6 @@
 # Three kinds of secret live under one environment. The platform's own
 # credentials (the four database URLs, the TOTP encryption key, the Sentry
-# DSN, the Slack tokens, the WorkOS API key) are declared here and injected
+# DSN, the Slack tokens, the WorkOS application key) are declared here and injected
 # into tasks by the execution role.
 # Application-managed secrets, the ones SecretsInterface reads at runtime,
 # live under "<prefix>app/", which is the value of TADAS_SECRETS_NAME_PREFIX,
@@ -198,11 +198,14 @@ resource "aws_secretsmanager_secret_version" "stripe" {
   }
 }
 
-# The WorkOS API key the API exchanges sign-in codes and sends invitations
-# with: a process credential, injected into the API alone as
-# TADAS_WORKOS_API_KEY, and named outside the application prefix so no
-# process reaches it through the secrets capability. Each environment holds
-# the key of its own WorkOS environment (staging's, production's). Terraform
+# The Tadas App application's API key: the client secret the API exchanges
+# sign-in codes with, and the key it sends invitations with. A process
+# credential, injected into the API alone as TADAS_WORKOS_API_KEY, and named
+# outside the application prefix so no process reaches it through the
+# secrets capability. Each environment holds a key of the Tadas App in its
+# own WorkOS environment (staging's, production's), made on that
+# application's API keys tab, never the environment's; the API refuses to
+# start on any other key. Terraform
 # creates it as "off", which the API reads as not configured (it starts, and
 # every sign-in through WorkOS answers 503 until the key is set), and never
 # writes it again: set the real value once with

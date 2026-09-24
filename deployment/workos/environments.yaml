@@ -1,6 +1,7 @@
-# The desired state of each WorkOS environment Tadas signs people in
-# through. `uv run tadas-ops workos-bootstrap --environment <name>` reads it
-# and reconciles WorkOS with it: a dry run by default, `--apply` to write.
+# The desired state of the WorkOS application Tadas signs people in
+# through, per WorkOS environment. `uv run tadas-ops workos-bootstrap
+# --environment <name>` reads it and reconciles WorkOS with it: a dry run by
+# default, `--apply` to write.
 #
 # A WorkOS environment is not a Tadas environment. `staging` serves the
 # local stack and Tadas's staging; `production` serves production alone.
@@ -8,34 +9,36 @@
 # TADAS_SIGN_IN_REDIRECT_URIS names it, and a deployed one refuses anything
 # else.
 #
-# The client id is the application's, and it is not a secret. The API key
-# is: the command reads it from the variable named here and never prints it.
-#
-# `client: application` says the client id is an AuthKit application's (the
-# "Tadas App"), not the environment's own client. An application's redirects
-# and its login initiation URI live on its Redirects tab in the dashboard,
-# which no API writes, so the command only probes them and names what the
-# dashboard needs. It never writes the environment's redirect list, which
-# AuthKit does not read for an application.
+# The client id is the Tadas App application's, and it is not a secret. The
+# API key is, and it is that application's own key (Applications, Tadas
+# App, API keys), never the environment's (API Keys): the command proves
+# it before anything else, reads it from the variable named here, and never
+# prints it. The key reads and writes the application's redirect list.
+# The Redirects tab's other fields have no API; the command prints them as
+# checks to make on the tab.
 
 staging:
   api_key_variable: WORKOS_API_KEY
   client_id: client_01M3640D8WBF9KC0P89YW4E72N
-  client: application
   redirect_uris:
     - http://localhost:55173/auth/callback
     - http://localhost:5173/auth/callback
     - https://app.staging.tadas.fyi/auth/callback
+  # The deployed callback, so nothing WorkOS sends on its own lands on a
+  # laptop's port.
+  default_redirect_uri: https://app.staging.tadas.fyi/auth/callback
   login_initiation_uri: https://app.staging.tadas.fyi/login
+  app_homepage_url: https://app.staging.tadas.fyi
   # The sign-in and the invitations need no webhook.
   webhooks: []
 
 production:
   api_key_variable: WORKOS_PRODUCTION_API_KEY
   client_id: client_01M363XVP5FGF2P45FHK9B7MJD
-  client: application
   redirect_uris:
     - https://app.tadas.fyi/auth/callback
+  default_redirect_uri: https://app.tadas.fyi/auth/callback
   login_initiation_uri: https://app.tadas.fyi/login
+  app_homepage_url: https://app.tadas.fyi
   # The sign-in and the invitations need no webhook.
   webhooks: []

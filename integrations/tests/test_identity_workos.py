@@ -18,9 +18,10 @@ from tadas.integrations.exceptions import (
     ProviderConflict,
     ProviderRefused,
     ProviderUnavailable,
+    UnsafeIntegration,
 )
 from tadas.integrations.identity import InvitationState
-from tadas.integrations.identity.workos import IdentityProviderWorkOSImpl
+from tadas.integrations.identity.workos import CREDENTIAL_CHECK_CODE, IdentityProviderWorkOSImpl
 
 CLIENT_ID = "client_test"
 API_KEY = "sk_test_secret_value"
@@ -143,7 +144,7 @@ def test_the_authorization_url_names_the_application_the_redirect_and_the_state(
     assert made.issuer == f"https://api.workos.com/user_management/{CLIENT_ID}"
 
 
-async def test_a_code_is_exchanged_with_its_verifier_and_no_secret() -> None:
+async def test_a_code_is_exchanged_with_the_applications_key_and_its_verifier() -> None:
     made, recorder = provider(
         lambda r: httpx.Response(
             200,
@@ -166,11 +167,21 @@ async def test_a_code_is_exchanged_with_its_verifier_and_no_secret() -> None:
     assert sent.url.path == "/user_management/authenticate"
     body = body_of(sent)
     assert body["grant_type"] == "authorization_code" and body["code"] == "the-code"
-    # The application's public client: the verifier goes, and no secret,
-    # since an AuthKit application's secret is not the environment's key.
-    assert body["client_id"] == CLIENT_ID and "client_secret" not in body
+    # A confidential client: the application's key is the client secret,
+    # and the verifier goes with it, which WorkOS checks as well.
+    assert body["client_id"] == CLIENT_ID and body["client_secret"] == API_KEY
     assert body["code_verifier"] == "the-verifier" and body["invitation_token"] == "inv"
-    assert API_KEY not in sent.headers.get("authorization", "")
+
+
+async def test_a_key_workos_refuses_as_the_applications_is_unavailable_not_the_persons() -> None:
+    made, _ = provider(
+        lambda r: httpx.Response(
+            400, json={"error": "invalid_client", "error_description": "Invalid client secret."}
+        )
+    )
+    with pytest.raises(ProviderUnavailable) as raised:
+        await made.authenticate_code("c", code_verifier="v")
+    assert "TADAS_WORKOS_API_KEY" in str(raised.value) and API_KEY not in str(raised.value)
 
 
 async def test_a_sign_in_by_another_method_is_not_a_single_sign_on() -> None:
@@ -210,6 +221,8 @@ async def test_the_device_answers_map_to_the_integrations_own(
     body = body_of(recorder.requests[0])
     assert body["grant_type"] == "urn:ietf:params:oauth:grant-type:device_code"
     assert body["device_code"] == "dev-code"
+    # WorkOS takes the device sign-in as a public client's: no secret in it.
+    assert body["client_id"] == CLIENT_ID and "client_secret" not in body
 
 
 async def test_a_device_sign_in_starts_for_the_application() -> None:
@@ -228,7 +241,7 @@ async def test_a_device_sign_in_starts_for_the_application() -> None:
     )
     started = await made.start_device()
     assert (started.user_code, started.expires_in, started.interval) == ("ABCD-EFGH", 300, 5)
-    assert body_of(recorder.requests[0])["client_id"] == CLIENT_ID
+    assert body_of(recorder.requests[0]) == {"client_id": CLIENT_ID}
 
 
 @pytest.mark.parametrize("status", [500, 503])
@@ -310,7 +323,7 @@ async def test_invitations_are_sent_found_and_read_back() -> None:
             )
         return httpx.Response(404, json={"message": "no"})
 
-    made, _ = provider(answer)
+    made, recorder = provider(answer)
     sent = await made.send_invitation(
         email="bob@acme.example", organization_id="org_1", expires_in_days=7
     )
@@ -320,6 +333,9 @@ async def test_invitations_are_sent_found_and_read_back() -> None:
     accepted = await made.accepted_invitation(organization_id="org_1", user_id="user_1")
     assert accepted is not None and accepted.id == "inv_1"
     assert await made.accepted_invitation(organization_id="org_1", user_id="user_9") is None
+    # Every management call carries the application's key, so an invitation
+    # is sent in the application's context and lands its person there.
+    assert {r.headers["authorization"] for r in recorder.requests} == {f"Bearer {API_KEY}"}
 
 
 async def test_the_admin_portal_link_is_for_the_organization_and_the_intent() -> None:
@@ -331,11 +347,12 @@ async def test_the_admin_portal_link_is_for_the_organization_and_the_intent() ->
         }
         return httpx.Response(201, json={"link": "https://setup.example/portal/abc"})
 
-    made, _ = provider(answer)
+    made, recorder = provider(answer)
     link = await made.portal_link(
         organization_id="org_1", intent="sso", return_url="http://localhost:55173/settings"
     )
     assert link == "https://setup.example/portal/abc"
+    assert recorder.requests[0].headers["authorization"] == f"Bearer {API_KEY}"
 
 
 def test_the_client_never_takes_a_credential_from_the_environment() -> None:
@@ -343,3 +360,47 @@ def test_the_client_never_takes_a_credential_from_the_environment() -> None:
         IdentityProviderWorkOSImpl(client_id=CLIENT_ID, api_key="", timeout=timedelta(seconds=1))
     with pytest.raises(ValueError):
         IdentityProviderWorkOSImpl(client_id="", api_key=API_KEY, timeout=timedelta(seconds=1))
+
+
+def credential_check(
+    status: int, error: str | None = None
+) -> Callable[[httpx.Request], httpx.Response]:
+    def answer(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/user_management/authenticate"
+        return httpx.Response(status, json={"error": error, "error_description": "said"})
+
+    return answer
+
+
+async def test_the_start_proves_the_key_is_the_applications() -> None:
+    made, recorder = provider(credential_check(400, "invalid_grant"))
+    await made.start()
+    [sent] = recorder.requests
+    body = body_of(sent)
+    # A code WorkOS never issued, exchanged as the application: only the
+    # application's own key gets as far as the code.
+    assert body["code"] == CREDENTIAL_CHECK_CODE and "code_verifier" not in body
+    assert body["client_id"] == CLIENT_ID and body["client_secret"] == API_KEY
+
+
+async def test_the_start_refuses_a_key_of_another_application_or_environment() -> None:
+    made, _ = provider(credential_check(400, "invalid_client"))
+    with pytest.raises(UnsafeIntegration) as raised:
+        await made.start()
+    message = str(raised.value)
+    assert "TADAS_WORKOS_API_KEY" in message and CLIENT_ID in message
+    assert "API keys" in message and API_KEY not in message
+
+
+@pytest.mark.parametrize("status", [500, 503, 429])
+async def test_the_start_goes_on_when_workos_cannot_say(status: int) -> None:
+    made, _ = provider(credential_check(status))
+    await made.start()
+
+
+async def test_the_start_goes_on_when_workos_is_out_of_reach() -> None:
+    def refuse(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("refused", request=request)
+
+    made, _ = provider(refuse)
+    await made.start()
