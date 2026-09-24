@@ -109,7 +109,7 @@ export function TextField({
   label: string;
   value: string;
   onChange: (value: string) => void;
-  type?: "text" | "email" | "password" | "datetime-local";
+  type?: "text" | "email" | "password" | "date";
   autoComplete?: string;
   placeholder?: string;
 }) {

@@ -103,6 +103,18 @@ Zustand, one realtime channel.
   an idempotency key and then switched into the same way. The token change
   reopens the realtime socket; a late 4401 from the old socket signs
   nothing out, since it belongs to a token the tab no longer holds.
+- Tasks. Adding one is a single text box: type the title and press Enter,
+  or click Add. The due date is set by editing the task, with a date
+  picker and a link that clears it. A due date is a date, never a time:
+  the row says "due Today", "due Tomorrow", "due Fri" within the week
+  ahead, or "due Sep 30" further out, and "Overdue" once the day has
+  passed with no reminder out. The reminder goes out at nine in the
+  morning of the date, in the time zone of the person the task is for.
+- The person's time zone. After sign-in, the shell (`TimeZoneSync` in
+  `src/app/useTimeZoneSync.ts`) reads `/v1/me/identity` and, when the
+  browser's IANA zone differs from the one held there, sends it once with
+  `PATCH /v1/me/identity`. It is quiet: a refusal is dropped and the page
+  never waits on it.
 - Settings, for a member who manages members: an invitation by email and
   role (at most their own, never owner), which WorkOS sends, and the
   pending ones to send again or revoke. A team org's settings also open

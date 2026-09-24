@@ -7,6 +7,7 @@ import type {
   CreateTeamOrgRequest,
   DevSignInRequest,
   ExchangeSessionRequest,
+  IdentityView,
   IssuedApiKeyView,
   IssuedLoginView,
   IssuedSessionView,
@@ -40,6 +41,14 @@ const MY_MEMBERSHIPS_PAGE_SIZE = 200;
 
 export function useMe() {
   return useQuery({ queryKey: keys.me, queryFn: ({ signal }) => api.get<MeView>("/v1/me", { signal }) });
+}
+
+/** The person behind the session, across every org: the time zone lives here. */
+export function useIdentity() {
+  return useQuery({
+    queryKey: keys.identity,
+    queryFn: ({ signal }) => api.get<IdentityView>("/v1/me/identity", { signal }),
+  });
 }
 
 /** Every member of the org, page after page. The list is not a screen of its

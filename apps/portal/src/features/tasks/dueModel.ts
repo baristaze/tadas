@@ -1,6 +1,8 @@
-// Pure: a task's due time, between the wire and the screen. The wire carries
-// ISO 8601 with an offset; the screen shows and takes the browser's local
-// time, through a `datetime-local` input, whose value has no offset.
+// Pure: a task's due date, between the wire and the screen. The wire carries
+// a calendar date, "YYYY-MM-DD", with no time and no zone. The screen shows it
+// as that same date and takes it from a `date` input, whose value is the same
+// string. A date is never read through `new Date(iso)`, which would take it as
+// UTC midnight and shift it a day for anyone west of UTC.
 import type { TaskView } from "../../api";
 
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -12,91 +14,76 @@ const LONG_MONTHS = [
 ];
 const DAY_MS = 86_400_000;
 
-const two = (n: number) => String(n).padStart(2, "0");
-
-/** A due time is upcoming, past with its reminder not out yet, or reminded. */
-export type DueState = "upcoming" | "past" | "reminded";
+/** A due date is upcoming (today or later), overdue (before today, its
+ * reminder not out), or reminded. */
+export type DueState = "upcoming" | "overdue" | "reminded";
 
 export interface DueBadge {
   state: DueState;
-  /** The short text on the row, e.g. "due Tue 14:30". */
+  /** The short text on the row, e.g. "due Tomorrow". */
   text: string;
   /** The whole date, for the tooltip. */
   title: string;
 }
 
-function parse(iso: string): Date | null {
-  const date = new Date(iso);
-  return Number.isNaN(date.getTime()) ? null : date;
+/** The local calendar date a "YYYY-MM-DD" names, or null for anything else. */
+export function parseDate(value: string | null | undefined): Date | null {
+  const match = value ? /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim()) : null;
+  if (!match) return null;
+  const [, y, m, d] = match.map(Number) as [number, number, number, number];
+  const date = new Date(y, m - 1, d);
+  if (date.getFullYear() !== y || date.getMonth() !== m - 1 || date.getDate() !== d) return null;
+  return date;
 }
 
-function clock(date: Date): string {
-  return `${two(date.getHours())}:${two(date.getMinutes())}`;
+/** Days from `now`'s calendar day to `date`'s: 0 today, 1 tomorrow, -1 yesterday. */
+function daysFrom(date: Date, now: Date): number {
+  const day = (d: Date) => Date.UTC(d.getFullYear(), d.getMonth(), d.getDate());
+  return Math.round((day(date) - day(now)) / DAY_MS);
 }
 
-function dayNumber(date: Date): number {
-  return Math.round(new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime() / DAY_MS);
-}
-
-/** Short and local: the weekday within six days either side of today, the
- * month and day further out, and the year too when it is not this one. */
+/** Short: Today, Tomorrow, the weekday within the week ahead, the month and
+ * day further out or behind, and the year too when it is not this one. */
 export function formatDue(date: Date, now: Date): string {
-  if (Math.abs(dayNumber(date) - dayNumber(now)) <= 6) return `${DAYS[date.getDay()]} ${clock(date)}`;
+  const days = daysFrom(date, now);
+  if (days === 0) return "Today";
+  if (days === 1) return "Tomorrow";
+  if (days > 1 && days <= 6) return DAYS[date.getDay()]!;
   const day = `${MONTHS[date.getMonth()]} ${date.getDate()}`;
-  const year = date.getFullYear() === now.getFullYear() ? "" : ` ${date.getFullYear()}`;
-  return `${day}${year} ${clock(date)}`;
+  return date.getFullYear() === now.getFullYear() ? day : `${day} ${date.getFullYear()}`;
 }
 
 export function formatDueLong(date: Date): string {
-  return `${LONG_DAYS[date.getDay()]} ${date.getDate()} ${LONG_MONTHS[date.getMonth()]} ${date.getFullYear()}, ${clock(date)}`;
+  return `${LONG_DAYS[date.getDay()]} ${date.getDate()} ${LONG_MONTHS[date.getMonth()]} ${date.getFullYear()}`;
 }
 
-export function dueState(task: Pick<TaskView, "remind_at" | "reminded_at">, now: Date): DueState | null {
-  const due = task.remind_at ? parse(task.remind_at) : null;
+export function dueState(task: Pick<TaskView, "due_on" | "reminded_at">, now: Date): DueState | null {
+  const due = parseDate(task.due_on);
   if (!due) return null;
   if (task.reminded_at) return "reminded";
-  return due.getTime() <= now.getTime() ? "past" : "upcoming";
+  return daysFrom(due, now) < 0 ? "overdue" : "upcoming";
 }
 
-export function dueBadge(task: Pick<TaskView, "remind_at" | "reminded_at">, now: Date): DueBadge | null {
+export function dueBadge(task: Pick<TaskView, "due_on" | "reminded_at">, now: Date): DueBadge | null {
   const state = dueState(task, now);
-  const due = task.remind_at ? parse(task.remind_at) : null;
+  const due = parseDate(task.due_on);
   if (!state || !due) return null;
   const short = formatDue(due, now);
   const long = formatDueLong(due);
-  if (state === "reminded") return { state, text: `reminded ${short}`, title: `Due ${long}. The reminder went out.` };
-  if (state === "past") return { state, text: `due ${short}`, title: `Due ${long}. The time has passed.` };
+  if (state === "reminded") return { state, text: `reminded · due ${short}`, title: `Due ${long}. The reminder went out.` };
+  if (state === "overdue") return { state, text: `Overdue · ${short}`, title: `Due ${long}. The date has passed.` };
   return { state, text: `due ${short}`, title: `Due ${long}` };
 }
 
-/** The value a `datetime-local` input shows for a due time: local, to the minute. */
-export function toInputValue(iso: string | null): string {
-  const date = iso ? parse(iso) : null;
-  if (!date) return "";
-  return `${date.getFullYear()}-${two(date.getMonth() + 1)}-${two(date.getDate())}T${clock(date)}`;
+/** The value a `date` input shows for a due date: the date itself, or empty. */
+export function toInputValue(dueOn: string | null | undefined): string {
+  return dueOn && parseDate(dueOn) ? dueOn.trim() : "";
 }
 
-/** The wire value for what a `datetime-local` input holds: the local time
- * with the browser's offset for that moment. Null for an empty or partial value. */
-export function fromInputValue(value: string): string | null {
-  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(value.trim());
-  if (!match) return null;
-  const [, y, mo, d, h, mi] = match.map(Number) as [number, number, number, number, number, number];
-  const date = new Date(y, mo - 1, d, h, mi);
-  if (Number.isNaN(date.getTime()) || date.getMonth() !== mo - 1 || date.getDate() !== d) return null;
-  const offset = -date.getTimezoneOffset();
-  const sign = offset >= 0 ? "+" : "-";
-  const abs = Math.abs(offset);
-  return (
-    `${date.getFullYear()}-${two(date.getMonth() + 1)}-${two(date.getDate())}` +
-    `T${clock(date)}:00${sign}${two(Math.floor(abs / 60))}:${two(abs % 60)}`
-  );
-}
-
-/** What an edit sends as `remind_at`: undefined when the input did not change,
- * so the field is left out and the due time kept; null when it was emptied,
- * which clears it; the new time otherwise, which reschedules. */
-export function remindAtChange(initial: string, current: string): string | null | undefined {
+/** What an edit sends as `due_on`: undefined when the input did not change,
+ * so the field is left out and the date kept; null when it was emptied,
+ * which clears it; the new date otherwise, which reschedules. */
+export function dueOnChange(initial: string, current: string): string | null | undefined {
   if (current.trim() === initial.trim()) return undefined;
-  return fromInputValue(current);
+  return parseDate(current) ? current.trim() : null;
 }

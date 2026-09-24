@@ -1,66 +1,72 @@
 import { describe, expect, it } from "vitest";
-import { dueBadge, dueState, formatDue, fromInputValue, remindAtChange, toInputValue } from "./dueModel";
+import { dueBadge, dueOnChange, dueState, formatDue, parseDate, toInputValue } from "./dueModel";
 
-// Local times throughout: the model shows and takes the browser's zone, so the
-// test builds its moments in whatever zone it runs in.
+// "Now" is a local moment, so the test reads the same in whatever zone it runs in.
 const now = new Date(2026, 8, 22, 12, 0); // Tuesday 22 September 2026, 12:00
-const at = (day: number, hour: number, minute = 0, month = 8, year = 2026) =>
-  new Date(year, month, day, hour, minute).toISOString();
+const late = new Date(2026, 8, 22, 23, 30); // the same day, well past nine
 
 describe("due model", () => {
-  it("says the weekday near today and the date further out", () => {
-    expect(formatDue(new Date(2026, 8, 22, 14, 30), now)).toBe("Tue 14:30");
-    expect(formatDue(new Date(2026, 8, 25, 9, 5), now)).toBe("Fri 09:05");
-    expect(formatDue(new Date(2026, 8, 16, 8, 0), now)).toBe("Wed 08:00");
-    expect(formatDue(new Date(2026, 8, 30, 14, 30), now)).toBe("Sep 30 14:30");
-    expect(formatDue(new Date(2027, 0, 4, 7, 0), now)).toBe("Jan 4 2027 07:00");
+  it("reads a date as the calendar day it names, never shifted by a zone", () => {
+    const date = parseDate("2026-09-30")!;
+    expect([date.getFullYear(), date.getMonth(), date.getDate(), date.getHours()]).toEqual([2026, 8, 30, 0]);
+    expect(parseDate("2026-01-01")!.getDate()).toBe(1);
+    expect(parseDate(null)).toBeNull();
+    expect(parseDate("2026-02-30")).toBeNull();
+    expect(parseDate("2026-09-30T09:00:00Z")).toBeNull();
+    expect(parseDate("not a date")).toBeNull();
   });
 
-  it("knows an upcoming, a past, and a reminded due time", () => {
-    expect(dueState({ remind_at: null, reminded_at: null }, now)).toBeNull();
-    expect(dueState({ remind_at: at(22, 14, 30), reminded_at: null }, now)).toBe("upcoming");
-    expect(dueState({ remind_at: at(22, 11), reminded_at: null }, now)).toBe("past");
-    expect(dueState({ remind_at: at(22, 11), reminded_at: at(22, 11) }, now)).toBe("reminded");
-    expect(dueState({ remind_at: "not a time", reminded_at: null }, now)).toBeNull();
+  it("says Today, Tomorrow, the weekday of the week ahead, and the date further out", () => {
+    expect(formatDue(parseDate("2026-09-22")!, now)).toBe("Today");
+    expect(formatDue(parseDate("2026-09-23")!, now)).toBe("Tomorrow");
+    expect(formatDue(parseDate("2026-09-25")!, now)).toBe("Fri");
+    expect(formatDue(parseDate("2026-09-28")!, now)).toBe("Mon");
+    expect(formatDue(parseDate("2026-09-29")!, now)).toBe("Sep 29");
+    expect(formatDue(parseDate("2026-09-30")!, now)).toBe("Sep 30");
+    expect(formatDue(parseDate("2026-09-20")!, now)).toBe("Sep 20");
+    expect(formatDue(parseDate("2027-01-04")!, now)).toBe("Jan 4 2027");
   });
 
-  it("builds the badge a row shows", () => {
-    expect(dueBadge({ remind_at: null, reminded_at: null }, now)).toBeNull();
-    expect(dueBadge({ remind_at: at(22, 14, 30), reminded_at: null }, now)).toEqual({
+  it("knows an upcoming, an overdue, and a reminded due date", () => {
+    expect(dueState({ due_on: null, reminded_at: null }, now)).toBeNull();
+    expect(dueState({ due_on: "2026-09-22", reminded_at: null }, late)).toBe("upcoming");
+    expect(dueState({ due_on: "2026-09-30", reminded_at: null }, now)).toBe("upcoming");
+    expect(dueState({ due_on: "2026-09-21", reminded_at: null }, now)).toBe("overdue");
+    expect(dueState({ due_on: "2026-09-22", reminded_at: "2026-09-22T07:00:00Z" }, now)).toBe("reminded");
+    expect(dueState({ due_on: "garbage", reminded_at: null }, now)).toBeNull();
+  });
+
+  it("builds the badge a row shows, with no time in it", () => {
+    expect(dueBadge({ due_on: null, reminded_at: null }, now)).toBeNull();
+    expect(dueBadge({ due_on: "2026-09-22", reminded_at: null }, now)).toEqual({
       state: "upcoming",
-      text: "due Tue 14:30",
-      title: "Due Tuesday 22 September 2026, 14:30",
+      text: "due Today",
+      title: "Due Tuesday 22 September 2026",
     });
-    expect(dueBadge({ remind_at: at(22, 11), reminded_at: null }, now)).toMatchObject({
-      state: "past",
-      text: "due Tue 11:00",
+    expect(dueBadge({ due_on: "2026-09-23", reminded_at: null }, now)).toMatchObject({ text: "due Tomorrow" });
+    expect(dueBadge({ due_on: "2026-09-30", reminded_at: null }, now)).toMatchObject({ text: "due Sep 30" });
+    expect(dueBadge({ due_on: "2026-09-21", reminded_at: null }, now)).toEqual({
+      state: "overdue",
+      text: "Overdue · Sep 21",
+      title: "Due Monday 21 September 2026. The date has passed.",
     });
-    expect(dueBadge({ remind_at: at(21, 9), reminded_at: at(21, 9) }, now)).toEqual({
+    expect(dueBadge({ due_on: "2026-09-22", reminded_at: "2026-09-22T07:00:00Z" }, now)).toEqual({
       state: "reminded",
-      text: "reminded Mon 09:00",
-      title: "Due Monday 21 September 2026, 09:00. The reminder went out.",
+      text: "reminded · due Today",
+      title: "Due Tuesday 22 September 2026. The reminder went out.",
     });
   });
 
-  it("round-trips a local time through the input and the wire", () => {
+  it("hands the date input the date itself", () => {
     expect(toInputValue(null)).toBe("");
-    expect(toInputValue(at(22, 14, 30))).toBe("2026-09-22T14:30");
-    const wire = fromInputValue("2026-09-22T14:30");
-    expect(wire).toMatch(/^2026-09-22T14:30:00[+-]\d{2}:\d{2}$/);
-    expect(new Date(wire!).getTime()).toBe(new Date(2026, 8, 22, 14, 30).getTime());
-    expect(toInputValue(wire)).toBe("2026-09-22T14:30");
+    expect(toInputValue("2026-09-30")).toBe("2026-09-30");
+    expect(toInputValue("bad")).toBe("");
   });
 
-  it("refuses an empty or partial input", () => {
-    expect(fromInputValue("")).toBeNull();
-    expect(fromInputValue("2026-09-22")).toBeNull();
-    expect(fromInputValue("2026-02-30T10:00")).toBeNull();
-  });
-
-  it("sends a due time only when the edit changed it, and null to clear it", () => {
-    expect(remindAtChange("", "")).toBeUndefined();
-    expect(remindAtChange("2026-09-22T14:30", "2026-09-22T14:30")).toBeUndefined();
-    expect(remindAtChange("2026-09-22T14:30", "")).toBeNull();
-    expect(remindAtChange("", "2026-09-23T09:00")).toBe(fromInputValue("2026-09-23T09:00"));
+  it("sends a due date only when the edit changed it, and null to clear it", () => {
+    expect(dueOnChange("", "")).toBeUndefined();
+    expect(dueOnChange("2026-09-30", "2026-09-30")).toBeUndefined();
+    expect(dueOnChange("2026-09-30", "")).toBeNull();
+    expect(dueOnChange("", "2026-10-01")).toBe("2026-10-01");
   });
 });
