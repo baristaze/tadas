@@ -67,35 +67,60 @@ billing unconfigured.
 
 ## Slack
 
-`tadas.integrations.slack.SlackInterface` posts a message, replies in a
-thread, answers a slash command through the `response_url` Slack sent
-with it, and publishes the App Home. Its errors are the decisions a
-caller needs, not Slack's whole vocabulary:
+Tadas is a Slack app that each org installs into its own workspace.
+`tadas.integrations.slack.SlackInterface` is the one door to it:
 
-| Error | Means | What the worker does |
+- the install: Slack's page for a workspace, asking for `BOT_SCOPES`
+  and carrying a one-time state (`authorize_url`); the code Slack sends
+  back, traded with the client id and secret for the workspace's token
+  (`exchange_code`, `oauth.v2.access`); a token renewed (`refresh`), and
+  a token or an install ended (`revoke`, `uninstall`);
+- the check of a call in (`verify_request`): the Slack SDK's signature
+  check over the raw body and its timestamp, inside five minutes, in
+  constant time. `requests.py` turns a checked call into the
+  `SlackInbound` the API queues, keyed on a UUID v5 over the event's
+  `event_id` or the command's `trigger_id`;
+- the Web API under the token the caller hands in, one call at a time:
+  a post, in a thread or not; the email on a person's profile
+  (`users.info`); the App Home; and the answer to a command through the
+  `response_url` Slack sent with it.
+
+The client never holds a workspace's token. The caller, the slack
+manager, resolves it from the org's own secrets for the one call.
+
+Its errors are the decisions a caller needs, not Slack's whole
+vocabulary:
+
+| Error | Means | What the caller does |
 |-------|-------|----------------------|
-| `SlackRateLimited` | Slack asked to wait (429), `retry_after` says how long | Parks the item for that long |
-| `SlackChannelUnusable` | `channel_not_found`, `not_in_channel`, `is_archived` | Marks the connection broken |
-| `SlackNotConfigured` | This process holds no bot token | Posts nothing, says so in the log |
-| `SlackFailed` | Anything else, a transport failure included | Fails the item, which retries |
+| `SlackRateLimited` | Slack asked to wait (429), `retry_after` says how long | The worker parks the item for that long |
+| `SlackChannelUnusable` | `channel_not_found`, `not_in_channel`, `is_archived` | Marks the installation broken; `/tadas connect` says to invite the bot |
+| `SlackTokenRevoked` | `invalid_auth`, `token_revoked`, `invalid_refresh_token`, and the like: the install is gone | Marks the installation broken; a new install mends it |
+| `SlackRequestRefused` | A call in whose signature, timestamp, or body did not check out (`401`) | The API refuses it and queues nothing |
+| `SlackNotConfigured` | This process holds none of the app's credentials (`503`) | Nothing reaches Slack, and nothing from Slack is accepted |
+| `SlackFailed` | Anything else, a transport failure included | The item or the queued call is tried again |
 
 Three impls:
 
-- `SlackWebImpl`, the real client: the Web API with the bot token,
-  over one aiohttp session opened at start, every call under
-  `TADAS_SLACK_TIMEOUT_SECONDS`. A reply goes only to a URL under
+- `SlackWebImpl`, the real client: the app's client id, client secret,
+  and signing secret, one aiohttp session opened at start, every call
+  under `TADAS_SLACK_TIMEOUT_SECONDS`. A reply goes only to a URL under
   `https://hooks.slack.com/`.
-- `SlackTwinImpl`, the twin: records every call in memory, fails on
-  request so a test can drive the rate limit and the unusable channel,
-  and stamps each message `twin.<n>` so a record says where it came
-  from. It refuses to run outside `local` and `test`.
-- `SlackOffImpl`: what a deployed process holds with no bot token. It
-  posts nothing and says why.
+- `SlackTwinImpl`, the twin: Slack's side in memory. It approves an
+  install at once for its own workspace, issues tokens that expire and
+  refresh tokens that work once, signs requests with Slack's scheme under
+  a secret of its own, records every post, fails on request (one method
+  or any), and stamps each message `twin.<n>`. A token names its
+  workspace, so a token the local API's twin issued works in the local
+  worker's. It refuses to run outside `local` and `test`.
+- `SlackOffImpl`: what a process holds when any of the three credentials
+  is unset. Every call answers `slack_unavailable`.
 
-The worker picks one at boot: the real client when a bot token is set,
-the twin in a local process without one, and the off impl otherwise.
-Tests never reach Slack. The app's settings, its scopes, and its two
-tokens are in [the Slack runbook](../docs/runbooks/providers/slack.md).
+`TADAS_SLACK_BACKEND` picks `twin` or `slack`, and `slack` with the
+three credentials is the real client. The two manifests in
+`deployment/slack/` name the same scopes, and a test holds them together.
+The app's settings, its credentials, and each environment's app are in
+[the Slack runbook](../docs/runbooks/providers/slack.md).
 
 ## The identity provider
 

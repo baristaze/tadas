@@ -370,25 +370,31 @@ context on keeps the stage the callee needs.
   `BillingOperatorManagerInterface`: read an org's plan, grant one.
   Both tables are `core` and `org`-scoped. The marks are purged after
   thirty days; a tenant past its retention loses its account too.
-- `slack`: the org's one Slack connection (`SlackConnection`: the
-  workspace and channel, who linked it, and `status`, `ok` or `broken`
-  with the refusal that broke it), the one-time link codes
-  (`SlackLinkCode`, kept as a SHA-256 digest, redeemed in one
-  conditional write, ten minutes long), and the record of each post
-  (`SlackPost`, unique per org on the posting item's key). A connection
-  is unique among the living twice, one per org and one org per
-  channel, as partial unique indexes, so a channel another org holds is
-  refused (`SlackChannelTaken`, a `Conflict`). Issuing a code and
-  disconnecting need `MANAGE_MEMBERS`. Two operations take the request
-  stage, because a Slack command arrives with a channel or a code and no
-  tenant: `redeem_link_code` finds the org from the code, and
-  `channel_context` from the channel and hands back the tenant's service
-  context with the linking member as the attribution, which is who a
-  task `/tadas add` creates is attributed to and who `/tadas list`
-  reads as. Their storage lookups
-  (`redeem_link_code`, `read_connection_by_channel`) read in the system
-  scope. The tables are `core`, `org`-scoped, and purged by the sweep
-  after thirty days.
+- `slack`: the org's one Slack installation (`SlackInstallation`: the
+  workspace, the app's bot user, the scopes Slack granted, who installed
+  it, the channel it posts to, and `status`, `ok` or `broken` with the
+  refusal that broke it), the one-time install states
+  (`SlackInstallState`, kept as a SHA-256 digest, bound to the org and
+  the member, redeemed in one conditional write, ten minutes long), and
+  the record of each post (`SlackPost`, unique per org on the posting
+  work's key). An installation is unique among the living twice, one
+  per org and one org per workspace, as partial unique indexes, so a
+  workspace another org holds is refused (`SlackWorkspaceTaken`, a
+  `Conflict`) and the token Slack handed over is revoked. The bot token
+  is the org's own secret, never a field: `credential_ref` names it in
+  the secret store under the org's prefix. The token lives twelve hours
+  and its refresh token works once, so `bot_token` renews it an hour
+  before expiry, one renewal at a time (a conditional write on
+  `refreshing_until`), and keeps the new pair before using it; a
+  renewal Slack refuses marks the installation broken. Starting an
+  install, binding the channel, and uninstalling need
+  `MANAGE_MEMBERS`. Two operations take the request stage, because
+  Slack's calls carry no tenant: `finish_install` finds the org from
+  the state, and `installation_for_team` from the workspace and hands
+  back the tenant's service context with the installing member as the
+  attribution. Their storage lookups (`redeem_install_state`,
+  `read_installation_by_team`) read in the system scope. The tables are
+  `core`, `org`-scoped, and purged by the sweep after thirty days.
 - `idempotency`: the durable outcome of a request the caller may retry,
   one record per (tenant, user, key); the gateway begins it before a
   creating request and finishes it with the outcome. The record carries
@@ -493,7 +499,7 @@ context on keeps the stage the callee needs.
   Three kinds ride it ([ADR 0012](adr/0012-the-work-queue-has-no-producer-yet.md),
   closed): a task written with a new due time lands a `work.TASK_REMINDER`
   row, a task created or completed in an org with a working Slack
-  connection a `work.SLACK_POST` row, and the reminder's own write, when
+  channel a `work.SLACK_POST` row, and the reminder's own write, when
   it goes out, lands `tasks.task.reminded` and a `work.SLACK_POST` row
   beside it. A kind whose payload is a `ScheduledPayload` names
   `not_before`, and the relayed enqueue makes the item available then,
@@ -784,7 +790,14 @@ alone, and neither key may touch what the other's work does not need
   `/webhooks/stripe`, outside `/v1`: the gateway reads the body and the
   `Stripe-Signature` header, the service checks the signature and its
   five-minute window before anything is queued, and queues the delivery
-  on `webhooks` under a UUID v5 of the event id. A `plan_limit_reached`
+  on `webhooks` under a UUID v5 of the event id. Slack's calls come in
+  the same way, at `/webhooks/slack/commands` and
+  `/webhooks/slack/events`: each is checked against the Slack app's
+  signing secret and its five-minute window, acknowledged at once, and
+  queued on `slack` under a UUID v5 of the event id or the command's
+  trigger id. `/webhooks/slack/oauth` is where Slack sends a browser
+  back from an install; it is not signed, and the one-time state is its
+  check. A `plan_limit_reached`
   envelope carries `plan_limit`, and the edge's idempotency marker is
   released on a 402 as on a 429.
   The client address is the peer's, or the one `X-Forwarded-For` names
@@ -961,19 +974,18 @@ alone, and neither key may touch what the other's work does not need
   reads one would leave it forever; the org row stays as the record.
   Each namespace purges its own rows and asks tenancy the one question,
   `tenant_expired`, so the whole sweep reads one answer.
-  Beside the loop, `serve` consumes the `slack` queue: each delivery
-  the Socket Mode bridge acknowledged is handled (`/tadas add`, `list`,
-  `link`, `help`, a mention, the App Home) and deleted, and one whose handling
-  failed for a reason a retry can change is left for the queue to hand
-  back. `slack` is the bridge: one process per environment holding the
-  Socket Mode connection with `TADAS_SLACK_APP_TOKEN`, which
-  acknowledges each delivery before anything else and queues it under a
-  UUID v5 key over the provider and the delivery id, dropping Slack's
-  retries by that key; with no app token it holds no connection. The
-  Slack client is the one of `integrations/` the container picks at
-  boot: the Web API with `TADAS_SLACK_BOT_TOKEN`, the twin locally
-  without one, and the off impl in a deployed process without one.
-  `tadas-maintenance serve | slack | health`.
+  Beside the loop, `serve` consumes the `slack` queue: each command or
+  event the API checked and acknowledged is handled (`/tadas`, `/tadas
+  team`, `/tadas add`, `/tadas connect`, `/tadas help`, a mention, the
+  App Home, an uninstall) and deleted, and one whose handling failed
+  for a reason a retry can change is left for the queue to hand back.
+  The person typing is the org's member whose identity holds the email
+  Slack gives for them (`users.info`). The Slack client is the one of
+  `integrations/` the container picks at boot: the Web API when the app's client id, client secret, and
+  signing secret are all set, each call made with the org's own bot
+  token, the twin locally, and the off impl in a deployed process
+  without them.
+  `tadas-maintenance serve | health`.
   The serving process answers `/metrics` and `/healthz` on
   `TADAS_METRICS_PORT` (9464) from one thread: `/healthz` asks the
   loop for its last beat, on its event loop, so a blocked loop fails
@@ -1351,9 +1363,9 @@ page; this section says what exists.
   (`deployment/local/grafana/dashboards/tadas-overview.json`), and
   `infra/tests/test_dashboard_parity.py` holds the titles equal.
   `modules/alarms` declares the SNS topic `tadas-<env>-alarms`, the
-  email subscription from `alarm_email`, and eight alarms: the load
+  email subscription from `alarm_email`, and seven alarms: the load
   balancer's 5xx ratio, its unhealthy targets, its p95, the database's
-  CPU and free storage, and each of the three services running below its
+  CPU and free storage, and each of the two services running below its
   desired count. [runbooks/operate.md](runbooks/operate.md) reads them.
 - **Scale-out.** Every service declares an autoscaling target and a
   CPU target-tracking policy in `modules/service`, created only when

@@ -86,12 +86,18 @@ screen and in the org's Slack channel.
 
 ## Slack
 
-A **Slack connection** is the one Slack channel an org posts to:
-reminders, new tasks, and finished ones appear there, and
-`/tadas add <title>` typed there adds a task, and `/tadas list` shows
-the first open ones to whoever typed it. An owner or an admin
-connects it with a **link code**, a short code Tadas shows once and
-that works once.
+A **Slack installation** is the Tadas app added to one Slack workspace
+for an org. An owner or an admin installs it from Settings with "Add to
+Slack". The org has at most one, and a workspace belongs to one org.
+The app's key into that workspace, its bot token, is the org's own
+secret, kept in the secret store and never on the record.
+
+The installation's **channel** is where reminders, new tasks, and
+finished ones appear. An owner or an admin picks it by typing
+`/tadas connect` there. In any channel the app is in, `/tadas` shows
+your open tasks, `/tadas team` the org's, and `/tadas add <title>` adds
+a task. Tadas knows who typed by the email address Slack holds for
+them, which must be one a member signed in with.
 
 A **file** is something a person keeps with the work: a document, a
 picture, a recording. Tadas keeps a record of the file (its name, its
@@ -143,9 +149,9 @@ a second task.
   it is done as that user in that org. A socket ticket stands for one
   of them.
 - Tasks belong to the org. Each is created by a user and may be
-  assigned to a user. A task added from Slack is created by the user
-  whose code linked the channel.
-- A Slack connection belongs to the org, and a channel to one org.
+  assigned to a user. A task added from Slack is created by the member
+  who typed it.
+- A Slack installation belongs to the org, and a workspace to one org.
 - An org is on one plan. The plan bounds its members, its API keys,
   and its active tasks; meeting a bound is a refusal that offers the
   plan that lifts it, and nothing is ever taken away. The billing
@@ -167,7 +173,7 @@ a second task.
 - [Orgs, identities, users, memberships, sessions, API keys, and socket tickets](src/tadas/om/tenancy/README.md)
 - [Tasks](src/tadas/om/tasks/README.md)
 - [Files](src/tadas/om/media/README.md)
-- [Slack connections, link codes, and posts](src/tadas/om/slack/README.md)
+- [Slack installations and posts](src/tadas/om/slack/README.md)
 - [Plans, billing accounts, and delivery marks](src/tadas/om/billing/README.md)
 - [Events](src/tadas/om/events/README.md)
 - [Work items](src/tadas/om/work/README.md)

@@ -43,9 +43,10 @@ touches and the ADR that explains why it is shaped that way.
     Staging and Production environments, the AuthKit application and
     its Redirects tab, the API key, `tadas-ops workos-bootstrap`, and
     the organizations Tadas makes.
-  - [providers/slack.md](providers/slack.md): the Slack app. Its
-    scopes, the two tokens, the one Socket Mode connection staging
-    holds, and why a laptop holds none.
+  - [providers/slack.md](providers/slack.md): the Slack app. One app
+    per environment from its committed manifest, the signing secret and
+    the client secret, the install each org makes, the channel it
+    binds, and the twin a laptop uses.
 - [support.md](support.md): how a support investigation runs: a
   tenant names a problem, the supporter takes the org id, runs
   `ops-root-cause`, what it reads and in which order, and what is
