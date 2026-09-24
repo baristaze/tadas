@@ -8,6 +8,7 @@ from tadas.infra.root import InfraInterface
 from tadas.integrations.identity.absent import IdentityProviderAbsentImpl
 from tadas.integrations.impl.configured import absent_payments
 from tadas.integrations.root import IntegrationsInterface
+from tadas.integrations.slack.off import SlackOffImpl
 from tadas.om.billing import BillingManagerInterface, BillingOperatorManagerInterface
 from tadas.om.billing.impl.manager import BillingManagerImpl, BillingOptions
 from tadas.om.billing.impl.operator import BillingOperatorManagerImpl
@@ -55,10 +56,10 @@ def build_managers(
 ) -> Managers:
     """`integrations` is the root of the hosted services the managers front:
     the identity provider, which the tenancy manager signs people in and
-    invites them through, and the payment processor, which the billing
-    manager mirrors. None is a process that signs nobody in and holds no
-    processor, and every call that would reach either is refused as
-    unavailable."""
+    invites them through, the payment processor, which the billing manager
+    mirrors, and the Slack app, which the slack manager installs and posts
+    through. None is a process that signs nobody in and holds none of them,
+    and every call that would reach one is refused as unavailable."""
     # The relay every core-role manager hands its outbox rows to. It reaches
     # the work manager through the root below, because a row of kind
     # `work.<kind>` is enqueued there: the work manager needs the tenancy
@@ -107,7 +108,14 @@ def build_managers(
         outbox,
         MediaOptions(),
     )
-    slack = SlackManagerImpl(storage.get_slack_storage(), tenancy, outbox, SlackOptions())
+    slack = SlackManagerImpl(
+        storage.get_slack_storage(),
+        tenancy,
+        outbox,
+        SlackOffImpl() if integrations is None else integrations.get_slack(),
+        infra.get_secrets(),
+        SlackOptions(),
+    )
     tasks = TasksManagerImpl(
         storage.get_tasks_storage(),
         tenancy,

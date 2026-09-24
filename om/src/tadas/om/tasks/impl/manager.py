@@ -15,7 +15,7 @@ from tadas.om.opcontext import OpContext, Permission
 from tadas.om.outbox import OutboxRelayInterface
 from tadas.om.outbox.types.row import OutboxRow, outbox_row
 from tadas.om.slack import SlackManagerInterface
-from tadas.om.slack.types.connection import SlackConnectionStatus
+from tadas.om.slack.types.installation import SlackInstallationStatus
 from tadas.om.tasks.manager import TasksManagerInterface
 from tadas.om.tasks.rules import is_between, position_after, renumbered, top_position
 from tadas.om.tasks.storage import TasksStorageInterface
@@ -437,9 +437,14 @@ class TasksManagerImpl(TasksManagerInterface):
         self, ctx: OpContext, task_id: UUID, event: SlackPostEvent
     ) -> tuple[OutboxRow, ...]:
         """The work row that posts the event to the org's Slack channel, or
-        none when the org has no channel or its channel is broken."""
-        connection = await self._slack.get_connection(ctx)
-        if connection is None or connection.status is not SlackConnectionStatus.OK:
+        none when the org has not installed Slack, bound no channel, or its
+        installation is broken."""
+        installation = await self._slack.get_installation(ctx)
+        if (
+            installation is None
+            or installation.channel_id is None
+            or installation.status is not SlackInstallationStatus.OK
+        ):
             return ()
         payload = SlackPostPayload(event=event)
         kind = work_row_kind(WorkKind.SLACK_POST)

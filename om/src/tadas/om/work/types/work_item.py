@@ -17,7 +17,7 @@ class WorkKind(StrEnum):
     NOOP = "NOOP"  # the maintenance worker's kind: no work beyond the sweep
     SYNC_SEATS = "SYNC_SEATS"  # a per-seat plan's quantity follows the member count
     TASK_REMINDER = "TASK_REMINDER"  # a task's due time came: remind the team
-    SLACK_POST = "SLACK_POST"  # a message to the channel the org connected
+    SLACK_POST = "SLACK_POST"  # a message to the Slack channel the org bound
 
 
 WORK_ROW_PREFIX = "work."

@@ -1,53 +1,79 @@
-"""Storage of the slack namespace: the org's connection, the link codes, and
-the record of what was posted. Every operation takes org_id first, except the
-two lookups that find a tenant from what Slack sends, which are cross-tenant
-by nature and read in the system scope."""
+"""Storage of the slack namespace: the org's installation, the install
+states, and the record of what was posted. Every operation takes org_id
+first, except the two lookups that find a tenant from what Slack sends (a
+workspace, a state), which are cross-tenant by nature and read in the system
+scope."""
 
 from abc import ABC, abstractmethod
 from datetime import datetime
 from uuid import UUID
 
 from tadas.om.outbox.types.row import OutboxRow
-from tadas.om.slack.types.connection import SlackConnection, SlackLinkCode, SlackPost
+from tadas.om.slack.types.installation import SlackInstallation, SlackInstallState, SlackPost
 
 
 class SlackStorageInterface(ABC):
     @abstractmethod
-    async def read_connection(self, org_id: UUID) -> SlackConnection | None:
-        """The org's living connection; a deleted one reads as None."""
+    async def read_installation(self, org_id: UUID) -> SlackInstallation | None:
+        """The org's living installation; a deleted one reads as None."""
         ...
 
     @abstractmethod
-    async def read_connection_by_channel(
-        self, team_id: str, channel_id: str
-    ) -> tuple[UUID, SlackConnection] | None:
-        """Cross-tenant, in the system scope: the living connection of a Slack
-        channel and the org it belongs to. A command arrives with a channel and
-        no tenant; this is how it finds one."""
+    async def read_installation_by_team(
+        self, team_id: str
+    ) -> tuple[UUID, SlackInstallation] | None:
+        """Cross-tenant, in the system scope: the living installation in a
+        Slack workspace and the org it belongs to. A call from Slack arrives
+        with a workspace and no tenant; this is how it finds one."""
         ...
 
     @abstractmethod
-    async def write_connection(
-        self, org_id: UUID, connection: SlackConnection, outbox_rows: tuple[OutboxRow, ...]
+    async def write_installation(
+        self,
+        org_id: UUID,
+        installation: SlackInstallation,
+        outbox_rows: tuple[OutboxRow, ...],
     ) -> None:
         """Insert or update by id, with the rows that announce it in the same
-        commit. A second living connection for the org, or a channel another
-        living connection holds, is `UniqueKeyTaken`, and nothing lands."""
+        commit. A second living installation for the org, or a workspace
+        another living installation holds, is `UniqueKeyTaken`, and nothing
+        lands."""
         ...
 
     @abstractmethod
-    async def create_link_code(self, org_id: UUID, code: SlackLinkCode) -> None:
-        """Lands a fresh code. Its digest is unique."""
+    async def claim_refresh(
+        self, org_id: UUID, installation_id: UUID, now: datetime, until: datetime
+    ) -> bool:
+        """One conditional write: stamps `refreshing_until` on the living
+        installation while no other renewal holds it at `now`. True when this
+        caller holds the claim, so one renewal of the token runs at a time."""
         ...
 
     @abstractmethod
-    async def redeem_link_code(
-        self, code_hash: str, now: datetime
-    ) -> tuple[UUID, SlackLinkCode] | None:
+    async def settle_refresh(
+        self,
+        org_id: UUID,
+        installation_id: UUID,
+        token_expires_at: datetime | None,
+        now: datetime,
+    ) -> None:
+        """Ends a renewal: when the new token expires, and the claim cleared.
+        Nothing when the installation is gone meanwhile."""
+        ...
+
+    @abstractmethod
+    async def create_install_state(self, org_id: UUID, state: SlackInstallState) -> None:
+        """Lands a fresh state. Its digest is unique."""
+        ...
+
+    @abstractmethod
+    async def redeem_install_state(
+        self, state_hash: str, now: datetime
+    ) -> tuple[UUID, SlackInstallState] | None:
         """Cross-tenant, in the system scope, one conditional write: stamps
-        `redeemed_at` on the code with this digest while it is unredeemed and
+        `redeemed_at` on the state with this digest while it is unredeemed and
         not expired at `now`, and returns it with its org. None when there is
-        no such code, it was redeemed, or it expired: a code works once."""
+        no such state, it was redeemed, or it expired: a state works once."""
         ...
 
     @abstractmethod
@@ -63,9 +89,9 @@ class SlackStorageInterface(ABC):
 
     @abstractmethod
     async def purge(self, org_id: UUID, before: datetime) -> int:
-        """The sweep's hard delete for one tenant: connections deleted, codes
-        expired, and posts recorded before `before`; returns how many rows
-        went."""
+        """The sweep's hard delete for one tenant: installations deleted,
+        states expired or redeemed, and posts recorded before `before`;
+        returns how many rows went."""
         ...
 
     @abstractmethod

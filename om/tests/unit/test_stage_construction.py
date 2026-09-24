@@ -39,6 +39,7 @@ ALLOWED: Counter[tuple[str, str, str]] = Counter(
         (TRANSITIONS, "TenancyManagerImpl.resume", "build_context"): 1,
         (TRANSITIONS, "TenancyManagerImpl.service_context", "build_context"): 1,
         (TRANSITIONS, "TenancyManagerImpl.service_contexts", "build_context"): 1,
+        (TRANSITIONS, "TenancyManagerImpl.member_context", "build_context"): 1,
     }
 )
 """(module, enclosing definition, what is constructed) -> how many times."""

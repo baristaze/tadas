@@ -117,7 +117,7 @@ class TasksManagerInterface(ABC):
     ) -> Task | None:
         """The reminder the task's due time scheduled, when it comes due: marks
         the task reminded and announces it (`tasks.task.reminded`), and asks
-        for the Slack post when the org has a channel connected, all in one
+        for the Slack post when the org has a Slack channel bound, all in one
         write conditioned on the task still being open and due at `remind_at`
         and not yet reminded. None when it no longer is, which is a reminder
         gone stale: nothing is written and nothing is announced."""

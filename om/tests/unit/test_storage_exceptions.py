@@ -64,8 +64,8 @@ STORAGE_EXCEPTIONS: frozenset[tuple[str, str]] = frozenset(
         ("WorkStorageInterface", "purge_items"),
         ("OutboxStorageInterface", "claim_pending"),
         ("OutboxStorageInterface", "purge_done"),
-        ("SlackStorageInterface", "read_connection_by_channel"),
-        ("SlackStorageInterface", "redeem_link_code"),
+        ("SlackStorageInterface", "read_installation_by_team"),
+        ("SlackStorageInterface", "redeem_install_state"),
     }
 )
 
@@ -117,6 +117,9 @@ REQUEST_TRANSITIONS: frozenset[tuple[str, str]] = frozenset(
         ("TenancyManagerInterface", "redeem_ticket"),
         ("TenancyManagerInterface", "service_context"),
         ("TenancyManagerInterface", "service_contexts"),
+        # The member a Slack command was typed by, found by the address their
+        # Slack profile holds.
+        ("TenancyManagerInterface", "member_context"),
         ("TenancyManagerInterface", "grant_operator"),
         ("TenancyManagerInterface", "disable_operator"),
         ("TenancyManagerInterface", "grant_operator_token"),
@@ -125,10 +128,11 @@ REQUEST_TRANSITIONS: frozenset[tuple[str, str]] = frozenset(
         # The org a verified delivery from the payment processor names, before
         # any stage exists for it: the webhook consumer's lookup.
         ("BillingManagerInterface", "org_of_delivery"),
-        # A Slack command arrives with a channel or a code and no tenant; each
-        # finds the tenant from what Slack sent, as a webhook's lookup does.
-        ("SlackManagerInterface", "redeem_link_code"),
-        ("SlackManagerInterface", "channel_context"),
+        # A call from Slack arrives with a workspace or an install state and no
+        # tenant; each finds the tenant from what Slack sent, as a webhook's
+        # lookup does.
+        ("SlackManagerInterface", "finish_install"),
+        ("SlackManagerInterface", "installation_for_team"),
     }
 )
 

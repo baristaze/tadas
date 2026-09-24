@@ -1017,6 +1017,33 @@ class TenancyManagerImpl(TenancyManagerInterface):
             credential_kind=CredentialKind.INTERNAL,
         )
 
+    async def member_context(
+        self, rctx: RequestContext, org_id: UUID, email: str
+    ) -> OpContext | None:
+        # The address as the provider or Slack gave it, then lowercased: an
+        # identity is kept under the address its sign-in proved, and Slack's
+        # profile may spell the same address with capitals.
+        identity = None
+        for spelled in dict.fromkeys((email.strip(), email.strip().lower())):
+            identity = await self._storage.read_identity_by_email_digest(email_digest(spelled))
+            if identity is not None:
+                break
+        if identity is None:
+            return None
+        try:
+            org, user, membership = await self._principal_in(org_id, identity.id)
+        except NotAuthorized:
+            return None
+        return build_context(
+            rctx,
+            user_id=user.id,
+            org_id=org.id,
+            role=membership.role,
+            permissions=permissions_of(membership.role),
+            credential_kind=CredentialKind.INTERNAL,
+            teams=membership.teams,
+        )
+
     async def _every_org(self) -> list[Org]:
         """Every tenant, page by page: a sweep that stopped at the first clamp
         would never reach the tenants behind it."""
