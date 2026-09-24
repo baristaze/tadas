@@ -172,7 +172,7 @@ resource "aws_secretsmanager_secret_version" "slack" {
 # answers 503), and never writes it again. The key is set once by hand:
 #   aws secretsmanager put-secret-value --secret-id <prefix>stripe_org_key --secret-string <key>
 # and the signing secret by `tadas-ops stripe-bootstrap --env <env>`, which
-# learns it when it registers the endpoint (docs/runbooks/stripe.md).
+# learns it when it registers the endpoint (docs/runbooks/providers/stripe.md).
 resource "aws_secretsmanager_secret" "stripe" {
   for_each = toset(["stripe_org_key", "stripe_webhook_secret"])
 

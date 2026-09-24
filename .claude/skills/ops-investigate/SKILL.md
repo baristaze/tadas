@@ -1,6 +1,6 @@
 ---
 name: ops-investigate
-description: "Investigate one environment of the platform with a read-only credential: the alarms, the error rate, the latency, the worker outcomes, the pool, the queue, the cost against the budget, and the platform's size, then report what is wrong and what to do next. Every read goes through the signals' own APIs (CloudWatch, X-Ray, the error tracker in the cloud; Prometheus, Jaeger, GlitchTip locally). Use when something looks off, when an alarm fires, or as the daily look. Never writes."
+description: "Investigate one environment of the platform with a read-only credential: the alarms, the error rate, the latency, the worker outcomes, the pool, the queues and their dead letters, the providers (sign-in, billing, the Slack bridge), the cost against the budget, and the platform's size, then report what is wrong and what to do next. Every read goes through the signals' own APIs (CloudWatch, X-Ray, the error tracker in the cloud; Prometheus, Jaeger, GlitchTip locally). Use when something looks off, when an alarm fires, or as the daily look. Never writes."
 allowed-tools: Read, Grep, Glob, Bash(aws:*), Bash(curl:*), Bash(docker compose:*), Bash(uv run:*)
 ---
 
@@ -48,8 +48,13 @@ the token has expired: stop, and name the refresh the preamble gives.
 
 ## Procedure
 
-The processes are `api` and `maintenance`, as `deployment/README.md`
-lists them.
+The processes are `api`, `maintenance`, and `slack` (the Slack bridge,
+one task that holds the Socket Mode connection), as
+`deployment/README.md` lists them. Each is an ECS service of that
+name in the cluster `tadas-<env>`, with the log group
+`/tadas/<env>/<process>`. The queues are `tadas-<env>-webhooks` (the
+payment processor's deliveries) and `tadas-<env>-slack` (what Slack
+sent), each with a dead-letter queue named with `-dead` after it.
 
 1. Verify the credential as Role and credential states. Compute the
    window: `--since` back from now, as epoch seconds
@@ -87,7 +92,7 @@ lists them.
    - the database's CPU and free storage: no local exporter; report
      them as not read
    With `--alarm <name>`, start here and apply the first responder
-   rule of step 10 before reading anything else.
+   rule of step 11 before reading anything else.
 4. Request rate, error ratio, p95, by route. Cloud, one query per
    panel of the dashboard `tadas-<env>`, namespace `Tadas`:
 
@@ -116,14 +121,28 @@ lists them.
    `outbox`, `queue`, `cache`, `rate_limit`, `admission`,
    `idempotency`), read as `sum by (subsystem, outcome)
    (increase(tadas_outcomes_total[<since>]))`. Queue depth, the oldest
-   age, and pool checkouts have no metric; the cloud reads the queue
-   from `aws sqs get-queue-attributes` and the pool from the database's
-   connection count. Cloud also reads the
-   running count against the desired count:
+   age, and pool checkouts have no metric; the cloud reads the pool
+   from the database's connection count, and each queue and its dead
+   letter from SQS:
+
+   ```bash
+   for q in webhooks webhooks-dead slack slack-dead; do
+     url="$(aws sqs get-queue-url --queue-name tadas-<env>-$q \
+       --query QueueUrl --output text --profile tadas-<env>-investigate)"
+     aws sqs get-queue-attributes --queue-url "$url" --profile tadas-<env>-investigate \
+       --attribute-names ApproximateNumberOfMessages ApproximateNumberOfMessagesNotVisible
+   done
+   ```
+
+   A message in a `-dead` queue is a delivery the worker could not
+   handle after its retries: a finding, with the queue's name. Cloud
+   also reads the running count against the desired count. `slack`
+   runs exactly one task; zero running means no `/tadas` command is
+   answered:
 
    ```bash
    aws ecs describe-services --cluster tadas-<env> \
-     --services tadas-<env>-api tadas-<env>-maintenance \
+     --services api maintenance slack \
      --profile tadas-<env>-investigate
    ```
 
@@ -164,7 +183,7 @@ lists them.
 
    ```bash
    aws logs start-query --profile tadas-<env>-investigate \
-     --log-group-names /tadas/<env>/api /tadas/<env>/maintenance \
+     --log-group-names /tadas/<env>/api /tadas/<env>/maintenance /tadas/<env>/slack \
      --start-time <start> --end-time <end> \
      --query-string 'fields @timestamp, level, request_id, @message | filter level = "ERROR" | sort @timestamp desc | limit 100'
    aws logs get-query-results --query-id <id> --profile tadas-<env>-investigate
@@ -180,7 +199,47 @@ lists them.
    `"request_id"` when `TADAS_LOG_JSON` is on.
    With `--request-id`, filter every source on it: `filter request_id
    = "<id>"` in the cloud, `grep` locally.
-8. Traces. Cloud:
+8. The providers. Each of the three says in its own log when it is
+   not configured, and the skill reads that, never a secret: the
+   secrets are denied to the role, and their names are enough. Cloud,
+   over the same window:
+
+   ```bash
+   aws logs start-query --profile tadas-<env>-investigate \
+     --log-group-names /tadas/<env>/api /tadas/<env>/maintenance /tadas/<env>/slack \
+     --start-time <start> --end-time <end> \
+     --query-string 'fields @timestamp, @log, @message | filter @message like /identity provider|payments=stripe|billing_unavailable|no Slack app token|no bot token|socket mode connection/ | sort @timestamp desc | limit 50'
+   ```
+
+   What each line means, and the secret it points to:
+
+   - `identity provider: none (TADAS_WORKOS_API_KEY is not set)` and
+     `every sign-in through one answers 503`: nobody can sign in
+     through WorkOS. `tadas/<env>/workos_api_key` is `off`, or the
+     API's tasks started before it was written.
+   - `payments=stripe (not configured)`, or `billing_unavailable` on a
+     request: checkouts answer 503 and every org keeps its plan.
+     `tadas/<env>/stripe_org_key` is `off`. A `503` on
+     `/webhooks/stripe` is `tadas/<env>/stripe_webhook_secret`; a
+     `400` there is a signing secret that does not match the
+     endpoint's, and the processor retries it.
+   - `no Slack app token is set; the Socket Mode connection stays
+     closed` in `/tadas/<env>/slack`: `/tadas` answers nothing.
+     `tadas/<env>/slack_app_token` is `off`. `slack socket mode
+     connection is open` is the healthy line.
+   - `slack post <id> dropped: no bot token is configured` in
+     `/tadas/<env>/maintenance`: reminders go nowhere.
+     `tadas/<env>/slack_bot_token` is `off`.
+
+   The start lines are written once, when a task starts, so a window
+   after the last rollout holds none: report "not in the window",
+   never "configured". A finding here names the secret and
+   `docs/runbooks/providers/<stripe|workos|slack>.md`; writing the
+   value is a person's step under their own sign-in, never this
+   skill's. Locally, `grep` the same lines in each process's own
+   output, as step 7 reads it; a laptop holds no Slack app token on
+   purpose, so a closed connection there is not a finding.
+9. Traces. Cloud:
 
    ```bash
    aws xray get-trace-summaries --profile tadas-<env>-investigate \
@@ -205,7 +264,7 @@ lists them.
    with no `TADAS_OTEL_ENDPOINT`, which is a finding, not an error.
    With `--request-id`, filter on the `tadas_request_id` annotation in the
    cloud and the `tadas.request_id` attribute locally instead.
-9. Cost, cloud only. The month to date against the budget:
+10. Cost, cloud only. The month to date against the budget:
 
    ```bash
    aws ce get-cost-and-usage --profile tadas-<env>-investigate \
@@ -216,7 +275,7 @@ lists them.
      --profile tadas-<env>-investigate
    ```
 
-10. The first responder rule. In production nothing is suppressed:
+11. The first responder rule. In production nothing is suppressed:
     a new production's one tenant is its first customer, so every
     alarm and finding there is reported as a finding, with the request
     ids that prove it. Outside production, an alarm or a finding is
@@ -225,7 +284,7 @@ lists them.
     and that user is the team's. A suppression is never silent: it is
     reported as suppressed, with the reason, the size, and the request
     ids it rests on.
-11. Write the report. Name the next skill: `ops-root-cause` with an
+12. Write the report. Name the next skill: `ops-root-cause` with an
     org id when one tenant's rows explain it, `ops-watch` when the
     signal is still moving, `ops-infra-as-code` when the fix is a
     resource.
@@ -260,6 +319,8 @@ lists them.
 
 - Requests: <rate>, error ratio <ratio>, p95 <ms> by route
 - Workers: <outcomes per kind>, queue depth <n>, oldest <age>
+- Queues: webhooks <n> (dead <n>), slack <n> (dead <n>); services api, maintenance, slack <running>/<desired>
+- Providers: sign-in <configured | off: tadas/<env>/workos_api_key | not in the window>, billing <...: tadas/<env>/stripe_org_key>, Slack posts <...: tadas/<env>/slack_bot_token>, Slack connection <open | closed: tadas/<env>/slack_app_token>
 - Pool and cache: <checkouts, timeouts, hits, misses>
 - Errors: <count>, top issue <title> (<request id, or none>), or "not
   read: the environment names no error tracker"

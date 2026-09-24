@@ -164,6 +164,21 @@ the names of what was written and never a value.
      dispatches `deploy-staging.yml`. For production it prints the
      order above, because the first release waits for a replicated
      build.
+   - The providers, printed for the person and never run by this
+     skill (step 7b). The first deploy makes five secrets holding
+     `off`: `tadas/<env>/workos_api_key`, `stripe_org_key`,
+     `stripe_webhook_secret`, `slack_bot_token`, and `slack_app_token`.
+     After it, the person makes each value in the provider's dashboard
+     and writes it under their own sign-in (`tadas-staging`; in
+     production `tadas-prod-power`, when authorized); the Stripe
+     bootstrap writes `stripe_webhook_secret` itself. WorkOS comes
+     first, since the grants below sign people up through it and every
+     sign-in answers `503` without its key. Production leaves
+     `slack_app_token` at `off` while staging holds the Slack app's one
+     connection. The values reach the tasks at their next start. Point
+     the person to `docs/runbooks/providers/` for the steps; never ask
+     for a value in the conversation, and never run a
+     `put-secret-value` yourself.
    - The grants, printed for the person and never run by this skill:
      the first operator, the provisioner, and the smoke identity, each
      through `grant-operator.yml` on the environment's branch, which
@@ -245,6 +260,7 @@ dry run's smoke test is "not yet".
 - <the next run of Order, or nothing>
 - Dispatch `grant-operator.yml` for the first operator, who enrols the second factor at the console's first sign-in and runs `uv run tadas-ops token --env <env> --identity operator` in their own terminal; grant the smoke identity and set `SMOKE_EMAIL`, so the next deploy runs the smoke test
 - Manual steps left: <the tracker's lines in the env file, or none>
+- The providers, after the first deploy: write workos_api_key, stripe_org_key, slack_bot_token<, slack_app_token (staging)> under <sso profile | tadas-prod-power>, run `tadas-ops workos-bootstrap` and `tadas-ops stripe-bootstrap`, then roll or wait for the next deploy (docs/runbooks/providers/)
 - Hand the administrator permission set back; every later skill runs
   under tadas-<env>-investigate.
 ```

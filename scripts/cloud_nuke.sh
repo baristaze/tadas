@@ -26,7 +26,9 @@
 # The account, the administrator profile, the region, and the public names
 # come from deployment/cloud/environments.json, and the account is checked
 # before the apply and before the destroy. The bootstrap root stays: the
-# account keeps its roles, its registry, its zones, and its state.
+# account keeps its roles, its registry, its zones, and its state. Nothing
+# at the providers is touched either; the list at the end names what stays
+# at Stripe, WorkOS, and Slack.
 #
 # Inputs, as flags or as environment variables:
 #   --alarm-email    ALARM_EMAIL       the address the root's alarms go to
@@ -255,3 +257,15 @@ if [ "$environment" = "staging" ]; then
   say "- production's copies of what staging built: its images and static builds, in production's account"
 fi
 say "- $HOME/.config/tadas/ops/$environment.env, and the investigate profile in $HOME/.aws/config"
+
+# The providers: nothing here writes to them. What the environment leaves
+# there is listed so a person decides; a recreate reuses most of it.
+case "$environment" in
+  staging) stripe_account="the sandbox acct_1UIfVX45a2t9JoiY"; workos_environment="Staging" ;;
+  production) stripe_account="the live account acct_1UIfTS4Dj4HbbS1T"; workos_environment="Production" ;;
+esac
+say "== 6. What remains at the providers (docs/runbooks/providers/)"
+say "- Stripe, $stripe_account: the webhook endpoint https://$api_domain_name/webhooks/stripe, which now posts to a name that does not answer. Keep it if $environment comes back (the next stripe-bootstrap finds the new secret empty and rolls it); delete it under Developers > Webhooks if not. The customers and subscriptions its orgs made stay too."
+say "- WorkOS $workos_environment: the organizations its team orgs made (external_id = the old org id) and the users who signed in. Harmless; a recreate makes new orgs. The application's redirects for https://$app_domain_name stay, and the next $environment uses them."
+say "- Slack: the app, its tokens, and the channels the bot was invited to. The Socket Mode connection closed with the slack service."
+say "- The values of tadas/$environment/{stripe_org_key,workos_api_key,slack_bot_token,slack_app_token} went with the secrets: a recreate writes each again after its first deploy. Revoke a key at its provider if $environment is not coming back."

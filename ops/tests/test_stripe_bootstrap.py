@@ -172,6 +172,20 @@ def test_the_command_refuses_a_live_key_on_staging(
     assert "not_a_real_key" not in err
 
 
+def test_the_command_refuses_to_write_the_secret_under_an_investigate_profile(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The signing secret is written under a person's own sign-in; an agent's
+    read-only profile is refused before anything reaches the processor."""
+    monkeypatch.chdir(ROOT)
+    monkeypatch.setenv("TADAS_STRIPE_ORG_KEY", "rk_test_not_a_real_key")
+    argv = ["stripe-bootstrap", "--env", "staging", "--profile", "tadas-staging-investigate"]
+    assert main(argv) == 2
+    err = capsys.readouterr().err
+    assert "writes no secret" in err
+    assert "not_a_real_key" not in err
+
+
 def _billed(tiers: tuple[CatalogTier, ...], seats: int) -> int:
     """A volume tier prices the whole count at the tier the count reaches."""
     for tier in tiers:

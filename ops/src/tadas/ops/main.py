@@ -463,9 +463,13 @@ async def stripe_bootstrap_command(args: argparse.Namespace) -> int:
         if args.env not in CLOUD_ENVIRONMENTS:
             raise ValueError(f"--env {args.env} has no secret store; it has no webhook endpoint")
         layout = json.loads((root / "deployment" / "cloud" / "environments.json").read_text())
-        store = SecretStoreAwsImpl(
-            sso_profile_of(args.env), str(layout["region"]), timedelta(seconds=10)
-        )
+        profile = getattr(args, "profile", None) or sso_profile_of(args.env)
+        if profile.endswith("-investigate"):
+            raise ValueError(
+                f"{profile} is an agent's read-only profile and writes no secret; "
+                "run this under your own sign-in (--profile)"
+            )
+        store = SecretStoreAwsImpl(profile, str(layout["region"]), timedelta(seconds=10))
     catalog = CatalogStripeImpl(
         api_key=key, account_id=desired.accounts[args.env], timeout=timedelta(seconds=20)
     )
@@ -569,6 +573,12 @@ def build_parser() -> argparse.ArgumentParser:
         default="aws",
         help="where the webhook endpoint's signing secret goes: the environment's Secrets "
         "Manager under its sign-in profile, or nowhere",
+    )
+    p_stripe.add_argument(
+        "--profile",
+        default=None,
+        help="the AWS profile that writes the signing secret; the environment's sign-in "
+        "profile by default, which in production only reads, so there it is tadas-prod-power",
     )
     return parser
 
