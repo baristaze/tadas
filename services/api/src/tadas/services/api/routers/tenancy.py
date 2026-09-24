@@ -41,6 +41,7 @@ from tadas.services.api.types.tenancy import (
     SignInStartView,
     SsoLinkRequest,
     SsoLinkView,
+    UpdateIdentityRequest,
     UpdateMembershipRequest,
     UpdateMeRequest,
     UserPageView,
@@ -139,6 +140,13 @@ async def update_me(ctx: Ctx, tenancy: TenancyService, body: UpdateMeRequest) ->
 @router.get("/me/identity", response_model=IdentityView)
 async def my_identity(ctx: Ctx, tenancy: TenancyService) -> IdentityView:
     return await tenancy.get_identity(ctx)
+
+
+@router.patch("/me/identity", response_model=IdentityView)
+async def update_my_identity(
+    ctx: Ctx, tenancy: TenancyService, body: UpdateIdentityRequest
+) -> IdentityView:
+    return await tenancy.update_identity(ctx, body)
 
 
 @router.get("/orgs/current", response_model=OrgView)

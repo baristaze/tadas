@@ -615,7 +615,8 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        patch?: never;
+        /** Update My Identity */
+        patch: operations["update_my_identity_v1_me_identity_patch"];
         trace?: never;
     };
     "/v1/media/files/{file_id}": {
@@ -1061,19 +1062,28 @@ export interface components {
         };
         /**
          * AddTaskRequest
-         * @description `remind_at` schedules one reminder at that time, pushed to every open
-         *     screen of the org and posted to its Slack channel when one is connected.
-         *     It carries its offset; a time without one is refused.
+         * @description `due_on` is the day the task is due, `YYYY-MM-DD`, never a time. It
+         *     schedules one reminder at nine in the morning of that day, in the time
+         *     zone of the person the task is for (the assignee, or the creator), pushed
+         *     to every open screen of the org and posted to its Slack channel when one
+         *     is connected. `remind_at`, the due time of the release before, is still
+         *     taken for one release: its date, in its own offset, is the due date, and
+         *     `due_on` wins when both are sent.
          */
         AddTaskRequest: {
             /** Assignee Id */
             assignee_id?: string | null;
+            /** Due On */
+            due_on?: string | null;
             /**
              * Notes
              * @default
              */
             notes: string;
-            /** Remind At */
+            /**
+             * Remind At
+             * @deprecated
+             */
             remind_at?: string | null;
             /** Title */
             title: string;
@@ -1382,6 +1392,8 @@ export interface components {
              */
             id: string;
             operator_role: components["schemas"]["OperatorRole"] | null;
+            /** Time Zone */
+            time_zone?: string | null;
         };
         /**
          * InvitationPageView
@@ -2080,6 +2092,8 @@ export interface components {
             created_by: string;
             /** Deleted At */
             deleted_at: string | null;
+            /** Due On */
+            due_on?: string | null;
             /**
              * Id
              * Format: uuid
@@ -2089,7 +2103,10 @@ export interface components {
             notes: string;
             /** Position */
             position: number;
-            /** Remind At */
+            /**
+             * Remind At
+             * @deprecated
+             */
             remind_at?: string | null;
             /** Reminded At */
             reminded_at?: string | null;
@@ -2122,6 +2139,17 @@ export interface components {
              */
             identity_id: string;
         };
+        /**
+         * UpdateIdentityRequest
+         * @description Where the person is, as an IANA name ("Europe/Istanbul"): the portal
+         *     sends the browser's own on sign-in. A due date's reminder goes out at
+         *     nine in the morning in it; with none sent, in UTC. A name that is not
+         *     one is 422.
+         */
+        UpdateIdentityRequest: {
+            /** Time Zone */
+            time_zone: string;
+        };
         /** UpdateMeRequest */
         UpdateMeRequest: {
             /** Display Name */
@@ -2140,15 +2168,21 @@ export interface components {
          *     `precondition_failed` when another write landed since, so the caller reads
          *     again and decides over the current task. An update that names no version
          *     is refused with 422 `validation_failed`, since it would overwrite blind.
-         *     An explicit null `remind_at` clears the due time; a new one reschedules
-         *     the reminder, and the one scheduled before it never goes out.
+         *     An explicit null `due_on` clears the due date; a new one reschedules the
+         *     reminder, and the one scheduled before it never goes out. `remind_at`
+         *     is taken for one release, as on the add.
          */
         UpdateTaskRequest: {
             /** Assignee Id */
             assignee_id?: string | null;
+            /** Due On */
+            due_on?: string | null;
             /** Notes */
             notes?: string | null;
-            /** Remind At */
+            /**
+             * Remind At
+             * @deprecated
+             */
             remind_at?: string | null;
             status?: components["schemas"]["TaskStatus"] | null;
             /** Title */
@@ -3623,6 +3657,43 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IdentityView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_my_identity_v1_me_identity_patch: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateIdentityRequest"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
