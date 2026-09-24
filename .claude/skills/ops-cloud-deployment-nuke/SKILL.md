@@ -183,8 +183,8 @@ bridge), the ECS services of the cluster `tadas-<env>`, as
 
 ## At the providers, untouched
 
-- Stripe (<sandbox | live>): the webhook endpoint https://<api name>/webhooks/stripe, <kept for a recreate | for the person to delete>; the customers its orgs made
+- Stripe (<sandbox | live>): the webhook endpoint https://<api name>/webhooks/stripe, <kept for a recreate | for the person to delete>; the customers its orgs made; the restricted key tadas-<env>-runtime, <kept for a recreate | for the person to delete>
 - WorkOS (<Staging | Production>): the organizations and users its orgs made; the application's redirects
 - Slack: the app, its tokens, the channels; the connection closed with the slack service
-- Provider keys to write again on a recreate: stripe_org_key, workos_api_key, slack_bot_token, slack_app_token
+- Provider keys to write again on a recreate: stripe_runtime_key, workos_api_key, slack_bot_token, slack_app_token
 ```

@@ -15,7 +15,7 @@ from tadas.integrations.payments import PaymentsInterface
 from tadas.integrations.payments.stripe import PaymentsStripeImpl
 from tadas.integrations.payments.twin import TWIN_ENVIRONMENTS, PaymentsTwinImpl
 from tadas.integrations.root import IntegrationsInterface
-from tadas.integrations.settings import IntegrationsSettings, key_mode, mode_for
+from tadas.integrations.settings import IntegrationsSettings, key_refusal
 
 
 def refuse_unsafe(settings: IntegrationsSettings, environment: str, deployed: bool) -> None:
@@ -28,26 +28,32 @@ def refuse_unsafe(settings: IntegrationsSettings, environment: str, deployed: bo
     refuse_unsafe_payments(settings, environment)
 
 
+RUNTIME_KEY_VARIABLE = "TADAS_STRIPE_RUNTIME_KEY"
+
+
 def refuse_unsafe_payments(settings: IntegrationsSettings, environment: str) -> None:
-    """The payment processor's twin anywhere but local and test, and a key
-    whose mode is not the environment's: production takes a live key, every
-    other environment a test key."""
+    """The payment processor's twin anywhere but local and test; a runtime
+    key that is not a restricted key, or whose mode is not the environment's
+    (production takes a live key, every other environment a test key); and
+    the key's retired name, so a leftover line says what replaced it."""
+    if settings.stripe_org_key is not None:
+        raise UnsafeIntegration(
+            "TADAS_STRIPE_ORG_KEY is no longer read: the processes take a restricted key as "
+            f"{RUNTIME_KEY_VARIABLE}, and `tadas-ops stripe-bootstrap` its own as "
+            "TADAS_STRIPE_BOOTSTRAP_KEY (docs/runbooks/providers/stripe.md)"
+        )
     if settings.billing_backend == "twin":
         if environment not in TWIN_ENVIRONMENTS:
             raise UnsafeIntegration(
                 f"TADAS_BILLING_BACKEND=twin is refused when TADAS_ENVIRONMENT={environment}"
             )
         return
-    key = settings.stripe_org_key
+    key = settings.stripe_runtime_key
     if key is None:
         return
-    expected = mode_for(environment)
-    found = key_mode(key.get_secret_value())
-    if found != expected:
-        raise UnsafeIntegration(
-            f"TADAS_STRIPE_ORG_KEY is a {found or 'unrecognised'} key; "
-            f"TADAS_ENVIRONMENT={environment} takes a {expected} key"
-        )
+    refusal = key_refusal(RUNTIME_KEY_VARIABLE, key.get_secret_value(), environment)
+    if refusal is not None:
+        raise UnsafeIntegration(refusal)
 
 
 def payments_for(settings: IntegrationsSettings, environment: str) -> PaymentsInterface:
@@ -55,7 +61,7 @@ def payments_for(settings: IntegrationsSettings, environment: str) -> PaymentsIn
     refuse_unsafe_payments(settings, environment)
     if settings.billing_backend == "twin":
         return PaymentsTwinImpl(environment=environment)
-    key, secret = settings.stripe_org_key, settings.stripe_webhook_secret
+    key, secret = settings.stripe_runtime_key, settings.stripe_webhook_secret
     return PaymentsStripeImpl(
         api_key=None if key is None else key.get_secret_value(),
         account_id=settings.stripe_account_id,

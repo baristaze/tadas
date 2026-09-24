@@ -30,12 +30,12 @@ x-app-env: &app-env
   TADAS_OTEL_ENDPOINT: http://jaeger:4318
   TADAS_SENTRY_DSN: http://0123456789abcdef0123456789abcdef@glitchtip:8000/1
   TADAS_CORS_ORIGINS: '["http://localhost:55173","http://127.0.0.1:55173"]'
-  # The payment processor: the sandbox account, and the key and the signing
-  # secret from .env or the shell, empty by default, which leaves billing
+  # The payment processor: the sandbox account, and the runtime key and the
+  # signing secret from .env or the shell, empty by default, which leaves billing
   # unconfigured (every org keeps its plan; a checkout answers 503).
   TADAS_BILLING_BACKEND: ${TADAS_BILLING_BACKEND:-stripe}
   TADAS_STRIPE_ACCOUNT_ID: ${TADAS_STRIPE_ACCOUNT_ID:-acct_1UIfVX45a2t9JoiY}
-  TADAS_STRIPE_ORG_KEY: ${TADAS_STRIPE_ORG_KEY:-}
+  TADAS_STRIPE_RUNTIME_KEY: ${TADAS_STRIPE_RUNTIME_KEY:-}
   TADAS_STRIPE_WEBHOOK_SECRET: ${TADAS_STRIPE_WEBHOOK_SECRET:-}
 
 services:
