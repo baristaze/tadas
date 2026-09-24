@@ -23,10 +23,9 @@ module "environment" {
   portal_sentry_dsn = var.portal_sentry_dsn
   # This environment's Slack app (deployment/slack/manifest.staging.json).
   # A client id is public; the app's client secret and signing secret are its
-  # secrets. Empty until a person commits the id from the app's Basic
-  # Information page (docs/runbooks/providers/slack.md): until then Slack is
-  # unconfigured here.
-  slack_client_id = ""
+  # secrets. The staging app's id, from its Basic Information page
+  # (docs/runbooks/providers/slack.md).
+  slack_client_id = "842588338401.12123745580357"
 
   # The payment processor's account, the Tadas sandbox: test mode, no real money. The process refuses a key
   # whose mode is not this environment's.

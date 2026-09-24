@@ -1,4 +1,4 @@
-# ADR 0033: Slack is a distributed app over HTTP, installed per org
+# ADR 0035: Slack is a distributed app over HTTP, installed per org
 
 **Status**: accepted (2026-09-23)
 

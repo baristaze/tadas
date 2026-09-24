@@ -45,7 +45,7 @@ never a credential here.
 ## Amendment (2026-09-23)
 
 Slack's calls arrive over HTTP
-([ADR 0033](0033-slack-is-a-distributed-app-over-http-installed-per-org.md)).
+([ADR 0035](0035-slack-is-a-distributed-app-over-http-installed-per-org.md)).
 The API checks each one, acknowledges it, and queues it. The key is a
 UUID v5 over the provider's name and Slack's own id for the delivery:
 the `trigger_id` of a command, and the `event_id` of an event. The
