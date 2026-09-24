@@ -134,7 +134,7 @@ async def test_a_reminder_claimed_before_its_time_parks_until_then(tmp_path: Pat
     assert timedelta(minutes=4) < parked.value.resume_after <= timedelta(minutes=5)
 
 
-async def test_a_reminder_asks_for_the_slack_post_when_a_channel_is_connected(
+async def test_a_reminder_asks_for_the_slack_post_when_a_channel_is_bound(
     tmp_path: Path,
 ) -> None:
     container, twin = build(tmp_path)

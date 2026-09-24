@@ -1,8 +1,10 @@
 """Helpers the reminder and Slack tests share: a container over the memory
-roots and the Slack twin, orgs to act in, and the work a write queued."""
+roots and the Slack twin, orgs to act in, the app installed and a channel
+bound, the calls Slack makes, and the work a write queued."""
 
 from datetime import timedelta
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 from uuid import UUID
 
 from worker_support import request
@@ -10,6 +12,7 @@ from worker_support import request
 from tadas.infra.cache import CacheScope
 from tadas.infra.impl.local import InfraLocalImpl
 from tadas.integrations.identity.absent import IdentityProviderAbsentImpl
+from tadas.integrations.slack.requests import SlackInbound, inbound_command, inbound_event
 from tadas.integrations.slack.twin import SlackTwinImpl
 from tadas.om.base import new_id, utcnow
 from tadas.om.billing.types.plan import Plan
@@ -19,14 +22,12 @@ from tadas.om.tasks.types.task import Task
 from tadas.om.tenancy.impl.manager import TenancyManagerImpl, TenancyOptions
 from tadas.om.work.types.work_item import WorkItem, WorkKind
 from tadas.workers.maintenance.container import WorkerContainer
-from tadas.workers.maintenance.slack_inbound import (
-    InboundDelivery,
-    SlackInboundHandler,
-    delivery_key,
-)
+from tadas.workers.maintenance.slack_inbound import SlackInboundHandler
 
-TEAM = "TQSHA9YBT"
+TEAM = "T0ACME"
+OWNER_SLACK = "U0OWNER"
 PORTAL = "https://app.tadas.test"
+REDIRECT = "https://api.tadas.test/webhooks/slack/oauth"
 LEASE = timedelta(seconds=30)
 
 
@@ -100,26 +101,31 @@ async def claim(container: WorkerContainer, kind: WorkKind) -> tuple[OpContext, 
     return await container.managers.work.claim(request(), "default", [kind], "test", LEASE)
 
 
-def delivery(payload: dict[str, object], *, kind: str = "slash_commands") -> InboundDelivery:
-    envelope = str(new_id())
-    return InboundDelivery(
-        key=delivery_key(kind, envelope, payload),
-        received_at=utcnow(),
-        type=kind,
-        payload=payload,
-    )
-
-
-def command(text: str, channel: str = "C0SLACK", user: str = "U0PERSON") -> InboundDelivery:
-    return delivery(
+def command(
+    text: str, channel: str = "C0SLACK", user: str = OWNER_SLACK, team: str = TEAM
+) -> SlackInbound:
+    """A `/tadas` command as the API queues it once its signature checked out."""
+    return inbound_command(
         {
             "command": "/tadas",
             "text": text,
-            "team_id": TEAM,
+            "team_id": team,
             "channel_id": channel,
             "user_id": user,
+            "trigger_id": f"trigger.{new_id()}",
             "response_url": "https://hooks.slack.com/commands/T/1/abc",
-        }
+        },
+        utcnow(),
+        0,
+    )
+
+
+def event(body: dict[str, object], team: str = TEAM) -> SlackInbound:
+    """An Events API callback as the API queues it."""
+    return inbound_event(
+        {"type": "event_callback", "team_id": team, "event_id": f"Ev{new_id().hex}", "event": body},
+        utcnow(),
+        0,
     )
 
 
@@ -127,16 +133,31 @@ def inbound(container: WorkerContainer, twin: SlackTwinImpl) -> SlackInboundHand
     return SlackInboundHandler(
         container.managers.slack,
         container.managers.tasks,
+        container.managers.tenancy,
         twin,
         AppContext(type=AppType.SLACK, version="slack@test"),
         PORTAL,
     )
 
 
+async def install(
+    container: WorkerContainer, twin: SlackTwinImpl, owner: OpContext, team: str = TEAM
+) -> None:
+    """Installs the app for the owner's org the way a person does: Add to
+    Slack in the portal, Allow on Slack's page, and back. The owner is in the
+    workspace as `OWNER_SLACK`, with the address they sign in with."""
+    slack = container.managers.slack
+    start = await slack.start_install(owner, REDIRECT)
+    state = parse_qs(urlsplit(start.url).query)["state"][0]
+    await slack.finish_install(request(), state, twin.approve(team, OWNER_SLACK), REDIRECT)
+    identity = await container.managers.tenancy.get_identity(owner)
+    twin.add_user(team, OWNER_SLACK, identity.email)
+
+
 async def connect(
     container: WorkerContainer, twin: SlackTwinImpl, owner: OpContext, channel: str = "C0SLACK"
 ) -> None:
-    """Links a channel to the owner's org the way a person does: a code from
-    the portal, typed into the channel."""
-    issued = await container.managers.slack.issue_link_code(owner)
-    await inbound(container, twin).handle(command(f"link {issued.code}", channel))
+    """Installs the app and binds a channel, as the owner types `/tadas
+    connect` in it."""
+    await install(container, twin, owner)
+    await inbound(container, twin).handle(command("connect", channel))

@@ -1,7 +1,7 @@
 [project]
 name = "tadas-maintenance"
 version = "0.1.0"
-description = "The Tadas maintenance worker: the claim loop, the sweep, and the Slack socket bridge."
+description = "The Tadas maintenance worker: the claim loop, the sweep, and what Slack sends."
 requires-python = ">=3.14"
 dependencies = [
     "tadas-om",

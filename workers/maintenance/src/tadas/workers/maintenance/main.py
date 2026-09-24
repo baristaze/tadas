@@ -1,6 +1,5 @@
-"""The worker binary: settings, container, stop handlers, `serve`, `slack`
-(the Socket Mode bridge), and the `health` probe, which asks the serving
-process's `/healthz`."""
+"""The worker binary: settings, container, stop handlers, `serve`, and the
+`health` probe, which asks the serving process's `/healthz`."""
 
 import argparse
 import asyncio
@@ -34,7 +33,6 @@ from tadas.workers.maintenance.slack_inbound import (
     SlackInboundHandler,
 )
 from tadas.workers.maintenance.slack_posts import SlackPostHandlerImpl
-from tadas.workers.maintenance.slack_socket import SlackSocketBridge, hold_connection
 
 log = logging.getLogger(__name__)
 
@@ -91,12 +89,13 @@ def build_consumer(container: WorkerContainer) -> DeliveryConsumer:
 
 
 def build_inbound(container: WorkerContainer) -> SlackInboundConsumer:
-    """The consumer of the `slack` queue: what the Socket Mode bridge
-    acknowledged and queued, handled under the request stage it mints."""
+    """The consumer of the `slack` queue: what the API checked, acknowledged,
+    and queued, handled under the request stage it mints."""
     settings = container.settings
     handler = SlackInboundHandler(
         container.managers.slack,
         container.managers.tasks,
+        container.managers.tenancy,
         container.slack,
         AppContext(type=AppType.SLACK, version=f"slack@{settings.worker_id}"),
         settings.portal_url,
@@ -166,39 +165,6 @@ async def serve(lane: str | None) -> int:
     return 0
 
 
-async def slack() -> int:
-    """The Socket Mode bridge: one per environment. It needs the queue and the
-    app token, and nothing else: no database, no bot token. With no app token
-    it holds no connection and idles, healthy, saying so, so a deployed
-    environment whose secret is still "off" runs the process harmlessly."""
-    settings = MaintenanceSettings(service_name="slack")
-    boot(settings)
-    container = WorkerContainer.build(settings)
-    await container.infra.start()
-    stopping = asyncio.Event()
-    running = asyncio.get_running_loop()
-    for sig in (signal.SIGTERM, signal.SIGINT):
-        running.add_signal_handler(sig, stopping.set)
-
-    async def alive() -> bool:
-        return True
-
-    http = WorkerHttpServer(settings.metrics_host, settings.metrics_port, alive, running)
-    http.start()
-    try:
-        if settings.slack_app_token is None:
-            log.warning("no Slack app token is set; the Socket Mode connection stays closed")
-            await stopping.wait()
-        else:
-            bridge = SlackSocketBridge(container.infra.get_queues())
-            timeout = timedelta(seconds=settings.slack_timeout_seconds)
-            await hold_connection(settings.slack_app_token, bridge, stopping, timeout)
-    finally:
-        http.stop()
-        await container.close()
-    return 0
-
-
 def liveness_probe(loop: WorkerLoop) -> Probe:
     async def alive() -> bool:
         return loop.alive()
@@ -228,12 +194,9 @@ def main(argv: list[str] | None = None) -> int:
     p_serve = sub.add_parser("serve", help="run the worker loop")
     p_serve.add_argument("--lane", help="the lane to claim from; defaults to TADAS_WORKER_LANE")
     sub.add_parser("health", help="exit 0 while the serving worker answers /healthz with 200")
-    sub.add_parser("slack", help="hold the Slack Socket Mode connection and queue what arrives")
     args = parser.parse_args(argv)
     if args.command == "health":
         return health(MaintenanceSettings())
-    if args.command == "slack":
-        return asyncio.run(slack())
     return asyncio.run(serve(args.lane))
 
 

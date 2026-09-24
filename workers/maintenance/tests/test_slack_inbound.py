@@ -1,7 +1,8 @@
-"""What Slack sends, after the acknowledgement: the command parser, the link
-code (hashed, single use, expiring), `/tadas add` in a connected channel and
-nowhere else, `/tadas list` and `/tadas` alone, the help, the mention, the App
-Home, the tenant fence of the connection, and the queue consumer's delete-or-retry."""
+"""What Slack sends, after the API checked and acknowledged it: the command
+parser; the workspace names the org and the Slack profile's address names
+the person; `/tadas` alone, `/tadas team`, `/tadas add`, `/tadas connect`,
+and the help; the mention, once; the App Home; the uninstall; the tenant
+fence of the workspace; and the queue consumer's delete-or-retry."""
 
 import asyncio
 from datetime import UTC, datetime, timedelta
@@ -9,13 +10,15 @@ from pathlib import Path
 
 import pytest
 from slack_support import (
+    OWNER_SLACK,
     PORTAL,
     TEAM,
     build,
     command,
     connect,
-    delivery,
+    event,
     inbound,
+    install,
     make_task,
     member_of,
     on_team,
@@ -24,19 +27,16 @@ from slack_support import (
 
 from tadas.infra.queues import Queues
 from tadas.infra.queues.memory import QueueMemoryImpl
-from tadas.integrations.slack import SlackFailed
+from tadas.integrations.slack import SlackFailed, error_for
 from tadas.integrations.slack.twin import SlackTwinImpl
 from tadas.om.base import derived_id
-from tadas.om.exceptions import NotAuthorized
 from tadas.om.opcontext import OpContext
-from tadas.om.slack.impl.manager import SlackManagerImpl, SlackOptions
-from tadas.om.slack.rules import code_digest, normalized_code
 from tadas.om.tasks.types.filter import TaskFilter
 from tadas.om.tasks.types.task import Task, TaskScope, TaskStatus
 from tadas.workers.maintenance.container import WorkerContainer
 from tadas.workers.maintenance.slack_inbound import (
     CONNECTED,
-    NOT_CONNECTED,
+    NOT_INSTALLED,
     USAGE,
     Command,
     InboundOptions,
@@ -47,22 +47,24 @@ from tadas.workers.maintenance.slack_inbound import (
     parse_command,
 )
 
+BOB_SLACK = "U0BOB"
+
 
 @pytest.mark.parametrize(
     ("text", "parsed"),
     [
-        ("", Command(Verb.LIST)),
-        ("   ", Command(Verb.LIST)),
-        ("list", Command(Verb.LIST)),
-        ("  LIST ", Command(Verb.LIST)),
-        ("List", Command(Verb.LIST)),
+        ("", Command(Verb.MINE)),
+        ("   ", Command(Verb.MINE)),
+        ("team", Command(Verb.TEAM)),
+        ("  TEAM ", Command(Verb.TEAM)),
         ("help", Command(Verb.HELP)),
-        ("  HELP  ", Command(Verb.HELP)),
+        ("connect", Command(Verb.CONNECT)),
         ("add Buy milk", Command(Verb.ADD, "Buy milk")),
         ("Add   Buy   milk ", Command(Verb.ADD, "Buy   milk")),
-        ("link abcd-efgh", Command(Verb.LINK, "abcd-efgh")),
         ("add", Command(Verb.UNKNOWN, "add")),
-        ("link", Command(Verb.UNKNOWN, "link")),
+        ("me", Command(Verb.UNKNOWN, "me")),
+        ("list", Command(Verb.UNKNOWN, "list")),
+        ("team everyone", Command(Verb.UNKNOWN, "team everyone")),
         ("delete 3", Command(Verb.UNKNOWN, "delete 3")),
         ("edit Buy milk", Command(Verb.UNKNOWN, "edit Buy milk")),
     ],
@@ -71,167 +73,313 @@ def test_the_command_parser(text: str, parsed: Command) -> None:
     assert parse_command(text) == parsed
 
 
-def test_a_code_is_typed_loosely_and_stored_as_a_digest() -> None:
-    assert normalized_code(" abcd-efgh ") == "ABCDEFGH"
-    assert code_digest("abcd efgh") == code_digest("ABCD-EFGH")
-    assert "ABCD" not in code_digest("ABCD-EFGH")
+def answers(twin: SlackTwinImpl) -> list[str]:
+    return [text for _, text in twin.responses]
+
+
+async def with_bob(container: WorkerContainer, twin: SlackTwinImpl) -> OpContext:
+    """Bob, a member of acme, in the workspace as `BOB_SLACK`."""
+    bob = await member_of(container, "acme", "bob@acme.test")
+    twin.add_user(TEAM, BOB_SLACK, "bob@acme.test")
+    return bob
 
 
 async def test_help_and_an_unknown_command_answer_with_the_usage(tmp_path: Path) -> None:
     container, twin = build(tmp_path)
     handler = inbound(container, twin)
-    await handler.handle(command("help"))
+    await handler.handle(command("help"))  # needs no install
     await handler.handle(command("rename 3 to 4"))
-    assert [text for _, text in twin.responses] == [USAGE, USAGE]
+    await handler.handle(command("list"))
+    assert answers(twin) == [USAGE, USAGE, USAGE]
 
 
-async def test_add_in_a_channel_no_org_holds_says_how_to_connect(tmp_path: Path) -> None:
+async def test_a_workspace_no_org_installed_says_how_to_install(tmp_path: Path) -> None:
     container, twin = build(tmp_path)
-    await inbound(container, twin).handle(command("add Buy milk"))
-    assert [text for _, text in twin.responses] == [NOT_CONNECTED]
-
-
-async def test_a_code_links_the_channel_once(tmp_path: Path) -> None:
-    container, twin = build(tmp_path)
-    ann = await owner_of(container, "acme")
-    issued = await container.managers.slack.issue_link_code(ann)
     handler = inbound(container, twin)
-    await handler.handle(command(f"link {issued.code.lower()}", "C0TEAM", "U0ANN"))
-    connection = await container.managers.slack.get_connection(ann)
-    assert connection is not None
-    assert (connection.team_id, connection.channel_id) == (TEAM, "C0TEAM")
-    assert connection.created_by == ann.user_id and connection.linked_by_slack_user == "U0ANN"
-    assert twin.posts[-1].channel_id == "C0TEAM" and twin.posts[-1].text == CONNECTED
-    assert twin.responses[-1][1] == "Connected. Try `/tadas add <title>`."
-    await handler.handle(command(f"link {issued.code}", "C0OTHER"))
-    assert twin.responses[-1][1].startswith("That code is unknown, used, or expired")
-    again = await container.managers.slack.get_connection(ann)
-    assert again is not None and again.channel_id == "C0TEAM"
+    for text in ("", "team", "add Buy milk", "connect"):
+        await handler.handle(command(text))
+    assert answers(twin) == [NOT_INSTALLED] * 4
 
 
-async def test_an_expired_code_links_nothing(tmp_path: Path) -> None:
+async def test_a_person_tadas_does_not_know_is_told_how_to_join(tmp_path: Path) -> None:
     container, twin = build(tmp_path)
     ann = await owner_of(container, "acme")
-    expired = SlackManagerImpl(
-        container.storage.get_slack_storage(),
-        container.managers.tenancy,
-        container.managers.outbox,
-        SlackOptions(code_lifetime=timedelta(seconds=-1)),
+    await install(container, twin, ann)
+    twin.add_user(TEAM, "U0STRANGER", "stranger@elsewhere.test")
+    handler = inbound(container, twin)
+    await handler.handle(command("add Sneak in", user="U0STRANGER"))
+    assert answers(twin)[-1] == (
+        "You are not a member of Acme in Tadas yet. Tadas knows you by the email of your"
+        " Slack profile, stranger@elsewhere.test. Ask an owner or an admin to invite that"
+        " address in Tadas, under Settings, then sign in once with it."
     )
-    issued = await expired.issue_link_code(ann)
-    await inbound(container, twin).handle(command(f"link {issued.code}"))
-    assert await container.managers.slack.get_connection(ann) is None
-    assert twin.responses[-1][1].startswith("That code is unknown, used, or expired")
+    await handler.handle(command("", user="U0NOEMAIL"))
+    assert answers(twin)[-1].startswith("Tadas could not read the email of your Slack profile")
+    count = await container.managers.tasks.count_open_tasks(
+        ann, TaskFilter(scope=TaskScope.TEAM, user_id=ann.user_id)
+    )
+    assert count == 0, "nothing was added"
 
 
-async def test_the_code_is_kept_as_its_digest_alone(tmp_path: Path) -> None:
-    container, _ = build(tmp_path)
-    ann = await owner_of(container, "acme")
-    issued = await container.managers.slack.issue_link_code(ann)
-    stored = container.storage.get_slack_storage()._codes  # type: ignore[attr-defined]
-    [(_, code)] = stored.values()
-    assert code.code_hash == code_digest(issued.code)
-    assert normalized_code(issued.code) not in code.model_dump_json()
-
-
-async def test_only_an_owner_or_an_admin_issues_a_code(tmp_path: Path) -> None:
-    container, _ = build(tmp_path)
-    await owner_of(container, "acme")
-    bob = await member_of(container, "acme", "bob@acme.test")
-    with pytest.raises(NotAuthorized):
-        await container.managers.slack.issue_link_code(bob)
-    with pytest.raises(NotAuthorized):
-        await container.managers.slack.disconnect(bob)
-
-
-async def test_relinking_replaces_the_channel(tmp_path: Path) -> None:
+async def test_add_is_made_by_the_person_who_typed_and_once(tmp_path: Path) -> None:
     container, twin = build(tmp_path)
     ann = await owner_of(container, "acme")
-    await connect(container, twin, ann, "C0FIRST")
-    first = await container.managers.slack.get_connection(ann)
-    await connect(container, twin, ann, "C0SECOND")
-    second = await container.managers.slack.get_connection(ann)
-    assert first is not None and second is not None
-    assert second.id == first.id and second.channel_id == "C0SECOND"
-    await inbound(container, twin).handle(command("add In the old channel", "C0FIRST"))
-    assert twin.responses[-1][1] == NOT_CONNECTED
-
-
-async def test_a_channel_speaks_for_one_org(tmp_path: Path) -> None:
-    container, twin = build(tmp_path)
-    ann = await owner_of(container, "acme")
-    zoe = await owner_of(container, "zenith")
-    await connect(container, twin, ann, "C0SHARED")
-    issued = await container.managers.slack.issue_link_code(zoe)
-    await inbound(container, twin).handle(command(f"link {issued.code}", "C0SHARED"))
-    assert twin.responses[-1][1].startswith("This channel is connected to another Tadas org")
-    assert await container.managers.slack.get_connection(zoe) is None
-    theirs = await container.managers.slack.get_connection(ann)
-    assert theirs is not None and theirs.channel_id == "C0SHARED"
-
-
-async def test_add_creates_the_task_in_the_channels_org_alone(tmp_path: Path) -> None:
-    container, twin = build(tmp_path)
-    ann = await owner_of(container, "acme")
-    zoe = await owner_of(container, "zenith")
-    await on_team(container, zoe)
-    await connect(container, twin, ann, "C0ACME")
-    await connect(container, twin, zoe, "C0ZENITH")
-    typed = command("add Order more coffee", "C0ACME")
+    await install(container, twin, ann)
+    bob = await with_bob(container, twin)
+    typed = command("add Order more coffee", user=BOB_SLACK)
     handler = inbound(container, twin)
     await handler.handle(typed)
-    await handler.handle(typed)  # the queue handed the same delivery back
-    tasks = container.managers.tasks
-    acme = await tasks.get_open_tasks(
+    await handler.handle(typed)  # Slack's retry, or the queue handing it back
+    page = await container.managers.tasks.get_open_tasks(
         ann, TaskFilter(scope=TaskScope.TEAM, user_id=ann.user_id), None, 50
     )
-    zenith = await tasks.get_open_tasks(
-        zoe, TaskFilter(scope=TaskScope.TEAM, user_id=zoe.user_id), None, 50
-    )
-    assert [task.title for task in acme.items] == ["Order more coffee"], "one task, in acme"
-    assert zenith.items == ()
-    [task] = acme.items
+    [task] = page.items
+    assert task.title == "Order more coffee" and task.created_by == bob.user_id
     assert task.id == derived_id(typed.key, typed.received_at)
-    assert task.created_by == ann.user_id, "the member who linked the channel"
-    assert twin.responses[-1][1] == "Added: *Order more coffee*"
+    assert answers(twin)[-1] == "Added: *Order more coffee*"
+
+
+async def test_add_lands_in_the_workspaces_org_alone(tmp_path: Path) -> None:
+    container, twin = build(tmp_path)
+    ann = await owner_of(container, "acme")
+    zoe = await owner_of(container, "zenith")
+    await install(container, twin, ann, "T0ACME")
+    await install(container, twin, zoe, "T0ZENITH")
+    await inbound(container, twin).handle(command("add Acme's own", team="T0ACME"))
+    tasks = container.managers.tasks
+    acme = await tasks.count_open_tasks(ann, TaskFilter(scope=TaskScope.TEAM, user_id=ann.user_id))
+    zenith = await tasks.count_open_tasks(
+        zoe, TaskFilter(scope=TaskScope.TEAM, user_id=zoe.user_id)
+    )
+    assert (acme, zenith) == (1, 0)
 
 
 async def test_add_past_the_plans_bound_says_so_and_where_to_upgrade(tmp_path: Path) -> None:
     container, twin = build(tmp_path)
     ann = await owner_of(container, "acme")  # a new org is on Free: ten active tasks
-    await connect(container, twin, ann, "C0ACME")
+    await install(container, twin, ann)
     for n in range(10):
         await container.managers.tasks.create_task(ann, make_task(ann, f"task {n}"))
-    await inbound(container, twin).handle(command("add One too many", "C0ACME"))
-    assert twin.responses[-1][1] == (
+    await inbound(container, twin).handle(command("add One too many"))
+    assert answers(twin)[-1] == (
         "Not added: the Free plan allows 10 active tasks. Pro lifts it. An owner or an "
         f"admin can upgrade in Tadas, under <{PORTAL}/settings/billing|Settings, Billing>."
     )
     assert await container.managers.tasks.count_active_tasks(ann) == 10
 
 
-async def test_disconnecting_stops_the_channel(tmp_path: Path) -> None:
+async def test_connect_binds_the_channel_an_owner_typed_it_in(tmp_path: Path) -> None:
     container, twin = build(tmp_path)
     ann = await owner_of(container, "acme")
-    await connect(container, twin, ann)
-    assert await container.managers.slack.disconnect(ann) is not None
-    assert await container.managers.slack.get_connection(ann) is None
-    await inbound(container, twin).handle(command("add After the disconnect"))
-    assert twin.responses[-1][1] == NOT_CONNECTED
+    await connect(container, twin, ann, "C0TEAM")
+    installation = await container.managers.slack.get_installation(ann)
+    assert installation is not None and installation.channel_id == "C0TEAM"
+    assert twin.posts[-1].channel_id == "C0TEAM" and twin.posts[-1].text == CONNECTED
+    assert answers(twin)[-1] == (
+        "Connected. Reminders and task updates will appear in this channel."
+    )
 
 
-async def test_a_mention_is_answered_in_its_thread_and_the_home_is_published(
+async def test_connect_is_an_owners_or_an_admins(tmp_path: Path) -> None:
+    container, twin = build(tmp_path)
+    ann = await owner_of(container, "acme")
+    await install(container, twin, ann)
+    await with_bob(container, twin)
+    await inbound(container, twin).handle(command("connect", "C0TEAM", BOB_SLACK))
+    assert answers(twin)[-1].startswith("Only an owner or an admin")
+    installation = await container.managers.slack.get_installation(ann)
+    assert installation is not None and installation.channel_id is None
+
+
+async def test_connect_in_a_channel_the_app_is_not_in_binds_nothing(tmp_path: Path) -> None:
+    container, twin = build(tmp_path)
+    ann = await owner_of(container, "acme")
+    await install(container, twin, ann)
+    twin.fail_next(error_for("not_in_channel"), "chat.postMessage")
+    await inbound(container, twin).handle(command("connect", "C0PRIVATE"))
+    assert answers(twin)[-1] == (
+        "@tadas is not in this channel yet, so it cannot post here: type `/invite @tadas`."
+        " Then type `/tadas connect` again."
+    )
+    installation = await container.managers.slack.get_installation(ann)
+    assert installation is not None and installation.channel_id is None
+
+
+async def add_tasks(
+    container: WorkerContainer, ctx: OpContext, count: int, prefix: str = "Task"
+) -> list[Task]:
+    """`count` open tasks, created oldest first, so the last one created is
+    the newest."""
+    return [
+        await container.managers.tasks.create_task(ctx, make_task(ctx, f"{prefix} {n}"))
+        for n in range(1, count + 1)
+    ]
+
+
+async def listed(
+    handler: SlackInboundHandler, twin: SlackTwinImpl, text: str = "", user: str = OWNER_SLACK
+) -> str:
+    await handler.handle(command(text, user=user))
+    return twin.responses[-1][1]
+
+
+async def test_an_empty_list_says_so_to_the_person_alone(tmp_path: Path) -> None:
+    container, twin = build(tmp_path)
+    ann = await owner_of(container, "acme")
+    await install(container, twin, ann)
+    answer = await listed(inbound(container, twin), twin)
+    assert answer == (
+        f"No open tasks. Add one with `/tadas add <title>`, or open <{PORTAL}/|Tadas>."
+    )
+    assert twin.responses[-1][0] == "https://hooks.slack.com/commands/T/1/abc", "for one person"
+
+
+async def test_tadas_alone_is_my_open_tasks_newest_first(tmp_path: Path) -> None:
+    container, twin = build(tmp_path)
+    ann = await owner_of(container, "acme")
+    await on_team(container, ann)
+    await install(container, twin, ann)
+    bob = await with_bob(container, twin)
+    await add_tasks(container, ann, 3, "Ann's")
+    await add_tasks(container, bob, 2, "Bob's")
+    handler = inbound(container, twin)
+    assert await listed(handler, twin) == "\n".join(
+        [
+            "*Your open tasks*",
+            "• Ann's 3",
+            "• Ann's 2",
+            "• Ann's 1",
+            f"Open <{PORTAL}/|Tadas> to work on them.",
+        ]
+    )
+    assert (await listed(handler, twin, user=BOB_SLACK)).split("\n")[1:3] == [
+        "• Bob's 2",
+        "• Bob's 1",
+    ]
+    assert await listed(handler, twin, "   ") == await listed(handler, twin), (
+        "spaces are still alone"
+    )
+
+
+async def test_team_is_every_open_task_newest_first(tmp_path: Path) -> None:
+    container, twin = build(tmp_path)
+    ann = await owner_of(container, "acme")
+    await on_team(container, ann)
+    await install(container, twin, ann)
+    bob = await with_bob(container, twin)
+    await add_tasks(container, ann, 1, "Ann's")
+    await add_tasks(container, bob, 1, "Bob's")
+    answer = await listed(inbound(container, twin), twin, "team", BOB_SLACK)
+    assert answer.split("\n")[:3] == ["*The team's open tasks*", "• Bob's 1", "• Ann's 1"]
+
+
+async def test_a_long_list_shows_the_ten_newest_and_counts_the_rest(tmp_path: Path) -> None:
+    container, twin = build(tmp_path)
+    ann = await owner_of(container, "acme")
+    await on_team(container, ann)
+    await install(container, twin, ann)
+    await add_tasks(container, ann, 12)
+    for text in ("", "team"):
+        lines = (await listed(inbound(container, twin), twin, text)).split("\n")
+        assert lines[1:11] == [f"• Task {n}" for n in range(12, 2, -1)]
+        assert lines[-1] == f"…and 2 more in <{PORTAL}/|Tadas>"
+        assert len(lines) == 12
+
+
+async def test_the_list_leaves_out_done_and_deleted_tasks(tmp_path: Path) -> None:
+    container, twin = build(tmp_path)
+    ann = await owner_of(container, "acme")
+    await install(container, twin, ann)
+    done, gone, kept = await add_tasks(container, ann, 3)
+    tasks = container.managers.tasks
+    await tasks.update_task(ann, done.model_copy(update={"status": TaskStatus.DONE}), done.version)
+    await tasks.delete_task(ann, gone.id, gone.version)
+    answer = await listed(inbound(container, twin), twin, "team")
+    assert answer.split("\n")[1:-1] == [f"• {kept.title}"]
+
+
+async def test_a_title_cannot_ping_or_fake_a_link_and_the_due_date_is_localized(
     tmp_path: Path,
 ) -> None:
     container, twin = build(tmp_path)
+    ann = await owner_of(container, "acme")
+    await install(container, twin, ann)
+    due = datetime(2030, 5, 17, 14, 30, tzinfo=UTC)
+    await container.managers.tasks.create_task(
+        ann, make_task(ann, "Ship <!channel> & <https://evil.test|this>", remind_at=due)
+    )
+    answer = await listed(inbound(container, twin), twin)
+    stamp = int(due.timestamp())
+    assert answer.split("\n")[1] == (
+        "• Ship &lt;!channel&gt; &amp; &lt;https://evil.test|this&gt;"
+        f"  _due <!date^{stamp}^{{date_short_pretty}}|2030-05-17>_"
+    )
+    assert "<!channel>" not in answer
+
+
+async def test_a_mention_is_answered_in_its_thread_once(tmp_path: Path) -> None:
+    container, twin = build(tmp_path)
+    ann = await owner_of(container, "acme")
+    await install(container, twin, ann)
+    mention = event({"type": "app_mention", "channel": "C0ANY", "ts": "1700.01", "text": "hi"})
     handler = inbound(container, twin)
-    mention = {"type": "app_mention", "channel": "C0ANY", "ts": "1700.01", "text": "<@B> hi"}
-    await handler.handle(delivery({"event_id": "Ev1", "event": mention}, kind="events_api"))
-    assert twin.posts[-1].thread_ts == "1700.01" and twin.posts[-1].text == USAGE
-    opened = {"type": "app_home_opened", "user": "U0ANN", "tab": "home"}
-    await handler.handle(delivery({"event_id": "Ev2", "event": opened}, kind="events_api"))
+    await handler.handle(mention)
+    await handler.handle(mention)  # Slack's retry of the same event
+    replies = [post for post in twin.posts if post.thread_ts == "1700.01"]
+    assert [post.text for post in replies] == [USAGE]
+    assert replies[0].team_id == TEAM
+
+
+async def test_the_home_is_published_with_the_orgs_token(tmp_path: Path) -> None:
+    container, twin = build(tmp_path)
+    ann = await owner_of(container, "acme")
+    await install(container, twin, ann)
+    await inbound(container, twin).handle(
+        event({"type": "app_home_opened", "user": "U0ANN", "tab": "home"})
+    )
     [(user, view)] = twin.homes
     assert user == "U0ANN" and view["type"] == "home"
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"type": "app_uninstalled"},
+        {"type": "tokens_revoked", "tokens": {"oauth": [], "bot": ["UBOTT0ACME"]}},
+    ],
+)
+async def test_an_uninstall_in_slack_removes_the_installation(
+    tmp_path: Path, body: dict[str, object]
+) -> None:
+    container, twin = build(tmp_path)
+    ann = await owner_of(container, "acme")
+    await install(container, twin, ann)
+    installation = await container.managers.slack.get_installation(ann)
+    assert installation is not None
+    await inbound(container, twin).handle(event(body))
+    assert await container.managers.slack.get_installation(ann) is None
+    secrets = container.infra.get_secrets()
+    assert not await secrets.has(ann.org_id, installation.credential_ref)
+    await inbound(container, twin).handle(command("add After"))
+    assert answers(twin)[-1] == NOT_INSTALLED
+
+
+async def test_a_user_token_revoked_leaves_the_installation(tmp_path: Path) -> None:
+    container, twin = build(tmp_path)
+    ann = await owner_of(container, "acme")
+    await install(container, twin, ann)
+    await inbound(container, twin).handle(
+        event({"type": "tokens_revoked", "tokens": {"oauth": ["U0ANN"], "bot": []}})
+    )
+    assert await container.managers.slack.get_installation(ann) is not None
+
+
+async def test_an_event_for_a_workspace_no_org_holds_does_nothing(tmp_path: Path) -> None:
+    container, twin = build(tmp_path)
+    await inbound(container, twin).handle(
+        event({"type": "app_mention", "channel": "C0ANY", "ts": "1.0"}, team="T0NOBODY")
+    )
+    assert twin.posts == []
 
 
 async def test_the_consumer_deletes_what_it_handled_and_leaves_what_failed(
@@ -245,9 +393,8 @@ async def test_the_consumer_deletes_what_it_handled_and_leaves_what_failed(
     await queues.send(Queues.SLACK, b"not json")
     await queues.send(Queues.SLACK, command("help").model_dump_json().encode())
     assert await consumer.poll_once() == 2
-    assert (await queues.depth(Queues.SLACK)).visible + (
-        await queues.depth(Queues.SLACK)
-    ).in_flight == 0
+    depth = await queues.depth(Queues.SLACK)
+    assert depth.visible + depth.in_flight == 0
     twin.fail_next(SlackFailed("timeout"))
     await queues.send(Queues.SLACK, command("help").model_dump_json().encode())
     assert await consumer.poll_once() == 1
@@ -265,121 +412,9 @@ async def test_the_consumer_stops_when_asked(tmp_path: Path) -> None:
     await asyncio.wait_for(running, 1)
 
 
-async def add_tasks(container: WorkerContainer, ctx: OpContext, count: int) -> list[Task]:
-    """`count` open tasks, created oldest first, so the last one created is
-    the top of the list."""
-    return [
-        await container.managers.tasks.create_task(ctx, make_task(ctx, f"Task {n}"))
-        for n in range(1, count + 1)
-    ]
-
-
-async def listed(handler: SlackInboundHandler, twin: SlackTwinImpl, text: str = "list") -> str:
-    await handler.handle(command(text))
-    return twin.responses[-1][1]
-
-
-async def test_list_in_a_channel_no_org_holds_says_how_to_connect(tmp_path: Path) -> None:
-    container, twin = build(tmp_path)
-    handler = inbound(container, twin)
-    assert await listed(handler, twin) == NOT_CONNECTED
-    assert await listed(handler, twin, "") == NOT_CONNECTED
-
-
-async def test_an_empty_list_says_so(tmp_path: Path) -> None:
-    container, twin = build(tmp_path)
-    ann = await owner_of(container, "acme")
-    await connect(container, twin, ann)
-    answer = await listed(inbound(container, twin), twin)
-    assert answer == (
-        f"No open tasks. Add one with `/tadas add <title>`, or open <{PORTAL}/|Tadas>."
-    )
-    assert twin.responses[-1][0] == "https://hooks.slack.com/commands/T/1/abc", "for one person"
-
-
-async def test_the_list_is_the_open_list_in_its_own_order(tmp_path: Path) -> None:
-    container, twin = build(tmp_path)
-    ann = await owner_of(container, "acme")
-    await connect(container, twin, ann)
-    await add_tasks(container, ann, 3)
-    handler = inbound(container, twin)
-    answer = await listed(handler, twin)
-    assert answer == "\n".join(
-        [
-            "*Open tasks*",
-            "• Task 3",
-            "• Task 2",
-            "• Task 1",
-            f"Open <{PORTAL}/|Tadas> to work on them.",
-        ]
-    )
-    assert await listed(handler, twin, "  ") == answer, "`/tadas` alone is `/tadas list`"
-
-
-async def test_a_long_list_shows_ten_and_counts_the_rest(tmp_path: Path) -> None:
-    container, twin = build(tmp_path)
-    ann = await owner_of(container, "acme")
-    await on_team(container, ann)
-    await connect(container, twin, ann)
-    await add_tasks(container, ann, 12)
-    answer = await listed(inbound(container, twin), twin, " LIST ")
-    lines = answer.split("\n")
-    assert lines[1:11] == [f"• Task {n}" for n in range(12, 2, -1)]
-    assert lines[-1] == f"…and 2 more in <{PORTAL}/|Tadas>"
-    assert len(lines) == 12
-
-
-async def test_the_list_leaves_out_done_and_deleted_tasks(tmp_path: Path) -> None:
-    container, twin = build(tmp_path)
-    ann = await owner_of(container, "acme")
-    await connect(container, twin, ann)
-    done, gone, kept = await add_tasks(container, ann, 3)
-    tasks = container.managers.tasks
-    await tasks.update_task(ann, done.model_copy(update={"status": TaskStatus.DONE}), done.version)
-    await tasks.delete_task(ann, gone.id, gone.version)
-    answer = await listed(inbound(container, twin), twin)
-    assert answer.split("\n")[1:-1] == [f"• {kept.title}"]
-
-
-async def test_a_title_cannot_ping_or_fake_a_link_and_the_due_time_is_localized(
-    tmp_path: Path,
-) -> None:
-    container, twin = build(tmp_path)
-    ann = await owner_of(container, "acme")
-    await connect(container, twin, ann)
-    due = datetime(2030, 5, 17, 14, 30, tzinfo=UTC)
-    await container.managers.tasks.create_task(
-        ann, make_task(ann, "Ship <!channel> & <https://evil.test|this>", remind_at=due)
-    )
-    answer = await listed(inbound(container, twin), twin)
-    stamp = int(due.timestamp())
-    assert answer.split("\n")[1] == (
-        "• Ship &lt;!channel&gt; &amp; &lt;https://evil.test|this&gt;"
-        f"  _due <!date^{stamp}^{{date_short_pretty}} {{time}}|2030-05-17 14:30 UTC>_"
-    )
-    assert "<!channel>" not in answer
-
-
-async def test_the_list_is_the_channels_org_alone(tmp_path: Path) -> None:
-    container, twin = build(tmp_path)
-    ann = await owner_of(container, "acme")
-    zoe = await owner_of(container, "zenith")
-    await on_team(container, zoe)
-    await connect(container, twin, ann, "C0ACME")
-    await connect(container, twin, zoe, "C0ZENITH")
-    await container.managers.tasks.create_task(ann, make_task(ann, "Acme's own"))
-    for n in range(12):
-        await container.managers.tasks.create_task(zoe, make_task(zoe, f"Zenith {n}"))
-    handler = inbound(container, twin)
-    await handler.handle(command("list", "C0ACME"))
-    acme = twin.responses[-1][1]
-    assert acme.split("\n")[1:] == ["• Acme's own", f"Open <{PORTAL}/|Tadas> to work on them."]
-    await handler.handle(command("list", "C0ZENITH"))
-    zenith = twin.responses[-1][1]
-    assert "Acme" not in zenith and zenith.endswith(f"…and 2 more in <{PORTAL}/|Tadas>")
-
-
-def test_the_usage_and_the_home_name_the_list() -> None:
-    assert "`/tadas list`" in USAGE
+def test_the_usage_and_the_home_name_every_command() -> None:
+    for named in ("`/tadas`", "`/tadas team`", "`/tadas add <title>`", "`/tadas connect`"):
+        assert named in USAGE
+    assert "`/tadas list`" not in USAGE and "`/tadas me`" not in USAGE
     [section] = [b for b in home_view()["blocks"] if b.get("text", {}).get("text") == USAGE]
     assert section["type"] == "section"

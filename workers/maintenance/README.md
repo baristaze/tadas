@@ -3,8 +3,7 @@
 The background process of Tadas. It runs the work queue's claim loop,
 the consumer of what Slack sends, and, on a timer, the sweep that keeps
 the platform tidy. Every replica is the same process on one lane; a
-second lane is a second replica told its lane. The same image runs one
-more process, `slack`, which holds Slack's connection (below).
+second lane is a second replica told its lane.
 
 ## What it does
 
@@ -23,21 +22,30 @@ more process, `slack`, which holds Slack's connection (below).
   set for; otherwise it sends nothing. A Slack post writes one line to
   the org's channel (a task created, completed, or reminded of),
   records it under the item's key so a rerun posts nothing, parks on a
-  rate limit for the time Slack named, and marks the connection broken
-  when Slack refuses the channel for good. `SYNC_SEATS` reads an org's
+  rate limit for the time Slack named, and marks the installation
+  broken when Slack refuses the channel for good. `SYNC_SEATS` reads an org's
   active members when it runs and holds a Max subscription's quantity to
   them, with no proration and under a key made of the item and the
   count, so a retried run is one change. The last kind does nothing and
   keeps the loop honest.
-- **What Slack sends.** The worker reads the `slack` queue: `/tadas`
-  commands, mentions, and the App Home opening, each already
-  acknowledged to Slack. `/tadas add` creates a task in the channel's
-  org, `/tadas list` (or `/tadas` alone) answers the person who typed it
-  with the org's first ten open tasks, a count of the rest, and a link
-  to the portal at `TADAS_PORTAL_URL`, `/tadas link` spends a link code,
-  and anything else answers with the usage. A task past the org's plan
-  is not added, and the reply names the plan and where to upgrade. A
-  delivery that fails stays on the queue and comes back.
+- **What Slack sends.** Slack calls the API, which checks each call's
+  signature, acknowledges it within Slack's three seconds, and queues
+  it on `slack`. The worker reads that queue: `/tadas` commands,
+  mentions, the App Home opening, and the app's uninstall. The org is
+  the one that installed the app in the call's workspace. The person
+  is the org's member whose sign-in proved the email their Slack
+  profile holds; someone Tadas cannot match is told how to join.
+  `/tadas` alone answers with your ten newest open tasks, `/tadas team`
+  with the org's, each with a count of the rest and a link to the
+  portal at `TADAS_PORTAL_URL`. `/tadas add <title>` creates a task
+  made by the person who typed it. `/tadas connect`, from an owner or
+  an admin, makes the channel it was typed in the one Tadas posts to.
+  `/tadas help`, and anything else, answers with the usage, and so
+  does a mention, in its thread. A task past the org's plan is not
+  added, and the reply names the plan and where to upgrade. A call
+  handled twice changes nothing: the task takes an id derived from the
+  call's key, and a mention's reply is recorded under it. A call that
+  fails stays on the queue and comes back.
 - **Apply the payment processor's deliveries.** Beside the claim loop,
   the worker long-polls the inbound queue the webhook route fills. For
   each delivery it finds the org the delivery names, mints that org's
@@ -87,26 +95,11 @@ more process, `slack`, which holds Slack's connection (below).
   for another worker, then marks itself offline. A cloud rollout replaces one worker at a time, because a
   worker holds leases.
 
-## The Slack connection
-
-Slack delivers commands and events over a websocket the app opens
-(Socket Mode), not over HTTP, and wants each acknowledged within three
-seconds. `tadas-maintenance slack` holds that socket: it acknowledges
-each delivery first, then puts it on the `slack` queue, and remembers
-recent keys so Slack's retries are dropped. It does nothing else, so a
-slow database never delays an acknowledgement. One runs per
-environment, never two: Slack spreads deliveries across every open
-connection. It opens the socket only when `TADAS_SLACK_APP_TOKEN` is
-set, and local and staging share one Slack app, so a laptop leaves the
-token empty. Posting needs only `TADAS_SLACK_BOT_TOKEN`; without it a
-local worker posts through the twin and a deployed one posts nothing.
-
 ## The subcommands
 
 | Subcommand | Does |
 |------------|------|
 | `serve` | Runs the loop and the `slack` queue's consumer; `--lane` overrides the lane from settings. |
-| `slack` | Holds the Slack Socket Mode connection and queues what arrives; idles when no app token is set. |
 | `health` | Asks the serving process's `/healthz` by hand; exits 0 on 200. |
 
 ## What it never does
