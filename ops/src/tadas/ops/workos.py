@@ -1,25 +1,29 @@
-"""`tadas-ops workos-bootstrap`: reconciles one WorkOS environment with the
+"""`tadas-ops workos-bootstrap`: reconciles one WorkOS application with the
 desired state committed in `deployment/workos/environments.yaml`. A dry run
 by default; `--apply` writes what the API can write. Rerun against unchanged
 config, it changes nothing and says so.
 
-A redirect URI is present when AuthKit accepts it for the client: `GET
+The key is the Tadas App application's own API key, made on that
+application's API keys tab. The command proves it first: it exchanges a
+code WorkOS never issued, with the key as the client secret, and WorkOS
+answers `invalid_grant` for the application's key and `invalid_client` for
+any other (another application's, the environment's, another
+environment's). A key that is not the application's stops the run (exit 2)
+before anything is read or written.
+
+The application's redirect list is what the key reads and writes: WorkOS's
+redirect URI API works on the application the key belongs to. A redirect
+URI is present when AuthKit accepts it for the client: `GET
 /user_management/authorize` with the client id and the URI answers with a
 redirect that is not to `/redirect-uri-invalid`. That probe is the truth.
+A missing URI is added to the list under `--apply` and probed again; one the
+probe still refuses fails the run (exit 1) and is named as a dashboard step.
+So does a default redirect that is not the one the desired state names:
+the API reports which URI is the default and does not change it.
 
-Where a missing redirect is added depends on the kind of client the desired
-state names. An AuthKit application (`client: application`, what Tadas signs
-in through) keeps its redirects on its own Redirects tab in the WorkOS
-dashboard, which no API reads or writes; AuthKit does not read the
-environment's list for it. So for an application the command only probes,
-and names each missing URI as a dashboard step; it never writes the
-environment's list, since an entry there would change nothing. The
-environment's own client (`client: environment`) is the one the API can
-serve: a missing URI is added to the environment's list
-(`/user_management/redirect_uris`) and probed again. Either way a URI the
-probe still refuses fails the run (exit 1). The login initiation URI has no
-API at all: it is printed as a check to make on the Redirects tab. No
-webhook is reconciled: the sign-in and the invitations need none.
+The Redirects tab's other fields have no API. The command prints what each
+should hold, as a check to make by eye on the tab. No webhook is
+reconciled: the sign-in and the invitations need none.
 
 The API key comes from the variable the desired state names for the
 environment, and never appears in anything this prints."""
@@ -29,7 +33,7 @@ import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 from urllib.parse import urlsplit
 
 import httpx
@@ -40,8 +44,17 @@ from tadas.ops.environments import repository_root
 WORKOS_API = "https://api.workos.com"
 TIMEOUT_SECONDS = 10.0
 INVALID_REDIRECT_PATH = "/redirect-uri-invalid"
+# A code WorkOS never issued: only the application's own key gets as far as
+# the code, and hears `invalid_grant`.
+CREDENTIAL_CHECK_CODE = "tadas-credential-check"
 OK, FAILED, USAGE = 0, 1, 2
-CLIENT_KINDS = ("application", "environment")
+# The Redirects tab's fields Tadas leaves to AuthKit, and why.
+LEFT_TO_AUTHKIT = (
+    ("sign-out URIs", "not set: nobody is sent to WorkOS's logout; the homepage is the fallback"),
+    ("sign-up URL", "not set: AuthKit hosts the sign-up page"),
+    ("user invitation URL", "not set: AuthKit's page takes it, then the login initiation URI"),
+    ("password reset URL", "not set: no password sign-in is on"),
+)
 
 
 @dataclass(frozen=True)
@@ -49,9 +62,10 @@ class Desired:
     environment: str
     api_key_variable: str
     client_id: str
-    client: Literal["application", "environment"]
     redirect_uris: tuple[str, ...]
+    default_redirect_uri: str
     login_initiation_uri: str
+    app_homepage_url: str
     webhooks: tuple[str, ...]
 
 
@@ -68,34 +82,63 @@ def load_desired(path: Path, environment: str) -> Desired:
         names = ", ".join(sorted(loaded)) if isinstance(loaded, dict) else "none"
         raise ValueError(f"{path} names no WorkOS environment {environment!r} (it names {names})")
     entry = loaded[environment]
-    client = str(entry.get("client", "application"))
-    if client == "application":
-        kind: Literal["application", "environment"] = "application"
-    elif client == "environment":
-        kind = "environment"
-    else:
+    redirect_uris = tuple(str(u) for u in entry["redirect_uris"])
+    default = str(entry["default_redirect_uri"])
+    if default not in redirect_uris:
         raise ValueError(
-            f"{path}: client of {environment!r} is {client!r}; "
-            f"it is one of {', '.join(CLIENT_KINDS)}"
+            f"{path}: the default redirect URI of {environment!r}, {default}, "
+            "is not one of its redirect URIs"
         )
     return Desired(
         environment=environment,
         api_key_variable=str(entry["api_key_variable"]),
         client_id=str(entry["client_id"]),
-        client=kind,
-        redirect_uris=tuple(str(u) for u in entry["redirect_uris"]),
+        redirect_uris=redirect_uris,
+        default_redirect_uri=default,
         login_initiation_uri=str(entry["login_initiation_uri"]),
+        app_homepage_url=str(entry["app_homepage_url"]),
         webhooks=tuple(str(w) for w in entry.get("webhooks") or ()),
     )
 
 
+@dataclass(frozen=True)
+class Listed:
+    uri: str
+    default: bool
+
+
 class WorkOS:
     """The few WorkOS routes the reconcile reads and writes. The key rides
-    the authorization header of the calls that need it and nothing else."""
+    the authorization header, or the credential check's client secret, and
+    nothing else."""
 
     def __init__(self, client: httpx.AsyncClient, api_key: str) -> None:
         self._client = client
+        self._key = api_key
         self._auth = {"Authorization": f"Bearer {api_key}"}
+
+    async def key_is_the_applications(self, client_id: str) -> tuple[bool, str]:
+        """Whether WorkOS takes the key as the application's client secret,
+        and what it said."""
+        response = await self._client.post(
+            "/user_management/authenticate",
+            json={
+                "grant_type": "authorization_code",
+                "client_id": client_id,
+                "client_secret": self._key,
+                "code": CREDENTIAL_CHECK_CODE,
+            },
+        )
+        body: Any = response.json() if response.content else {}
+        if not isinstance(body, dict):
+            body = {}
+        error = str(body.get("error") or "")
+        said = str(body.get("error_description") or error)
+        if response.status_code == 400 and error == "invalid_grant":
+            return True, said
+        if response.status_code == 400 and error == "invalid_client":
+            return False, said
+        raise ValueError(f"the credential check answered {response.status_code} {error}".rstrip())
 
     async def accepts(self, client_id: str, redirect_uri: str) -> bool:
         """Whether AuthKit accepts the redirect for the application."""
@@ -115,9 +158,9 @@ class WorkOS:
         location = response.headers.get("location", "")
         return urlsplit(location).path != INVALID_REDIRECT_PATH
 
-    async def environment_redirects(self) -> list[str]:
-        """The environment's own list, every page of it."""
-        found: list[str] = []
+    async def redirects(self) -> list[Listed]:
+        """The application's redirect list, every page of it."""
+        found: list[Listed] = []
         after: str | None = None
         while True:
             params: dict[str, str | int] = {"limit": 100}
@@ -127,7 +170,10 @@ class WorkOS:
                 "/user_management/redirect_uris", params=params, headers=self._auth
             )
             answer = self._json(response, "listing the redirect URIs")
-            found.extend(str(item["uri"]) for item in answer.get("data", []))
+            found.extend(
+                Listed(uri=str(item["uri"]), default=bool(item.get("default")))
+                for item in answer.get("data", [])
+            )
             after = (answer.get("list_metadata") or {}).get("after")
             if not after:
                 return found
@@ -145,7 +191,7 @@ class WorkOS:
     @staticmethod
     def _json(response: httpx.Response, doing: str) -> dict[str, Any]:
         if response.is_error:
-            # The body, never the request: the request carried the key.
+            # The status, never the request: the request carried the key.
             raise ValueError(f"{doing}: WorkOS answered {response.status_code}")
         body: Any = response.json()
         return body if isinstance(body, dict) else {}
@@ -157,37 +203,40 @@ class Outcome:
     created: int = 0
     pending: int = 0
     missing: int = 0
+    refused_key: bool = False
 
     @property
     def exit_code(self) -> int:
+        if self.refused_key:
+            return USAGE
         return FAILED if self.missing else OK
 
 
 async def reconcile(desired: Desired, workos: WorkOS, *, apply: bool) -> Outcome:
     outcome = Outcome(lines=[])
-    listed = await workos.environment_redirects()
     say = outcome.lines.append
-    say(f"WorkOS {desired.environment}, {desired.client} client {desired.client_id}")
-    listing = f": {', '.join(listed)}" if listed else ""
-    if desired.client == "application":
-        # Reported, never written: AuthKit reads the application's own
-        # Redirects tab, so an entry here is harmless and changes nothing.
+    say(f"WorkOS {desired.environment}, application {desired.client_id}")
+    ours, said = await workos.key_is_the_applications(desired.client_id)
+    if not ours:
+        outcome.refused_key = True
         say(
-            f"environment list: {len(listed)} redirect URI(s){listing} "
-            "(AuthKit does not read it for an application; nothing here is written)"
+            f"key: not the API key of application {desired.client_id} (WorkOS: {said}). "
+            f"Make one on {tab(desired, 'API keys')} and export it; the environment's "
+            "API Keys page is not where it lives"
         )
-    else:
-        say(f"environment list: {len(listed)} redirect URI(s){listing}")
+        return outcome
+    say(f"key: application {desired.client_id}'s")
+    listed = await workos.redirects()
+    say(f"the application's list: {len(listed)} redirect URI(s){listing(listed)}")
+    known = {item.uri for item in listed}
     for uri in desired.redirect_uris:
         if await workos.accepts(desired.client_id, uri):
             say(f"redirect {uri}: present")
             continue
-        if desired.client == "application" or uri in listed:
-            # Only the dashboard adds it: the application's redirects have no
-            # API, and an environment list that holds it and is still refused
-            # cannot be helped by a write.
+        if uri in known:
+            # The list holds it and AuthKit still refuses it: a write cannot help.
             outcome.missing += 1
-            say(f"redirect {uri}: missing (dashboard): {dashboard(desired)}")
+            say(f"redirect {uri}: missing (dashboard): {tab(desired, 'Redirects')}")
             continue
         if not apply:
             outcome.pending += 1
@@ -200,31 +249,41 @@ async def reconcile(desired: Desired, workos: WorkOS, *, apply: bool) -> Outcome
             say(f"redirect {uri}: {'created' if created else 'present'}")
         else:
             outcome.missing += 1
-            say(f"redirect {uri}: missing (dashboard): {dashboard(desired)}")
+            say(f"redirect {uri}: missing (dashboard): {tab(desired, 'Redirects')}")
+    defaults = [item.uri for item in listed if item.default]
+    if defaults == [desired.default_redirect_uri]:
+        say(f"default redirect: {desired.default_redirect_uri}")
+    else:
+        outcome.missing += 1
+        say(
+            f"default redirect: {', '.join(defaults) or 'none'}; make "
+            f"{desired.default_redirect_uri} the default (dashboard): {tab(desired, 'Redirects')}"
+        )
     say(
         f"login initiation URI: {desired.login_initiation_uri} "
-        "(check it on the application's Redirects tab; no API reads or writes it)"
+        "(check it on the Redirects tab; no API reads or writes it)"
     )
+    say(f"app homepage URL: {desired.app_homepage_url} (check it on the same tab)")
+    for field, why in LEFT_TO_AUTHKIT:
+        say(f"{field}: {why}")
     say("webhooks: none" if not desired.webhooks else f"webhooks: {', '.join(desired.webhooks)}")
-    say(summary(outcome, apply=apply))
+    say(summary(outcome))
     return outcome
 
 
-def dashboard(desired: Desired) -> str:
-    if desired.client == "application":
-        return (
-            f"add it on the Redirects tab of application {desired.client_id} in the WorkOS "
-            "dashboard; no API writes an application's redirects"
-        )
-    return (
-        f"add it for client {desired.client_id} in the WorkOS dashboard; the environment's "
-        "list holds it and AuthKit still refuses it"
-    )
+def listing(listed: list[Listed]) -> str:
+    if not listed:
+        return ""
+    return ": " + ", ".join(f"{i.uri}{' (default)' if i.default else ''}" for i in listed)
 
 
-def summary(outcome: Outcome, *, apply: bool) -> str:
+def tab(desired: Desired, name: str) -> str:
+    return f"Applications, application {desired.client_id}, its {name} tab"
+
+
+def summary(outcome: Outcome) -> str:
     if outcome.missing:
-        return f"{outcome.missing} redirect URI(s) need the dashboard"
+        return f"{outcome.missing} change(s) need the dashboard"
     if outcome.pending:
         return f"{outcome.pending} to create (a dry run; --apply makes them)"
     if outcome.created:
@@ -244,8 +303,9 @@ async def workos_bootstrap_command(
     api_key = values.get(desired.api_key_variable, "").strip()
     if not api_key:
         print(
-            f"tadas-ops: {desired.api_key_variable} is not set; the key of WorkOS "
-            f"{desired.environment} is what this command runs with, and there is none here",
+            f"tadas-ops: {desired.api_key_variable} is not set; the API key of application "
+            f"{desired.client_id} (WorkOS {desired.environment}) is what this command runs "
+            "with, and there is none here",
             file=sys.stderr,
         )
         return USAGE

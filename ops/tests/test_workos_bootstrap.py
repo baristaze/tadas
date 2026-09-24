@@ -1,7 +1,7 @@
-"""`tadas-ops workos-bootstrap`: the desired state in the repository, a dry
-run by default, the authorize probe as the truth of what AuthKit accepts, an
-application client whose redirects only the dashboard adds (so the command
-never writes the environment's list for it), and a second run against
+"""`tadas-ops workos-bootstrap`: the desired state in the repository, the
+key proven to be the application's before anything else, a dry run by
+default, the authorize probe as the truth of what AuthKit accepts, the
+application's own list written under --apply, and a second run against
 unchanged config that changes nothing."""
 
 import argparse
@@ -13,46 +13,68 @@ import httpx
 import pytest
 
 from tadas.ops.environments import repository_root
-from tadas.ops.workos import desired_file, load_desired, workos_bootstrap_command
+from tadas.ops.workos import (
+    CREDENTIAL_CHECK_CODE,
+    desired_file,
+    load_desired,
+    workos_bootstrap_command,
+)
 
 KEY = "sk_test_never_printed"
 APP = "client_app"
-DESIRED = """
+LOCAL = "http://localhost:55173/auth/callback"
+DEPLOYED = "https://app.staging.example.test/auth/callback"
+DESIRED = f"""
 staging:
   api_key_variable: WORKOS_API_KEY
-  client_id: client_app
-  client: application
+  client_id: {APP}
   redirect_uris:
-    - http://localhost:55173/auth/callback
-    - https://app.staging.example.test/auth/callback
+    - {LOCAL}
+    - {DEPLOYED}
+  default_redirect_uri: {DEPLOYED}
   login_initiation_uri: https://app.staging.example.test/login
+  app_homepage_url: https://app.staging.example.test
   webhooks: []
 """
-# The environment's own client: the one kind whose redirects the API writes.
-DESIRED_ENVIRONMENT_CLIENT = DESIRED.replace("client: application", "client: environment")
 
 
 class FakeWorkOS:
-    """The environment's redirect list, and the application's own list the
-    authorize probe reads. `mirrored` says whether an environment write
-    reaches the application's list; `known` answers a create with 422."""
+    """One application: its key, its redirect list, and what AuthKit
+    accepts for it. `mirrored` says whether a write to the list reaches
+    AuthKit; `default` names the list's default."""
 
     def __init__(
         self,
         accepted: set[str],
         *,
+        listed: set[str] | None = None,
+        default: str | None = None,
         mirrored: bool = True,
-        known: set[str] | None = None,
+        key: str = KEY,
     ) -> None:
         self.accepted = set(accepted)
-        self.listed: list[str] = sorted(known or set())
+        self.listed: list[str] = sorted(listed if listed is not None else accepted)
+        self.default = default
         self.mirrored = mirrored
+        self.key = key
         self.created: list[str] = []
         self.requests: list[httpx.Request] = []
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
         path = request.url.path
+        if path == "/user_management/authenticate":
+            body = json.loads(request.content)
+            assert body["code"] == CREDENTIAL_CHECK_CODE and body["client_id"] == APP
+            if body["client_secret"] != self.key:
+                return httpx.Response(
+                    400,
+                    json={
+                        "error": "invalid_client",
+                        "error_description": "a client secret from a different application",
+                    },
+                )
+            return httpx.Response(400, json={"error": "invalid_grant"})
         if path == "/user_management/authorize":
             assert "authorization" not in request.headers
             query = parse_qs(urlsplit(str(request.url)).query)
@@ -62,13 +84,14 @@ class FakeWorkOS:
             return httpx.Response(302, headers={"location": f"https://authkit.test{where}"})
         assert request.headers["authorization"] == f"Bearer {KEY}"
         if path == "/user_management/redirect_uris" and request.method == "GET":
-            data = [{"object": "redirect_uri", "uri": uri} for uri in self.listed]
+            data = [
+                {"object": "redirect_uri", "uri": uri, "default": uri == self.default}
+                for uri in self.listed
+            ]
             return httpx.Response(200, json={"data": data, "list_metadata": {"after": None}})
         if path == "/user_management/redirect_uris" and request.method == "POST":
             uri = json.loads(request.content)["uri"]
             if uri in self.listed:
-                if self.mirrored:
-                    self.accepted.add(uri)
                 return httpx.Response(422, json={"message": "exists"})
             self.listed.append(uri)
             self.created.append(uri)
@@ -87,21 +110,21 @@ def repo(tmp_path: Path, desired: str = DESIRED) -> Path:
 
 async def run(
     tmp_path: Path,
-    api: FakeWorkOS,
+    api: FakeWorkOS | httpx.MockTransport,
     *,
     apply: bool,
     key: str | None = KEY,
-    desired: str = DESIRED,
 ) -> int:
+    transport = api if isinstance(api, httpx.MockTransport) else httpx.MockTransport(api)
     return await workos_bootstrap_command(
         argparse.Namespace(environment="staging", apply=apply),
-        transport=httpx.MockTransport(api),
+        transport=transport,
         environ={} if key is None else {"WORKOS_API_KEY": key},
-        root=repo(tmp_path, desired),
+        root=repo(tmp_path),
     )
 
 
-def test_the_committed_desired_state_names_both_environments() -> None:
+def test_the_committed_desired_state_names_both_applications() -> None:
     root = repository_root(Path(__file__).parent)
     assert root is not None
     staging = load_desired(desired_file(root), "staging")
@@ -109,125 +132,111 @@ def test_the_committed_desired_state_names_both_environments() -> None:
     assert staging.client_id == "client_01M3640D8WBF9KC0P89YW4E72N"
     assert production.client_id == "client_01M363XVP5FGF2P45FHK9B7MJD"
     assert "http://localhost:55173/auth/callback" in staging.redirect_uris
+    assert staging.default_redirect_uri == "https://app.staging.tadas.fyi/auth/callback"
     assert all(u.startswith("https://") for u in production.redirect_uris)
+    assert production.default_redirect_uri.startswith("https://")
     assert staging.api_key_variable != production.api_key_variable
     assert staging.webhooks == () and production.webhooks == ()
-    assert staging.client == "application" and production.client == "application"
 
 
-async def test_an_application_client_is_probed_and_its_environment_list_never_written(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """The stray entry in the environment's list is reported and left alone,
-    and a missing redirect is a dashboard step even under --apply."""
-    stray = "http://localhost:5173/auth/callback"
-    api = FakeWorkOS({"http://localhost:55173/auth/callback"}, known={stray})
-    assert await run(tmp_path, api, apply=True) == 1
-    out = capsys.readouterr().out
-    assert "application client client_app" in out
-    assert f"environment list: 1 redirect URI(s): {stray}" in out
-    assert "AuthKit does not read it for an application; nothing here is written" in out
-    assert "https://app.staging.example.test/auth/callback: missing (dashboard)" in out
-    assert "Redirects tab of application client_app" in out
-    assert "1 redirect URI(s) need the dashboard" in out
-    assert not any(r.method == "POST" for r in api.requests)
-
-
-async def test_an_application_client_passes_once_the_dashboard_holds_every_redirect(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    api = FakeWorkOS({"http://localhost:55173/auth/callback"})
-    assert await run(tmp_path, api, apply=False) == 1
-    capsys.readouterr()
-    # The person adds it on the application's Redirects tab.
-    api.accepted.add("https://app.staging.example.test/auth/callback")
-    assert await run(tmp_path, api, apply=True) == 0
-    out = capsys.readouterr().out
-    assert "https://app.staging.example.test/auth/callback: present" in out
-    assert "nothing to change" in out
-    assert not any(r.method == "POST" for r in api.requests)
-
-
-def test_a_client_kind_the_command_does_not_know_is_refused(tmp_path: Path) -> None:
-    repo(tmp_path, DESIRED.replace("client: application", "client: something"))
-    with pytest.raises(ValueError, match="client of 'staging' is 'something'"):
+def test_a_default_that_is_not_a_redirect_is_refused(tmp_path: Path) -> None:
+    repo(tmp_path, DESIRED.replace(f"default_redirect_uri: {DEPLOYED}", "default_redirect_uri: x"))
+    with pytest.raises(ValueError, match="is not one of its redirect URIs"):
         load_desired(desired_file(tmp_path), "staging")
 
 
-async def test_an_environment_client_dry_run_says_what_it_would_create_and_writes_nothing(
+async def test_a_key_of_another_application_stops_the_run_before_anything_else(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    api = FakeWorkOS({"http://localhost:55173/auth/callback"})
-    assert await run(tmp_path, api, apply=False, desired=DESIRED_ENVIRONMENT_CLIENT) == 0
+    """The environment's key, or another application's, is refused by the
+    exchange as this application's client secret; nothing is read after."""
+    api = FakeWorkOS({LOCAL}, key="sk_test_the_applications")
+    assert await run(tmp_path, api, apply=True) == 2
     out = capsys.readouterr().out
-    assert "http://localhost:55173/auth/callback: present" in out
-    assert "https://app.staging.example.test/auth/callback: would create" in out
-    assert "1 to create (a dry run; --apply makes them)" in out
-    assert not any(r.method == "POST" for r in api.requests)
+    assert f"key: not the API key of application {APP}" in out
+    assert "a client secret from a different application" in out
+    assert f"Applications, application {APP}, its API keys tab" in out
+    assert [r.url.path for r in api.requests] == ["/user_management/authenticate"]
 
 
-async def test_an_environment_client_is_created_once_and_the_rerun_changes_nothing(
+async def test_a_dry_run_says_what_it_would_create_and_writes_nothing(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    api = FakeWorkOS({"http://localhost:55173/auth/callback"})
-    assert await run(tmp_path, api, apply=True, desired=DESIRED_ENVIRONMENT_CLIENT) == 0
+    api = FakeWorkOS({LOCAL}, default=LOCAL)
+    assert await run(tmp_path, api, apply=False) == 1
+    out = capsys.readouterr().out
+    assert f"key: application {APP}'s" in out
+    assert f"the application's list: 1 redirect URI(s): {LOCAL} (default)" in out
+    assert f"redirect {LOCAL}: present" in out
+    assert f"redirect {DEPLOYED}: would create" in out
+    assert f"default redirect: {LOCAL}; make {DEPLOYED} the default (dashboard)" in out
+    assert not any(r.method == "POST" and "redirect_uris" in r.url.path for r in api.requests)
+
+
+async def test_a_missing_redirect_is_created_once_and_the_rerun_changes_nothing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    api = FakeWorkOS({LOCAL})
+    assert await run(tmp_path, api, apply=True) == 1
     first = capsys.readouterr().out
-    assert "https://app.staging.example.test/auth/callback: created" in first
-    assert api.created == ["https://app.staging.example.test/auth/callback"]
-    assert await run(tmp_path, api, apply=True, desired=DESIRED_ENVIRONMENT_CLIENT) == 0
+    assert f"redirect {DEPLOYED}: created" in first and api.created == [DEPLOYED]
+    assert "default redirect: none" in first
+    # The person makes the deployed callback the default on the tab.
+    api.default = DEPLOYED
+    assert await run(tmp_path, api, apply=True) == 0
     second = capsys.readouterr().out
-    assert api.created == ["https://app.staging.example.test/auth/callback"]
+    assert api.created == [DEPLOYED]
+    assert f"default redirect: {DEPLOYED}" in second
     assert "nothing to change" in second and "created" not in second
 
 
-async def test_a_redirect_the_list_holds_already_counts_as_present(
+async def test_a_redirect_the_list_holds_and_authkit_refuses_is_a_dashboard_step(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """The list the read saw may lag a write another run made: the create
-    answers 422, and the probe decides."""
-    uri = "https://app.staging.example.test/auth/callback"
-    api = FakeWorkOS({"http://localhost:55173/auth/callback"})
-    original = api.__call__
-
-    def lagging(request: httpx.Request) -> httpx.Response:
-        if request.method == "POST":
-            api.listed.append(uri)
-        return original(request)
-
-    code = await workos_bootstrap_command(
-        argparse.Namespace(environment="staging", apply=True),
-        transport=httpx.MockTransport(lagging),
-        environ={"WORKOS_API_KEY": KEY},
-        root=repo(tmp_path, DESIRED_ENVIRONMENT_CLIENT),
-    )
-    assert code == 0
+    api = FakeWorkOS({LOCAL}, listed={LOCAL, DEPLOYED}, default=DEPLOYED)
+    assert await run(tmp_path, api, apply=True) == 1
     out = capsys.readouterr().out
-    assert f"{uri}: present" in out and api.created == []
+    assert f"redirect {DEPLOYED}: missing (dashboard)" in out
+    assert "1 change(s) need the dashboard" in out
+    assert api.created == []
 
 
-async def test_a_redirect_only_the_dashboard_adds_fails_the_run(
+async def test_a_write_authkit_does_not_take_fails_the_run(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    api = FakeWorkOS({"http://localhost:55173/auth/callback"}, mirrored=False)
-    assert await run(tmp_path, api, apply=True, desired=DESIRED_ENVIRONMENT_CLIENT) == 1
+    api = FakeWorkOS({LOCAL}, default=LOCAL, mirrored=False)
+    api.default = None
+    assert await run(tmp_path, api, apply=True) == 1
     out = capsys.readouterr().out
-    assert "missing (dashboard)" in out and "for client client_app" in out
-    # Rerun: the environment's list holds it, so no write is tried again.
-    posts = sum(r.method == "POST" for r in api.requests)
-    assert await run(tmp_path, api, apply=True, desired=DESIRED_ENVIRONMENT_CLIENT) == 1
-    assert sum(r.method == "POST" for r in api.requests) == posts
+    assert f"redirect {DEPLOYED}: missing (dashboard)" in out and api.created == [DEPLOYED]
+
+
+async def test_the_tabs_other_fields_are_printed_as_checks(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    api = FakeWorkOS({LOCAL, DEPLOYED}, default=DEPLOYED)
+    assert await run(tmp_path, api, apply=False) == 0
+    out = capsys.readouterr().out
+    assert "login initiation URI: https://app.staging.example.test/login" in out
+    assert "app homepage URL: https://app.staging.example.test" in out
+    for field in ("sign-out URIs", "sign-up URL", "user invitation URL", "password reset URL"):
+        assert f"{field}: not set" in out
+    assert "webhooks: none" in out and "nothing to change" in out
+
+
+async def test_a_credential_check_workos_cannot_answer_is_an_error(tmp_path: Path) -> None:
+    api = httpx.MockTransport(lambda r: httpx.Response(503, json={"message": "down"}))
+    with pytest.raises(ValueError, match="the credential check answered 503"):
+        await run(tmp_path, api, apply=False)
 
 
 async def test_the_key_never_appears_in_what_it_prints(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    api = FakeWorkOS(set(), mirrored=False)
-    await run(tmp_path, api, apply=True)
-    await run(tmp_path, api, apply=False)
+    await run(tmp_path, FakeWorkOS(set(), mirrored=False), apply=True)
+    await run(tmp_path, FakeWorkOS(set(), key="another"), apply=False)
     captured = capsys.readouterr()
     assert KEY not in captured.out + captured.err
-    assert "login initiation URI: https://app.staging.example.test/login" in captured.out
-    assert "webhooks: none" in captured.out
 
 
 async def test_no_key_is_a_usage_error_that_names_the_variable(
@@ -235,5 +244,6 @@ async def test_no_key_is_a_usage_error_that_names_the_variable(
 ) -> None:
     api = FakeWorkOS(set())
     assert await run(tmp_path, api, apply=False, key=None) == 2
-    assert "WORKOS_API_KEY is not set" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "WORKOS_API_KEY is not set" in err and f"API key of application {APP}" in err
     assert api.requests == []
