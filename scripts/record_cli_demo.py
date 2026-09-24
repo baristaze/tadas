@@ -1,13 +1,17 @@
 """Records the CLI demo GIF in the root README: two terminal panes side by
-side. On the left Bob (a member `make seed` creates) runs `tadas` one
-command at a time; on the right the owner runs `tadas listen` and each
-change shows up a moment later.
+side. On the left Bob (a member `make seed` creates) signs in and runs
+`tadas` one command at a time: a task with a reminder, a task with an image
+attached, the list, a task done. On the right the owner runs `tadas listen`
+and each change shows up a moment later.
 
-Both are real subprocesses of the CLI on this checkout. Each person signs
-in through the API over the Python client in `clients/python/`, the way
-`record_demo.py` does, and the CLI gets its session token through the
-environment: no `tadas login` and nothing secret in the picture. The task
-list is emptied first. Every line is stamped when it is typed or when it
+Both are real subprocesses of the CLI on this checkout. Bob signs in on
+screen with `tadas login --dev-email`, the local stack's sign-in by address,
+into the seeded team org; the session file lands in a scratch directory the
+commands run in, next to the image he attaches, which is drawn here. The
+owner's listener gets a session token for the same org through the
+environment, over the Python client in `clients/python/`, the way
+`record_demo.py` signs in: nothing secret in the picture. The task list is
+emptied first. Every line is stamped when it is typed or when it
 arrives from the pipe, and the panes are drawn from those stamps on one
 timeline into a GIF.
 
@@ -36,7 +40,7 @@ from PIL import Image, ImageDraw, ImageFont
 from tadas.client.client import ApiClient
 from tadas.client.types import OrgKind, TaskScope, TaskStatus
 
-WIDTH, HEIGHT = 420, 330  # each pane in the GIF; the two match the portal GIF's width
+WIDTH, HEIGHT = 420, 360  # each pane in the GIF; the two match the portal GIF's width
 SCALE = 2  # render at twice the size, then downscale, for crisp text
 FPS = 12
 GAP = 12
@@ -132,17 +136,20 @@ class Pane:
 
 
 class Cli:
-    """Runs the CLI on this checkout as one person, with the credential in the
-    environment and nothing on disk but an empty TADAS_HOME."""
+    """Runs the CLI on this checkout as one person, in a scratch directory
+    whose `.tadas` is the TADAS_HOME. With a token, the credential is in the
+    environment; without one, the person signs in with `tadas login`."""
 
-    def __init__(self, api: str, token: str, home: str) -> None:
+    def __init__(self, api: str, token: str | None, directory: str) -> None:
+        self.directory = directory
         self.env = {
-            **os.environ,
+            **{k: v for k, v in os.environ.items() if k != "TADAS_TOKEN"},
             "TADAS_API_URL": api,
-            "TADAS_TOKEN": token,
-            "TADAS_HOME": home,
+            "TADAS_HOME": ".tadas",
             "PYTHONUNBUFFERED": "1",
         }
+        if token is not None:
+            self.env["TADAS_TOKEN"] = token
 
     async def spawn(self, *args: str, stderr: int | None) -> asyncio.subprocess.Process:
         return await asyncio.create_subprocess_exec(
@@ -151,6 +158,7 @@ class Cli:
             "tadas.apps.cli.main",
             *args,
             env=self.env,
+            cwd=self.directory,
             stdout=asyncio.subprocess.PIPE,
             stderr=stderr,
         )
@@ -183,18 +191,26 @@ def short_id(added: list[str]) -> str:
     return added[0].split()[1]
 
 
-async def story(bob: Pane, cli: Cli) -> None:
-    """Bob's session: two tasks, one renamed, completed and reopened, a third
-    added, one removed, and a last one completed."""
-    fix = short_id(await command(bob, cli, "add", "Fix CI"))
-    review = short_id(await command(bob, cli, "add", "Review PR #42"))
-    await command(bob, cli, "edit", fix, "--title", "Fix CI flake")
-    await command(bob, cli, "done", fix)
-    await command(bob, cli, "reopen", fix)
-    changelog = short_id(await command(bob, cli, "add", "Write changelog"))
-    await command(bob, cli, "rm", review)
-    await command(bob, cli, "done", changelog)
+async def story(bob: Pane, cli: Cli, email: str, org: str) -> None:
+    """Bob's session: he signs in, adds a task that reminds him in half an
+    hour, adds another and attaches an image to it, lists the open tasks,
+    and completes the first."""
+    await command(bob, cli, "login", "--dev-email", email, "--org", org)
+    bank = short_id(await command(bob, cli, "add", "Call the bank", "--remind", "+30m"))
+    logo = short_id(await command(bob, cli, "add", "New logo"))
+    await command(bob, cli, "attach", logo, "logo.png")
+    await command(bob, cli, "ls")
+    await command(bob, cli, "done", bank)
     bob.say("$ ")
+
+
+def draw_logo(path: str) -> None:
+    """The image Bob attaches: a small logo draft, the one the portal demo uses."""
+    image = Image.new("RGB", (480, 240), (82, 80, 214))
+    draw = ImageDraw.Draw(image)
+    draw.rounded_rectangle((170, 50, 310, 190), radius=28, fill=(255, 255, 255))
+    draw.line((205, 122, 230, 147, 278, 94), fill=(26, 143, 77), width=16, joint="curve")
+    image.save(path)
 
 
 async def follow(process: asyncio.subprocess.Process, pane: Pane) -> None:
@@ -321,10 +337,11 @@ def stills(renderer: Renderer, panes: Sequence[Pane], out: str, directory: str) 
 async def record(args: argparse.Namespace) -> None:
     api = Api(args.api)
     owner_token = await api.token(args.owner)
-    bob_token = await api.token(args.member)
     print(f"cleared {await api.clear_tasks(owner_token)} tasks")
 
-    home = tempfile.mkdtemp(prefix="tadas-demo-cli-")
+    owner_directory = tempfile.mkdtemp(prefix="tadas-demo-cli-")
+    bob_directory = tempfile.mkdtemp(prefix="tadas-demo-cli-")
+    draw_logo(os.path.join(bob_directory, "logo.png"))
     bob = Pane("bob", "bob - command mode")
     owner = Pane("owner", "owner - tadas listen")
     listener = None
@@ -332,11 +349,11 @@ async def record(args: argparse.Namespace) -> None:
         start = time.monotonic()
         await owner.type("tadas listen")
         # The listener's stderr (the "stopped" after Ctrl-C) stays out of the pane.
-        listener = await Cli(args.api, owner_token, home).spawn("listen", stderr=None)
+        listener = await Cli(args.api, owner_token, owner_directory).spawn("listen", stderr=None)
         following = asyncio.create_task(follow(listener, owner))
         await wait_for_first_line(owner)
         await asyncio.sleep(1.2)
-        await story(bob, Cli(args.api, bob_token, home))
+        await story(bob, Cli(args.api, None, bob_directory), args.member, args.org)
         await asyncio.sleep(1.5)
         end = time.monotonic()
         listener.send_signal(signal.SIGINT)
@@ -345,7 +362,8 @@ async def record(args: argparse.Namespace) -> None:
         if listener is not None and listener.returncode is None:
             listener.terminate()
             await listener.wait()
-        shutil.rmtree(home, ignore_errors=True)
+        for directory in (owner_directory, bob_directory):
+            shutil.rmtree(directory, ignore_errors=True)
 
     renderer = Renderer()
     if too_wide := renderer.too_wide((bob, owner)):
@@ -363,6 +381,7 @@ def main() -> None:
     parser.add_argument("--api", default="http://127.0.0.1:8000")
     parser.add_argument("--owner", default="owner@example.test")
     parser.add_argument("--member", default="bob@example.test")
+    parser.add_argument("--org", default="acme", help="the seeded team org's slug")
     parser.add_argument("--still", action="store_true", help="write a PNG per pane instead")
     parser.add_argument("--stills-dir", help="also write a PNG per pane into this directory")
     asyncio.run(record(parser.parse_args()))

@@ -7,29 +7,34 @@ at the center (`om/`), one infrastructure toolkit (`infra/`), services
 and workers around them, and apps at the edge.
 
 <p align="center">
-  <img src="docs/media/realtime-demo.gif" width="876" alt="Two portal windows side by side, Bob on the left and the owner on the right, both on Team's Tasks. Bob adds three tasks, renames one and assigns it to the owner, drags it to the top by its handle, completes another, and deletes a third; each change appears in the owner's window at once.">
+  <img src="docs/media/realtime-demo.gif" width="876" alt="Two portal windows side by side, Bob on the left and the owner on the right, both on Acme's Team's Tasks. Bob adds three tasks, the second with a due time; he opens the third, assigns it to the owner, and attaches an image, which shows as a preview. The owner opens the same task and sees the image. Bob completes the first task. Each change appears in the owner's window at once.">
 </p>
 
-The portal in two windows, signed in as two of the people `make seed` creates:
-`bob@example.test` on the left, `owner@example.test` on the right, both on
-Team's Tasks. Bob takes tasks through their whole life: adds three, renames
-one and assigns it to the owner, drags it to the top by its handle, completes
-one, and deletes one. Every change reaches the owner's window over the
-realtime channel as it happens. Each window is narrower than half a laptop
-screen, and every task stays on one line there. `make demo-gif` records it
-again from a running `make up` stack (`scripts/record_demo.py`), and refuses
-to when a row would wrap.
+The portal in two windows, signed in through the local sign-in as two of the
+people `make seed` creates: `bob@example.test` on the left,
+`owner@example.test` on the right, both in the seeded team org, Acme, on
+Team's Tasks. Bob adds three tasks, one with a due time. He opens the third,
+assigns it to the owner, and attaches an image, which the task shows as a
+preview; the owner opens the same task and sees it too. Then Bob completes
+the first. Every change reaches the owner's window over the realtime channel
+as it happens. Each window is narrower than half a laptop screen, and every
+task stays on one line there. `make demo-gif` records it again from a running `make up` stack (`scripts/record_demo.py`), and refuses
+to when a row would wrap; `make demo-gif-dark` records the dark theme's copy,
+which the company site shows on a dark system.
 
 <p align="center">
-  <img src="docs/media/cli-demo.gif" width="876" alt="Two terminals side by side. On the left Bob adds, edits, completes, reopens, and deletes tasks with the tadas command line. On the right the owner runs tadas listen, and every change appears as a line the moment it happens.">
+  <img src="docs/media/cli-demo.gif" width="876" alt="Two terminals side by side. On the left Bob signs in with tadas login, adds a task that reminds him in half an hour, adds another and attaches an image to it, lists the open tasks, and completes the first. On the right the owner runs tadas listen, and every change appears as a line the moment it happens.">
 </p>
 
 The same thing from two terminals. On the left Bob works in command mode,
-one `tadas` call at a time; on the right the owner runs `tadas listen` and
-every change reaches the terminal over the same realtime channel the portal
-uses, as one line: who did what to which task. `make demo-cli-gif` records
-it from a running `make up` stack (`scripts/record_cli_demo.py`), and refuses
-to when a line would wrap.
+one `tadas` call at a time: he signs in with `tadas login --dev-email` (the
+local stack's sign-in by address), adds a task with `--remind +30m`, adds
+another and attaches an image to it, lists the open tasks, and completes the
+first. On the right the owner runs `tadas listen`, and every change reaches
+the terminal over the same realtime channel the portal uses, as one line:
+who did what to which task. `make demo-cli-gif` records it from a running
+`make up` stack (`scripts/record_cli_demo.py`), and refuses to when a line
+would wrap.
 
 ## Quick start
 

@@ -23,8 +23,10 @@ writes each environment's links into the HTML.
   script, no tracker, no analytics.
 - The product visual is the README's realtime demo,
   `docs/media/realtime-demo.gif`, referenced from `index.html` and
-  copied into the build with a hashed name. `make demo-gif` records it
-  again.
+  copied into the build with a hashed name. A dark system gets
+  `docs/media/realtime-demo-dark.gif` instead, through the `<picture>`'s
+  dark source, so the demo matches the page. `make demo-gif` records the
+  light one again, and `make demo-gif-dark` the dark one.
 - `src/links.ts` decides the links: the app's sign-in and sign-up and the
   repository. The names come from `deployment/cloud/environments.json`,
   the one place every deployed name lives. `vite.config.ts` writes them

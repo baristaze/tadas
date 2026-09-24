@@ -1,15 +1,17 @@
 """Records the realtime demo GIF in the root README: two portal windows side by
 side, Bob (the member `make seed` creates) on the left and the owner on the
-right, both on Team's Tasks. Bob adds, edits and assigns, reorders by the
-handle, completes, and deletes tasks; the owner's window follows live.
+right, both on Acme's Team's Tasks. Bob adds tasks, one with a due time,
+attaches an image to one and assigns it to the owner, and completes another;
+the owner's window follows live and opens the file Bob attached.
 
 It drives a headless Chrome over the DevTools protocol, one isolated browser
-context per person. Each signs in through the API's local sign-in (a session
-token, the way the API tests do) rather than through WorkOS, over the Python
-client in
-`clients/python/` (ADR 0004 records the interval before that client
-existed). The task list is emptied first, then both windows are screencast
-and the frames are composed on one timeline into a GIF.
+context per person. Each signs in the way the portal's `/login/dev` does,
+through the local stack's dev sign-in rather than WorkOS, over the Python
+client in `clients/python/`, and lands on the seeded team org, not the
+personal org every person also has. The task
+list is emptied first, then both windows are screencast and the frames are
+composed on one timeline into a GIF. The attached image is drawn here, so
+the recording needs no file of its own.
 
 Each window is under half the GIF's width, the size a README shows it at, and
 a task row stays on one line at that width: after every step the recorder
@@ -28,6 +30,7 @@ per window instead, to check the layout.
 import argparse
 import asyncio
 import base64
+import datetime
 import io
 import itertools
 import json
@@ -41,7 +44,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 import websockets
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from tadas.client.client import ApiClient
 from tadas.client.types import OrgKind, TaskScope, TaskStatus
@@ -51,6 +54,7 @@ SCALE = 2  # render at twice the size, then downscale, for crisp text
 FPS = 12
 GAP = 12
 DEBUG_PORT = 49222
+BACKDROP = {"light": (220, 220, 216), "dark": (38, 39, 46)}  # around the two windows
 ACCENTS = [(26, 143, 77), (201, 106, 5), (82, 80, 214), (197, 47, 42), (255, 255, 255)]
 
 
@@ -155,17 +159,38 @@ class Window:
             await asyncio.sleep(0.1)
         raise TimeoutError(f"{self.name}: {expression}")
 
-    async def add_task(self, title: str) -> None:
+    async def add_task(self, title: str, due: str | None = None) -> None:
+        """Types the title, sets the due time (a `datetime-local` value, e.g.
+        2026-10-01T17:00) when there is one, and presses Enter."""
         await self.js("document.querySelector('input[aria-label=\"New task\"]').focus()")
         for character in title:
             await self.cdp.send("Input.insertText", {"text": character}, self.session)
             await asyncio.sleep(0.07)
+        if due is not None:
+            await asyncio.sleep(0.4)
+            await self.set_value("document.querySelector('input[type=\"datetime-local\"]')", due)
+            await asyncio.sleep(0.9)
+            await self.js("document.querySelector('input[aria-label=\"New task\"]').focus()")
         await asyncio.sleep(0.35)
         enter = {"key": "Enter", "code": "Enter", "windowsVirtualKeyCode": 13}
         await self.cdp.send(
             "Input.dispatchKeyEvent", {"type": "keyDown", "text": "\r", **enter}, self.session
         )
         await self.cdp.send("Input.dispatchKeyEvent", {"type": "keyUp", **enter}, self.session)
+
+    async def set_value(self, expression: str, value: str) -> None:
+        """Sets an input the way React hears it. A date picker is drawn
+        outside the page and never reaches a screencast, so the time is set
+        here rather than picked."""
+        await self.js(
+            f"""(() => {{
+              const field = {expression};
+              const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+              set.call(field, {json.dumps(value)});
+              field.dispatchEvent(new Event("input", {{ bubbles: true }}));
+              return true;
+            }})()"""
+        )
 
     def _row(self, title: str) -> str:
         """A JS expression for the open or done row whose title is `title`."""
@@ -192,33 +217,39 @@ class Window:
         return box
 
     async def click(self, expression: str) -> None:
+        """Brings the target into view the way a person scrolls to it, then
+        clicks its centre; an open form can run below the window."""
+        if await self.js(
+            f"""(() => {{
+              const target = {expression};
+              const r = target.getBoundingClientRect();
+              if (r.top >= 0 && r.bottom <= window.innerHeight) return false;
+              target.scrollIntoView({{ block: "nearest", behavior: "smooth" }});
+              return true;
+            }})()"""
+        ):
+            await asyncio.sleep(0.7)
         box = await self._centre(expression)
         for kind in ("mouseMoved", "mousePressed", "mouseReleased"):
             event = {"type": kind, "x": box["x"], "y": box["y"], "button": "left", "clickCount": 1}
             await self.cdp.send("Input.dispatchMouseEvent", event, self.session)
 
-    async def type_into(self, expression: str, text: str) -> None:
-        """Replaces the field's text, one character at a time."""
-        await self.js(f"(() => {{ const f = {expression}; f.focus(); f.select(); return true }})()")
-        for character in text:
-            await self.cdp.send("Input.insertText", {"text": character}, self.session)
-            await asyncio.sleep(0.07)
-
     async def complete(self, title: str) -> None:
         await self.click(f"{self._row(title)}.querySelector('input[type=\"checkbox\"]')")
 
-    async def edit(self, title: str, new_title: str, assignee: str) -> None:
-        """Opens the row's edit, retitles it, assigns it, and saves."""
+    async def open(self, title: str) -> None:
+        """Opens the row's edit form, where its due time and its files are."""
         await self.click(self._button(title, "edit"))
-        await asyncio.sleep(0.8)
-        form = f"{self._row(title)}.querySelector('form')"
-        await self.type_into(f"{form}.querySelector('input[type=\"text\"]')", new_title)
-        await asyncio.sleep(0.5)
-        # A select's menu is drawn outside the page and never reaches a
-        # screencast, so the choice is set the way React hears it.
+
+    async def close(self, title: str) -> None:
+        await self.click(self._button(title, "close"))
+
+    async def assign(self, title: str, assignee: str) -> None:
+        """Picks the assignee in the open form. A select's menu is drawn
+        outside the page too, so the choice is set the way React hears it."""
         await self.js(
             f"""(() => {{
-              const select = {form}.querySelector("select");
+              const select = {self._row(title)}.querySelector("form select");
               const option = [...select.options]
                 .find((o) => o.textContent === {json.dumps(assignee)});
               const set = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value").set;
@@ -227,58 +258,31 @@ class Window:
               return true;
             }})()"""
         )
-        await asyncio.sleep(0.8)
-        await self.click(f"{form}.querySelector('button[type=\"submit\"]')")
 
-    async def delete(self, title: str) -> None:
-        await self.click(self._button(title, "edit"))
-        await asyncio.sleep(1.0)
-        await self.click(self._button(title, "Delete"))
-
-    async def drag_above(self, title: str, target: str) -> None:
-        """Takes the row by its handle and drops it above the target row. The
-        drag is intercepted, so the drop is dispatched here, not by the OS."""
-        start = await self._centre(f"{self._row(title)}.querySelector('.tadas-handle')")
-        target_box = await self.js(
-            f"(() => {{ const r = {self._row(target)}.getBoundingClientRect();"
-            " return { x: r.x + r.width / 2, y: r.y + 6 } })()"
+    async def attach(self, title: str, path: str) -> None:
+        """Hands a file to the open form's picker, as choosing it in the
+        system's dialog would, then waits for its preview to load."""
+        picker = await self.cdp.send(
+            "Runtime.evaluate",
+            {"expression": f"{self._row(title)}.querySelector('input[type=\"file\"]')"},
+            self.session,
         )
-        intercepted: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
+        # The DOM domain resolves a node only once it has handed out the document.
+        await self.cdp.send("DOM.getDocument", {"depth": 0}, self.session)
+        node = await self.cdp.send(
+            "DOM.requestNode", {"objectId": picker["result"]["objectId"]}, self.session
+        )
+        await self.cdp.send(
+            "DOM.setFileInputFiles", {"files": [path], "nodeId": node["nodeId"]}, self.session
+        )
+        await self.preview_shown(title)
 
-        def on_drag(message: dict[str, Any]) -> None:
-            if message.get("method") == "Input.dragIntercepted" and not intercepted.done():
-                intercepted.set_result(message["params"]["data"])
+    async def preview_shown(self, title: str) -> None:
+        """Waits for the open form's image preview to finish loading."""
+        await self.wait_for(f"!!{self._row(title)}.querySelector('img')?.complete")
 
-        self.cdp.handlers.append(on_drag)
-        await self.cdp.send("Input.setInterceptDrags", {"enabled": True}, self.session)
-        try:
-            mouse = {"button": "left", "clickCount": 1}
-            await self.cdp.send(
-                "Input.dispatchMouseEvent", {"type": "mousePressed", **start, **mouse}, self.session
-            )
-            steps = 12
-            for n in range(1, steps + 1):
-                point = {
-                    "x": start["x"] + (target_box["x"] - start["x"]) * n / steps,
-                    "y": start["y"] + (target_box["y"] - start["y"]) * n / steps,
-                }
-                await self.cdp.send(
-                    "Input.dispatchMouseEvent",
-                    {"type": "mouseMoved", **point, **mouse, "buttons": 1},
-                    self.session,
-                )
-                await asyncio.sleep(0.04)
-            data = await asyncio.wait_for(intercepted, 5)
-            for kind in ("dragEnter", "dragOver", "drop"):
-                if kind == "drop":
-                    await asyncio.sleep(0.6)  # the drop line shows before the drop
-                event = {"type": kind, **target_box, "data": data}
-                await self.cdp.send("Input.dispatchDragEvent", event, self.session)
-            released = {"type": "mouseReleased", **target_box, **mouse}
-            await self.cdp.send("Input.dispatchMouseEvent", released, self.session)
-        finally:
-            self.cdp.handlers.remove(on_drag)
-            await self.cdp.send("Input.setInterceptDrags", {"enabled": False}, self.session)
+    async def save(self, title: str) -> None:
+        await self.click(f"{self._row(title)}.querySelector('form button[type=\"submit\"]')")
 
     async def check_layout(self) -> None:
         """Every task row on one line with its whole title, and nothing wider
@@ -356,9 +360,10 @@ async def open_window(
     return window
 
 
-async def story(owner: Window, bob: Window) -> None:
-    """Bob works through a task's whole life on the left; the owner watches.
-    Both windows are checked after every step."""
+async def story(owner: Window, bob: Window, image: str) -> None:
+    """Bob adds and completes tasks on the left, one with a due time and one
+    with an image; the owner watches, then opens the image. Both windows are
+    checked after every step."""
 
     async def step(action: Awaitable[None], pause: float) -> None:
         await action
@@ -366,15 +371,29 @@ async def story(owner: Window, bob: Window) -> None:
         for window in (bob, owner):
             await window.check_layout()
 
-    await asyncio.sleep(1.5)
-    await step(bob.add_task("Migrate DB"), 1.4)
-    await step(bob.add_task("Review PR #42"), 1.4)
-    await step(bob.add_task("Write changelog"), 1.8)
-    await step(bob.edit("Migrate DB", "Migrate the DB", "Local Owner"), 2.2)
-    await step(bob.drag_above("Migrate the DB", "Write changelog"), 2.2)
-    await step(bob.complete("Review PR #42"), 2.4)
-    await step(bob.delete("Write changelog"), 2.4)
-    await asyncio.sleep(0.8)
+    # Tomorrow at five, in the browser's local time.
+    due = (datetime.date.today() + datetime.timedelta(days=1)).isoformat() + "T17:00"
+    await asyncio.sleep(1.2)
+    await step(bob.add_task("Migrate the DB"), 1.2)
+    await step(bob.add_task("Review PR #42", due=due), 1.6)
+    await step(bob.add_task("New logo"), 1.2)
+    await step(bob.open("New logo"), 0.8)
+    await step(bob.assign("New logo", "Local Owner"), 0.6)
+    await step(bob.attach("New logo", image), 1.6)
+    await step(bob.save("New logo"), 1.6)
+    await step(owner.open("New logo"), 0.6)
+    await step(owner.preview_shown("New logo"), 2.0)
+    await step(owner.close("New logo"), 0.8)
+    await step(bob.complete("Migrate the DB"), 2.2)
+
+
+def draw_logo(path: str) -> None:
+    """The image Bob attaches: a small logo draft, drawn here."""
+    image = Image.new("RGB", (480, 240), (82, 80, 214))
+    draw = ImageDraw.Draw(image)
+    draw.rounded_rectangle((170, 50, 310, 190), radius=28, fill=(255, 255, 255))
+    draw.line((205, 122, 230, 147, 278, 94), fill=(26, 143, 77), width=16, joint="curve")
+    image.save(path)
 
 
 def frame_at(frames: list[tuple[float, bytes]], moment: float) -> bytes:
@@ -387,7 +406,7 @@ def frame_at(frames: list[tuple[float, bytes]], moment: float) -> bytes:
     return chosen
 
 
-def compose(left: Window, right: Window, start: float, end: float, out: str) -> None:
+def compose(left: Window, right: Window, start: float, end: float, out: str, theme: str) -> None:
     decoded: dict[int, Image.Image] = {}
 
     def image(data: bytes) -> Image.Image:
@@ -406,7 +425,7 @@ def compose(left: Window, right: Window, start: float, end: float, out: str) -> 
         if (id(on_left), id(on_right)) == last:
             durations[-1] += step_ms  # an unchanged moment lengthens the frame before it
         else:
-            canvas = Image.new("RGB", (canvas_w, canvas_h), (220, 220, 216))
+            canvas = Image.new("RGB", (canvas_w, canvas_h), BACKDROP[theme])
             canvas.paste(image(on_left), (GAP, GAP))
             canvas.paste(image(on_right), (GAP * 2 + WIDTH, GAP))
             frames.append(canvas)
@@ -477,7 +496,7 @@ async def record(args: argparse.Namespace) -> None:
                     await window.check_layout()
                     await still(window, args.out.removesuffix(".gif") + f"-{window.name}.png")
             else:
-                await screencast(cdp, bob, owner, args.out)
+                await screencast(cdp, bob, owner, args.out, args.theme)
             pump.cancel()
     finally:
         chrome.terminate()
@@ -499,7 +518,7 @@ async def debugger_url() -> str:
     raise TimeoutError("Chrome did not open its debugging port")
 
 
-async def screencast(cdp: Cdp, bob: Window, owner: Window, out: str) -> None:
+async def screencast(cdp: Cdp, bob: Window, owner: Window, out: str, theme: str) -> None:
     """Bob on the left, the owner on the right."""
     by_session = {bob.session: bob, owner.session: owner}
     acks: set[asyncio.Task[Any]] = set()
@@ -519,13 +538,19 @@ async def screencast(cdp: Cdp, bob: Window, owner: Window, out: str) -> None:
     for window in (bob, owner):
         options = {"format": "jpeg", "quality": 92, "everyNthFrame": 1}
         await cdp.send("Page.startScreencast", options, window.session)
+    files = tempfile.mkdtemp(prefix="tadas-demo-files-")
+    image = os.path.join(files, "logo.png")
+    draw_logo(image)
     await asyncio.sleep(0.8)
-    start = time.time()
-    await story(owner, bob)
-    end = time.time()
+    try:
+        start = time.time()
+        await story(owner, bob, image)
+        end = time.time()
+    finally:
+        shutil.rmtree(files, ignore_errors=True)
     for window in (bob, owner):
         await cdp.send("Page.stopScreencast", {}, window.session)
-    compose(bob, owner, start, end, out)
+    compose(bob, owner, start, end, out, theme)
 
 
 def main() -> None:

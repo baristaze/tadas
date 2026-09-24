@@ -27,7 +27,7 @@ def test_login_keeps_a_session_and_whoami_reads_it(
     assert signed.exit_code == 0, signed.output
     # Ann belongs to Acme and to her personal org; with no --org she enters
     # the personal one, the place every person has.
-    assert signed.stdout.startswith("signed in as Ann at Ann (owner); session kept in ")
+    assert signed.stdout.startswith("signed in as Ann at Ann (owner)\nsession kept in ")
     session = config.load_session()
     assert session is not None and session.org_slug.startswith("ann-")
     assert session.api_url == "http://test"
@@ -240,7 +240,7 @@ def test_a_code_nobody_confirms_expires_with_exit_1(
 def test_the_local_sign_in_takes_an_address_alone(stack: Stack) -> None:
     signed = stack.tadas("login", "--dev-email", BOB["email"], "--org", "acme", token=None)
     assert signed.exit_code == 0, signed.output
-    assert signed.output.startswith("signed in as Bob at Acme (member); session kept in ")
+    assert signed.output.startswith("signed in as Bob at Acme (member)\nsession kept in ")
 
 
 def test_a_task_that_changed_while_the_command_ran_is_refused_with_exit_1(

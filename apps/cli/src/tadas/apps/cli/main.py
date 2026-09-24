@@ -299,7 +299,7 @@ def login(
             path = keep(api_url, session)
             typer.echo(
                 f"signed in as {session.user.display_name} at {session.org.name}"
-                f" ({session.role.value}); session kept in {path}"
+                f" ({session.role.value})\nsession kept in {path}"
             )
 
     _run(go())
