@@ -218,16 +218,6 @@ class IssuedDownloadView(BaseModel):
     url: Annotated[str | None, Field(title='Url')]
 
 
-class IssuedSlackLinkCodeView(BaseModel):
-    """
-    A one-time code, typed into a Slack channel as `/tadas link <code>`. It
-    works once, until `expires_at`, and is shown here only: the platform keeps
-    its digest.
-    """
-    code: Annotated[str | None, Field(title='Code')]
-    expires_at: Annotated[AwareDatetime, Field(title='Expires At')]
-
-
 class IssuedTicketView(BaseModel):
     """
     Carries the freshly minted socket ticket in the clear, once; redeeming
@@ -482,33 +472,56 @@ class SignInStartView(BaseModel):
     code_verifier: Annotated[str, Field(title='Code Verifier')]
 
 
-class SlackConnectionStatus(StrEnum):
+class SlackEventAnswerView(BaseModel):
+    """
+    Slack's check of the events URL gets its `challenge` back; every other
+    event is acknowledged with nothing.
+    """
+    challenge: Annotated[str | None, Field(title='Challenge')] = None
+
+
+class SlackInstallStartView(BaseModel):
+    """
+    Slack's own page, where a person approves the install for their
+    workspace. The link carries a one-time state, works once, until
+    `expires_at`, and is shown here only: a replay under the same
+    Idempotency-Key answers with `url` null, and the caller asks for another.
+    """
+    expires_at: Annotated[AwareDatetime, Field(title='Expires At')]
+    url: Annotated[str | None, Field(title='Url')]
+
+
+class SlackInstallationStatus(StrEnum):
     ok = 'ok'
     broken = 'broken'
 
 
-class SlackConnectionView(BaseModel):
+class SlackInstallationView(BaseModel):
     """
-    The Slack channel the org is connected to. `status` is `broken` when
-    Slack refused a post for good (`broken_reason` says which refusal); the
-    channel is linked again to mend it. `created_by` is the member whose code
-    linked it, whom a task added from the channel is attributed to.
+    The Slack workspace the org installed Tadas into, and the channel it
+    posts to. `channel_id` is null until someone types `/tadas connect` in a
+    channel. `status` is `broken` when Slack refused for good (`broken_reason`
+    says which refusal): the channel is gone or the app is not in it, which a
+    new `/tadas connect` mends, or the token no longer renews, which a new
+    install mends. `created_by` is the member who installed it. The bot token
+    is never on the wire.
     """
     broken_reason: Annotated[str | None, Field(title='Broken Reason')]
-    channel_id: Annotated[str, Field(title='Channel Id')]
+    channel_id: Annotated[str | None, Field(title='Channel Id')]
     created_at: Annotated[AwareDatetime, Field(title='Created At')]
     created_by: Annotated[UUID, Field(title='Created By')]
     id: Annotated[UUID, Field(title='Id')]
-    status: SlackConnectionStatus
+    status: SlackInstallationStatus
     team_id: Annotated[str, Field(title='Team Id')]
+    team_name: Annotated[str, Field(title='Team Name')]
     updated_at: Annotated[AwareDatetime, Field(title='Updated At')]
 
 
 class SlackStatusView(BaseModel):
     """
-    Whether the org has a channel connected, and which.
+    Whether the org has installed Tadas in Slack, and where.
     """
-    connection: SlackConnectionView | None
+    installation: SlackInstallationView | None
 
 
 class Intent(StrEnum):

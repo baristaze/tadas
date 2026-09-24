@@ -2,7 +2,7 @@
 hands back the network-layer root the container holds."""
 
 from tadas.infra.root import InfraInterface
-from tadas.integrations.payments import PaymentsInterface
+from tadas.integrations.root import IntegrationsInterface
 from tadas.om.root import Managers
 from tadas.services.api.services import (
     AdminServiceInterface,
@@ -80,8 +80,10 @@ class ServicesImpl(ServicesInterface):
 def build_services(
     managers: Managers,
     infra: InfraInterface,
-    payments: PaymentsInterface,
+    integrations: IntegrationsInterface,
     portal_origins: list[str],
+    slack_redirect_uri: str,
+    portal_url: str,
 ) -> ServicesInterface:
     """In-process impls only: the remote impl of each interface is the typed
     Python client, which arrives with the first Python consumer (ADR 0004)."""
@@ -95,6 +97,12 @@ def build_services(
         billing=BillingServiceImpl(
             managers.billing, managers.tenancy, managers.tasks, managers.media, portal_origins
         ),
-        webhooks=WebhooksServiceImpl(payments, infra.get_queues()),
-        slack=SlackServiceImpl(managers.slack),
+        webhooks=WebhooksServiceImpl(integrations.get_payments(), infra.get_queues()),
+        slack=SlackServiceImpl(
+            managers.slack,
+            integrations.get_slack(),
+            infra.get_queues(),
+            slack_redirect_uri,
+            portal_url,
+        ),
     )

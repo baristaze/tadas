@@ -89,6 +89,14 @@ class ApiSettings(StorageSettings, InfraSettings, IntegrationsSettings):
     # seed, the demo recorders, the traffic generator, and the tests. Off
     # unless set, and refused at boot outside a local or test environment.
     dev_sign_in_enabled: bool = False
+    # Where Slack sends a person's browser back at the end of an install: this
+    # API's own `/webhooks/slack/oauth`, named in the Slack app's manifest as
+    # its redirect URL. Slack refuses an install that comes back anywhere else.
+    slack_redirect_uri: str = "http://127.0.0.1:8000/webhooks/slack/oauth"
+    # Where people open Tadas in this environment: an install ends on the
+    # portal's settings page, which says how it went. The local stack's
+    # portal by default; a deployed environment names its own.
+    portal_url: str = "http://localhost:55173"
     # How long an invitation's link works, from its send or resend.
     invitation_lifetime_days: int = Field(default=7, ge=1, le=30)
     # The interactive API docs and the OpenAPI document, served locally for

@@ -19,6 +19,7 @@ from tadas.integrations.impl.configured import (
     IntegrationsConfiguredImpl,
     absent_integrations,
     payments_for,
+    slack_for,
 )
 from tadas.integrations.payments import PaymentsInterface
 from tadas.integrations.root import IntegrationsInterface
@@ -162,12 +163,14 @@ class AppContainer:
                 "environment": "test",
                 "dev_sign_in_enabled": True,
                 "billing_backend": "twin",
+                "slack_backend": "twin",
             }
         )
         # No identity provider unless the test hands one in, and the payment
-        # processor the settings name: the twin, in a test.
+        # processor and the Slack app the settings name: the twins, in a test.
         integrations = integrations or absent_integrations(
-            payments_for(settings, settings.environment)
+            payments_for(settings, settings.environment),
+            slack_for(settings, settings.environment),
         )
         return cls.over(settings, storage, infra, integrations)
 
@@ -188,7 +191,12 @@ class AppContainer:
             integrations,
         )
         services = build_services(
-            managers, infra, integrations.get_payments(), settings.cors_origins
+            managers,
+            infra,
+            integrations,
+            settings.cors_origins,
+            settings.slack_redirect_uri,
+            settings.portal_url,
         )
         return cls(
             settings,

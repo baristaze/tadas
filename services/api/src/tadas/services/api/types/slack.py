@@ -1,20 +1,24 @@
 from datetime import datetime
 from uuid import UUID
 
-from tadas.om.slack.types.connection import SlackConnectionStatus
+from tadas.om.slack.types.installation import SlackInstallationStatus
 from tadas.services.api.types.common import View
 
 
-class SlackConnectionView(View):
-    """The Slack channel the org is connected to. `status` is `broken` when
-    Slack refused a post for good (`broken_reason` says which refusal); the
-    channel is linked again to mend it. `created_by` is the member whose code
-    linked it, whom a task added from the channel is attributed to."""
+class SlackInstallationView(View):
+    """The Slack workspace the org installed Tadas into, and the channel it
+    posts to. `channel_id` is null until someone types `/tadas connect` in a
+    channel. `status` is `broken` when Slack refused for good (`broken_reason`
+    says which refusal): the channel is gone or the app is not in it, which a
+    new `/tadas connect` mends, or the token no longer renews, which a new
+    install mends. `created_by` is the member who installed it. The bot token
+    is never on the wire."""
 
     id: UUID
     team_id: str
-    channel_id: str
-    status: SlackConnectionStatus
+    team_name: str
+    channel_id: str | None
+    status: SlackInstallationStatus
     broken_reason: str | None
     created_by: UUID
     created_at: datetime
@@ -22,17 +26,25 @@ class SlackConnectionView(View):
 
 
 class SlackStatusView(View):
-    """Whether the org has a channel connected, and which."""
+    """Whether the org has installed Tadas in Slack, and where."""
 
-    connection: SlackConnectionView | None
+    installation: SlackInstallationView | None
 
 
-class IssuedSlackLinkCodeView(View):
-    """A one-time code, typed into a Slack channel as `/tadas link <code>`. It
-    works once, until `expires_at`, and is shown here only: the platform keeps
-    its digest."""
+class SlackInstallStartView(View):
+    """Slack's own page, where a person approves the install for their
+    workspace. The link carries a one-time state, works once, until
+    `expires_at`, and is shown here only: a replay under the same
+    Idempotency-Key answers with `url` null, and the caller asks for another."""
 
-    secret_fields = frozenset({"code"})
+    secret_fields = frozenset({"url"})
 
-    code: str | None
+    url: str | None
     expires_at: datetime
+
+
+class SlackEventAnswerView(View):
+    """Slack's check of the events URL gets its `challenge` back; every other
+    event is acknowledged with nothing."""
+
+    challenge: str | None = None

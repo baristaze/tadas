@@ -53,6 +53,7 @@ def build_container(
         {
             "_env_file": None,
             "billing_backend": "twin",
+            "slack_backend": "twin",
             "environment": "test",
             "totp_encryption_key": TOTP_KEY,
             "dev_sign_in_enabled": True,

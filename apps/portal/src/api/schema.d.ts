@@ -862,36 +862,20 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/slack/connection": {
+    "/v1/slack/installation": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** Get Connection */
-        get: operations["get_connection_v1_slack_connection_get"];
+        /** Get Installation */
+        get: operations["get_installation_v1_slack_installation_get"];
         put?: never;
-        post?: never;
-        /** Disconnect */
-        delete: operations["disconnect_v1_slack_connection_delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/slack/link-codes": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Issue Link Code */
-        post: operations["issue_link_code_v1_slack_link_codes_post"];
-        delete?: never;
+        /** Start Install */
+        post: operations["start_install_v1_slack_installation_post"];
+        /** Uninstall */
+        delete: operations["uninstall_v1_slack_installation_delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -995,6 +979,57 @@ export interface paths {
         };
         /** List Users */
         get: operations["list_users_v1_users_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/webhooks/slack/commands": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Slack Command */
+        post: operations["slack_command_webhooks_slack_commands_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/webhooks/slack/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Slack Event */
+        post: operations["slack_event_webhooks_slack_events_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/webhooks/slack/oauth": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Slack Oauth */
+        get: operations["slack_oauth_webhooks_slack_oauth_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1513,21 +1548,6 @@ export interface components {
             user: components["schemas"]["UserView"];
         };
         /**
-         * IssuedSlackLinkCodeView
-         * @description A one-time code, typed into a Slack channel as `/tadas link <code>`. It
-         *     works once, until `expires_at`, and is shown here only: the platform keeps
-         *     its digest.
-         */
-        IssuedSlackLinkCodeView: {
-            /** Code */
-            code: string | null;
-            /**
-             * Expires At
-             * Format: date-time
-             */
-            expires_at: string;
-        };
-        /**
          * IssuedTicketView
          * @description Carries the freshly minted socket ticket in the clear, once; redeeming
          *     it opens the channel and re-checks the credential behind it.
@@ -1939,22 +1959,50 @@ export interface components {
             code_verifier: string;
         };
         /**
-         * SlackConnectionStatus
+         * SlackEventAnswerView
+         * @description Slack's check of the events URL gets its `challenge` back; every other
+         *     event is acknowledged with nothing.
+         */
+        SlackEventAnswerView: {
+            /** Challenge */
+            challenge?: string | null;
+        };
+        /**
+         * SlackInstallStartView
+         * @description Slack's own page, where a person approves the install for their
+         *     workspace. The link carries a one-time state, works once, until
+         *     `expires_at`, and is shown here only: a replay under the same
+         *     Idempotency-Key answers with `url` null, and the caller asks for another.
+         */
+        SlackInstallStartView: {
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /** Url */
+            url: string | null;
+        };
+        /**
+         * SlackInstallationStatus
          * @enum {string}
          */
-        SlackConnectionStatus: "ok" | "broken";
+        SlackInstallationStatus: "ok" | "broken";
         /**
-         * SlackConnectionView
-         * @description The Slack channel the org is connected to. `status` is `broken` when
-         *     Slack refused a post for good (`broken_reason` says which refusal); the
-         *     channel is linked again to mend it. `created_by` is the member whose code
-         *     linked it, whom a task added from the channel is attributed to.
+         * SlackInstallationView
+         * @description The Slack workspace the org installed Tadas into, and the channel it
+         *     posts to. `channel_id` is null until someone types `/tadas connect` in a
+         *     channel. `status` is `broken` when Slack refused for good (`broken_reason`
+         *     says which refusal): the channel is gone or the app is not in it, which a
+         *     new `/tadas connect` mends, or the token no longer renews, which a new
+         *     install mends. `created_by` is the member who installed it. The bot token
+         *     is never on the wire.
          */
-        SlackConnectionView: {
+        SlackInstallationView: {
             /** Broken Reason */
             broken_reason: string | null;
             /** Channel Id */
-            channel_id: string;
+            channel_id: string | null;
             /**
              * Created At
              * Format: date-time
@@ -1970,9 +2018,11 @@ export interface components {
              * Format: uuid
              */
             id: string;
-            status: components["schemas"]["SlackConnectionStatus"];
+            status: components["schemas"]["SlackInstallationStatus"];
             /** Team Id */
             team_id: string;
+            /** Team Name */
+            team_name: string;
             /**
              * Updated At
              * Format: date-time
@@ -1981,10 +2031,10 @@ export interface components {
         };
         /**
          * SlackStatusView
-         * @description Whether the org has a channel connected, and which.
+         * @description Whether the org has installed Tadas in Slack, and where.
          */
         SlackStatusView: {
-            connection: components["schemas"]["SlackConnectionView"] | null;
+            installation: components["schemas"]["SlackInstallationView"] | null;
         };
         /**
          * SsoLinkRequest
@@ -4216,7 +4266,7 @@ export interface operations {
             };
         };
     };
-    get_connection_v1_slack_connection_get: {
+    get_installation_v1_slack_installation_get: {
         parameters: {
             query?: never;
             header?: {
@@ -4249,40 +4299,7 @@ export interface operations {
             };
         };
     };
-    disconnect_v1_slack_connection_delete: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-                "x-app"?: string | null;
-                "x-app-version"?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SlackStatusView"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    issue_link_code_v1_slack_link_codes_post: {
+    start_install_v1_slack_installation_post: {
         parameters: {
             query?: never;
             header?: {
@@ -4302,7 +4319,40 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["IssuedSlackLinkCodeView"];
+                    "application/json": components["schemas"]["SlackInstallStartView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    uninstall_v1_slack_installation_delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SlackStatusView"];
                 };
             };
             /** @description Validation Error */
@@ -4682,6 +4732,104 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["UserPageView"];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    slack_command_webhooks_slack_commands_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Slack-Request-Timestamp"?: string | null;
+                "X-Slack-Signature"?: string | null;
+                "X-Slack-Retry-Num"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    slack_event_webhooks_slack_events_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Slack-Request-Timestamp"?: string | null;
+                "X-Slack-Signature"?: string | null;
+                "X-Slack-Retry-Num"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SlackEventAnswerView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    slack_oauth_webhooks_slack_oauth_get: {
+        parameters: {
+            query?: {
+                code?: string | null;
+                state?: string | null;
+                error?: string | null;
+            };
+            header?: {
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            302: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {
