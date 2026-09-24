@@ -1,31 +1,51 @@
-"""The Slack client's own contract: Slack's answers become the three errors a
-caller decides on, the real client translates the Web API's refusals into them
-without the token in what it raises, a command's answer goes to Slack's own
-address alone, the twin stays local and fails on request, and the off client
-posts nothing."""
+"""The Slack client's own contract: Slack's answers become the errors a
+caller decides on; the real client makes each call under the token it is
+handed and never carries it in what it raises; a command's answer goes to
+Slack's own address alone; an install's code and a refresh become tokens;
+a call in is checked against the signing secret over its raw body, in
+constant time, inside five minutes; the twin signs the way Slack does, stays
+local, issues tokens that renew once, and fails on request; and the off
+client reaches Slack for nothing."""
 
-from datetime import timedelta
+import time
+from datetime import UTC, datetime, timedelta
 from typing import Any
+from urllib.parse import parse_qs, urlencode, urlsplit
 
 import pytest
 from slack_sdk.errors import SlackApiError
+from slack_sdk.signature import SignatureVerifier
 from slack_sdk.web.async_client import AsyncWebClient
 from slack_sdk.web.async_slack_response import AsyncSlackResponse
 
 from tadas.infra.exceptions import InfraException
 from tadas.integrations.slack import (
+    BOT_SCOPES,
     SlackChannelUnusable,
     SlackFailed,
     SlackNotConfigured,
     SlackRateLimited,
+    SlackRequestRefused,
+    SlackTokenRevoked,
     error_for,
     is_response_url,
 )
 from tadas.integrations.slack.off import SlackOffImpl
-from tadas.integrations.slack.twin import SlackTwinImpl
+from tadas.integrations.slack.requests import (
+    command_of,
+    delivery_key,
+    event_of,
+    inbound_command,
+    inbound_event,
+    sign,
+    verify,
+)
+from tadas.integrations.slack.twin import TWIN_SIGNING_SECRET, SlackTwinImpl
 from tadas.integrations.slack.web import SlackWebImpl
 
-TOKEN = "xoxb-000-000-not-a-real-token"
+TOKEN = "xoxe.xoxb-000-000-not-a-real-token"
+SECRET = "8f742231b10e8888abcd99yyyzzz85a5"
+CLIENT_SECRET = "not-a-real-client-secret"
 
 
 def test_slacks_answers_become_the_errors_a_caller_decides_on() -> None:
@@ -35,6 +55,8 @@ def test_slacks_answers_become_the_errors_a_caller_decides_on() -> None:
     for code in ("channel_not_found", "not_in_channel", "is_archived"):
         unusable = error_for(code)
         assert isinstance(unusable, SlackChannelUnusable) and unusable.slack_code == code
+    for code in ("invalid_auth", "token_revoked", "account_inactive", "invalid_refresh_token"):
+        assert isinstance(error_for(code), SlackTokenRevoked)
     other = error_for("internal_error")
     assert type(other) is SlackFailed and other.slack_code == "internal_error"
     assert isinstance(other, InfraException)
@@ -46,39 +68,209 @@ def test_only_slacks_own_address_answers_a_command() -> None:
     assert not is_response_url("http://169.254.169.254/latest/meta-data/")
 
 
-def refusal(status: int, error: str, headers: dict[str, str] | None = None) -> SlackApiError:
-    response = AsyncSlackResponse(
+# The signature.
+
+
+def test_a_request_signed_the_way_slack_documents_passes_the_sdks_check() -> None:
+    body = b"token=x&team_id=T0&command=%2Ftadas&text=add+milk&trigger_id=1.2.3"
+    at, signature = sign(body, SECRET)
+    assert signature.startswith("v0=")
+    assert SignatureVerifier(SECRET).is_valid(body, at, signature)
+    verify(body, at, signature, SECRET)
+
+
+def test_slacks_documented_example_signs_to_its_documented_signature() -> None:
+    # The example of Slack's "Verifying requests from Slack" page.
+    body = (
+        b"token=xyzz0WbapA4vBCDEFasx0q6G&team_id=T1DC2JH3J&team_domain=testteamnow&"
+        b"channel_id=G8PSS9T3V&channel_name=foobar&user_id=U2CERLKJA&user_name=roadrunner&"
+        b"command=%2Fwebhook-collect&text=&response_url=https%3A%2F%2Fhooks.slack.com%2F"
+        b"commands%2FT1DC2JH3J%2F397700885554%2F96rGlfmibIGlgcZRskXaIFfN&"
+        b"trigger_id=398738663015.47445629121.803a0bc887a14d10d2c447fce8b6703c"
+    )
+    _, signature = sign(body, SECRET, 1531420618)
+    assert signature == "v0=a2114d57b48eac39b9ad189dd8316235a7b4a8d21a10bd27519666489c69b503"
+
+
+@pytest.mark.parametrize(
+    ("change", "reason"),
+    [
+        ("body", "bad_signature"),
+        ("secret", "bad_signature"),
+        ("stale", "bad_signature"),
+        ("future", "bad_signature"),
+        ("unsigned", "unsigned"),
+        ("garbage", "bad_timestamp"),
+    ],
+)
+def test_a_request_that_does_not_check_out_is_refused(change: str, reason: str) -> None:
+    body = b'{"type":"event_callback","event_id":"Ev1"}'
+    now = int(time.time())
+    at, signature = sign(body, SECRET, now)
+    timestamp: str | None = at
+    if change == "body":
+        body = body.replace(b"Ev1", b"Ev2")
+    elif change == "secret":
+        _, signature = sign(body, "another-secret", now)
+    elif change == "stale":
+        timestamp, signature = sign(body, SECRET, now - 301)
+    elif change == "future":
+        timestamp, signature = sign(body, SECRET, now + 301)
+    elif change == "unsigned":
+        signature = ""
+    elif change == "garbage":
+        timestamp = "yesterday"
+    with pytest.raises(SlackRequestRefused) as refused:
+        verify(body, timestamp, signature, SECRET)
+    assert refused.value.slack_code == reason and refused.value.http_status == 401
+    assert SECRET not in str(refused.value)
+
+
+def test_a_request_just_inside_the_window_passes() -> None:
+    body = b"x"
+    at, signature = sign(body, SECRET, int(time.time()) - 290)
+    verify(body, at, signature, SECRET)
+
+
+# What a call carries, and its key.
+
+
+def test_a_command_is_keyed_on_its_trigger_and_an_event_on_its_id() -> None:
+    fields = command_of(
+        urlencode(
+            {"command": "/tadas", "text": "add milk", "team_id": "T0", "trigger_id": "1.2.3"}
+        ).encode()
+    )
+    assert fields["text"] == "add milk"
+    at = datetime.now(UTC)
+    assert inbound_command(fields, at, 0).key == delivery_key("1.2.3")
+    first = inbound_event({"type": "event_callback", "event_id": "Ev9"}, at, 0)
+    retry = inbound_event({"type": "event_callback", "event_id": "Ev9"}, at, 2)
+    assert first.key == retry.key and retry.retry_num == 2, "a retry keeps its key"
+    with pytest.raises(SlackRequestRefused):
+        command_of(b"command=%2Ftadas&team_id=T0")  # no trigger to key it on
+    with pytest.raises(SlackRequestRefused):
+        event_of(b"not json")
+    with pytest.raises(SlackRequestRefused):
+        inbound_event({"type": "event_callback"}, at, 0)
+
+
+# The real client.
+
+
+def answer_of(status: int, data: dict[str, Any], headers: dict[str, str] | None = None) -> Any:
+    return AsyncSlackResponse(
         client=None,
         http_verb="POST",
-        api_url="https://slack.com/api/chat.postMessage",
+        api_url="https://slack.com/api/x",
         req_args={},
-        data={"ok": False, "error": error},
+        data=data,
         headers=headers or {},
         status_code=status,
     )
-    return SlackApiError(error, response)
 
 
-async def started(monkeypatch: pytest.MonkeyPatch, answer: Any) -> SlackWebImpl:
+def refusal(status: int, error: str, headers: dict[str, str] | None = None) -> SlackApiError:
+    return SlackApiError(error, answer_of(status, {"ok": False, "error": error}, headers))
+
+
+async def started(
+    monkeypatch: pytest.MonkeyPatch,
+    answer: Any,
+    seen: list[tuple[str, str | None, Any]] | None = None,
+) -> SlackWebImpl:
     """The real client with its Web API call replaced: `answer` is raised when
-    it is an exception and returned otherwise."""
+    it is an exception and returned otherwise; each call is noted in `seen`
+    with the token it was made under."""
 
-    async def api_call(self: AsyncWebClient, method: str, **_: Any) -> Any:
+    async def api_call(self: AsyncWebClient, method: str, **kwargs: Any) -> Any:
+        if seen is not None:
+            seen.append((method, self.token, kwargs.get("json") or kwargs.get("data")))
         if isinstance(answer, BaseException):
             raise answer
         return answer
 
     monkeypatch.setattr(AsyncWebClient, "api_call", api_call)
-    client = SlackWebImpl(TOKEN, timedelta(seconds=5))
+    client = SlackWebImpl("111.222", CLIENT_SECRET, SECRET, timedelta(seconds=5))
     await client.start()
     return client
 
 
-async def test_the_web_client_returns_the_posts_timestamp(monkeypatch: pytest.MonkeyPatch) -> None:
-    client = await started(monkeypatch, {"ok": True, "ts": "1727000000.000100"})
+async def test_each_call_is_made_under_the_token_it_is_handed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: list[tuple[str, str | None, Any]] = []
+    client = await started(monkeypatch, {"ok": True, "ts": "1727000000.000100"}, seen)
     try:
-        assert await client.post_message("C0TEAM", "hello") == "1727000000.000100"
-        assert await client.reply_in_thread("C0TEAM", "1.0", "hi") == "1727000000.000100"
+        assert await client.post_message(TOKEN, "C0TEAM", "hello") == "1727000000.000100"
+        await client.post_message("xoxe.xoxb-other", "C0TEAM", "hi", thread_ts="1.0")
+    finally:
+        await client.close()
+    assert [(method, token) for method, token, _ in seen] == [
+        ("chat.postMessage", TOKEN),
+        ("chat.postMessage", "xoxe.xoxb-other"),
+    ]
+    assert seen[1][2]["thread_ts"] == "1.0"
+
+
+async def test_an_install_code_becomes_the_workspaces_grant(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: list[tuple[str, str | None, Any]] = []
+    answer = {
+        "ok": True,
+        "access_token": TOKEN,
+        "refresh_token": "xoxe-1-refresh",
+        "expires_in": 43200,
+        "token_type": "bot",
+        "scope": "commands,chat:write",
+        "bot_user_id": "UBOT",
+        "app_id": "A0APP",
+        "team": {"id": "T0ACME", "name": "Acme"},
+        "authed_user": {"id": "U0ANN"},
+    }
+    client = await started(monkeypatch, answer, seen)
+    try:
+        grant = await client.exchange_code("the-code", "https://api.test/webhooks/slack/oauth")
+        renewed = await client.refresh("xoxe-1-refresh")
+    finally:
+        await client.close()
+    assert (grant.team_id, grant.team_name, grant.bot_user_id) == ("T0ACME", "Acme", "UBOT")
+    assert grant.scopes == ("commands", "chat:write") and grant.installer_user_id == "U0ANN"
+    assert grant.tokens.access_token.get_secret_value() == TOKEN
+    assert grant.tokens.expires_at is not None
+    assert TOKEN not in repr(grant), "a token never shows in a repr"
+    assert seen[0][2]["code"] == "the-code" and seen[0][2]["client_secret"] == CLIENT_SECRET
+    assert seen[1][2]["grant_type"] == "refresh_token"
+    assert renewed.refresh_token is not None
+
+
+def test_the_install_page_asks_for_the_bot_scopes_and_carries_the_state() -> None:
+    client = SlackWebImpl("111.222", CLIENT_SECRET, SECRET, timedelta(seconds=5))
+    url = client.authorize_url("the-state", "https://api.test/webhooks/slack/oauth")
+    parts = urlsplit(url)
+    query = {k: v[0] for k, v in parse_qs(parts.query).items()}
+    assert f"{parts.scheme}://{parts.netloc}{parts.path}" == "https://slack.com/oauth/v2/authorize"
+    assert query == {
+        "client_id": "111.222",
+        "scope": ",".join(BOT_SCOPES),
+        "state": "the-state",
+        "redirect_uri": "https://api.test/webhooks/slack/oauth",
+    }
+    assert CLIENT_SECRET not in url
+
+
+async def test_the_email_is_read_from_a_persons_profile(monkeypatch: pytest.MonkeyPatch) -> None:
+    person = {"ok": True, "user": {"id": "U0ANN", "profile": {"email": "ann@acme.test"}}}
+    client = await started(monkeypatch, person)
+    try:
+        assert await client.user_email(TOKEN, "U0ANN") == "ann@acme.test"
+    finally:
+        await client.close()
+    bot = {"ok": True, "user": {"id": "UBOT", "is_bot": True, "profile": {}}}
+    client = await started(monkeypatch, bot)
+    try:
+        assert await client.user_email(TOKEN, "UBOT") is None
     finally:
         await client.close()
 
@@ -87,7 +279,7 @@ async def test_a_rate_limit_carries_the_wait_slack_named(monkeypatch: pytest.Mon
     client = await started(monkeypatch, refusal(429, "ratelimited", {"Retry-After": "12"}))
     try:
         with pytest.raises(SlackRateLimited) as raised:
-            await client.post_message("C0TEAM", "hello")
+            await client.post_message(TOKEN, "C0TEAM", "hello")
         assert raised.value.retry_after == timedelta(seconds=12)
     finally:
         await client.close()
@@ -99,7 +291,8 @@ async def test_a_rate_limit_carries_the_wait_slack_named(monkeypatch: pytest.Mon
         (200, "not_in_channel", SlackChannelUnusable),
         (200, "channel_not_found", SlackChannelUnusable),
         (200, "is_archived", SlackChannelUnusable),
-        (200, "invalid_auth", SlackFailed),
+        (200, "invalid_auth", SlackTokenRevoked),
+        (200, "internal_error", SlackFailed),
         (500, "", SlackFailed),
     ],
 )
@@ -109,8 +302,17 @@ async def test_a_refusal_is_translated_and_never_carries_the_token(
     client = await started(monkeypatch, refusal(status, error))
     try:
         with pytest.raises(expected) as raised:
-            await client.post_message("C0TEAM", "hello")
+            await client.post_message(TOKEN, "C0TEAM", "hello")
         assert TOKEN not in str(raised.value) and raised.value.__cause__ is None
+    finally:
+        await client.close()
+
+
+async def test_an_uninstall_of_an_app_already_gone_is_done(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = await started(monkeypatch, refusal(200, "invalid_auth"))
+    try:
+        await client.uninstall(TOKEN)
+        await client.revoke(TOKEN)
     finally:
         await client.close()
 
@@ -121,22 +323,34 @@ async def test_a_transport_failure_is_a_failure_worth_a_retry(
     client = await started(monkeypatch, TimeoutError("read timed out"))
     try:
         with pytest.raises(SlackFailed) as raised:
-            await client.publish_home("U0ANN", {"type": "home", "blocks": []})
+            await client.publish_home(TOKEN, "U0ANN", {"type": "home", "blocks": []})
         assert raised.value.slack_code == "TimeoutError"
     finally:
         await client.close()
 
 
 async def test_the_web_client_refuses_a_foreign_response_url_before_any_request() -> None:
-    client = SlackWebImpl(TOKEN, timedelta(seconds=5))
+    client = SlackWebImpl("111.222", CLIENT_SECRET, SECRET, timedelta(seconds=5))
     with pytest.raises(SlackFailed) as raised:
         await client.respond("https://attacker.example.test/hook", "hi")
     assert raised.value.slack_code == "invalid_response_url"
 
 
 async def test_the_web_client_is_not_used_before_start() -> None:
+    client = SlackWebImpl("111.222", CLIENT_SECRET, SECRET, timedelta(seconds=5))
     with pytest.raises(RuntimeError):
-        await SlackWebImpl(TOKEN, timedelta(seconds=5)).post_message("C0TEAM", "hello")
+        await client.post_message(TOKEN, "C0TEAM", "hello")
+
+
+def test_the_web_client_checks_calls_with_its_signing_secret() -> None:
+    client = SlackWebImpl("111.222", CLIENT_SECRET, SECRET, timedelta(seconds=5))
+    body = b"payload"
+    client.verify_request(body, *sign(body, SECRET))
+    with pytest.raises(SlackRequestRefused):
+        client.verify_request(body, *sign(body, TWIN_SIGNING_SECRET))
+
+
+# The twin.
 
 
 def test_the_twin_runs_locally_only() -> None:
@@ -147,30 +361,71 @@ def test_the_twin_runs_locally_only() -> None:
             SlackTwinImpl(environment)
 
 
-async def test_the_twin_records_what_it_was_asked_and_fails_on_request() -> None:
+async def test_the_twin_installs_renews_once_and_revokes() -> None:
     twin = SlackTwinImpl("test")
-    first = await twin.post_message("C0TEAM", "one")
-    reply = await twin.reply_in_thread("C0TEAM", first, "two")
-    assert [(p.text, p.thread_ts) for p in twin.posts] == [("one", None), ("two", first)]
-    assert first != reply and first.startswith("twin.")
+    grant = await twin.exchange_code(twin.approve("T0ACME", "U0ANN"), "https://r")
+    with pytest.raises(SlackFailed):
+        await twin.exchange_code("twin-code-unknown", "https://r")
+    token = grant.tokens.access_token.get_secret_value()
+    refresh = grant.tokens.refresh_token
+    assert refresh is not None
+    assert twin.team_of(token) == "T0ACME"
+    renewed = await twin.refresh(refresh.get_secret_value())
+    with pytest.raises(SlackTokenRevoked):
+        await twin.refresh(refresh.get_secret_value())
+    fresh = renewed.access_token.get_secret_value()
+    assert await twin.post_message(fresh, "C0TEAM", "hello")
+    await twin.uninstall(fresh)
+    assert twin.uninstalled == ["T0ACME"]
+    with pytest.raises(SlackTokenRevoked):
+        await twin.post_message(fresh, "C0TEAM", "after")
 
-    twin.fail_next(error_for("not_in_channel"))
+
+async def test_a_token_one_twin_issued_works_in_another_process() -> None:
+    api, worker = SlackTwinImpl("local"), SlackTwinImpl("local")
+    grant = await api.exchange_code(api.approve("T0ACME", "U0ANN"), "https://r")
+    token = grant.tokens.access_token.get_secret_value()
+    assert await worker.post_message(token, "C0TEAM", "hello")
+    assert worker.posts[-1].team_id == "T0ACME"
+
+
+def test_the_twins_install_page_approves_at_once_and_sends_the_browser_back() -> None:
+    url = SlackTwinImpl("local").authorize_url("the-state", "http://127.0.0.1:8000/cb")
+    parts = urlsplit(url)
+    query = {k: v[0] for k, v in parse_qs(parts.query).items()}
+    assert f"{parts.scheme}://{parts.netloc}{parts.path}" == "http://127.0.0.1:8000/cb"
+    assert query["state"] == "the-state" and query["code"].startswith("twin-code-")
+
+
+async def test_the_twin_signs_as_slack_does_and_fails_on_request() -> None:
+    twin = SlackTwinImpl("test")
+    body = b'{"type":"url_verification","challenge":"c"}'
+    headers = twin.signed(body)
+    twin.verify_request(body, headers["X-Slack-Request-Timestamp"], headers["X-Slack-Signature"])
+    assert SignatureVerifier(TWIN_SIGNING_SECRET).is_valid_request(body, headers)
+    grant = await twin.exchange_code(twin.approve("T0ACME", "U0ANN"), "https://r")
+    token = grant.tokens.access_token.get_secret_value()
+    twin.fail_next(error_for("not_in_channel"), "chat.postMessage")
+    twin.add_user("T0ACME", "U0ANN", "ann@acme.test")
+    assert await twin.user_email(token, "U0ANN") == "ann@acme.test", "only the post fails"
     with pytest.raises(SlackChannelUnusable):
-        await twin.post_message("C0TEAM", "three")
-    assert len(twin.posts) == 2
-    await twin.post_message("C0TEAM", "four")
-    assert len(twin.posts) == 3
-
+        await twin.post_message(token, "C0TEAM", "three")
+    await twin.post_message(token, "C0TEAM", "four")
     with pytest.raises(SlackFailed):
         await twin.respond("https://attacker.example.test/hook", "hi")
     await twin.respond("https://hooks.slack.com/commands/T0/1/abc", "hi")
     assert twin.responses == [("https://hooks.slack.com/commands/T0/1/abc", "hi")]
 
 
-async def test_the_off_client_posts_nothing_and_says_why() -> None:
+async def test_the_off_client_reaches_slack_for_nothing_and_says_why() -> None:
     off = SlackOffImpl()
     assert off.describe() == "slack=off"
+    with pytest.raises(SlackNotConfigured) as refused:
+        off.verify_request(b"x", "1", "v0=0")
+    assert refused.value.http_status == 503
     with pytest.raises(SlackNotConfigured):
-        await off.post_message("C0TEAM", "hello")
+        off.authorize_url("s", "https://r")
+    with pytest.raises(SlackNotConfigured):
+        await off.post_message(TOKEN, "C0TEAM", "hello")
     with pytest.raises(SlackNotConfigured):
         await off.respond("https://hooks.slack.com/commands/T0/1/abc", "hi")

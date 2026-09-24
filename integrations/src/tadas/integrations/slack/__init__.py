@@ -1,21 +1,59 @@
-"""Slack: the one interface the platform posts through, and the errors a
-caller decides on. The real client speaks the Web API with the bot token; the
-twin answers in-process and records what it was asked. A caller never knows
-which it holds.
+"""Slack: the one interface the platform reaches Slack through, and the errors
+a caller decides on.
+
+Tadas is a distributed Slack app. Each org installs it into its own
+workspace through OAuth v2, and the install hands back a bot token for that
+workspace alone; every Web API call here names the token it is made under.
+Slack's calls in (slash commands, events) are signed with the app's signing
+secret, and `verify_request` checks one before anything reads it. The app's
+client id, client secret, and signing secret are this process's; a
+workspace's token is its tenant's, and the caller resolves it.
+
+The real client speaks the Web API; the twin answers in-process, issues its
+own installs and tokens, and signs its own requests with Slack's scheme. A
+caller never knows which it holds.
 
 The errors are the decision a caller needs, not Slack's whole vocabulary: a
-rate limit says when to come back, an unusable channel says the connection is
-broken until a person fixes it, and anything else is a failure worth a retry."""
+rate limit says when to come back, an unusable channel says the channel is
+broken until a person fixes it, a revoked token says the install is gone,
+and anything else is a failure worth a retry."""
 
 from abc import ABC, abstractmethod
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
+from pydantic import BaseModel, ConfigDict, SecretStr
+
 from tadas.infra.exceptions import InfraException
+
+BOT_SCOPES: tuple[str, ...] = (
+    "commands",
+    "chat:write",
+    "app_mentions:read",
+    "users:read",
+    "users:read.email",
+)
+"""What the bot asks for at install, and nothing more: the `/tadas` command,
+posting in a channel it was invited to, `@tadas`, and the email of the person
+who typed, which is how a Slack user is matched to a member. The manifests in
+`deployment/slack/` name the same list; a test holds them together."""
 
 UNUSABLE_CHANNEL_ERRORS = frozenset({"channel_not_found", "not_in_channel", "is_archived"})
 """Slack's answers that no retry changes: the channel is gone, archived, or
 the app was never invited. A person fixes each; the platform stops posting."""
+
+REVOKED_TOKEN_ERRORS = frozenset(
+    {
+        "invalid_auth",
+        "not_authed",
+        "token_revoked",
+        "account_inactive",
+        "invalid_refresh_token",
+        "team_not_found",
+    }
+)
+"""Slack's answers that say the install is gone: the app was removed, the
+token revoked, or the workspace deleted. Only a new install mends it."""
 
 
 class SlackError(InfraException):
@@ -44,27 +82,119 @@ class SlackChannelUnusable(SlackError):
     `UNUSABLE_CHANNEL_ERRORS`."""
 
 
+class SlackTokenRevoked(SlackError):
+    """The install behind the token is gone: one of `REVOKED_TOKEN_ERRORS`."""
+
+
 class SlackNotConfigured(SlackError):
-    """This process holds no bot token, so nothing can be posted."""
+    """This process holds no Slack app credentials, so nothing reaches Slack
+    and nothing from Slack is accepted."""
+
+    http_status = 503
+    code = "slack_unavailable"
 
     def __init__(self) -> None:
-        super().__init__("not_configured", "no Slack bot token is configured")
+        super().__init__("not_configured", "the Slack app's credentials are not configured")
 
 
 class SlackFailed(SlackError):
     """Any other refusal or transport failure; a retry may change it."""
 
 
+class SlackRequestRefused(SlackError):
+    """A call in whose signature, timestamp, or body did not check out.
+    Nothing is queued for it."""
+
+    http_status = 401
+    code = "slack_signature_invalid"
+
+
+class SlackTokens(BaseModel):
+    """A bot token and what renews it. With token rotation on, the access
+    token lives twelve hours and the refresh token works once."""
+
+    model_config = ConfigDict(frozen=True)
+
+    access_token: SecretStr
+    refresh_token: SecretStr | None = None
+    expires_at: datetime | None = None
+
+
+class SlackGrant(BaseModel):
+    """What a finished install hands back (`oauth.v2.access`): the workspace,
+    the bot user in it, the scopes granted, the tokens, and who installed."""
+
+    model_config = ConfigDict(frozen=True)
+
+    team_id: str
+    team_name: str
+    app_id: str
+    bot_user_id: str
+    scopes: tuple[str, ...]
+    installer_user_id: str
+    tokens: SlackTokens
+
+
 class SlackInterface(ABC):
+    # The app: its install, its tokens, and its calls in.
+
     @abstractmethod
-    async def post_message(self, channel_id: str, text: str) -> str:
-        """Posts `text` to the channel as the app (`chat.postMessage`); returns
-        the message's timestamp, which names it in the channel."""
+    def authorize_url(self, state: str, redirect_uri: str) -> str:
+        """Slack's page that asks a person to install the app into their
+        workspace with `BOT_SCOPES`, carrying `state` back to `redirect_uri`."""
         ...
 
     @abstractmethod
-    async def reply_in_thread(self, channel_id: str, thread_ts: str, text: str) -> str:
-        """Posts `text` in the thread of the message `thread_ts`."""
+    async def exchange_code(self, code: str, redirect_uri: str) -> SlackGrant:
+        """Finishes an install: the code Slack sent to the redirect, traded
+        with the app's client id and secret (`oauth.v2.access`)."""
+        ...
+
+    @abstractmethod
+    async def refresh(self, refresh_token: str) -> SlackTokens:
+        """A fresh bot token from a refresh token, which Slack then revokes
+        after a short grace period: a refresh token works once."""
+        ...
+
+    @abstractmethod
+    async def uninstall(self, token: str) -> None:
+        """Removes the app from the workspace the token belongs to
+        (`apps.uninstall`); a token already revoked is already uninstalled."""
+        ...
+
+    @abstractmethod
+    async def revoke(self, token: str) -> None:
+        """Revokes one token (`auth.revoke`) and leaves the app installed: for
+        a token an install handed over that the platform will not keep."""
+        ...
+
+    @abstractmethod
+    def verify_request(self, body: bytes, timestamp: str | None, signature: str | None) -> None:
+        """Checks a call in: `v0=` HMAC-SHA256 of `v0:<timestamp>:<body>`
+        under the signing secret, compared in constant time, with a timestamp
+        no more than five minutes from now. `SlackRequestRefused` otherwise;
+        `SlackNotConfigured` when this process holds no signing secret."""
+        ...
+
+    # The Web API, under one install's bot token.
+
+    @abstractmethod
+    async def post_message(
+        self, token: str, channel_id: str, text: str, thread_ts: str | None = None
+    ) -> str:
+        """Posts `text` to the channel as the app (`chat.postMessage`), in the
+        thread of `thread_ts` when given; returns the message's timestamp."""
+        ...
+
+    @abstractmethod
+    async def user_email(self, token: str, user_id: str) -> str | None:
+        """The email a Slack user's profile holds (`users.info`), or None for
+        a bot, a deleted user, or a profile without one."""
+        ...
+
+    @abstractmethod
+    async def publish_home(self, token: str, user_id: str, view: dict[str, Any]) -> None:
+        """Publishes the App Home view for one person (`views.publish`)."""
         ...
 
     @abstractmethod
@@ -72,11 +202,6 @@ class SlackInterface(ABC):
         """Answers a slash command through the `response_url` Slack sent with
         it, visible to the person who typed it alone. The URL must be one of
         Slack's own; any other is refused before a request is made."""
-        ...
-
-    @abstractmethod
-    async def publish_home(self, user_id: str, view: dict[str, Any]) -> None:
-        """Publishes the App Home view for one person (`views.publish`)."""
         ...
 
     @abstractmethod
@@ -95,6 +220,8 @@ def error_for(code: str, retry_after: timedelta | None = None) -> SlackError:
         return SlackRateLimited(retry_after or timedelta(seconds=30))
     if code in UNUSABLE_CHANNEL_ERRORS:
         return SlackChannelUnusable(code)
+    if code in REVOKED_TOKEN_ERRORS:
+        return SlackTokenRevoked(code)
     return SlackFailed(code)
 
 

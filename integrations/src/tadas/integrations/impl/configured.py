@@ -16,6 +16,10 @@ from tadas.integrations.payments.stripe import PaymentsStripeImpl
 from tadas.integrations.payments.twin import TWIN_ENVIRONMENTS, PaymentsTwinImpl
 from tadas.integrations.root import IntegrationsInterface
 from tadas.integrations.settings import IntegrationsSettings, key_refusal
+from tadas.integrations.slack import SlackInterface
+from tadas.integrations.slack.off import SlackOffImpl
+from tadas.integrations.slack.twin import SlackTwinImpl
+from tadas.integrations.slack.web import SlackWebImpl
 
 
 def refuse_unsafe(settings: IntegrationsSettings, environment: str, deployed: bool) -> None:
@@ -26,6 +30,33 @@ def refuse_unsafe(settings: IntegrationsSettings, environment: str, deployed: bo
             f"TADAS_IDENTITY_PROVIDER=twin is refused when TADAS_ENVIRONMENT={environment}"
         )
     refuse_unsafe_payments(settings, environment)
+    refuse_unsafe_slack(settings, environment)
+
+
+def refuse_unsafe_slack(settings: IntegrationsSettings, environment: str) -> None:
+    """Slack's twin anywhere but local and test."""
+    if settings.slack_backend == "twin" and environment not in TWIN_ENVIRONMENTS:
+        raise UnsafeIntegration(
+            f"TADAS_SLACK_BACKEND=twin is refused when TADAS_ENVIRONMENT={environment}"
+        )
+
+
+def slack_for(settings: IntegrationsSettings, environment: str) -> SlackInterface:
+    """The Slack app the settings name, after the boot's refusal: the twin, the
+    real client when all three of the app's credentials are set, and
+    otherwise the client that reaches Slack for nothing and says so."""
+    refuse_unsafe_slack(settings, environment)
+    if settings.slack_backend == "twin":
+        return SlackTwinImpl(environment)
+    client_secret, signing_secret = settings.slack_client_secret, settings.slack_signing_secret
+    if not settings.slack_client_id or client_secret is None or signing_secret is None:
+        return SlackOffImpl()
+    return SlackWebImpl(
+        client_id=settings.slack_client_id,
+        client_secret=client_secret.get_secret_value(),
+        signing_secret=signing_secret.get_secret_value(),
+        timeout=timedelta(seconds=settings.slack_timeout_seconds),
+    )
 
 
 RUNTIME_KEY_VARIABLE = "TADAS_STRIPE_RUNTIME_KEY"
@@ -70,6 +101,12 @@ def payments_for(settings: IntegrationsSettings, environment: str) -> PaymentsIn
     )
 
 
+def absent_slack() -> SlackInterface:
+    """The Slack app of a process that holds none: every call answers
+    `slack_unavailable`."""
+    return SlackOffImpl()
+
+
 def absent_payments() -> PaymentsInterface:
     """The payment processor of a process that holds none: every call answers
     `billing_unavailable`, and every org keeps its plan."""
@@ -100,10 +137,14 @@ class IntegrationsOverImpl(IntegrationsInterface):
     provider of a process that signs nobody in."""
 
     def __init__(
-        self, identity: IdentityProviderInterface, payments: PaymentsInterface | None = None
+        self,
+        identity: IdentityProviderInterface,
+        payments: PaymentsInterface | None = None,
+        slack: SlackInterface | None = None,
     ) -> None:
         self._identity = identity
         self._payments = payments or absent_payments()
+        self._slack = slack or absent_slack()
 
     def get_identity_provider(self) -> IdentityProviderInterface:
         return self._identity
@@ -111,25 +152,36 @@ class IntegrationsOverImpl(IntegrationsInterface):
     def get_payments(self) -> PaymentsInterface:
         return self._payments
 
+    def get_slack(self) -> SlackInterface:
+        return self._slack
+
     def describe(self) -> list[str]:
-        return [self._identity.describe(), self._payments.describe()]
+        return [self._identity.describe(), self._payments.describe(), self._slack.describe()]
 
     async def start(self) -> None:
         await self._identity.start()
         await self._payments.start()
+        await self._slack.start()
 
     async def close(self) -> None:
+        await self._slack.close()
         await self._payments.close()
         await self._identity.close()
 
 
-def absent_integrations(payments: PaymentsInterface | None = None) -> IntegrationsInterface:
+def absent_integrations(
+    payments: PaymentsInterface | None = None, slack: SlackInterface | None = None
+) -> IntegrationsInterface:
     """The root of a process that signs nobody in; it holds no payment
-    processor either unless the caller hands one in."""
-    return IntegrationsOverImpl(IdentityProviderAbsentImpl(), payments)
+    processor and no Slack app either unless the caller hands them in."""
+    return IntegrationsOverImpl(IdentityProviderAbsentImpl(), payments, slack)
 
 
 class IntegrationsConfiguredImpl(IntegrationsOverImpl):
     def __init__(self, settings: IntegrationsSettings, environment: str, deployed: bool) -> None:
         refuse_unsafe(settings, environment, deployed)
-        super().__init__(identity_provider_for(settings), payments_for(settings, environment))
+        super().__init__(
+            identity_provider_for(settings),
+            payments_for(settings, environment),
+            slack_for(settings, environment),
+        )
