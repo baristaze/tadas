@@ -134,23 +134,19 @@ starts with the queues `elasticmq/elasticmq.conf` declares: `tadas-webhooks`
 and `tadas-slack`, each with a `-dead` queue after five receives, as the
 cloud's queue module declares them.
 
-## Slack
-
-The stack holds no Slack connection and sets no `TADAS_SLACK_*`, so the
-`maintenance` container posts through the in-process twin. Local and
-staging share one Slack app, and Slack spreads its deliveries across every
-open connection, so a bridge left running on a laptop takes deliveries
-meant for staging. To try the real thing, run the bridge by hand, briefly,
-with the tokens exported for that run only:
-
-```bash
-TADAS_SLACK_APP_TOKEN=xapp-... uv run tadas-maintenance slack
-```
-
-It sends each delivery to `tadas-slack`, where the worker takes it. A host
-worker posts to Slack only with `TADAS_SLACK_BOT_TOKEN` set for its run.
 Valkey has no named volume but snapshots on shutdown, so `dc restart valkey`
 keeps its keys; `flushall` above empties it, and `make reset` removes it.
+
+## Slack
+
+A laptop has no public URL, so Slack itself never calls it, and no
+tunnel is needed. `.env.example` sets `TADAS_SLACK_BACKEND=twin`: Slack
+in memory, refused outside local and test. "Add to Slack" in the local
+portal installs into the twin's own workspace (`TTWIN0001`) at once,
+and the worker posts to the twin, which logs each post. Slack's calls
+in are exercised by the tests, and by hand with a request to the local
+API signed with the twin's signing secret, as
+[the Slack runbook](../../docs/runbooks/providers/slack.md) shows.
 
 ## Metrics, traces, and errors
 

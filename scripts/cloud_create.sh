@@ -563,10 +563,9 @@ case "$environment" in
 esac
 cluster="tadas-$environment"
 say "Written under $writer_profile, with AWS_ACCESS_KEY_ID and its siblings unset, one value at a time, read with read -rs so none is shown:"
-secrets="workos_api_key stripe_runtime_key slack_bot_token slack_app_token"
-# One Slack app serves every environment and staging holds its one
-# connection, so production leaves its app token off.
-[ "$environment" = "production" ] && secrets="workos_api_key stripe_runtime_key slack_bot_token"
+# Each environment has a Slack app of its own, since an app has one set of
+# request URLs, so each writes both of its app's secrets.
+secrets="workos_api_key stripe_runtime_key slack_client_secret slack_signing_secret"
 for secret in $secrets; do
   say "  aws secretsmanager put-secret-value --profile $writer_profile --region $region --secret-id tadas/$environment/$secret --secret-string \"\$VALUE\""
 done
@@ -577,13 +576,12 @@ case "$environment" in
 esac
 say "  Stripe: stripe_runtime_key takes the environment's runtime key. The bootstrap runs under a second restricted key, held by you and never written to the cloud. With TADAS_STRIPE_BOOTSTRAP_KEY exported, it makes the catalog and the endpoint, and writes tadas/$environment/stripe_webhook_secret itself:"
 say "    uv run tadas-ops stripe-bootstrap --env $environment --profile $writer_profile --dry-run, then without --dry-run, then again for \"no changes\""
-if [ "$environment" = "production" ]; then
-  say "  Slack: slack_app_token stays off here while staging holds the app's one Socket Mode connection."
-fi
+say "  Slack: the environment's own app, from deployment/slack/manifest.$environment.json (production's app is made when production opens). From its Basic Information page, the signing secret and the client secret are slack_signing_secret and slack_client_secret above; its client id is committed as slack_client_id in $environment_root/main.tf, and that commit deploys."
 say "  Then the tasks read the values at their next start: the next deploy, or now:"
-for service in api maintenance slack; do
+for service in api maintenance; do
   say "    aws ecs update-service --profile $writer_profile --region $region --cluster $cluster --service $service --force-new-deployment"
 done
+say "  Slack, once the API holds its signing secret: paste deployment/slack/manifest.$environment.json into the app's App Manifest page and save, and Slack checks https://$api_domain_name/webhooks/slack/events until it says verified. Turn on public distribution under Manage Distribution. Then, at https://$app_domain_name, Settings, Slack, Add to Slack; /invite @tadas and /tadas connect in a channel; try /tadas, /tadas team, and /tadas add."
 say "  The steps, the key permissions, and the checks: docs/runbooks/providers/{workos,stripe,slack}.md."
 
 case "$environment" in
