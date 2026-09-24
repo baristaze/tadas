@@ -226,7 +226,12 @@ sent), each with a dead-letter queue named with `-dead` after it.
      say, and the API started.
    - `payments=stripe (not configured)`, or `billing_unavailable` on a
      request: checkouts answer 503 and every org keeps its plan.
-     `tadas/<env>/stripe_org_key` is `off`. A `503` on
+     `tadas/<env>/stripe_runtime_key` is `off`. `payments=stripe
+     (acct_..., <version>; the key lacks <resource>, ...)` names what
+     the runtime key could not read at start, and the log line `the
+     stripe runtime key lacks <resource> (group <group>)` says where
+     the dashboard's editor keeps it: the person adds it to the key,
+     which takes effect at once. A `503` on
      `/webhooks/stripe` is `tadas/<env>/stripe_webhook_secret`; a
      `400` there is a signing secret that does not match the
      endpoint's, and the processor retries it.
@@ -327,7 +332,7 @@ sent), each with a dead-letter queue named with `-dead` after it.
 - Requests: <rate>, error ratio <ratio>, p95 <ms> by route
 - Workers: <outcomes per kind>, queue depth <n>, oldest <age>
 - Queues: webhooks <n> (dead <n>), slack <n> (dead <n>); services api, maintenance, slack <running>/<desired>
-- Providers: sign-in <configured | off: tadas/<env>/workos_api_key | not in the window>, billing <...: tadas/<env>/stripe_org_key>, Slack posts <...: tadas/<env>/slack_bot_token>, Slack connection <open | closed: tadas/<env>/slack_app_token>
+- Providers: sign-in <configured | off: tadas/<env>/workos_api_key | not in the window>, billing <configured | off: tadas/<env>/stripe_runtime_key | lacks <resources>>, Slack posts <...: tadas/<env>/slack_bot_token>, Slack connection <open | closed: tadas/<env>/slack_app_token>
 - Pool and cache: <checkouts, timeouts, hits, misses>
 - Errors: <count>, top issue <title> (<request id, or none>), or "not
   read: the environment names no error tracker"

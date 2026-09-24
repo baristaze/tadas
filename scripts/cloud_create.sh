@@ -563,10 +563,10 @@ case "$environment" in
 esac
 cluster="tadas-$environment"
 say "Written under $writer_profile, with AWS_ACCESS_KEY_ID and its siblings unset, one value at a time, read with read -rs so none is shown:"
-secrets="workos_api_key stripe_org_key slack_bot_token slack_app_token"
+secrets="workos_api_key stripe_runtime_key slack_bot_token slack_app_token"
 # One Slack app serves every environment and staging holds its one
 # connection, so production leaves its app token off.
-[ "$environment" = "production" ] && secrets="workos_api_key stripe_org_key slack_bot_token"
+[ "$environment" = "production" ] && secrets="workos_api_key stripe_runtime_key slack_bot_token"
 for secret in $secrets; do
   say "  aws secretsmanager put-secret-value --profile $writer_profile --region $region --secret-id tadas/$environment/$secret --secret-string \"\$VALUE\""
 done
@@ -575,7 +575,7 @@ case "$environment" in
   staging) say "    uv run tadas-ops workos-bootstrap --environment staging --apply   (WORKOS_API_KEY exported, read with read -rs)" ;;
   production) say "    uv run tadas-ops workos-bootstrap --environment production --apply   (WORKOS_PRODUCTION_API_KEY exported, read with read -rs)" ;;
 esac
-say "  Stripe: with TADAS_STRIPE_ORG_KEY exported, the bootstrap makes the catalog and the endpoint, and writes tadas/$environment/stripe_webhook_secret itself:"
+say "  Stripe: stripe_runtime_key takes the environment's runtime key. The bootstrap runs under a second restricted key, held by you and never written to the cloud. With TADAS_STRIPE_BOOTSTRAP_KEY exported, it makes the catalog and the endpoint, and writes tadas/$environment/stripe_webhook_secret itself:"
 say "    uv run tadas-ops stripe-bootstrap --env $environment --profile $writer_profile --dry-run, then without --dry-run, then again for \"no changes\""
 if [ "$environment" = "production" ]; then
   say "  Slack: slack_app_token stays off here while staging holds the app's one Socket Mode connection."

@@ -1,4 +1,4 @@
-# ADR 0032: The WorkOS key is the application's, never the environment's
+# ADR 0033: The WorkOS key is the application's, never the environment's
 
 **Status**: accepted (2026-09-23). Supersedes the paragraph "The exchange
 is PKCE, not a secret" of [ADR 0028](0028-sign-in-is-the-identity-providers.md).

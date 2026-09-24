@@ -1,7 +1,8 @@
 """The bootstrap over the catalog twin and a secret store in memory: a first
 run makes the account whole, a second changes nothing, a changed amount is
 a new price that takes the lookup key, a lost endpoint secret rolls the
-endpoint, a key of the wrong mode is refused, and the committed tiers price
+endpoint, the bootstrap reads its own key and refuses one that is not a
+restricted key of the environment's mode, and the committed tiers price
 seats the way the object model's rule does."""
 
 from pathlib import Path
@@ -143,29 +144,57 @@ async def test_a_dry_run_writes_nothing(desired: DesiredState) -> None:
 @pytest.mark.parametrize(
     ("env", "key"),
     [
-        ("staging", "sk_live_x"),
-        ("staging", "rk_org_live_x"),
-        ("local", "sk_live_x"),
+        ("staging", "rk_live_x"),
+        ("local", "rk_live_x"),
         ("production", "rk_test_x"),
-        ("production", "sk_org_test_x"),
         ("staging", "pk_test_x"),
     ],
 )
 def test_a_key_of_the_wrong_mode_is_refused(env: str, key: str) -> None:
-    with pytest.raises(ValueError, match="takes a"):
+    with pytest.raises(ValueError, match="takes"):
         check_key(env, key)
 
 
-def test_a_key_of_the_right_mode_passes() -> None:
+@pytest.mark.parametrize(
+    ("env", "key", "said"),
+    [
+        ("staging", "rk_org_test_x", "organization key"),
+        ("production", "sk_org_live_x", "organization key"),
+        ("staging", "sk_test_x", "secret key"),
+        ("production", "sk_live_x", "secret key"),
+    ],
+)
+def test_only_a_restricted_key_is_taken(env: str, key: str, said: str) -> None:
+    with pytest.raises(ValueError, match=said) as refusal:
+        check_key(env, key)
+    assert key not in str(refusal.value)
+
+
+def test_a_restricted_key_of_the_right_mode_passes() -> None:
     check_key("staging", "rk_test_x")
-    check_key("production", "sk_org_live_x")
+    check_key("production", "rk_live_x")
+
+
+def test_the_command_reads_its_own_key_and_never_the_runtime_one(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The runtime key in the shell is not a bootstrap key: the command asks
+    for its own and touches nothing."""
+    monkeypatch.chdir(ROOT)
+    monkeypatch.delenv("TADAS_STRIPE_BOOTSTRAP_KEY", raising=False)
+    monkeypatch.setenv("TADAS_STRIPE_RUNTIME_KEY", "rk_test_not_a_real_key")
+    monkeypatch.setenv("TADAS_STRIPE_ORG_KEY", "rk_test_not_a_real_key")
+    assert main(["stripe-bootstrap", "--env", "staging", "--secret-store", "none"]) == 2
+    err = capsys.readouterr().err
+    assert "set TADAS_STRIPE_BOOTSTRAP_KEY" in err
+    assert "not_a_real_key" not in err
 
 
 def test_the_command_refuses_a_live_key_on_staging(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.chdir(ROOT)
-    monkeypatch.setenv("TADAS_STRIPE_ORG_KEY", "sk_live_not_a_real_key")
+    monkeypatch.setenv("TADAS_STRIPE_BOOTSTRAP_KEY", "rk_live_not_a_real_key")
     assert main(["stripe-bootstrap", "--env", "staging", "--secret-store", "none"]) == 2
     err = capsys.readouterr().err
     assert "takes a test key" in err
@@ -178,7 +207,7 @@ def test_the_command_refuses_to_write_the_secret_under_an_investigate_profile(
     """The signing secret is written under a person's own sign-in; an agent's
     read-only profile is refused before anything reaches the processor."""
     monkeypatch.chdir(ROOT)
-    monkeypatch.setenv("TADAS_STRIPE_ORG_KEY", "rk_test_not_a_real_key")
+    monkeypatch.setenv("TADAS_STRIPE_BOOTSTRAP_KEY", "rk_test_not_a_real_key")
     argv = ["stripe-bootstrap", "--env", "staging", "--profile", "tadas-staging-investigate"]
     assert main(argv) == 2
     err = capsys.readouterr().err

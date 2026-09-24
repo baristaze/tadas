@@ -447,14 +447,19 @@ async def token_command(
 
 async def stripe_bootstrap_command(args: argparse.Namespace) -> int:
     """Makes the processor's account match the committed desired state. The
-    key comes from the process environment and is never printed; the account
-    is the one the definition names for the environment."""
+    bootstrap key comes from the person's shell and is never printed; the
+    runtime key the processes hold is never read here. The account is the
+    one the definition names for the environment."""
     root = repository_root()
     if root is None:
         raise ValueError("run this from the tadas checkout; it reads deployment/stripe/")
     key = os.environ.get(KEY_VARIABLE, "").strip()
     if not key:
-        print(f"set {KEY_VARIABLE} to the account's key for --env {args.env}", file=sys.stderr)
+        print(
+            f"set {KEY_VARIABLE} to the account's bootstrap key for --env {args.env} "
+            "(docs/runbooks/providers/stripe.md)",
+            file=sys.stderr,
+        )
         return USAGE
     check_key(args.env, key)
     desired = load_desired(root)

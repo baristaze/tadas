@@ -18,7 +18,7 @@ credential: an API key made on that application's own API keys tab. The
 environment's API Keys page (under Developer) is a different thing. Its
 keys belong to the environment's default application, and WorkOS refuses
 them as the Tadas App's (`invalid_client`). The API refuses to start on
-one ([ADR 0032](../../adr/0032-the-workos-key-is-the-applications.md)).
+one ([ADR 0033](../../adr/0033-the-workos-key-is-the-applications.md)).
 
 ## The levels, and what lives at each
 

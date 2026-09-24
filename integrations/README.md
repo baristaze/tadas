@@ -30,7 +30,7 @@ subscriptions; Tadas owns what a plan entitles an org to.
 
 | Implementation | What it is |
 |----------------|------------|
-| `PaymentsStripeImpl` | The SDK over one client opened at start, with the account in `Stripe-Context`, `Stripe-Version` pinned to the SDK's release, and a timeout on every call. Without a key it is unconfigured: every call answers `billing_unavailable` (503). |
+| `PaymentsStripeImpl` | The SDK over one client opened at start, with the account in `Stripe-Context`, `Stripe-Version` pinned to the SDK's release, and a timeout on every call. At start it reads one item under each permission of the runtime key, and names in the start line and the log any resource the key cannot read. Without a key it is unconfigured: every call answers `billing_unavailable` (503). |
 | `PaymentsTwinImpl` | Customers, checkouts, and subscriptions in memory. It signs its own deliveries with the processor's scheme, so they pass the same check, and it lets a test complete a checkout, move a subscription, end a period, and have any event delivered. Every id it makes carries `twin`. |
 
 ## The catalog
@@ -38,8 +38,11 @@ subscriptions; Tadas owns what a plan entitles an org to.
 `PaymentsCatalogInterface` is what the operator's bootstrap reconciles:
 products, prices by lookup key, the webhook endpoint, and the Billing
 Portal configuration. Its caller is `tadas-ops stripe-bootstrap`, never
-a serving process. `CatalogStripeImpl` is the real one, under the same
-headers and timeout; `CatalogTwinImpl` keeps the processor's rules that
+a serving process, and it runs under a key of its own: the bootstrap
+key the person holds, never the runtime key. `payments.permissions`
+lists what each key may touch, as Stripe's editor names it.
+`CatalogStripeImpl` is the real one, under the same headers and
+timeout; `CatalogTwinImpl` keeps the processor's rules that
 matter to a reconcile (one price holds a lookup key, a transfer moves
 it, an endpoint's secret is shown once) and is what the bootstrap's
 tests run against. [The runbook](../docs/runbooks/providers/stripe.md) says how it
@@ -48,11 +51,16 @@ is run.
 ## What a process refuses at boot
 
 - The twin anywhere but `local` and `test`.
+- A key that is not a restricted key. An organization key reaches
+  every account of the organization, and a secret key may do
+  everything in one.
 - A key whose mode is not the environment's: production takes a live
   key, every other environment a test key. The prefix says which.
+- `TADAS_STRIPE_ORG_KEY`, the runtime key's retired name. The refusal
+  names the two that replaced it.
 
 Each refusal names the setting. The settings are `TADAS_BILLING_BACKEND`
-(`twin` or `stripe`), `TADAS_STRIPE_ACCOUNT_ID`, `TADAS_STRIPE_ORG_KEY`,
+(`twin` or `stripe`), `TADAS_STRIPE_ACCOUNT_ID`, `TADAS_STRIPE_RUNTIME_KEY`,
 `TADAS_STRIPE_WEBHOOK_SECRET`, and `TADAS_STRIPE_TIMEOUT_SECONDS`; the
 two secrets reach a deployed process at start, and `off` or empty leaves
 billing unconfigured.
@@ -111,7 +119,7 @@ sign-in becomes a person.
 |---------|------|
 | `TADAS_IDENTITY_PROVIDER` | `workos`, `twin`, or `none` (the default). `twin` is refused at boot outside `local` and `test`. |
 | `TADAS_WORKOS_CLIENT_ID` | The Tadas App application's client id. Not a secret: every authorization URL carries it. Staging's Tadas App serves the local stack and staging; production has its own. |
-| `TADAS_WORKOS_API_KEY` | The Tadas App application's API key, made on that application's own API keys tab, never the environment's API Keys page. A secret, and the process's one WorkOS credential: the client secret of the code exchange (which sends the PKCE verifier as well), and the key of every management call (organizations, invitations, the admin portal), so an invitation carries the application's context. The device sign-in sends no secret. At start the client proves it is the application's key and refuses to boot on any other (ADR 0032). Locally from `.env` or the shell; deployed, injected into the API from the secret store (`<prefix>workos_api_key`). Empty or `off` means not configured: the process starts, says so, and every sign-in through WorkOS answers `503`. |
+| `TADAS_WORKOS_API_KEY` | The Tadas App application's API key, made on that application's own API keys tab, never the environment's API Keys page. A secret, and the process's one WorkOS credential: the client secret of the code exchange (which sends the PKCE verifier as well), and the key of every management call (organizations, invitations, the admin portal), so an invitation carries the application's context. The device sign-in sends no secret. At start the client proves it is the application's key and refuses to boot on any other (ADR 0033). Locally from `.env` or the shell; deployed, injected into the API from the secret store (`<prefix>workos_api_key`). Empty or `off` means not configured: the process starts, says so, and every sign-in through WorkOS answers `503`. |
 | `TADAS_WORKOS_BASE_URL`, `TADAS_WORKOS_TIMEOUT_SECONDS` | Where the client calls, and the timeout on every call (10 seconds). |
 
 The WorkOS environments, the application's redirects, and the key are

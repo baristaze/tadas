@@ -165,16 +165,22 @@ resource "aws_secretsmanager_secret_version" "slack" {
   }
 }
 
-# The payment processor's key and the signing secret of the endpoint it
-# delivers to: process credentials, injected at start into the API and the
-# worker, the way the error tracker's DSN is. Terraform creates each as "off",
-# which leaves billing unconfigured (every org keeps its plan and a checkout
-# answers 503), and never writes it again. The key is set once by hand:
-#   aws secretsmanager put-secret-value --secret-id <prefix>stripe_org_key --secret-string <key>
+# The payment processor's runtime key and the signing secret of the endpoint
+# it delivers to: process credentials, injected at start into the API and
+# the worker, the way the error tracker's DSN is. Terraform creates each as
+# "off", which leaves billing unconfigured (every org keeps its plan and a
+# checkout answers 503), and never writes it again. The runtime key is a
+# restricted key of the environment's Stripe account, set once by hand:
+#   aws secretsmanager put-secret-value --secret-id <prefix>stripe_runtime_key --secret-string <key>
 # and the signing secret by `tadas-ops stripe-bootstrap --env <env>`, which
 # learns it when it registers the endpoint (docs/runbooks/providers/stripe.md).
+# The bootstrap's own key is never here: the person who runs it holds it.
+#
+# stripe_org_key is the runtime key's retired name. No process of this
+# release reads it; the release before reads it, so it stays for one
+# release, for a rollback to start, and the release after removes it.
 resource "aws_secretsmanager_secret" "stripe" {
-  for_each = toset(["stripe_org_key", "stripe_webhook_secret"])
+  for_each = toset(["stripe_runtime_key", "stripe_webhook_secret", "stripe_org_key"])
 
   name                    = "${var.prefix}${each.key}"
   recovery_window_in_days = local.recovery_window_in_days

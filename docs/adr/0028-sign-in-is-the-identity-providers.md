@@ -2,7 +2,7 @@
 
 **Status**: accepted (2026-09-26). The paragraph "The exchange is PKCE,
 not a secret", and the key the reconcile command runs with, are
-superseded (2026-09-23) by [ADR 0032](0032-the-workos-key-is-the-applications.md):
+superseded (2026-09-23) by [ADR 0033](0033-the-workos-key-is-the-applications.md):
 the key is the Tadas App application's, and it is the exchange's client
 secret.
 
