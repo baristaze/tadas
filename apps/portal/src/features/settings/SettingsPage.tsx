@@ -144,7 +144,7 @@ export function SettingsPage() {
 }
 
 function SlackCard({ slack }: { slack: SettingsVm["slack"] }) {
-  const { summary, code } = slack;
+  const { summary } = slack;
   return (
     <Card title="Slack">
       {slack.loading ? (
@@ -155,21 +155,18 @@ function SlackCard({ slack }: { slack: SettingsVm["slack"] }) {
         <div style={{ display: "grid", gap: tokens.space.md }}>
           <div data-slack-state={summary.state}>{summary.line}</div>
           {summary.fix ? <Banner>{summary.fix}</Banner> : null}
-          {code ? (
-            <Banner>
-              In the Slack channel, type <code>{code.invite}</code>, then <code>{code.command}</code>. The code
-              works once and expires at {code.expiresAt}.{" "}
-              <LinkButton onClick={slack.dismissCode}>dismiss</LinkButton>
-            </Banner>
-          ) : null}
+          <Muted>
+            In Slack, <code>/tadas</code> shows your open tasks, <code>/tadas team</code> the team&apos;s, and{" "}
+            <code>/tadas add</code> adds one. Tadas knows you by the email of your Slack profile.
+          </Muted>
           {slack.canManage ? (
             <div style={{ display: "flex", gap: tokens.space.sm }}>
-              <Button onClick={() => void slack.connect()} disabled={slack.connecting}>
-                {summary.connectLabel}
+              <Button onClick={() => void slack.install()} disabled={slack.installing}>
+                {summary.installLabel}
               </Button>
-              {slack.connected ? (
-                <Button tone="danger" onClick={() => void slack.disconnect()} disabled={slack.disconnecting}>
-                  Disconnect
+              {slack.installed ? (
+                <Button tone="danger" onClick={() => void slack.uninstall()} disabled={slack.uninstalling}>
+                  Remove from Slack
                 </Button>
               ) : null}
             </div>

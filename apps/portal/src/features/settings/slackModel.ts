@@ -1,95 +1,99 @@
 // Pure: what the Slack section of the settings screen says, and who may act
-// on it. The org has one channel at most; linking one is a code typed in it.
-import type { IssuedSlackLinkCodeView, MeView, SlackConnectionView, SlackStatusView } from "../../api";
+// on it. The org installs Tadas into one Slack workspace, from here; the
+// channel it posts to is chosen in Slack, with `/tadas connect`.
+import type { MeView, SlackStatusView } from "../../api";
 
 export const INVITE_COMMAND = "/invite @tadas";
+export const CONNECT_COMMAND = "/tadas connect";
 
-export type SlackState = "not_connected" | "connected" | "broken";
+export type SlackState = "not_installed" | "no_channel" | "connected" | "broken";
 
 export interface SlackSummary {
   state: SlackState;
-  /** One line on the connection. */
+  /** One line on the installation. */
   line: string;
-  /** What to do about a broken connection, in plain words; null otherwise. */
+  /** What to do next, in plain words; null when nothing is to be done. */
   fix: string | null;
-  /** The label of the button that issues a code. */
-  connectLabel: string;
+  /** The label of the button that starts an install. */
+  installLabel: string;
 }
 
-export interface IssuedCode {
-  code: string;
-  expiresAt: string;
-  /** The connection as it stood when the code was issued, to tell when it was used. */
-  connectionAtIssue: Pick<SlackConnectionView, "id" | "updated_at"> | null;
-}
-
-/** Linking and disconnecting take an owner or an admin: the API refuses anyone else. */
+/** Installing and removing take an owner or an admin: the API refuses anyone else. */
 export function canManageSlack(me: MeView | undefined): boolean {
   return me?.permissions.includes("manage_members") ?? false;
 }
 
+const TOKEN_REFUSALS = new Set([
+  "invalid_auth",
+  "not_authed",
+  "token_revoked",
+  "account_inactive",
+  "invalid_refresh_token",
+  "team_not_found",
+  "token_missing",
+]);
+
 export function brokenReasonText(reason: string | null): string {
+  if (reason && TOKEN_REFUSALS.has(reason)) {
+    return "Slack no longer accepts the install's token: add Tadas to Slack again.";
+  }
   switch (reason) {
     case "not_in_channel":
-      return `@tadas is not in the channel: type ${INVITE_COMMAND} in it, then link again.`;
+      return `@tadas is not in the channel: type ${INVITE_COMMAND} in it, then ${CONNECT_COMMAND}.`;
     case "channel_not_found":
     case "is_archived":
-      return "The channel was deleted or archived: link another.";
+      return `The channel was deleted or archived: type ${CONNECT_COMMAND} in another.`;
     default:
       return reason
-        ? `Slack refuses posts to the channel (${reason}): link it again, or link another.`
-        : "Slack refuses posts to the channel: link it again, or link another.";
+        ? `Slack refuses posts to the channel (${reason}): type ${CONNECT_COMMAND} in it again, or in another.`
+        : `Slack refuses posts to the channel: type ${CONNECT_COMMAND} in it again, or in another.`;
   }
 }
 
 export function slackSummary(status: SlackStatusView | undefined): SlackSummary {
-  const connection = status?.connection ?? null;
-  if (!connection) {
-    return { state: "not_connected", line: "Not connected.", fix: null, connectLabel: "Connect Slack" };
+  const installation = status?.installation ?? null;
+  if (!installation) {
+    return { state: "not_installed", line: "Not installed.", fix: null, installLabel: "Add to Slack" };
   }
-  if (connection.status === "broken") {
+  const where = `Installed in ${installation.team_name || installation.team_id}`;
+  if (installation.status === "broken") {
     return {
       state: "broken",
-      line: `Connected to channel ${connection.channel_id}, but posts to it fail.`,
-      fix: brokenReasonText(connection.broken_reason),
-      connectLabel: "Link another channel",
+      line: `${where}, but posting there fails.`,
+      fix: brokenReasonText(installation.broken_reason),
+      installLabel: "Add to Slack again",
+    };
+  }
+  if (!installation.channel_id) {
+    return {
+      state: "no_channel",
+      line: `${where}. No channel gets posts yet.`,
+      fix: `In the channel for reminders and task updates, type ${INVITE_COMMAND}, then ${CONNECT_COMMAND}.`,
+      installLabel: "Add to Slack again",
     };
   }
   return {
     state: "connected",
-    line: `Connected to channel ${connection.channel_id}.`,
+    line: `${where}, posting to channel ${installation.channel_id}.`,
     fix: null,
-    connectLabel: "Link another channel",
+    installLabel: "Add to Slack again",
   };
 }
 
-/** HH:MM in the browser's local time. */
-export function clockOf(iso: string): string {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return "";
-  return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
-}
-
-export function linkCommand(code: string): string {
-  return `/tadas link ${code}`;
-}
-
-/** The code the server issued, or null when the answer lost it on the way. */
-export function issuedCode(issued: IssuedSlackLinkCodeView, status: SlackStatusView | undefined): IssuedCode | null {
-  if (!issued.code) return null;
-  const connection = status?.connection ?? null;
-  return {
-    code: issued.code,
-    expiresAt: issued.expires_at,
-    connectionAtIssue: connection && { id: connection.id, updated_at: connection.updated_at },
-  };
-}
-
-/** A code stops being shown once the connection moved on from where it stood
- * when the code was issued: the code was used, or another one was. */
-export function codeStillPending(code: IssuedCode, status: SlackStatusView | undefined): boolean {
-  const now = status?.connection ?? null;
-  const then = code.connectionAtIssue;
-  if (!now) return then === null;
-  return then !== null && now.id === then.id && now.updated_at === then.updated_at;
+/** What the page says when Slack sends the browser back, from `?slack=`. */
+export function installOutcomeText(outcome: string | null): string | null {
+  switch (outcome) {
+    case null:
+      return null;
+    case "installed":
+      return `Tadas is in Slack. Type ${CONNECT_COMMAND} in the channel it should post to.`;
+    case "cancelled":
+      return "Slack was not installed: the install was cancelled on Slack's page.";
+    case "taken":
+      return "That Slack workspace is installed for another Tadas org. Remove it there first.";
+    case "expired":
+      return "The install link expired or was already used. Click Add to Slack again.";
+    default:
+      return "Slack refused the install. Try Add to Slack again.";
+  }
 }

@@ -1,18 +1,11 @@
-import type { MeView, SlackConnectionView, SlackStatusView } from "../../api";
+import type { MeView, SlackInstallationView, SlackStatusView } from "../../api";
 import { describe, expect, it } from "vitest";
-import {
-  brokenReasonText,
-  canManageSlack,
-  clockOf,
-  codeStillPending,
-  issuedCode,
-  linkCommand,
-  slackSummary,
-} from "./slackModel";
+import { brokenReasonText, canManageSlack, installOutcomeText, slackSummary } from "./slackModel";
 
-const connection = (overrides: Partial<SlackConnectionView> = {}): SlackConnectionView => ({
-  id: "c1",
+const installation = (overrides: Partial<SlackInstallationView> = {}): SlackInstallationView => ({
+  id: "i1",
   team_id: "T1",
+  team_name: "Acme",
   channel_id: "C0123",
   status: "ok",
   broken_reason: null,
@@ -22,7 +15,7 @@ const connection = (overrides: Partial<SlackConnectionView> = {}): SlackConnecti
   ...overrides,
 });
 
-const status = (c: SlackConnectionView | null): SlackStatusView => ({ connection: c });
+const status = (i: SlackInstallationView | null): SlackStatusView => ({ installation: i });
 
 const me = (permissions: MeView["permissions"]): MeView => ({
   user: { id: "u1", email: "a@b.c", display_name: "Ann", created_at: "2026-09-01T00:00:00Z" },
@@ -32,62 +25,61 @@ const me = (permissions: MeView["permissions"]): MeView => ({
   app: "portal",
 });
 
-// A local moment, so the clock reads the same in any zone the test runs in.
-const expires = new Date(2026, 8, 22, 14, 5).toISOString();
-
 describe("slack model", () => {
-  it("lets an owner or an admin link and disconnect, and a member only look", () => {
+  it("lets an owner or an admin install and remove, and a member only look", () => {
     expect(canManageSlack(me(["read", "write", "manage_members"]))).toBe(true);
     expect(canManageSlack(me(["read", "write"]))).toBe(false);
     expect(canManageSlack(undefined)).toBe(false);
   });
 
-  it("says the state of the connection", () => {
-    expect(slackSummary(undefined)).toMatchObject({ state: "not_connected", line: "Not connected.", fix: null });
-    expect(slackSummary(status(null)).connectLabel).toBe("Connect Slack");
-    expect(slackSummary(status(connection()))).toEqual({
-      state: "connected",
-      line: "Connected to channel C0123.",
+  it("says the state of the installation and what to do next", () => {
+    expect(slackSummary(undefined)).toEqual({
+      state: "not_installed",
+      line: "Not installed.",
       fix: null,
-      connectLabel: "Link another channel",
+      installLabel: "Add to Slack",
     });
-    expect(slackSummary(status(connection({ status: "broken", broken_reason: "not_in_channel" })))).toEqual({
+    expect(slackSummary(status(installation({ channel_id: null })))).toEqual({
+      state: "no_channel",
+      line: "Installed in Acme. No channel gets posts yet.",
+      fix: "In the channel for reminders and task updates, type /invite @tadas, then /tadas connect.",
+      installLabel: "Add to Slack again",
+    });
+    expect(slackSummary(status(installation()))).toEqual({
+      state: "connected",
+      line: "Installed in Acme, posting to channel C0123.",
+      fix: null,
+      installLabel: "Add to Slack again",
+    });
+    expect(slackSummary(status(installation({ status: "broken", broken_reason: "not_in_channel" })))).toEqual({
       state: "broken",
-      line: "Connected to channel C0123, but posts to it fail.",
-      fix: "@tadas is not in the channel: type /invite @tadas in it, then link again.",
-      connectLabel: "Link another channel",
+      line: "Installed in Acme, but posting there fails.",
+      fix: "@tadas is not in the channel: type /invite @tadas in it, then /tadas connect.",
+      installLabel: "Add to Slack again",
     });
   });
 
   it("puts each refusal in plain words", () => {
-    expect(brokenReasonText("channel_not_found")).toBe("The channel was deleted or archived: link another.");
-    expect(brokenReasonText("is_archived")).toBe("The channel was deleted or archived: link another.");
-    expect(brokenReasonText("token_revoked")).toBe(
-      "Slack refuses posts to the channel (token_revoked): link it again, or link another.",
+    expect(brokenReasonText("channel_not_found")).toBe(
+      "The channel was deleted or archived: type /tadas connect in another.",
     );
-    expect(brokenReasonText(null)).toBe("Slack refuses posts to the channel: link it again, or link another.");
+    expect(brokenReasonText("invalid_refresh_token")).toBe(
+      "Slack no longer accepts the install's token: add Tadas to Slack again.",
+    );
+    expect(brokenReasonText("token_missing")).toBe(brokenReasonText("token_revoked"));
+    expect(brokenReasonText(null)).toBe(
+      "Slack refuses posts to the channel: type /tadas connect in it again, or in another.",
+    );
   });
 
-  it("says how to use a code and when it expires", () => {
-    expect(clockOf(expires)).toBe("14:05");
-    expect(linkCommand("ABCD-EFGH")).toBe("/tadas link ABCD-EFGH");
-    expect(clockOf("not a time")).toBe("");
-  });
-
-  it("keeps a code until the connection moves on from where it stood", () => {
-    const fresh = issuedCode({ code: "ABCD-EFGH", expires_at: expires }, status(null))!;
-    expect(fresh.connectionAtIssue).toBeNull();
-    expect(codeStillPending(fresh, status(null))).toBe(true);
-    expect(codeStillPending(fresh, status(connection()))).toBe(false);
-
-    const relink = issuedCode({ code: "WXYZ-2345", expires_at: expires }, status(connection()))!;
-    expect(codeStillPending(relink, status(connection()))).toBe(true);
-    expect(codeStillPending(relink, status(connection({ updated_at: "2026-09-22T11:00:00Z" })))).toBe(false);
-    expect(codeStillPending(relink, status(connection({ id: "c2" })))).toBe(false);
-    expect(codeStillPending(relink, status(null))).toBe(false);
-  });
-
-  it("has no code to show when the answer lost it", () => {
-    expect(issuedCode({ code: null, expires_at: expires }, status(null))).toBeNull();
+  it("says how an install went when Slack sends the browser back", () => {
+    expect(installOutcomeText(null)).toBeNull();
+    expect(installOutcomeText("installed")).toBe(
+      "Tadas is in Slack. Type /tadas connect in the channel it should post to.",
+    );
+    expect(installOutcomeText("taken")).toContain("another Tadas org");
+    expect(installOutcomeText("expired")).toContain("expired or was already used");
+    expect(installOutcomeText("cancelled")).toContain("cancelled");
+    expect(installOutcomeText("failed")).toBe("Slack refused the install. Try Add to Slack again.");
   });
 });

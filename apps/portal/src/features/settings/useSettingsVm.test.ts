@@ -10,7 +10,7 @@ import {
   type ApiKeyPageView,
   type ApiKeyView,
   type MeView,
-  type SlackConnectionView,
+  type SlackInstallationView,
   type SlackStatusView,
   type UserPageView,
 } from "../../api";
@@ -96,7 +96,7 @@ beforeEach(() => {
     items: [keyOf("k1", "first"), keyOf("k2", "second")],
     next_cursor: null,
   } satisfies ApiKeyPageView);
-  net.reads.set("/v1/slack/connection", { connection: null } satisfies SlackStatusView);
+  net.reads.set("/v1/slack/installation", { installation: null } satisfies SlackStatusView);
   useNoticesStore.setState({ notices: [] });
 });
 
@@ -130,9 +130,10 @@ it("says a created key whose secret was lost, instead of showing nothing", async
   ]);
 });
 
-const linked: SlackConnectionView = {
-  id: "c1",
+const installed: SlackInstallationView = {
+  id: "i1",
   team_id: "T1",
+  team_name: "Acme",
   channel_id: "C0123",
   status: "ok",
   broken_reason: null,
@@ -143,42 +144,51 @@ const linked: SlackConnectionView = {
 
 it("shows a member the Slack state and nothing to act on", async () => {
   net.reads.set("/v1/me", { ...me, role: "member", permissions: ["read", "write"] });
-  net.reads.set("/v1/slack/connection", { connection: linked } satisfies SlackStatusView);
+  net.reads.set("/v1/slack/installation", { installation: installed } satisfies SlackStatusView);
   await mount();
   for (let turn = 0; turn < 20 && vm().slack.loading; turn += 1) await tick();
-  expect(vm().slack.summary.line).toBe("Connected to channel C0123.");
+  expect(vm().slack.summary.line).toBe("Installed in Acme, posting to channel C0123.");
   expect(vm().slack.canManage).toBe(false);
 });
 
-it("issues a code for an owner and says a refusal", async () => {
+it("starts an install for an owner and says a refusal or a lost link", async () => {
   net.reads.set("/v1/me", { ...me, permissions: [...me.permissions, "manage_members"] });
   await mount();
   for (let turn = 0; turn < 20 && vm().slack.loading; turn += 1) await tick();
   expect(vm().slack.canManage).toBe(true);
-  expect(vm().slack.summary.connectLabel).toBe("Connect Slack");
-  await act(async () => void vm().slack.connect());
-  expect(net.writes.map((w) => w.path)).toEqual(["/v1/slack/link-codes"]);
-  await act(async () => net.writes[0]!.resolve({ code: "ABCD-EFGH", expires_at: "2026-09-22T10:10:00Z" }));
-  expect(vm().slack.code?.command).toBe("/tadas link ABCD-EFGH");
-
-  // A second ask the server refuses is said, and the code in hand stays.
-  await act(async () => void vm().slack.connect());
-  await act(async () => net.writes[1]!.reject(new ApiError(403, "forbidden", "only an owner or an admin may link Slack", "req-2")));
+  expect(vm().slack.summary.installLabel).toBe("Add to Slack");
+  await act(async () => void vm().slack.install());
+  expect(net.writes.map((w) => w.path)).toEqual(["/v1/slack/installation"]);
+  await act(async () => net.writes[0]!.resolve({ url: null, expires_at: "2026-09-22T10:10:00Z" }));
+  await act(async () => void vm().slack.install());
+  await act(async () =>
+    net.writes[1]!.reject(new ApiError(503, "slack_unavailable", "the Slack app's credentials are not configured", "req-2")),
+  );
   expect(useNoticesStore.getState().notices.map((n) => n.message)).toEqual([
-    "Only an owner or an admin may link Slack.",
+    "The install link was lost on the way back; click Add to Slack again.",
+    "The Slack app's credentials are not configured. Reference: req-2",
   ]);
-  expect(vm().slack.code?.command).toBe("/tadas link ABCD-EFGH");
 });
 
-it("disconnects and says the channel is gone", async () => {
+it("says how the install went when Slack sends the browser back, once", async () => {
+  window.history.replaceState(null, "", "/settings?slack=installed");
+  await mount();
+  expect(useNoticesStore.getState().notices.map((n) => n.message)).toEqual([
+    "Tadas is in Slack. Type /tadas connect in the channel it should post to.",
+  ]);
+  expect(window.location.search).toBe("");
+});
+
+it("removes Tadas from Slack and says it is gone", async () => {
   net.reads.set("/v1/me", { ...me, permissions: [...me.permissions, "manage_members"] });
-  net.reads.set("/v1/slack/connection", { connection: linked } satisfies SlackStatusView);
+  net.reads.set("/v1/slack/installation", { installation: installed } satisfies SlackStatusView);
   await mount();
   for (let turn = 0; turn < 20 && vm().slack.loading; turn += 1) await tick();
-  expect(vm().slack.connected).toBe(true);
-  await act(async () => void vm().slack.disconnect());
-  expect(net.writes.map((w) => w.path)).toEqual(["/v1/slack/connection"]);
-  await act(async () => net.writes[0]!.resolve({ connection: null }));
-  expect(vm().slack.connected).toBe(false);
-  expect(vm().slack.summary.line).toBe("Not connected.");
+  expect(vm().slack.installed).toBe(true);
+  await act(async () => void vm().slack.uninstall());
+  expect(net.writes.map((w) => w.path)).toEqual(["/v1/slack/installation"]);
+  await act(async () => net.writes[0]!.resolve({ installation: null }));
+  await tick();
+  expect(vm().slack.installed).toBe(false);
+  expect(vm().slack.summary.line).toBe("Not installed.");
 });
