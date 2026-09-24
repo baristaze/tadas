@@ -766,12 +766,16 @@ translated to `PaymentsRefused`, `BackendUnreachable`, or
 `BackendFailed`), and `PaymentsTwinImpl`, which keeps customers and
 subscriptions in memory and signs its own deliveries with the
 processor's scheme, which the SDK's own check verifies. `build_payments`
-refuses the twin outside local and test and a key whose mode is not the
-environment's (production live, everything else test), and with no key
-answers `billing_unavailable` (503) to every call.
+refuses the twin outside local and test, a key that is not a restricted
+key of one account, and a key whose mode is not the environment's
+(production live, everything else test), and with no key answers
+`billing_unavailable` (503) to every call.
 `PaymentsCatalogInterface` is the bootstrap's view of the same account:
 products, prices by lookup key, webhook endpoints, and the portal's
-configuration.
+configuration. It runs under a second restricted key, the bootstrap's,
+which the person who runs it holds; the processes hold the runtime key
+alone, and neither key may touch what the other's work does not need
+(`payments.permissions`).
 
 ## Processes
 
@@ -1203,12 +1207,13 @@ configuration.
   secret is per environment because a secret is per account, but the DSN
   in it is one project's: there is one tracker project for the product,
   and the environment on each event is what separates them, so a read of
-  it filters on `environment:<env>`. The payment processor's key and the
-  signing secret of its endpoint are `<prefix>stripe_org_key` and
+  it filters on `environment:<env>`. The payment processor's runtime key
+  and the signing secret of its endpoint are `<prefix>stripe_runtime_key` and
   `<prefix>stripe_webhook_secret`, injected into the API and the worker
   the same way and "off" until set (`tadas-ops stripe-bootstrap` writes
   the second), and each root commits its `stripe_account_id`: the
-  sandbox for staging, the live account for production. The
+  sandbox for staging, the live account for production. The bootstrap's
+  own key is held by the person who runs it and is never in the cloud. The
   module README explains state and credentials.
 - `.github/workflows/ci.yml`: the fast gate, the integration job (which
   runs `make migrate-check` right after `make migrate`), an image build

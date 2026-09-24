@@ -1,6 +1,6 @@
 # ADR 0031: Plans are levers, and the payment processor is mirrored
 
-**Status**: accepted (2026-09-22)
+**Status**: accepted (2026-09-22). The key's name and kind are superseded by [ADR 0032](0032-two-restricted-stripe-keys.md).
 
 ## Context
 

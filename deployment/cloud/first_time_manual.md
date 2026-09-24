@@ -521,7 +521,9 @@ once, in its own dashboard, and each has a page that walks through it
 for a person who has never opened that dashboard:
 
 - [Stripe](../../docs/runbooks/providers/stripe.md): the sandbox and
-  the live account, the restricted key, `tadas-ops stripe-bootstrap`.
+  the live account, the two restricted keys (the runtime key the
+  processes hold, and the bootstrap key the person holds),
+  `tadas-ops stripe-bootstrap`.
 - [WorkOS](../../docs/runbooks/providers/workos.md): the Staging and
   Production environments, the application's Redirects tab, the API
   key, `tadas-ops workos-bootstrap`.
@@ -532,7 +534,7 @@ What they share is the order, because the secret that holds each value
 is made by the deploy:
 
 1. The environment's first deploy makes the five secrets, each holding
-   `off`: `tadas/<env>/stripe_org_key`,
+   `off`: `tadas/<env>/stripe_runtime_key`,
    `tadas/<env>/stripe_webhook_secret`, `tadas/<env>/workos_api_key`,
    `tadas/<env>/slack_bot_token`, and `tadas/<env>/slack_app_token`.
    With `off` the environment runs, and says in its logs what is off.

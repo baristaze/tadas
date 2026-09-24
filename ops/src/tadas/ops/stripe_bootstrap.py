@@ -10,7 +10,13 @@ create, and goes straight to the environment's secret store; when the
 store holds none for an endpoint that exists, the endpoint is rolled
 (deleted and made again), because the processor never shows a secret
 twice. Nothing here prints a secret. A rerun against an account that
-already matches changes nothing and says so."""
+already matches changes nothing and says so.
+
+It runs under a key of its own, TADAS_STRIPE_BOOTSTRAP_KEY: a restricted
+key held by the person who runs it and read from their shell, which may
+touch the products, the prices, the webhook endpoints, and the portal
+configurations (BOOTSTRAP_PERMISSIONS) and nothing else. The running
+processes never hold it, and it never reaches the cloud."""
 
 import hashlib
 import json
@@ -34,12 +40,12 @@ from tadas.integrations.payments.catalog import (
     WebhookEndpoint,
 )
 from tadas.integrations.payments.stripe import STRIPE_VERSION
-from tadas.integrations.settings import key_mode, mode_for
+from tadas.integrations.settings import key_refusal
 
 DESIRED_STATE = Path("deployment") / "stripe" / "desired-state.json"
 ENVIRONMENTS = ("local", "staging", "production")
 PORTAL_KEY = "portal"
-KEY_VARIABLE = "TADAS_STRIPE_ORG_KEY"
+KEY_VARIABLE = "TADAS_STRIPE_BOOTSTRAP_KEY"
 CHANGES = frozenset({"created", "updated", "archived", "rolled"})
 
 
@@ -127,13 +133,11 @@ def load_desired(root: Path) -> DesiredState:
 
 
 def check_key(env: str, key: str) -> None:
-    """Production takes a live key and every other environment a test key."""
-    expected = mode_for(env)
-    found = key_mode(key)
-    if found != expected:
-        raise ValueError(
-            f"{KEY_VARIABLE} is a {found or 'unrecognised'} key; --env {env} takes a {expected} key"
-        )
+    """A restricted key only, and in the environment's mode: production takes
+    a live key and every other environment a test key."""
+    refusal = key_refusal(KEY_VARIABLE, key, env)
+    if refusal is not None:
+        raise ValueError(refusal)
 
 
 # Where the endpoint's secret goes.

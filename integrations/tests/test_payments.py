@@ -1,11 +1,15 @@
 """The payments integration without an account: the signature check every
 delivery passes, the ids a delivery names, the twin's refusal outside a
-local environment, the boot's refusal of a key whose mode is not the
-environment's, and the real client's reading of a subscription."""
+local environment, the boot's refusals (a key that is not a restricted key
+of the environment's mode, and the key's retired name), the processes
+reading the runtime key alone, the boot's check of what the key may read,
+and the real client's reading of a subscription."""
 
 import json
+import logging
 import time
 from datetime import timedelta
+from typing import Any
 from uuid import uuid4
 
 import pytest
@@ -18,6 +22,7 @@ from tadas.integrations.exceptions import (
 )
 from tadas.integrations.impl.configured import payments_for, refuse_unsafe_payments
 from tadas.integrations.payments.deliveries import delivery_of, sign, verified
+from tadas.integrations.payments.permissions import CHECKOUT_SESSIONS, RUNTIME_PERMISSIONS
 from tadas.integrations.payments.stripe import PaymentsStripeImpl, subscription_of
 from tadas.integrations.payments.twin import TWIN_WEBHOOK_SECRET, PaymentsTwinImpl
 from tadas.integrations.payments.types import ORG_METADATA_KEY, delivery_key
@@ -204,30 +209,85 @@ def test_a_keys_prefix_says_its_mode(key: str, mode: str | None) -> None:
 @pytest.mark.parametrize(
     ("environment", "key", "refused"),
     [
-        ("production", "sk_live_x", False),
+        ("production", "rk_live_x", False),
         ("production", "rk_test_x", True),
         ("staging", "rk_test_x", False),
-        ("staging", "sk_live_x", True),
-        ("local", "sk_live_x", True),
-        ("local", "sk_org_test_x", False),
+        ("staging", "rk_live_x", True),
+        ("local", "rk_live_x", True),
+        ("local", "rk_test_x", False),
         ("staging", "pk_test_x", True),
     ],
 )
 def test_a_key_whose_mode_is_not_the_environments_is_refused_at_boot(
     environment: str, key: str, refused: bool
 ) -> None:
-    configured = settings(billing_backend="stripe", stripe_org_key=key)
+    configured = settings(billing_backend="stripe", stripe_runtime_key=key)
     if refused:
         with pytest.raises(UnsafeIntegration) as refusal:
             refuse_unsafe_payments(configured, environment)
         assert key not in refusal.value.message
+        assert "TADAS_STRIPE_RUNTIME_KEY" in refusal.value.message
     else:
         refuse_unsafe_payments(configured, environment)
 
 
+@pytest.mark.parametrize(
+    ("environment", "key", "said"),
+    [
+        ("staging", "rk_org_test_x", "organization key"),
+        ("staging", "sk_org_test_x", "organization key"),
+        ("production", "sk_org_live_x", "organization key"),
+        ("staging", "sk_test_x", "secret key"),
+        ("production", "sk_live_x", "secret key"),
+    ],
+)
+def test_only_a_restricted_key_of_the_account_is_taken_at_boot(
+    environment: str, key: str, said: str
+) -> None:
+    """An organization key reaches every account, and a secret key may do
+    everything in one; the processes take a restricted key alone."""
+    configured = settings(billing_backend="stripe", stripe_runtime_key=key)
+    with pytest.raises(UnsafeIntegration) as refusal:
+        refuse_unsafe_payments(configured, environment)
+    assert said in refusal.value.message
+    assert key not in refusal.value.message
+
+
+def test_the_keys_retired_name_is_refused_at_boot_with_the_new_names() -> None:
+    configured = settings(billing_backend="stripe", stripe_org_key="rk_test_x")
+    with pytest.raises(UnsafeIntegration) as refusal:
+        refuse_unsafe_payments(configured, "staging")
+    assert "TADAS_STRIPE_RUNTIME_KEY" in refusal.value.message
+    assert "TADAS_STRIPE_BOOTSTRAP_KEY" in refusal.value.message
+    assert "rk_test_x" not in refusal.value.message
+
+
+def test_the_processes_read_the_runtime_key_and_never_the_bootstraps(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TADAS_STRIPE_BOOTSTRAP_KEY", "rk_test_bootstrap")
+    monkeypatch.delenv("TADAS_STRIPE_RUNTIME_KEY", raising=False)
+    monkeypatch.delenv("TADAS_STRIPE_ORG_KEY", raising=False)
+    alone = IntegrationsSettings.model_validate(
+        {"_env_file": None, "stripe_account_id": "acct_test"}
+    )
+    assert alone.stripe_runtime_key is None
+    assert payments_for(alone, "staging").configured is False
+    assert "rk_test_bootstrap" not in repr(alone.model_dump())
+    monkeypatch.setenv("TADAS_STRIPE_RUNTIME_KEY", "rk_test_runtime")
+    both = IntegrationsSettings.model_validate(
+        {"_env_file": None, "stripe_account_id": "acct_test"}
+    )
+    assert both.stripe_runtime_key is not None
+    assert both.stripe_runtime_key.get_secret_value() == "rk_test_runtime"
+    assert payments_for(both, "staging").configured is True
+
+
 async def test_no_key_leaves_billing_unconfigured_and_every_call_says_so() -> None:
     for off in (None, "", "off"):
-        payments = payments_for(settings(billing_backend="stripe", stripe_org_key=off), "staging")
+        payments = payments_for(
+            settings(billing_backend="stripe", stripe_runtime_key=off), "staging"
+        )
         await payments.start()
         assert payments.configured is False
         with pytest.raises(PaymentsUnconfigured) as refused:
@@ -238,12 +298,114 @@ async def test_no_key_leaves_billing_unconfigured_and_every_call_says_so() -> No
         await payments.close()
 
 
+# The boot's check of what the key may read.
+
+
+class _Lister:
+    def __init__(self, name: str, refused: set[str], error: type[Exception]) -> None:
+        self._name = name
+        self._refused = refused
+        self._error = error
+        self.params: list[dict[str, Any]] = []
+
+    async def list_async(self, params: dict[str, Any]) -> object:
+        self.params.append(params)
+        if self._name in self._refused:
+            raise self._error("refused")
+        return {"data": []}
+
+
+class _ProcessorOf:
+    """The SDK client's `v1` as far as the key check reads it: five lists,
+    each refused when the key lacks its resource."""
+
+    def __init__(self, refused: set[str], error: type[Exception] = stripe.PermissionError) -> None:
+        def lister(name: str) -> _Lister:
+            return _Lister(name, refused, error)
+
+        self.customers = lister("customers")
+        self.subscriptions = lister("subscriptions")
+        self.prices = lister("prices")
+        self.checkout = type("Checkout", (), {"sessions": lister("checkout.sessions")})()
+        self.billing_portal = type(
+            "Portal", (), {"configurations": lister("billing_portal.configurations")}
+        )()
+        self.v1 = self
+
+
+async def _checked(refused: set[str], error: type[Exception] = stripe.PermissionError) -> Any:
+    payments = PaymentsStripeImpl(
+        api_key="rk_test_x",
+        account_id="acct_test",
+        webhook_secret=SECRET,
+        timeout=timedelta(seconds=3),
+        check_at_start=False,
+    )
+    await payments.start()
+    await payments.close()
+    payments._client = _ProcessorOf(refused, error)  # type: ignore[assignment]
+    return payments
+
+
+async def test_a_key_that_reads_every_resource_passes_the_check() -> None:
+    payments = await _checked(set())
+    assert await payments.check_access() == ()
+    assert "lacks" not in payments.describe()
+    client = payments._client
+    assert all(
+        lister.params == [{"limit": 1}]
+        for lister in (
+            client.customers,
+            client.subscriptions,
+            client.prices,
+            client.checkout.sessions,
+            client.billing_portal.configurations,
+        )
+    )
+
+
+async def test_a_key_without_checkout_sessions_is_named_at_start(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    payments = await _checked({"checkout.sessions"})
+    with caplog.at_level(logging.ERROR):
+        assert await payments.check_access() == (CHECKOUT_SESSIONS,)
+    assert payments.describe().endswith("; the key lacks Checkout Sessions)")
+    assert "lacks Checkout Sessions (group Checkout Sessions)" in caplog.text
+    assert "rk_test_x" not in caplog.text
+
+
+async def test_a_key_every_read_refuses_is_named_as_the_wrong_account(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    payments = await _checked(
+        {
+            "customers",
+            "subscriptions",
+            "prices",
+            "checkout.sessions",
+            "billing_portal.configurations",
+        },
+        stripe.AuthenticationError,
+    )
+    with caplog.at_level(logging.ERROR):
+        assert await payments.check_access() == RUNTIME_PERMISSIONS
+    assert "not a key of acct_test" in caplog.text
+
+
+async def test_a_processor_that_does_not_answer_leaves_the_check_open() -> None:
+    payments = await _checked({"customers"}, stripe.APIConnectionError)
+    assert await payments.check_access() == ()
+    assert "lacks" not in payments.describe()
+
+
 async def test_the_real_client_names_the_account_and_the_pinned_version() -> None:
     payments = PaymentsStripeImpl(
         api_key="rk_test_x",
         account_id="acct_test",
         webhook_secret=SECRET,
         timeout=timedelta(seconds=3),
+        check_at_start=False,
     )
     await payments.start()
     try:

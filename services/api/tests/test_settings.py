@@ -17,6 +17,7 @@ PREFIX = ApiSettings.model_config.get("env_prefix", "")
 
 NOT_A_KNOB = {
     "secret_overrides": "the TADAS_SECRET_<ORG>_<NAME> family, documented by its example line",
+    "stripe_org_key": "the runtime key's retired name, read only to refuse it at boot",
 }
 
 LOCAL_DEFAULT_SERVES_THE_CLOUD = {

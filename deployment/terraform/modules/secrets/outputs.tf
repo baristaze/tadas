@@ -76,8 +76,14 @@ output "operator_tokens_policy_arn" {
   value       = aws_iam_policy.operator_tokens.arn
 }
 
+output "stripe_runtime_key_secret_arn" {
+  description = "Injected into the API and the worker as TADAS_STRIPE_RUNTIME_KEY; \"off\" until set, which leaves billing unconfigured."
+  value       = aws_secretsmanager_secret.stripe["stripe_runtime_key"].arn
+  depends_on  = [aws_secretsmanager_secret_version.stripe]
+}
+
 output "stripe_org_key_secret_arn" {
-  description = "Injected into the API and the worker as TADAS_STRIPE_ORG_KEY; \"off\" until set, which leaves billing unconfigured."
+  description = "The runtime key's retired name, which the release before this one injects; kept readable for one release so a rollback starts."
   value       = aws_secretsmanager_secret.stripe["stripe_org_key"].arn
   depends_on  = [aws_secretsmanager_secret_version.stripe]
 }
