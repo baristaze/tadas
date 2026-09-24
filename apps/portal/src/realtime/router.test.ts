@@ -38,9 +38,9 @@ const SERVER_KINDS = [
   "media.file.updated",
   "media.file.deleted",
   "tasks.task.reminded",
-  "slack.connection.created",
-  "slack.connection.updated",
-  "slack.connection.deleted",
+  "slack.installation.created",
+  "slack.installation.updated",
+  "slack.installation.deleted",
   "tenancy.api_key.created",
   "tenancy.api_key.deleted",
   "tenancy.invitation.created",
@@ -139,12 +139,12 @@ describe("routeEnvelope", () => {
     expect(seen).toEqual([keys.tasks.all]);
   });
 
-  it("refreshes the Slack connection on each of its pushes", () => {
+  it("refreshes the Slack installation on each of its pushes", () => {
     for (const action of ["created", "updated", "deleted"]) {
       const { queryClient, seen } = recording();
-      routeEnvelope(queryClient, pushOf(`slack.connection.${action}`));
+      routeEnvelope(queryClient, pushOf(`slack.installation.${action}`));
       expect(seen).toHaveLength(1);
-      expect(isPrefixOf(seen[0]!, keys.slack.connection)).toBe(true);
+      expect(isPrefixOf(seen[0]!, keys.slack.installation)).toBe(true);
     }
   });
 
@@ -168,7 +168,7 @@ describe("reminderOf", () => {
 
   it("is null for every other push and every other frame", () => {
     expect(reminderOf(pushOf("tasks.task.updated"))).toBeNull();
-    expect(reminderOf(pushOf("slack.connection.updated"))).toBeNull();
+    expect(reminderOf(pushOf("slack.installation.updated"))).toBeNull();
     expect(reminderOf(parseEnvelope(JSON.stringify({ type: "pong", sent_at: null, seq: 1 }))!)).toBeNull();
     const other = parseEnvelope(
       JSON.stringify({

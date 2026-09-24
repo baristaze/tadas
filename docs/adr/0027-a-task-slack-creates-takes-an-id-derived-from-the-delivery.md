@@ -1,6 +1,8 @@
 # ADR 0027: A task Slack creates takes an id derived from the delivery
 
 **Status**: accepted (2026-09-22)
+Amended (2026-09-23): the delivery arrives over HTTP and its key comes
+from Slack's own id; see the note at the end.
 
 ## Context
 
@@ -39,3 +41,16 @@ table and no column. The cost is that the id's random bits are not
 random: anyone who knew a delivery's key and the millisecond it arrived
 could compute the task's id. Neither leaves the platform, and an id is
 never a credential here.
+
+## Amendment (2026-09-23)
+
+Slack's calls arrive over HTTP
+([ADR 0035](0035-slack-is-a-distributed-app-over-http-installed-per-org.md)).
+The API checks each one, acknowledges it, and queues it. The key is a
+UUID v5 over the provider's name and Slack's own id for the delivery:
+the `trigger_id` of a command, and the `event_id` of an event. The
+derived id, the time it carries, and the create's retry are as decided
+above. The module that derives the key is
+`tadas.integrations.slack.requests`, which the static checker does not
+read as minting an entity's id, so `pyproject.toml` names no exception
+for it.

@@ -1,27 +1,71 @@
-from datetime import timedelta
+import json
+import logging
+from datetime import datetime, timedelta
 from uuid import UUID
 
+from pydantic import SecretStr
+
+from tadas.infra.secrets import SecretsInterface
+from tadas.integrations.slack import (
+    SlackError,
+    SlackFailed,
+    SlackGrant,
+    SlackInterface,
+    SlackTokenRevoked,
+    SlackTokens,
+)
 from tadas.om.base import Platform, new_id, utcnow
-from tadas.om.exceptions import NotFound, SlackChannelTaken, UniqueKeyTaken
+from tadas.om.exceptions import NotFound, SlackWorkspaceTaken, UniqueKeyTaken
 from tadas.om.opcontext import OpContext, Permission, RequestContext
 from tadas.om.outbox import OutboxRelayInterface
 from tadas.om.outbox.types.row import outbox_row
 from tadas.om.slack.manager import SlackManagerInterface
-from tadas.om.slack.rules import code_digest, new_link_code
+from tadas.om.slack.rules import credential_ref_for, new_state, state_digest
 from tadas.om.slack.storage import SlackStorageInterface
-from tadas.om.slack.types.connection import (
-    IssuedSlackLinkCode,
-    SlackConnection,
-    SlackConnectionStatus,
-    SlackLinkCode,
+from tadas.om.slack.types.installation import (
+    SlackInstallation,
+    SlackInstallationStatus,
+    SlackInstallStart,
+    SlackInstallState,
     SlackPost,
 )
 from tadas.om.tenancy import TenancyManagerInterface
 
+log = logging.getLogger(__name__)
+
 
 class SlackOptions(Platform):
-    code_lifetime: timedelta = timedelta(minutes=10)
+    state_lifetime: timedelta = timedelta(minutes=10)
+    # A token is renewed this long before it expires, so a caller that finds
+    # a renewal already running still holds a token that works.
+    refresh_margin: timedelta = timedelta(hours=1)
+    # How long one renewal holds its claim; one that died is taken over after.
+    refresh_claim: timedelta = timedelta(seconds=30)
     retention: timedelta = timedelta(days=30)
+
+
+def tokens_json(tokens: SlackTokens) -> str:
+    """The secret's value: the bot token, what renews it, and when it expires."""
+    return json.dumps(
+        {
+            "access_token": tokens.access_token.get_secret_value(),
+            "refresh_token": None
+            if tokens.refresh_token is None
+            else tokens.refresh_token.get_secret_value(),
+            "expires_at": None if tokens.expires_at is None else tokens.expires_at.isoformat(),
+        }
+    )
+
+
+def tokens_from(value: str) -> SlackTokens:
+    stored = json.loads(value)
+    expires = stored.get("expires_at")
+    refresh = stored.get("refresh_token")
+    return SlackTokens(
+        access_token=SecretStr(str(stored["access_token"])),
+        refresh_token=SecretStr(str(refresh)) if refresh else None,
+        expires_at=None if not expires else datetime.fromisoformat(expires),
+    )
 
 
 class SlackManagerImpl(SlackManagerInterface):
@@ -30,39 +74,135 @@ class SlackManagerImpl(SlackManagerInterface):
         storage: SlackStorageInterface,
         tenancy: TenancyManagerInterface,
         relay: OutboxRelayInterface,
+        slack: SlackInterface,
+        secrets: SecretsInterface,
         options: SlackOptions,
     ) -> None:
         self._storage = storage
         self._tenancy = tenancy
         self._relay = relay
+        self._slack = slack
+        self._secrets = secrets
         self._options = options
 
-    async def get_connection(self, ctx: OpContext) -> SlackConnection | None:
+    async def get_installation(self, ctx: OpContext) -> SlackInstallation | None:
         ctx.require(Permission.READ)
-        return await self._storage.read_connection(ctx.org_id)
+        return await self._storage.read_installation(ctx.org_id)
 
-    async def issue_link_code(self, ctx: OpContext) -> IssuedSlackLinkCode:
+    async def start_install(self, ctx: OpContext, redirect_uri: str) -> SlackInstallStart:
         ctx.require(Permission.MANAGE_MEMBERS)
         now = utcnow()
-        code = new_link_code()
-        expires_at = now + self._options.code_lifetime
-        await self._storage.create_link_code(
+        state = new_state()
+        expires_at = now + self._options.state_lifetime
+        # The page first: a process whose Slack app is not configured refuses
+        # here, before a state is kept for an install that cannot finish.
+        url = self._slack.authorize_url(state, redirect_uri)
+        await self._storage.create_install_state(
             ctx.org_id,
-            SlackLinkCode(
+            SlackInstallState(
                 id=new_id(),
                 created_at=now,
                 user_id=ctx.user_id,
-                code_hash=code_digest(code),
+                state_hash=state_digest(state),
                 expires_at=expires_at,
             ),
         )
-        return IssuedSlackLinkCode(code=code, expires_at=expires_at)
+        return SlackInstallStart(url=url, expires_at=expires_at)
 
-    async def disconnect(self, ctx: OpContext) -> SlackConnection | None:
+    async def finish_install(
+        self, rctx: RequestContext, state: str, code: str, redirect_uri: str
+    ) -> SlackInstallation:
+        redeemed = await self._storage.redeem_install_state(state_digest(state), utcnow())
+        if redeemed is None:
+            raise NotFound("that install is unknown, used, or expired")
+        org_id, started = redeemed
+        ctx = await self._tenancy.service_context(rctx, org_id, started.user_id)
+        grant = await self._slack.exchange_code(code, redirect_uri)
+        held = await self._storage.read_installation_by_team(grant.team_id)
+        if held is not None and held[0] != org_id:
+            await self._revoke_quietly(grant.tokens)
+            raise SlackWorkspaceTaken("this Slack workspace is installed for another org")
+        current = await self._storage.read_installation(org_id)
+        if current is not None and current.team_id != grant.team_id:
+            # Another workspace replaces the org's one: the app leaves it.
+            await self._remove(ctx, current, uninstall=True)
+            current = None
+        installation = self._installed(ctx, grant, current)
+        await self._secrets.put(org_id, installation.credential_ref, tokens_json(grant.tokens))
+        try:
+            await self._write(ctx, installation, "created" if current is None else "updated")
+        except UniqueKeyTaken:
+            # A race the read above did not see: another org took the workspace.
+            if current is None:
+                await self._secrets.delete(org_id, installation.credential_ref)
+            await self._revoke_quietly(grant.tokens)
+            raise SlackWorkspaceTaken("this Slack workspace is installed for another org") from None
+        return installation
+
+    def _installed(
+        self, ctx: OpContext, grant: SlackGrant, current: SlackInstallation | None
+    ) -> SlackInstallation:
+        """The installation a grant makes: a new one, or the org's own in the
+        same workspace installed again (new scopes, a new token), which keeps
+        its channel and is well again."""
+        now = utcnow()
+        fields = {
+            "team_id": grant.team_id,
+            "team_name": grant.team_name,
+            "app_id": grant.app_id,
+            "bot_user_id": grant.bot_user_id,
+            "scopes": ",".join(grant.scopes),
+            "installed_by_slack_user": grant.installer_user_id,
+            "token_expires_at": grant.tokens.expires_at,
+            "refreshing_until": None,
+            "status": SlackInstallationStatus.OK,
+            "broken_reason": None,
+            "updated_at": now,
+            "updated_by": ctx.user_id,
+        }
+        if current is not None:
+            return current.model_copy(update=fields)
+        installation_id = new_id()
+        return SlackInstallation.model_validate(
+            {
+                **fields,
+                "id": installation_id,
+                "created_at": now,
+                "created_by": ctx.user_id,
+                "credential_ref": credential_ref_for(installation_id),
+            }
+        )
+
+    async def uninstall(self, ctx: OpContext) -> SlackInstallation | None:
         ctx.require(Permission.MANAGE_MEMBERS)
-        current = await self._storage.read_connection(ctx.org_id)
+        current = await self._storage.read_installation(ctx.org_id)
         if current is None:
             return None
+        return await self._remove(ctx, current, uninstall=True)
+
+    async def forget(self, ctx: OpContext, reason: str) -> SlackInstallation | None:
+        ctx.require(Permission.WRITE)
+        current = await self._storage.read_installation(ctx.org_id)
+        if current is None:
+            return None
+        log.info("slack installation of org %s is gone at Slack: %s", ctx.org_id, reason)
+        return await self._remove(ctx, current, uninstall=False)
+
+    async def _remove(
+        self, ctx: OpContext, current: SlackInstallation, *, uninstall: bool
+    ) -> SlackInstallation:
+        """The app leaves the workspace (when Slack does not know yet), the
+        token goes from the org's secrets, and the row is deleted, announced.
+        Slack's side is best effort: a Slack that cannot be reached leaves the
+        app there, and a person removes it in Slack; Tadas holds no token for
+        it either way."""
+        if uninstall and await self._secrets.has(ctx.org_id, current.credential_ref):
+            try:
+                tokens = tokens_from(await self._secrets.get(ctx.org_id, current.credential_ref))
+                await self._slack.uninstall(tokens.access_token.get_secret_value())
+            except SlackError as error:
+                log.warning("slack app of org %s was not removed at Slack: %s", ctx.org_id, error)
+        await self._secrets.delete(ctx.org_id, current.credential_ref)
         now = utcnow()
         deleted = current.model_copy(
             update={
@@ -75,79 +215,93 @@ class SlackManagerImpl(SlackManagerInterface):
         await self._write(ctx, deleted, "deleted")
         return deleted
 
-    async def redeem_link_code(
-        self,
-        rctx: RequestContext,
-        code: str,
-        team_id: str,
-        channel_id: str,
-        slack_user_id: str,
-    ) -> SlackConnection:
-        redeemed = await self._storage.redeem_link_code(code_digest(code), utcnow())
-        if redeemed is None:
-            raise NotFound("that code is unknown, used, or expired")
-        org_id, link = redeemed
-        ctx = await self._tenancy.service_context(rctx, org_id, link.user_id)
-        held = await self._storage.read_connection_by_channel(team_id, channel_id)
-        if held is not None and held[0] != org_id:
-            raise SlackChannelTaken("this channel is connected to another org")
-        now = utcnow()
-        current = await self._storage.read_connection(org_id)
-        if current is None:
-            linked = SlackConnection(
-                id=new_id(),
-                created_at=now,
-                updated_at=now,
-                created_by=link.user_id,
-                updated_by=link.user_id,
-                team_id=team_id,
-                channel_id=channel_id,
-                linked_by_slack_user=slack_user_id,
-            )
-            action = "created"
-        else:
-            # Relinking writes over the org's one row: the channel, the person
-            # the channel acts as, and a fresh status.
-            linked = current.model_copy(
-                update={
-                    "created_by": link.user_id,
-                    "updated_at": now,
-                    "updated_by": link.user_id,
-                    "team_id": team_id,
-                    "channel_id": channel_id,
-                    "linked_by_slack_user": slack_user_id,
-                    "status": SlackConnectionStatus.OK,
-                    "broken_reason": None,
-                }
-            )
-            action = "updated"
-        try:
-            await self._write(ctx, linked, action)
-        except UniqueKeyTaken:
-            # A race the read above did not see: another org took the channel.
-            raise SlackChannelTaken("this channel is connected to another org") from None
-        return linked
-
-    async def channel_context(
-        self, rctx: RequestContext, team_id: str, channel_id: str
-    ) -> tuple[OpContext, SlackConnection] | None:
-        held = await self._storage.read_connection_by_channel(team_id, channel_id)
+    async def installation_for_team(
+        self, rctx: RequestContext, team_id: str
+    ) -> tuple[OpContext, SlackInstallation] | None:
+        held = await self._storage.read_installation_by_team(team_id)
         if held is None:
             return None
-        org_id, connection = held
-        ctx = await self._tenancy.service_context(rctx, org_id, connection.created_by)
-        return ctx, connection
+        org_id, installation = held
+        ctx = await self._tenancy.service_context(rctx, org_id, installation.created_by)
+        return ctx, installation
 
-    async def mark_broken(self, ctx: OpContext, reason: str) -> SlackConnection | None:
+    async def bot_token(self, ctx: OpContext) -> str:
+        ctx.require(Permission.READ)
+        installation = await self._storage.read_installation(ctx.org_id)
+        if installation is None:
+            raise NotFound("the org has no Slack installation")
+        if not await self._secrets.has(ctx.org_id, installation.credential_ref):
+            await self.mark_broken(ctx, "token_missing")
+            raise SlackTokenRevoked("token_missing")
+        tokens = tokens_from(await self._secrets.get(ctx.org_id, installation.credential_ref))
+        now = utcnow()
+        expires = tokens.expires_at
+        if expires is None or tokens.refresh_token is None:
+            return tokens.access_token.get_secret_value()  # a token that never expires
+        if expires - self._options.refresh_margin > now:
+            return tokens.access_token.get_secret_value()
+        claimed = await self._storage.claim_refresh(
+            ctx.org_id, installation.id, now, now + self._options.refresh_claim
+        )
+        if not claimed:
+            # Another caller renews it. The margin keeps this token working
+            # meanwhile; one already expired waits for the renewal.
+            if expires > now:
+                return tokens.access_token.get_secret_value()
+            raise SlackFailed("token_renewing", "the Slack token is being renewed")
+        # A renewal that settled between the read above and the claim left a
+        # fresh pair: it is read again, and a refresh token already spent is
+        # never presented.
+        tokens = tokens_from(await self._secrets.get(ctx.org_id, installation.credential_ref))
+        if tokens.refresh_token is None or (
+            tokens.expires_at is not None and tokens.expires_at - self._options.refresh_margin > now
+        ):
+            await self._storage.settle_refresh(
+                ctx.org_id, installation.id, tokens.expires_at, utcnow()
+            )
+            return tokens.access_token.get_secret_value()
+        try:
+            fresh = await self._slack.refresh(tokens.refresh_token.get_secret_value())
+        except SlackTokenRevoked as revoked:
+            await self._storage.settle_refresh(ctx.org_id, installation.id, expires, utcnow())
+            await self.mark_broken(ctx, revoked.slack_code)
+            raise
+        except SlackError:
+            await self._storage.settle_refresh(ctx.org_id, installation.id, expires, utcnow())
+            raise
+        # The refresh token just used stops working after Slack's grace
+        # period, so the new pair is kept before anything else happens.
+        await self._secrets.put(ctx.org_id, installation.credential_ref, tokens_json(fresh))
+        await self._storage.settle_refresh(ctx.org_id, installation.id, fresh.expires_at, utcnow())
+        return fresh.access_token.get_secret_value()
+
+    async def bind_channel(self, ctx: OpContext, channel_id: str) -> SlackInstallation:
+        ctx.require(Permission.MANAGE_MEMBERS)
+        current = await self._storage.read_installation(ctx.org_id)
+        if current is None:
+            raise NotFound("the org has no Slack installation")
+        bound = current.model_copy(
+            update={
+                "channel_id": channel_id,
+                "status": SlackInstallationStatus.OK,
+                "broken_reason": None,
+                "updated_at": utcnow(),
+                "updated_by": ctx.user_id,
+            }
+        )
+        await self._write(ctx, bound, "updated")
+        return bound
+
+    async def mark_broken(self, ctx: OpContext, reason: str) -> SlackInstallation | None:
         ctx.require(Permission.WRITE)
-        current = await self._storage.read_connection(ctx.org_id)
+        current = await self._storage.read_installation(ctx.org_id)
         if current is None:
             return None
-        if current.status is SlackConnectionStatus.BROKEN and current.broken_reason == reason:
+        if current.status is SlackInstallationStatus.BROKEN and current.broken_reason == reason:
             return current
         broken = current.model_copy(
             update={
-                "status": SlackConnectionStatus.BROKEN,
+                "status": SlackInstallationStatus.BROKEN,
                 "broken_reason": reason,
                 "updated_at": utcnow(),
                 "updated_by": ctx.user_id,
@@ -176,10 +330,16 @@ class SlackManagerImpl(SlackManagerInterface):
             return await self._storage.purge_tenant(ctx.org_id)
         return await self._storage.purge(ctx.org_id, utcnow() - self._options.retention)
 
-    async def _write(self, ctx: OpContext, connection: SlackConnection, action: str) -> None:
-        """The connection and the row that announces it, in one commit; the
-        portal's settings hear it and read the connection again. Ids only."""
-        rows = (outbox_row(ctx, f"slack.connection.{action}", connection.id, {}),)
-        await self._storage.write_connection(ctx.org_id, connection, rows)
+    async def _revoke_quietly(self, tokens: SlackTokens) -> None:
+        try:
+            await self._slack.revoke(tokens.access_token.get_secret_value())
+        except SlackError as error:
+            log.warning("a Slack token the platform does not keep was not revoked: %s", error)
+
+    async def _write(self, ctx: OpContext, installation: SlackInstallation, action: str) -> None:
+        """The installation and the row that announces it, in one commit; the
+        portal's settings hear it and read the installation again. Ids only."""
+        rows = (outbox_row(ctx, f"slack.installation.{action}", installation.id, {}),)
+        await self._storage.write_installation(ctx.org_id, installation, rows)
         for row in rows:
             await self._relay.relay(ctx.org_id, row)

@@ -24,6 +24,16 @@ class TasksManagerInterface(ABC):
         ...
 
     @abstractmethod
+    async def get_recent_open_tasks(
+        self, ctx: OpContext, criterion: TaskFilter, limit: int
+    ) -> TaskPage:
+        """The newest open tasks the filter shows, newest first: one page and
+        no cursor, for a caller that shows a few and links to the rest. The
+        filter's user is the caller, as on `get_open_tasks`; `limit` is
+        clamped, and `has_more` says whether more are open."""
+        ...
+
+    @abstractmethod
     async def count_open_tasks(self, ctx: OpContext, criterion: TaskFilter) -> int:
         """How many open tasks the filter shows, the number beside a page of
         `get_open_tasks`; the filter's user is the caller, as there."""
@@ -114,7 +124,7 @@ class TasksManagerInterface(ABC):
     async def fire_reminder(self, ctx: OpContext, task_id: UUID, due_on: date) -> Task | None:
         """The reminder of the task's due date, when its moment has come:
         marks the task reminded and announces it (`tasks.task.reminded`), and
-        asks for the Slack post when the org has a channel connected, all in
+        asks for the Slack post when the org has a Slack channel bound, all in
         one write conditioned on the task still being open and due on `due_on`
         and not yet reminded. None when it no longer is, which is a reminder
         gone stale: nothing is written and nothing is announced."""

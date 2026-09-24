@@ -38,7 +38,7 @@ output "application_prefix" {
 }
 
 output "policy_arn" {
-  description = "Attached to every task role; reads the application prefix only."
+  description = "Attached to every task role; reads the application prefix, and writes a tenant's own secrets under its org/ part alone."
   value       = aws_iam_policy.application.arn
 }
 
@@ -54,15 +54,21 @@ output "workos_api_key_secret_arn" {
   depends_on  = [aws_secretsmanager_secret_version.workos_api_key]
 }
 
-output "slack_bot_token_secret_arn" {
-  description = "Injected into the maintenance service as TADAS_SLACK_BOT_TOKEN; \"off\" until set, which leaves posting to Slack off."
-  value       = aws_secretsmanager_secret.slack["bot"].arn
-  depends_on  = [aws_secretsmanager_secret_version.slack]
+output "slack_client_secret_arn" {
+  description = "Injected into the API and the worker as TADAS_SLACK_CLIENT_SECRET; \"off\" until set, which leaves Slack unconfigured."
+  value       = aws_secretsmanager_secret.slack_app["slack_client_secret"].arn
+  depends_on  = [aws_secretsmanager_secret_version.slack_app]
 }
 
-output "slack_app_token_secret_arn" {
-  description = "Injected into the slack service as TADAS_SLACK_APP_TOKEN; \"off\" until set, which leaves the Socket Mode connection closed."
-  value       = aws_secretsmanager_secret.slack["app"].arn
+output "slack_signing_secret_arn" {
+  description = "Injected into the API and the worker as TADAS_SLACK_SIGNING_SECRET; \"off\" until set, which refuses every call from Slack with 503."
+  value       = aws_secretsmanager_secret.slack_app["slack_signing_secret"].arn
+  depends_on  = [aws_secretsmanager_secret_version.slack_app]
+}
+
+output "slack_bot_token_secret_arn" {
+  description = "The retired bot token the release before injects into the worker: in the rollback secrets for one release."
+  value       = aws_secretsmanager_secret.slack["bot"].arn
   depends_on  = [aws_secretsmanager_secret_version.slack]
 }
 

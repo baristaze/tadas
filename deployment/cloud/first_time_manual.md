@@ -528,8 +528,10 @@ for a person who has never opened that dashboard:
   Production environments, the Tadas App application, its own API key
   (never the environment's) and its Redirects tab,
   `tadas-ops workos-bootstrap`.
-- [Slack](../../docs/runbooks/providers/slack.md): the one app, its
-  scopes, its two tokens, and the one connection staging holds.
+- [Slack](../../docs/runbooks/providers/slack.md): the environment's
+  own app, made from its manifest in `deployment/slack/`, its client
+  id, its client secret and signing secret, and public distribution,
+  so each org installs it into its own workspace.
 
 What they share is the order, because the secret that holds each value
 is made by the deploy:
@@ -537,13 +539,15 @@ is made by the deploy:
 1. The environment's first deploy makes the five secrets, each holding
    `off`: `tadas/<env>/stripe_runtime_key`,
    `tadas/<env>/stripe_webhook_secret`, `tadas/<env>/workos_api_key`,
-   `tadas/<env>/slack_bot_token`, and `tadas/<env>/slack_app_token`.
+   `tadas/<env>/slack_client_secret`, and
+   `tadas/<env>/slack_signing_secret`.
    With `off` the environment runs, and says in its logs what is off.
 2. A person writes each value under their own sign-in, `tadas-staging`
    for staging (in production `tadas-prod-power`, when authorized),
    with `AWS_ACCESS_KEY_ID` and its siblings unset, as section 18
    says. `stripe_webhook_secret` is the exception: the Stripe
-   bootstrap writes it.
+   bootstrap writes it. Slack's client id is no secret: it is
+   committed as `slack_client_id` in the environment root.
 3. The next deploy, or a forced new deployment of the service, starts
    tasks that read the new values. A task reads its secrets only at
    start.

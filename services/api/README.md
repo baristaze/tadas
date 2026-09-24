@@ -60,9 +60,11 @@ change. A name the image does not host refuses the boot.
   that sends it sets the due date to its date, and a response carries
   it as `null`. The release after this one removes it.
   (`/v1/tasks`, `/v1/tasks/{task_id}`, `/v1/tasks/{task_id}/move`)
-- **Slack.** The org's connected channel, any member; a one-time link
-  code, shown once, and the disconnect, an owner or an admin.
-  (`/v1/slack/connection`, `/v1/slack/link-codes`)
+- **Slack.** The org's installation (its workspace, its channel, and
+  whether it works), any member; the install, which answers Slack's
+  page to send the browser to with a one-time state, and the
+  uninstall, an owner or an admin. (`/v1/slack/installation`: `GET`,
+  `POST`, `DELETE`)
 - **Events.** The org's diary after a sequence number. (`/v1/events`)
 - **Billing.** The org's plan, where it comes from, its seats and
   active tasks against the plan's bounds, and the plans on offer; a
@@ -77,6 +79,17 @@ change. A name the image does not host refuses the boot.
   and its timestamp, within a five-minute window, and queues the
   delivery for the worker; one that fails the check is a 400 and
   nothing is queued. (`/webhooks/stripe`)
+- **Slack's calls.** Outside `/v1` too, since their shape is Slack's.
+  No credential: a slash command and an event are each checked against
+  the Slack app's signing secret over the body and its timestamp,
+  within five minutes, acknowledged at once, and queued for the worker;
+  one that fails the check is a 401 (`slack_signature_invalid`) and
+  nothing is queued. With no Slack app configured, each answers 503
+  (`slack_unavailable`). The events route answers Slack's URL check.
+  The install's return is where Slack sends the browser back; it is
+  not signed, the one-time state is its check, and it redirects to the
+  portal's Settings with the outcome. (`/webhooks/slack/commands`,
+  `/webhooks/slack/events`, `GET /webhooks/slack/oauth`)
 - **Realtime.** The live channel, a websocket opened with a
   single-use ticket. (`/v1/realtime`)
 - **The operator plane.** For an identity on the operator allowlist,

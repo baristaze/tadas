@@ -211,7 +211,7 @@ async def test_a_finished_or_deleted_task_is_not_reminded(tmp_path: Path, ending
     assert await reminded_kinds(container, ann) == []
 
 
-async def test_a_reminder_asks_for_the_slack_post_when_a_channel_is_connected(
+async def test_a_reminder_asks_for_the_slack_post_when_a_channel_is_bound(
     tmp_path: Path,
 ) -> None:
     container, twin = build(tmp_path)

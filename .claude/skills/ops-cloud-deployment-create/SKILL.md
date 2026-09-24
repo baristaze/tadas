@@ -167,7 +167,8 @@ the names of what was written and never a value.
    - The providers, printed for the person and never run by this
      skill (step 7b). The first deploy makes five secrets holding
      `off`: `tadas/<env>/workos_api_key`, `stripe_runtime_key`,
-     `stripe_webhook_secret`, `slack_bot_token`, and `slack_app_token`.
+     `stripe_webhook_secret`, `slack_client_secret`, and
+     `slack_signing_secret`.
      After it, the person makes each value in the provider's dashboard
      and writes it under their own sign-in (`tadas-staging`; in
      production `tadas-prod-power`, when authorized); the Stripe
@@ -178,9 +179,14 @@ the names of what was written and never a value.
      never the WorkOS environment's; the API refuses to start on
      another. WorkOS comes first, since the grants below sign people
      up through it and every
-     sign-in answers `503` without its key. Production leaves
-     `slack_app_token` at `off` while staging holds the Slack app's one
-     connection. The values reach the tasks at their next start. Point
+     sign-in answers `503` without its key. Each environment has a
+     Slack app of its own (`deployment/slack/manifest.<env>.json`):
+     its two secrets go into the two secrets above, and its client id
+     is committed as `slack_client_id` in the environment root. Once
+     the API holds the signing secret, the person pastes the manifest
+     into the app, turns on public distribution, and installs the app
+     from the portal's Settings. The values reach the tasks at their
+     next start. Point
      the person to `docs/runbooks/providers/` for the steps; never ask
      for a value in the conversation, and never run a
      `put-secret-value` yourself.
@@ -265,7 +271,7 @@ dry run's smoke test is "not yet".
 - <the next run of Order, or nothing>
 - Dispatch `grant-operator.yml` for the first operator, who enrols the second factor at the console's first sign-in and runs `uv run tadas-ops token --env <env> --identity operator` in their own terminal; grant the smoke identity and set `SMOKE_EMAIL`, so the next deploy runs the smoke test
 - Manual steps left: <the tracker's lines in the env file, or none>
-- The providers, after the first deploy: write workos_api_key, stripe_runtime_key, slack_bot_token<, slack_app_token (staging)> under <sso profile | tadas-prod-power>, run `tadas-ops workos-bootstrap` and `tadas-ops stripe-bootstrap` (TADAS_STRIPE_BOOTSTRAP_KEY in the person's shell), then roll or wait for the next deploy (docs/runbooks/providers/)
+- The providers, after the first deploy: write workos_api_key, stripe_runtime_key, slack_client_secret, slack_signing_secret under <sso profile | tadas-prod-power>, commit slack_client_id, run `tadas-ops workos-bootstrap` and `tadas-ops stripe-bootstrap` (TADAS_STRIPE_BOOTSTRAP_KEY in the person's shell), then roll or wait for the next deploy; then paste the Slack manifest, turn on public distribution, and Add to Slack (docs/runbooks/providers/)
 - Hand the administrator permission set back; every later skill runs
   under tadas-<env>-investigate.
 ```

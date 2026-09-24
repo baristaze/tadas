@@ -26,6 +26,7 @@ CROSS_TENANT_CASES: frozenset[str] = frozenset(
         "read_done_tasks",
         "read_open_places",
         "read_open_tasks",
+        "read_recent_open_tasks",
         "read_task",
         "update_task",
         "update_tasks",
@@ -141,6 +142,7 @@ class TaskStorageContract:
         await seed(storage, org_a, task)
         assert await storage.read_task(org_b, task.id) is None
         assert await storage.read_open_tasks(org_b, team(), None, limit=10) == []
+        assert await storage.read_recent_open_tasks(org_b, team(), limit=10) == []
         assert await storage.read_open_places(org_b, exclude=None, after=None, limit=10) == []
 
     async def test_the_open_count_is_the_tenants_live_open_tasks(
@@ -351,6 +353,21 @@ class TaskStorageContract:
             "t0",
         ]
         assert await storage.read_task(org, gone.id) == gone
+
+    async def test_the_recent_open_list_is_newest_first_and_hides_the_rest(
+        self, storage: TasksStorageInterface
+    ) -> None:
+        org = new_id()
+        tasks = [make_task(f"t{i}", position=float(-i)) for i in range(4)]
+        for task in tasks:
+            await seed(storage, org, task)
+        await bump(storage, org, tasks[3], status=TaskStatus.DONE, updated_at=utcnow())
+        await bump(storage, org, tasks[2], deleted_at=utcnow(), deleted_by=new_id())
+        recent = await storage.read_recent_open_tasks(org, team(), limit=10)
+        assert [t.title for t in recent] == ["t1", "t0"]
+        assert [t.title for t in await storage.read_recent_open_tasks(org, team(), limit=1)] == [
+            "t1"
+        ]
 
     async def test_open_places_are_bounded_and_follow_the_rule(
         self, storage: TasksStorageInterface

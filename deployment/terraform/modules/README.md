@@ -37,7 +37,7 @@ Three kinds of root live under this folder:
 | `cache`         | Valkey (cache scopes and the topic bus), encrypted in transit   |
 | `queue`         | One SQS queue and dead-letter queue per `Queues` member, IAM    |
 | `buckets`       | One private versioned bucket per `Buckets` member, IAM          |
-| `secrets`       | The four database URLs (master, migration, runtime, system), the Sentry DSN, the Slack bot and app tokens, the TOTP encryption key, the two operator token secrets, the application secrets policy |
+| `secrets`       | The four database URLs (master, migration, runtime, system), the Sentry DSN, the Slack app's client and signing secrets, the TOTP encryption key, the two operator token secrets, the application secrets policy |
 | `load_balancer` | The load balancer at the API's domain name: HTTPS, HTTP redirects |
 | `static_site`   | A static site's private bucket and its CloudFront distribution at one domain name, under the security headers; called twice, for the portal and for the company site |
 | `certificate`   | A DNS-validated ACM certificate for one name                    |
@@ -58,7 +58,7 @@ protection. What each set of numbers costs is in
 calls side by side is how the environments are compared.
 
 Three inputs of the `environment` module are operations rather than
-scale. `alarm_email` is where the environment's eight alarms deliver.
+scale. `alarm_email` is where the environment's seven alarms deliver.
 `autoscaling_enabled` is the one flip: each service's lever under it
 (`api_autoscaling`, `maintenance_autoscaling`: a ceiling, a CPU target,
 and `enabled = true` by default) takes effect only when it is true, and
@@ -77,22 +77,18 @@ each as a one-off task on the migrate task's definition
 and the service depends on it, so a step that fails ends the apply with
 the old tasks still serving.
 The worker passes the API's `rollout_gate` as `rollout_after`, so it
-rolls after the migration ran. The Slack bridge is a third instance, on
-the maintenance image with `command = ["tadas-maintenance", "slack"]`:
-one task, no autoscaling, `deployment_maximum_percent = 100` and
-`deployment_minimum_healthy_percent = 0`, so the old task stops before
-its replacement starts. Slack spreads deliveries across every open
-connection, so two at once would each see only some of them. It also
-rolls after the migration. Every service waits for its new tasks to
+rolls after the migration ran. Every service waits for its new tasks to
 serve (`wait_for_steady_state`): a rollout ECS rolls back fails the
 apply instead of leaving it green over old tasks.
 
 The `task` module is instantiated twice, and nothing keeps either
 running. The migrate task is the one place the master's URL and the
 migration login's URL are injected. The grant task connects as the
-runtime and system logins, and its role holds the one secret write a
-task has: `PutSecretValue` on `tadas-<environment>-provisioner-token`
-and `tadas-<environment>-smoke-token`. Serving tasks connect as the
+runtime and system logins, and its role holds the one write on a
+platform secret a task has: `PutSecretValue` on
+`tadas-<environment>-provisioner-token` and
+`tadas-<environment>-smoke-token`. The serving tasks write only the
+orgs' own secrets (below). Serving tasks connect as the
 runtime and system logins only. The environment root's outputs
 (`cluster_name`, `grant_task_definition_arn`, `grant_container_name`,
 `private_subnet_ids`, `app_security_group_id`) are what
@@ -245,18 +241,33 @@ Tasks read the secret when they start, so roll the services afterwards
 (`aws ecs update-service --force-new-deployment`, or the next deploy).
 Terraform never overwrites the value; `off` turns reporting off again.
 
-The Slack app's two tokens take the same path, one secret each, both
-created as `off`. The bot token (`xoxb-`) reaches the maintenance
-service as `TADAS_SLACK_BOT_TOKEN`; the app-level token (`xapp-`)
-reaches the slack service alone as `TADAS_SLACK_APP_TOKEN`. With either
-`off`, its side of Slack stays off and the process stays healthy.
+The Slack app's two secrets take the same path, one secret each, both
+created as `off`: the client secret, which trades an install's code for
+the workspace's token and renews it, and the signing secret, which
+checks every call Slack makes in. Both reach the API, the worker, and
+the one-off tasks as `TADAS_SLACK_CLIENT_SECRET` and
+`TADAS_SLACK_SIGNING_SECRET`. The app's client id is not a secret: the
+environment root commits it as `slack_client_id`. With any of the three
+unset, Slack is unconfigured: "Add to Slack" and every call from Slack
+answer 503, and the processes stay healthy.
 
 ```bash
 aws secretsmanager put-secret-value \
-  --secret-id tadas/staging/slack_bot_token --secret-string 'xoxb-...'
+  --secret-id tadas/staging/slack_client_secret --secret-string '...'
 aws secretsmanager put-secret-value \
-  --secret-id tadas/staging/slack_app_token --secret-string 'xapp-...'
+  --secret-id tadas/staging/slack_signing_secret --secret-string '...'
 ```
+
+An installed workspace's bot token is no process credential. It is the
+org's own secret, which the application writes under
+`tadas/<environment>/app/org/<org_id>/`, so the application policy and
+the account's task boundary give the serving tasks `CreateSecret`,
+`PutSecretValue`, and `DeleteSecret` on that part of the prefix alone.
+`slack_bot_token` stays one more release, read by no process of this
+one: the release before posts with it, and a rollback starts that
+release, so it is among the serving tasks' rollback secrets. The release
+after removes it. The steps are in
+[the Slack runbook](../../../docs/runbooks/providers/slack.md).
 
 ## Checks
 

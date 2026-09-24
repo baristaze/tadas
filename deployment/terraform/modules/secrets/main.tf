@@ -137,17 +137,43 @@ resource "aws_secretsmanager_secret_version" "sentry_dsn" {
   }
 }
 
-# The Slack app's two credentials: the bot token (xoxb-) the maintenance
-# worker posts with, and the app-level token (xapp-) that opens the Socket
-# Mode connection only the slack service holds. Like the DSN, each is
-# created as "off", which leaves Slack off, and never written again: set the
-# real values once with
-#   aws secretsmanager put-secret-value --secret-id <prefix>slack_bot_token --secret-string <xoxb-...>
-#   aws secretsmanager put-secret-value --secret-id <prefix>slack_app_token --secret-string <xapp-...>
-# A task reads its secret when it starts, so the services roll to pick a new
-# value up (aws ecs update-service --force-new-deployment).
+# The Slack app's two secrets: the client secret, which trades an install's
+# code for the workspace's token and renews tokens, and the signing secret,
+# which checks every call Slack makes in. Process credentials, injected at
+# start into the API and the worker, the way the payment processor's are.
+# Terraform creates each as "off", which leaves Slack unconfigured (Add to
+# Slack and every call from Slack answer 503), and never writes it again: set
+# the real values once from the app's Basic Information page with
+#   aws secretsmanager put-secret-value --secret-id <prefix>slack_client_secret --secret-string <secret>
+#   aws secretsmanager put-secret-value --secret-id <prefix>slack_signing_secret --secret-string <secret>
+# and roll the API and the worker (docs/runbooks/providers/slack.md). An
+# installed workspace's bot token is no process credential: it is the org's
+# own secret, under the application prefix (below).
+resource "aws_secretsmanager_secret" "slack_app" {
+  for_each = toset(["slack_client_secret", "slack_signing_secret"])
+
+  name                    = "${var.prefix}${each.key}"
+  recovery_window_in_days = local.recovery_window_in_days
+  tags                    = local.tags
+}
+
+resource "aws_secretsmanager_secret_version" "slack_app" {
+  for_each = aws_secretsmanager_secret.slack_app
+
+  secret_id     = each.value.id
+  secret_string = "off"
+
+  lifecycle {
+    ignore_changes = [secret_string]
+  }
+}
+
+# slack_bot_token is the one token the release before posted with. No
+# process of this release reads it; the release before reads it in the
+# worker, so it stays for one release, for a rollback to start, and the
+# release after removes it.
 resource "aws_secretsmanager_secret" "slack" {
-  for_each = toset(["bot", "app"])
+  for_each = toset(["bot"])
 
   name                    = "${var.prefix}slack_${each.key}_token"
   recovery_window_in_days = local.recovery_window_in_days
@@ -233,6 +259,18 @@ data "aws_iam_policy_document" "application" {
       "secretsmanager:DescribeSecret",
     ]
     resources = ["${local.secret_arn_prefix}${local.application_prefix}*"]
+  }
+
+  # A tenant's own secrets, each under org/<org_id>/ in the prefix: the one
+  # write a serving process holds. An install puts the workspace's bot token
+  # there, a renewal replaces it, and an uninstall deletes it.
+  statement {
+    actions = [
+      "secretsmanager:CreateSecret",
+      "secretsmanager:PutSecretValue",
+      "secretsmanager:DeleteSecret",
+    ]
+    resources = ["${local.secret_arn_prefix}${local.application_prefix}org/*"]
   }
 }
 

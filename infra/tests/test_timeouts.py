@@ -137,7 +137,6 @@ def test_every_client_construction_names_a_timeout() -> None:
         "integrations/src/tadas/integrations/payments/stripe.py",
         "integrations/src/tadas/integrations/payments/catalog.py",
         "integrations/src/tadas/integrations/slack/web.py",
-        "workers/maintenance/src/tadas/workers/maintenance/slack_socket.py",
     }, "the scan no longer sees a client it used to; widen it before trusting it"
     unbounded = [site for site, bounded in found if not bounded]
     assert not unbounded, f"clients built without a timeout: {unbounded}"

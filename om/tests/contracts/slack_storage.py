@@ -1,8 +1,9 @@
-"""The slack storage contract: the connection is unique among the living per
-org and per channel, a link code is redeemed once and never after it expired,
-a post is recorded once per key, and every read and write is fenced by the
-tenant. The cases named in `CROSS_TENANT_CASES` present another tenant's
-identifier and assert that nothing is found and nothing changes."""
+"""The slack storage contract: the installation is unique among the living
+per org and per workspace, a refresh is claimed by one caller at a time, an
+install state is redeemed once and never after it expired, a post is recorded
+once per key, and every read and write is fenced by the tenant. The cases
+named in `CROSS_TENANT_CASES` present another tenant's identifier and assert
+that nothing is found and nothing changes."""
 
 from datetime import timedelta
 from uuid import UUID
@@ -12,52 +13,60 @@ import pytest
 from contracts.racing import race
 from tadas.om.base import new_id, utcnow
 from tadas.om.exceptions import TenantMismatch, UniqueKeyTaken
-from tadas.om.slack.rules import code_digest, new_link_code
+from tadas.om.slack.rules import credential_ref_for, new_state, state_digest
 from tadas.om.slack.storage import SlackStorageInterface
-from tadas.om.slack.types.connection import (
-    SlackConnection,
-    SlackConnectionStatus,
-    SlackLinkCode,
+from tadas.om.slack.types.installation import (
+    SlackInstallation,
+    SlackInstallationStatus,
+    SlackInstallState,
     SlackPost,
 )
 
 CROSS_TENANT_CASES: frozenset[str] = frozenset(
     {
-        "create_link_code",
+        "claim_refresh",
+        "create_install_state",
         "create_post",
         "purge",
         "purge_tenant",
-        "read_connection",
+        "read_installation",
         "read_post",
-        "write_connection",
+        "settle_refresh",
+        "write_installation",
     }
 )
 """Every method of `SlackStorageInterface` that takes a tenant has a case in
 this module that presents another tenant's."""
 
 
-def make_connection(channel_id: str = "C1", team_id: str = "T1") -> SlackConnection:
+def make_installation(team_id: str = "T1") -> SlackInstallation:
     now = utcnow()
     user = new_id()
-    return SlackConnection(
-        id=new_id(),
+    installation_id = new_id()
+    return SlackInstallation(
+        id=installation_id,
         created_at=now,
         updated_at=now,
         created_by=user,
         updated_by=user,
         team_id=team_id,
-        channel_id=channel_id,
-        linked_by_slack_user="U1",
+        team_name="Acme",
+        app_id="A1",
+        bot_user_id="UBOT",
+        scopes="commands,chat:write",
+        installed_by_slack_user="U1",
+        credential_ref=credential_ref_for(installation_id),
+        token_expires_at=now + timedelta(hours=12),
     )
 
 
-def make_code(code: str, *, lifetime: timedelta = timedelta(minutes=10)) -> SlackLinkCode:
+def make_state(state: str, *, lifetime: timedelta = timedelta(minutes=10)) -> SlackInstallState:
     now = utcnow()
-    return SlackLinkCode(
+    return SlackInstallState(
         id=new_id(),
         created_at=now,
         user_id=new_id(),
-        code_hash=code_digest(code),
+        state_hash=state_digest(state),
         expires_at=now + lifetime,
     )
 
@@ -71,85 +80,114 @@ class SlackStorageContract:
     def storage(self) -> SlackStorageInterface:
         raise NotImplementedError("the concrete test class provides the storage")
 
-    async def test_a_connection_round_trips_and_is_found_by_its_channel(
+    async def test_an_installation_round_trips_and_is_found_by_its_workspace(
         self, storage: SlackStorageInterface
     ) -> None:
         org = new_id()
-        connection = make_connection()
-        await storage.write_connection(org, connection, ())
-        assert await storage.read_connection(org) == connection
-        assert await storage.read_connection_by_channel("T1", "C1") == (org, connection)
-        assert await storage.read_connection_by_channel("T1", "C2") is None
-        assert await storage.read_connection_by_channel("T2", "C1") is None
+        installation = make_installation()
+        await storage.write_installation(org, installation, ())
+        assert await storage.read_installation(org) == installation
+        assert await storage.read_installation_by_team("T1") == (org, installation)
+        assert await storage.read_installation_by_team("T2") is None
 
     async def test_reads_and_writes_are_fenced_by_the_tenant(
         self, storage: SlackStorageInterface
     ) -> None:
         org, other = new_id(), new_id()
-        connection = make_connection()
-        await storage.write_connection(org, connection, ())
-        assert await storage.read_connection(other) is None
-        broken = connection.model_copy(update={"status": SlackConnectionStatus.BROKEN})
+        installation = make_installation()
+        await storage.write_installation(org, installation, ())
+        assert await storage.read_installation(other) is None
+        broken = installation.model_copy(update={"status": SlackInstallationStatus.BROKEN})
         with pytest.raises(TenantMismatch):
-            await storage.write_connection(other, broken, ())
-        assert await storage.read_connection(org) == connection
+            await storage.write_installation(other, broken, ())
+        now = utcnow()
+        assert await storage.claim_refresh(other, installation.id, now, now) is False
+        await storage.settle_refresh(other, installation.id, None, now)
+        assert await storage.read_installation(org) == installation
         await storage.create_post(org, make_post(key := new_id()))
         assert await storage.read_post(other, key) is None
         assert await storage.create_post(other, make_post(key)) is True, "a key is per tenant"
-        await storage.create_link_code(other, make_code(new_link_code()))
+        await storage.create_install_state(other, make_state(new_state()))
 
-    async def test_an_org_has_one_living_connection_and_a_channel_one_org(
+    async def test_an_org_has_one_living_installation_and_a_workspace_one_org(
         self, storage: SlackStorageInterface
     ) -> None:
         org, other = new_id(), new_id()
-        first = make_connection("C1")
-        await storage.write_connection(org, first, ())
+        first = make_installation("T1")
+        await storage.write_installation(org, first, ())
         with pytest.raises(UniqueKeyTaken):
-            await storage.write_connection(org, make_connection("C2"), ())
+            await storage.write_installation(org, make_installation("T2"), ())
         with pytest.raises(UniqueKeyTaken):
-            await storage.write_connection(other, make_connection("C1"), ())
-        assert await storage.read_connection(other) is None
-        # Deleting frees both keys: the org links again, and so does the channel.
+            await storage.write_installation(other, make_installation("T1"), ())
+        assert await storage.read_installation(other) is None
+        # Deleting frees both keys: the org installs again, and so does the
+        # workspace, for another org.
         now = utcnow()
         gone = first.model_copy(update={"deleted_at": now, "deleted_by": first.created_by})
-        await storage.write_connection(org, gone, ())
-        assert await storage.read_connection(org) is None
-        again = make_connection("C1")
-        await storage.write_connection(other, again, ())
-        assert await storage.read_connection_by_channel("T1", "C1") == (other, again)
-        await storage.write_connection(org, make_connection("C2"), ())
+        await storage.write_installation(org, gone, ())
+        assert await storage.read_installation(org) is None
+        again = make_installation("T1")
+        await storage.write_installation(other, again, ())
+        assert await storage.read_installation_by_team("T1") == (other, again)
+        await storage.write_installation(org, make_installation("T2"), ())
 
-    async def test_a_code_is_redeemed_once(self, storage: SlackStorageInterface) -> None:
+    async def test_one_caller_holds_a_refresh_until_it_settles_or_lapses(
+        self, storage: SlackStorageInterface
+    ) -> None:
         org = new_id()
-        code = new_link_code()
-        link = make_code(code)
-        await storage.create_link_code(org, link)
+        installation = make_installation()
+        await storage.write_installation(org, installation, ())
         now = utcnow()
-        redeemed = await storage.redeem_link_code(code_digest(code), now)
+        until = now + timedelta(seconds=30)
+        run = await race(
+            *(storage.claim_refresh(org, installation.id, now, until) for _ in range(3))
+        )
+        assert run.outcomes.count(True) == 1, run.summary()
+        assert await storage.claim_refresh(org, installation.id, now, until) is False
+        # A claim that lapsed is taken over.
+        assert await storage.claim_refresh(org, installation.id, until, until) is True
+        later = now + timedelta(hours=24)
+        await storage.settle_refresh(org, installation.id, later, now)
+        stored = await storage.read_installation(org)
+        assert stored is not None
+        assert stored.token_expires_at == later and stored.refreshing_until is None
+        assert await storage.claim_refresh(org, installation.id, now, until) is True
+
+    async def test_a_state_is_redeemed_once(self, storage: SlackStorageInterface) -> None:
+        org = new_id()
+        state = new_state()
+        started = make_state(state)
+        await storage.create_install_state(org, started)
+        now = utcnow()
+        redeemed = await storage.redeem_install_state(state_digest(state), now)
         assert redeemed is not None
-        assert redeemed[0] == org and redeemed[1].id == link.id
+        assert redeemed[0] == org and redeemed[1].id == started.id
         assert redeemed[1].redeemed_at == now
-        assert await storage.redeem_link_code(code_digest(code), now) is None
-        assert await storage.redeem_link_code(code_digest(new_link_code()), now) is None
+        assert await storage.redeem_install_state(state_digest(state), now) is None
+        assert await storage.redeem_install_state(state_digest(new_state()), now) is None
 
     async def test_two_redemptions_race_and_one_wins(self, storage: SlackStorageInterface) -> None:
-        code = new_link_code()
-        await storage.create_link_code(new_id(), make_code(code))
+        state = new_state()
+        await storage.create_install_state(new_id(), make_state(state))
         now = utcnow()
-        run = await race(*(storage.redeem_link_code(code_digest(code), now) for _ in range(3)))
+        run = await race(
+            *(storage.redeem_install_state(state_digest(state), now) for _ in range(3))
+        )
         assert len(run.admitted) == 1, run.summary()
-        assert await storage.redeem_link_code(code_digest(code), now) is None
+        assert await storage.redeem_install_state(state_digest(state), now) is None
 
-    async def test_an_expired_code_is_refused(self, storage: SlackStorageInterface) -> None:
-        code = new_link_code()
-        await storage.create_link_code(new_id(), make_code(code, lifetime=timedelta(seconds=-1)))
-        assert await storage.redeem_link_code(code_digest(code), utcnow()) is None
+    async def test_an_expired_state_is_refused(self, storage: SlackStorageInterface) -> None:
+        state = new_state()
+        await storage.create_install_state(
+            new_id(), make_state(state, lifetime=timedelta(seconds=-1))
+        )
+        assert await storage.redeem_install_state(state_digest(state), utcnow()) is None
 
-    async def test_a_code_digest_is_unique(self, storage: SlackStorageInterface) -> None:
-        code = new_link_code()
-        await storage.create_link_code(new_id(), make_code(code))
+    async def test_a_state_digest_is_unique(self, storage: SlackStorageInterface) -> None:
+        state = new_state()
+        await storage.create_install_state(new_id(), make_state(state))
         with pytest.raises(UniqueKeyTaken):
-            await storage.create_link_code(new_id(), make_code(code))
+            await storage.create_install_state(new_id(), make_state(state))
 
     async def test_a_post_is_recorded_once_per_key(self, storage: SlackStorageInterface) -> None:
         org, key = new_id(), new_id()
@@ -162,19 +200,19 @@ class SlackStorageContract:
         self, storage: SlackStorageInterface
     ) -> None:
         org, other = new_id(), new_id()
-        connection = make_connection()
+        installation = make_installation()
         now = utcnow()
-        await storage.write_connection(
-            org, connection.model_copy(update={"deleted_at": now, "deleted_by": new_id()}), ()
+        await storage.write_installation(
+            org, installation.model_copy(update={"deleted_at": now, "deleted_by": new_id()}), ()
         )
-        await storage.create_link_code(org, make_code(new_link_code()))
+        await storage.create_install_state(org, make_state(new_state()))
         await storage.create_post(org, make_post(new_id()))
         await storage.create_post(other, make_post(new_id()))
         assert await storage.purge(org, now - timedelta(days=1)) == 0
         assert await storage.purge(other, now + timedelta(hours=1)) == 1
         assert await storage.purge(org, now + timedelta(hours=1)) == 3
-        await storage.write_connection(org, make_connection(), ())
+        await storage.write_installation(org, make_installation(), ())
         await storage.create_post(other, make_post(new_id()))
         assert await storage.purge_tenant(org) == 1
-        assert await storage.read_connection(org) is None
+        assert await storage.read_installation(org) is None
         assert await storage.purge_tenant(other) == 1

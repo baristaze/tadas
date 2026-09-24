@@ -1,23 +1,25 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { errorMessage } from "../../app/errorMessage";
 import { forgetSession } from "../../app/forgetSession";
-import { useDisconnectSlack, useIssueSlackLinkCode, useSlackStatus } from "../../queries/slack";
+import { useSlackStatus, useStartSlackInstall, useUninstallSlack } from "../../queries/slack";
 import { useApiKeys, useCreateApiKey, useLogout, useMe, useRevokeApiKey, useUsers } from "../../queries/tenancy";
 import { useNoticesStore } from "../../store/notices";
 import { isPlanLimit } from "../../store/upgrade";
 import { noteSignedOut } from "../../store/signInState";
 import { apiKeyRows, canManageKeys, memberRows, signedInAs } from "./settingsModel";
 import { signOut } from "./signOut";
-import {
-  canManageSlack,
-  clockOf,
-  codeStillPending,
-  INVITE_COMMAND,
-  issuedCode,
-  linkCommand,
-  slackSummary,
-  type IssuedCode,
-} from "./slackModel";
+import { canManageSlack, installOutcomeText, slackSummary } from "./slackModel";
+
+/** The `?slack=` outcome Slack's install sends the browser back with, read
+ * once and taken off the address, so a reload does not say it again. */
+function takeInstallOutcome(): string | null {
+  const url = new URL(window.location.href);
+  const outcome = url.searchParams.get("slack");
+  if (outcome === null) return null;
+  url.searchParams.delete("slack");
+  window.history.replaceState(window.history.state, "", url);
+  return outcome;
+}
 
 export function useSettingsVm() {
   const me = useMe();
@@ -31,10 +33,14 @@ export function useSettingsVm() {
   const [newKeyName, setNewKeyName] = useState("");
   const [issuedKey, setIssuedKey] = useState<string | null>(null);
   const slack = useSlackStatus();
-  const issueCode = useIssueSlackLinkCode();
-  const disconnect = useDisconnectSlack();
+  const startInstall = useStartSlackInstall();
+  const uninstall = useUninstallSlack();
   const mayManageSlack = canManageSlack(me.data);
-  const [slackCode, setSlackCode] = useState<IssuedCode | null>(null);
+
+  useEffect(() => {
+    const said = installOutcomeText(takeInstallOutcome());
+    if (said) notify(said);
+  }, [notify]);
 
   const members = useMemo(() => memberRows(users.data ?? []), [users.data]);
   const keys = useMemo(() => apiKeyRows(apiKeys.data ?? [], new Date()), [apiKeys.data]);
@@ -72,29 +78,24 @@ export function useSettingsVm() {
     }
   };
 
-  // A code is shown until it is used (the connection's push refreshes the
-  // status, and the status moves on from where it stood), or dismissed.
-  const connectSlack = async () => {
+  // Off to Slack's page; Slack sends the browser back here, and the outcome
+  // is said then. A refusal (not configured, not allowed) is said now.
+  const installSlack = async () => {
     try {
-      const issued = await issueCode.mutateAsync();
-      const code = issuedCode(issued, slack.data);
-      if (code === null) notify("A code was issued, but it was lost on the way back; ask for another.");
-      setSlackCode(code);
+      const start = await startInstall.mutateAsync();
+      if (!start.url) notify("The install link was lost on the way back; click Add to Slack again.");
     } catch (caught) {
-      notify(errorMessage(caught, "No code was issued."));
+      notify(errorMessage(caught, "Slack's install page could not be opened."));
     }
   };
 
-  const disconnectSlack = async () => {
+  const uninstallSlack = async () => {
     try {
-      await disconnect.mutateAsync();
-      setSlackCode(null);
+      await uninstall.mutateAsync();
     } catch (caught) {
-      notify(errorMessage(caught, "Slack was not disconnected."));
+      notify(errorMessage(caught, "Tadas was not removed from Slack."));
     }
   };
-
-  const shownCode = slackCode && codeStillPending(slackCode, slack.data) ? slackCode : null;
 
   // The server session is revoked, then the token and the cache go; the
   // realtime channel closes with the token. A sign-out finishes here even
@@ -131,18 +132,12 @@ export function useSettingsVm() {
       loading: slack.isPending,
       error: slack.error,
       summary: slackSummary(slack.data),
-      connected: Boolean(slack.data?.connection),
+      installed: Boolean(slack.data?.installation),
       canManage: mayManageSlack,
-      code: shownCode && {
-        invite: INVITE_COMMAND,
-        command: linkCommand(shownCode.code),
-        expiresAt: clockOf(shownCode.expiresAt),
-      },
-      dismissCode: () => setSlackCode(null),
-      connect: connectSlack,
-      connecting: issueCode.isPending,
-      disconnect: disconnectSlack,
-      disconnecting: disconnect.isPending,
+      install: installSlack,
+      installing: startInstall.isPending,
+      uninstall: uninstallSlack,
+      uninstalling: uninstall.isPending,
     },
     signOut: leave,
     signingOut: logout.isPending,

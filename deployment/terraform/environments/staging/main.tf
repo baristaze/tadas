@@ -21,6 +21,11 @@ module "environment" {
   # client id is public; the application's own API key is its secret.
   workos_client_id  = "client_01M3640D8WBF9KC0P89YW4E72N"
   portal_sentry_dsn = var.portal_sentry_dsn
+  # This environment's Slack app (deployment/slack/manifest.staging.json).
+  # A client id is public; the app's client secret and signing secret are its
+  # secrets. The staging app's id, from its Basic Information page
+  # (docs/runbooks/providers/slack.md).
+  slack_client_id = "842588338401.12123745580357"
 
   # The payment processor's account, the Tadas sandbox: test mode, no real money. The process refuses a key
   # whose mode is not this environment's.
@@ -45,8 +50,6 @@ module "environment" {
   maintenance_desired_count    = 1
   maintenance_cpu              = 256
   maintenance_memory           = 512
-  slack_cpu                    = 256
-  slack_memory                 = 512
 
   # Operations. `autoscaling_enabled` is the one flip: every lever below it
   # is on, so true scales the whole environment, and the flip is a pull

@@ -1,49 +1,152 @@
-"""The real client: the Slack Web API under the bot token, over aiohttp.
-One session for the life of the process, opened at start and shared by the
-Web API client and the command replies, every call under the timeout from
-settings."""
+"""The real client: the Slack app over the Web API and aiohttp.
+
+It holds the app's three credentials (the client id, the client secret, the
+signing secret) for the life of the process, and never a workspace's token:
+each Web API call names the token it is made under, and the caller resolved
+it for that one call. One HTTP session for the life of the process, opened at
+start and shared by every call and every command reply, each under the
+timeout from settings."""
 
 import logging
 from datetime import timedelta
 from typing import Any
+from urllib.parse import urlencode
 
 import aiohttp
+from pydantic import SecretStr
 from slack_sdk.errors import SlackApiError
 from slack_sdk.web.async_client import AsyncWebClient
 from slack_sdk.webhook.async_client import AsyncWebhookClient
 
+from tadas.infra.base import utcnow
 from tadas.integrations.slack import (
+    BOT_SCOPES,
     SlackError,
     SlackFailed,
+    SlackGrant,
     SlackInterface,
+    SlackTokenRevoked,
+    SlackTokens,
     error_for,
     is_response_url,
 )
+from tadas.integrations.slack.requests import verify
 
 log = logging.getLogger(__name__)
 
+AUTHORIZE_URL = "https://slack.com/oauth/v2/authorize"
+
+
+def tokens_of(answer: Any) -> SlackTokens:
+    """The bot token of an `oauth.v2.access` answer, and, with token rotation
+    on, its refresh token and when it expires."""
+    expires_in = answer.get("expires_in")
+    refresh = answer.get("refresh_token")
+    return SlackTokens(
+        access_token=SecretStr(str(answer["access_token"])),
+        refresh_token=SecretStr(str(refresh)) if refresh else None,
+        expires_at=None if not expires_in else utcnow() + timedelta(seconds=int(expires_in)),
+    )
+
 
 class SlackWebImpl(SlackInterface):
-    def __init__(self, bot_token: str, timeout: timedelta) -> None:
-        self._token = bot_token
+    def __init__(
+        self, client_id: str, client_secret: str, signing_secret: str, timeout: timedelta
+    ) -> None:
+        self._client_id = client_id
+        self._client_secret = client_secret
+        self._signing_secret = signing_secret
         self._timeout = timeout
         self._session: aiohttp.ClientSession | None = None
-        self._client: AsyncWebClient | None = None
 
-    def _web(self) -> AsyncWebClient:
-        if self._client is None:
+    def _web(self, token: str | None = None) -> AsyncWebClient:
+        if self._session is None:
             raise RuntimeError("the Slack client is used before start()")
-        return self._client
-
-    async def post_message(self, channel_id: str, text: str) -> str:
-        response = await self._call("chat.postMessage", channel=channel_id, text=text)
-        return str(response["ts"])
-
-    async def reply_in_thread(self, channel_id: str, thread_ts: str, text: str) -> str:
-        response = await self._call(
-            "chat.postMessage", channel=channel_id, thread_ts=thread_ts, text=text
+        return AsyncWebClient(
+            token=token, session=self._session, timeout=int(self._timeout.total_seconds())
         )
-        return str(response["ts"])
+
+    def authorize_url(self, state: str, redirect_uri: str) -> str:
+        query = urlencode(
+            {
+                "client_id": self._client_id,
+                "scope": ",".join(BOT_SCOPES),
+                "state": state,
+                "redirect_uri": redirect_uri,
+            }
+        )
+        return f"{AUTHORIZE_URL}?{query}"
+
+    async def exchange_code(self, code: str, redirect_uri: str) -> SlackGrant:
+        answer = await self._call(
+            None,
+            "oauth.v2.access",
+            client_id=self._client_id,
+            client_secret=self._client_secret,
+            code=code,
+            redirect_uri=redirect_uri,
+        )
+        team = answer.get("team") or {}
+        return SlackGrant(
+            team_id=str(team.get("id", "")),
+            team_name=str(team.get("name", "")),
+            app_id=str(answer.get("app_id", "")),
+            bot_user_id=str(answer.get("bot_user_id", "")),
+            scopes=tuple(s for s in str(answer.get("scope", "")).split(",") if s),
+            installer_user_id=str((answer.get("authed_user") or {}).get("id", "")),
+            tokens=tokens_of(answer),
+        )
+
+    async def refresh(self, refresh_token: str) -> SlackTokens:
+        answer = await self._call(
+            None,
+            "oauth.v2.access",
+            client_id=self._client_id,
+            client_secret=self._client_secret,
+            grant_type="refresh_token",
+            refresh_token=refresh_token,
+        )
+        return tokens_of(answer)
+
+    async def uninstall(self, token: str) -> None:
+        try:
+            await self._call(
+                token,
+                "apps.uninstall",
+                client_id=self._client_id,
+                client_secret=self._client_secret,
+            )
+        except SlackTokenRevoked:
+            return
+
+    async def revoke(self, token: str) -> None:
+        try:
+            await self._call(token, "auth.revoke")
+        except SlackTokenRevoked:
+            return
+
+    def verify_request(self, body: bytes, timestamp: str | None, signature: str | None) -> None:
+        verify(body, timestamp, signature, self._signing_secret)
+
+    async def post_message(
+        self, token: str, channel_id: str, text: str, thread_ts: str | None = None
+    ) -> str:
+        params: dict[str, Any] = {"channel": channel_id, "text": text}
+        if thread_ts:
+            params["thread_ts"] = thread_ts
+        answer = await self._call(token, "chat.postMessage", json=True, **params)
+        return str(answer["ts"])
+
+    async def user_email(self, token: str, user_id: str) -> str | None:
+        answer = await self._call(token, "users.info", user=user_id)
+        user = answer.get("user") or {}
+        if user.get("deleted") or user.get("is_bot"):
+            return None
+        email = (user.get("profile") or {}).get("email")
+        return str(email) if email else None
+
+    async def publish_home(self, token: str, user_id: str, view: dict[str, Any]) -> None:
+        await self._call(token, "views.publish", json=True, user_id=user_id, view=view)
 
     async def respond(self, response_url: str, text: str) -> None:
         if not is_response_url(response_url):
@@ -58,17 +161,18 @@ class SlackWebImpl(SlackInterface):
         if answer.status_code >= 400:
             raise SlackFailed(f"http_{answer.status_code}", answer.body)
 
-    async def publish_home(self, user_id: str, view: dict[str, Any]) -> None:
-        await self._call("views.publish", user_id=user_id, view=view)
-
-    async def _call(self, method: str, **params: Any) -> Any:
+    async def _call(
+        self, token: str | None, method: str, *, json: bool = False, **params: Any
+    ) -> Any:
         """One Web API call, its refusals translated into the errors a caller
-        decides on; the token never appears in what is raised or logged. A
-        client used before start() is a programming error, raised as one and
+        decides on; no token or secret appears in what is raised or logged.
+        A client used before start() is a programming error, raised as one and
         never as a failure a retry could fix."""
-        web = self._web()
+        web = self._web(token)
         try:
-            return await web.api_call(method, json=params)
+            if json:
+                return await web.api_call(method, json=params)
+            return await web.api_call(method, data=params)
         except SlackApiError as error:
             response = error.response
             code = str(response.get("error") or f"http_{response.status_code}")
@@ -88,10 +192,8 @@ class SlackWebImpl(SlackInterface):
     async def start(self) -> None:
         seconds = int(self._timeout.total_seconds())
         self._session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=seconds))
-        self._client = AsyncWebClient(token=self._token, session=self._session, timeout=seconds)
 
     async def close(self) -> None:
         if self._session is not None:
             await self._session.close()
         self._session = None
-        self._client = None

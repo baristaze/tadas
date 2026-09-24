@@ -38,7 +38,7 @@ seven kinds of thing [Tadas is made of](../../../../README.md).
   clearing it schedules none.
 - **Remind.** At nine in the morning of the due date, the task is marked
   reminded and every open screen of the org hears of it; so does the
-  org's Slack channel, when one is connected.
+  org's Slack channel, when the org has one.
 - **Sweep.** Deleted tasks are erased for good after the retention.
 
 ## The rules

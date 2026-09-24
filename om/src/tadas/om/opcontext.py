@@ -96,7 +96,7 @@ class AppType(StrEnum):
     CLI = "cli"
     API = "api"
     WORKER = "worker"
-    SLACK = "slack"  # a command typed in a connected Slack channel
+    SLACK = "slack"  # a call from Slack: a command, an event, an install
 
 
 class SecurityContext(Platform):

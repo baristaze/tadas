@@ -52,6 +52,20 @@ class IntegrationsSettings(BaseSettings):
     stripe_org_key: SecretStr | None = Field(default=None, repr=False)
     stripe_timeout_seconds: float = Field(default=10.0, gt=0)
 
+    # Slack: the app's real client, or its twin in memory (the tests, and a
+    # laptop, where "Add to Slack" installs into the twin's own workspace),
+    # which is refused outside local and test. The client id is not a secret:
+    # every install page carries it, and each environment commits its own
+    # app's. The client secret trades an install's code for its token and
+    # renews tokens; the signing secret checks every call Slack makes in.
+    # Both are process credentials, injected at start; empty or "off" leaves
+    # Slack unconfigured, which answers 503 and posts nothing.
+    slack_backend: Literal["twin", "slack"] = "slack"
+    slack_client_id: str = ""
+    slack_client_secret: SecretStr | None = Field(default=None, repr=False)
+    slack_signing_secret: SecretStr | None = Field(default=None, repr=False)
+    slack_timeout_seconds: float = Field(default=10.0, gt=0)
+
     @field_validator("workos_api_key")
     @classmethod
     def _key_off_is_none(cls, value: SecretStr | None) -> SecretStr | None:
@@ -59,9 +73,16 @@ class IntegrationsSettings(BaseSettings):
             return None
         return value
 
-    @field_validator("stripe_runtime_key", "stripe_webhook_secret", "stripe_org_key", mode="before")
+    @field_validator(
+        "stripe_runtime_key",
+        "stripe_webhook_secret",
+        "stripe_org_key",
+        "slack_client_secret",
+        "slack_signing_secret",
+        mode="before",
+    )
     @classmethod
-    def _stripe_off_is_none(cls, value: object) -> object:
+    def _secret_off_is_none(cls, value: object) -> object:
         """The cloud secret starts as "off", as the error tracker's DSN does."""
         if isinstance(value, str) and value.strip().lower() in ("", "off"):
             return None

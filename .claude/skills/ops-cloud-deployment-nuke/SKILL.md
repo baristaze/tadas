@@ -51,9 +51,8 @@ call.
 
 ## Procedure
 
-The processes are `api`, `maintenance`, and `slack` (the Slack
-bridge), the ECS services of the cluster `tadas-<env>`, as
-`deployment/README.md` lists them.
+The processes are `api` and `maintenance`, the ECS services of the
+cluster `tadas-<env>`, as `deployment/README.md` lists them.
 
 1. Verify the administrator profile as Role and credential states.
 2. Production only, two checks, both before the script runs:
@@ -89,9 +88,11 @@ bridge), the ECS services of the cluster `tadas-<env>`, as
 
    ```bash
    aws ecs describe-services --cluster tadas-<env> \
-     --services api maintenance slack --profile <admin_profile>
+     --services api maintenance --profile <admin_profile>
    aws s3api list-buckets --query 'Buckets[?starts_with(Name, `tadas-<env>-`)].Name' \
      --profile <admin_profile>
+   aws secretsmanager list-secrets --filters Key=name,Values=tadas/<env>/app/org/ \
+     --query 'length(SecretList)' --profile <admin_profile>
    ```
 
 4. Run the script dry, show the person what it printed, and stop.
@@ -133,7 +134,10 @@ bridge), the ECS services of the cluster `tadas-<env>`, as
    webhook endpoint for the environment's API name (kept for a
    recreate, which rolls it; deleted by the person if the environment
    is not coming back), the customers its orgs made, WorkOS's
-   organizations and users, and the Slack app and its channels. The
+   organizations and users, and the environment's Slack app and the
+   workspaces that installed it. Each org's Slack bot token, under
+   `tadas/<env>/app/org/`, stays in Secrets Manager, since the
+   application wrote it and Terraform does not own it. The
    provider keys' values went with the secrets, so a recreate writes
    them again after its first deploy
    (`docs/runbooks/providers/`).
@@ -179,12 +183,13 @@ bridge), the ECS services of the cluster `tadas-<env>`, as
 - Production only: the final snapshot tadas-production-final and the automated backups
 - Staging only: production's copies of what staging built, in production's account
 - GitHub environment and variables; ~/.config/tadas/ops/<env>.env; the tadas-<env>-investigate profile
+- The orgs' Slack bot tokens under tadas/<env>/app/org/: <count>, for the person to delete if the environment is not coming back
 - <resource the destroy could not remove>: <reason>
 
 ## At the providers, untouched
 
 - Stripe (<sandbox | live>): the webhook endpoint https://<api name>/webhooks/stripe, <kept for a recreate | for the person to delete>; the customers its orgs made; the restricted key tadas-<env>-runtime, <kept for a recreate | for the person to delete>
 - WorkOS (<Staging | Production>): the organizations and users its orgs made; the application's redirects
-- Slack: the app, its tokens, the channels; the connection closed with the slack service
-- Provider keys to write again on a recreate: stripe_runtime_key, workos_api_key, slack_bot_token, slack_app_token
+- Slack: the environment's app, whose request URLs fail until a new environment answers; the workspaces keep it installed until someone removes it in Slack; each org installs again
+- Provider keys to write again on a recreate: stripe_runtime_key, workos_api_key, slack_client_secret, slack_signing_secret
 ```

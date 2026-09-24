@@ -314,6 +314,18 @@ class TenancyManagerInterface(ABC):
         ...
 
     @abstractmethod
+    async def member_context(
+        self, rctx: RequestContext, org_id: UUID, email: str
+    ) -> OpContext | None:
+        """Platform-internal: the context of the live member of `org_id` whose
+        identity holds `email`, with their own role and its permissions, for
+        work a person asks for from outside a session: a command typed in
+        Slack, whose profile the email is read from. The identity's address is
+        the one its sign-in proved. None when no identity holds the address,
+        or its person is not a live member of the org."""
+        ...
+
+    @abstractmethod
     async def service_contexts(self, rctx: RequestContext) -> list[OpContext]:
         """Platform-internal: one service context per tenant, deleted ones
         included, for sweeps, with one for the system scope (`EMPTY_UUID` as the

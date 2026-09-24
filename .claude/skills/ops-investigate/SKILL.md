@@ -1,6 +1,6 @@
 ---
 name: ops-investigate
-description: "Investigate one environment of the platform with a read-only credential: the alarms, the error rate, the latency, the worker outcomes, the pool, the queues and their dead letters, the providers (sign-in, billing, the Slack bridge), the cost against the budget, and the platform's size, then report what is wrong and what to do next. Every read goes through the signals' own APIs (CloudWatch, X-Ray, the error tracker in the cloud; Prometheus, Jaeger, GlitchTip locally). Use when something looks off, when an alarm fires, or as the daily look. Never writes."
+description: "Investigate one environment of the platform with a read-only credential: the alarms, the error rate, the latency, the worker outcomes, the pool, the queues and their dead letters, the providers (sign-in, billing, Slack), the cost against the budget, and the platform's size, then report what is wrong and what to do next. Every read goes through the signals' own APIs (CloudWatch, X-Ray, the error tracker in the cloud; Prometheus, Jaeger, GlitchTip locally). Use when something looks off, when an alarm fires, or as the daily look. Never writes."
 allowed-tools: Read, Grep, Glob, Bash(aws:*), Bash(curl:*), Bash(docker compose:*), Bash(uv run:*)
 ---
 
@@ -48,13 +48,14 @@ the token has expired: stop, and name the refresh the preamble gives.
 
 ## Procedure
 
-The processes are `api`, `maintenance`, and `slack` (the Slack bridge,
-one task that holds the Socket Mode connection), as
+The processes are `api` and `maintenance`, as
 `deployment/README.md` lists them. Each is an ECS service of that
 name in the cluster `tadas-<env>`, with the log group
 `/tadas/<env>/<process>`. The queues are `tadas-<env>-webhooks` (the
-payment processor's deliveries) and `tadas-<env>-slack` (what Slack
-sent), each with a dead-letter queue named with `-dead` after it.
+payment processor's deliveries) and `tadas-<env>-slack` (the calls
+from Slack the API checked and queued), each with a dead-letter queue
+named with `-dead` after it. Slack's calls in are in
+`/tadas/<env>/api`, and their handling is in `/tadas/<env>/maintenance`.
 
 1. Verify the credential as Role and credential states. Compute the
    window: `--since` back from now, as epoch seconds
@@ -136,13 +137,11 @@ sent), each with a dead-letter queue named with `-dead` after it.
 
    A message in a `-dead` queue is a delivery the worker could not
    handle after its retries: a finding, with the queue's name. Cloud
-   also reads the running count against the desired count. `slack`
-   runs exactly one task; zero running means no `/tadas` command is
-   answered:
+   also reads the running count against the desired count:
 
    ```bash
    aws ecs describe-services --cluster tadas-<env> \
-     --services api maintenance slack \
+     --services api maintenance \
      --profile tadas-<env>-investigate
    ```
 
@@ -183,7 +182,7 @@ sent), each with a dead-letter queue named with `-dead` after it.
 
    ```bash
    aws logs start-query --profile tadas-<env>-investigate \
-     --log-group-names /tadas/<env>/api /tadas/<env>/maintenance /tadas/<env>/slack \
+     --log-group-names /tadas/<env>/api /tadas/<env>/maintenance \
      --start-time <start> --end-time <end> \
      --query-string 'fields @timestamp, level, request_id, @message | filter level = "ERROR" | sort @timestamp desc | limit 100'
    aws logs get-query-results --query-id <id> --profile tadas-<env>-investigate
@@ -206,9 +205,9 @@ sent), each with a dead-letter queue named with `-dead` after it.
 
    ```bash
    aws logs start-query --profile tadas-<env>-investigate \
-     --log-group-names /tadas/<env>/api /tadas/<env>/maintenance /tadas/<env>/slack \
+     --log-group-names /tadas/<env>/api /tadas/<env>/maintenance \
      --start-time <start> --end-time <end> \
-     --query-string 'fields @timestamp, @log, @message | filter @message like /identity provider|WorkOS application|WorkOS credential check|payments=stripe|billing_unavailable|no Slack app token|no bot token|socket mode connection/ | sort @timestamp desc | limit 50'
+     --query-string 'fields @timestamp, @log, @message | filter @message like /identity provider|WorkOS application|WorkOS credential check|payments=stripe|billing_unavailable|slack=|webhooks\/slack\/[a-z]+ (401|503)|v1\/slack\/installation 503|no Slack app is configured|slack token of org|slack channel of org|slack install failed/ | sort @timestamp desc | limit 50'
    ```
 
    What each line means, and the secret it points to:
@@ -235,13 +234,26 @@ sent), each with a dead-letter queue named with `-dead` after it.
      `/webhooks/stripe` is `tadas/<env>/stripe_webhook_secret`; a
      `400` there is a signing secret that does not match the
      endpoint's, and the processor retries it.
-   - `no Slack app token is set; the Socket Mode connection stays
-     closed` in `/tadas/<env>/slack`: `/tadas` answers nothing.
-     `tadas/<env>/slack_app_token` is `off`. `slack socket mode
-     connection is open` is the healthy line.
-   - `slack post <id> dropped: no bot token is configured` in
-     `/tadas/<env>/maintenance`: reminders go nowhere.
-     `tadas/<env>/slack_bot_token` is `off`.
+   - `slack=off` on a start line, a `503` (`slack_unavailable`) on
+     `/v1/slack/installation` or `/webhooks/slack/*` in the access
+     lines of `/tadas/<env>/api`, or `slack post <id> dropped: no Slack app is
+     configured` in `/tadas/<env>/maintenance`: Slack is unconfigured,
+     so "Add to Slack" and `/tadas` answer nothing and posts go
+     nowhere. `tadas/<env>/slack_client_secret` or
+     `tadas/<env>/slack_signing_secret` is `off`, or `slack_client_id`
+     is empty in the environment root. `slack=web` is the healthy
+     start line.
+   - A `401` (`slack_signature_invalid`) on `/webhooks/slack/*` in the
+     access lines of `/tadas/<env>/api`: the signing secret does not match the app's,
+     so every command and event is refused.
+   - `slack install failed at Slack: <code>` in `/tadas/<env>/api`:
+     an install the app's client id or client secret could not
+     finish.
+   - `slack token of org <id> is revoked` or `slack channel of org
+     <id> is unusable` in `/tadas/<env>/maintenance`: one org's
+     installation is broken, not the environment's. The org installs
+     again, or types `/tadas connect` in a channel the app is in; not
+     a finding about a secret.
 
    The start lines are written once, when a task starts, so a window
    after the last rollout holds none: report "not in the window",
@@ -249,8 +261,8 @@ sent), each with a dead-letter queue named with `-dead` after it.
    `docs/runbooks/providers/<stripe|workos|slack>.md`; writing the
    value is a person's step under their own sign-in, never this
    skill's. Locally, `grep` the same lines in each process's own
-   output, as step 7 reads it; a laptop holds no Slack app token on
-   purpose, so a closed connection there is not a finding.
+   output, as step 7 reads it; a laptop runs Slack's twin on purpose
+   (`slack=twin`), so that is not a finding.
 9. Traces. Cloud:
 
    ```bash
@@ -331,8 +343,8 @@ sent), each with a dead-letter queue named with `-dead` after it.
 
 - Requests: <rate>, error ratio <ratio>, p95 <ms> by route
 - Workers: <outcomes per kind>, queue depth <n>, oldest <age>
-- Queues: webhooks <n> (dead <n>), slack <n> (dead <n>); services api, maintenance, slack <running>/<desired>
-- Providers: sign-in <configured | off: tadas/<env>/workos_api_key | not in the window>, billing <configured | off: tadas/<env>/stripe_runtime_key | lacks <resources>>, Slack posts <...: tadas/<env>/slack_bot_token>, Slack connection <open | closed: tadas/<env>/slack_app_token>
+- Queues: webhooks <n> (dead <n>), slack <n> (dead <n>); services api, maintenance <running>/<desired>
+- Providers: sign-in <configured | off: tadas/<env>/workos_api_key | not in the window>, billing <configured | off: tadas/<env>/stripe_runtime_key | lacks <resources>>, Slack <configured | off: tadas/<env>/slack_client_secret, tadas/<env>/slack_signing_secret, slack_client_id | signature refused: tadas/<env>/slack_signing_secret | not in the window>, broken installations <org ids, or none>
 - Pool and cache: <checkouts, timeouts, hits, misses>
 - Errors: <count>, top issue <title> (<request id, or none>), or "not
   read: the environment names no error tracker"

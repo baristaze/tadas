@@ -12,8 +12,14 @@ from tadas.integrations.identity import workos
 from tadas.integrations.identity.absent import IdentityProviderAbsentImpl
 from tadas.integrations.identity.twin import IdentityProviderTwinImpl
 from tadas.integrations.identity.workos import IdentityProviderWorkOSImpl
-from tadas.integrations.impl.configured import IntegrationsConfiguredImpl, absent_integrations
+from tadas.integrations.impl.configured import (
+    IntegrationsConfiguredImpl,
+    absent_integrations,
+    slack_for,
+)
 from tadas.integrations.settings import IntegrationsSettings
+from tadas.integrations.slack.off import SlackOffImpl
+from tadas.integrations.slack.web import SlackWebImpl
 
 DEPLOYED = frozenset({"dev", "staging", "production"})
 
@@ -134,5 +140,38 @@ async def test_the_absent_provider_refuses_every_call() -> None:
     assert root.describe() == [
         root.get_identity_provider().describe(),
         root.get_payments().describe(),
+        root.get_slack().describe(),
     ]
     await root.close()
+
+
+@pytest.mark.parametrize("environment", ["staging", "production"])
+def test_slacks_twin_is_refused_in_a_deployed_environment(environment: str) -> None:
+    with pytest.raises(UnsafeIntegration, match="TADAS_SLACK_BACKEND=twin"):
+        slack_for(settings(slack_backend="twin"), environment)
+
+
+@pytest.mark.parametrize(
+    "missing", ["slack_client_id", "slack_client_secret", "slack_signing_secret"]
+)
+def test_slack_without_any_of_its_three_credentials_is_off(missing: str) -> None:
+    given = {
+        "slack_client_id": "111.222",
+        "slack_client_secret": "not-a-secret",
+        "slack_signing_secret": "not-a-secret",
+    }
+    given[missing] = "off" if missing != "slack_client_id" else ""
+    assert isinstance(slack_for(settings(**given), "staging"), SlackOffImpl)
+
+
+def test_slack_with_all_three_is_the_real_client_and_says_so_without_a_secret() -> None:
+    chosen = slack_for(
+        settings(
+            slack_client_id="111.222",
+            slack_client_secret="client-secret-value",
+            slack_signing_secret="signing-secret-value",
+        ),
+        "staging",
+    )
+    assert isinstance(chosen, SlackWebImpl) and chosen.describe() == "slack=web"
+    assert "secret-value" not in repr(settings(slack_client_secret="client-secret-value"))

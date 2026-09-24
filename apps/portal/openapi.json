@@ -1053,33 +1053,6 @@
         "title": "IssuedSessionView",
         "type": "object"
       },
-      "IssuedSlackLinkCodeView": {
-        "description": "A one-time code, typed into a Slack channel as `/tadas link <code>`. It\nworks once, until `expires_at`, and is shown here only: the platform keeps\nits digest.",
-        "properties": {
-          "code": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Code"
-          },
-          "expires_at": {
-            "format": "date-time",
-            "title": "Expires At",
-            "type": "string"
-          }
-        },
-        "required": [
-          "code",
-          "expires_at"
-        ],
-        "title": "IssuedSlackLinkCodeView",
-        "type": "object"
-      },
       "IssuedTicketView": {
         "description": "Carries the freshly minted socket ticket in the clear, once; redeeming\nit opens the channel and re-checks the credential behind it.",
         "properties": {
@@ -1951,16 +1924,61 @@
         "title": "SignInStartView",
         "type": "object"
       },
-      "SlackConnectionStatus": {
+      "SlackEventAnswerView": {
+        "description": "Slack's check of the events URL gets its `challenge` back; every other\nevent is acknowledged with nothing.",
+        "properties": {
+          "challenge": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Challenge"
+          }
+        },
+        "title": "SlackEventAnswerView",
+        "type": "object"
+      },
+      "SlackInstallStartView": {
+        "description": "Slack's own page, where a person approves the install for their\nworkspace. The link carries a one-time state, works once, until\n`expires_at`, and is shown here only: a replay under the same\nIdempotency-Key answers with `url` null, and the caller asks for another.",
+        "properties": {
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          }
+        },
+        "required": [
+          "url",
+          "expires_at"
+        ],
+        "title": "SlackInstallStartView",
+        "type": "object"
+      },
+      "SlackInstallationStatus": {
         "enum": [
           "ok",
           "broken"
         ],
-        "title": "SlackConnectionStatus",
+        "title": "SlackInstallationStatus",
         "type": "string"
       },
-      "SlackConnectionView": {
-        "description": "The Slack channel the org is connected to. `status` is `broken` when\nSlack refused a post for good (`broken_reason` says which refusal); the\nchannel is linked again to mend it. `created_by` is the member whose code\nlinked it, whom a task added from the channel is attributed to.",
+      "SlackInstallationView": {
+        "description": "The Slack workspace the org installed Tadas into, and the channel it\nposts to. `channel_id` is null until someone types `/tadas connect` in a\nchannel. `status` is `broken` when Slack refused for good (`broken_reason`\nsays which refusal): the channel is gone or the app is not in it, which a\nnew `/tadas connect` mends, or the token no longer renews, which a new\ninstall mends. `created_by` is the member who installed it. The bot token\nis never on the wire.",
         "properties": {
           "broken_reason": {
             "anyOf": [
@@ -1974,8 +1992,15 @@
             "title": "Broken Reason"
           },
           "channel_id": {
-            "title": "Channel Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Channel Id"
           },
           "created_at": {
             "format": "date-time",
@@ -1993,10 +2018,14 @@
             "type": "string"
           },
           "status": {
-            "$ref": "#/components/schemas/SlackConnectionStatus"
+            "$ref": "#/components/schemas/SlackInstallationStatus"
           },
           "team_id": {
             "title": "Team Id",
+            "type": "string"
+          },
+          "team_name": {
+            "title": "Team Name",
             "type": "string"
           },
           "updated_at": {
@@ -2008,6 +2037,7 @@
         "required": [
           "id",
           "team_id",
+          "team_name",
           "channel_id",
           "status",
           "broken_reason",
@@ -2015,16 +2045,16 @@
           "created_at",
           "updated_at"
         ],
-        "title": "SlackConnectionView",
+        "title": "SlackInstallationView",
         "type": "object"
       },
       "SlackStatusView": {
-        "description": "Whether the org has a channel connected, and which.",
+        "description": "Whether the org has installed Tadas in Slack, and where.",
         "properties": {
-          "connection": {
+          "installation": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/SlackConnectionView"
+                "$ref": "#/components/schemas/SlackInstallationView"
               },
               {
                 "type": "null"
@@ -2033,7 +2063,7 @@
           }
         },
         "required": [
-          "connection"
+          "installation"
         ],
         "title": "SlackStatusView",
         "type": "object"
@@ -7920,9 +7950,9 @@
         ]
       }
     },
-    "/v1/slack/connection": {
+    "/v1/slack/installation": {
       "delete": {
-        "operationId": "disconnect_v1_slack_connection_delete",
+        "operationId": "uninstall_v1_slack_installation_delete",
         "parameters": [
           {
             "in": "header",
@@ -7995,13 +8025,13 @@
             "description": "Validation Error"
           }
         },
-        "summary": "Disconnect",
+        "summary": "Uninstall",
         "tags": [
           "slack"
         ]
       },
       "get": {
-        "operationId": "get_connection_v1_slack_connection_get",
+        "operationId": "get_installation_v1_slack_installation_get",
         "parameters": [
           {
             "in": "header",
@@ -8074,15 +8104,13 @@
             "description": "Validation Error"
           }
         },
-        "summary": "Get Connection",
+        "summary": "Get Installation",
         "tags": [
           "slack"
         ]
-      }
-    },
-    "/v1/slack/link-codes": {
+      },
       "post": {
-        "operationId": "issue_link_code_v1_slack_link_codes_post",
+        "operationId": "start_install_v1_slack_installation_post",
         "parameters": [
           {
             "in": "header",
@@ -8156,7 +8184,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/IssuedSlackLinkCodeView"
+                  "$ref": "#/components/schemas/SlackInstallStartView"
                 }
               }
             },
@@ -8173,7 +8201,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "Issue Link Code",
+        "summary": "Start Install",
         "tags": [
           "slack"
         ]
@@ -9266,6 +9294,267 @@
         "summary": "List Users",
         "tags": [
           "tenancy"
+        ]
+      }
+    },
+    "/webhooks/slack/commands": {
+      "post": {
+        "operationId": "slack_command_webhooks_slack_commands_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Slack-Request-Timestamp",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Slack-Request-Timestamp"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Slack-Signature",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Slack-Signature"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Slack-Retry-Num",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Slack-Retry-Num"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Slack Command",
+        "tags": [
+          "webhooks"
+        ]
+      }
+    },
+    "/webhooks/slack/events": {
+      "post": {
+        "operationId": "slack_event_webhooks_slack_events_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Slack-Request-Timestamp",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Slack-Request-Timestamp"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Slack-Signature",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Slack-Signature"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Slack-Retry-Num",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Slack-Retry-Num"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SlackEventAnswerView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Slack Event",
+        "tags": [
+          "webhooks"
+        ]
+      }
+    },
+    "/webhooks/slack/oauth": {
+      "get": {
+        "operationId": "slack_oauth_webhooks_slack_oauth_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "code",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Code"
+            }
+          },
+          {
+            "in": "query",
+            "name": "state",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "State"
+            }
+          },
+          {
+            "in": "query",
+            "name": "error",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Error"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app-version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Version"
+            }
+          }
+        ],
+        "responses": {
+          "302": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Slack Oauth",
+        "tags": [
+          "webhooks"
         ]
       }
     },
