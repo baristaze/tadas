@@ -122,8 +122,8 @@ enters a deployed environment: WorkOS AuthKit (an email code or link,
 Google, GitHub, or their company's single sign-on), and a first sign-in
 is the sign-up. It lands in the person's personal org, the org chip
 creates a team org from there, and the org's settings invite people to
-it. Locally it needs the WorkOS staging environment's API key in
-`TADAS_WORKOS_API_KEY`.
+it. Locally it needs the API key of the staging environment's Tadas App
+application in `TADAS_WORKOS_API_KEY`.
 
 ### Dashboards
 

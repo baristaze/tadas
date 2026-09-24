@@ -570,10 +570,10 @@ secrets="workos_api_key stripe_org_key slack_bot_token slack_app_token"
 for secret in $secrets; do
   say "  aws secretsmanager put-secret-value --profile $writer_profile --region $region --secret-id tadas/$environment/$secret --secret-string \"\$VALUE\""
 done
-say "  WorkOS first: the grants below sign people up through it. Its application's Redirects tab takes https://$app_domain_name/auth/callback and https://$app_domain_name/login by hand; check them with"
+say "  WorkOS first: the grants below sign people up through it. workos_api_key is the Tadas App application's API key (Applications, Tadas App, API keys), never the environment's; the API refuses to start on another. The bootstrap proves the key, adds https://$app_domain_name/auth/callback to the application's redirects, and names the Redirects tab's checks (the default redirect, https://$app_domain_name/login as the initiate login URI):"
 case "$environment" in
-  staging) say "    uv run tadas-ops workos-bootstrap --environment staging   (WORKOS_API_KEY exported, read with read -rs)" ;;
-  production) say "    uv run tadas-ops workos-bootstrap --environment production   (WORKOS_PRODUCTION_API_KEY exported, read with read -rs)" ;;
+  staging) say "    uv run tadas-ops workos-bootstrap --environment staging --apply   (WORKOS_API_KEY exported, read with read -rs)" ;;
+  production) say "    uv run tadas-ops workos-bootstrap --environment production --apply   (WORKOS_PRODUCTION_API_KEY exported, read with read -rs)" ;;
 esac
 say "  Stripe: with TADAS_STRIPE_ORG_KEY exported, the bootstrap makes the catalog and the endpoint, and writes tadas/$environment/stripe_webhook_secret itself:"
 say "    uv run tadas-ops stripe-bootstrap --env $environment --profile $writer_profile --dry-run, then without --dry-run, then again for \"no changes\""

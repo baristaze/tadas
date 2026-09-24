@@ -171,7 +171,9 @@ the names of what was written and never a value.
      After it, the person makes each value in the provider's dashboard
      and writes it under their own sign-in (`tadas-staging`; in
      production `tadas-prod-power`, when authorized); the Stripe
-     bootstrap writes `stripe_webhook_secret` itself. WorkOS comes
+     bootstrap writes `stripe_webhook_secret` itself. `workos_api_key`
+     is the Tadas App application's own API key, never the WorkOS
+     environment's; the API refuses to start on another. WorkOS comes
      first, since the grants below sign people up through it and every
      sign-in answers `503` without its key. Production leaves
      `slack_app_token` at `off` while staging holds the Slack app's one

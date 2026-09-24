@@ -37,7 +37,7 @@ served to it. Exposure is by listing, never by folder.
 - [Operate runbook](docs/runbooks/operate.md): reading an environment under the investigate profile
 - [Scale runbook](docs/runbooks/scale.md): the one variable that turns autoscaling on
 - [Stripe runbook](docs/runbooks/providers/stripe.md): the payment processor for a newcomer: its levels, the sandbox and the live account, the key and its permissions, the bootstrap, the webhook secret, local deliveries, rotation, and what breaks
-- [WorkOS runbook](docs/runbooks/providers/workos.md): the sign-in provider for a newcomer: its environments, the application and its Redirects tab, the API key, the bootstrap's check, rotation, and what breaks
+- [WorkOS runbook](docs/runbooks/providers/workos.md): the sign-in provider for a newcomer: its environments, the Tadas App application, its own API key (never the environment's) and its Redirects tab, the bootstrap, rotation, and what breaks
 - [Slack runbook](docs/runbooks/providers/slack.md): the Slack app for a newcomer: its scopes, the two tokens, the one Socket Mode connection, rotation, and what breaks
 - [Support runbook](docs/runbooks/support.md): how a support investigation runs
 - [Tenant isolation runbook](docs/runbooks/tenant-isolation.md): the cross-tenant cases and what they catch
@@ -55,7 +55,7 @@ served to it. Exposure is by listing, never by folder.
 - [Operate runbook](docs/runbooks/operate.md): reading an environment under the investigate profile
 - [Scale runbook](docs/runbooks/scale.md): the one variable that turns autoscaling on
 - [Stripe runbook](docs/runbooks/providers/stripe.md): the payment processor for a newcomer: its levels, the sandbox and the live account, the key and its permissions, the bootstrap, the webhook secret, local deliveries, rotation, and what breaks
-- [WorkOS runbook](docs/runbooks/providers/workos.md): the sign-in provider for a newcomer: its environments, the application and its Redirects tab, the API key, the bootstrap's check, rotation, and what breaks
+- [WorkOS runbook](docs/runbooks/providers/workos.md): the sign-in provider for a newcomer: its environments, the Tadas App application, its own API key (never the environment's) and its Redirects tab, the bootstrap, rotation, and what breaks
 - [Slack runbook](docs/runbooks/providers/slack.md): the Slack app for a newcomer: its scopes, the two tokens, the one Socket Mode connection, rotation, and what breaks
 - [Support runbook](docs/runbooks/support.md): how a support investigation runs
 - [Tenant isolation runbook](docs/runbooks/tenant-isolation.md): the cross-tenant cases and what they catch

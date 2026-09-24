@@ -2,8 +2,8 @@
 stripe-bootstrap, each against one named environment, and workos-bootstrap
 against one WorkOS environment. Exit 0 when the run did what was asked, 1
 when a stress target was missed, a reader found nothing, or a redirect needs
-the WorkOS dashboard, 2 for a bad invocation or a credential the operator
-plane refused."""
+the WorkOS dashboard, 2 for a bad invocation, a credential the operator
+plane refused, or a WorkOS key that is not the application's."""
 
 import argparse
 import asyncio
@@ -552,7 +552,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_workos = sub.add_parser(
         "workos-bootstrap",
-        help="reconcile a WorkOS environment with deployment/workos/environments.yaml",
+        help="reconcile the WorkOS application with deployment/workos/environments.yaml",
     )
     p_workos.add_argument("--environment", required=True, help="staging or production")
     p_workos.add_argument(

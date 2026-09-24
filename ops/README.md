@@ -135,40 +135,44 @@ person's sign-in.
 | `signals check --env <e> --request-id <id>` | Reads the log lines, the metric, the trace, and the error event for one request id. |
 | `size --env <e>` | The platform's size: orgs, users, and the tasks of the last twenty-four hours, with the traffic generator's own tenants left out. |
 | `token --env <e> --identity operator\|provisioner [--dev-email a]` | Writes an operator token into the env file, never printing it. |
-| `workos-bootstrap --environment staging\|production [--apply]` | Checks a WorkOS environment against `deployment/workos/environments.yaml`; see below. [The runbook](../docs/runbooks/providers/workos.md) has the dashboard steps around it. |
+| `workos-bootstrap --environment staging\|production [--apply]` | Proves the key is the Tadas App application's, then reconciles that application with `deployment/workos/environments.yaml`; see below. [The runbook](../docs/runbooks/providers/workos.md) has the dashboard steps around it. |
 | `stripe-bootstrap --env <e> [--dry-run] [--secret-store aws\|none] [--profile p]` | Makes the payment processor's account match `deployment/stripe/desired-state.json`: the three products, the prices by lookup key, the Billing Portal configuration, and the environment's webhook endpoint. It reads the key from `TADAS_STRIPE_ORG_KEY` and refuses one whose mode is not the environment's. A rerun against a matching account changes nothing and says so. The endpoint's signing secret goes to `tadas/<env>/stripe_webhook_secret` under the person's own sign-in (`--profile`; the environment's sign-in profile by default, and in production `tadas-prod-power`, since `tadas-prod` only reads) and is never printed; an investigate profile is refused. [The runbook](../docs/runbooks/providers/stripe.md) has the steps. |
 
 ## The WorkOS bootstrap
 
-`deployment/workos/environments.yaml` is the desired state of each
-WorkOS environment Tadas signs people in through: the application's
-client id and its kind (`client: application`), its redirect URIs, its
-login initiation URI, and its webhooks, which are none. `staging` serves
-the local stack and staging; `production` serves production alone.
+`deployment/workos/environments.yaml` is the desired state of the Tadas
+App, the WorkOS application Tadas signs people in through, in each WorkOS
+environment: its client id, its redirect URIs and which one is the
+default, its login initiation URI, its App homepage URL, and its
+webhooks, which are none. `staging` serves the local stack and staging;
+`production` serves production alone.
 
 ```bash
 uv run tadas-ops workos-bootstrap --environment staging          # a dry run
 uv run tadas-ops workos-bootstrap --environment staging --apply  # writes
 ```
 
-The API key comes from the variable the file names for the environment
-(`WORKOS_API_KEY` for staging, `WORKOS_PRODUCTION_API_KEY` for
-production), and the command never prints it. Production is run by
-whoever holds its key; without the variable the command refuses.
+The key is the Tadas App application's own API key, from the variable
+the file names for the environment (`WORKOS_API_KEY` for staging,
+`WORKOS_PRODUCTION_API_KEY` for production), and the command never
+prints it. Without the variable the command refuses.
+
+The command proves the key first. It exchanges a code WorkOS never
+issued, with the key as the client secret: WorkOS answers
+`invalid_grant` for the application's own key and `invalid_client` for
+any other. A key from the environment's API Keys page, or another
+application's, stops the run with exit 2 before anything is read.
 
 A redirect is present when AuthKit accepts it for the application: the
 command asks `GET /user_management/authorize` with the client id and the
-URI and reads where it is sent. That probe is the truth, because the
-application's redirects live on its Redirects tab in the WorkOS
-dashboard, which no API reads or writes. So for an application the
-command only probes: a redirect the probe refuses is named as a
-dashboard step, and the command exits 1. It never writes the
-environment's redirect list, which AuthKit does not read for an
-application; it lists what is there and says so. Only a desired state
-that names the environment's own client (`client: environment`) has a
-missing redirect added to that list under `--apply`. The login
-initiation URI has no API at all, so it is printed as a check to make on
-the same tab. A second run against unchanged config says `nothing to
+URI and reads where it is sent. That probe is the truth. The key reads
+and writes the application's own redirect list, so under `--apply` a
+missing redirect is added there and probed again. One the probe still
+refuses is named as a dashboard step, and the command exits 1. So is a
+default redirect that is not the one the file names: the API reports the
+default and does not set it. The Redirects tab's other fields have no
+API, so the command prints what each should hold as a check to make on
+the tab. A second run against unchanged config says `nothing to
 change`.
 
 ## The skills

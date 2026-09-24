@@ -178,13 +178,16 @@ each run does:
    uv run tadas-ops signals check --env <environment> --request-id "$id"
    ```
 
-10. Sign-in: write the WorkOS environment's API key once
-   (`aws secretsmanager put-secret-value --secret-id tadas/<environment>/workos_api_key
+10. Sign-in: write the Tadas App application's API key once (made on
+   that application's own API keys tab in WorkOS, never the
+   environment's API Keys page;
+   `aws secretsmanager put-secret-value --secret-id tadas/<environment>/workos_api_key
    --secret-string <key>`, then roll the API), and hold the WorkOS
    configuration to the repository's with `WORKOS_API_KEY=<key> uv run
    tadas-ops workos-bootstrap --environment <workos environment>
    --apply` (ops/README.md). Until the key is set, the API starts and
-   every sign-in answers `503`.
+   every sign-in answers `503`. With a key of another application or
+   environment, the API refuses to start.
 11. The first person: the environment carries no seed (`make seed` is
    local), so open the portal and sign in at `/login` through WorkOS.
    A first sign-in creates the identity and its personal org, with the

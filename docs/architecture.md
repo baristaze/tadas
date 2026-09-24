@@ -122,8 +122,9 @@ context on keeps the stage the callee needs.
   is the identity provider's (ADR 0028): the manager holds
   `IdentityProviderInterface` from `integrations/`, WorkOS or its twin,
   and `sign_in_with_code` exchanges the code the portal's callback
-  brought back, server-side, with the PKCE verifier `sign_in_url`
-  answered (the tab keeps it beside its state), for an issuer, a
+  brought back, server-side, with the Tadas App application's API key as
+  the client secret and the PKCE verifier `sign_in_url` answered (the
+  tab keeps it beside its state), for an issuer, a
   subject, and a verified email. The identity is found by the pair
   (`read_identity_by_issuer_subject`, a system-scope lookup, unique
   `(issuer, subject)` where the subject is set), else by the email
@@ -618,8 +619,10 @@ it is one: the identity provider (`identity/`), with WorkOS's SDK
 of a process that signs nobody in (the worker, or an API without its
 key), which answers every call as unavailable. `IntegrationsSettings`
 (`TADAS_IDENTITY_PROVIDER`, `TADAS_WORKOS_CLIENT_ID`,
-`TADAS_WORKOS_API_KEY`) is mixed into the API's settings, and the
-configured root refuses the twin in a deployed environment. Every
+`TADAS_WORKOS_API_KEY`, the Tadas App application's own key) is mixed
+into the API's settings, and the configured root refuses the twin in a
+deployed environment. The WorkOS client proves at start that the key is
+the application's and refuses to boot on another (ADR 0032). Every
 provider error is translated into a leaf of infra's exception family,
 and the tenancy manager translates the sign-in ones into its own.
 

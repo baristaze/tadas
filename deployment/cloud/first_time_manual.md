@@ -523,8 +523,9 @@ for a person who has never opened that dashboard:
 - [Stripe](../../docs/runbooks/providers/stripe.md): the sandbox and
   the live account, the restricted key, `tadas-ops stripe-bootstrap`.
 - [WorkOS](../../docs/runbooks/providers/workos.md): the Staging and
-  Production environments, the application's Redirects tab, the API
-  key, `tadas-ops workos-bootstrap`.
+  Production environments, the Tadas App application, its own API key
+  (never the environment's) and its Redirects tab,
+  `tadas-ops workos-bootstrap`.
 - [Slack](../../docs/runbooks/providers/slack.md): the one app, its
   scopes, its two tokens, and the one connection staging holds.
 

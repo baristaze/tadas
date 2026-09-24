@@ -97,8 +97,8 @@ tokens are in [the Slack runbook](../docs/runbooks/providers/slack.md).
 
 `identity/absent.py` is the provider of a process that signs nobody in:
 every call answers `ProviderUnavailable`, which the API presents as
-`503`. The worker holds it, and so does an API whose WorkOS key is not
-set.
+`503`. The worker holds it, and so does an API whose WorkOS application
+key is not set.
 
 The provider hands Tadas an issuer, a subject, and a verified email.
 Everything else (the identity row, its id, the sessions, the
@@ -110,8 +110,8 @@ sign-in becomes a person.
 | Setting | What |
 |---------|------|
 | `TADAS_IDENTITY_PROVIDER` | `workos`, `twin`, or `none` (the default). `twin` is refused at boot outside `local` and `test`. |
-| `TADAS_WORKOS_CLIENT_ID` | The WorkOS application's client id. Not a secret: every authorization URL carries it. Staging's application serves the local stack and staging; production has its own. |
-| `TADAS_WORKOS_API_KEY` | The WorkOS environment's API key, a secret, for the management calls: organizations, invitations, the admin portal. The sign-in's code exchange does not use it: it presents the PKCE verifier the sign-in started with, as the application's public client. Locally from `.env` or the shell; deployed, injected into the API from the secret store (`<prefix>workos_api_key`). Empty or `off` means not configured: the process starts, says so, and every sign-in through WorkOS answers `503`. |
+| `TADAS_WORKOS_CLIENT_ID` | The Tadas App application's client id. Not a secret: every authorization URL carries it. Staging's Tadas App serves the local stack and staging; production has its own. |
+| `TADAS_WORKOS_API_KEY` | The Tadas App application's API key, made on that application's own API keys tab, never the environment's API Keys page. A secret, and the process's one WorkOS credential: the client secret of the code exchange (which sends the PKCE verifier as well), and the key of every management call (organizations, invitations, the admin portal), so an invitation carries the application's context. The device sign-in sends no secret. At start the client proves it is the application's key and refuses to boot on any other (ADR 0032). Locally from `.env` or the shell; deployed, injected into the API from the secret store (`<prefix>workos_api_key`). Empty or `off` means not configured: the process starts, says so, and every sign-in through WorkOS answers `503`. |
 | `TADAS_WORKOS_BASE_URL`, `TADAS_WORKOS_TIMEOUT_SECONDS` | Where the client calls, and the timeout on every call (10 seconds). |
 
 The WorkOS environments, the application's redirects, and the key are

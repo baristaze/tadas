@@ -266,6 +266,6 @@ case "$environment" in
 esac
 say "== 6. What remains at the providers (docs/runbooks/providers/)"
 say "- Stripe, $stripe_account: the webhook endpoint https://$api_domain_name/webhooks/stripe, which now posts to a name that does not answer. Keep it if $environment comes back (the next stripe-bootstrap finds the new secret empty and rolls it); delete it under Developers > Webhooks if not. The customers and subscriptions its orgs made stay too."
-say "- WorkOS $workos_environment: the organizations its team orgs made (external_id = the old org id) and the users who signed in. Harmless; a recreate makes new orgs. The application's redirects for https://$app_domain_name stay, and the next $environment uses them."
+say "- WorkOS $workos_environment: the organizations its team orgs made (external_id = the old org id) and the users who signed in. Harmless; a recreate makes new orgs. The Tadas App application, its API keys, and its redirects for https://$app_domain_name stay, and the next $environment uses them."
 say "- Slack: the app, its tokens, and the channels the bot was invited to. The Socket Mode connection closed with the slack service."
 say "- The values of tadas/$environment/{stripe_org_key,workos_api_key,slack_bot_token,slack_app_token} went with the secrets: a recreate writes each again after its first deploy. Revoke a key at its provider if $environment is not coming back."
