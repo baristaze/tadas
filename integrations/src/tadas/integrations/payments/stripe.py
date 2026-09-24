@@ -4,8 +4,15 @@ Every call carries two headers the account decides with: `Stripe-Context`,
 naming the account the settings name, and `Stripe-Version`, pinned to the
 version the SDK was released against, so a payload's shape changes only
 when this pin does. One client is opened at `start` and closed at `close`,
-and every call is bounded by the timeout the settings give it."""
+and every call is bounded by the timeout the settings give it.
 
+At `start` the client reads once with each permission of the runtime key
+(one item of each resource), so a key of another account, or one that
+lacks a resource, is named in the start line and the log before the
+first checkout finds it. A read proves the resource is not None; it
+cannot prove Write without writing."""
+
+import asyncio
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -19,6 +26,14 @@ from tadas.infra.exceptions import BackendFailed, BackendUnreachable
 from tadas.integrations.exceptions import PaymentsRefused, PaymentsUnconfigured
 from tadas.integrations.payments import PaymentsInterface
 from tadas.integrations.payments.deliveries import verified
+from tadas.integrations.payments.permissions import (
+    CHECKOUT_SESSIONS,
+    CUSTOMER_PORTAL,
+    CUSTOMERS,
+    PRICES_READ,
+    SUBSCRIPTIONS,
+    Permission,
+)
 from tadas.integrations.payments.types import (
     ORG_METADATA_KEY,
     ProviderDelivery,
@@ -45,6 +60,7 @@ class PaymentsStripeImpl(PaymentsInterface):
         webhook_secret: str | None,
         timeout: timedelta,
         max_network_retries: int = 2,
+        check_at_start: bool = True,
     ) -> None:
         self._api_key = api_key
         self._account_id = account_id
@@ -54,6 +70,8 @@ class PaymentsStripeImpl(PaymentsInterface):
         self._client: stripe.StripeClient | None = None
         self._http: stripe.HTTPXClient | None = None
         self._portal_configuration: str | None = None
+        self._check_at_start = check_at_start
+        self._lacking: tuple[Permission, ...] = ()
 
     @property
     def configured(self) -> bool:
@@ -62,7 +80,10 @@ class PaymentsStripeImpl(PaymentsInterface):
     def describe(self) -> str:
         if not self.configured:
             return "payments=stripe (not configured)"
-        return f"payments=stripe ({self._account_id}, {STRIPE_VERSION})"
+        described = f"{self._account_id}, {STRIPE_VERSION}"
+        if self._lacking:
+            described += "; the key lacks " + ", ".join(p.resource for p in self._lacking)
+        return f"payments=stripe ({described})"
 
     async def start(self) -> None:
         if not self.configured or self._client is not None:
@@ -75,6 +96,52 @@ class PaymentsStripeImpl(PaymentsInterface):
             http_client=self._http,
             max_network_retries=self._retries,
         )
+        if self._check_at_start:
+            await self.check_access()
+
+    async def check_access(self) -> tuple[Permission, ...]:
+        """One read under each permission of the runtime key; returns, and
+        logs, the ones the processor refused. A processor that does not
+        answer leaves the question open: the process starts either way,
+        since billing is one part of it."""
+        v1 = self._v1()
+        reads: dict[Permission, Any] = {
+            CUSTOMERS: v1.customers.list_async({"limit": 1}),
+            CHECKOUT_SESSIONS: v1.checkout.sessions.list_async({"limit": 1}),
+            CUSTOMER_PORTAL: v1.billing_portal.configurations.list_async({"limit": 1}),
+            SUBSCRIPTIONS: v1.subscriptions.list_async({"limit": 1}),
+            PRICES_READ: v1.prices.list_async({"limit": 1}),
+        }
+        answers = await asyncio.gather(*reads.values(), return_exceptions=True)
+        lacking: list[Permission] = []
+        for permission, answer in zip(reads, answers, strict=True):
+            if isinstance(answer, stripe.APIConnectionError):
+                log.warning("stripe did not answer the key check: %s", type(answer).__name__)
+                return ()
+            if isinstance(answer, stripe.PermissionError | stripe.AuthenticationError):
+                lacking.append(permission)
+            elif isinstance(answer, BaseException):
+                log.warning(
+                    "stripe key check: reading %s failed: %s",
+                    permission.resource,
+                    getattr(answer, "code", None) or type(answer).__name__,
+                )
+        self._lacking = tuple(lacking)
+        if len(lacking) == len(reads):
+            log.error(
+                "stripe refused every read: the key is revoked, lacks every permission, or is "
+                "not a key of %s",
+                self._account_id,
+            )
+        else:
+            for permission in lacking:
+                log.error(
+                    "the stripe runtime key lacks %s (group %s): set it to %s on the key",
+                    permission.resource,
+                    permission.group,
+                    permission.level,
+                )
+        return self._lacking
 
     async def close(self) -> None:
         if self._http is not None:

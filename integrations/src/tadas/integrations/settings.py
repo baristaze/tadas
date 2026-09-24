@@ -36,12 +36,19 @@ class IntegrationsSettings(BaseSettings):
     # The account every call names in `Stripe-Context`. Not a secret: each
     # environment commits its own.
     stripe_account_id: str | None = None
-    # The key, and the signing secret of the endpoint the processor delivers
-    # to. Both are process credentials, injected at start; empty or "off"
-    # leaves billing unconfigured, which answers 503 and keeps every org on
-    # its plan.
-    stripe_org_key: SecretStr | None = Field(default=None, repr=False)
+    # The runtime key, and the signing secret of the endpoint the processor
+    # delivers to. Both are process credentials, injected at start; empty or
+    # "off" leaves billing unconfigured, which answers 503 and keeps every org
+    # on its plan. The runtime key is a restricted key of the account that
+    # may touch only what the API and the worker call (RUNTIME_PERMISSIONS).
+    # The bootstrap's key is never a process's: `tadas-ops stripe-bootstrap`
+    # reads it from the person's shell.
+    stripe_runtime_key: SecretStr | None = Field(default=None, repr=False)
     stripe_webhook_secret: SecretStr | None = Field(default=None, repr=False)
+    # The name the runtime key had before it was split from the bootstrap's.
+    # It is read only to refuse it at boot with the new names, so a leftover
+    # line in a laptop's .env is not a silent "not configured".
+    stripe_org_key: SecretStr | None = Field(default=None, repr=False)
     stripe_timeout_seconds: float = Field(default=10.0, gt=0)
 
     @field_validator("workos_api_key")
@@ -51,7 +58,7 @@ class IntegrationsSettings(BaseSettings):
             return None
         return value
 
-    @field_validator("stripe_org_key", "stripe_webhook_secret", mode="before")
+    @field_validator("stripe_runtime_key", "stripe_webhook_secret", "stripe_org_key", mode="before")
     @classmethod
     def _stripe_off_is_none(cls, value: object) -> object:
         """The cloud secret starts as "off", as the error tracker's DSN does."""
@@ -85,3 +92,44 @@ def mode_for(environment: str) -> Literal["live", "test"]:
     a laptop or staging never moves real money and production never answers
     with a sandbox."""
     return "live" if environment == "production" else "test"
+
+
+ORGANIZATION_PREFIXES = ("sk_org_", "rk_org_")
+
+
+def key_kind(key: str) -> Literal["restricted", "secret", "organization"] | None:
+    """What a processor key's prefix says it may reach: an organization key
+    every account of the organization, a secret key everything in one
+    account, a restricted key only what it was given in one account."""
+    if key.startswith(ORGANIZATION_PREFIXES):
+        return "organization"
+    if key.startswith("rk_"):
+        return "restricted"
+    if key.startswith("sk_"):
+        return "secret"
+    return None
+
+
+def key_refusal(variable: str, key: str, environment: str) -> str | None:
+    """Why a key is refused for the environment, or None when it is taken.
+    Only a restricted key is taken, and only in the environment's mode. The
+    message names the variable and never the key."""
+    kind = key_kind(key)
+    if kind == "organization":
+        return (
+            f"{variable} is an organization key, which reaches every account of the "
+            "organization; make a restricted key in the environment's account "
+            "(docs/runbooks/providers/stripe.md)"
+        )
+    if kind == "secret":
+        return (
+            f"{variable} is a secret key, which may do everything in the account; make a "
+            "restricted key with the permissions docs/runbooks/providers/stripe.md lists"
+        )
+    expected = mode_for(environment)
+    if kind is None:
+        return f"{variable} is not a restricted key; {environment} takes rk_{expected}_"
+    found = key_mode(key) or "unrecognised"
+    if found != expected:
+        return f"{variable} is a {found} key; {environment} takes a {expected} key"
+    return None
