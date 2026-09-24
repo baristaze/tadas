@@ -42,6 +42,11 @@ variable "workos_client_id" {
   type        = string
 }
 
+variable "slack_client_id" {
+  description = "The client id of this environment's Slack app (its Basic Information page, App Credentials): staging's app in staging, production's in production. Not a secret; the client secret and the signing secret are (TADAS_SLACK_CLIENT_SECRET, TADAS_SLACK_SIGNING_SECRET, from the secrets module). Empty leaves Slack unconfigured: Add to Slack and every call from Slack answer 503."
+  type        = string
+}
+
 variable "site_domain_name" {
   description = "The company site's public name: tadas.fyi, or staging.tadas.fyi for staging. A record in the Cloudflare zone, not a hosted zone here; an issued certificate for it must exist in us-east-1 (the bootstrap root's). Empty leaves the site out and changes nothing else."
   type        = string
@@ -123,15 +128,6 @@ variable "maintenance_cpu" {
 }
 
 variable "maintenance_memory" {
-  type = number
-}
-
-variable "slack_cpu" {
-  description = "The Slack bridge's CPU units: one task holding one websocket."
-  type        = number
-}
-
-variable "slack_memory" {
   type = number
 }
 

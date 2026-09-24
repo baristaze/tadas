@@ -22,6 +22,9 @@ module "environment" {
   # client id is public; the environment's API key is its secret.
   workos_client_id  = "client_01M363XVP5FGF2P45FHK9B7MJD"
   portal_sentry_dsn = var.portal_sentry_dsn
+  # This environment's Slack app (deployment/slack/manifest.production.json),
+  # made when production opens. Empty until then: Slack is unconfigured here.
+  slack_client_id = ""
 
   # The payment processor's account, the live account. The process refuses a key
   # whose mode is not this environment's.
@@ -48,8 +51,6 @@ module "environment" {
   maintenance_desired_count    = 1
   maintenance_cpu              = 256
   maintenance_memory           = 512
-  slack_cpu                    = 256
-  slack_memory                 = 512
 
   # Operations. `autoscaling_enabled` is the one flip: every lever below it
   # is on, so true scales the whole environment, and the flip is a pull

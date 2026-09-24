@@ -1,0 +1,63 @@
+{
+  "_metadata": {
+    "major_version": 2,
+    "minor_version": 1
+  },
+  "display_information": {
+    "name": "Tadas",
+    "description": "Your team's to-do list, in Slack.",
+    "background_color": "#1f2937",
+    "long_description": "Tadas keeps a team's to-do list, for the people and the agents that work alongside them. In Slack, `/tadas` shows your newest open tasks, `/tadas team` the team's, and `/tadas add <title>` adds one, made by you. `/tadas connect` picks the channel Tadas posts reminders and task updates to. Each org installs the app from its settings in Tadas, and Tadas knows you by the email of your Slack profile."
+  },
+  "features": {
+    "app_home": {
+      "home_tab_enabled": true,
+      "messages_tab_enabled": false,
+      "messages_tab_read_only_enabled": false
+    },
+    "bot_user": {
+      "display_name": "tadas",
+      "always_online": false
+    },
+    "slash_commands": [
+      {
+        "command": "/tadas",
+        "url": "https://api.tadas.fyi/webhooks/slack/commands",
+        "description": "Your open tasks; team, add, connect, or help",
+        "usage_hint": "[team | add <title> | connect | help]",
+        "should_escape": false
+      }
+    ]
+  },
+  "oauth_config": {
+    "redirect_urls": [
+      "https://api.tadas.fyi/webhooks/slack/oauth"
+    ],
+    "scopes": {
+      "bot": [
+        "commands",
+        "chat:write",
+        "app_mentions:read",
+        "users:read",
+        "users:read.email"
+      ]
+    }
+  },
+  "settings": {
+    "event_subscriptions": {
+      "request_url": "https://api.tadas.fyi/webhooks/slack/events",
+      "bot_events": [
+        "app_home_opened",
+        "app_mention",
+        "app_uninstalled",
+        "tokens_revoked"
+      ]
+    },
+    "interactivity": {
+      "is_enabled": false
+    },
+    "org_deploy_enabled": false,
+    "socket_mode_enabled": false,
+    "token_rotation_enabled": true
+  }
+}

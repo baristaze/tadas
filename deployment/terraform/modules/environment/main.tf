@@ -31,7 +31,12 @@ locals {
     TADAS_LOG_JSON            = "true"
     TADAS_BILLING_BACKEND     = "stripe"
     TADAS_STRIPE_ACCOUNT_ID   = var.stripe_account_id
-    TADAS_DATABASE_POOL_SIZE  = tostring(var.database_pool_size)
+    TADAS_SLACK_BACKEND       = "slack"
+    TADAS_SLACK_CLIENT_ID     = var.slack_client_id
+    # Where people open Tadas: an install ends on its settings page, and a
+    # list answered in Slack links to it.
+    TADAS_PORTAL_URL         = "https://${var.app_domain_name}"
+    TADAS_DATABASE_POOL_SIZE = tostring(var.database_pool_size)
     # Read by no code. A rotation (database_password_version raised) changes
     # the task definition through this line, so every service rolls and its
     # new tasks start with the new URL; without it the old tasks would keep
@@ -62,16 +67,23 @@ locals {
     # process secrets being simpler than a set per service.
     TADAS_STRIPE_RUNTIME_KEY    = module.secrets.stripe_runtime_key_secret_arn
     TADAS_STRIPE_WEBHOOK_SECRET = module.secrets.stripe_webhook_secret_arn
+    # The Slack app's two secrets, the same way: the API checks Slack's calls
+    # with the signing secret and finishes an install with the client secret;
+    # the worker renews an install's token with the client secret.
+    TADAS_SLACK_CLIENT_SECRET  = module.secrets.slack_client_secret_arn
+    TADAS_SLACK_SIGNING_SECRET = module.secrets.slack_signing_secret_arn
   }
 
   # The revision before this release injected the master's URL as
-  # TADAS_DATABASE_URL, and the payment processor's key under its retired
-  # name, stripe_org_key. A rollout the circuit breaker rolls back starts
-  # that revision again, so the serving tasks' execution roles keep reading
-  # both until the release that ends the transition.
+  # TADAS_DATABASE_URL, the payment processor's key under its retired name,
+  # stripe_org_key, and the Slack bot token the worker posted with. A
+  # rollout the circuit breaker rolls back starts that revision again, so
+  # the serving tasks' execution roles keep reading them until the release
+  # that ends the transition.
   rollback_secret_arns = [
     module.secrets.database_master_url_secret_arn,
     module.secrets.stripe_org_key_secret_arn,
+    module.secrets.slack_bot_token_secret_arn,
   ]
 
   # A one-off task opens small pools: it runs one command, not requests.
@@ -371,6 +383,9 @@ module "api" {
     TADAS_INTERACTIVE_DOCS = "false"
     # The load balancer lives in the VPC, so its X-Forwarded-For names the client.
     TADAS_TRUSTED_PROXIES = jsonencode([var.vpc_cidr])
+    # Where Slack sends a browser back at the end of an install; the Slack
+    # app's manifest names the same URL (deployment/slack/).
+    TADAS_SLACK_REDIRECT_URI = "https://${var.api_domain_name}/webhooks/slack/oauth"
   })
 
   health_check_command = [
@@ -415,15 +430,10 @@ module "maintenance" {
 
   rollback_secret_arns = local.rollback_secret_arns
 
-  # The bot token posts to Slack; the worker alone holds it.
-  secrets = merge(local.process_secrets, {
-    TADAS_SLACK_BOT_TOKEN = module.secrets.slack_bot_token_secret_arn
-  })
+  secrets = local.process_secrets
 
   environment_variables = merge(local.process_environment, {
     TADAS_SERVICE_NAME = "maintenance"
-    # `/tadas list` in Slack links to this environment's portal.
-    TADAS_PORTAL_URL = "https://${var.app_domain_name}"
   })
 
   # The serving process answers /healthz on its metrics port from its
@@ -445,54 +455,6 @@ module "maintenance" {
   }
 }
 
-# The Slack bridge: `tadas-maintenance slack` on the maintenance image holds
-# the Socket Mode connection with the app token, acknowledges each delivery,
-# and sends it to the slack queue, where the maintenance worker takes it.
-# Slack spreads deliveries across every open connection, so exactly one task
-# runs, never two, not even during a rollout: at most 100% and at least 0%,
-# so the old task stops before its replacement starts, and no autoscaling.
-# It serves /healthz and /metrics on 9464 like the worker, and rolls after
-# the API's migration.
-module "slack" {
-  source = "../service"
-
-  name               = "slack"
-  image              = var.maintenance_image
-  command            = ["tadas-maintenance", "slack"]
-  environment        = var.environment
-  cluster_arn        = module.cluster.arn
-  subnet_ids         = module.network.private_subnet_ids
-  security_group_ids = [module.network.app_security_group_id]
-  desired_count      = 1
-  cpu                = var.slack_cpu
-  memory             = var.slack_memory
-  metrics_port       = 9464
-  policy_arns        = local.process_policies
-
-  secrets = merge(local.process_secrets, {
-    TADAS_SLACK_APP_TOKEN = module.secrets.slack_app_token_secret_arn
-  })
-
-  environment_variables = merge(local.process_environment, {
-    TADAS_SERVICE_NAME = "slack"
-  })
-
-  health_check_command = [
-    "CMD-SHELL",
-    "python -c \"import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:9464/healthz').status == 200 else 1)\"",
-  ]
-
-  deployment_maximum_percent         = 100
-  deployment_minimum_healthy_percent = 0
-  rollout_after                      = module.api.rollout_gate
-
-  autoscaling = {
-    enabled    = false
-    max        = 1
-    target_cpu = 60
-  }
-}
-
 # What an operator reads. The dashboard is the cloud twin of the local
 # Grafana one, by panel title; the alarms are the default set, to one topic.
 
@@ -501,7 +463,7 @@ module "dashboard" {
 
   environment              = var.environment
   cluster_name             = module.cluster.name
-  service_names            = [module.api.service_name, module.maintenance.service_name, module.slack.service_name]
+  service_names            = [module.api.service_name, module.maintenance.service_name]
   database_identifier      = module.database.identifier
   load_balancer_arn_suffix = module.load_balancer.arn_suffix
   cache_node_ids           = module.cache.member_clusters
@@ -517,5 +479,5 @@ module "alarms" {
   target_group_arn_suffix  = module.load_balancer.target_group_arn_suffix
   database_identifier      = module.database.identifier
   cluster_name             = module.cluster.name
-  service_names            = [module.api.service_name, module.maintenance.service_name, module.slack.service_name]
+  service_names            = [module.api.service_name, module.maintenance.service_name]
 }
