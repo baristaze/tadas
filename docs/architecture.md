@@ -122,8 +122,9 @@ context on keeps the stage the callee needs.
   is the identity provider's (ADR 0028): the manager holds
   `IdentityProviderInterface` from `integrations/`, WorkOS or its twin,
   and `sign_in_with_code` exchanges the code the portal's callback
-  brought back, server-side, with the PKCE verifier `sign_in_url`
-  answered (the tab keeps it beside its state), for an issuer, a
+  brought back, server-side, with the Tadas App application's API key as
+  the client secret and the PKCE verifier `sign_in_url` answered (the
+  tab keeps it beside its state), for an issuer, a
   subject, and a verified email. The identity is found by the pair
   (`read_identity_by_issuer_subject`, a system-scope lookup, unique
   `(issuer, subject)` where the subject is set), else by the email
@@ -248,7 +249,7 @@ context on keeps the stage the callee needs.
   stream and counted on the outcome counter. Done or failed items are
   purged by the sweep after the work retention (30 days).
 - `tasks`: the to-do items (`Task`: title, notes, status, position,
-  version, and the due time `remind_at` with `reminded_at` beside it), listed by a `TaskFilter` (team or mine) and paged by a
+  version, and the due date `due_on` with `reminded_at` beside it), listed by a `TaskFilter` (team or mine) and paged by a
   cursor, `OpenTaskCursor` over (position, id) for the open list and
   `TaskCursor` over (updated_at, id) for the done one, all passed
   unchanged from the manager to storage; the visibility, cursor, and
@@ -334,14 +335,26 @@ context on keeps the stage the callee needs.
   its object and then its row are erased by the sweep after a day
   (`purge_deleted`, a batch of 100 per tenant per sweep), and an upload
   pending for a day is erased the same way.
-  A due time is the caller's field and `reminded_at` the manager's. A
-  write that changes `remind_at` clears `reminded_at` and, when the new
-  one is set, lands the reminder's work row in the same commit; the
-  reminder that comes due is `fire_reminder`, one conditional write
-  (`mark_reminded`: open, living, still due at the time the item
-  carries, not yet reminded) that moves the version on and lands the
-  announcement, so a moved, cleared, finished, or already reminded due
-  time writes nothing and announces nothing.
+  A due date is the caller's field and `reminded_at` the manager's
+  ([ADR 0034](adr/0034-a-task-is-due-on-a-date.md)). A write that
+  changes `due_on` clears `reminded_at` and, when the new one is set,
+  lands the reminder's work row in the same commit, available from
+  `earliest_reminder_time` (nine in the morning at UTC+14, the first
+  morning of that date anywhere); a write that changes the assignee
+  lands another. When the item runs, `get_due_reminder` reads the task
+  and the time zone of the person it is for (`reminder_person`: the
+  assignee, or the creator), and `reminder_time` puts the reminder at
+  nine in the morning of the date there; the handler parks until then.
+  The reminder itself is `fire_reminder`, one conditional write
+  (`mark_reminded`: open, living, still due on the date read, not yet
+  reminded) that moves the version on and lands the announcement, so a
+  moved, cleared, finished, or already reminded due date writes nothing
+  and announces nothing. The time zone is the person's identity's
+  (`Identity.time_zone`, an IANA name `tenancy.rules.check_time_zone`
+  accepts), which the portal sends through `PATCH /v1/me/identity`.
+  `tasks.remind_at` is dead and deferred: no read names it, and the
+  Postgres storage still writes it, nine in the morning UTC of the due
+  date, for the release before; the release after this one drops it.
 
 - `billing`: an org's plan and its account at the payment processor
   ([ADR 0031](adr/0031-plans-are-levers-and-the-processor-is-mirrored.md)).
@@ -497,7 +510,7 @@ context on keeps the stage the callee needs.
   root binds, because the work manager needs the tenancy manager, which
   needs the relay; the graph the root hands back is still whole.
   Three kinds ride it ([ADR 0012](adr/0012-the-work-queue-has-no-producer-yet.md),
-  closed): a task written with a new due time lands a `work.TASK_REMINDER`
+  closed): a task written with a new due date lands a `work.TASK_REMINDER`
   row, a task created or completed in an org with a working Slack
   channel a `work.SLACK_POST` row, and the reminder's own write, when
   it goes out, lands `tasks.task.reminded` and a `work.SLACK_POST` row
@@ -624,8 +637,10 @@ it is one: the identity provider (`identity/`), with WorkOS's SDK
 of a process that signs nobody in (the worker, or an API without its
 key), which answers every call as unavailable. `IntegrationsSettings`
 (`TADAS_IDENTITY_PROVIDER`, `TADAS_WORKOS_CLIENT_ID`,
-`TADAS_WORKOS_API_KEY`) is mixed into the API's settings, and the
-configured root refuses the twin in a deployed environment. Every
+`TADAS_WORKOS_API_KEY`, the Tadas App application's own key) is mixed
+into the API's settings, and the configured root refuses the twin in a
+deployed environment. The WorkOS client proves at start that the key is
+the application's and refuses to boot on another (ADR 0033). Every
 provider error is translated into a leaf of infra's exception family,
 and the tenancy manager translates the sign-in ones into its own.
 

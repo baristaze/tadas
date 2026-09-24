@@ -16,7 +16,7 @@ from tadas.om.opcontext import Permission
 class WorkKind(StrEnum):
     NOOP = "NOOP"  # the maintenance worker's kind: no work beyond the sweep
     SYNC_SEATS = "SYNC_SEATS"  # a per-seat plan's quantity follows the member count
-    TASK_REMINDER = "TASK_REMINDER"  # a task's due time came: remind the team
+    TASK_REMINDER = "TASK_REMINDER"  # a task's due date came: remind the team
     SLACK_POST = "SLACK_POST"  # a message to the Slack channel the org bound
 
 
@@ -98,10 +98,12 @@ class ScheduledPayload(Platform):
 
 
 class TaskReminderPayload(ScheduledPayload):
-    """The due time a task carried when the reminder was set, as
-    `not_before`. The handler fires only while the task still carries it:
-    an edit that moved or cleared the due time leaves this item stale, and
-    a stale item completes without a word."""
+    """The first moment any person's reminder of the task's due date can go
+    out, as `not_before` (`tasks.rules.earliest_reminder_time`). The payload
+    carries no date: the handler reads the task's date and the person's time
+    zone when it runs, waits for their morning, and fires only while the task
+    is still due on that date. An edit that moved or cleared the date leaves
+    an item that completes without a word."""
 
 
 class SlackPostEvent(StrEnum):

@@ -81,8 +81,9 @@ A **task** is one item on the list: a title, notes, who it is assigned
 to, and whether it is open or done. Open tasks sit in the order the
 team arranged them; done tasks are listed newest first. A task
 remembers who created it and who last changed it. It can carry a
-**due time**: when it comes, the team gets one reminder, on every open
-screen and in the org's Slack channel.
+**due date**, a day and never an hour. On the morning of that day, at
+nine where the person it is for lives, the team gets one reminder, on
+every open screen and in the org's Slack channel.
 
 ## Slack
 
@@ -128,7 +129,7 @@ did not happen.
 
 A **work item** is a job for later: something the platform does in the
 background on behalf of a person who asked once, such as the reminder a
-due time scheduled or a post to Slack. It waits in a queue, some of it
+due date scheduled or a post to Slack. It waits in a queue, some of it
 until a set time.
 A worker claims it, holds it for a short lease, does it, and marks it
 done. If the worker dies, the lease runs out and another worker picks

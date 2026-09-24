@@ -1,7 +1,11 @@
 """Every role's migrated schema agrees with the ORM metadata, the latest
 revision of every role downgrades and upgrades again, the logins are safe to
-make twice, a data migration passes the fence it runs under, and the personal
-org backfill gives every person one."""
+make twice, a data migration passes the fence it runs under, the personal
+org backfill gives every person one, and the due date backfill gives every
+task with a due time its date."""
+
+from datetime import UTC, date, datetime
+from uuid import UUID
 
 import pytest
 from contracts.event_storage import make_event
@@ -12,6 +16,7 @@ from contracts.factories import (
     make_personal_org,
     make_user,
 )
+from contracts.task_storage import make_task
 from sqlalchemy import Connection
 from sqlalchemy.ext.asyncio import create_async_engine
 
@@ -22,6 +27,8 @@ from tadas.om.storage.impl.pg_base import LoginSessions
 from tadas.om.storage.migrate import backfill, check, downgrade, ensure_logins_at, head, upgrade
 from tadas.om.storage.roles import DatabaseRole
 from tadas.om.storage.settings import MigrationSettings
+from tadas.om.tasks.storage.impl.postgres import TasksStoragePostgresImpl
+from tadas.om.tasks.types.task import Task
 from tadas.om.tenancy.rules import MAX_SLUG_LENGTH, SLUG_PATTERN
 from tadas.om.tenancy.storage.impl.postgres import TenancyStoragePostgresImpl
 from tadas.om.tenancy.types.identity import Identity
@@ -212,5 +219,98 @@ async def test_the_backfill_gives_every_person_one_personal_org(
     try:
         async with engine.connect() as connection:
             assert await connection.run_sync(fenced) == [True, True, True]
+    finally:
+        await engine.dispose()
+
+
+# The due date backfill.
+
+
+BEFORE_DUE_DATE_BACKFILL = "202609261600"
+"""The revision that adds `tasks.due_on`; the one after it fills it from the
+due time. Stepped back to by name, as above."""
+
+
+def raw(connection: Connection, sql: str) -> list[tuple[object, ...]]:
+    """A statement over every tenant's tasks: the fence lifted for it and put
+    back, in the caller's transaction, as a migration does."""
+    connection.exec_driver_sql("ALTER TABLE core.tasks NO FORCE ROW LEVEL SECURITY")
+    result = connection.exec_driver_sql(sql)
+    rows = [tuple(row) for row in result] if result.returns_rows else []
+    connection.exec_driver_sql("ALTER TABLE core.tasks FORCE ROW LEVEL SECURITY")
+    return rows
+
+
+async def on_core(url: str, sql: str) -> list[tuple[object, ...]]:
+    engine = create_async_engine(url)
+    try:
+        async with engine.begin() as connection:
+            return await connection.run_sync(lambda sync: raw(sync, sql))
+    finally:
+        await engine.dispose()
+
+
+async def test_the_due_date_backfill_takes_the_utc_date_in_every_tenant(
+    pg_sessions: LoginSessions, migrated: dict[DatabaseRole, str]
+) -> None:
+    """Tasks of two tenants, as the release before wrote them: a due time and
+    no due date. The backfill gives each the UTC date of its due time and
+    leaves a task without one alone. The downgrade gives the release before a
+    due time on each due date, and the fence is back after both."""
+    core = migrated[DatabaseRole.CORE]
+    storage = TasksStoragePostgresImpl(pg_sessions)
+    ann_org, zoe_org = new_id(), new_id()
+    late = make_task("late in Lima")
+    plain = make_task("no due time")
+    other = make_task("another tenant's")
+    for org, task in ((ann_org, late), (ann_org, plain), (zoe_org, other)):
+        assert await storage.create_task(org, task, ())
+
+    await downgrade(DatabaseRole.CORE, core, BEFORE_DUE_DATE_BACKFILL)
+    await on_core(
+        core,
+        "UPDATE core.tasks SET due_on = NULL, remind_at = CASE title"
+        " WHEN 'late in Lima' THEN timestamptz '2030-09-30 23:30:00-05'"
+        " WHEN 'another tenant''s' THEN timestamptz '2030-10-02 08:00:00+00' END",
+    )
+    await upgrade(DatabaseRole.CORE, core)
+
+    async def due(task: Task, org: UUID) -> date | None:
+        stored = await storage.read_task(org, task.id)
+        assert stored is not None
+        return stored.due_on
+
+    assert await due(late, ann_org) == date(2030, 10, 1), "the UTC date of the due time"
+    assert await due(other, zoe_org) == date(2030, 10, 2), "the other tenant's too"
+    assert await due(plain, ann_org) is None
+
+    # This release writes the old column too, nine in the morning UTC, so a
+    # fast rollback to the release before still reads each due date.
+    moved = late.model_copy(update={"due_on": date(2030, 12, 24), "version": late.version + 1})
+    await storage.update_task(ann_org, moved, late.version, ())
+    [(written,)] = await on_core(core, f"SELECT remind_at FROM core.tasks WHERE id = '{late.id}'")
+    assert written == datetime(2030, 12, 24, 9, tzinfo=UTC)
+
+    # A downgrade restores a due time wherever the old column disagrees.
+    await on_core(core, f"UPDATE core.tasks SET remind_at = NULL WHERE id = '{late.id}'")
+    await downgrade(DatabaseRole.CORE, core, BEFORE_DUE_DATE_BACKFILL)
+    rows = await on_core(core, "SELECT title, remind_at FROM core.tasks")
+    restored = {title: at for title, at in rows}
+    assert restored == {
+        "late in Lima": datetime(2030, 12, 24, 9, tzinfo=UTC),
+        "no due time": None,
+        "another tenant's": datetime(2030, 10, 2, 8, tzinfo=UTC),
+    }
+
+    await upgrade(DatabaseRole.CORE, core)
+    assert await check(DatabaseRole.CORE, core) == []
+    engine = create_async_engine(core)
+    try:
+        async with engine.connect() as connection:
+            assert await connection.run_sync(
+                lambda sync: sync.exec_driver_sql(
+                    "SELECT relforcerowsecurity FROM pg_class WHERE oid = 'core.tasks'::regclass"
+                ).scalar_one()
+            )
     finally:
         await engine.dispose()

@@ -5,7 +5,7 @@ and the help; the mention, once; the App Home; the uninstall; the tenant
 fence of the workspace; and the queue consumer's delete-or-retry."""
 
 import asyncio
-from datetime import UTC, datetime, timedelta
+from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
@@ -298,21 +298,18 @@ async def test_the_list_leaves_out_done_and_deleted_tasks(tmp_path: Path) -> Non
     assert answer.split("\n")[1:-1] == [f"• {kept.title}"]
 
 
-async def test_a_title_cannot_ping_or_fake_a_link_and_the_due_date_is_localized(
+async def test_a_title_cannot_ping_or_fake_a_link_and_the_due_date_is_shown(
     tmp_path: Path,
 ) -> None:
     container, twin = build(tmp_path)
     ann = await owner_of(container, "acme")
     await install(container, twin, ann)
-    due = datetime(2030, 5, 17, 14, 30, tzinfo=UTC)
     await container.managers.tasks.create_task(
-        ann, make_task(ann, "Ship <!channel> & <https://evil.test|this>", remind_at=due)
+        ann, make_task(ann, "Ship <!channel> & <https://evil.test|this>", due_on=date(2030, 5, 17))
     )
     answer = await listed(inbound(container, twin), twin)
-    stamp = int(due.timestamp())
     assert answer.split("\n")[1] == (
-        "• Ship &lt;!channel&gt; &amp; &lt;https://evil.test|this&gt;"
-        f"  _due <!date^{stamp}^{{date_short_pretty}}|2030-05-17>_"
+        "• Ship &lt;!channel&gt; &amp; &lt;https://evil.test|this&gt;  _due 2030-05-17_"
     )
     assert "<!channel>" not in answer
 

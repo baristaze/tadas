@@ -39,6 +39,18 @@ class IdentityView(View):
     email: str
     operator_role: OperatorRole | None
     created_at: datetime
+    # Later fields default, so a client reads a response from a build that
+    # predates them.
+    time_zone: str | None = None
+
+
+class UpdateIdentityRequest(RequestBody):
+    """Where the person is, as an IANA name ("Europe/Istanbul"): the portal
+    sends the browser's own on sign-in. A due date's reminder goes out at
+    nine in the morning in it; with none sent, in UTC. A name that is not
+    one is 422."""
+
+    time_zone: str = Field(min_length=1, max_length=64)
 
 
 class UpdateMeRequest(RequestBody):

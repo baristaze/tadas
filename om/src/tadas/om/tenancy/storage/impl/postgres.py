@@ -97,6 +97,16 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
         async with self._session_for(stmt, org_id=EMPTY_UUID) as session:
             return await self._matched(session, stmt)
 
+    async def write_time_zone(self, identity_id: UUID, time_zone: str, at: datetime) -> bool:
+        stmt = (
+            update(Identities)
+            .where(Identities.id == identity_id)
+            .values(time_zone=time_zone, updated_at=at)
+            .returning(Identities.id)
+        )
+        async with self._session_for(stmt, org_id=EMPTY_UUID) as session:
+            return await self._matched(session, stmt)
+
     async def confirm_totp(self, identity_id: UUID, step: int, at: datetime) -> bool:
         stmt = (
             update(Identities)

@@ -10,7 +10,7 @@ from tadas.infra.base import InfraModel
 
 class Queues(StrEnum):
     WEBHOOKS = "webhooks"
-    SLACK = "slack"  # what Slack sends over the Socket Mode connection, acknowledged
+    SLACK = "slack"  # what Slack sends the API, acknowledged there, handled by maintenance
 
 
 class QueueMessage(InfraModel):

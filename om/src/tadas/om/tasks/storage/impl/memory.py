@@ -1,5 +1,5 @@
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import date, datetime
 from uuid import UUID
 
 from tadas.om.exceptions import PreconditionFailed, TenantMismatch
@@ -117,7 +117,7 @@ class TasksStorageMemoryImpl(MemoryStorageBase, TasksStorageInterface):
         self,
         org_id: UUID,
         task_id: UUID,
-        remind_at: datetime,
+        due_on: date,
         reminded_at: datetime,
         outbox_rows: tuple[OutboxRow, ...],
     ) -> Task | None:
@@ -127,7 +127,7 @@ class TasksStorageMemoryImpl(MemoryStorageBase, TasksStorageInterface):
                 task is None
                 or task.status != TaskStatus.OPEN
                 or task.deleted_at is not None
-                or task.remind_at != remind_at
+                or task.due_on != due_on
                 or task.reminded_at is not None
             ):
                 return None

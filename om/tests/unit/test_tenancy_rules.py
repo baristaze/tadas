@@ -9,6 +9,7 @@ from tadas.om.tenancy.rules import (
     SLUG_PATTERN,
     check_email,
     check_org,
+    check_time_zone,
     email_digest,
     email_domain,
     is_platform_email,
@@ -129,3 +130,17 @@ def test_a_team_org_has_a_name_and_a_well_formed_slug(name: str, slug: str | Non
 def test_a_team_org_may_leave_its_slug_to_the_name() -> None:
     check_org("Cafe", None)
     check_org("Cafe", "cafe-2")
+
+
+@pytest.mark.parametrize("name", ["Europe/Istanbul", "America/Argentina/Buenos_Aires", "UTC"])
+def test_a_time_zone_is_an_iana_name(name: str) -> None:
+    check_time_zone(name)
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["+03:00", "GMT+3 ", "Mars/Olympus_Mons", "../../etc/passwd", "/etc/localtime", "x" * 65],
+)
+def test_anything_else_is_refused_as_a_time_zone(name: str) -> None:
+    with pytest.raises(ValueError):
+        check_time_zone(name)

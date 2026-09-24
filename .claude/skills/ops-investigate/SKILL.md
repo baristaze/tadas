@@ -207,7 +207,7 @@ named with `-dead` after it. Slack's calls in are in
    aws logs start-query --profile tadas-<env>-investigate \
      --log-group-names /tadas/<env>/api /tadas/<env>/maintenance \
      --start-time <start> --end-time <end> \
-     --query-string 'fields @timestamp, @log, @message | filter @message like /identity provider|payments=stripe|billing_unavailable|slack=|webhooks\/slack\/[a-z]+ (401|503)|v1\/slack\/installation 503|no Slack app is configured|slack token of org|slack channel of org|slack install failed/ | sort @timestamp desc | limit 50'
+     --query-string 'fields @timestamp, @log, @message | filter @message like /identity provider|WorkOS application|WorkOS credential check|payments=stripe|billing_unavailable|slack=|webhooks\/slack\/[a-z]+ (401|503)|v1\/slack\/installation 503|no Slack app is configured|slack token of org|slack channel of org|slack install failed/ | sort @timestamp desc | limit 50'
    ```
 
    What each line means, and the secret it points to:
@@ -216,6 +216,13 @@ named with `-dead` after it. Slack's calls in are in
      `every sign-in through one answers 503`: nobody can sign in
      through WorkOS. `tadas/<env>/workos_api_key` is `off`, or the
      API's tasks started before it was written.
+   - `TADAS_WORKOS_API_KEY is not the API key of the WorkOS application`,
+     and the API's tasks stop at start: the secret holds a key WorkOS
+     refuses as the Tadas App's (the environment's API key, another
+     application's, or the other WorkOS environment's). The key belongs
+     on the Tadas App's own API keys tab. `the WorkOS credential check
+     did not finish` or `answered` is a warning only: WorkOS could not
+     say, and the API started.
    - `payments=stripe (not configured)`, or `billing_unavailable` on a
      request: checkouts answer 503 and every org keeps its plan.
      `tadas/<env>/stripe_runtime_key` is `off`. `payments=stripe

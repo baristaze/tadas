@@ -5,6 +5,8 @@
 // its own list) is named in the router's table instead.
 export const keys = {
   me: ["me"] as const,
+  // The person behind the session: their address and their time zone.
+  identity: ["identity"] as const,
   // The person's places across orgs, read with the session under the
   // identity stage. No push names it; a switch drops it with every other key.
   myMemberships: {

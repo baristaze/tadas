@@ -94,6 +94,11 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
             updated_at=at,
         )
 
+    async def write_time_zone(self, identity_id: UUID, time_zone: str, at: datetime) -> bool:
+        return await self._update_identity(
+            identity_id, lambda _: True, time_zone=time_zone, updated_at=at
+        )
+
     async def confirm_totp(self, identity_id: UUID, step: int, at: datetime) -> bool:
         return await self._update_identity(
             identity_id,

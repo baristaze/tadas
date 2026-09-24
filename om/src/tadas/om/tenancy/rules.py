@@ -1,6 +1,6 @@
 """Pure rules of the tenancy namespace: credential parsing, hashing, the
-role cap, the TOTP code, who a single sign-on admits, and where a list
-cursor cuts. Values in, values out;
+role cap, the TOTP code, who a single sign-on admits, a person's time
+zone, and where a list cursor cuts. Values in, values out;
 no clock, no storage, no settings. Both storage impls call the cursor rules;
 the relational one spells them in SQL and names the rule it mirrors."""
 
@@ -12,6 +12,7 @@ import unicodedata
 from datetime import datetime, timedelta
 from urllib.parse import quote
 from uuid import UUID
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from tadas.om.opcontext import CredentialKind, Role
 from tadas.om.tenancy.types.role import ROLE_RANK
@@ -63,6 +64,25 @@ def check_email(email: str) -> None:
         raise ValueError("enter an email address")
     if "\\" in email:
         raise ValueError("an email address holds no backslash")
+
+
+MAX_TIME_ZONE_LENGTH = 64
+"""The longest IANA name kept; the longest real one is about thirty."""
+
+_TIME_ZONE_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_+\-]*(/[A-Za-z0-9_+\-]+)*")
+
+
+def check_time_zone(name: str) -> None:
+    """A time zone is an IANA name this process knows ("Europe/Istanbul",
+    "UTC"), refused with ValueError otherwise: an offset like "+03:00" moves
+    with no daylight saving, and a zone the process cannot read would time a
+    reminder by guess."""
+    if len(name) > MAX_TIME_ZONE_LENGTH or not _TIME_ZONE_NAME.fullmatch(name):
+        raise ValueError("a time zone is an IANA name, like Europe/Istanbul")
+    try:
+        ZoneInfo(name)
+    except ZoneInfoNotFoundError, ValueError:
+        raise ValueError(f"{name} is not a time zone this server knows") from None
 
 
 MAX_OPERATOR_TOKEN_TTL = timedelta(hours=1)

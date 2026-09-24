@@ -1505,6 +1505,23 @@ class TenancyStorageContract:
         assert await storage.read_identity(identity.id) == changed
         assert [r.org_id for r in await claim_all(outbox) if r.id == row.id] == [EMPTY_UUID]
 
+    async def test_a_time_zone_is_written_alone(self, storage: TenancyStorageInterface) -> None:
+        """The person's time zone lands on their identity and nothing else
+        moves; an identity that does not exist takes none."""
+        identity = make_identity()
+        await storage.write_identity(identity)
+        now = utcnow()
+        assert await storage.write_time_zone(identity.id, "Europe/Istanbul", now)
+        stored = await storage.read_identity(identity.id)
+        assert stored is not None and stored.time_zone == "Europe/Istanbul"
+        assert stored == identity.model_copy(
+            update={"time_zone": "Europe/Istanbul", "updated_at": now}
+        )
+        assert await storage.write_time_zone(identity.id, "America/Lima", now)
+        again = await storage.read_identity(identity.id)
+        assert again is not None and again.time_zone == "America/Lima"
+        assert not await storage.write_time_zone(new_id(), "UTC", now), "no such identity"
+
     async def test_a_totp_secret_is_minted_confirmed_and_each_step_used_once(
         self, storage: TenancyStorageInterface
     ) -> None:

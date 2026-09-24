@@ -47,8 +47,8 @@ locals {
   # How people sign in, read at boot by every process that runs the API's
   # image: the service, and the migrate and grant tasks, which boot the same
   # settings and refuse a sign-in that comes back anywhere but this
-  # environment's own portal. People sign in through the WorkOS application
-  # of this environment.
+  # environment's own portal. People sign in through the Tadas App, the
+  # WorkOS application of this environment.
   api_sign_in_environment = {
     TADAS_IDENTITY_PROVIDER     = "workos"
     TADAS_WORKOS_CLIENT_ID      = var.workos_client_id

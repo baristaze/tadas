@@ -525,8 +525,9 @@ for a person who has never opened that dashboard:
   processes hold, and the bootstrap key the person holds),
   `tadas-ops stripe-bootstrap`.
 - [WorkOS](../../docs/runbooks/providers/workos.md): the Staging and
-  Production environments, the application's Redirects tab, the API
-  key, `tadas-ops workos-bootstrap`.
+  Production environments, the Tadas App application, its own API key
+  (never the environment's) and its Redirects tab,
+  `tadas-ops workos-bootstrap`.
 - [Slack](../../docs/runbooks/providers/slack.md): the environment's
   own app, made from its manifest in `deployment/slack/`, its client
   id, its client secret and signing secret, and public distribution,

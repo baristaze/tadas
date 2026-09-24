@@ -18,8 +18,8 @@ module "environment" {
   app_domain_name   = var.app_domain_name
   site_domain_name  = var.site_domain_name
   cors_origins      = var.cors_origins
-  # The WorkOS application of this environment's WorkOS environment. A
-  # client id is public; the environment's API key is its secret.
+  # The Tadas App application of this environment's WorkOS environment. A
+  # client id is public; the application's own API key is its secret.
   workos_client_id  = "client_01M363XVP5FGF2P45FHK9B7MJD"
   portal_sentry_dsn = var.portal_sentry_dsn
   # This environment's Slack app (deployment/slack/manifest.production.json),

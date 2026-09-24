@@ -91,7 +91,7 @@
       },
       "AddTaskRequest": {
         "additionalProperties": false,
-        "description": "`remind_at` schedules one reminder at that time, pushed to every open\nscreen of the org and posted to its Slack channel when one is connected.\nIt carries its offset; a time without one is refused.",
+        "description": "`due_on` is the day the task is due, `YYYY-MM-DD`, never a time. It\nschedules one reminder at nine in the morning of that day, in the time\nzone of the person the task is for (the assignee, or the creator), pushed\nto every open screen of the org and posted to its Slack channel when one\nis connected. `remind_at`, the due time of the release before, is still\ntaken for one release: its date, in its own offset, is the due date, and\n`due_on` wins when both are sent.",
         "properties": {
           "assignee_id": {
             "anyOf": [
@@ -104,6 +104,18 @@
               }
             ],
             "title": "Assignee Id"
+          },
+          "due_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due On"
           },
           "notes": {
             "default": "",
@@ -120,6 +132,7 @@
                 "type": "null"
               }
             ],
+            "deprecated": true,
             "title": "Remind At"
           },
           "title": {
@@ -771,6 +784,17 @@
                 "type": "null"
               }
             ]
+          },
+          "time_zone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Time Zone"
           }
         },
         "required": [
@@ -2234,6 +2258,18 @@
             ],
             "title": "Deleted At"
           },
+          "due_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due On"
+          },
           "id": {
             "format": "uuid",
             "title": "Id",
@@ -2257,6 +2293,7 @@
                 "type": "null"
               }
             ],
+            "deprecated": true,
             "title": "Remind At"
           },
           "reminded_at": {
@@ -2325,6 +2362,23 @@
         "title": "TotpConfirmedView",
         "type": "object"
       },
+      "UpdateIdentityRequest": {
+        "additionalProperties": false,
+        "description": "Where the person is, as an IANA name (\"Europe/Istanbul\"): the portal\nsends the browser's own on sign-in. A due date's reminder goes out at\nnine in the morning in it; with none sent, in UTC. A name that is not\none is 422.",
+        "properties": {
+          "time_zone": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Time Zone",
+            "type": "string"
+          }
+        },
+        "required": [
+          "time_zone"
+        ],
+        "title": "UpdateIdentityRequest",
+        "type": "object"
+      },
       "UpdateMeRequest": {
         "additionalProperties": false,
         "properties": {
@@ -2356,7 +2410,7 @@
       },
       "UpdateTaskRequest": {
         "additionalProperties": false,
-        "description": "A partial update: absent fields are kept. An explicit null\n`assignee_id` unassigns the task. The version the update compares with is\nthe task's as the caller read it, in the `If-Match` header: the update\nlands only when the task is still at it, and is refused with 412\n`precondition_failed` when another write landed since, so the caller reads\nagain and decides over the current task. An update that names no version\nis refused with 422 `validation_failed`, since it would overwrite blind.\nAn explicit null `remind_at` clears the due time; a new one reschedules\nthe reminder, and the one scheduled before it never goes out.",
+        "description": "A partial update: absent fields are kept. An explicit null\n`assignee_id` unassigns the task. The version the update compares with is\nthe task's as the caller read it, in the `If-Match` header: the update\nlands only when the task is still at it, and is refused with 412\n`precondition_failed` when another write landed since, so the caller reads\nagain and decides over the current task. An update that names no version\nis refused with 422 `validation_failed`, since it would overwrite blind.\nAn explicit null `due_on` clears the due date; a new one reschedules the\nreminder, and the one scheduled before it never goes out. `remind_at`\nis taken for one release, as on the add.",
         "properties": {
           "assignee_id": {
             "anyOf": [
@@ -2369,6 +2423,18 @@
               }
             ],
             "title": "Assignee Id"
+          },
+          "due_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due On"
           },
           "notes": {
             "anyOf": [
@@ -2391,6 +2457,7 @@
                 "type": "null"
               }
             ],
+            "deprecated": true,
             "title": "Remind At"
           },
           "status": {
@@ -6287,6 +6354,95 @@
           }
         },
         "summary": "My Identity",
+        "tags": [
+          "tenancy"
+        ]
+      },
+      "patch": {
+        "operationId": "update_my_identity_v1_me_identity_patch",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app-version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Version"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateIdentityRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IdentityView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update My Identity",
         "tags": [
           "tenancy"
         ]

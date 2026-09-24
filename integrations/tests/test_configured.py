@@ -1,9 +1,14 @@
 """The integrations root picks the provider from settings, and refuses the
 twin anywhere but a local environment."""
 
+import json
+from typing import Any
+
+import httpx
 import pytest
 
 from tadas.integrations.exceptions import ProviderUnavailable, UnsafeIntegration
+from tadas.integrations.identity import workos
 from tadas.integrations.identity.absent import IdentityProviderAbsentImpl
 from tadas.integrations.identity.twin import IdentityProviderTwinImpl
 from tadas.integrations.identity.workos import IdentityProviderWorkOSImpl
@@ -70,6 +75,39 @@ def test_workos_with_both_is_the_real_client_and_says_so_without_the_key() -> No
     described = " ".join(root.describe())
     assert "client_x" in described and "sk_secret" not in described
     assert "sk_secret" not in repr(settings(identity_provider="workos", workos_api_key="sk_secret"))
+
+
+async def test_the_settings_key_is_the_exchanges_secret_and_the_management_calls_bearer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sent: list[httpx.Request] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        sent.append(request)
+        if request.url.path == "/user_management/authenticate":
+            return httpx.Response(400, json={"error": "invalid_grant"})
+        return httpx.Response(201, json={"link": "https://setup.example/portal"})
+
+    class OverTheFake(httpx.AsyncClient):
+        def __init__(self, **options: Any) -> None:
+            super().__init__(**{**options, "transport": httpx.MockTransport(answer)})
+
+    monkeypatch.setattr(workos.httpx, "AsyncClient", OverTheFake)
+    root = IntegrationsConfiguredImpl(
+        settings(
+            identity_provider="workos", workos_client_id="client_app", workos_api_key="sk_app"
+        ),
+        "staging",
+        True,
+    )
+    await root.start()
+    provider = root.get_identity_provider()
+    await provider.portal_link(organization_id="org_1", intent="sso", return_url="https://x")
+    await root.close()
+    check, link = sent
+    assert json.loads(check.content)["client_secret"] == "sk_app"
+    assert json.loads(check.content)["client_id"] == "client_app"
+    assert link.headers["authorization"] == "Bearer sk_app"
 
 
 def test_no_provider_is_the_default_and_refuses_every_call() -> None:

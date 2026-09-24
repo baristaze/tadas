@@ -7,13 +7,14 @@ at the center (`om/`), one infrastructure toolkit (`infra/`), services
 and workers around them, and apps at the edge.
 
 <p align="center">
-  <img src="docs/media/realtime-demo.gif" width="876" alt="Two portal windows side by side, Bob on the left and the owner on the right, both on Acme's Team's Tasks. Bob adds three tasks, the second with a due time; he opens the third, assigns it to the owner, and attaches an image, which shows as a preview. The owner opens the same task and sees the image. Bob completes the first task. Each change appears in the owner's window at once.">
+  <img src="docs/media/realtime-demo.gif" width="876" alt="Two portal windows side by side, Bob on the left and the owner on the right, both on Acme's Team's Tasks. Bob adds three tasks and opens the second to give it a due date; he opens the third, assigns it to the owner, and attaches an image, which shows as a preview. The owner opens the same task and sees the image. Bob completes the first task. Each change appears in the owner's window at once.">
 </p>
 
 The portal in two windows, signed in through the local sign-in as two of the
 people `make seed` creates: `bob@example.test` on the left,
 `owner@example.test` on the right, both in the seeded team org, Acme, on
-Team's Tasks. Bob adds three tasks, one with a due time. He opens the third,
+Team's Tasks. Bob adds a task from the one text box, adds a second and
+opens it to give it a due date, then adds a third. He opens the third,
 assigns it to the owner, and attaches an image, which the task shows as a
 preview; the owner opens the same task and sees it too. Then Bob completes
 the first. Every change reaches the owner's window over the realtime channel
@@ -23,12 +24,12 @@ to when a row would wrap; `make demo-gif-dark` records the dark theme's copy,
 which the company site shows on a dark system.
 
 <p align="center">
-  <img src="docs/media/cli-demo.gif" width="876" alt="Two terminals side by side. On the left Bob signs in with tadas login, adds a task that reminds him in half an hour, adds another and attaches an image to it, lists the open tasks, and completes the first. On the right the owner runs tadas listen, and every change appears as a line the moment it happens.">
+  <img src="docs/media/cli-demo.gif" width="876" alt="Two terminals side by side. On the left Bob signs in with tadas login, adds a task due tomorrow, adds another and attaches an image to it, lists the open tasks, and completes the first. On the right the owner runs tadas listen, and every change appears as a line the moment it happens.">
 </p>
 
 The same thing from two terminals. On the left Bob works in command mode,
 one `tadas` call at a time: he signs in with `tadas login --dev-email` (the
-local stack's sign-in by address), adds a task with `--remind +30m`, adds
+local stack's sign-in by address), adds a task with `--due` and tomorrow's date, adds
 another and attaches an image to it, lists the open tasks, and completes the
 first. On the right the owner runs `tadas listen`, and every change reaches
 the terminal over the same realtime channel the portal uses, as one line:
@@ -122,8 +123,8 @@ enters a deployed environment: WorkOS AuthKit (an email code or link,
 Google, GitHub, or their company's single sign-on), and a first sign-in
 is the sign-up. It lands in the person's personal org, the org chip
 creates a team org from there, and the org's settings invite people to
-it. Locally it needs the WorkOS staging environment's API key in
-`TADAS_WORKOS_API_KEY`.
+it. Locally it needs the API key of the staging environment's Tadas App
+application in `TADAS_WORKOS_API_KEY`.
 
 ### Dashboards
 

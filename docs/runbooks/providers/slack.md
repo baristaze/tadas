@@ -258,7 +258,8 @@ separate submission, and Tadas does not make it.
 
 **Check.** In Slack, `/tadas help` answers with the usage, `/tadas add
 Buy milk` answers "Added", and the task is in Tadas, made by you. Give a
-task a due date: the reminder arrives in the channel. If `/tadas` says
+task yesterday's date as its due date: its morning has passed everywhere,
+so the reminder arrives in the channel within a minute. If `/tadas` says
 you are not a member, the email on your Slack profile is not the address
 you sign in to Tadas with.
 

@@ -129,6 +129,7 @@ tenantless = [
     "TenancyStorageInterface.redeem_socket_ticket",
     "TenancyStorageInterface.use_totp_step",
     "TenancyStorageInterface.write_identity",
+    "TenancyStorageInterface.write_time_zone",
     "TenancyStorageInterface.write_totp_secret",
     "WorkStorageInterface.claim_next",
     "WorkStorageInterface.purge_items",

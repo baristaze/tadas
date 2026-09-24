@@ -1,9 +1,9 @@
-from datetime import datetime
+from datetime import date, datetime
 from enum import StrEnum
 from typing import ClassVar
 from uuid import UUID
 
-from tadas.om.base import Identifiable, SoftDeletable, Trackable
+from tadas.om.base import Identifiable, Platform, SoftDeletable, Trackable
 
 
 class TaskStatus(StrEnum):
@@ -35,10 +35,19 @@ class Task(Identifiable, Trackable, SoftDeletable):
     # and the write lands only when the stored row still has the version the
     # caller names beside the entity. A caller that names another is stale.
     version: int = 1
-    # When the team wants to hear about the task again. Setting it schedules
-    # one reminder at that time; moving or clearing it leaves the scheduled
-    # one stale, and a stale reminder never goes out.
-    remind_at: datetime | None = None
-    # When the reminder for the current `remind_at` went out; None while it
-    # has not. A new `remind_at` clears it.
+    # The day the task is due: a date, never a time. Setting it schedules one
+    # reminder on the morning of that day, in the time zone of the person the
+    # task is for (tasks.rules.reminder_time); moving or clearing it leaves
+    # the scheduled one stale, and a stale reminder never goes out.
+    due_on: date | None = None
+    # When the reminder for the current `due_on` went out; None while it has
+    # not. A new `due_on` clears it.
     reminded_at: datetime | None = None
+
+
+class DueReminder(Platform):
+    """The reminder a task waits for: the due date it is for, and the moment
+    it goes out."""
+
+    due_on: date
+    at: datetime

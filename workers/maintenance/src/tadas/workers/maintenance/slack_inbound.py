@@ -24,7 +24,7 @@ import asyncio
 import contextlib
 import logging
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import timedelta
 from enum import StrEnum
 from typing import Any
 
@@ -93,7 +93,8 @@ def parse_command(text: str) -> Command:
 USAGE = "\n".join(
     [
         "*Tadas* keeps your team's to-do list.",
-        "• `/tadas` shows your ten newest open tasks, only to you",
+        "• `/tadas` shows your ten newest open tasks, only to you: My Tasks in Tadas,"
+        " assigned to you or unassigned and made by you",
         "• `/tadas team` shows the team's ten newest open tasks, only to you",
         "• `/tadas add <title>` adds a task, made by you",
         "• `/tadas connect` makes this channel the one Tadas posts reminders and task"
@@ -126,20 +127,16 @@ def unknown_person(org_name: str, email: str | None) -> str:
     )
 
 
-def due_text(due: date | datetime | None) -> str:
-    """The due date as Slack shows it: in the reader's own calendar, with the
-    ISO date as the fallback a client that cannot localize prints."""
-    if due is None:
-        return ""
-    if isinstance(due, datetime):
-        return f"<!date^{int(due.timestamp())}^{{date_short_pretty}}|{due.date().isoformat()}>"
-    return due.isoformat()
+def due_text(task: Task) -> str:
+    """The due date as Slack shows it: the date itself, which reads the same
+    in every time zone."""
+    return "" if task.due_on is None else task.due_on.isoformat()
 
 
 def task_line(task: Task) -> str:
     """One task of the list: its title, escaped, and its due date when set."""
     line = f"• {escaped(task.title)}"
-    due = due_text(task.remind_at)
+    due = due_text(task)
     return f"{line}  _due {due}_" if due else line
 
 

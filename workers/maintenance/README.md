@@ -17,9 +17,11 @@ second lane is a second replica told its lane.
   or, once its attempts are spent, makes it a dead letter. When it
   parks, the item is handed back for the time it named and spends no
   attempt.
-- **The kinds.** A reminder marks its task reminded and announces it,
-  if the task is still open and still due at the time the reminder was
-  set for; otherwise it sends nothing. A Slack post writes one line to
+- **The kinds.** A reminder waits for nine in the morning of its task's
+  due date, in the time zone of the person the task is for, read when it
+  runs; before then it parks until then. Then it marks its task reminded
+  and announces it, if the task is still open and still due on that
+  date; otherwise it sends nothing. A Slack post writes one line to
   the org's channel (a task created, completed, or reminded of),
   records it under the item's key so a rerun posts nothing, parks on a
   rate limit for the time Slack named, and marks the installation

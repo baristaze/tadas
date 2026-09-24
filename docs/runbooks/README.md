@@ -40,8 +40,8 @@ touches and the ADR that explains why it is shaped that way.
     the Billing Portal, the webhook endpoint and its secret), and
     `stripe listen` on a laptop.
   - [providers/workos.md](providers/workos.md): the sign-in. The
-    Staging and Production environments, the AuthKit application and
-    its Redirects tab, the API key, `tadas-ops workos-bootstrap`, and
+    Staging and Production environments, the Tadas App application,
+    its API key and its Redirects tab, `tadas-ops workos-bootstrap`, and
     the organizations Tadas makes.
   - [providers/slack.md](providers/slack.md): the Slack app. One app
     per environment from its committed manifest, the signing secret and

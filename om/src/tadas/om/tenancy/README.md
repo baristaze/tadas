@@ -17,7 +17,8 @@ of the seven kinds of thing [Tadas is made of](../../../../README.md).
 - **Identity**: one person across every org: an email, the identity
   provider's name for them (an issuer and a subject), and whether the
   person is on the operator allowlist and what an operator may do there
-  (read, or write, which includes read). Tadas keeps no password.
+  (read, or write, which includes read), and the person's time zone.
+  Tadas keeps no password.
 - **User**: the identity inside one org: the display name and the
   email the team sees.
 - **Membership**: the user's place in the org, with a role.
@@ -139,6 +140,12 @@ of the seven kinds of thing [Tadas is made of](../../../../README.md).
   the operator plane reaches two calls and nothing else: mint the
   secret, then confirm it with a first code. From then on the plane
   admits them only on a sign-in that verified a code.
+- **Record a time zone.** A person's time zone is an IANA name, like
+  `Europe/Istanbul`, kept on their identity, so it holds in every org
+  they are in. The portal sends the one the browser reports when the
+  person signs in. A task's reminder goes out at nine in the morning
+  there ([tasks](../tasks/README.md)). Anything that is not such a name,
+  an offset like `+03:00` among them, is refused.
 - **Sweep.** Removed members, revoked or expired keys and sessions,
   spent tickets, closed or expired invitations, and old runs of wrong
   second-factor codes are deleted for good

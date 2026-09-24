@@ -42,6 +42,7 @@ STORAGE_EXCEPTIONS: frozenset[tuple[str, str]] = frozenset(
         ("TenancyStorageInterface", "read_identity_by_issuer_subject"),
         ("TenancyStorageInterface", "write_identity"),
         ("TenancyStorageInterface", "write_totp_secret"),
+        ("TenancyStorageInterface", "write_time_zone"),
         ("TenancyStorageInterface", "confirm_totp"),
         ("TenancyStorageInterface", "use_totp_step"),
         ("TenancyStorageInterface", "read_sign_in_delay"),

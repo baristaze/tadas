@@ -1,17 +1,22 @@
 import random
+from datetime import UTC, date, datetime
 from uuid import UUID
 
+import pytest
 from contracts.task_storage import make_task
 
 from tadas.om.base import new_id
 from tadas.om.tasks.rules import (
     Place,
+    earliest_reminder_time,
     follows,
     is_after,
     is_before,
     is_between,
     is_visible,
     position_after,
+    reminder_person,
+    reminder_time,
     renumbered,
     top_position,
 )
@@ -119,3 +124,45 @@ def test_follows_compares_the_pair() -> None:
     assert not follows((1.0, low), (1.0, high))
     assert not follows((1.0, low), (1.0, low))
     assert follows((2.0, low), (1.0, high))
+
+
+# A due date's reminder: nine in the morning, in the person's time zone.
+
+
+@pytest.mark.parametrize(
+    ("zone", "expected"),
+    [
+        # Ahead of UTC: the morning comes before UTC's, the day before at +14.
+        ("Pacific/Kiritimati", datetime(2030, 9, 29, 19, tzinfo=UTC)),
+        ("Europe/Istanbul", datetime(2030, 9, 30, 6, tzinfo=UTC)),
+        ("Asia/Kolkata", datetime(2030, 9, 30, 3, 30, tzinfo=UTC)),
+        # UTC, and the fallbacks to it.
+        ("UTC", datetime(2030, 9, 30, 9, tzinfo=UTC)),
+        (None, datetime(2030, 9, 30, 9, tzinfo=UTC)),
+        ("Not/A_Zone", datetime(2030, 9, 30, 9, tzinfo=UTC)),
+        # Behind UTC: after UTC's morning, in its own summer time.
+        ("America/New_York", datetime(2030, 9, 30, 13, tzinfo=UTC)),
+        ("Pacific/Honolulu", datetime(2030, 9, 30, 19, tzinfo=UTC)),
+    ],
+)
+def test_the_reminder_is_nine_in_the_morning_of_the_due_date_in_the_zone(
+    zone: str | None, expected: datetime
+) -> None:
+    due = date(2030, 9, 30)
+    assert reminder_time(due, zone) == expected
+    assert reminder_time(due, zone) >= earliest_reminder_time(due)
+
+
+def test_daylight_saving_moves_the_utc_hour_and_never_the_local_one() -> None:
+    assert reminder_time(date(2030, 1, 15), "Europe/Berlin").hour == 8  # UTC+1
+    assert reminder_time(date(2030, 7, 15), "Europe/Berlin").hour == 7  # UTC+2
+
+
+def test_the_first_morning_of_a_date_is_nine_at_utc_plus_fourteen() -> None:
+    assert earliest_reminder_time(date(2030, 9, 30)) == datetime(2030, 9, 29, 19, tzinfo=UTC)
+
+
+def test_the_reminder_keeps_the_assignees_morning_or_the_creators() -> None:
+    creator, assignee = new_id(), new_id()
+    assert reminder_person(make_task(created_by=creator)) == creator
+    assert reminder_person(make_task(created_by=creator, assignee_id=assignee)) == assignee

@@ -85,9 +85,9 @@ that address, the one their sign-in proved. The command runs with that
 member's own role. Someone Tadas does not know is told how to join.
 
 **The commands are few.** `/tadas` alone is your ten newest open tasks,
-the portal's My Tasks; `/tadas team` is the org's ten newest; `/tadas add
-<title>`, `/tadas connect`, and `/tadas help`. Editing and deleting stay
-in Tadas.
+the portal's My Tasks: assigned to you, or unassigned and made by you.
+`/tadas team` is the org's ten newest. Then `/tadas add <title>`,
+`/tadas connect`, and `/tadas help`. Editing and deleting stay in Tadas.
 
 **Each deployed environment has its own app.** An app has one set of
 request URLs. The two manifests are committed in `deployment/slack/`, and

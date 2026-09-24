@@ -25,7 +25,7 @@ const task = (id: string, overrides: Partial<TaskView> = {}): TaskView => ({
   updated_at: "2026-09-17T10:00:00Z",
   created_by: "ann",
   deleted_at: null,
-  remind_at: null,
+  due_on: null,
   reminded_at: null,
   version: 1,
   ...overrides,

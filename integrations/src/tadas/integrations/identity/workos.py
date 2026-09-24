@@ -2,18 +2,29 @@
 
 AuthKit is the hosted sign-in (an email code or link, Google, GitHub, and an
 organization's single sign-on); the code it hands back is exchanged here,
-server-side, with the PKCE verifier the sign-in started with. An AuthKit
-application has a client secret of its own, which is not the environment's
-API key; the exchange needs neither, so this process holds only the API
-key, and uses it for the management calls (organizations, invitations, the
-admin portal). A WorkOS organization stands for a Tadas org and carries its
-id as `external_id`.
+server-side. This process holds one credential: the Tadas App application's
+API key, made on that application's own API keys tab. It is the client
+secret of the exchange, which is a confidential client's, and it
+authenticates every management call (organizations, invitations, the admin
+portal), so an invitation carries the application's context. The key of
+another application, or of the environment, is not it: WorkOS answers the
+exchange with `invalid_client`, and `start` refuses to boot on it.
+
+The exchange also sends the PKCE verifier the sign-in started with. WorkOS
+checks it when the secret is present too, so a code taken from the redirect
+is worth nothing without the tab that started the sign-in (RFC 9700 asks for
+PKCE on a confidential client as well). The device sign-in sends no secret:
+WorkOS takes it as a public client's, and the SDK sends none with it.
+
+A WorkOS organization stands for a Tadas org and carries its id as
+`external_id`.
 
 The SDK's own HTTP client is replaced by one this impl owns, with the
 timeout from settings, so every call out carries it. The SDK's retries stay:
 they retry a 429 and a server error with backoff. Every SDK error is
 translated here; none crosses the boundary."""
 
+import logging
 from datetime import timedelta
 from typing import Any, Literal, NoReturn
 
@@ -37,6 +48,7 @@ from tadas.integrations.exceptions import (
     ProviderConflict,
     ProviderRefused,
     ProviderUnavailable,
+    UnsafeIntegration,
 )
 from tadas.integrations.identity import (
     DeviceAuthorization,
@@ -49,7 +61,14 @@ from tadas.integrations.identity import (
     ProvidedUser,
 )
 
+log = logging.getLogger(__name__)
+
 WORKOS_API = "https://api.workos.com"
+# A code WorkOS never issued. Exchanged at start with the key as the client
+# secret, it answers `invalid_grant` when the key is the application's, and
+# `invalid_client` when it is another application's, the environment's, or
+# another environment's. Nothing is made either way.
+CREDENTIAL_CHECK_CODE = "tadas-credential-check"
 DEVICE_ERRORS: dict[str, type[Exception]] = {
     "authorization_pending": DevicePending,
     "slow_down": DeviceSlowDown,
@@ -67,6 +86,12 @@ def _translate(error: Exception, doing: str) -> NoReturn:
     """Every SDK error as an integration exception, naming what was being done."""
     if isinstance(error, BadRequestError) and error.error in DEVICE_ERRORS:
         raise DEVICE_ERRORS[error.error](f"{doing}: {error.error}") from None
+    if isinstance(error, BadRequestError) and error.error == "invalid_client":
+        # The process's credential, not the person's request: revoked since
+        # the start, or not the application's. It is a 503 until it is fixed.
+        raise ProviderUnavailable(
+            f"{doing}: WorkOS refused TADAS_WORKOS_API_KEY as the application's (invalid_client)"
+        ) from None
     if isinstance(error, (ServerError, RateLimitExceededError)):
         raise ProviderUnavailable(f"{doing}: WorkOS answered {error.status_code}") from None
     if isinstance(error, UnprocessableEntityError):
@@ -138,6 +163,8 @@ class IdentityProviderWorkOSImpl(IdentityProviderInterface):
         self._client_id = client_id
         self._base_url = base_url.rstrip("/")
         self._http = httpx.AsyncClient(timeout=timeout.total_seconds(), transport=transport)
+        # One client, one credential: the application's key is the exchange's
+        # client secret and the management calls' bearer alike.
         self._workos = AsyncWorkOSClient(
             api_key=api_key,
             client_id=client_id,
@@ -145,19 +172,11 @@ class IdentityProviderWorkOSImpl(IdentityProviderInterface):
             max_retries=max_retries,
             http_client=self._http,
         )
-        # The sign-in exchanges, as the application's public client: no
-        # secret goes with them, the PKCE verifier and the device code do.
-        self._public = AsyncWorkOSClient(
-            client_id=client_id,
-            base_url=self._base_url,
-            max_retries=max_retries,
-            is_public=True,
-            http_client=self._http,
-        )
 
     @property
     def issuer(self) -> str:
-        """The issuer of the access tokens this application's sign-ins mint."""
+        """The issuer Tadas files this application's subjects under. A WorkOS
+        user id is the environment's, shared by its applications."""
         return f"{self._base_url}/user_management/{self._client_id}"
 
     @property
@@ -187,7 +206,7 @@ class IdentityProviderWorkOSImpl(IdentityProviderInterface):
         self, code: str, *, code_verifier: str | None, invitation_token: str | None = None
     ) -> ProvidedSignIn:
         try:
-            response = await self._public.user_management.authenticate_with_code(
+            response = await self._workos.user_management.authenticate_with_code(
                 code=code, code_verifier=code_verifier, invitation_token=invitation_token
             )
         except (WorkOSError, httpx.HTTPError) as error:
@@ -196,7 +215,7 @@ class IdentityProviderWorkOSImpl(IdentityProviderInterface):
 
     async def start_device(self) -> DeviceAuthorization:
         try:
-            started = await self._public.user_management.create_device(client_id=self._client_id)
+            started = await self._workos.user_management.create_device(client_id=self._client_id)
         except (WorkOSError, httpx.HTTPError) as error:
             _translate(error, "starting a device sign-in")
         return DeviceAuthorization(
@@ -210,7 +229,7 @@ class IdentityProviderWorkOSImpl(IdentityProviderInterface):
 
     async def authenticate_device(self, device_code: str) -> ProvidedSignIn:
         try:
-            response = await self._public.user_management.authenticate_with_device_code(
+            response = await self._workos.user_management.authenticate_with_device_code(
                 device_code=device_code
             )
         except (WorkOSError, httpx.HTTPError) as error:
@@ -311,7 +330,35 @@ class IdentityProviderWorkOSImpl(IdentityProviderInterface):
         return f"identity provider: WorkOS ({self._base_url}, client {self._client_id})"
 
     async def start(self) -> None:
-        return None
+        """Proves the key is this application's before the process serves:
+        refused on `invalid_client`, which only a key of another application
+        or another environment earns. WorkOS out of reach is said and does
+        not stop the start; the sign-ins say it again as a 503."""
+        try:
+            await self._workos.user_management.authenticate_with_code(code=CREDENTIAL_CHECK_CODE)
+        except BadRequestError as error:
+            if error.error == "invalid_client":
+                raise UnsafeIntegration(
+                    "TADAS_WORKOS_API_KEY is not the API key of the WorkOS application "
+                    f"{self._client_id}: WorkOS answered invalid_client "
+                    f"({error.error_description or 'no description'}). Make the key on "
+                    "that application's own API keys tab (Applications, Tadas App, API "
+                    "keys), not under the environment's API Keys"
+                ) from None
+            if error.error != "invalid_grant":
+                log.warning(
+                    "the WorkOS credential check answered %s; the key is not proven to be "
+                    "application %s's",
+                    error.error or error.status_code,
+                    self._client_id,
+                )
+        except (WorkOSError, httpx.HTTPError) as error:
+            log.warning(
+                "the WorkOS credential check did not finish (%s); the key is not proven to "
+                "be application %s's",
+                type(error).__name__,
+                self._client_id,
+            )
 
     async def close(self) -> None:
         await self._http.aclose()

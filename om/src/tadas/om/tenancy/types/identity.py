@@ -20,9 +20,11 @@ class Identity(Identifiable, Trackable):
         "totp_secret",
         "totp_confirmed_at",
         "totp_last_step",
+        "time_zone",
     )
-    """The link to the provider and the allowlist entry: set by the manager's
-    own operations, never copied from a caller."""
+    """The link to the provider, the allowlist entry, the second factor, and
+    the time zone: set by the manager's own operations, never copied from a
+    caller."""
 
     email: str
     # The provider's name for this person: the issuer and the subject under
@@ -42,6 +44,11 @@ class Identity(Identifiable, Trackable):
     totp_secret: str | None = None
     totp_confirmed_at: datetime | None = None
     totp_last_step: int | None = None
+    # Where the person is, as an IANA name ("Europe/Istanbul"): the portal
+    # sends the browser's own when the person signs in. It decides the hour
+    # of the morning a due date's reminder goes out. None until first sent,
+    # and a reminder then keeps UTC's morning.
+    time_zone: str | None = None
 
     @property
     def totp_enrolled(self) -> bool:

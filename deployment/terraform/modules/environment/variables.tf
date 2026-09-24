@@ -38,7 +38,7 @@ variable "app_domain_name" {
 }
 
 variable "workos_client_id" {
-  description = "The client id of the WorkOS application people of this environment sign in through: staging's application in staging, production's in production. Not a secret; the API key is (TADAS_WORKOS_API_KEY, from the secrets module)."
+  description = "The client id of the Tadas App, the WorkOS application people of this environment sign in through: staging's in staging, production's in production. Not a secret; that application's own API key is (TADAS_WORKOS_API_KEY, from the secrets module)."
   type        = string
 }
 

@@ -175,7 +175,10 @@ the names of what was written and never a value.
      bootstrap writes `stripe_webhook_secret` itself, under a second
      restricted key the person holds in their shell
      (`TADAS_STRIPE_BOOTSTRAP_KEY`) and never writes to the cloud.
-     WorkOS comes first, since the grants below sign people up through it and every
+     `workos_api_key` is the Tadas App application's own API key,
+     never the WorkOS environment's; the API refuses to start on
+     another. WorkOS comes first, since the grants below sign people
+     up through it and every
      sign-in answers `503` without its key. Each environment has a
      Slack app of its own (`deployment/slack/manifest.<env>.json`):
      its two secrets go into the two secrets above, and its client id

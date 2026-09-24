@@ -17,7 +17,7 @@ export interface TaskRow {
   assigneeId: string | null;
   createdBy: string;
   assignee: string | null;
-  /** The due time's badge, or null when the task has none. */
+  /** The due date's badge, or null when the task has none. */
   due: DueBadge | null;
 }
 
