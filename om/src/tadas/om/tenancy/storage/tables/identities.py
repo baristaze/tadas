@@ -44,6 +44,7 @@ class Identities(GlobalIdentifiableMixin, TrackableMixin, Base):
     totp_secret: Mapped[str | None]
     totp_confirmed_at: Mapped[datetime | None]
     totp_last_step: Mapped[int | None] = mapped_column(BigInteger())
+    time_zone: Mapped[str | None]
     # The run of failed sign-ins moved to `sign_in_delays`, keyed on the
     # email's digest. The columns are dead and deferred: no read names them
     # and no write sets them, the database's default fills the one that is

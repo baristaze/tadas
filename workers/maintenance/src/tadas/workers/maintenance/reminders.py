@@ -1,11 +1,17 @@
-"""The reminder handler: a task's due time came, so the team hears of it.
+"""The reminder handler: a task's due date came, so the team hears of it.
 
-The item was scheduled by the write that set the due time and waited in the
-queue until then. Whether it still means anything is the task's to say, in
-one conditional write: open, living, still due at the time the item carries,
-and not yet reminded. An edit that moved or cleared the due time, a task
-finished or deleted meanwhile, and a second run of a reminder that went out
-all make that write land nothing, and the item completes without a word."""
+A due date has no hour. Its reminder goes out at nine in the morning of the
+date, in the time zone of the person the task is for: the assignee, or the
+creator when the task is unassigned (`tasks.rules.reminder_time`). The item
+was scheduled by the write that set the date, for the first moment any zone's
+morning of it comes. When it runs, the handler reads the task and the person
+as they are now; before their morning, it parks until then.
+
+Whether the reminder still means anything is the task's to say, in one
+conditional write: open, living, still due on the date read, and not yet
+reminded. An edit that moved or cleared the date, a task finished or deleted
+meanwhile, and a second item or a second run for a reminder that went out all
+make that write land nothing, and the item completes without a word."""
 
 import logging
 from typing import ClassVar
@@ -14,25 +20,28 @@ from tadas.om.base import utcnow
 from tadas.om.opcontext import OpContext, Permission
 from tadas.om.tasks import TasksManagerInterface
 from tadas.om.work.types.handler import WorkHandlerInterface, WorkParked
-from tadas.om.work.types.work_item import TaskReminderPayload, WorkItem
+from tadas.om.work.types.work_item import WorkItem
 
 log = logging.getLogger(__name__)
 
 
 class TaskReminderHandlerImpl(WorkHandlerInterface):
-    REQUIRES: ClassVar[tuple[Permission, ...]] = (Permission.WRITE,)
-    """`fire_reminder` writes."""
+    REQUIRES: ClassVar[tuple[Permission, ...]] = (Permission.READ, Permission.WRITE)
+    """`get_due_reminder` reads; `fire_reminder` writes."""
 
     def __init__(self, tasks: TasksManagerInterface) -> None:
         self._tasks = tasks
 
     async def handle(self, ctx: OpContext, item: WorkItem) -> None:
-        payload = TaskReminderPayload.model_validate(item.payload)
-        early = payload.not_before - utcnow()
+        due = await self._tasks.get_due_reminder(ctx, item.target_id)
+        if due is None:
+            log.info("reminder %s for task %s is stale; nothing sent", item.id, item.target_id)
+            return
+        early = due.at - utcnow()
         if early.total_seconds() > 0:
-            # Claimed before its time (a clock ahead, a hand-back): wait it out.
+            # Before the person's morning: the item waits in the queue for it.
             raise WorkParked("the reminder is not due yet", early)
-        fired = await self._tasks.fire_reminder(ctx, item.target_id, payload.not_before)
+        fired = await self._tasks.fire_reminder(ctx, item.target_id, due.due_on)
         if fired is None:
             log.info("reminder %s for task %s is stale; nothing sent", item.id, item.target_id)
             return

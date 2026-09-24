@@ -3,7 +3,7 @@ tenant fence's evidence: each one presents another tenant's identifier and
 asserts that nothing is found and nothing changes. The negative control that
 says what they catch is in `docs/runbooks/tenant-isolation.md`."""
 
-from datetime import timedelta
+from datetime import date, timedelta
 from uuid import UUID
 
 import pytest
@@ -515,18 +515,31 @@ class TaskStorageContract:
             (1.0, second.id),
         ]
 
+    async def test_a_due_date_is_set_moved_and_cleared(
+        self, storage: TasksStorageInterface
+    ) -> None:
+        org = new_id()
+        task = make_task().model_copy(update={"due_on": date(2030, 1, 31)})
+        await storage.create_task(org, task, (make_row(org, task),))
+        moved = await bump(storage, org, task, due_on=date(2030, 2, 1))
+        assert (await storage.read_task(org, task.id)) == moved
+        cleared = await bump(storage, org, moved, due_on=None)
+        stored = await storage.read_task(org, task.id)
+        assert stored == cleared and stored is not None and stored.due_on is None
+
     async def test_a_reminder_is_marked_once_and_only_while_it_is_due(
         self, storage: TasksStorageInterface
     ) -> None:
         """The reminder's compare-and-set: it lands while the task is open,
-        living, due at the time the reminder carries, and not yet reminded,
-        and never for another tenant; a second run of it lands nothing."""
+        living, due on the date the reminder read, and not yet reminded, and
+        never for another tenant; a second run of it lands nothing."""
         org, other = new_id(), new_id()
-        due = utcnow().replace(microsecond=0)
-        task = make_task().model_copy(update={"remind_at": due})
+        due = date(2030, 9, 30)
+        task = make_task().model_copy(update={"due_on": due})
         await storage.create_task(org, task, (make_row(org, task),))
+        assert (await storage.read_task(org, task.id)) == task, "the date round-trips"
         assert await storage.mark_reminded(other, task.id, due, utcnow(), ()) is None
-        moved = due + timedelta(minutes=5)
+        moved = due + timedelta(days=1)
         assert await storage.mark_reminded(org, task.id, moved, utcnow(), ()) is None
         now = utcnow()
         marked = await storage.mark_reminded(
@@ -534,8 +547,12 @@ class TaskStorageContract:
         )
         assert marked is not None
         assert marked.reminded_at == now and marked.version == task.version + 1
+        assert marked.due_on == due
         assert await storage.read_task(org, task.id) == marked
         assert await storage.mark_reminded(org, task.id, due, utcnow(), ()) is None
-        done = make_task(status=TaskStatus.DONE).model_copy(update={"remind_at": due})
+        done = make_task(status=TaskStatus.DONE).model_copy(update={"due_on": due})
         await storage.create_task(org, done, (make_row(org, done),))
         assert await storage.mark_reminded(org, done.id, due, utcnow(), ()) is None
+        undated = make_task()
+        await storage.create_task(org, undated, (make_row(org, undated),))
+        assert await storage.mark_reminded(org, undated.id, due, utcnow(), ()) is None

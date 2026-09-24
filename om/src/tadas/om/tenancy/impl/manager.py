@@ -86,6 +86,7 @@ from tadas.om.tenancy.rules import (
     capped_role,
     check_email,
     check_org,
+    check_time_zone,
     credential_kind_of,
     email_digest,
     hash_token,
@@ -1100,6 +1101,25 @@ class TenancyManagerImpl(TenancyManagerInterface):
         if identity is None:
             raise NotFound(f"identity {user.identity_id} not found")
         return identity
+
+    async def set_time_zone(self, ctx: OpContext, time_zone: str) -> Identity:
+        ctx.require(Permission.READ)
+        try:
+            check_time_zone(time_zone)
+        except ValueError as error:
+            raise ValidationFailed(str(error)) from None
+        user = await self._live_user(ctx, ctx.user_id)
+        if not await self._storage.write_time_zone(user.identity_id, time_zone, utcnow()):
+            raise NotFound(f"identity {user.identity_id} not found")
+        return await self.get_identity(ctx)
+
+    async def get_time_zone(self, ctx: OpContext, user_id: UUID) -> str | None:
+        ctx.require(Permission.READ)
+        user = await self._storage.read_user(ctx.org_id, user_id)
+        if user is None:
+            return None
+        identity = await self._storage.read_identity(user.identity_id)
+        return None if identity is None else identity.time_zone
 
     # Invitations and single sign-on.
 

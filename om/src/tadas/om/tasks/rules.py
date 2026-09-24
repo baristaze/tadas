@@ -1,12 +1,15 @@
 """Pure rules of the tasks namespace: which tasks a filter shows, where a
-cursor cuts, and the arithmetic of the open list's manual order. Values in,
+cursor cuts, the arithmetic of the open list's manual order, and when a due
+date's reminder goes out. Values in,
 values out; no clock, no storage, no settings. The manager and both storage
 impls call these; the relational impl spells the visibility, cursor, and
 follows rules in SQL where one statement must decide, and names the rule it
 mirrors."""
 
 from collections.abc import Sequence
+from datetime import UTC, date, datetime, time, timedelta
 from uuid import UUID
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor, TaskFilter
 from tadas.om.tasks.types.task import Task, TaskScope
@@ -89,3 +92,46 @@ def renumbered(count: int) -> list[float]:
     """The positions of a renumbered open list, top first: whole numbers, so
     every gap is wide again."""
     return [float(index) for index in range(count)]
+
+
+REMINDER_HOUR = time(9)
+"""A due date has no hour, so its reminder takes one: nine in the morning of
+the due date, in the time zone of the person the task is for."""
+
+AHEAD_OF_UTC_AT_MOST = timedelta(hours=14)
+"""The furthest any time zone runs ahead of UTC (Pacific/Kiritimati): no
+person's morning of a date comes before nine there."""
+
+
+def reminder_zone(name: str | None) -> ZoneInfo:
+    """The zone a reminder is timed in: the person's, by its IANA name, or UTC
+    when they have none or the name is not one this process knows."""
+    if name:
+        try:
+            return ZoneInfo(name)
+        except ZoneInfoNotFoundError, ValueError:
+            pass
+    return ZoneInfo("UTC")
+
+
+def reminder_person(task: Task) -> UUID:
+    """Whose morning the reminder keeps: the assignee's, or the creator's when
+    the task is unassigned."""
+    return task.assignee_id if task.assignee_id is not None else task.created_by
+
+
+def reminder_time(due_on: date, time_zone: str | None) -> datetime:
+    """When the reminder of `due_on` goes out: nine in the morning of that
+    day in the zone named, in UTC. A day that skips or repeats nine (a
+    daylight-saving change at that hour) takes the first reading."""
+    local = datetime.combine(due_on, REMINDER_HOUR, tzinfo=reminder_zone(time_zone))
+    return local.astimezone(UTC)
+
+
+def earliest_reminder_time(due_on: date) -> datetime:
+    """The first moment any person's reminder of `due_on` can go out: nine
+    in the morning in the zone furthest ahead of UTC. The reminder's work
+    item waits in the queue until then, and its handler waits the rest from
+    the person's zone as it reads when it runs, so an assignee changed or a
+    zone moved after the date was set is still met on their morning."""
+    return datetime.combine(due_on, REMINDER_HOUR, tzinfo=UTC) - AHEAD_OF_UTC_AT_MOST
