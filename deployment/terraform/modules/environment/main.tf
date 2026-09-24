@@ -60,15 +60,19 @@ locals {
     # Both processes call the payment processor, and only the API receives
     # its deliveries; the worker holds the signing secret too, one set of
     # process secrets being simpler than a set per service.
-    TADAS_STRIPE_ORG_KEY        = module.secrets.stripe_org_key_secret_arn
+    TADAS_STRIPE_RUNTIME_KEY    = module.secrets.stripe_runtime_key_secret_arn
     TADAS_STRIPE_WEBHOOK_SECRET = module.secrets.stripe_webhook_secret_arn
   }
 
   # The revision before this release injected the master's URL as
-  # TADAS_DATABASE_URL. A rollout the circuit breaker rolls back starts that
-  # revision again, so the serving tasks' execution roles keep reading it
-  # until the release that ends the transition.
-  rollback_secret_arns = [module.secrets.database_master_url_secret_arn]
+  # TADAS_DATABASE_URL, and the payment processor's key under its retired
+  # name, stripe_org_key. A rollout the circuit breaker rolls back starts
+  # that revision again, so the serving tasks' execution roles keep reading
+  # both until the release that ends the transition.
+  rollback_secret_arns = [
+    module.secrets.database_master_url_secret_arn,
+    module.secrets.stripe_org_key_secret_arn,
+  ]
 
   # A one-off task opens small pools: it runs one command, not requests.
   # deployment/cloud/README.md counts them in the connection budget.
