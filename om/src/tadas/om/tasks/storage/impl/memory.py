@@ -34,6 +34,12 @@ class TasksStorageMemoryImpl(MemoryStorageBase, TasksStorageInterface):
         ]
         return sorted(tasks, key=lambda t: (t.position, t.id))[:limit]
 
+    async def read_recent_open_tasks(
+        self, org_id: UUID, criterion: TaskFilter, limit: int
+    ) -> list[Task]:
+        tasks = [t for t in self._live(org_id, TaskStatus.OPEN) if is_visible(t, criterion)]
+        return sorted(tasks, key=lambda t: t.id, reverse=True)[:limit]
+
     async def count_open_tasks(self, org_id: UUID, criterion: TaskFilter) -> int:
         return sum(1 for t in self._live(org_id, TaskStatus.OPEN) if is_visible(t, criterion))
 

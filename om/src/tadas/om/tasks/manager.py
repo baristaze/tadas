@@ -24,6 +24,16 @@ class TasksManagerInterface(ABC):
         ...
 
     @abstractmethod
+    async def get_recent_open_tasks(
+        self, ctx: OpContext, criterion: TaskFilter, limit: int
+    ) -> TaskPage:
+        """The newest open tasks the filter shows, newest first: one page and
+        no cursor, for a caller that shows a few and links to the rest. The
+        filter's user is the caller, as on `get_open_tasks`; `limit` is
+        clamped, and `has_more` says whether more are open."""
+        ...
+
+    @abstractmethod
     async def count_open_tasks(self, ctx: OpContext, criterion: TaskFilter) -> int:
         """How many open tasks the filter shows, the number beside a page of
         `get_open_tasks`; the filter's user is the caller, as there."""

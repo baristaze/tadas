@@ -74,6 +74,15 @@ class TasksManagerImpl(TasksManagerInterface):
         rows = await self._storage.read_open_tasks(ctx.org_id, criterion, after, limit + 1)
         return self._page(rows, limit)
 
+    async def get_recent_open_tasks(
+        self, ctx: OpContext, criterion: TaskFilter, limit: int
+    ) -> TaskPage:
+        ctx.require(Permission.READ)
+        self._own(ctx, criterion)
+        limit = self._clamp(limit)
+        rows = await self._storage.read_recent_open_tasks(ctx.org_id, criterion, limit + 1)
+        return self._page(rows, limit)
+
     async def count_open_tasks(self, ctx: OpContext, criterion: TaskFilter) -> int:
         ctx.require(Permission.READ)
         self._own(ctx, criterion)
