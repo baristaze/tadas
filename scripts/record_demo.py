@@ -1,6 +1,6 @@
 """Records the realtime demo GIF in the root README: two portal windows side by
 side, Bob (the member `make seed` creates) on the left and the owner on the
-right, both on Acme's Team's Tasks. Bob adds tasks, one with a due time,
+right, both on Acme's Team's Tasks. Bob adds tasks, gives one a due date,
 attaches an image to one and assigns it to the owner, and completes another;
 the owner's window follows live and opens the file Bob attached.
 
@@ -159,18 +159,12 @@ class Window:
             await asyncio.sleep(0.1)
         raise TimeoutError(f"{self.name}: {expression}")
 
-    async def add_task(self, title: str, due: str | None = None) -> None:
-        """Types the title, sets the due time (a `datetime-local` value, e.g.
-        2026-10-01T17:00) when there is one, and presses Enter."""
+    async def add_task(self, title: str) -> None:
+        """Types the title into the one box and presses Enter."""
         await self.js("document.querySelector('input[aria-label=\"New task\"]').focus()")
         for character in title:
             await self.cdp.send("Input.insertText", {"text": character}, self.session)
             await asyncio.sleep(0.07)
-        if due is not None:
-            await asyncio.sleep(0.4)
-            await self.set_value("document.querySelector('input[type=\"datetime-local\"]')", due)
-            await asyncio.sleep(0.9)
-            await self.js("document.querySelector('input[aria-label=\"New task\"]').focus()")
         await asyncio.sleep(0.35)
         enter = {"key": "Enter", "code": "Enter", "windowsVirtualKeyCode": 13}
         await self.cdp.send(
@@ -180,7 +174,7 @@ class Window:
 
     async def set_value(self, expression: str, value: str) -> None:
         """Sets an input the way React hears it. A date picker is drawn
-        outside the page and never reaches a screencast, so the time is set
+        outside the page and never reaches a screencast, so the date is set
         here rather than picked."""
         await self.js(
             f"""(() => {{
@@ -238,7 +232,7 @@ class Window:
         await self.click(f"{self._row(title)}.querySelector('input[type=\"checkbox\"]')")
 
     async def open(self, title: str) -> None:
-        """Opens the row's edit form, where its due time and its files are."""
+        """Opens the row's edit form, where its due date and its files are."""
         await self.click(self._button(title, "edit"))
 
     async def close(self, title: str) -> None:
@@ -280,6 +274,11 @@ class Window:
     async def preview_shown(self, title: str) -> None:
         """Waits for the open form's image preview to finish loading."""
         await self.wait_for(f"!!{self._row(title)}.querySelector('img')?.complete")
+
+    async def set_due(self, title: str, due: datetime.date) -> None:
+        """Sets the due date in the row's open form."""
+        field = f"{self._row(title)}.querySelector('form input[type=\"date\"]')"
+        await self.set_value(field, due.isoformat())
 
     async def save(self, title: str) -> None:
         await self.click(f"{self._row(title)}.querySelector('form button[type=\"submit\"]')")
@@ -361,8 +360,8 @@ async def open_window(
 
 
 async def story(owner: Window, bob: Window, image: str) -> None:
-    """Bob adds and completes tasks on the left, one with a due time and one
-    with an image; the owner watches, then opens the image. Both windows are
+    """Bob adds and completes tasks on the left, gives one a due date and one
+    an image; the owner watches, then opens the image. Both windows are
     checked after every step."""
 
     async def step(action: Awaitable[None], pause: float) -> None:
@@ -371,11 +370,13 @@ async def story(owner: Window, bob: Window, image: str) -> None:
         for window in (bob, owner):
             await window.check_layout()
 
-    # Tomorrow at five, in the browser's local time.
-    due = (datetime.date.today() + datetime.timedelta(days=1)).isoformat() + "T17:00"
+    tomorrow = datetime.date.today() + datetime.timedelta(days=1)
     await asyncio.sleep(1.2)
     await step(bob.add_task("Migrate the DB"), 1.2)
-    await step(bob.add_task("Review PR #42", due=due), 1.6)
+    await step(bob.add_task("Review PR #42"), 1.2)
+    await step(bob.open("Review PR #42"), 0.8)
+    await step(bob.set_due("Review PR #42", tomorrow), 0.9)
+    await step(bob.save("Review PR #42"), 1.6)
     await step(bob.add_task("New logo"), 1.2)
     await step(bob.open("New logo"), 0.8)
     await step(bob.assign("New logo", "Local Owner"), 0.6)
