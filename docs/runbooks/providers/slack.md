@@ -157,7 +157,8 @@ not deliver.
 **Check.** `/tadas/staging/slack` logs `slack socket mode connection is
 open`. In a Slack channel, `/tadas help` answers. For a post, connect a
 channel to an org from Tadas's settings page, `/invite @tadas` in it,
-and give a task a due time a minute away: the reminder arrives.
+and give a task yesterday's date as its due date: its morning has passed
+everywhere, so the reminder arrives within a minute.
 
 ## What is automated, and by what
 

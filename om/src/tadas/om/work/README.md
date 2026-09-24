@@ -24,7 +24,7 @@ seven kinds of thing [Tadas is made of](../../../../README.md).
 ## What can happen
 
 - **Enqueue.** Directly by a person's request, or by the outbox relay
-  when a change asked for work: setting a due time, a task created,
+  when a change asked for work: setting a due date, a task created,
   completed, or reminded in an org with a Slack channel, and a member
   added or removed in an org on Max. The item starts queued with zero
   attempts and no claim, whatever the caller sent.

@@ -6,7 +6,7 @@ seven kinds of thing [Tadas is made of](../../../../README.md).
 ## The nouns
 
 - **Task**: a title, notes, a status (open or done), an assignee, a
-  position in the open list, a due time, and a version. It remembers
+  position in the open list, a due date, and a version. It remembers
   who created it, who last changed it, and when its reminder went out.
 - **Filter**: which tasks a list shows. *Team* shows every task of the
   org. *Mine* shows the tasks assigned to me, plus the unassigned ones I
@@ -33,12 +33,12 @@ seven kinds of thing [Tadas is made of](../../../../README.md).
   removed with it.
 - **Attach a file**, list a task's files, and remove one. The upload
   itself, its confirm, and its download are the file's own.
-- **Set, move, or clear the due time.** Setting it schedules one
-  reminder at that time; moving it schedules a new one; clearing it
-  schedules none.
-- **Remind.** When the due time comes, the task is marked reminded and
-  every open screen of the org hears of it; so does the org's Slack
-  channel, when one is connected.
+- **Set, move, or clear the due date.** Setting it schedules one
+  reminder on the morning of that day; moving it schedules a new one;
+  clearing it schedules none.
+- **Remind.** At nine in the morning of the due date, the task is marked
+  reminded and every open screen of the org hears of it; so does the
+  org's Slack channel, when one is connected.
 - **Sweep.** Deleted tasks are erased for good after the retention.
 
 ## The rules
@@ -83,10 +83,18 @@ seven kinds of thing [Tadas is made of](../../../../README.md).
   first and its attachments after it; when removing them fails, the
   delete still stands, the failure is logged and counted, and the files
   stay out of every list while still counting toward the storage used.
-- **A reminder is for the due time it was set for.** It goes out only
-  while the task is open, not deleted, still due at that time, and not
-  yet reminded, all checked in one write. So a reminder for a time that
+- **A due date is a date.** A task is due on a day, never at an hour.
+  The API takes `YYYY-MM-DD` and refuses a time.
+- **The reminder keeps the person's morning.** A date has no hour, so
+  the reminder takes one: nine in the morning of the due date, in the
+  time zone of the person the task is for. That is the assignee, or the
+  creator when the task is unassigned. A person's time zone is the one
+  their browser reports when they sign in to the portal; with none
+  recorded, the reminder keeps UTC's morning. The zone is read when the
+  reminder runs, so a task handed to someone else, or a person who
+  moved, is still met on their own morning.
+- **A reminder is for the due date it was set for.** It goes out only
+  while the task is open, not deleted, still due on that date, and not
+  yet reminded, all checked in one write. So a reminder for a date that
   was moved or cleared, or for a task finished or deleted meanwhile,
   never goes out, and a reminder goes out once.
-- **A due time carries its time zone.** The API refuses one without an
-  offset rather than guess.
