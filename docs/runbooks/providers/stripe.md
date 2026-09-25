@@ -147,15 +147,34 @@ Do these once per environment, in this order. Staging first.
 
 ### 1. Check the account is the one the repository names
 
-1. Sign in at [dashboard.stripe.com](https://dashboard.stripe.com).
-2. Open the account switcher (top left). It lists the organization's
-   accounts. For staging, pick the sandbox.
-3. Open **Settings** → **Account details**. The account id there is
-   `acct_1UIfVX45a2t9JoiY` for the sandbox, or `acct_1UIfTS4Dj4HbbS1T`
-   for live.
+The dashboard has three levels, and each has its own settings page:
+the organization ("Baris Taze (Personal Projects)"), the account
+("Tadas"), and the account's sandbox ("Tadas sandbox"). The account
+details, the keys, and the webhooks live on the account and on the
+sandbox, never on the organization. When the URL reads
+`dashboard.stripe.com/org_…/org/settings`, you are on the
+organization's page: it has no **Account details**, and its
+**Personal details** → **Accounts** table lists only live accounts, so
+the live Tadas account shows there even in sandbox mode, and the
+sandbox does not.
 
-If an id differs, stop. Every call names the committed id, so a key of
-another account is refused.
+The shortest way in is the account's own URL:
+
+- the sandbox, for local and staging:
+  [dashboard.stripe.com/acct_1UIfVX45a2t9JoiY/test/apikeys](https://dashboard.stripe.com/acct_1UIfVX45a2t9JoiY/test/apikeys)
+- the live account, for production:
+  [dashboard.stripe.com/acct_1UIfTS4Dj4HbbS1T/apikeys](https://dashboard.stripe.com/acct_1UIfTS4Dj4HbbS1T/apikeys)
+
+Or by hand: sign in at [dashboard.stripe.com](https://dashboard.stripe.com),
+open the switcher at the top left, and pick **Tadas**, then its
+sandbox, **Tadas sandbox**.
+
+**Check.** The top left names **Tadas sandbox** (or **Tadas** for
+live), and the URL carries the account id: `acct_1UIfVX45a2t9JoiY` and
+`/test/` for the sandbox, `acct_1UIfTS4Dj4HbbS1T` and no `/test/` for
+live. The same id is under **Settings** → **Business** → **Account
+details**. If an id differs, stop. Every call names the committed id,
+so a key of another account is refused.
 
 ### 2. Make the two restricted keys
 
@@ -201,8 +220,12 @@ in the environment's AWS account, each holding the word `off`:
 
 The bootstrap key has no secret here. It never goes to the cloud.
 
-`off` means "not set". The processes start, billing is unconfigured,
-every org keeps its plan, and a checkout answers `503`.
+A secret in AWS cannot be empty, so Tadas uses the plain word `off`
+as a secret's value to mean "not set". Turning a secret off means
+replacing its value with that word, and nothing else.
+
+With `off`, the processes start, billing is unconfigured, every org
+keeps its plan, and a checkout answers `503`.
 
 **Check**, under your own sign-in:
 
@@ -387,14 +410,31 @@ table anyway, then name it after the environment again. Write it (step
 Then, under **Developers** → **API keys**, open the old key's menu (⋯)
 and delete it. Both keys work until then, so nothing breaks in between.
 
+**The old secret, `stripe_org_key`.** It held the one key Tadas used
+before the runtime key and the bootstrap key. Nothing reads it now, but
+it stays in AWS for one more release, for two reasons: Terraform still
+owns it, and the release before this one still reads it if it is ever
+rolled back to. Once the runtime key works, turn it off:
+
+```bash
+aws secretsmanager put-secret-value --profile tadas-staging --region us-west-2 \
+  --secret-id tadas/staging/stripe_org_key --secret-string off
+```
+
+Do not delete it. AWS keeps a deleted secret's name for at least seven
+days, and the next deploy fails when it tries to make the secret again.
+Do not write any other text into it either. A rolled-back release reads
+any other value as a key, refuses it, and does not start. The next
+release removes the secret from Terraform, and Terraform deletes it.
+
 **The bootstrap key.** Make a new one with the bootstrap's rows, store
 it in the password manager, and run the bootstrap's dry run with it.
 Then delete the old one. No environment holds it, so nothing is
 written and nothing is rolled.
 
 **The webhook signing secret.** Stripe shows it only when an endpoint
-is made, so a rotation is a new endpoint. Write `off` into the secret,
-then run the bootstrap. It finds the store empty, deletes the endpoint,
+is made, so a rotation is a new endpoint. Replace the secret's value
+with the word `off`, then run the bootstrap. It finds the store empty, deletes the endpoint,
 makes it again, and stores the new secret:
 
 ```bash
