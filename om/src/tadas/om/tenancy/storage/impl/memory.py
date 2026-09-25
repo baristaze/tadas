@@ -495,6 +495,25 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
             self._put(self._sessions, ended_org_id, ended, outbox_rows)
             self._put(self._sessions, org_id, session)
 
+    async def exchange_sign_in(self, org_id: UUID, session: Session, ended: Session) -> None:
+        # Every check, then every write: the twin of one commit.
+        async with self._lock:
+            stored = self._get(self._sessions, EMPTY_UUID, ended.id)
+            if stored is None:
+                raise NotFound(f"session {ended.id} is not a sign-in")
+            if stored.revoked_at is not None:
+                raise Conflict(f"sign-in {ended.id} was exchanged already")
+            if session.id in self._sessions:
+                raise UniqueKeyTaken(f"session {session.id} is already written")
+            self._require_free(
+                self._every(self._sessions),
+                session,
+                lambda other: other.token_hash == session.token_hash,
+                "uq_sessions_token_hash",
+            )
+            self._put(self._sessions, EMPTY_UUID, ended)
+            self._put(self._sessions, org_id, session)
+
     async def read_api_keys(
         self, org_id: UUID, after: UUID | None, limit: int, user_id: UUID | None = None
     ) -> list[ApiKey]:

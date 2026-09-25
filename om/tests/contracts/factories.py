@@ -96,6 +96,22 @@ def make_session(
     )
 
 
+def make_sign_in(identity_id: UUID, token_hash: str) -> Session:
+    """A sign-in: the credential with no tenant, kept in the system scope."""
+    now = utcnow()
+    return Session(
+        id=new_id(),
+        created_at=now,
+        updated_at=now,
+        created_by=identity_id,
+        updated_by=identity_id,
+        identity_id=identity_id,
+        token_hash=token_hash,
+        credential_kind=CredentialKind.LOGIN,
+        expires_at=now + timedelta(minutes=10),
+    )
+
+
 def make_api_key(user_id: UUID, key_hash: str) -> ApiKey:
     now = utcnow()
     return ApiKey(

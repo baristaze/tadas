@@ -345,6 +345,20 @@ class TenancyStorageInterface(ABC):
         ...
 
     @abstractmethod
+    async def exchange_sign_in(self, org_id: UUID, session: Session, ended: Session) -> None:
+        """A named atomic write: the new session lands in `org_id` and the
+        sign-in it was exchanged from, ended, in one commit or not at all, so
+        a sign-in makes one session. A sign-in is a row of the system scope,
+        which only the system scope writes, so this is one of the enumerated
+        transactions that open it; the insert runs under `org_id`. The
+        sign-in must be in the system scope and still live as stored (not
+        revoked); otherwise nothing lands: NotFound for a credential that is
+        not in the system scope (a tenant's session among them), Conflict for
+        one another exchange already ended. Two exchanges racing on one
+        sign-in admit one."""
+        ...
+
+    @abstractmethod
     async def read_api_keys(
         self, org_id: UUID, after: UUID | None, limit: int, user_id: UUID | None = None
     ) -> list[ApiKey]:

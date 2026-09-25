@@ -18,6 +18,7 @@ from contracts.factories import (
     make_org,
     make_personal_org,
     make_session,
+    make_sign_in,
     make_socket_ticket,
     make_user,
 )
@@ -42,6 +43,7 @@ CROSS_TENANT_CASES: frozenset[str] = frozenset(
     {
         "count_members",
         "create_member",
+        "exchange_sign_in",
         "create_org_with_owner",
         "issue_api_key",
         "purge_deleted",
@@ -1137,6 +1139,82 @@ class TenancyStorageContract:
             await storage.replace_session(org_b.id, new, org_a.id, ended, ())
         assert await storage.read_session(org_a.id, old.id) == old, "the old one still lives"
         assert await storage.read_session(org_b.id, new.id) is None
+
+    async def test_exchange_sign_in_ends_it_and_lands_the_session_in_one_commit(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        org = make_org()
+        sign_in = make_sign_in(new_id(), uuid4().hex)
+        await storage.write_session(EMPTY_UUID, sign_in)
+        new = make_session(sign_in.identity_id, new_id(), uuid4().hex)
+        ended = sign_in.model_copy(update={"revoked_at": utcnow()})
+        await storage.exchange_sign_in(org.id, new, ended)
+        assert await storage.read_session_by_id(sign_in.id) == (EMPTY_UUID, ended)
+        assert await storage.read_session(org.id, new.id) == new
+        assert await storage.read_session_by_digest(new.token_hash) == (org.id, new)
+        # An ended sign-in cannot be exchanged again: a sign-in makes one session.
+        again = make_session(sign_in.identity_id, new_id(), uuid4().hex)
+        with pytest.raises(Conflict):
+            await storage.exchange_sign_in(org.id, again, ended)
+        assert await storage.read_session(org.id, again.id) is None
+        assert await storage.read_session_by_digest(again.token_hash) is None
+
+    async def test_two_exchanges_of_one_sign_in_admit_one(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        """Clicks the browser delivered together, or a replayed request: the
+        row lock, or the memory lock, lets one through and the others find
+        the sign-in ended."""
+        org = make_org()
+        sign_in = make_sign_in(new_id(), uuid4().hex)
+        await storage.write_session(EMPTY_UUID, sign_in)
+        ended = sign_in.model_copy(update={"revoked_at": utcnow()})
+        candidates = [make_session(sign_in.identity_id, new_id(), uuid4().hex) for _ in range(3)]
+
+        async def exchange(new: Session) -> Session | None:
+            try:
+                await storage.exchange_sign_in(org.id, new, ended)
+            except Conflict:
+                return None
+            return new
+
+        run = await race(*(exchange(new) for new in candidates))
+        assert len(run.admitted) == 1, run.summary()
+        landed = [await storage.read_session(org.id, new.id) for new in candidates]
+        assert [s for s in landed if s is not None] == run.admitted
+
+    async def test_exchange_sign_in_never_ends_a_tenants_session(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        """Only a row of the system scope is a sign-in. A tenant's session
+        named in its place is not found there: nothing is ended and nothing
+        lands, in that tenant or in another."""
+        org_a, org_b = make_org("A"), make_org("B")
+        held = make_session(new_id(), new_id(), uuid4().hex)
+        await storage.write_session(org_a.id, held)
+        new = make_session(held.identity_id, new_id(), uuid4().hex)
+        ended = held.model_copy(update={"revoked_at": utcnow()})
+        for org in (org_a, org_b):
+            with pytest.raises(NotFound):
+                await storage.exchange_sign_in(org.id, new, ended)
+            assert await storage.read_session(org.id, new.id) is None
+        assert await storage.read_session(org_a.id, held.id) == held
+        assert await storage.read_session_by_digest(new.token_hash) is None
+
+    async def test_exchange_sign_in_ends_nothing_when_the_new_token_is_taken(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        org = make_org()
+        taken = make_session(new_id(), new_id(), uuid4().hex)
+        await storage.write_session(org.id, taken)
+        sign_in = make_sign_in(new_id(), uuid4().hex)
+        await storage.write_session(EMPTY_UUID, sign_in)
+        new = make_session(sign_in.identity_id, new_id(), taken.token_hash)
+        ended = sign_in.model_copy(update={"revoked_at": utcnow()})
+        with pytest.raises(UniqueKeyTaken):
+            await storage.exchange_sign_in(org.id, new, ended)
+        assert await storage.read_session_by_id(sign_in.id) == (EMPTY_UUID, sign_in), "still live"
+        assert await storage.read_session(org.id, new.id) is None
 
     async def test_membership_for_user(self, storage: TenancyStorageInterface) -> None:
         org = make_org()
