@@ -62,8 +62,9 @@ distribution sends the same security headers as the portal's, with a
 `Content-Security-Policy` that names the page's own origin and nothing
 else. A missing path gets `404.html` with a 404.
 `scripts/deploy_static.sh site` publishes a build: the hashed assets
-cached for a year, the pages revalidated on every load, and an
-invalidation of every page.
+cached for a year and uploaded when new, the pages revalidated on every
+load, and each page whose content changed uploaded and invalidated. A
+build whose pages did not change publishes with no invalidation.
 
 The site's name is a CNAME in the Cloudflare zone, DNS only, to the
 distribution; the create run writes it, and its certificate's validation
