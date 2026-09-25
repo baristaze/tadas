@@ -5,12 +5,13 @@ import { SettingsTabs } from "./SettingsTabs";
 import { StorageCard } from "./StorageCard";
 import { useInvitationsVm } from "./useInvitationsVm";
 import { useSettingsVm, type SettingsVm } from "./useSettingsVm";
+import { PaymentNotice } from "../billing/PaymentNotice";
 
 export function SettingsPage() {
   const vm = useSettingsVm();
   const invites = useInvitationsVm(vm.me);
   return (
-    <Page title="Settings" nav={<AppNav />}>
+    <Page title="Settings" nav={<AppNav />} notice={<PaymentNotice />}>
       <SettingsTabs />
       <div style={{ display: "flex", gap: 16, alignItems: "center" }}>
         {vm.signedInAs ? <Muted>{vm.signedInAs}</Muted> : null}

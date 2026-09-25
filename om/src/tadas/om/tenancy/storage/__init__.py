@@ -271,6 +271,17 @@ class TenancyStorageInterface(ABC):
         ...
 
     @abstractmethod
+    async def read_principal(
+        self, org_id: UUID, user_id: UUID
+    ) -> tuple[Org | None, User | None, Membership | None]:
+        """The three rows a credential stands for, read together: the org, the
+        user in it, and the user's live membership, each None when missing.
+        Every authenticated request reads them, so they come back from one
+        transaction and not three. Deleted rows are returned as stored; the
+        caller decides what a deleted one means."""
+        ...
+
+    @abstractmethod
     async def write_membership(
         self, org_id: UUID, membership: Membership, outbox_rows: tuple[OutboxRow, ...] = ()
     ) -> None: ...

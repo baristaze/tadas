@@ -44,14 +44,35 @@ def test_the_cloud_dashboard_carries_every_local_panel_by_title() -> None:
     assert cloud[: len(local)] == expected, "the first cloud widgets are the local panels, in order"
 
 
-def test_the_cloud_dashboard_adds_one_row_for_the_backing_services() -> None:
+def test_the_cloud_dashboard_adds_the_backing_services_and_the_alarmed_reads() -> None:
     extra = _cloud_titles()[len(_grafana_titles()) :]
     assert extra == [
         "Database CPU and connections",
         "Cache CPU",
         "Queue messages visible and dead",
         "Running tasks",
+        "Read latency p95, the reads with an alarm",
+        "Queue oldest message age",
     ]
+
+
+def test_the_read_latency_widget_draws_the_metric_the_read_alarms_watch() -> None:
+    """The alarms module's log filter writes `tadas_read_latency_ms`, one
+    series per route, and its alarms read the p95 of it; the widget draws the
+    same, for the routes the alarms module names."""
+    body = json.loads(re.sub(r"\$\{\w+\}", "null", CLOUD.read_text()))
+    (widget,) = [
+        widget
+        for widget in body["widgets"]
+        if widget["properties"]["title"] == "Read latency p95, the reads with an alarm"
+    ]
+    assert widget["properties"]["stat"] == "p95"
+    dashboard = (CLOUD.parent / "main.tf").read_text()
+    assert '"Tadas", "tadas_read_latency_ms", "route"' in dashboard
+    alarms = (CLOUD.parent.parent / "alarms" / "main.tf").read_text()
+    assert 'name       = "tadas_read_latency_ms"' in alarms
+    assert 'metric_name         = "tadas_read_latency_ms"' in alarms
+    assert 'extended_statistic  = "p95"' in alarms
 
 
 def test_the_cloud_dashboard_reads_the_application_metrics_from_the_tadas_namespace() -> None:
@@ -74,3 +95,19 @@ def test_the_cloud_latency_widget_reads_the_load_balancer_p95() -> None:
     ]
     assert widget["properties"]["stat"] == "p95"
     assert widget["properties"]["metrics"][0][:2] == ["AWS/ApplicationELB", "TargetResponseTime"]
+
+
+def test_the_queue_widgets_draw_what_the_queue_alarms_watch() -> None:
+    """Each inbound queue's backlog alarm reads the age of its oldest
+    message, and its dead-letter alarm the messages visible on its `-dead`
+    twin; the dashboard draws both, for the same list of queues."""
+    dashboard = (CLOUD.parent / "main.tf").read_text()
+    assert '["AWS/SQS", "ApproximateAgeOfOldestMessage", "QueueName", name' in dashboard
+    assert '"ApproximateNumberOfMessagesVisible", "QueueName", "${name}-dead"' in dashboard
+    alarms = (CLOUD.parent.parent / "alarms" / "main.tf").read_text()
+    assert 'metric_name         = "ApproximateAgeOfOldestMessage"' in alarms
+    assert 'dimensions          = { QueueName = "${each.key}-dead" }' in alarms
+    environment = (CLOUD.parent.parent / "environment" / "main.tf").read_text()
+    # Both modules take the queue module's one list, so a queue added there
+    # is drawn and alarmed on together.
+    assert environment.count("queue_names              = module.queue.queue_names") == 2

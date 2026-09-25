@@ -28,6 +28,16 @@ variable "cluster_name" {
   type        = string
 }
 
+variable "api_log_group_name" {
+  description = "The API's log group; a read's latency is read from its access lines there."
+  type        = string
+}
+
+variable "queue_names" {
+  description = "The inbound queues, prefix included; each gets a backlog alarm, and its -dead twin a dead-letter alarm."
+  type        = list(string)
+}
+
 variable "service_names" {
   description = "One tasks-below-desired alarm per service named here."
   type        = list(string)
@@ -74,4 +84,18 @@ variable "database_free_storage_bytes" {
   description = "Free storage below which the database alarm fires; 2 GiB by default."
   type        = number
   default     = 2147483648
+}
+
+variable "read_latency_p95_seconds" {
+  description = "One latency alarm per read named here: the GET route's template, and the p95 in seconds above which it fires."
+  type        = map(number)
+  default = {
+    "/v1/billing" = 1
+  }
+}
+
+variable "queue_oldest_message_seconds" {
+  description = "How long the oldest message on an inbound queue may wait before the backlog alarm fires. Ten minutes: past the five receives of a sixty-second visibility a failing message has before it is dead-lettered, which the dead-letter alarm reports."
+  type        = number
+  default     = 600
 }

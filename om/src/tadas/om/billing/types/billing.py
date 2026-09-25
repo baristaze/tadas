@@ -24,6 +24,10 @@ class Billing(Entitlements):
     comped_plan: Plan | None
     ends_at: datetime | None
     plan_after: Plan | None
+    payment_failed: bool
+    """The processor could not collect the subscription's latest invoice
+    (past due or unpaid); it clears when a later payment succeeds or the
+    subscription ends."""
     account: BillingAccount | None
 
 

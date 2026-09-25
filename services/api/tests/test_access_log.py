@@ -29,6 +29,23 @@ async def test_the_middleware_logs_the_template_not_the_query(
     assert "wst_secret" not in lines[0] and "after_seq" not in lines[0]
 
 
+async def test_the_access_line_carries_the_route_and_its_time_as_fields(
+    client: httpx.AsyncClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The fields the alarms module's log metric filter reads a route's
+    latency from."""
+    with caplog.at_level(logging.INFO, logger="tadas.services.api.gateway.observability"):
+        await client.get("/v1/events?after_seq=7")
+    (access,) = [r for r in caplog.records if r.name == "tadas.services.api.gateway.observability"]
+    fields = access.http  # type: ignore[attr-defined]
+    assert {k: fields[k] for k in ("method", "route", "status")} == {
+        "method": "GET",
+        "route": "/v1/events",
+        "status": 401,
+    }
+    assert isinstance(fields["duration_ms"], float) and fields["duration_ms"] >= 0
+
+
 async def test_the_access_line_carries_the_request_id(
     client: httpx.AsyncClient, caplog: pytest.LogCaptureFixture
 ) -> None:

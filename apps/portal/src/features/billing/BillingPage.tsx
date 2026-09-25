@@ -13,6 +13,7 @@ import {
   storageText,
   usageText,
 } from "./billingModel";
+import { PaymentNotice } from "./PaymentNotice";
 import { PlanList } from "./PlanList";
 import { useBillingVm } from "./useBillingVm";
 
@@ -27,6 +28,7 @@ export function BillingPage() {
         <Muted>Loading</Muted>
       ) : (
         <>
+          <PaymentNotice />
           <Card title="Plan">
             <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 12 }}>
               <Pill tone="accent">{planName(billing.plan)}</Pill>

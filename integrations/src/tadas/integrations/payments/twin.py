@@ -108,10 +108,14 @@ class PaymentsTwinImpl(PaymentsInterface):
         }
         return f"https://checkout.twin.invalid/c/{session_id}"
 
-    async def create_portal_session(self, customer_id: str, return_url: str) -> str:
+    async def create_portal_session(
+        self, customer_id: str, return_url: str, update_payment_method: bool = False
+    ) -> str:
         if customer_id not in self.customers:
             raise PaymentsRefused("create billing portal session", "resource_missing")
         self.portal_sessions.append(customer_id)
+        if update_payment_method:
+            return f"https://billing.twin.invalid/p/{customer_id}/payment-method"
         return f"https://billing.twin.invalid/p/{customer_id}"
 
     async def read_subscription(self, subscription_id: str) -> ProviderSubscription | None:

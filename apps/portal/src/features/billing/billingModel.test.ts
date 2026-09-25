@@ -9,6 +9,7 @@ import {
   limitLines,
   monthlyCents,
   monthlyText,
+  paymentFailedSentence,
   planName,
   priceText,
   renewsText,
@@ -42,6 +43,7 @@ function billing(overrides: Partial<BillingView> = {}): BillingView {
     active_tasks: 3,
     storage_bytes: 0,
     monthly_cents: 0,
+    payment_failed: false,
     can_manage: true,
     plans: PLANS,
     ...overrides,
@@ -153,5 +155,28 @@ describe("the billing page", () => {
       "The payment processor refused (payments_refused). Reference: req_2",
     );
     expect(checkoutFailure(new Error("offline"))).toBe("The checkout did not start.");
+  });
+});
+
+describe("a payment that failed", () => {
+  it("tells an owner or an admin while the processor retries, naming the plan kept", () => {
+    const sentence = paymentFailedSentence(billing({ ...PAYING, status: "past_due", payment_failed: true }));
+    expect(sentence).toBe(
+      "The last payment for your Pro plan did not go through. It is being tried again, and the org " +
+        "keeps the plan while it is. Update the payment method to keep it.",
+    );
+  });
+
+  it("tells them the org is on what is left once the retries stop", () => {
+    const sentence = paymentFailedSentence(billing({ status: "unpaid", payment_failed: true }));
+    expect(sentence).toBe(
+      "The last payment did not go through and the retries have stopped, so the org is on " +
+        "Free until it is paid. Update the payment method to pay it.",
+    );
+  });
+
+  it("tells a member nothing, and nobody anything once it is paid", () => {
+    expect(paymentFailedSentence(billing({ ...PAYING, status: "past_due", payment_failed: true, can_manage: false }))).toBeNull();
+    expect(paymentFailedSentence(billing({ ...PAYING }))).toBeNull();
   });
 });

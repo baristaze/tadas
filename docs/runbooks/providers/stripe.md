@@ -35,7 +35,7 @@ Stripe organization  "Tadas"                       the business; its people
 | Key | A secret that lets a program call Stripe. A **restricted key** belongs to one account and reaches only the resources it was given. Tadas takes nothing else: an **organization key** reaches every account of the organization, and a **secret key** may do everything in its account. | Two restricted keys: a runtime key per environment, in the environment's secret store, and a bootstrap key per account, held by the person who runs the bootstrap | A person, once per key |
 | Products and prices | What is sold, and for how much. A price is found by its **lookup key**, never by its id. The Max price has two volume tiers. | `deployment/stripe/desired-state.json` | `tadas-ops stripe-bootstrap` |
 | Webhook endpoint | The URL Stripe posts events to, and the **signing secret** that proves a post came from Stripe. | One per deployed environment | `tadas-ops stripe-bootstrap` |
-| Billing Portal configuration | What a customer may do on Stripe's own page: update a card, see invoices, change plan, cancel at the period's end. | One, marked with metadata | `tadas-ops stripe-bootstrap` |
+| Billing Portal configuration | What a customer may do on Stripe's own page: update a card, see invoices, change plan, cancel at the period's end. The portal's "Update payment method" button after a failed payment opens the card update directly, which needs the update turned on here. | One, marked with metadata | `tadas-ops stripe-bootstrap` |
 | Customers and subscriptions | One customer per org that ever started a checkout, carrying the org's id in its metadata. | Made by the product | The API and the worker |
 
 The account ids are not secrets. They are committed: in

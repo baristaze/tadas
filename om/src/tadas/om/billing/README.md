@@ -72,6 +72,11 @@ when asked, never from anything a person sends.
   the end.
 - **A payment that failed** leaves the org on its plan while the
   processor tries again. When the processor gives up, the org is on Free.
+  Either way, every owner and admin sees it: a notice on the billing
+  page and a banner on every other page, with a button to the
+  processor's page for a new payment method. The notice stays until a
+  later payment goes through or the subscription ends. A member sees
+  nothing, since a member cannot fix it.
 - On **Max** the subscription pays for the org's active members. When a
   member is added or removed, the count is brought in step in the
   background; the change is billed from the next invoice, with no charge

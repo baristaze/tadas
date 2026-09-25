@@ -14,6 +14,7 @@ from tadas.om.billing.rules import (
     ends_at,
     limits_of,
     paid_plan,
+    payment_failed,
     seats_metered,
     should_mirror,
 )
@@ -66,6 +67,7 @@ def billing_of(account: BillingAccount | None, now: datetime) -> Billing:
         comped_plan=comped,
         ends_at=ending,
         plan_after=(comped or Plan.FREE) if ending is not None else None,
+        payment_failed=payment_failed(account),
         account=account,
     )
 
@@ -153,12 +155,16 @@ class BillingManagerImpl(BillingManagerInterface):
         log.info("org %s started a checkout for %s", ctx.org_id, plan.value)
         return CheckoutStart(url=url)
 
-    async def open_portal(self, ctx: OpContext, return_url: str) -> str:
+    async def open_portal(
+        self, ctx: OpContext, return_url: str, update_payment_method: bool = False
+    ) -> str:
         ctx.require(Permission.MANAGE_BILLING)
         account = await self._storage.read_account(ctx.org_id)
         if account is None or account.customer_id is None:
             raise NotFound("the org has no billing account yet; choose a plan first")
-        return await self._payments.create_portal_session(account.customer_id, return_url)
+        return await self._payments.create_portal_session(
+            account.customer_id, return_url, update_payment_method
+        )
 
     async def cancel(self, ctx: OpContext) -> Billing:
         return await self._set_cancel(ctx, True)

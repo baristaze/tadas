@@ -6,6 +6,7 @@ import { tokens } from "../../design/tokens";
 import { TaskItem } from "./TaskItem";
 import type { DropSide } from "./tasksModel";
 import { useTasksVm, type TasksVm } from "./useTasksVm";
+import { PaymentNotice } from "../billing/PaymentNotice";
 
 const SCOPES: { value: TaskScope; label: string }[] = [
   { value: "mine", label: "My Tasks" },
@@ -15,7 +16,7 @@ const SCOPES: { value: TaskScope; label: string }[] = [
 export function TasksPage() {
   const vm = useTasksVm();
   return (
-    <Page title="Tasks" nav={<AppNav />}>
+    <Page title="Tasks" nav={<AppNav />} notice={<PaymentNotice />}>
       <div style={{ display: "flex", alignItems: "center", gap: tokens.space.md }}>
         <SegmentedControl label="Which tasks" value={vm.scope} options={SCOPES} onChange={vm.setScope} />
       </div>

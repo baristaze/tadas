@@ -223,10 +223,39 @@ async def test_an_invoice_that_failed_and_one_that_was_paid_move_the_status(
     failed = await world.billing.get_billing(ctx)
     assert failed.account is not None and failed.account.status is SubscriptionStatus.PAST_DUE
     assert failed.plan is Plan.TEAM  # the processor is still retrying
+    assert failed.payment_failed
     world.twin.move(subscription, status="active")
     assert await world.deliver(world.twin.invoice_event("invoice.paid", subscription))
     paid = await world.billing.get_billing(ctx)
     assert paid.account is not None and paid.account.status is SubscriptionStatus.ACTIVE
+    assert not paid.payment_failed
+
+
+async def test_a_failed_payment_is_told_until_the_processor_gives_up_and_the_plan_ends(
+    world: World,
+) -> None:
+    ctx = await world.org("acme")
+    subscription = await world.buy(ctx, Plan.PRO)
+    assert not (await world.billing.get_billing(ctx)).payment_failed
+    # The processor stopped retrying: the org is on Free and still owes.
+    world.twin.move(subscription, status="unpaid")
+    assert await world.deliver(world.twin.invoice_event("invoice.payment_failed", subscription))
+    unpaid = await world.billing.get_billing(ctx)
+    assert unpaid.payment_failed and unpaid.plan is Plan.FREE
+    # The subscription ended: there is nothing left to pay for.
+    world.twin.move(subscription, status="canceled")
+    ended = world.twin.subscription_event("customer.subscription.deleted", subscription)
+    assert await world.deliver(ended)
+    assert not (await world.billing.get_billing(ctx)).payment_failed
+
+
+async def test_the_portal_opens_on_a_new_payment_method_when_asked(world: World) -> None:
+    ctx = await world.org("acme")
+    await world.buy(ctx, Plan.PRO)
+    home = await world.billing.open_portal(ctx, SUCCESS)
+    fix = await world.billing.open_portal(ctx, SUCCESS, update_payment_method=True)
+    assert not home.endswith("/payment-method")
+    assert fix.endswith("/payment-method")
 
 
 async def test_a_delivery_that_names_another_orgs_customer_changes_nothing(

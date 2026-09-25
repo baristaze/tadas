@@ -1779,13 +1779,11 @@ class TenancyManagerImpl(TenancyManagerInterface):
             raise PersonalOrgFixed(f"a personal org {rule}")
 
     async def _principal(self, org_id: UUID, user_id: UUID) -> tuple[Org, User, Membership]:
-        org = await self._storage.read_org(org_id)
+        org, user, membership = await self._storage.read_principal(org_id, user_id)
         if org is None or org.deleted_at is not None:
             raise InvalidCredential("the org is gone")
-        user = await self._storage.read_user(org_id, user_id)
         if user is None or user.deleted_at is not None:
             raise InvalidCredential("the user is gone")
-        membership = await self._storage.read_membership_for_user(org_id, user_id)
         if membership is None:
             raise InvalidCredential("the membership is gone")
         return org, user, membership

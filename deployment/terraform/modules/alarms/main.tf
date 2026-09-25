@@ -1,7 +1,9 @@
 # The default alarm set of one environment, and the one topic they all go
-# to. Seven alarms: the edge (5xx ratio, unhealthy targets, p95 latency), the
-# database (CPU, free storage), and the runtime (a service running fewer
-# tasks than it wants, one per service). The thresholds are inputs with defaults here, at the
+# to: the edge (5xx ratio, unhealthy targets, p95 latency), one per read
+# that has a latency of its own to keep (GET /v1/billing), the database
+# (CPU, free storage), the queues (a backlog and a dead letter, per
+# inbound queue), and the runtime (a service running fewer tasks than it
+# wants, one per service). The thresholds are inputs with defaults here, at the
 # leaf, because a threshold is a number and not shape; an environment that
 # wants another number passes it through the environment module, which
 # exposes none of them yet.
@@ -131,6 +133,57 @@ resource "aws_cloudwatch_metric_alarm" "http_p95_latency" {
   tags                = local.tags
 }
 
+# One read's own latency. The load balancer's p95 is every route together,
+# so a slow read that is a small share of the traffic never moves it. The
+# API writes each request's route and time as fields of its access line, and
+# a metric filter on its log group turns one route's lines into a metric of
+# raw values, from which CloudWatch computes a true p95.
+
+locals {
+  # A route template as an alarm name can carry it: /v1/billing is v1-billing.
+  read_latency_slugs = {
+    for route, seconds in var.read_latency_p95_seconds :
+    route => trim(replace(route, "/[^a-zA-Z0-9]+/", "-"), "-")
+  }
+}
+
+resource "aws_cloudwatch_log_metric_filter" "read_latency" {
+  for_each = var.read_latency_p95_seconds
+
+  name           = "${local.prefix}-read-latency-${local.read_latency_slugs[each.key]}"
+  log_group_name = var.api_log_group_name
+  pattern        = "{ $.http.method = \"GET\" && $.http.route = \"${each.key}\" }"
+
+  metric_transformation {
+    name       = "tadas_read_latency_ms"
+    namespace  = "Tadas"
+    value      = "$.http.duration_ms"
+    unit       = "Milliseconds"
+    dimensions = { route = "$.http.route" }
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "read_latency" {
+  for_each = var.read_latency_p95_seconds
+
+  alarm_name          = "${local.prefix}-read-latency-${local.read_latency_slugs[each.key]}"
+  alarm_description   = "GET ${each.key} answered slower than ${each.value}s at p95 for ${var.evaluation_periods} periods of ${var.period_seconds}s, as the API timed it."
+  namespace           = "Tadas"
+  metric_name         = "tadas_read_latency_ms"
+  dimensions          = { route = each.key }
+  extended_statistic  = "p95"
+  period              = var.period_seconds
+  evaluation_periods  = var.evaluation_periods
+  comparison_operator = "GreaterThanThreshold"
+  threshold           = each.value * 1000
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = [aws_sns_topic.alarms.arn]
+  ok_actions          = [aws_sns_topic.alarms.arn]
+  tags                = local.tags
+
+  depends_on = [aws_cloudwatch_log_metric_filter.read_latency]
+}
+
 # The database.
 
 resource "aws_cloudwatch_metric_alarm" "database_cpu" {
@@ -162,6 +215,54 @@ resource "aws_cloudwatch_metric_alarm" "database_free_storage" {
   evaluation_periods  = var.evaluation_periods
   comparison_operator = "LessThanThreshold"
   threshold           = var.database_free_storage_bytes
+  alarm_actions       = [aws_sns_topic.alarms.arn]
+  ok_actions          = [aws_sns_topic.alarms.arn]
+  tags                = local.tags
+}
+
+# The queues: two alarms per inbound queue. Stripe's calls in and Slack's
+# are answered at the edge and handled by the worker from here, so a worker
+# that stops draining one leaves the caller answered and nothing done.
+# A backlog is the oldest message waiting past a bound, which reads the same
+# at any volume; a dead letter is one message in the queue's `-dead` twin,
+# where a message lands after its last attempt, and one is enough to look.
+# An idle queue stops reporting after some hours, and a dead-letter queue
+# that holds a message goes idle too, so missing data keeps the alarm's
+# state instead of clearing it.
+
+resource "aws_cloudwatch_metric_alarm" "queue_backlog" {
+  for_each = toset(var.queue_names)
+
+  alarm_name          = "${each.key}-backlog"
+  alarm_description   = "The oldest message on ${each.key} waited longer than ${var.queue_oldest_message_seconds}s for ${var.evaluation_periods} periods of ${var.period_seconds}s: the worker is not draining it."
+  namespace           = "AWS/SQS"
+  metric_name         = "ApproximateAgeOfOldestMessage"
+  dimensions          = { QueueName = each.key }
+  statistic           = "Maximum"
+  period              = var.period_seconds
+  evaluation_periods  = var.evaluation_periods
+  comparison_operator = "GreaterThanThreshold"
+  threshold           = var.queue_oldest_message_seconds
+  treat_missing_data  = "ignore"
+  alarm_actions       = [aws_sns_topic.alarms.arn]
+  ok_actions          = [aws_sns_topic.alarms.arn]
+  tags                = local.tags
+}
+
+resource "aws_cloudwatch_metric_alarm" "queue_dead_letter" {
+  for_each = toset(var.queue_names)
+
+  alarm_name          = "${each.key}-dead-letter"
+  alarm_description   = "A message is in ${each.key}-dead: it failed every attempt on ${each.key}."
+  namespace           = "AWS/SQS"
+  metric_name         = "ApproximateNumberOfMessagesVisible"
+  dimensions          = { QueueName = "${each.key}-dead" }
+  statistic           = "Maximum"
+  period              = var.period_seconds
+  evaluation_periods  = 1
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  threshold           = 1
+  treat_missing_data  = "ignore"
   alarm_actions       = [aws_sns_topic.alarms.arn]
   ok_actions          = [aws_sns_topic.alarms.arn]
   tags                = local.tags

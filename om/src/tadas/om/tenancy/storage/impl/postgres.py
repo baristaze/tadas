@@ -462,6 +462,29 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
             row = (await session.execute(stmt)).scalar_one_or_none()
             return None if row is None else to_model(row, Membership)
 
+    async def read_principal(
+        self, org_id: UUID, user_id: UUID
+    ) -> tuple[Org | None, User | None, Membership | None]:
+        # The three reads of `read_org`, `read_user`, and
+        # `read_membership_for_user`, in one transaction under the tenant and
+        # the user: one checkout and one scope instead of three.
+        org_stmt = select(Orgs).where(Orgs.org_id == org_id, Orgs.id == org_id)
+        user_stmt = select(Users).where(Users.org_id == org_id, Users.id == user_id)
+        membership_stmt = select(Memberships).where(
+            Memberships.org_id == org_id,
+            Memberships.user_id == user_id,
+            Memberships.deleted_at.is_(None),
+        )
+        async with self._session_for(Orgs, org_id=org_id, user_id=user_id) as session:
+            org = (await session.execute(org_stmt)).scalar_one_or_none()
+            user = (await session.execute(user_stmt)).scalar_one_or_none()
+            membership = (await session.execute(membership_stmt)).scalar_one_or_none()
+            return (
+                None if org is None else to_model(org, Org),
+                None if user is None else to_model(user, User),
+                None if membership is None else to_model(membership, Membership),
+            )
+
     async def write_membership(
         self, org_id: UUID, membership: Membership, outbox_rows: tuple[OutboxRow, ...] = ()
     ) -> None:

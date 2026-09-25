@@ -72,9 +72,10 @@ change. A name the image does not host refuses the boot.
   `POST`, `DELETE`)
 - **Events.** The org's diary after a sequence number. (`/v1/events`)
 - **Billing.** The org's plan, where it comes from, its seats and
-  active tasks against the plan's bounds, and the plans on offer; a
-  checkout for a paid plan and the processor's own portal, each coming
-  back only to a page of the portal; cancel at the period's end, and
+  active tasks against the plan's bounds, whether the latest payment
+  failed, and the plans on offer; a checkout for a paid plan and the
+  processor's own portal (its home, or its flow for a new payment
+  method), each coming back only to a page of the portal; cancel at the period's end, and
   taking that back. Everyone in the org reads; an owner or an admin
   changes. (`/v1/billing`, `/v1/billing/checkout`,
   `/v1/billing/portal`, `/v1/billing/cancel`, `/v1/billing/resume`)

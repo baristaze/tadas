@@ -95,7 +95,8 @@ class BillingServiceImpl(BillingServiceInterface):
 
     async def open_portal(self, ctx: OpContext, body: OpenPortalRequest) -> RedirectView:
         back = portal_url(body.return_url, self._origins)
-        return RedirectView(url=await self._billing.open_portal(ctx, back))
+        update = body.flow == "payment_method_update"
+        return RedirectView(url=await self._billing.open_portal(ctx, back, update))
 
     async def cancel(self, ctx: OpContext) -> BillingView:
         return await self._view(ctx, await self._billing.cancel(ctx))
@@ -122,6 +123,7 @@ class BillingServiceImpl(BillingServiceInterface):
             active_tasks=await self._tasks.count_active_tasks(ctx),
             storage_bytes=usage.total_size_bytes + usage.pending_size_bytes,
             monthly_cents=0 if paid is None else monthly_price_cents(paid, seats),
+            payment_failed=billing.payment_failed,
             can_manage=ctx.has(Permission.MANAGE_BILLING),
             plans=PLANS,
         )

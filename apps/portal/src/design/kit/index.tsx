@@ -29,11 +29,15 @@ export function BrandMark({ size = 28, withName = true }: { size?: number; withN
 export function Page({
   title,
   nav,
+  notice,
   narrow = false,
   children,
 }: {
   title: string;
   nav?: ReactNode;
+  /** What the page says above its title before anything else: a banner the
+   * whole app shows, such as a payment that failed. */
+  notice?: ReactNode;
   narrow?: boolean;
   children: ReactNode;
 }) {
@@ -51,6 +55,7 @@ export function Page({
               <BrandMark size={36} withName={false} />
             </div>
           ) : null}
+          {notice ? <div className="tadas-page-notice">{notice}</div> : null}
           <h1 className="tadas-title">{title}</h1>
           {/* minmax(0, 1fr): a row that never wraps shrinks with the column instead of widening it. */}
           <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: tokens.space.lg }}>{children}</div>

@@ -1,6 +1,6 @@
 import type { EventView } from "../api";
 import { describe, expect, it } from "vitest";
-import { behind, eventEnvelope, isLastPage, place } from "./stream";
+import { behind, eventEnvelope, FIRST_CATCH_UP_MARGIN_MS, isLastPage, place, readsBegan, tailSince } from "./stream";
 
 describe("place", () => {
   it("takes the first sequenced push as the cursor", () => {
@@ -53,5 +53,32 @@ describe("eventEnvelope", () => {
     expect(isLastPage(200, 200)).toBe(false);
     expect(isLastPage(199, 200)).toBe(true);
     expect(isLastPage(0, 200)).toBe(true);
+  });
+});
+
+describe("the first catch-up's window", () => {
+  const at = (seq: number, time: string): EventView => ({
+    seq,
+    kind: "tasks.task.updated",
+    target_id: `t${seq}`,
+    produced_at: `2026-09-16T${time}Z`,
+    actor_id: "u1",
+  });
+  const noon = Date.parse("2026-09-16T12:00:00Z");
+
+  it("starts the margin before the server's time the page began reading", () => {
+    expect(readsBegan("2026-09-16T12:00:03Z", 3000)).toBe(noon - FIRST_CATCH_UP_MARGIN_MS);
+  });
+
+  it("keeps the records produced since then", () => {
+    const tail = [at(3, "11:59:00"), at(4, "12:00:01")];
+    expect(tailSince(tail, 2, noon)).toEqual([at(4, "12:00:01")]);
+  });
+
+  it("cannot tell when every record of a tail read past the stream's start is recent", () => {
+    expect(tailSince([at(3, "12:00:01")], 2, noon)).toBeNull();
+    // From the start, the whole stream is in hand.
+    expect(tailSince([at(1, "12:00:01")], 0, noon)).toEqual([at(1, "12:00:01")]);
+    expect(tailSince([], 2, noon)).toEqual([]);
   });
 });

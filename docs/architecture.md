@@ -375,7 +375,12 @@ context on keeps the stage the callee needs.
   (`PLAN_PRICES`, Max's volume tiers mirrored by `monthly_price_cents`),
   and derives the plan from the mirror: a live status carries its plan,
   a subscription set to end carries it until the period's end, and a
-  grant is a second source, the higher winning. `refuse_past` is the
+  grant is a second source, the higher winning. `payment_failed` is the
+  mirror's status too: past due or unpaid is an invoice the processor
+  could not collect, and a later payment (active) or an end (canceled)
+  clears it. `open_portal` with `update_payment_method` opens the
+  processor's payment method flow, which comes back to the portal page
+  once a method is saved. `refuse_past` is the
   lever: it raises `PlanLimitReached`, a 402 carrying the lever, the
   plan, the bound, and the plan that lifts it. The tasks and tenancy
   managers hold `EntitlementsInterface` alone; the billing manager reads
@@ -1092,7 +1097,14 @@ alone, and neither key may touch what the other's work does not need
   replay pages until the last page, a failed fetch, or a page that moved
   the cursor nowhere (a seq between is not in storage yet), and the
   cursor never moves past a seq that was not applied, so the next push
-  or pong retries from where it stands.
+  or pong retries from where it stands. The first hello has no cursor
+  before it: what the page read before the socket subscribed may predate
+  a change never pushed. So the client reads the last page of the stream
+  and routes the records produced since the page began reading (the
+  hello's `sent_at` less the time the tab waited for it, less fifteen
+  seconds, past a statement's deadline), and the rest of the cache stays
+  as read. Only a tail that cannot tell (every record on it that recent)
+  or a hello with no time refreshes every query.
   Errors go to the Sentry-compatible backend named by `sentryDsn` in
   the runtime `config.json` (locally, by `VITE_SENTRY_DSN`), through
   every route's `errorElement` and React's root error hooks; the DSN is
@@ -1389,10 +1401,16 @@ page; this section says what exists.
   (`deployment/local/grafana/dashboards/tadas-overview.json`), and
   `infra/tests/test_dashboard_parity.py` holds the titles equal.
   `modules/alarms` declares the SNS topic `tadas-<env>-alarms`, the
-  email subscription from `alarm_email`, and seven alarms: the load
-  balancer's 5xx ratio, its unhealthy targets, its p95, the database's
-  CPU and free storage, and each of the two services running below its
-  desired count. [runbooks/operate.md](runbooks/operate.md) reads them.
+  email subscription from `alarm_email`, and twelve alarms: the load
+  balancer's 5xx ratio, its unhealthy targets, its p95, the p95 of
+  `GET /v1/billing` on its own, the database's CPU and free storage,
+  each of the two inbound queues (`webhooks`, `slack`) backing up and a
+  message landing in its dead-letter queue, and each of the two services
+  running below its desired count. A read's own
+  p95 comes from the API's access lines: each carries its route and its
+  time as JSON fields, and a log metric filter writes them to
+  `tadas_read_latency_ms`, which the dashboard draws beside the alarm.
+  [runbooks/operate.md](runbooks/operate.md) reads them.
 - **Scale-out.** Every service declares an autoscaling target and a
   CPU target-tracking policy in `modules/service`, created only when
   its `autoscaling.enabled` is true. The environment module ANDs each

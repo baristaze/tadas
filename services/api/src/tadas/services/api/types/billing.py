@@ -3,6 +3,7 @@ plans on offer, where a person goes to pay or to manage what they pay for,
 and the operator's grant."""
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import Field
 
@@ -55,6 +56,13 @@ class BillingView(View):
     the plan's storage figure; the plan does not refuse on it yet."""
     monthly_cents: int
     """What the paid plan costs a month at `seats`; zero with none."""
+    payment_failed: bool
+    """The processor could not collect the latest invoice: the subscription
+    is past due, and the org keeps its plan while the processor retries, or
+    unpaid, and the org is on what is left until it pays. It clears when a
+    later payment succeeds or the subscription ends. The fix is another
+    payment method: `POST /v1/billing/portal` with `flow` set to
+    `payment_method_update`."""
     can_manage: bool
     plans: tuple[PlanOfferView, ...]
 
@@ -78,7 +86,11 @@ class StartCheckoutRequest(RequestBody):
 
 
 class OpenPortalRequest(RequestBody):
+    """`flow` opens the processor's page on one task and comes back to
+    `return_url` when it is done; without it, the page's home."""
+
     return_url: str = Field(min_length=1, max_length=2000)
+    flow: Literal["payment_method_update"] | None = None
 
 
 class RedirectView(View):

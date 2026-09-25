@@ -49,9 +49,14 @@ class BillingManagerInterface(EntitlementsInterface):
         ...
 
     @abstractmethod
-    async def open_portal(self, ctx: OpContext, return_url: str) -> str:
+    async def open_portal(
+        self, ctx: OpContext, return_url: str, update_payment_method: bool = False
+    ) -> str:
         """The processor's page for the org's customer: payment methods,
-        invoices, a change between paid plans, cancellation."""
+        invoices, a change between paid plans, cancellation. With
+        `update_payment_method`, the page opens on adding a payment method
+        and comes back to `return_url` once one is saved: the way out of a
+        payment that failed."""
         ...
 
     @abstractmethod

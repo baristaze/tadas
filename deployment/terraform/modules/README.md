@@ -44,7 +44,7 @@ Three kinds of root live under this folder:
 | `domain_records`| The API's and the portal's alias records                        |
 | `service`       | One process: log groups, roles, task definition with an ADOT collector sidecar, service, and its autoscaling target and policy behind the switch |
 | `task`          | One one-off task (the migration, the operator grant): its log group, roles, and task definition, run by `aws ecs run-task` |
-| `alarms`        | The default alarm set to one SNS topic: the edge, the database, each service's task count |
+| `alarms`        | The default alarm set to one SNS topic: the edge, the reads with a latency of their own, the database, each inbound queue's backlog and dead letters, each service's task count |
 | `dashboard`     | The CloudWatch dashboard, from a JSON template carrying the local Grafana dashboard's panels by title |
 
 The `environment` module is the graph itself, and the only module a root
@@ -58,7 +58,7 @@ protection. What each set of numbers costs is in
 calls side by side is how the environments are compared.
 
 Three inputs of the `environment` module are operations rather than
-scale. `alarm_email` is where the environment's seven alarms deliver.
+scale. `alarm_email` is where the environment's alarms deliver.
 `autoscaling_enabled` is the one flip: each service's lever under it
 (`api_autoscaling`, `maintenance_autoscaling`: a ceiling, a CPU target,
 and `enabled = true` by default) takes effect only when it is true, and

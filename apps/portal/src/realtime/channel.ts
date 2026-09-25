@@ -5,7 +5,7 @@
 import type { EventView } from "../api";
 import type { ConnectionState } from "../store/connection";
 import { entityOf, isEntityChanged, parseEnvelope, type ClientCommand, type Envelope } from "./envelopes";
-import { behind, eventEnvelope, isLastPage, place, type Cursor } from "./stream";
+import { behind, eventEnvelope, isLastPage, place, readsBegan, tailSince, type Cursor } from "./stream";
 import { backoffDelay, DEGRADED_POLL_INTERVAL_MS, PING_INTERVAL_MS, STABLE_OPEN_MS } from "./timeouts";
 
 const TOPICS = ["entity_changed"];
@@ -30,13 +30,15 @@ export interface ChannelDeps {
   fetchEventsAfter(after: number, limit: number): Promise<EventView[]>;
   /** Hands one envelope to the router; the query cache is behind it. */
   route(envelope: Envelope): void;
-  /** Refreshes every query, for the one catch-up that has no cursor yet. */
+  /** Refreshes every query, for a first catch-up the stream's tail cannot answer. */
   refreshAll(): Promise<unknown>;
   connection: { getState(): ConnectionState };
   /** Records per replay page; the production size is EVENTS_PAGE. */
   pageSize: number;
   /** The server closed with 4401: the session is gone; sign out instead of reconnecting. */
   onUnauthenticated?(): void;
+  /** A monotonic clock in milliseconds; a test hands in its own. */
+  now?(): number;
 }
 
 export const CLOSE_UNAUTHENTICATED = 4401;
@@ -59,6 +61,10 @@ export function openChannel(deps: ChannelDeps): Channel {
   let attempt = 0;
   let stopped = false;
   let cursor: Cursor = null;
+  const now = deps.now ?? (() => performance.now());
+  // When the page began reading, near enough: the provider opens the channel
+  // in the same render that mounts the page's first queries.
+  const startedAt = now();
   // Frames and replays are applied strictly in arrival order.
   let inbox: Promise<void> = Promise.resolve();
 
@@ -136,14 +142,45 @@ export function openChannel(deps: ChannelDeps): Channel {
   };
 
   // What a reconnect and a degraded poll both do: catch up from the cursor.
-  // Before the first sequenced push there is no cursor to replay from, so
-  // the one time that happens the cache is refreshed wholesale.
+  // With no cursor yet (no hello ever arrived) there is nothing to replay
+  // from, and the cache is refreshed wholesale.
   const catchUp = async () => {
     if (cursor === null) {
       await deps.refreshAll();
       return;
     }
     await replay(cursor);
+  };
+
+  // The first hello's catch-up. What the page read before the socket
+  // subscribed may predate a change the socket never pushed, so the stream's
+  // tail is read and the records produced since the page began reading are
+  // routed: the queries they touch refetch, and the rest stay as read. When
+  // the tail cannot tell, or the hello carries no time, the cache is
+  // refreshed wholesale instead.
+  const firstCatchUp = async (head: number, sentAt: string | null | undefined, waitedMs: number) => {
+    if (!sentAt) {
+      await deps.refreshAll();
+      return;
+    }
+    if (head <= 0) return;
+    const after = Math.max(0, head - deps.pageSize);
+    let tail: EventView[];
+    try {
+      tail = await deps.fetchEventsAfter(after, deps.pageSize);
+    } catch {
+      await deps.refreshAll();
+      return;
+    }
+    if (stopped) return;
+    const recent = tailSince(tail.filter((event) => event.seq <= head), after, readsBegan(sentAt, waitedMs));
+    if (recent === null) {
+      await deps.refreshAll();
+      return;
+    }
+    const last = new Map<string, Envelope>();
+    for (const event of recent) last.set(entityOf(event.kind), eventEnvelope(event));
+    for (const envelope of last.values()) deps.route(envelope);
   };
 
   const stopPolling = () => {
@@ -207,9 +244,16 @@ export function openChannel(deps: ChannelDeps): Channel {
     opened.onopen = () => {
       if (stopped || socket !== opened) return;
       for (const topic of TOPICS) send({ op: "subscribe", topic });
-      enqueue(catchUp);
+      // A reconnect replays from its cursor at once; a first socket waits for
+      // the hello, which names the stream's head.
+      if (cursor !== null) enqueue(catchUp);
       pingTimer = setInterval(() => send({ op: "ping" }), PING_INTERVAL_MS);
-      stableTimer = setTimeout(settle, STABLE_OPEN_MS);
+      stableTimer = setTimeout(() => {
+        // Open this long without a hello: there is no head to read the tail
+        // up to, so the one catch-up left is the wholesale one.
+        if (cursor === null) enqueue(catchUp);
+        settle();
+      }, STABLE_OPEN_MS);
     };
     opened.onmessage = (message) => {
       if (stopped || socket !== opened) return;
@@ -218,7 +262,11 @@ export function openChannel(deps: ChannelDeps): Channel {
       if (envelope.type === "hello") {
         // The hello names the stream position, so a reconnect before the
         // first push replays from it instead of refreshing wholesale.
-        if (cursor === null) cursor = envelope.seq;
+        if (cursor === null) {
+          cursor = envelope.seq;
+          const waited = now() - startedAt;
+          enqueue(() => firstCatchUp(envelope.seq, envelope.sent_at, waited));
+        }
         settle();
       }
       enqueue(() => deliver(envelope));

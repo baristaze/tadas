@@ -132,8 +132,24 @@ class RequestIdMiddleware:
                     HTTP_LATENCY.labels(route=template, method=label).observe(elapsed)
                     # The access line, in place of uvicorn's: the template, so
                     # a query string (the socket ticket rides in one) is never
-                    # written out.
-                    log.info("%s %s %d %.1fms", method, template, status["code"], elapsed * 1000)
+                    # written out. The same four values ride as fields, which
+                    # is what a log metric filter reads a route's latency from.
+                    millis = round(elapsed * 1000, 1)
+                    log.info(
+                        "%s %s %d %.1fms",
+                        method,
+                        template,
+                        status["code"],
+                        millis,
+                        extra={
+                            "http": {
+                                "method": label,
+                                "route": template,
+                                "status": status["code"],
+                                "duration_ms": millis,
+                            }
+                        },
+                    )
                 # Last, after every line this request writes: the access line
                 # above carries the id only while the context still holds it.
                 request_id_var.reset(token)

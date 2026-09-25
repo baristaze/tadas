@@ -296,6 +296,10 @@
               }
             ]
           },
+          "payment_failed": {
+            "title": "Payment Failed",
+            "type": "boolean"
+          },
           "plan": {
             "$ref": "#/components/schemas/Plan"
           },
@@ -349,6 +353,7 @@
           "active_tasks",
           "storage_bytes",
           "monthly_cents",
+          "payment_failed",
           "can_manage",
           "plans"
         ],
@@ -1354,7 +1359,20 @@
       },
       "OpenPortalRequest": {
         "additionalProperties": false,
+        "description": "`flow` opens the processor's page on one task and comes back to\n`return_url` when it is done; without it, the page's home.",
         "properties": {
+          "flow": {
+            "anyOf": [
+              {
+                "const": "payment_method_update",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Flow"
+          },
           "return_url": {
             "maxLength": 2000,
             "minLength": 1,

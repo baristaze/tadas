@@ -470,6 +470,7 @@ module "dashboard" {
   load_balancer_arn_suffix = module.load_balancer.arn_suffix
   cache_node_ids           = module.cache.member_clusters
   queue_names              = module.queue.queue_names
+  read_latency_routes      = module.alarms.read_latency_routes
 }
 
 module "alarms" {
@@ -481,5 +482,7 @@ module "alarms" {
   target_group_arn_suffix  = module.load_balancer.target_group_arn_suffix
   database_identifier      = module.database.identifier
   cluster_name             = module.cluster.name
+  api_log_group_name       = module.api.log_group_name
+  queue_names              = module.queue.queue_names
   service_names            = [module.api.service_name, module.maintenance.service_name]
 }

@@ -398,6 +398,15 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
             None,
         )
 
+    async def read_principal(
+        self, org_id: UUID, user_id: UUID
+    ) -> tuple[Org | None, User | None, Membership | None]:
+        return (
+            await self.read_org(org_id),
+            await self.read_user(org_id, user_id),
+            await self.read_membership_for_user(org_id, user_id),
+        )
+
     async def write_membership(
         self, org_id: UUID, membership: Membership, outbox_rows: tuple[OutboxRow, ...] = ()
     ) -> None:

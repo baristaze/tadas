@@ -2,8 +2,9 @@
 # dashboard the local profile provisions (deployment/local/grafana/dashboards/
 # tadas-overview.json). The first five widgets carry that dashboard's panels,
 # one for one, and a unit test holds the two lists of titles equal but for
-# latency; the last row is what only the cloud has: the database, the cache,
-# the queue, and the tasks.
+# latency; the rows after them are what only the cloud has: the database,
+# the cache, the queue, and the tasks, then the reads with a latency alarm
+# and the age of each queue's oldest message, which the alarms read.
 #
 # The body is dashboard.json.tftpl, a JSON document with interpolations and
 # nothing else (no template loops), so the test can read it as JSON. The
@@ -51,6 +52,20 @@ locals {
     ["AWS/ElastiCache", "EngineCPUUtilization", "CacheClusterId", id, { label = id }]
   ]
 
+  # The reads the alarms module keeps a latency alarm on, from the metric
+  # its log filter writes: raw values, so the p95 here is a true one.
+  read_latency = [
+    for route in var.read_latency_routes :
+    ["Tadas", "tadas_read_latency_ms", "route", route, { label = "GET ${route}" }]
+  ]
+
+  # What the backlog alarm reads, per inbound queue; the dead-letter alarm
+  # reads the "dead" lines of the queue widget above.
+  queue_ages = [
+    for name in var.queue_names :
+    ["AWS/SQS", "ApproximateAgeOfOldestMessage", "QueueName", name, { label = name }]
+  ]
+
   # Each metric stays an array: flatten() is recursive in Terraform and
   # would spread every row into loose strings, which CloudWatch refuses.
   queue_depths = concat(
@@ -71,5 +86,7 @@ resource "aws_cloudwatch_dashboard" "this" {
     responses_by_status      = jsonencode(local.responses_by_status)
     cache_cpu                = jsonencode(local.cache_cpu)
     queue_depths             = jsonencode(local.queue_depths)
+    read_latency             = jsonencode(local.read_latency)
+    queue_ages               = jsonencode(local.queue_ages)
   })
 }
