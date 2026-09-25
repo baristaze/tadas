@@ -147,15 +147,34 @@ Do these once per environment, in this order. Staging first.
 
 ### 1. Check the account is the one the repository names
 
-1. Sign in at [dashboard.stripe.com](https://dashboard.stripe.com).
-2. Open the account switcher (top left). It lists the organization's
-   accounts. For staging, pick the sandbox.
-3. Open **Settings** → **Account details**. The account id there is
-   `acct_1UIfVX45a2t9JoiY` for the sandbox, or `acct_1UIfTS4Dj4HbbS1T`
-   for live.
+The dashboard has three levels, and each has its own settings page:
+the organization ("Baris Taze (Personal Projects)"), the account
+("Tadas"), and the account's sandbox ("Tadas sandbox"). The account
+details, the keys, and the webhooks live on the account and on the
+sandbox, never on the organization. When the URL reads
+`dashboard.stripe.com/org_…/org/settings`, you are on the
+organization's page: it has no **Account details**, and its
+**Personal details** → **Accounts** table lists only live accounts, so
+the live Tadas account shows there even in sandbox mode, and the
+sandbox does not.
 
-If an id differs, stop. Every call names the committed id, so a key of
-another account is refused.
+The shortest way in is the account's own URL:
+
+- the sandbox, for local and staging:
+  [dashboard.stripe.com/acct_1UIfVX45a2t9JoiY/test/apikeys](https://dashboard.stripe.com/acct_1UIfVX45a2t9JoiY/test/apikeys)
+- the live account, for production:
+  [dashboard.stripe.com/acct_1UIfTS4Dj4HbbS1T/apikeys](https://dashboard.stripe.com/acct_1UIfTS4Dj4HbbS1T/apikeys)
+
+Or by hand: sign in at [dashboard.stripe.com](https://dashboard.stripe.com),
+open the switcher at the top left, and pick **Tadas**, then its
+sandbox, **Tadas sandbox**.
+
+**Check.** The top left names **Tadas sandbox** (or **Tadas** for
+live), and the URL carries the account id: `acct_1UIfVX45a2t9JoiY` and
+`/test/` for the sandbox, `acct_1UIfTS4Dj4HbbS1T` and no `/test/` for
+live. The same id is under **Settings** → **Business** → **Account
+details**. If an id differs, stop. Every call names the committed id,
+so a key of another account is refused.
 
 ### 2. Make the two restricted keys
 
