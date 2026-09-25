@@ -1,7 +1,8 @@
 # Three kinds of secret live under one environment. The platform's own
 # credentials (the four database URLs, the TOTP encryption key, the Sentry
-# DSN, the Slack tokens, the WorkOS application key) are declared here and injected
-# into tasks by the execution role.
+# DSN, the Slack app's two secrets, the payment processor's two, the WorkOS
+# application key) are declared here and injected into tasks by the
+# execution role.
 # Application-managed secrets, the ones SecretsInterface reads at runtime,
 # live under "<prefix>app/", which is the value of TADAS_SECRETS_NAME_PREFIX,
 # so a process can never reach its own bootstrap credentials through the
@@ -168,29 +169,6 @@ resource "aws_secretsmanager_secret_version" "slack_app" {
   }
 }
 
-# slack_bot_token is the one token the release before posted with. No
-# process of this release reads it; the release before reads it in the
-# worker, so it stays for one release, for a rollback to start, and the
-# release after removes it.
-resource "aws_secretsmanager_secret" "slack" {
-  for_each = toset(["bot"])
-
-  name                    = "${var.prefix}slack_${each.key}_token"
-  recovery_window_in_days = local.recovery_window_in_days
-  tags                    = local.tags
-}
-
-resource "aws_secretsmanager_secret_version" "slack" {
-  for_each = aws_secretsmanager_secret.slack
-
-  secret_id     = each.value.id
-  secret_string = "off"
-
-  lifecycle {
-    ignore_changes = [secret_string]
-  }
-}
-
 # The payment processor's runtime key and the signing secret of the endpoint
 # it delivers to: process credentials, injected at start into the API and
 # the worker, the way the error tracker's DSN is. Terraform creates each as
@@ -201,12 +179,8 @@ resource "aws_secretsmanager_secret_version" "slack" {
 # and the signing secret by `tadas-ops stripe-bootstrap --env <env>`, which
 # learns it when it registers the endpoint (docs/runbooks/providers/stripe.md).
 # The bootstrap's own key is never here: the person who runs it holds it.
-#
-# stripe_org_key is the runtime key's retired name. No process of this
-# release reads it; the release before reads it, so it stays for one
-# release, for a rollback to start, and the release after removes it.
 resource "aws_secretsmanager_secret" "stripe" {
-  for_each = toset(["stripe_runtime_key", "stripe_webhook_secret", "stripe_org_key"])
+  for_each = toset(["stripe_runtime_key", "stripe_webhook_secret"])
 
   name                    = "${var.prefix}${each.key}"
   recovery_window_in_days = local.recovery_window_in_days
