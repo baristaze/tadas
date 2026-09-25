@@ -220,8 +220,12 @@ in the environment's AWS account, each holding the word `off`:
 
 The bootstrap key has no secret here. It never goes to the cloud.
 
-`off` means "not set". The processes start, billing is unconfigured,
-every org keeps its plan, and a checkout answers `503`.
+A secret in AWS cannot be empty, so Tadas uses the plain word `off`
+as a secret's value to mean "not set". Turning a secret off means
+replacing its value with that word, and nothing else.
+
+With `off`, the processes start, billing is unconfigured, every org
+keeps its plan, and a checkout answers `503`.
 
 **Check**, under your own sign-in:
 
@@ -406,14 +410,31 @@ table anyway, then name it after the environment again. Write it (step
 Then, under **Developers** → **API keys**, open the old key's menu (⋯)
 and delete it. Both keys work until then, so nothing breaks in between.
 
+**The old secret, `stripe_org_key`.** It held the one key Tadas used
+before the runtime key and the bootstrap key. Nothing reads it now, but
+it stays in AWS for one more release, for two reasons: Terraform still
+owns it, and the release before this one still reads it if it is ever
+rolled back to. Once the runtime key works, turn it off:
+
+```bash
+aws secretsmanager put-secret-value --profile tadas-staging --region us-west-2 \
+  --secret-id tadas/staging/stripe_org_key --secret-string off
+```
+
+Do not delete it. AWS keeps a deleted secret's name for at least seven
+days, and the next deploy fails when it tries to make the secret again.
+Do not write any other text into it either. A rolled-back release reads
+any other value as a key, refuses it, and does not start. The next
+release removes the secret from Terraform, and Terraform deletes it.
+
 **The bootstrap key.** Make a new one with the bootstrap's rows, store
 it in the password manager, and run the bootstrap's dry run with it.
 Then delete the old one. No environment holds it, so nothing is
 written and nothing is rolled.
 
 **The webhook signing secret.** Stripe shows it only when an endpoint
-is made, so a rotation is a new endpoint. Write `off` into the secret,
-then run the bootstrap. It finds the store empty, deletes the endpoint,
+is made, so a rotation is a new endpoint. Replace the secret's value
+with the word `off`, then run the bootstrap. It finds the store empty, deletes the endpoint,
 makes it again, and stores the new secret:
 
 ```bash

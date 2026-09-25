@@ -177,7 +177,11 @@ here.
 
 The first deploy that carries sign-in makes
 `tadas/<env>/workos_api_key` in the environment's AWS account, holding
-`off`. With `off`, the API starts, says so in its log, and every sign-in
+`off`. A secret in AWS cannot be empty, so Tadas uses the plain word `off`
+as a secret's value to mean "not set". Turning a secret off means
+replacing its value with that word, and nothing else.
+
+With `off`, the API starts, says so in its log, and every sign-in
 through WorkOS answers `503`.
 
 **Check**, under your own sign-in:

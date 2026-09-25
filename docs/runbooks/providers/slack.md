@@ -121,7 +121,9 @@ secret, so the secrets come before the manifest.
 ### 1. Merge, and let staging deploy
 
 The deploy makes the two secrets, each holding `off`, runs the migration,
-and rolls the API and the worker. With `off`, **Add to Slack** and every
+and rolls the API and the worker. A secret in AWS cannot be empty, so
+Tadas uses the plain word `off` as a secret's value to mean "not set".
+With `off`, **Add to Slack** and every
 call from Slack answer `503 slack_unavailable`, and the API's log names
 `slack=off` at start.
 
