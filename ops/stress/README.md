@@ -26,6 +26,13 @@ and it reads the signals back when it ends.
   members take part, how many run at once, and how long they think
   between requests. `light` is a sanity run; `regular` is a normal day;
   `heavy` is a busy one; `stress` is past that.
+- **Shared tasks conflict, and that is counted, not failed.** The
+  people of an org share its tasks, and a move can renumber every open
+  task of the org. A write that meets a task changed under it gets a
+  412, the API's optimistic concurrency. The session reads the task
+  afresh and writes once more, as a client does, and a task found gone
+  is dropped. The report counts both as conflicts; neither is an error
+  or a failed session, and every other refusal still is.
 - **It ramps.** Concurrency climbs over the ramp, so a knee shows as
   a knee and not as a wall.
 - **It soaks.** The duration is long enough for leases to expire,
