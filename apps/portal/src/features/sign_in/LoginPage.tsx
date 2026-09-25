@@ -3,8 +3,10 @@ import { Button, Card, ErrorText, LinkButton, Muted, Page } from "../../design/k
 import { tokens } from "../../design/tokens";
 import { useLoginVm } from "./useLoginVm";
 
-export function LoginPage() {
-  const vm = useLoginVm();
+/** `signedOut` is the page `/signed-out` shows: the identity provider's
+ * logout ended its session and sent the browser back here. */
+export function LoginPage({ signedOut = false }: { signedOut?: boolean }) {
+  const vm = useLoginVm({ arrivedSignedOut: signedOut });
   const navigate = useNavigate();
   return (
     <Page title="Sign in to Tadas" narrow>

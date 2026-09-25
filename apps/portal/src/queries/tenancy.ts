@@ -14,10 +14,11 @@ import type {
   InvitationPageView,
   InvitationView,
   InviteMemberRequest,
+  LogoutRequest,
   MembershipChoicePageView,
   MembershipChoiceView,
   MeView,
-  SessionView,
+  SignedOutView,
   SignInCallbackRequest,
   SignInStartRequest,
   SignInStartView,
@@ -179,9 +180,13 @@ export function useDevSignIn() {
   });
 }
 
-/** Revokes the session the token names; the server answers with the session, revoked. */
+/** Revokes the session the token names. The server answers with the session,
+ * revoked, and where the browser goes to end the identity provider's session
+ * behind it, which sends the browser back to `return_to`. */
 export function useLogout() {
-  return useMutation({ mutationFn: () => api.post<SessionView>("/v1/auth/logout") });
+  return useMutation({
+    mutationFn: (body: LogoutRequest) => api.post<SignedOutView>("/v1/auth/logout", body),
+  });
 }
 
 export function useExchangeSession() {

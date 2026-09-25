@@ -12,16 +12,38 @@ function effects(revoke: SignOutEffects["revoke"]) {
     }),
     forget,
     report: vi.fn<SignOutEffects["report"]>(),
+    leave: vi.fn<SignOutEffects["leave"]>(() => {
+      // The session is gone here before the browser leaves.
+      expect(forget).toHaveBeenCalledTimes(1);
+    }),
   };
 }
 
+const PROVIDER_LOGOUT =
+  "https://api.workos.com/user_management/sessions/logout?session_id=session_01&return_to=https%3A%2F%2Fapp.example%2Fsigned-out";
+
 describe("signOut", () => {
   it("revokes the server session first, then forgets it here", async () => {
-    const e = effects(() => Promise.resolve({ id: "s1", revoked_at: "2026-09-19T00:00:00Z" }));
+    const e = effects(() => Promise.resolve({ provider_logout_url: null }));
     await expect(signOut(e)).resolves.toBe("revoked");
     expect(e.revoke).toHaveBeenCalledTimes(1);
     expect(e.forget).toHaveBeenCalledTimes(1);
     expect(e.report).not.toHaveBeenCalled();
+    // A session with no provider session behind it stays on the portal.
+    expect(e.leave).not.toHaveBeenCalled();
+  });
+
+  it("then sends the browser to the provider's logout the server answered", async () => {
+    const e = effects(() => Promise.resolve({ provider_logout_url: PROVIDER_LOGOUT }));
+    await expect(signOut(e)).resolves.toBe("revoked");
+    expect(e.leave).toHaveBeenCalledTimes(1);
+    expect(e.leave).toHaveBeenCalledWith(PROVIDER_LOGOUT);
+  });
+
+  it("stays on the portal when the server could not be asked", async () => {
+    const e = effects(() => Promise.reject(new TypeError("Failed to fetch")));
+    await signOut(e);
+    expect(e.leave).not.toHaveBeenCalled();
   });
 
   it("treats a 401 as already signed out and says nothing", async () => {

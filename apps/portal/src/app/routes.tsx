@@ -33,6 +33,8 @@ export const router = createBrowserRouter([
   // The identity provider's "initiate login" address: it starts a sign-in at once.
   { path: "/login", element: <LoginPage />, errorElement: <RouteError /> },
   { path: "/login/dev", element: <DevSignInPage />, errorElement: <RouteError /> },
+  // Where the identity provider's logout sends the browser back: a sign-in page that waits.
+  { path: "/signed-out", element: <LoginPage signedOut />, errorElement: <RouteError /> },
   { path: "/auth/callback", element: <CallbackPage />, errorElement: <RouteError /> },
   { path: "/sign-in", element: <Moved to="/login" />, errorElement: <RouteError /> },
   { path: "/sign-up", element: <Moved to="/login?screen_hint=sign-up" />, errorElement: <RouteError /> },
