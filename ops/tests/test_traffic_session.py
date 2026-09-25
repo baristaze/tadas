@@ -5,6 +5,7 @@ token its seat holds and never signs in for itself; the run does that once
 per person. Think time is zero and the clock is the test's."""
 
 import asyncio
+import json
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -28,6 +29,7 @@ from tadas.ops.traffic import (
     RecordingTransport,
     Seat,
     Session,
+    SessionOutcome,
     route_template,
     run_traffic,
     seat_order,
@@ -410,3 +412,111 @@ async def test_a_run_needs_seeded_people_or_a_provisioner() -> None:
         await run_traffic(
             env, LIGHT, duration_seconds=1, orgs=1, transport=httpx.MockTransport(FakeApi())
         )
+
+
+# Shared tasks: the 412 and the 404 a session meets when another session
+# wrote first. The fake's `interfere` is that other session.
+
+
+async def session_over(api: FakeApi) -> tuple[SessionOutcome, list[str]]:
+    samples: list[Sample] = []
+    client, recording = client_over(api, samples)
+    async with client:
+        outcome = await Session(
+            client,
+            SEAT,
+            quick_clock(),
+            recording=recording,
+            connect=connect_to(api),
+            task_count=lambda: 5,
+        ).run()
+    steps = [f"{r.method} {route_template(r.url.path)}" for r in api.requests]
+    return outcome, steps
+
+
+async def test_a_412_on_a_move_reads_the_task_afresh_and_moves_it_on_the_fresh_version() -> None:
+    """Another session's move renumbered the org's open list, so the version
+    this session holds is stale: the API says 412, and the session reads the
+    task and moves it once more. A conflict, counted, and not a failure."""
+    api = FakeApi(interfere={"POST /v1/tasks/{id}/move": ["bump"]})
+    outcome, steps = await session_over(api)
+    assert outcome.completed and outcome.failure is None, outcome.failure
+    assert (outcome.conflicts, outcome.gone) == (1, 0)
+    at = steps.index("POST /v1/tasks/{id}/move")
+    assert steps[at : at + 3] == [
+        "POST /v1/tasks/{id}/move",  # 412: the task moved on
+        "GET /v1/tasks/{id}",  # the fresh read
+        "POST /v1/tasks/{id}/move",  # on the fresh version, and it lands
+    ]
+    moves = [r for r in api.requests if r.url.path.endswith("/move")]
+    sent = [json.loads(r.content)["expected_version"] for r in moves]
+    assert sent[1] == sent[0] + 1
+
+
+async def test_a_second_412_leaves_the_step_undone_and_the_session_goes_on() -> None:
+    """One retry, as a client makes: a task that keeps moving under the
+    session is left as it is, and the session goes on to its next step."""
+    api = FakeApi(interfere={"PATCH /v1/tasks/{id}": ["bump", "bump"]})
+    outcome, steps = await session_over(api)
+    assert outcome.completed and outcome.failure is None, outcome.failure
+    assert (outcome.conflicts, outcome.gone) == (2, 0)
+    assert steps[7:10] == ["PATCH /v1/tasks/{id}", "GET /v1/tasks/{id}", "PATCH /v1/tasks/{id}"]
+    first = next(t for t in api.tasks.values() if t["title"].endswith("task 1"))
+    assert not first["title"].endswith("(edited)")
+
+
+async def test_a_task_deleted_under_the_session_is_dropped_and_its_later_steps_left_out() -> None:
+    """Another session deleted a task this one was about to complete: the
+    write answers 404, the fresh read says it is gone, and the reopen that
+    would have followed is left out."""
+    api = FakeApi(interfere={"PATCH /v1/tasks/{id}": ["pass", "delete"]})
+    outcome, steps = await session_over(api)
+    assert outcome.completed and outcome.failure is None, outcome.failure
+    assert (outcome.conflicts, outcome.gone) == (0, 1)
+    assert steps[7:] == [
+        "PATCH /v1/tasks/{id}",  # edit one
+        "PATCH /v1/tasks/{id}",  # complete it: 404, gone
+        "GET /v1/tasks/{id}",  # 404: gone indeed
+        "PATCH /v1/tasks/{id}",  # complete the other; no reopen of the gone one
+        "POST /v1/tasks/{id}/move",
+        "GET /v1/tasks",
+        "DELETE /v1/tasks/{id}",
+        "GET /v1/events",
+    ]
+
+
+async def test_a_412_on_a_delete_then_a_404_on_its_retry_is_a_conflict_and_a_task_gone() -> None:
+    """The ticket's race: one session deletes a task while another moves
+    it. The delete meets 412, the fresh read finds the task, and by the
+    retry the other session has deleted it: 404, and the session is done."""
+    api = FakeApi(interfere={"DELETE /v1/tasks/{id}": ["bump", "delete"]})
+    outcome, steps = await session_over(api)
+    assert outcome.completed and outcome.failure is None, outcome.failure
+    assert (outcome.conflicts, outcome.gone) == (1, 1)
+    at = steps.index("DELETE /v1/tasks/{id}")
+    assert steps[at:] == [
+        "DELETE /v1/tasks/{id}",  # 412
+        "GET /v1/tasks/{id}",  # still there, at a later version
+        "DELETE /v1/tasks/{id}",  # 404: deleted by the other session meanwhile
+        "GET /v1/tasks/{id}",  # 404: gone
+        "GET /v1/events",
+    ]
+
+
+class NotFoundOnDelete(FakeApi):
+    """Answers a delete with 404 while the task is still there to read."""
+
+    def answer(self, request: httpx.Request) -> httpx.Response:
+        if request.method == "DELETE":
+            return httpx.Response(404, json={"error": {"code": "not_found", "message": "no"}})
+        return super().answer(request)
+
+
+async def test_a_404_on_a_task_that_is_still_there_fails_the_session() -> None:
+    """A 404 is taken as a task gone only when the fresh read agrees; when
+    the task is there, something else was not found, and that is a failure."""
+    outcome, steps = await session_over(NotFoundOnDelete())
+    assert outcome.failure == "404 not_found on the API"
+    assert (outcome.conflicts, outcome.gone) == (0, 0)
+    assert steps[-2:] == ["DELETE /v1/tasks/{id}", "GET /v1/tasks/{id}"]
+

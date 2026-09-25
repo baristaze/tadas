@@ -45,6 +45,7 @@ class FakeApi:
         refuse_logins: int = 0,
         retry_after: str | None = None,
         dev_sign_in: bool = True,
+        interfere: dict[str, list[str]] | None = None,
     ) -> None:
         self.tasks: dict[str, dict[str, Any]] = {}
         self.events: list[dict[str, Any]] = []
@@ -64,6 +65,12 @@ class FakeApi:
         self.retry_after = retry_after
         """The `Retry-After`, in seconds, those refusals carry; none when the
         answer asks for no particular wait."""
+        self.interfere = interfere or {}
+        """What another session does to a task just before a write to it
+        lands, by the write's route template (`DELETE /v1/tasks/{id}`): one
+        action per matching write, taken in order. `bump` is another write to
+        the task, so the version the session holds is stale; `delete` is
+        another session deleting it; `pass` leaves that write alone."""
 
     def _event(self, kind: str, target_id: str) -> None:
         self.seq += 1
@@ -177,11 +184,22 @@ class FakeApi:
         parts = path.split("/")
         if len(parts) >= 4 and parts[2] == "tasks" and parts[3] in self.tasks:
             task = self.tasks[parts[3]]
+            if method != "GET":
+                self._interfere(f"{method} {route_template(path)}", task)
+            if task["deleted_at"]:
+                return httpx.Response(404, json={"error": {"code": "not_found", "message": path}})
+            if method == "GET" and len(parts) == 4:
+                return httpx.Response(200, json=task)
+            held = (
+                body.get("expected_version")
+                if method == "POST"
+                else request.headers.get("if-match", "").strip('"')
+            )
+            if str(held) != str(task["version"]):
+                return httpx.Response(
+                    412, json={"error": {"code": "precondition_failed", "message": "stale"}}
+                )
             if method == "PATCH":
-                if request.headers.get("if-match") != f'"{task["version"]}"':
-                    return httpx.Response(
-                        412, json={"error": {"code": "precondition_failed", "message": "stale"}}
-                    )
                 for key in ("title", "notes", "status"):
                     if key in body:
                         task[key] = body[key]
@@ -198,6 +216,17 @@ class FakeApi:
                 self._event("tasks.task.deleted", task["id"])
                 return httpx.Response(200, json=task)
         return httpx.Response(404, json={"error": {"code": "not_found", "message": path}})
+
+    def _interfere(self, route: str, task: dict[str, Any]) -> None:
+        actions = self.interfere.get(route)
+        if not actions:
+            return
+        action = actions.pop(0)
+        if action == "pass":
+            return
+        task["version"] += 1
+        if action == "delete":
+            task["deleted_at"] = NOW
 
 
 class FakeSocket:
