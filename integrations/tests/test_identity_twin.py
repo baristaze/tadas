@@ -26,6 +26,19 @@ async def test_a_code_is_exchanged_once_for_the_person_it_names() -> None:
     assert again.user.id == signed_in.user.id
 
 
+async def test_a_code_names_the_browser_session_and_a_device_none() -> None:
+    twin = IdentityProviderTwinImpl()
+    first = await twin.authenticate_code(twin.issue_code("dee@example.test"), code_verifier=None)
+    second = await twin.authenticate_code(twin.issue_code("dee@example.test"), code_verifier=None)
+    assert first.session_id and second.session_id and first.session_id != second.session_id
+    url = twin.logout_url(session_id=first.session_id, return_to="http://localhost/signed-out")
+    assert f"session_id={first.session_id}" in url and "return_to=" in url and ".invalid/" in url
+    started = await twin.start_device()
+    twin.confirm_device(started.user_code, "dee@example.test")
+    device = await twin.authenticate_device(started.device_code)
+    assert device.session_id is None
+
+
 async def test_a_code_issued_with_a_challenge_needs_its_verifier() -> None:
     twin = IdentityProviderTwinImpl()
     with pytest.raises(ProviderRefused):

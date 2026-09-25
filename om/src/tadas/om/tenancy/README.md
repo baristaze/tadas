@@ -82,8 +82,17 @@ of the seven kinds of thing [Tadas is made of](../../../../README.md).
   session for another org is a switch: the session presented ends in
   the same step that issues the new one, so a person holds one session
   per tab.
-- **Sign out.** The session presented is revoked. A person can also
-  list their own live sessions in the org and revoke any one of them.
+- **Sign out.** The session presented is revoked. A session that came
+  from a sign-in through the provider's hosted page also names the
+  provider's own session in that browser, and the sign-out answers the
+  provider's logout address for it: the browser goes there, the
+  provider ends its session, and it sends the browser back to the
+  portal's page that says so. Without that, the next sign-in on the same
+  browser would let the same person straight back in, which a shared
+  computer must not. A session from the device sign-in or the local
+  sign-in has nothing there to end, and signs out of Tadas alone. A
+  person can also list their own live sessions in the org and revoke any
+  one of them.
 - **Read and change the profile.** The org, the person's own identity,
   and their display name. The email belongs to the identity.
 - **Invite.** An owner or an admin invites a person by email, with a

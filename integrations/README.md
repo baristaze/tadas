@@ -126,15 +126,17 @@ The app's settings, its credentials, and each environment's app are in
 
 | What | Interface | Real client | Twin |
 |------|-----------|-------------|------|
-| Proves who a person is: the hosted sign-in, the code exchange, the device sign-in for the command line; and holds an org's side of it: its organization, its single sign-on, its invitations | `identity.IdentityProviderInterface` | `identity/workos.py`: WorkOS AuthKit through the `workos` SDK, pinned | `identity/twin.py`: in memory, for tests and CI |
+| Proves who a person is: the hosted sign-in, the code exchange, the device sign-in for the command line, and the logout address that ends the hosted sign-in's session in the browser; and holds an org's side of it: its organization, its single sign-on, its invitations | `identity.IdentityProviderInterface` | `identity/workos.py`: WorkOS AuthKit through the `workos` SDK, pinned | `identity/twin.py`: in memory, for tests and CI |
 
 `identity/absent.py` is the provider of a process that signs nobody in:
 every call answers `ProviderUnavailable`, which the API presents as
 `503`. The worker holds it, and so does an API whose WorkOS application
 key is not set.
 
-The provider hands Tadas an issuer, a subject, and a verified email.
-Everything else (the identity row, its id, the sessions, the
+The provider hands Tadas an issuer, a subject, and a verified email,
+and for a sign-in through the hosted page, the id of the provider's own
+session in that browser (the `sid` claim of the access token WorkOS
+answers the exchange with), which the sign-out ends. Everything else (the identity row, its id, the sessions, the
 memberships) is Tadas's own; the tenancy namespace's README says how a
 sign-in becomes a person.
 

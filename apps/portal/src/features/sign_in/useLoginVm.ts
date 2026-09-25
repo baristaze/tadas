@@ -8,8 +8,10 @@ import { landingPath, readStart } from "./signInModel";
 
 /** `/login`, the identity provider's "initiate login" address: it starts a
  * sign-in at once. The tab keeps a fresh state with where to land and the
- * invitation's token, and the browser goes to the provider. */
-export function useLoginVm() {
+ * invitation's token, and the browser goes to the provider. `/signed-out`,
+ * where the provider's logout sends the browser back, is the same page
+ * waiting for the person to ask. */
+export function useLoginVm({ arrivedSignedOut = false }: { arrivedSignedOut?: boolean } = {}) {
   const location = useLocation();
   const start = useStartSignIn();
   const [error, setError] = useState<string | null>(null);
@@ -18,7 +20,7 @@ export function useLoginVm() {
   const returnTo = landingPath((location.state as { from?: unknown } | null)?.from);
   const started = useRef(false);
   // Read once per visit: a tab that just signed out waits to be asked.
-  const [justSignedOut] = useState(takeSignedOut);
+  const [justSignedOut] = useState(() => takeSignedOut() || arrivedSignedOut);
   const wait = asked.offerDev || justSignedOut;
 
   const go = useCallback(async () => {

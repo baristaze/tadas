@@ -58,17 +58,19 @@ WorkOS team                                          the people who may open the
 
 ## Which Tadas environment uses which WorkOS environment
 
-| Tadas environment | WorkOS environment | Tadas App client id | Its key | Its redirect URI |
-|-------------------|--------------------|---------------------|---------|------------------|
-| `local` | Staging | `client_01M3640D8WBF9KC0P89YW4E72N` | `tadas-local` | `http://localhost:55173/auth/callback` (the stack's portal), `http://localhost:5173/auth/callback` (the Vite dev server) |
-| `staging` | Staging | `client_01M3640D8WBF9KC0P89YW4E72N` | `tadas-staging` | `https://app.staging.tadas.fyi/auth/callback` |
-| `production` | Production | `client_01M363XVP5FGF2P45FHK9B7MJD` | `tadas-production` | `https://app.tadas.fyi/auth/callback` |
+| Tadas environment | WorkOS environment | Tadas App client id | Its key | Its redirect URI | Its sign-out URI |
+|-------------------|--------------------|---------------------|---------|------------------|------------------|
+| `local` | Staging | `client_01M3640D8WBF9KC0P89YW4E72N` | `tadas-local` | `http://localhost:55173/auth/callback` (the stack's portal), `http://localhost:5173/auth/callback` (the Vite dev server) | `http://localhost:55173/signed-out`, `http://localhost:5173/signed-out` |
+| `staging` | Staging | `client_01M3640D8WBF9KC0P89YW4E72N` | `tadas-staging` | `https://app.staging.tadas.fyi/auth/callback` | `https://app.staging.tadas.fyi/signed-out` |
+| `production` | Production | `client_01M363XVP5FGF2P45FHK9B7MJD` | `tadas-production` | `https://app.tadas.fyi/auth/callback` | `https://app.tadas.fyi/signed-out` |
 
 Local and staging share one WorkOS environment and one application. So
-the Staging Tadas App's Redirects tab holds the three staging-side URIs.
-Each Tadas environment still takes only its own callback: the API
-refuses a sign-in that asks to come back anywhere else
-(`TADAS_SIGN_IN_REDIRECT_URIS`). Each gets a key of its own, so one can
+the Staging Tadas App's Redirects tab holds the three staging-side
+redirect URIs and the three staging-side sign-out URIs. Each Tadas
+environment still takes only its own: the API refuses a sign-in that
+asks to come back anywhere else (`TADAS_SIGN_IN_REDIRECT_URIS`), and a
+sign-out that asks WorkOS to send the person anywhere else
+(`TADAS_SIGN_OUT_RETURN_URIS`). Each gets a key of its own, so one can
 be revoked without the other.
 
 Sharing has two consequences. The WorkOS organizations and users that
@@ -92,7 +94,7 @@ in Production.
 | Redirect URIs | Staging: `http://localhost:55173/auth/callback`, `http://localhost:5173/auth/callback`, `https://app.staging.tadas.fyi/auth/callback`. Production: `https://app.tadas.fyi/auth/callback`. The default is `<portal>/auth/callback`. | Where AuthKit sends a person back with a code. Tadas names one in every sign-in it starts. WorkOS requires one default; the deployed callback is it, so nothing WorkOS sends on its own lands on a laptop's port. |
 | App homepage URL | `<portal>` | WorkOS shows it as the link to the app on AuthKit's pages and in the emails it sends, the invitation email among them. |
 | Initiate login URI | `<portal>/login` | Where AuthKit sends a person whose sign-in did not start at Tadas: an invitation link, a bookmark of the AuthKit page. The portal's `/login` starts a sign-in at once. WorkOS keeps the invitation through this redirect. |
-| Sign-out URIs | Not set | Where WorkOS's logout sends a person. Tadas never sends anyone there: signing out ends Tadas's own session. With none set, WorkOS falls back to the App homepage URL. |
+| Sign-out URIs | Staging: `http://localhost:55173/signed-out`, `http://localhost:5173/signed-out`, `https://app.staging.tadas.fyi/signed-out`. Production: `https://app.tadas.fyi/signed-out`. The default is `<portal>/signed-out`. | Where WorkOS's logout sends a person once it has ended their AuthKit session. A sign-in through AuthKit leaves that session in the browser, and while it lives, the next sign-in there goes through with no prompt. So the portal's sign-out ends Tadas's session, then sends the browser to WorkOS's logout with a `return_to` of its own `/signed-out`. WorkOS sends a person only to a URI on this list. The default is where it sends one whose logout names no return. |
 | Sign-up URL | Not set | Only for an app that hosts its own sign-up page. AuthKit hosts it, and the portal asks for it with `/login?screen_hint=sign-up`. |
 | User invitation URL | Not set | Only for an app that hosts its own sign-in page. Not set, the invitation email links to AuthKit's own page for it, which accepts the invitation and sends the person on through the initiate login URI. The portal's `/login` also takes `?invitation_token=`, so a link made by hand works too. |
 | Password reset URL | Not set | Tadas turns on no password sign-in, so nothing sends a reset. |
@@ -154,8 +156,13 @@ says:
    `https://app.staging.tadas.fyi/auth/callback` as the default.
 2. **App homepage URL**: `https://app.staging.tadas.fyi`.
 3. **Initiate login URI**: `https://app.staging.tadas.fyi/login`.
-4. Leave **Sign-out URIs**, **Sign-up URL**, **User invitation URL**,
-   and **Password reset URL** not set.
+4. **Sign-out URIs**: add each of these, one at a time:
+   `http://localhost:55173/signed-out`,
+   `http://localhost:5173/signed-out`, and
+   `https://app.staging.tadas.fyi/signed-out`. Mark
+   `https://app.staging.tadas.fyi/signed-out` as the default.
+5. Leave **Sign-up URL**, **User invitation URL**, and **Password reset
+   URL** not set.
 
 Do not add redirects on **Developer > Redirects**. That list is the
 default application's, so an entry there changes nothing for Tadas.
@@ -238,7 +245,8 @@ email code. You land in Tadas, signed in.
 | The proof that the key is the Tadas App's | The API at start; the bootstrap, first thing | Every task start; every bootstrap run |
 | The client id and the allowed callback | Terraform, from the environment's root | Every deploy |
 | The Tadas App's redirect URIs | `tadas-ops workos-bootstrap --apply` | A person runs it after a change to `environments.yaml` |
-| The Redirects tab's other fields | A person, by hand; the bootstrap prints each as a check | Once, and after a change to `environments.yaml` |
+| The Redirects tab's other fields, the sign-out URIs among them | A person, by hand; the bootstrap prints each as a check | Once, and after a change to `environments.yaml` |
+| The allowed sign-out return | Terraform, from the environment's root (`TADAS_SIGN_OUT_RETURN_URIS`) | Every deploy |
 | Organizations, invitations, Admin Portal links | The API | When an owner or an admin invites or opens single sign-on |
 
 ### The bootstrap
@@ -257,7 +265,10 @@ and works on the Tadas App with the key the file's variable holds.
    again. Without `--apply` it says `would create`.
 4. It checks which URI is the default. The API does not set it, so a
    wrong default is a dashboard step.
-5. It prints the tab's other fields as checks to make by eye.
+5. It prints the tab's other fields as checks to make by eye. The
+   sign-out URIs are among them: WorkOS has no API for them, and its
+   logout answers a made-up session the same whatever the return, so
+   no request can probe them either.
 
 A URI or a default only the dashboard can fix makes the run exit 1.
 When everything is in place, the output ends:
@@ -266,7 +277,7 @@ When everything is in place, the output ends:
 default redirect: https://app.staging.tadas.fyi/auth/callback
 login initiation URI: https://app.staging.tadas.fyi/login (check it on the Redirects tab; no API reads or writes it)
 app homepage URL: https://app.staging.tadas.fyi (check it on the same tab)
-sign-out URIs: not set: nobody is sent to WorkOS's logout; the homepage is the fallback
+sign-out URIs: http://localhost:55173/signed-out, http://localhost:5173/signed-out, https://app.staging.tadas.fyi/signed-out, default https://app.staging.tadas.fyi/signed-out (check them on the same tab; no API reads or writes them)
 sign-up URL: not set: AuthKit hosts the sign-up page
 user invitation URL: not set: AuthKit's page takes it, then the login initiation URI
 password reset URL: not set: no password sign-in is on
@@ -293,8 +304,13 @@ make up
 commented out on purpose. The Makefile includes that file, and a line
 there with an empty value would override what the shell exported.
 
+A sign-out after a sign-in through WorkOS goes through WorkOS's logout
+and comes back to the portal's `/signed-out` on the port it left from.
+Both local ports are on the Staging Tadas App's sign-out URIs for that.
+
 Without the key, the stack still runs. Sign-in through WorkOS answers
-`503`, and the local sign-in by address (`/login/dev`) still works.
+`503`, and the local sign-in by address (`/login/dev`) still works. Its
+sign-out stays on the portal: there is no WorkOS session to end.
 With a key that is not the Tadas App's, the API container stops at
 start and says why.
 
@@ -317,6 +333,9 @@ Tadas already issued are Tadas's own and outlive any key.
 | `the WorkOS credential check did not finish` in the start log | WorkOS could not be reached at start. The API started anyway | WorkOS's status page; the next start checks again |
 | Every sign-in through WorkOS answers `503` | `tadas/<env>/workos_api_key` is `off`, or the task started before it was written, or the key was revoked or expired since the start | `/tadas/<env>/api`: the start line names `identity provider: none (TADAS_WORKOS_API_KEY is not set)`, or a request logs `refused TADAS_WORKOS_API_KEY as the application's` |
 | AuthKit shows an "invalid redirect URI" page | The callback is not on the Tadas App's Redirects tab | Run the bootstrap with `--apply` |
+| After signing out, WorkOS does not send the person back to `/signed-out` | The portal's `/signed-out` is not among the Tadas App's sign-out URIs | The Tadas App's Redirects tab, **Sign-out URIs** (step 3) |
+| Signing out answers `422` | The portal asked to come back to a page the API does not name in `TADAS_SIGN_OUT_RETURN_URIS` | The environment's Terraform root, or `.env` locally |
+| After signing out, the next sign-in goes straight through with no prompt | The session came from a sign-in that left no AuthKit session Tadas knows of: a device sign-in, or a sign-in made before the release that keeps it | Nothing to fix: the next sign-in and sign-out end both |
 | A sign-in that did not start at Tadas lands on a WorkOS error page | The initiate login URI is missing or wrong | The Tadas App's Redirects tab |
 | An invited person lands somewhere other than Tadas | The invitation was sent from the WorkOS dashboard, which always uses the default application | Invite from Tadas's settings page |
 | An invitation or the Admin Portal link fails | WorkOS is down, or the key was revoked | `/tadas/<env>/api`, then WorkOS's status page |
@@ -346,7 +365,8 @@ the **Production** WorkOS environment, with application
 `client_01M363XVP5FGF2P45FHK9B7MJD` and its key `tadas-production`:
 
 - Its Redirects tab holds one redirect URI,
-  `https://app.tadas.fyi/auth/callback`, the default. The App homepage
+  `https://app.tadas.fyi/auth/callback`, the default, and one sign-out
+  URI, `https://app.tadas.fyi/signed-out`, the default. The App homepage
   URL is `https://app.tadas.fyi` and the initiate login URI
   `https://app.tadas.fyi/login`. Never a `localhost` one.
 - Google and GitHub need your own OAuth credentials (step 4).

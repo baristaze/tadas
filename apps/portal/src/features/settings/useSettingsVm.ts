@@ -99,14 +99,22 @@ export function useSettingsVm() {
 
   // The server session is revoked, then the token and the cache go; the
   // realtime channel closes with the token. A sign-out finishes here even
-  // when the server cannot be reached.
-  // `/login` then waits for the person to ask, rather than starting a sign-in
-  // the provider's own session would answer at once.
+  // when the server cannot be reached. A session signed in through the
+  // identity provider then sends the browser to its logout, which ends the
+  // provider's session and comes back to `/signed-out`. Until the browser
+  // leaves, and for a session with nothing to end there, `/login` waits for
+  // the person to ask rather than starting a sign-in.
   const forget = () => {
     noteSignedOut();
     forgetSession();
   };
-  const leave = () => void signOut({ revoke: () => logout.mutateAsync(), forget, report: notify });
+  const leave = () =>
+    void signOut({
+      revoke: () => logout.mutateAsync({ return_to: `${window.location.origin}/signed-out` }),
+      forget,
+      report: notify,
+      leave: (url) => window.location.assign(url),
+    });
 
   return {
     me: me.data,

@@ -85,6 +85,15 @@ class ApiSettings(StorageSettings, InfraSettings, IntegrationsSettings):
         "http://localhost:55173/auth/callback",
         "http://localhost:5173/auth/callback",
     ]
+    # Where the identity provider's logout may send a person back to: this
+    # environment's portal page that says they are signed out. Each is also
+    # one of the WorkOS application's sign-out URIs. A deployed environment
+    # names its own and nothing else, over https; the local stack names the
+    # portal's two local ports. A return not named here is refused.
+    sign_out_return_uris: list[str] = [
+        "http://localhost:55173/signed-out",
+        "http://localhost:5173/signed-out",
+    ]
     # The sign-in by address alone, with no browser round trip, for the
     # seed, the demo recorders, the traffic generator, and the tests. Off
     # unless set, and refused at boot outside a local or test environment.
@@ -135,21 +144,29 @@ class ApiSettings(StorageSettings, InfraSettings, IntegrationsSettings):
     @model_validator(mode="after")
     def local_doors_stay_local(self) -> ApiSettings:
         """The local sign-in is refused outside a local or test environment,
-        and a deployed environment's sign-in comes back to its own https
-        address and nowhere else. Each refusal names the setting."""
+        and a deployed environment's sign-in and sign-out come back to its own
+        https address and nowhere else. Each refusal names the setting."""
         if self.dev_sign_in_enabled and self.environment not in DEV_SIGN_IN_ENVIRONMENTS:
             raise ValueError(
                 "TADAS_DEV_SIGN_IN_ENABLED=true is refused "
                 f"when TADAS_ENVIRONMENT={self.environment}"
             )
         if self.environment in CLOUD_ENVIRONMENTS:
-            for uri in self.sign_in_redirect_uris:
-                parts = urlsplit(uri)
-                if parts.scheme != "https" or parts.hostname in (None, "localhost", "127.0.0.1"):
-                    raise ValueError(
-                        f"TADAS_SIGN_IN_REDIRECT_URIS names {uri!r}; a deployed "
-                        "environment's sign-in comes back to its own https address"
-                    )
+            for setting, uris, what in (
+                ("TADAS_SIGN_IN_REDIRECT_URIS", self.sign_in_redirect_uris, "sign-in"),
+                ("TADAS_SIGN_OUT_RETURN_URIS", self.sign_out_return_uris, "sign-out"),
+            ):
+                for uri in uris:
+                    parts = urlsplit(uri)
+                    if parts.scheme != "https" or parts.hostname in (
+                        None,
+                        "localhost",
+                        "127.0.0.1",
+                    ):
+                        raise ValueError(
+                            f"{setting} names {uri!r}; a deployed environment's "
+                            f"{what} comes back to its own https address"
+                        )
         return self
 
     @field_validator("trusted_proxies")

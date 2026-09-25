@@ -28,6 +28,7 @@ from tadas.services.api.types.tenancy import (
     IssuedApiKeyView,
     IssuedLoginView,
     IssuedSessionView,
+    LogoutRequest,
     MembershipChoicePageView,
     MembershipChoiceView,
     MembershipPageView,
@@ -36,6 +37,7 @@ from tadas.services.api.types.tenancy import (
     OrgView,
     SecondFactorRequest,
     SessionView,
+    SignedOutView,
     SignInCallbackRequest,
     SignInStartRequest,
     SignInStartView,
@@ -122,9 +124,14 @@ async def list_my_memberships(
     return await tenancy.get_identity_memberships(identity, cursor, limit)
 
 
-@router.post("/auth/logout", response_model=SessionView)
-async def logout(ctx: Ctx, tenancy: TenancyService) -> SessionView:
-    return await tenancy.logout(ctx)
+# The session presented ends; the answer names where the browser goes to end
+# the identity provider's session behind it, when there is one. The body is
+# optional: a caller with no browser sends none.
+@router.post("/auth/logout", response_model=SignedOutView)
+async def logout(
+    ctx: Ctx, tenancy: TenancyService, body: LogoutRequest | None = None
+) -> SignedOutView:
+    return await tenancy.logout(ctx, body)
 
 
 @router.get("/me", response_model=MeView)

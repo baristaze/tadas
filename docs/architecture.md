@@ -135,7 +135,15 @@ context on keeps the stage the callee needs.
   https callback, refused otherwise) and the caller's `state`. The
   device sign-in (`start_device_sign_in`, `finish_device_sign_in`,
   `SignInPending`, 400, while the person has not confirmed) serves the
-  command line. `verify_second_factor` takes a login and a TOTP code and
+  command line. A code sign-in also carries the AuthKit session the
+  browser holds (`ProvidedSignIn.session_id`, the `sid` claim of the
+  access token WorkOS answers the exchange with), kept on the login and
+  on every session exchanged or switched from it
+  (`sessions.provider_session_id`, server-side only); `logout` answers
+  `SignedOut`, the ended session and the provider's logout URL for that
+  session with a `return_to` the environment names
+  (`TenancyOptions.sign_out_return_uris`), or none for the device and
+  the local sign-in. `verify_second_factor` takes a login and a TOTP code and
   answers a new login that records it, behind the per-email delay.
   `dev_sign_in` signs in by address alone and is `NotFound` unless the
   options turn it on, which the API's settings refuse outside `local`
@@ -1057,7 +1065,9 @@ alone, and neither key may touch what the other's work does not need
   (members, invitations with resend and revoke, single sign-on for a
   team org, the org's storage used, api keys with Show more, sign-out,
   which revokes the server
-  session and empties the query cache with the token), and one realtime
+  session and empties the query cache with the token, then sends the
+  browser to WorkOS's logout when the API answers one, which comes back
+  to `/signed-out`), and one realtime
   channel that
   invalidates queries by the entity name inside a push's `kind`, or by
   the query that carries the entity (a membership, through `me`); the
@@ -1153,7 +1163,8 @@ alone, and neither key may touch what the other's work does not need
   provider's device sign-in through the API (a code to confirm in any
   browser), or with `--dev-email` on a local stack, and keeps a session token
   under `TADAS_HOME`; `logout` revokes it at the API that issued it and
-  forgets the file whatever the API answers; `TADAS_TOKEN` (a session
+  forgets the file whatever the API answers (the device sign-in leaves
+  no WorkOS session to end); `TADAS_TOKEN` (a session
   token or an api key) and `TADAS_API_URL` win over it. The rules of what is shown live in `model.py`, pure and unit
   tested; the commands run in tests against the whole API in-process.
 - `apps/site` (`@tadas/site`): the company site, one page and a

@@ -46,6 +46,9 @@ class IdentityProviderAbsentImpl(IdentityProviderInterface):
     ) -> ProvidedSignIn:
         self._refuse()
 
+    def logout_url(self, *, session_id: str, return_to: str | None) -> str:
+        self._refuse()
+
     async def start_device(self) -> DeviceAuthorization:
         self._refuse()
 

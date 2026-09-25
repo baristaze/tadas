@@ -22,6 +22,11 @@ change. A name the image does not host refuses the boot.
   sign-in (`/v1/auth/second-factor`). List my places; exchange the
   login, or switch a session, for a session in one org; sign out
   (`/v1/auth/memberships`, `/v1/auth/sessions`, `/v1/auth/logout`).
+  The sign-out takes an optional `return_to`, one of this
+  environment's `TADAS_SIGN_OUT_RETURN_URIS`, and answers the session
+  it ended with `provider_logout_url`: WorkOS's logout for the AuthKit
+  session the sign-in left in the browser, or null when there is none
+  (the device sign-in, the local sign-in).
   Locally and in the tests only, sign in by address alone
   (`/v1/auth/dev-sign-in`, ADR 0029); a deployed process refuses to
   start with it on.

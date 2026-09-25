@@ -44,15 +44,17 @@ locals {
     TADAS_DATABASE_PASSWORD_VERSION = tostring(var.database_password_version)
   }
 
-  # How people sign in, read at boot by every process that runs the API's
-  # image: the service, and the migrate and grant tasks, which boot the same
-  # settings and refuse a sign-in that comes back anywhere but this
-  # environment's own portal. People sign in through the Tadas App, the
-  # WorkOS application of this environment.
+  # How people sign in and out, read at boot by every process that runs the
+  # API's image: the service, and the migrate and grant tasks, which boot the
+  # same settings and refuse a sign-in or a sign-out that comes back anywhere
+  # but this environment's own portal. People sign in through the Tadas App,
+  # the WorkOS application of this environment; its sign-out URIs list the
+  # same `/signed-out` page.
   api_sign_in_environment = {
     TADAS_IDENTITY_PROVIDER     = "workos"
     TADAS_WORKOS_CLIENT_ID      = var.workos_client_id
     TADAS_SIGN_IN_REDIRECT_URIS = jsonencode(["https://${var.app_domain_name}/auth/callback"])
+    TADAS_SIGN_OUT_RETURN_URIS  = jsonencode(["https://${var.app_domain_name}/signed-out"])
   }
 
   # A serving process connects as the runtime login, and as the system login

@@ -109,6 +109,7 @@ from tadas.om.tenancy.types.issued import (
     IssuedSession,
     IssuedTicket,
     OrgMembership,
+    SignedOut,
     SignInStart,
 )
 from tadas.om.tenancy.types.membership import Membership
@@ -181,6 +182,10 @@ class TenancyOptions(Platform):
     """Where a sign-in at the identity provider may come back to: this
     environment's own portal callback, and nothing else. A redirect not
     named here is refused."""
+    sign_out_return_uris: tuple[str, ...] = ()
+    """Where the identity provider's logout may send a person back to: this
+    environment's own portal page for it, each one of the application's
+    sign-out URIs at the provider. A return not named here is refused."""
     dev_sign_in: bool = False
     """The local sign-in by address alone, for local and test processes. A
     deployed environment refuses it at boot, so it is never on there."""
@@ -445,7 +450,13 @@ class TenancyManagerImpl(TenancyManagerInterface):
         if run is not None:
             await self._storage.clear_failed_sign_ins(digest)
         memberships = await self._memberships_of(identity.id)
-        return await self._issue_login(identity, memberships, now)
+        # The new sign-in stands for the same visit to the provider as the one
+        # that presented the code, so it carries the same provider session.
+        presented = await self._storage.read_session_by_id(ictx.credential_id)
+        provider_session_id = presented[1].provider_session_id if presented else None
+        return await self._issue_login(
+            identity, memberships, now, provider_session_id=provider_session_id
+        )
 
     async def _signed_in(self, rctx: RequestContext, signed_in: ProvidedSignIn) -> IssuedLogin:
         """The identity the provider vouched for, found, linked, or made, and
@@ -460,7 +471,9 @@ class TenancyManagerImpl(TenancyManagerInterface):
         if signed_in.organization_id is not None:
             await self._join_through_provider(rctx, identity, signed_in)
         memberships = await self._with_personal(identity, await self._memberships_of(identity.id))
-        return await self._issue_login(identity, memberships)
+        return await self._issue_login(
+            identity, memberships, provider_session_id=signed_in.session_id
+        )
 
     async def _identity_of(self, signed_in: ProvidedSignIn) -> Identity:
         """By the issuer and the subject; else by the verified email, linked
@@ -669,6 +682,8 @@ class TenancyManagerImpl(TenancyManagerInterface):
         identity: Identity,
         memberships: tuple[OrgMembership, ...],
         second_factor_at: datetime | None = None,
+        *,
+        provider_session_id: str | None = None,
     ) -> IssuedLogin:
         """The credential that carries no tenant, stored under the system scope."""
         now = utcnow()
@@ -684,6 +699,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
             credential_kind=CredentialKind.LOGIN,
             expires_at=now + self._options.login_ttl,
             second_factor_at=second_factor_at,
+            provider_session_id=provider_session_id,
         )
         await self._storage.write_session(EMPTY_UUID, session)
         return IssuedLogin(token=token, expires_at=session.expires_at, memberships=memberships)
@@ -723,6 +739,11 @@ class TenancyManagerImpl(TenancyManagerInterface):
     async def exchange_login(self, ictx: IdentityContext, org_id: UUID) -> IssuedSession:
         self._refuse_operator_token(ictx)
         org, user, membership = await self._principal_in(org_id, ictx.identity_id)
+        # The credential presented: the sign-in, or the session a switch ends.
+        # The new session carries the provider's session it came from.
+        presented = await self._storage.read_session_by_id(ictx.credential_id)
+        if presented is None:
+            raise InvalidCredential("the credential behind the exchange is gone")
         now = utcnow()
         token = mint_token(CredentialKind.SESSION_TOKEN)
         session = Session(
@@ -736,9 +757,10 @@ class TenancyManagerImpl(TenancyManagerInterface):
             token_hash=hash_token(token),
             credential_kind=CredentialKind.SESSION_TOKEN,
             expires_at=now + self._options.session_ttl,
+            provider_session_id=presented[1].provider_session_id,
         )
         if ictx.credential_kind is CredentialKind.SESSION_TOKEN:
-            await self._switch(ictx, org_id, session, now)
+            await self._switch(ictx, presented, org_id, session, now)
         else:
             await self._storage.write_session(org_id, session)
         return IssuedSession(
@@ -746,14 +768,16 @@ class TenancyManagerImpl(TenancyManagerInterface):
         )
 
     async def _switch(
-        self, ictx: IdentityContext, org_id: UUID, session: Session, now: datetime
+        self,
+        ictx: IdentityContext,
+        found: tuple[UUID, Session],
+        org_id: UUID,
+        session: Session,
+        now: datetime,
     ) -> None:
         """The exchange of a session for another: the one presented ends in the
         write that lands the new one, and its revocation is announced under the
         tenant it belonged to, by its own user, so its socket closes."""
-        found = await self._storage.read_session_by_id(ictx.credential_id)
-        if found is None:
-            raise InvalidCredential("the session behind the switch is gone")
         ended_org_id, presented = found
         self._check_session(presented, CredentialKind.SESSION_TOKEN)
         ended = presented.model_copy(
@@ -1509,10 +1533,28 @@ class TenancyManagerImpl(TenancyManagerInterface):
         await self._write_session(ctx, revoked, "revoked")
         return revoked
 
-    async def logout(self, ctx: OpContext) -> Session:
+    async def logout(self, ctx: OpContext, return_to: str | None = None) -> SignedOut:
         if ctx.security.credential_kind is not CredentialKind.SESSION_TOKEN:
             raise ValidationFailed("only a session can log out")
-        return await self.revoke_session(ctx, ctx.security.credential_id)
+        if return_to is not None and return_to not in self._options.sign_out_return_uris:
+            raise ValidationFailed("that is not this environment's sign-out return")
+        ended = await self.revoke_session(ctx, ctx.security.credential_id)
+        return SignedOut(session=ended, provider_logout_url=self._provider_logout(ended, return_to))
+
+    def _provider_logout(self, ended: Session, return_to: str | None) -> str | None:
+        """Where the browser goes to end the provider's session behind the one
+        that ended here. Tadas's session is over whatever this answers: a
+        provider this process cannot reach leaves the provider's session to
+        its own lifetime, and says so."""
+        if ended.provider_session_id is None:
+            return None
+        try:
+            return self._provider.logout_url(
+                session_id=ended.provider_session_id, return_to=return_to
+            )
+        except ProviderUnavailable as error:
+            log.warning("the provider's session outlives the sign-out: %s", error.message)
+            return None
 
     async def get_api_keys(self, ctx: OpContext, after: UUID | None, limit: int) -> ApiKeyPage:
         ctx.require(Permission.MANAGE_KEYS)

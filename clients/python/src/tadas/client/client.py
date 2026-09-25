@@ -35,7 +35,7 @@ from tadas.client.types import (
     OrgView,
     PlatformSizeView,
     Role,
-    SessionView,
+    SignedOutView,
     SignInStartView,
     SsoLinkView,
     StorageUsageView,
@@ -506,8 +506,11 @@ class ApiClient:
         )
         return SsoLinkView.model_validate(answer)
 
-    async def logout(self) -> SessionView:
-        return SessionView.model_validate(await self.request("POST", "/v1/auth/logout"))
+    async def logout(self) -> SignedOutView:
+        """Ends the session this client holds. The answer's
+        `provider_logout_url` is a browser's next stop; a sign-in without a
+        browser (the device sign-in, the local one) has none."""
+        return SignedOutView.model_validate(await self.request("POST", "/v1/auth/logout"))
 
     async def me(self) -> MeView:
         return MeView.model_validate(await self.request("GET", "/v1/me"))

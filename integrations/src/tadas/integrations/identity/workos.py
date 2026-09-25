@@ -16,6 +16,17 @@ is worth nothing without the tab that started the sign-in (RFC 9700 asks for
 PKCE on a confidential client as well). The device sign-in sends no secret:
 WorkOS takes it as a public client's, and the SDK sends none with it.
 
+A sign-in through AuthKit's hosted page leaves an AuthKit session in the
+browser, and the next sign-in there goes through without a prompt until it
+ends. The code exchange answers an access token whose `sid` claim names that
+session; it is read here and kept by Tadas beside its own session, and the
+sign-out sends the browser to WorkOS's logout with it. The token comes
+straight from WorkOS over TLS, in the answer to this process's own request,
+so the claim is read without checking the signature: nothing else of the
+token is used, and Tadas never presents it anywhere. The device sign-in
+records no session: the browser that confirmed it may be another machine's,
+and a terminal has no browser to send.
+
 A WorkOS organization stands for a Tadas org and carries its id as
 `external_id`.
 
@@ -24,6 +35,9 @@ timeout from settings, so every call out carries it. The SDK's retries stay:
 they retry a 429 and a server error with backoff. Every SDK error is
 translated here; none crosses the boundary."""
 
+import base64
+import binascii
+import json
 import logging
 from datetime import timedelta
 from typing import Any, Literal, NoReturn
@@ -114,12 +128,28 @@ def _user(user: Any) -> ProvidedUser:
     )
 
 
-def _sign_in(response: Any) -> ProvidedSignIn:
+def session_of(access_token: str | None) -> str | None:
+    """The `sid` claim of an access token WorkOS just answered: the AuthKit
+    session its logout ends. None when the token carries none or cannot be
+    read, and the sign-in goes on: only the sign-out loses the provider's
+    half."""
+    try:
+        payload = (access_token or "").split(".")[1]
+        claims: Any = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+    except IndexError, ValueError, binascii.Error:
+        log.warning("the WorkOS access token could not be read; no AuthKit session is kept")
+        return None
+    sid = claims.get("sid") if isinstance(claims, dict) else None
+    return sid if isinstance(sid, str) and sid else None
+
+
+def _sign_in(response: Any, *, session_id: str | None = None) -> ProvidedSignIn:
     method = response.authentication_method
     return ProvidedSignIn(
         user=_user(response.user),
         organization_id=response.organization_id,
         via_sso=method is not None and _value(method) == "SSO",
+        session_id=session_id,
     )
 
 
@@ -211,7 +241,12 @@ class IdentityProviderWorkOSImpl(IdentityProviderInterface):
             )
         except (WorkOSError, httpx.HTTPError) as error:
             _translate(error, "exchanging the sign-in code")
-        return _sign_in(response)
+        return _sign_in(response, session_id=session_of(response.access_token))
+
+    def logout_url(self, *, session_id: str, return_to: str | None) -> str:
+        return self._workos.user_management.get_logout_url(
+            session_id=session_id, return_to=return_to
+        )
 
     async def start_device(self) -> DeviceAuthorization:
         try:

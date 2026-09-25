@@ -43,7 +43,9 @@ the person a member.
 
 A **session** is a signed-in visit. Signing in through the sign-in
 provider gives one. It is good for a while, and it ends when the
-person signs out or when it expires. A session belongs to one user in
+person signs out or when it expires. Signing out in the browser also
+ends the sign-in provider's own session there, so the next person at
+that computer is asked who they are. A session belongs to one user in
 one org, so a person who belongs to two teams picks which team they
 are visiting.
 

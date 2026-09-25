@@ -1,6 +1,7 @@
 """The WorkOS client over a fake transport: the requests it sends, and every
 answer translated into the integration's own shapes and exceptions."""
 
+import base64
 import json
 from collections.abc import Callable
 from datetime import timedelta
@@ -113,6 +114,15 @@ def body_of(request: httpx.Request) -> Any:
     return json.loads(request.content or b"{}")
 
 
+def access_token(claims: dict[str, Any]) -> str:
+    """A token in the shape WorkOS answers: header, claims, signature."""
+
+    def part(value: dict[str, Any]) -> str:
+        return base64.urlsafe_b64encode(json.dumps(value).encode()).decode().rstrip("=")
+
+    return f"{part({'alg': 'RS256'})}.{part(claims)}.c2lnbmF0dXJl"
+
+
 def test_the_authorization_url_names_the_application_the_redirect_and_the_state() -> None:
     made, recorder = provider(lambda r: httpx.Response(500))
     url = made.authorization_url(
@@ -171,6 +181,68 @@ async def test_a_code_is_exchanged_with_the_applications_key_and_its_verifier() 
     # and the verifier goes with it, which WorkOS checks as well.
     assert body["client_id"] == CLIENT_ID and body["client_secret"] == API_KEY
     assert body["code_verifier"] == "the-verifier" and body["invitation_token"] == "inv"
+
+
+async def test_a_code_sign_in_names_the_authkit_session_its_access_token_carries() -> None:
+    made, _ = provider(
+        lambda r: httpx.Response(
+            200,
+            json={
+                "user": USER,
+                "access_token": access_token({"sub": "user_1", "sid": "session_01ABC"}),
+                "refresh_token": "rt",
+            },
+        )
+    )
+    signed_in = await made.authenticate_code("c", code_verifier="v")
+    assert signed_in.session_id == "session_01ABC"
+
+
+@pytest.mark.parametrize("token", ["at", "a.!!!.c", access_token({"sub": "user_1"})])
+async def test_a_token_with_no_session_to_read_still_signs_in(token: str) -> None:
+    made, _ = provider(
+        lambda r: httpx.Response(
+            200, json={"user": USER, "access_token": token, "refresh_token": "rt"}
+        )
+    )
+    signed_in = await made.authenticate_code("c", code_verifier="v")
+    assert signed_in.user.id == "user_1" and signed_in.session_id is None
+
+
+async def test_a_device_sign_in_keeps_no_browser_session() -> None:
+    made, _ = provider(
+        lambda r: httpx.Response(
+            200,
+            json={
+                "user": USER,
+                "access_token": access_token({"sub": "user_1", "sid": "session_01DEV"}),
+                "refresh_token": "rt",
+            },
+        )
+    )
+    signed_in = await made.authenticate_device("dev-code")
+    assert signed_in.session_id is None
+
+
+def test_the_logout_url_ends_the_session_and_returns_to_the_portal() -> None:
+    made, recorder = provider(lambda r: httpx.Response(500))
+    url = made.logout_url(
+        session_id="session_01ABC", return_to="https://app.example.test/signed-out"
+    )
+    parts = urlsplit(url)
+    query = {k: v[0] for k, v in parse_qs(parts.query).items()}
+    assert (parts.scheme, parts.netloc, parts.path) == (
+        "https",
+        "api.workos.com",
+        "/user_management/sessions/logout",
+    )
+    assert query == {
+        "session_id": "session_01ABC",
+        "return_to": "https://app.example.test/signed-out",
+    }
+    assert API_KEY not in url and recorder.requests == []
+    bare = parse_qs(urlsplit(made.logout_url(session_id="s", return_to=None)).query)
+    assert bare == {"session_id": ["s"]}
 
 
 async def test_a_key_workos_refuses_as_the_applications_is_unavailable_not_the_persons() -> None:

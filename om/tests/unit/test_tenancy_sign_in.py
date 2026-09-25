@@ -18,6 +18,7 @@ from tadas.om.base import new_id, utcnow
 from tadas.om.events.storage.impl.memory import EventStorageMemoryImpl
 from tadas.om.exceptions import (
     Conflict,
+    CredentialExpired,
     EmailNotVerified,
     InvalidCredential,
     InvitationClosed,
@@ -45,6 +46,7 @@ from tadas.om.tenancy.types.org import Org, OrgKind
 APP = AppContext(type=AppType.PORTAL, version="portal@test")
 CALLBACK = "http://localhost:55173/auth/callback"
 SETTINGS = "http://localhost:55173/settings"
+SIGNED_OUT = "http://localhost:55173/signed-out"
 
 
 def request() -> RequestContext:
@@ -95,6 +97,7 @@ def build(
             dev_sign_in=dev_sign_in,
             totp_encryption_key=TOTP_KEY,
             sign_in_redirect_uris=(CALLBACK,),
+            sign_out_return_uris=(SIGNED_OUT,),
         ),
         SteppingClock(),
         identity_provider=twin or IdentityProviderAbsentImpl(),
@@ -567,3 +570,78 @@ async def test_an_organization_that_names_no_living_org_joins_nothing(
     code = twin.issue_code("eve@acme.example", organization_id=stray.id, via_sso=True)
     login = await manager.sign_in_with_code(request(), code)
     assert [m.org.kind for m in login.memberships] == [OrgKind.PERSONAL]
+
+
+# Signing out ends the provider's session too.
+
+
+async def test_a_sign_out_answers_the_providers_logout_for_the_session_the_sign_in_left(
+    manager: TenancyManagerImpl, twin: IdentityProviderTwinImpl
+) -> None:
+    code = twin.issue_code("dee@example.test")
+    login = await manager.sign_in_with_code(request(), code)
+    org_id = login.memberships[0].org.id
+    first = await manager.exchange_login(
+        await manager.authenticate_login(request(), login.token), org_id
+    )
+    # A switch ends the session presented and carries the provider's session on.
+    switched = await manager.exchange_login(
+        await manager.authenticate_login(request(), first.token), org_id
+    )
+    ctx = await manager.authenticate(request(), switched.token)
+    signed_out = await manager.logout(ctx, SIGNED_OUT)
+    assert signed_out.session.revoked_at is not None
+    url = signed_out.provider_logout_url
+    assert url is not None and url.startswith("https://identity.twin.invalid/logout?")
+    assert "session_id=twin_session_" in url
+    assert "return_to=http%3A%2F%2Flocalhost%3A55173%2Fsigned-out" in url
+    with pytest.raises(CredentialExpired):
+        await manager.authenticate(request(), switched.token)
+
+
+async def test_a_sign_out_with_no_return_leaves_it_to_the_providers_default(
+    manager: TenancyManagerImpl, twin: IdentityProviderTwinImpl
+) -> None:
+    login = await manager.sign_in_with_code(request(), twin.issue_code("dee@example.test"))
+    ctx = await enter(manager, login, login.memberships[0].org.id)
+    url = (await manager.logout(ctx)).provider_logout_url
+    assert url is not None and "session_id=" in url and "return_to" not in url
+
+
+async def test_a_sign_out_to_a_return_not_listed_is_refused_and_ends_nothing(
+    manager: TenancyManagerImpl, twin: IdentityProviderTwinImpl
+) -> None:
+    login = await manager.sign_in_with_code(request(), twin.issue_code("dee@example.test"))
+    ctx = await enter(manager, login, login.memberships[0].org.id)
+    with pytest.raises(ValidationFailed):
+        await manager.logout(ctx, "https://elsewhere.example/signed-out")
+    assert [s.id for s in await manager.get_sessions(ctx, limit=10)] == [ctx.security.credential_id]
+
+
+async def test_a_device_or_a_local_sign_in_signs_out_of_tadas_alone(
+    manager: TenancyManagerImpl, twin: IdentityProviderTwinImpl
+) -> None:
+    started = await manager.start_device_sign_in(request())
+    twin.confirm_device(started.user_code, "dee@example.test")
+    device = await manager.finish_device_sign_in(request(), started.device_code)
+    ctx = await enter(manager, device, device.memberships[0].org.id)
+    assert (await manager.logout(ctx, SIGNED_OUT)).provider_logout_url is None
+    local = await manager.dev_sign_in(request(), "eve@example.test")
+    ctx = await enter(manager, local, local.memberships[0].org.id)
+    assert (await manager.logout(ctx, SIGNED_OUT)).provider_logout_url is None
+
+
+async def test_a_provider_this_process_cannot_reach_leaves_tadas_signed_out(
+    manager: TenancyManagerImpl, twin: IdentityProviderTwinImpl, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tadas.integrations.exceptions import ProviderUnavailable
+
+    login = await manager.sign_in_with_code(request(), twin.issue_code("dee@example.test"))
+    ctx = await enter(manager, login, login.memberships[0].org.id)
+
+    def unreachable(*, session_id: str, return_to: str | None) -> str:
+        raise ProviderUnavailable("no identity provider is configured")
+
+    monkeypatch.setattr(twin, "logout_url", unreachable)
+    signed_out = await manager.logout(ctx, SIGNED_OUT)
+    assert signed_out.session.revoked_at is not None and signed_out.provider_logout_url is None

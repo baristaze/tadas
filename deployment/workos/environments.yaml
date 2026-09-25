@@ -15,7 +15,10 @@
 # it before anything else, reads it from the variable named here, and never
 # prints it. The key reads and writes the application's redirect list.
 # The Redirects tab's other fields have no API; the command prints them as
-# checks to make on the tab.
+# checks to make on the tab. The sign-out URIs are among them: where WorkOS's
+# logout sends a person once the sign-out has ended their AuthKit session.
+# Each Tadas environment names its own in TADAS_SIGN_OUT_RETURN_URIS, and the
+# API refuses any other return.
 
 staging:
   api_key_variable: WORKOS_API_KEY
@@ -29,6 +32,12 @@ staging:
   default_redirect_uri: https://app.staging.tadas.fyi/auth/callback
   login_initiation_uri: https://app.staging.tadas.fyi/login
   app_homepage_url: https://app.staging.tadas.fyi
+  sign_out_uris:
+    - http://localhost:55173/signed-out
+    - http://localhost:5173/signed-out
+    - https://app.staging.tadas.fyi/signed-out
+  # The deployed page, for the same reason as the default redirect.
+  default_sign_out_uri: https://app.staging.tadas.fyi/signed-out
   # The sign-in and the invitations need no webhook.
   webhooks: []
 
@@ -40,5 +49,8 @@ production:
   default_redirect_uri: https://app.tadas.fyi/auth/callback
   login_initiation_uri: https://app.tadas.fyi/login
   app_homepage_url: https://app.tadas.fyi
+  sign_out_uris:
+    - https://app.tadas.fyi/signed-out
+  default_sign_out_uri: https://app.tadas.fyi/signed-out
   # The sign-in and the invitations need no webhook.
   webhooks: []
