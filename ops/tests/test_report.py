@@ -94,4 +94,4 @@ def test_the_table_and_the_json_say_the_same() -> None:
     assert data["requests"] == 1 and data["started_at"] == AT.isoformat()
     assert data["working"]["requests"] == 1 and data["auth"]["requests"] == 0
     assert data["routes"][0]["route"] == "/v1/me"
-    assert data["sessions"] == {"completed": 1, "failed": 0, "cut": 0}
+    assert data["sessions"] == {"completed": 1, "failed": 0, "cut": 0, "conflicts": 0, "gone": 0}

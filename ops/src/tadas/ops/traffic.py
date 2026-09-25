@@ -23,6 +23,16 @@ done ones, delete one, read the stream after where it stood at the start,
 see one of its own changes arrive on the socket. A person thinks between
 steps.
 
+The people of an org share its tasks, and a move can renumber every open
+task of the org, so a session's write can meet a task that moved on since
+it read it. The API answers that with 412, the optimistic-concurrency
+refusal, and a session does what a client does: it reads the task afresh
+and makes the write once more on the fresh version. A task that is gone,
+404 on the write or on the read, is dropped and the session goes on
+without it. Both are counted on their own, as conflicts and as tasks gone,
+and neither is an error or a failure: they are the API working as it
+should under shared work. Every other refusal still fails the session.
+
 The tenants a run needs come from the operator plane (`POST /v1/admin/orgs`,
 a grant of Max, and its members) under the provisioner's operator token, a
 `write` entry and never a sign-in. They are named for the run, `ops-<run id>-<n>`, so no real
@@ -37,7 +47,7 @@ import logging
 import random
 import re
 import time
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError, version
@@ -191,6 +201,11 @@ class SessionOutcome:
     write_request_ids: list[str] = field(default_factory=list)
     """The request ids of the creating calls, first to last, for a caller
     that reads the signals back by one of them."""
+    conflicts: int = 0
+    """The 412s the session met on a write and answered by reading the task
+    afresh."""
+    gone: int = 0
+    """The tasks the session found gone when it went to write them."""
 
 
 class Clock:
@@ -330,33 +345,40 @@ class Session:
             if s.method == "POST" and s.route == "/v1/tasks" and s.status == 201 and s.request_id
         ]
 
-        await self.clock.think()
-        edited = await client.update_task(
-            created[0].id, version=created[0].version, title=f"{created[0].title} (edited)"
-        )
-        created[0] = edited
+        # A task the session found gone is None from then on, and every
+        # later step on it is left out.
+        tasks: list[TaskView | None] = list(created)
 
-        done: list[TaskView] = []
-        for task in created[1:3]:
+        await self.clock.think()
+        first = created[0]
+        tasks[0] = await self._land(
+            first,
+            lambda version: client.update_task(
+                first.id, version=version, title=f"{first.title} (edited)"
+            ),
+        )
+
+        for n in (1, 2):
             await self.clock.think()
-            done.append(
-                await client.update_task(task.id, version=task.version, status=TaskStatus.done)
+            tasks[n] = await self._mark(tasks[n], TaskStatus.done)
+
+        await self.clock.think()
+        tasks[1] = await self._mark(tasks[1], TaskStatus.open)
+
+        await self.clock.think()
+        moved, anchor = tasks[3], tasks[0]
+        if moved is not None and anchor is not None:
+            tasks[3] = await self._land(
+                moved, lambda version: client.move_task(moved.id, anchor.id, version)
             )
-        created[1], created[2] = done
-
-        await self.clock.think()
-        created[1] = await client.update_task(
-            created[1].id, version=created[1].version, status=TaskStatus.open
-        )
-
-        await self.clock.think()
-        created[3] = await client.move_task(created[3].id, created[0].id, created[3].version)
 
         await self.clock.think()
         await client.tasks(TaskStatus.done)
 
         await self.clock.think()
-        await client.delete_task(created[4].id, created[4].version)
+        deleted = tasks[4]
+        if deleted is not None:
+            await self._land(deleted, lambda version: client.delete_task(deleted.id, version))
 
         await self.clock.think()
         assert self._start_seq is not None
@@ -374,6 +396,61 @@ class Session:
                 raise SessionCut from None
             raise SessionFailed("the socket showed none of the session's own changes") from None
         self.outcome.saw_own_change = True
+
+    async def _land(
+        self, task: TaskView, write: Callable[[int], Awaitable[TaskView]]
+    ) -> TaskView | None:
+        """One write on a task, made the way a client of shared tasks makes
+        it: `write` takes the version the write is conditioned on. A 412
+        says the task moved on since the session read it, so the session
+        reads it afresh and writes once more on the fresh version. A second
+        412 leaves the step undone and the session goes on with the task as
+        it read it. A task that is gone, on the write or on the read, answers
+        None. Any other refusal is raised and fails the session, and so is a
+        404 on a task that is still there, since what was not found is then
+        something else. Answers the task as the API last showed it."""
+        try:
+            return await write(task.version)
+        except ApiError as error:
+            if error.status not in (404, 412):
+                raise
+            refused = error
+        if refused.status == 412:
+            self.outcome.conflicts += 1
+        fresh = await self._reread(task.id)
+        if fresh is None:
+            self.outcome.gone += 1
+            return None
+        if refused.status == 404:
+            raise refused
+        try:
+            return await write(fresh.version)
+        except ApiError as error:
+            if error.status == 412:
+                self.outcome.conflicts += 1
+                return fresh
+            if error.status == 404 and await self._reread(task.id) is None:
+                self.outcome.gone += 1
+                return None
+            raise
+
+    async def _mark(self, task: TaskView | None, status: TaskStatus) -> TaskView | None:
+        """Completes or reopens a task, unless it is gone already."""
+        if task is None:
+            return None
+        return await self._land(
+            task,
+            lambda version: self.client.update_task(task.id, version=version, status=status),
+        )
+
+    async def _reread(self, task_id: UUID) -> TaskView | None:
+        """The task as it stands now, or None when it is gone."""
+        try:
+            return await self.client.task(task_id)
+        except ApiError as error:
+            if error.status == 404:
+                return None
+            raise
 
 
 # The sign-in and the sign-out of a run
@@ -836,6 +913,8 @@ async def run_traffic(
         completed=sum(o.completed for o in outcomes),
         failed=sum(1 for o in outcomes if o.failure),
         cut=sum(o.cut for o in outcomes),
+        conflicts=sum(o.conflicts for o in outcomes),
+        gone=sum(o.gone for o in outcomes),
     )
     report = Report.of(
         samples,
