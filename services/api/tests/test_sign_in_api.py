@@ -13,13 +13,18 @@ from httpx import ASGITransport
 from pydantic import ValidationError
 
 from tadas.integrations.exceptions import UnsafeIntegration
-from tadas.integrations.identity.twin import TWIN_AUTHORIZE, IdentityProviderTwinImpl
+from tadas.integrations.identity.twin import (
+    TWIN_AUTHORIZE,
+    TWIN_LOGOUT,
+    IdentityProviderTwinImpl,
+)
 from tadas.integrations.impl.configured import IntegrationsConfiguredImpl, IntegrationsOverImpl
 from tadas.services.api.app import create_app
 from tadas.services.api.container import AppContainer
 from tadas.services.api.settings import ApiSettings
 
 CALLBACK = "http://localhost:55173/auth/callback"
+SIGNED_OUT = "http://localhost:55173/signed-out"
 STATE = "a-random-state-of-the-tab"
 VERIFIER = "v" * 43
 """A verifier for a code the twin issued with no challenge, which the twin
@@ -239,6 +244,93 @@ async def test_the_second_factor_is_verified_on_a_sign_in_only(
     assert anonymous.status_code == 401, anonymous.text
 
 
+async def session_of(client: httpx.AsyncClient, login: httpx.Response) -> dict[str, str]:
+    """The tenant session a sign-in's answer exchanges for, in its one place."""
+    assert login.status_code == 200, login.text
+    body = login.json()
+    [place] = body["memberships"]
+    session = await client.post(
+        "/v1/auth/sessions", json={"org_id": place["org"]["id"]}, headers=bearer(body["token"])
+    )
+    assert session.status_code == 200, session.text
+    return bearer(session.json()["token"])
+
+
+async def test_a_sign_out_answers_where_the_browser_ends_the_providers_session(
+    client: httpx.AsyncClient, twin: IdentityProviderTwinImpl
+) -> None:
+    code = twin.issue_code("dee@example.test")
+    headers = await session_of(
+        client,
+        await client.post("/v1/auth/callback", json={"code": code, "code_verifier": VERIFIER}),
+    )
+    out = await client.post("/v1/auth/logout", json={"return_to": SIGNED_OUT}, headers=headers)
+    assert out.status_code == 200, out.text
+    body = out.json()
+    assert body["revoked_at"] is not None and body["credential_kind"] == "session_token"
+    url = urlparse(body["provider_logout_url"])
+    assert f"{url.scheme}://{url.netloc}{url.path}" == TWIN_LOGOUT
+    query = parse_qs(url.query)
+    assert query["return_to"] == [SIGNED_OUT]
+    assert query["session_id"][0].startswith("twin_session_")
+    # Tadas's session is over.
+    gone = await client.get("/v1/me", headers=headers)
+    assert gone.status_code == 401, gone.text
+
+
+async def test_a_sign_out_with_no_body_still_ends_the_session(
+    client: httpx.AsyncClient, twin: IdentityProviderTwinImpl
+) -> None:
+    headers = await session_of(
+        client,
+        await client.post(
+            "/v1/auth/callback",
+            json={"code": twin.issue_code("dee@example.test"), "code_verifier": VERIFIER},
+        ),
+    )
+    out = await client.post("/v1/auth/logout", headers=headers)
+    assert out.status_code == 200, out.text
+    query = parse_qs(urlparse(out.json()["provider_logout_url"]).query)
+    assert "return_to" not in query and query["session_id"]
+
+
+async def test_a_session_signed_in_another_way_signs_out_of_tadas_alone(
+    client: httpx.AsyncClient, twin: IdentityProviderTwinImpl
+) -> None:
+    local = await session_of(
+        client, await client.post("/v1/auth/dev-sign-in", json={"email": "eve@example.test"})
+    )
+    device = (await client.post("/v1/auth/device")).json()
+    twin.confirm_device(device["user_code"], "dee@example.test")
+    by_device = await session_of(
+        client,
+        await client.post("/v1/auth/device/token", json={"device_code": device["device_code"]}),
+    )
+    for headers in (local, by_device):
+        out = await client.post("/v1/auth/logout", json={"return_to": SIGNED_OUT}, headers=headers)
+        assert out.status_code == 200, out.text
+        assert out.json()["provider_logout_url"] is None and out.json()["revoked_at"]
+
+
+@pytest.mark.parametrize(
+    "return_to", ["https://evil.example/signed-out", "http://localhost:55173/elsewhere", ""]
+)
+async def test_a_sign_out_return_that_is_not_this_environments_is_refused(
+    client: httpx.AsyncClient, twin: IdentityProviderTwinImpl, return_to: str
+) -> None:
+    headers = await session_of(
+        client,
+        await client.post(
+            "/v1/auth/callback",
+            json={"code": twin.issue_code("dee@example.test"), "code_verifier": VERIFIER},
+        ),
+    )
+    refused = await client.post("/v1/auth/logout", json={"return_to": return_to}, headers=headers)
+    assert refused.status_code == 422, refused.text
+    still = await client.get("/v1/me", headers=headers)
+    assert still.status_code == 200, still.text
+
+
 @pytest.mark.parametrize("environment", ["dev", "staging", "production"])
 def test_a_deployed_environment_refuses_the_local_sign_in(environment: str) -> None:
     with pytest.raises(ValidationError, match="TADAS_DEV_SIGN_IN_ENABLED"):
@@ -265,16 +357,42 @@ def test_a_deployed_environments_sign_in_comes_back_to_its_own_https_address(
 ) -> None:
     with pytest.raises(ValidationError, match="TADAS_SIGN_IN_REDIRECT_URIS"):
         ApiSettings.model_validate(
-            {"_env_file": None, "environment": "staging", "sign_in_redirect_uris": [redirect]}
+            {
+                "_env_file": None,
+                "environment": "staging",
+                "sign_in_redirect_uris": [redirect],
+                "sign_out_return_uris": ["https://app.staging.tadas.fyi/signed-out"],
+            }
         )
     allowed = ApiSettings.model_validate(
         {
             "_env_file": None,
             "environment": "staging",
             "sign_in_redirect_uris": ["https://app.staging.tadas.fyi/auth/callback"],
+            "sign_out_return_uris": ["https://app.staging.tadas.fyi/signed-out"],
         }
     )
     assert allowed.sign_in_redirect_uris == ["https://app.staging.tadas.fyi/auth/callback"]
+
+
+@pytest.mark.parametrize(
+    "return_to",
+    ["http://app.staging.tadas.fyi/signed-out", "https://localhost:55173/signed-out"],
+)
+def test_a_deployed_environments_sign_out_comes_back_to_its_own_https_address(
+    return_to: str,
+) -> None:
+    deployed = {
+        "_env_file": None,
+        "environment": "staging",
+        "sign_in_redirect_uris": ["https://app.staging.tadas.fyi/auth/callback"],
+    }
+    with pytest.raises(ValidationError, match="TADAS_SIGN_OUT_RETURN_URIS"):
+        ApiSettings.model_validate({**deployed, "sign_out_return_uris": [return_to]})
+    allowed = ApiSettings.model_validate(
+        {**deployed, "sign_out_return_uris": ["https://app.staging.tadas.fyi/signed-out"]}
+    )
+    assert allowed.sign_out_return_uris == ["https://app.staging.tadas.fyi/signed-out"]
 
 
 def test_the_settings_choose_the_provider_and_a_deployed_one_refuses_the_twin() -> None:
@@ -305,6 +423,7 @@ def test_the_settings_choose_the_provider_and_a_deployed_one_refuses_the_twin() 
             "environment": "staging",
             "identity_provider": "twin",
             "sign_in_redirect_uris": ["https://app.staging.tadas.fyi/auth/callback"],
+            "sign_out_return_uris": ["https://app.staging.tadas.fyi/signed-out"],
         }
     )
     with pytest.raises(UnsafeIntegration, match="TADAS_IDENTITY_PROVIDER=twin"):

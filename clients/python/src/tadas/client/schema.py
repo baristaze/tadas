@@ -241,6 +241,22 @@ class IssuedTotpSecretView(BaseModel):
     otpauth_uri: Annotated[str | None, Field(title='Otpauth Uri')]
 
 
+class ReturnTo(RootModel[str]):
+    root: Annotated[str, Field(max_length=2000, min_length=1, title='Return To')]
+
+
+class LogoutRequest(BaseModel):
+    """
+    Where the identity provider sends the browser once it has ended its own
+    session: this environment's portal page for it, and nothing else. Left
+    out, the provider sends it to its default sign-out address.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    return_to: Annotated[ReturnTo | None, Field(title='Return To')] = None
+
+
 class ExpiresIn(RootModel[int]):
     root: Annotated[int, Field(ge=1, le=3600, title='Expires In')]
 
@@ -476,6 +492,22 @@ class SignInStartView(BaseModel):
     """
     authorization_url: Annotated[str, Field(title='Authorization Url')]
     code_verifier: Annotated[str, Field(title='Code Verifier')]
+
+
+class SignedOutView(BaseModel):
+    """
+    The session that ended, and `provider_logout_url`: where the browser
+    goes next to end the identity provider's session behind it, so the next
+    sign-in on this browser asks who it is. Null when the sign-in left no
+    session there (the device sign-in, the local sign-in). It names the
+    provider's session, which is not a secret.
+    """
+    created_at: Annotated[AwareDatetime, Field(title='Created At')]
+    credential_kind: CredentialKind
+    expires_at: Annotated[AwareDatetime, Field(title='Expires At')]
+    id: Annotated[UUID, Field(title='Id')]
+    provider_logout_url: Annotated[str | None, Field(title='Provider Logout Url')] = None
+    revoked_at: Annotated[AwareDatetime | None, Field(title='Revoked At')]
 
 
 class SlackEventAnswerView(BaseModel):

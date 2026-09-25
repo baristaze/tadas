@@ -25,6 +25,7 @@ from tadas.services.api.types.tenancy import (
     IssuedApiKeyView,
     IssuedLoginView,
     IssuedSessionView,
+    LogoutRequest,
     MembershipChoicePageView,
     MembershipChoiceView,
     MembershipPageView,
@@ -33,6 +34,7 @@ from tadas.services.api.types.tenancy import (
     OrgView,
     SecondFactorRequest,
     SessionView,
+    SignedOutView,
     SignInCallbackRequest,
     SignInStartRequest,
     SignInStartView,
@@ -96,7 +98,7 @@ class TenancyServiceInterface(ABC):
         ...
 
     @abstractmethod
-    async def logout(self, ctx: OpContext) -> SessionView: ...
+    async def logout(self, ctx: OpContext, body: LogoutRequest | None) -> SignedOutView: ...
 
     @abstractmethod
     async def get_me(self, ctx: OpContext) -> MeView: ...

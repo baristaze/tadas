@@ -219,6 +219,24 @@ class SessionView(View):
     revoked_at: datetime | None
 
 
+class LogoutRequest(RequestBody):
+    """Where the identity provider sends the browser once it has ended its own
+    session: this environment's portal page for it, and nothing else. Left
+    out, the provider sends it to its default sign-out address."""
+
+    return_to: str | None = Field(default=None, min_length=1, max_length=2000)
+
+
+class SignedOutView(SessionView):
+    """The session that ended, and `provider_logout_url`: where the browser
+    goes next to end the identity provider's session behind it, so the next
+    sign-in on this browser asks who it is. Null when the sign-in left no
+    session there (the device sign-in, the local sign-in). It names the
+    provider's session, which is not a secret."""
+
+    provider_logout_url: str | None = None
+
+
 class ApiKeyView(View):
     id: UUID
     name: str

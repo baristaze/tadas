@@ -1128,6 +1128,27 @@
         "title": "IssuedUploadView",
         "type": "object"
       },
+      "LogoutRequest": {
+        "additionalProperties": false,
+        "description": "Where the identity provider sends the browser once it has ended its own\nsession: this environment's portal page for it, and nothing else. Left\nout, the provider sends it to its default sign-out address.",
+        "properties": {
+          "return_to": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Return To"
+          }
+        },
+        "title": "LogoutRequest",
+        "type": "object"
+      },
       "MeView": {
         "properties": {
           "app": {
@@ -1922,6 +1943,61 @@
           "code_verifier"
         ],
         "title": "SignInStartView",
+        "type": "object"
+      },
+      "SignedOutView": {
+        "description": "The session that ended, and `provider_logout_url`: where the browser\ngoes next to end the identity provider's session behind it, so the next\nsign-in on this browser asks who it is. Null when the sign-in left no\nsession there (the device sign-in, the local sign-in). It names the\nprovider's session, which is not a secret.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "credential_kind": {
+            "$ref": "#/components/schemas/CredentialKind"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "provider_logout_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider Logout Url"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked At"
+          }
+        },
+        "required": [
+          "id",
+          "credential_kind",
+          "created_at",
+          "expires_at",
+          "revoked_at"
+        ],
+        "title": "SignedOutView",
         "type": "object"
       },
       "SlackEventAnswerView": {
@@ -4769,12 +4845,29 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/LogoutRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SessionView"
+                  "$ref": "#/components/schemas/SignedOutView"
                 }
               }
             },

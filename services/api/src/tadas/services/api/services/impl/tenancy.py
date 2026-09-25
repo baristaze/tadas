@@ -25,6 +25,7 @@ from tadas.services.api.types.tenancy import (
     IssuedApiKeyView,
     IssuedLoginView,
     IssuedSessionView,
+    LogoutRequest,
     MembershipChoicePageView,
     MembershipChoiceView,
     MembershipPageView,
@@ -33,6 +34,7 @@ from tadas.services.api.types.tenancy import (
     OrgView,
     SecondFactorRequest,
     SessionView,
+    SignedOutView,
     SignInCallbackRequest,
     SignInStartRequest,
     SignInStartView,
@@ -140,8 +142,11 @@ class TenancyServiceImpl(TenancyServiceInterface):
             ),
         )
 
-    async def logout(self, ctx: OpContext) -> SessionView:
-        return SessionView.model_validate(await self._tenancy.logout(ctx))
+    async def logout(self, ctx: OpContext, body: LogoutRequest | None) -> SignedOutView:
+        signed_out = await self._tenancy.logout(ctx, body.return_to if body else None)
+        return SignedOutView.model_validate(signed_out.session).model_copy(
+            update={"provider_logout_url": signed_out.provider_logout_url}
+        )
 
     async def get_me(self, ctx: OpContext) -> MeView:
         # The context carries ids; the entities are loaded by the manager.

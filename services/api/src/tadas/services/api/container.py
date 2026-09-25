@@ -78,6 +78,7 @@ def tenancy_options(settings: ApiSettings) -> TenancyOptions:
         operator_token_ttl=timedelta(seconds=settings.operator_token_max_lifetime_seconds),
         totp_encryption_key=totp_key(settings),
         sign_in_redirect_uris=tuple(settings.sign_in_redirect_uris),
+        sign_out_return_uris=tuple(settings.sign_out_return_uris),
         dev_sign_in=settings.dev_sign_in_enabled,
         invitation_ttl_days=settings.invitation_lifetime_days,
     )

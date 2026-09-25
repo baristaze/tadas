@@ -1599,6 +1599,16 @@ export interface components {
             /** Url */
             url: string | null;
         };
+        /**
+         * LogoutRequest
+         * @description Where the identity provider sends the browser once it has ended its own
+         *     session: this environment's portal page for it, and nothing else. Left
+         *     out, the provider sends it to its default sign-out address.
+         */
+        LogoutRequest: {
+            /** Return To */
+            return_to?: string | null;
+        };
         /** MeView */
         MeView: {
             /** App */
@@ -1969,6 +1979,36 @@ export interface components {
             authorization_url: string;
             /** Code Verifier */
             code_verifier: string;
+        };
+        /**
+         * SignedOutView
+         * @description The session that ended, and `provider_logout_url`: where the browser
+         *     goes next to end the identity provider's session behind it, so the next
+         *     sign-in on this browser asks who it is. Null when the sign-in left no
+         *     session there (the device sign-in, the local sign-in). It names the
+         *     provider's session, which is not a secret.
+         */
+        SignedOutView: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            credential_kind: components["schemas"]["CredentialKind"];
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Provider Logout Url */
+            provider_logout_url?: string | null;
+            /** Revoked At */
+            revoked_at: string | null;
         };
         /**
          * SlackEventAnswerView
@@ -3103,7 +3143,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["LogoutRequest"] | null;
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -3111,7 +3155,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SessionView"];
+                    "application/json": components["schemas"]["SignedOutView"];
                 };
             };
             /** @description Validation Error */
