@@ -496,9 +496,15 @@ select.tadas-field {
   color: var(--tadas-text);
 }
 
-.tadas-menu-item:hover,
+.tadas-menu-item:not(:disabled):hover,
 .tadas-menu-item:focus-visible {
   background: var(--tadas-surface-subtle);
+}
+
+/* A choice being taken up: the others wait. */
+.tadas-menu-item:disabled {
+  cursor: progress;
+  opacity: 0.6;
 }
 
 /* The task rows. */
