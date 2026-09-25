@@ -263,10 +263,23 @@ class MoveTaskRequest(BaseModel):
     expected_version: Annotated[ExpectedVersion | None, Field(title='Expected Version')] = None
 
 
+class FlowEnum(StrEnum):
+    payment_method_update = 'payment_method_update'
+
+
+class Flow(RootModel[FlowEnum | None]):
+    root: Annotated[FlowEnum | None, Field(title='Flow')] = None
+
+
 class OpenPortalRequest(BaseModel):
+    """
+    `flow` opens the processor's page on one task and comes back to
+    `return_url` when it is done; without it, the page's home.
+    """
     model_config = ConfigDict(
         extra='forbid',
     )
+    flow: Annotated[Flow | None, Field(title='Flow')] = None
     return_url: Annotated[str, Field(max_length=2000, min_length=1, title='Return Url')]
 
 
@@ -757,6 +770,7 @@ class BillingView(BaseModel):
     limits: PlanLimitsView
     monthly_cents: Annotated[int, Field(title='Monthly Cents')]
     paid_plan: Plan | None
+    payment_failed: Annotated[bool, Field(title='Payment Failed')]
     plan: Plan
     plan_after: Plan | None
     plans: Annotated[list[PlanOfferView], Field(title='Plans')]

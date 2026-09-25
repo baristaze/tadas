@@ -367,7 +367,12 @@ context on keeps the stage the callee needs.
   (`PLAN_PRICES`, Max's volume tiers mirrored by `monthly_price_cents`),
   and derives the plan from the mirror: a live status carries its plan,
   a subscription set to end carries it until the period's end, and a
-  grant is a second source, the higher winning. `refuse_past` is the
+  grant is a second source, the higher winning. `payment_failed` is the
+  mirror's status too: past due or unpaid is an invoice the processor
+  could not collect, and a later payment (active) or an end (canceled)
+  clears it. `open_portal` with `update_payment_method` opens the
+  processor's payment method flow, which comes back to the portal page
+  once a method is saved. `refuse_past` is the
   lever: it raises `PlanLimitReached`, a 402 carrying the lever, the
   plan, the bound, and the plan that lifts it. The tasks and tenancy
   managers hold `EntitlementsInterface` alone; the billing manager reads

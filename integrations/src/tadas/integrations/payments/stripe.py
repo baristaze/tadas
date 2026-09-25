@@ -195,9 +195,19 @@ class PaymentsStripeImpl(PaymentsInterface):
             )
         return str(session.url)
 
-    async def create_portal_session(self, customer_id: str, return_url: str) -> str:
+    async def create_portal_session(
+        self, customer_id: str, return_url: str, update_payment_method: bool = False
+    ) -> str:
         v1 = self._v1()
         params: dict[str, Any] = {"customer": customer_id, "return_url": return_url}
+        if update_payment_method:
+            # The portal's deep link: straight to adding a payment method,
+            # then back to the page that sent the person. The configuration
+            # must allow the payment method update (the bootstrap turns it on).
+            params["flow_data"] = {
+                "type": "payment_method_update",
+                "after_completion": {"type": "redirect", "redirect": {"return_url": return_url}},
+            }
         configuration = await self._managed_portal_configuration(v1)
         if configuration is not None:
             params["configuration"] = configuration

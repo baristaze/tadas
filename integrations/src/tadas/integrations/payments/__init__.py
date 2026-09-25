@@ -54,9 +54,14 @@ class PaymentsInterface(ABC):
         ...
 
     @abstractmethod
-    async def create_portal_session(self, customer_id: str, return_url: str) -> str:
+    async def create_portal_session(
+        self, customer_id: str, return_url: str, update_payment_method: bool = False
+    ) -> str:
         """The processor's own page for the customer: payment methods,
-        invoices, a change of plan, cancellation. Returns its URL."""
+        invoices, a change of plan, cancellation. Returns its URL. With
+        `update_payment_method`, the page is the processor's flow for adding
+        a payment method, which sends the person back to `return_url` once
+        one is saved."""
         ...
 
     @abstractmethod

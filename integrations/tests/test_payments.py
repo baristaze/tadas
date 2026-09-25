@@ -446,3 +446,50 @@ def test_a_subscription_is_read_from_the_item_where_the_period_now_sits() -> Non
         True,
     )
     assert read.current_period_end is not None and read.org_id == org
+
+
+class _Sessions:
+    def __init__(self) -> None:
+        self.params: list[dict[str, Any]] = []
+
+    async def create_async(self, params: dict[str, Any]) -> object:
+        self.params.append(params)
+        return type("Session", (), {"url": "https://billing.stripe.com/p/session"})()
+
+
+class _Configurations:
+    async def list_async(self, params: dict[str, Any]) -> object:
+        return type("Page", (), {"data": []})()
+
+
+class _PortalOf:
+    """The SDK client's `v1` as far as a portal session reads it."""
+
+    def __init__(self) -> None:
+        self.sessions = _Sessions()
+        self.billing_portal = type(
+            "Portal", (), {"sessions": self.sessions, "configurations": _Configurations()}
+        )()
+        self.v1 = self
+
+
+async def test_a_portal_session_for_a_failed_payment_opens_the_payment_method_flow() -> None:
+    """The processor's documented deep link: `flow_data` of type
+    `payment_method_update`, redirecting back to the page that asked."""
+    payments = await _checked(set())
+    portal = _PortalOf()
+    payments._client = portal  # type: ignore[assignment]
+    await payments.create_portal_session("cus_1", "http://portal.test/settings/billing")
+    await payments.create_portal_session(
+        "cus_1", "http://portal.test/settings/billing", update_payment_method=True
+    )
+    home, fix = portal.sessions.params
+    assert "flow_data" not in home
+    assert fix["flow_data"] == {
+        "type": "payment_method_update",
+        "after_completion": {
+            "type": "redirect",
+            "redirect": {"return_url": "http://portal.test/settings/billing"},
+        },
+    }
+    assert fix["customer"] == "cus_1"

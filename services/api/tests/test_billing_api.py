@@ -232,6 +232,40 @@ async def test_cancel_holds_the_plan_to_the_period_end_and_resume_takes_it_back(
     assert portal.status_code == 200 and portal.json()["url"].startswith("https://billing.twin")
 
 
+async def test_a_failed_payment_is_read_and_the_portal_opens_on_a_new_payment_method(
+    client: httpx.AsyncClient, container: AppContainer, free: dict[str, str]
+) -> None:
+    await pay(client, container, free)
+    assert (await client.get("/v1/billing", headers=free)).json()["payment_failed"] is False
+    twin = twin_of(container)
+    subscription = next(iter(twin.subscriptions))
+    twin.move(subscription, status="past_due")
+    payload, signature = twin.invoice_event("invoice.payment_failed", subscription)
+    delivered = await client.post(
+        "/webhooks/stripe", content=payload, headers={"Stripe-Signature": signature}
+    )
+    assert delivered.status_code == 200
+    assert await drain(container) == [True]
+    failed = (await client.get("/v1/billing", headers=free)).json()
+    assert (failed["payment_failed"], failed["plan"], failed["status"]) == (True, "pro", "past_due")
+    fix = await client.post(
+        "/v1/billing/portal",
+        headers=free,
+        json={"return_url": PORTAL, "flow": "payment_method_update"},
+    )
+    assert fix.status_code == 200, fix.text
+    assert fix.json()["url"].endswith("/payment-method")
+    unknown = await client.post(
+        "/v1/billing/portal", headers=free, json={"return_url": PORTAL, "flow": "cancel"}
+    )
+    assert unknown.status_code == 422
+    twin.move(subscription, status="active")
+    payload, signature = twin.invoice_event("invoice.paid", subscription)
+    await client.post("/webhooks/stripe", content=payload, headers={"Stripe-Signature": signature})
+    assert await drain(container) == [True]
+    assert (await client.get("/v1/billing", headers=free)).json()["payment_failed"] is False
+
+
 async def test_every_other_org_is_untouched_by_a_delivery(
     client: httpx.AsyncClient, container: AppContainer, free: dict[str, str]
 ) -> None:

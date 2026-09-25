@@ -41,6 +41,22 @@ is the processor retrying a failed payment; the org keeps its plan while it
 does, and loses it when the processor gives up (unpaid or canceled)."""
 
 
+PAYMENT_FAILED_STATUSES = frozenset({SubscriptionStatus.PAST_DUE, SubscriptionStatus.UNPAID})
+"""The statuses the processor gives a subscription whose latest invoice it
+could not collect: past due while it retries, unpaid once it has stopped.
+A later payment makes it active again; an end makes it canceled."""
+
+
+def payment_failed(account: BillingAccount | None) -> bool:
+    """Whether the org's subscription has an invoice the processor could not
+    collect, which the owner fixes with another payment method."""
+    return (
+        account is not None
+        and account.subscription_id is not None
+        and account.status in PAYMENT_FAILED_STATUSES
+    )
+
+
 def limits_of(plan: Plan) -> PlanLimits:
     return PLAN_LIMITS[plan]
 

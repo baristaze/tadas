@@ -1185,6 +1185,8 @@ export interface components {
             /** Monthly Cents */
             monthly_cents: number;
             paid_plan: components["schemas"]["Plan"] | null;
+            /** Payment Failed */
+            payment_failed: boolean;
             plan: components["schemas"]["Plan"];
             plan_after: components["schemas"]["Plan"] | null;
             /** Plans */
@@ -1678,8 +1680,14 @@ export interface components {
             /** Expected Version */
             expected_version?: number | null;
         };
-        /** OpenPortalRequest */
+        /**
+         * OpenPortalRequest
+         * @description `flow` opens the processor's page on one task and comes back to
+         *     `return_url` when it is done; without it, the page's home.
+         */
         OpenPortalRequest: {
+            /** Flow */
+            flow?: "payment_method_update" | null;
             /** Return Url */
             return_url: string;
         };
