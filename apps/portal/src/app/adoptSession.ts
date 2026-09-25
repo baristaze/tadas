@@ -1,13 +1,14 @@
-// Taking up a new session is one act too: whatever the tab held goes first,
-// the token and every answer fetched under it, and only then is the new one
-// set. Signing in, signing up, and switching orgs all land here, so no cache
-// of the old tenant is ever shown under the new one. The realtime provider
-// reopens its socket on the token change.
+// Taking up a new session is one act too: every answer fetched under the
+// old one goes, and the new token replaces the old in one write. Signing in,
+// signing up, and switching orgs all land here, so no cache of the old tenant
+// is ever shown under the new one, and no moment passes with no token held:
+// a signed-in page never sees the tab signed out on its way to the new
+// session. The realtime provider reopens its socket on the token change.
 import type { IssuedSessionView } from "../api";
 import { useSessionStore } from "../store/session";
-import { forgetSession } from "./forgetSession";
+import { queryClient } from "./queryClient";
 
 export function adoptSession(issued: Pick<IssuedSessionView, "token" | "org">): void {
-  forgetSession();
+  queryClient.clear();
   useSessionStore.getState().setSession(issued.token, issued.org.slug);
 }

@@ -15,7 +15,7 @@ function DevSignInForm() {
   return (
     <Page title="Local sign-in" narrow>
       {vm.choice.kind === "several" ? (
-        <ChooseOrgCard memberships={vm.choice.memberships} onPick={(m) => void vm.pick(m)} />
+        <ChooseOrgCard memberships={vm.choice.memberships} onPick={(m) => void vm.pick(m)} busy={vm.busy} />
       ) : (
         <Card>
           <form

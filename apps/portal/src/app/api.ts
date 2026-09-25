@@ -2,7 +2,7 @@
 import { createClient } from "../api";
 import { useSessionStore } from "../store/session";
 import { runtimeConfig } from "./config";
-import { forgetSession } from "./forgetSession";
+import { forgetSessionIfHeld } from "./forgetSession";
 
 export const api = createClient({
   baseUrl: runtimeConfig().apiUrl,
@@ -12,5 +12,6 @@ export const api = createClient({
   retryAttempts: runtimeConfig().retryAttempts,
   retryBaseDelayMs: runtimeConfig().retryBaseDelayMs,
   getToken: () => useSessionStore.getState().token,
-  onUnauthorized: forgetSession,
+  // Through the same door as the socket's 4401, so a switch in flight holds it.
+  onUnauthorized: forgetSessionIfHeld,
 });

@@ -1,8 +1,9 @@
 import type { IssuedLoginView, MembershipChoiceView } from "../../api";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { adoptSession } from "../../app/adoptSession";
 import { errorMessage } from "../../app/errorMessage";
+import { inFlight, oneAtATime } from "../../app/oneAtATime";
 import { useExchangeSession } from "../../queries/tenancy";
 import { useNoticesStore } from "../../store/notices";
 import { chooseOrg, landingPath, type OrgChoice } from "./signInModel";
@@ -16,6 +17,7 @@ export function useEnterOrg() {
   const exchange = useExchangeSession();
   const [choice, setChoice] = useState<OrgChoice>({ kind: "none" });
   const [held, setHeld] = useState<{ token: string; returnTo: string } | null>(null);
+  const choosing = useRef(inFlight());
 
   const enter = async (token: string, membership: MembershipChoiceView, returnTo: string) => {
     const issued = await exchange.mutateAsync({ loginToken: token, body: { org_id: membership.org.id } });
@@ -36,14 +38,17 @@ export function useEnterOrg() {
   };
 
   // Choosing an org can be refused too (the sign-in expired, the API is
-  // away); the refusal is said the way a failed write is.
+  // away); the refusal is said the way a failed write is. One choice sends
+  // one exchange: a click while one is in flight is dropped.
   const pick = async (membership: MembershipChoiceView) => {
     if (!held) return;
-    try {
-      await enter(held.token, membership, held.returnTo);
-    } catch (caught) {
-      notify(errorMessage(caught, "Sign-in failed."));
-    }
+    await oneAtATime(choosing.current, async () => {
+      try {
+        await enter(held.token, membership, held.returnTo);
+      } catch (caught) {
+        notify(errorMessage(caught, "Sign-in failed."));
+      }
+    });
   };
 
   return { choice, signedIn, pick, entering: exchange.isPending };

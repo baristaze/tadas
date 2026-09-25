@@ -8,7 +8,7 @@ export function CallbackPage() {
   return (
     <Page title="Sign in to Tadas" narrow>
       {vm.choice.kind === "several" ? (
-        <ChooseOrgCard memberships={vm.choice.memberships} onPick={(m) => void vm.pick(m)} />
+        <ChooseOrgCard memberships={vm.choice.memberships} onPick={(m) => void vm.pick(m)} busy={vm.busy} />
       ) : (
         <Card>
           <div style={{ display: "grid", gap: tokens.space.md }}>

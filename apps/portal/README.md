@@ -101,17 +101,26 @@ Zustand, one realtime channel.
 - One tenant at a time. Every sign-in answers with the person's places:
   one goes straight in, several show a picker with the personal org first,
   none says so. The exchange turns the choice into the one session the tab
-  holds. The org chip in the chrome (`src/app/OrgChip.tsx`) shows the
+  holds. One choice sends one exchange: while it is in flight the picker's
+  buttons are disabled, and a click that still gets through is dropped
+  (`src/app/oneAtATime.ts`). The org chip in the chrome (`src/app/OrgChip.tsx`) shows the
   current org, marks a personal one, and opens a menu: the other places to
   switch to, and a new team org (`/orgs/new`, `src/features/new_org/`: a
   name and an optional short name, which the server makes from the name
   when it is left empty). A switch presents the current session to the
-  exchange, which the server ends in the same write, and `adoptSession`
-  then drops the old tenant (`forgetSession`: the token and every cached
-  answer) before the new session is set. A new team org is created under
-  an idempotency key and then switched into the same way. The token change
-  reopens the realtime socket; a late 4401 from the old socket signs
-  nothing out, since it belongs to a token the tab no longer holds.
+  exchange, which the server ends in the same write. The server closes
+  that session's socket with 4401 as it ends it, and the close often
+  arrives before the exchange's answer. So the switch holds the session
+  while the exchange runs (`holdSession` in `src/app/forgetSession.ts`): a
+  4401 or a 401 for it is noted, not acted on. With the answer in hand,
+  `adoptSession` drops every cached answer of the old tenant and puts the
+  new token in place of the old in one write, so the tab never holds no
+  token on the way. Only then does the hold end. An exchange that fails
+  after its session was refused signs the tab out; any other refusal
+  leaves the tab where it was and says why. A new team org is created
+  under an idempotency key and then switched into the same way. The token
+  change reopens the realtime socket; a later 4401 from the old socket
+  signs nothing out, since it belongs to a token the tab no longer holds.
 - Tasks. Adding one is a single text box: type the title and press Enter,
   or click Add. The due date is set by editing the task, with a date
   picker and a link that clears it. A due date is a date, never a time:
