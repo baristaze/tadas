@@ -147,9 +147,11 @@ context on keeps the stage the callee needs.
   answers a new login that records it, behind the per-email delay.
   `dev_sign_in` signs in by address alone and is `NotFound` unless the
   options turn it on, which the API's settings refuse outside `local`
-  and `test` (ADR 0029). Tadas keeps no password: the column
-  `identities.password_hash` stays one release, nullable and deferred,
-  for the release before, and the one after drops it. Invitations
+  and `test` (ADR 0029). Tadas keeps no password:
+  `identities.password_hash` holds none, and it and the two columns of
+  the old sign-in delay are in the table and out of the mapping, so no
+  statement names them; the next release drops the three (ADR 0038).
+  Invitations
   (`core.invitations`, org-scoped; one pending invitation per address
   in an org, the provider's id unique) are sent by the provider through
   the org's organization there, made once by its external id and kept
@@ -360,9 +362,8 @@ context on keeps the stage the callee needs.
   and announces nothing. The time zone is the person's identity's
   (`Identity.time_zone`, an IANA name `tenancy.rules.check_time_zone`
   accepts), which the portal sends through `PATCH /v1/me/identity`.
-  `tasks.remind_at` is dead and deferred: no read names it, and the
-  Postgres storage still writes it, nine in the morning UTC of the due
-  date, for the release before; the release after this one drops it.
+  `tasks.remind_at` is dead: it is in the table and out of the mapping,
+  so no statement names it, and the next release drops it (ADR 0038).
 
 - `billing`: an org's plan and its account at the payment processor
   ([ADR 0031](adr/0031-plans-are-levers-and-the-processor-is-mirrored.md)).
@@ -1284,7 +1285,9 @@ alone, and neither key may touch what the other's work does not need
   failed migration or a rolled-back rollout fails the apply with the old
   tasks still serving; a migration is compatible with the release before
   it (expand and contract), so the old tasks serve the new schema
-  meanwhile. Each environment has a credential of its
+  meanwhile. A column leaves the mapping one release before it leaves
+  the table, because the mapper names every mapped column in its
+  inserts (ADR 0038). Each environment has a credential of its
   own, and production has two: `tadas-deploy-staging` for staging,
   `tadas-plan-production`, which reads, for the plan, and
   `tadas-deploy-production`, which writes, for the apply. The trust of

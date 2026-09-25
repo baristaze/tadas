@@ -1,7 +1,7 @@
-from datetime import UTC, date, datetime, time
+from datetime import date, datetime
 from uuid import UUID
 
-from sqlalchemy import Index
+from sqlalchemy import Column, DateTime, Index
 from sqlalchemy.orm import Mapped, mapped_column
 
 from tadas.om.storage.tables.base import (
@@ -22,7 +22,15 @@ class Tasks(IdentifiableMixin, TrackableMixin, SoftDeletableMixin, Base):
         Index("ix_tasks_org_id_status_position", "org_id", "status", "position"),
         Index("ix_tasks_org_id_status_id", "org_id", "status", "id"),
         Index("ix_tasks_org_id_status_updated_at_id", "org_id", "status", "updated_at", "id"),
+        # The due time a task carried before a due date replaced it: dead, in
+        # the table and out of the mapping. The release before this one names
+        # it in every insert and update, and a migration runs before the
+        # services roll, so a drop here would fail its writes mid-rollout. Out
+        # of the mapping, no statement of this release names it, and the
+        # release after this one drops it with these lines.
+        Column("remind_at", DateTime(timezone=True), nullable=True),
     )
+    __mapper_args__ = {"exclude_properties": ["remind_at"]}
     title: Mapped[str]
     notes: Mapped[str]
     status: Mapped[str]
@@ -33,15 +41,3 @@ class Tasks(IdentifiableMixin, TrackableMixin, SoftDeletableMixin, Base):
     version: Mapped[int] = mapped_column(server_default="1")
     due_on: Mapped[date | None]
     reminded_at: Mapped[datetime | None]
-    # The due time a task carried before a due date replaced it. Dead and
-    # deferred: no read names it. This release still writes it, nine in the
-    # morning UTC of the due date (`remind_at_of`), so the release before,
-    # which reads only it, keeps each task's due date after a fast rollback.
-    # The release after this one drops the column and these lines.
-    remind_at: Mapped[datetime | None] = mapped_column(deferred=True)
-
-
-def remind_at_of(due_on: date | None) -> datetime | None:
-    """What the dead `remind_at` column holds for a due date: nine in the
-    morning of it, UTC. Only the release before reads it."""
-    return None if due_on is None else datetime.combine(due_on, time(9), tzinfo=UTC)

@@ -284,15 +284,13 @@ async def test_the_due_date_backfill_takes_the_utc_date_in_every_tenant(
     assert await due(other, zoe_org) == date(2030, 10, 2), "the other tenant's too"
     assert await due(plain, ann_org) is None
 
-    # This release writes the old column too, nine in the morning UTC, so a
-    # fast rollback to the release before still reads each due date.
+    # The old column is out of the mapping: an update leaves it as it was.
     moved = late.model_copy(update={"due_on": date(2030, 12, 24), "version": late.version + 1})
     await storage.update_task(ann_org, moved, late.version, ())
-    [(written,)] = await on_core(core, f"SELECT remind_at FROM core.tasks WHERE id = '{late.id}'")
-    assert written == datetime(2030, 12, 24, 9, tzinfo=UTC)
+    [(kept,)] = await on_core(core, f"SELECT remind_at FROM core.tasks WHERE id = '{late.id}'")
+    assert kept == datetime(2030, 10, 1, 4, 30, tzinfo=UTC)
 
     # A downgrade restores a due time wherever the old column disagrees.
-    await on_core(core, f"UPDATE core.tasks SET remind_at = NULL WHERE id = '{late.id}'")
     await downgrade(DatabaseRole.CORE, core, BEFORE_DUE_DATE_BACKFILL)
     rows = await on_core(core, "SELECT title, remind_at FROM core.tasks")
     restored = {title: at for title, at in rows}
