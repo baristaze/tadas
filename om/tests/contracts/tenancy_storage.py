@@ -56,6 +56,7 @@ CROSS_TENANT_CASES: frozenset[str] = frozenset(
         "read_membership_for_user",
         "read_memberships",
         "read_org",
+        "read_principal",
         "read_session",
         "read_sessions",
         "read_user",
@@ -317,6 +318,22 @@ class TenancyStorageContract:
                 org_b.id, membership.model_copy(update={"role": Role.OWNER})
             )
         assert await storage.read_memberships(org_a.id, limit=10) == [membership]
+
+    async def test_the_principal_is_read_whole_and_only_under_its_tenant(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        """The org, the user, and the live membership a credential stands for,
+        as the three single reads answer them; another tenant reads none of
+        them, and an ended membership reads as none."""
+        org, other = make_org("A"), make_org("B")
+        user = make_user(make_identity().id)
+        membership = make_membership(user.id)
+        await storage.create_org_with_owner(org.id, org, user, membership)
+        assert await storage.read_principal(org.id, user.id) == (org, user, membership)
+        assert await storage.read_principal(other.id, user.id) == (None, None, None)
+        ended = membership.model_copy(update={"deleted_at": utcnow(), "deleted_by": user.id})
+        await storage.write_membership(org.id, ended)
+        assert await storage.read_principal(org.id, user.id) == (org, user, None)
 
     async def test_the_member_count_is_the_tenants_live_memberships(
         self, storage: TenancyStorageInterface
