@@ -13,6 +13,13 @@ Every command below runs from the repository root.
 The compose project is `tadas`, so containers are named `tadas-<service>-1`
 and the volumes `tadas_postgres` and `tadas_minio`.
 
+MinIO serves no public image, so the object store is `pgsty/minio`, the
+community fork of the same server (https://github.com/pgsty/minio). It
+reads the same settings and the same data directory, bundles `mc`, and
+keeps the web console. The compose file pins a dated release tag and its
+digest. A bump takes the newest `RELEASE.*` tag on Docker Hub and its
+digest from `docker buildx imagetools inspect pgsty/minio:<tag>`.
+
 ## URLs and ports
 
 Everything listens on 127.0.0.1 only. `make urls` prints the browser URLs.
