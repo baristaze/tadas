@@ -28,9 +28,9 @@ of the seven kinds of thing [Tadas is made of](../../../../README.md).
   accepted, or revoked. A link stops working at its expiry.
 - **Session**: a signed-in visit. A login is a session with no org
   yet, the one a sign-in produces; exchanging it for an org gives a
-  session in that org. A live session also proves who the person is,
-  so it can list their orgs and be exchanged for a session in another
-  one. A session ends at its absolute lifetime or after it sits idle,
+  session in that org, and ends the login. A live session also proves
+  who the person is, so it can list their orgs and be exchanged for a
+  session in another one. A session ends at its absolute lifetime or after it sits idle,
   whichever comes first. Only the hash of the token is kept.
 - **Second factor**: an operator's TOTP secret, sealed under a key the
   process holds, enrolled once it is confirmed by a first code.
@@ -186,6 +186,13 @@ of the seven kinds of thing [Tadas is made of](../../../../README.md).
 - **Secrets are fingerprints.** A session token, an API key, and a
   socket ticket are stored as hashes. The plain value is shown once.
 - **A ticket works once.** A second redemption is refused.
+- **A sign-in is exchanged once.** The exchange ends the login in the
+  same write that makes the session, so one sign-in makes one session.
+  A second exchange, a replay, or a retry after a lost answer is
+  refused, and the person signs in again; of two at once, one lands.
+  The exchange takes no idempotency key: the login is the key, and a
+  replayed answer could not carry the session's token
+  ([ADR 0037](../../../../../docs/adr/0037-a-sign-in-is-exchanged-once.md)).
 - **A verified address or nothing.** The identity provider's sign-in
   counts only with an address it verified; that is what links a person
   Tadas already knows to the provider's name for them.
