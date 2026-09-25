@@ -27,7 +27,7 @@ from sqlalchemy import Connection, MetaData
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from tadas.om.storage.logins import ensure_logins
-from tadas.om.storage.roles import TABLE_ROLES, DatabaseRole, role_for
+from tadas.om.storage.roles import DROPPED_TABLE_ROLES, TABLE_ROLES, DatabaseRole, role_for
 from tadas.om.storage.settings import MigrationSettings
 from tadas.om.storage.tables.base import Base
 
@@ -73,8 +73,11 @@ def check_role_of_sql(role: DatabaseRole, sql: str) -> None:
     for schema, table in _SCHEMA_REF.findall(_INDEX_REF.sub("", sql)):
         if schema != role.value:
             raise RuntimeError(f"{role.value} migration references {schema}.{table}")
-        if table != VERSION_TABLE and role_for(table) is not role:
-            raise RuntimeError(f"table {table} belongs to role {role_for(table).value}")
+        if table == VERSION_TABLE:
+            continue
+        owner = DROPPED_TABLE_ROLES.get(table) or role_for(table)
+        if owner is not role:
+            raise RuntimeError(f"table {table} belongs to role {owner.value}")
 
 
 def run_sql(role: DatabaseRole, filename: str) -> None:

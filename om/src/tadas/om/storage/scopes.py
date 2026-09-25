@@ -90,8 +90,6 @@ TABLE_SCOPES: dict[str, TableScope] = {
     "billing_deliveries": TableScope(ScopeKind.ORG),
     "slack_installations": TableScope(ScopeKind.ORG),
     "slack_install_states": TableScope(ScopeKind.ORG),
-    "slack_connections": TableScope(ScopeKind.ORG),
-    "slack_link_codes": TableScope(ScopeKind.ORG),
     "slack_posts": TableScope(ScopeKind.ORG),
     # A tenant's rows that also belong to one person in it. A user's person
     # is the identity behind it, so it narrows on `app.identity_id`; every

@@ -1,6 +1,8 @@
 # ADR 0035: Slack is a distributed app over HTTP, installed per org
 
-**Status**: accepted (2026-09-23)
+**Status**: accepted (2026-09-23). The contract half is done
+(2026-09-25): the code-linked channel's two tables are dropped, and
+`<prefix>slack_bot_token` is gone from every environment.
 
 ## Context
 

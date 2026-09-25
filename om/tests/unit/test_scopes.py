@@ -12,7 +12,7 @@ import pytest
 
 import tadas.om
 from tadas.om.storage.migrate import MIGRATIONS_DIR, role_metadata
-from tadas.om.storage.roles import TABLE_ROLES, DatabaseRole, role_for
+from tadas.om.storage.roles import DROPPED_TABLE_ROLES, TABLE_ROLES, DatabaseRole, role_for
 from tadas.om.storage.scopes import (
     POLICY_NAME,
     TABLE_SCOPES,
@@ -155,8 +155,15 @@ def test_the_system_scope_clause_is_spelled_in_every_policy(role: DatabaseRole) 
         for name in role_metadata(role).tables
         if scope_for(name.split(".")[-1]).kind is not ScopeKind.SYSTEM
     ]
-    policies = sql.count(f"CREATE POLICY {POLICY_NAME} ON ")
-    assert policies == len(fenced), f"{role.value}: {policies} policies for {len(fenced)} tables"
+    # A table the chain dropped took its policy with it.
+    policies = [
+        table
+        for table in re.findall(rf"CREATE POLICY {POLICY_NAME} ON \w+\.(\w+)", sql)
+        if table not in DROPPED_TABLE_ROLES
+    ]
+    assert len(policies) == len(fenced), (
+        f"{role.value}: {len(policies)} policies for {len(fenced)} tables"
+    )
     # Twice per policy: `USING` and `WITH CHECK` carry the same expression.
     empty_uuid = "'00000000-0000-0000-0000-000000000000'"
     for name in fenced:
