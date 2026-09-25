@@ -22,8 +22,11 @@ So does a default redirect that is not the one the desired state names:
 the API reports which URI is the default and does not change it.
 
 The Redirects tab's other fields have no API. The command prints what each
-should hold, as a check to make by eye on the tab. No webhook is
-reconciled: the sign-in and the invitations need none.
+should hold, as a check to make by eye on the tab: the login initiation
+URI, the app homepage URL, and the sign-out URIs with their default. The
+sign-out URIs cannot be probed either: WorkOS's logout answers the same for
+a return it lists and one it does not until a real session ends. No webhook
+is reconciled: the sign-in and the invitations need none.
 
 The API key comes from the variable the desired state names for the
 environment, and never appears in anything this prints."""
@@ -50,7 +53,6 @@ CREDENTIAL_CHECK_CODE = "tadas-credential-check"
 OK, FAILED, USAGE = 0, 1, 2
 # The Redirects tab's fields Tadas leaves to AuthKit, and why.
 LEFT_TO_AUTHKIT = (
-    ("sign-out URIs", "not set: nobody is sent to WorkOS's logout; the homepage is the fallback"),
     ("sign-up URL", "not set: AuthKit hosts the sign-up page"),
     ("user invitation URL", "not set: AuthKit's page takes it, then the login initiation URI"),
     ("password reset URL", "not set: no password sign-in is on"),
@@ -66,6 +68,8 @@ class Desired:
     default_redirect_uri: str
     login_initiation_uri: str
     app_homepage_url: str
+    sign_out_uris: tuple[str, ...]
+    default_sign_out_uri: str
     webhooks: tuple[str, ...]
 
 
@@ -89,6 +93,13 @@ def load_desired(path: Path, environment: str) -> Desired:
             f"{path}: the default redirect URI of {environment!r}, {default}, "
             "is not one of its redirect URIs"
         )
+    sign_out_uris = tuple(str(u) for u in entry["sign_out_uris"])
+    default_sign_out = str(entry["default_sign_out_uri"])
+    if default_sign_out not in sign_out_uris:
+        raise ValueError(
+            f"{path}: the default sign-out URI of {environment!r}, {default_sign_out}, "
+            "is not one of its sign-out URIs"
+        )
     return Desired(
         environment=environment,
         api_key_variable=str(entry["api_key_variable"]),
@@ -97,6 +108,8 @@ def load_desired(path: Path, environment: str) -> Desired:
         default_redirect_uri=default,
         login_initiation_uri=str(entry["login_initiation_uri"]),
         app_homepage_url=str(entry["app_homepage_url"]),
+        sign_out_uris=sign_out_uris,
+        default_sign_out_uri=default_sign_out,
         webhooks=tuple(str(w) for w in entry.get("webhooks") or ()),
     )
 
@@ -264,6 +277,11 @@ async def reconcile(desired: Desired, workos: WorkOS, *, apply: bool) -> Outcome
         "(check it on the Redirects tab; no API reads or writes it)"
     )
     say(f"app homepage URL: {desired.app_homepage_url} (check it on the same tab)")
+    say(
+        f"sign-out URIs: {', '.join(desired.sign_out_uris)}, default "
+        f"{desired.default_sign_out_uri} (check them on the same tab; no API reads or "
+        "writes them)"
+    )
     for field, why in LEFT_TO_AUTHKIT:
         say(f"{field}: {why}")
     say("webhooks: none" if not desired.webhooks else f"webhooks: {', '.join(desired.webhooks)}")

@@ -34,6 +34,10 @@ staging:
   default_redirect_uri: {DEPLOYED}
   login_initiation_uri: https://app.staging.example.test/login
   app_homepage_url: https://app.staging.example.test
+  sign_out_uris:
+    - http://localhost:55173/signed-out
+    - https://app.staging.example.test/signed-out
+  default_sign_out_uri: https://app.staging.example.test/signed-out
   webhooks: []
 """
 
@@ -135,6 +139,9 @@ def test_the_committed_desired_state_names_both_applications() -> None:
     assert staging.default_redirect_uri == "https://app.staging.tadas.fyi/auth/callback"
     assert all(u.startswith("https://") for u in production.redirect_uris)
     assert production.default_redirect_uri.startswith("https://")
+    assert "http://localhost:55173/signed-out" in staging.sign_out_uris
+    assert staging.default_sign_out_uri == "https://app.staging.tadas.fyi/signed-out"
+    assert production.sign_out_uris == ("https://app.tadas.fyi/signed-out",)
     assert staging.api_key_variable != production.api_key_variable
     assert staging.webhooks == () and production.webhooks == ()
 
@@ -142,6 +149,18 @@ def test_the_committed_desired_state_names_both_applications() -> None:
 def test_a_default_that_is_not_a_redirect_is_refused(tmp_path: Path) -> None:
     repo(tmp_path, DESIRED.replace(f"default_redirect_uri: {DEPLOYED}", "default_redirect_uri: x"))
     with pytest.raises(ValueError, match="is not one of its redirect URIs"):
+        load_desired(desired_file(tmp_path), "staging")
+
+
+def test_a_default_that_is_not_a_sign_out_uri_is_refused(tmp_path: Path) -> None:
+    repo(
+        tmp_path,
+        DESIRED.replace(
+            "default_sign_out_uri: https://app.staging.example.test/signed-out",
+            "default_sign_out_uri: https://app.staging.example.test/",
+        ),
+    )
+    with pytest.raises(ValueError, match="is not one of its sign-out URIs"):
         load_desired(desired_file(tmp_path), "staging")
 
 
@@ -219,7 +238,12 @@ async def test_the_tabs_other_fields_are_printed_as_checks(
     out = capsys.readouterr().out
     assert "login initiation URI: https://app.staging.example.test/login" in out
     assert "app homepage URL: https://app.staging.example.test" in out
-    for field in ("sign-out URIs", "sign-up URL", "user invitation URL", "password reset URL"):
+    assert (
+        "sign-out URIs: http://localhost:55173/signed-out, "
+        "https://app.staging.example.test/signed-out, default "
+        "https://app.staging.example.test/signed-out (check them on the same tab" in out
+    )
+    for field in ("sign-up URL", "user invitation URL", "password reset URL"):
         assert f"{field}: not set" in out
     assert "webhooks: none" in out and "nothing to change" in out
 
