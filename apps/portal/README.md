@@ -68,7 +68,10 @@ Zustand, one realtime channel.
   of each wait is jitter, because a socket drops for a shared reason: a
   bare curve would bring every tab back at the same instant. A socket
   counts as connected once the hello frame arrives, so a server that
-  accepts and closes at once still backs off. Envelopes (`envelopes.ts`)
+  accepts and closes at once still backs off. The first hello's catch-up
+  reads the stream's last page and routes what was produced since the
+  page began reading; it refreshes every query only when that page cannot
+  tell, so a page load reads each query once. Envelopes (`envelopes.ts`)
   route into the query cache (`router.ts`), never into components. The
   ping interval comes from
   `deployment/realtime-timeouts.json`.

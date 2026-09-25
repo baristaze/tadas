@@ -53,13 +53,15 @@ const hello = (seq: number) => ({ type: "hello", sent_at: null, org_id: "o1", us
 /** The stream in storage, as pages after a seq. */
 type Pages = (after: number) => EventView[];
 
-function harness(pages: Pages = () => [], pageSize = 200) {
+function harness(pages: Pages = () => [], pageSize = 200, clock?: () => number) {
   const sockets: FakeSocket[] = [];
   const routed: Envelope[] = [];
   const fetches: number[] = [];
   const requestTicket = vi.fn(() => Promise.resolve("tkt"));
   const onUnauthenticated = vi.fn();
+  const refreshAll = vi.fn(() => Promise.resolve());
   const channel = openChannel({
+    now: clock,
     onUnauthenticated,
     requestTicket,
     openSocket: () => {
@@ -74,11 +76,11 @@ function harness(pages: Pages = () => [], pageSize = 200) {
     route: (envelope) => {
       routed.push(envelope);
     },
-    refreshAll: () => Promise.resolve(),
+    refreshAll,
     connection: useConnectionStore,
     pageSize,
   });
-  return { channel, sockets, routed, fetches, requestTicket, onUnauthenticated };
+  return { channel, sockets, routed, fetches, requestTicket, onUnauthenticated, refreshAll };
 }
 
 // Lets the ticket request and the inbox settle without moving the clock.
@@ -349,6 +351,127 @@ describe("stream cursor", () => {
     h2.sockets[0]!.receive(push(6));
     await flush();
     expect(channel.cursor()).toBe(6);
+  });
+});
+
+describe("the first catch-up", () => {
+  // The page began reading at 12:00:00 on the server's clock: the hello was
+  // sent at 12:00:03, three seconds after the channel opened.
+  const helloAt = (seq: number) => ({ ...hello(seq), sent_at: "2026-09-16T12:00:03Z" });
+  const at = (seq: number, time: string, kind = "tasks.task.updated"): EventView => ({
+    ...event(seq),
+    kind,
+    produced_at: `2026-09-16T${time}Z`,
+  });
+
+  function opened(pages: Pages, pageSize = 200) {
+    let clock = 0;
+    const h = harness(pages, pageSize, () => clock);
+    return { h, wait: (ms: number) => (clock += ms) };
+  }
+
+  it("routes what the stream produced since the page began reading, and refreshes nothing else", async () => {
+    // 11:59:30 is past the margin before the reads; 11:59:50 is inside it,
+    // and 12:00:01 came while the page read. One route per entity.
+    const stream = [
+      at(3, "11:59:30", "billing.account.updated"),
+      at(4, "11:59:50", "tasks.task.created"),
+      at(5, "12:00:01", "tasks.task.updated"),
+    ];
+    const { h, wait } = opened((after) => stream.filter((e) => e.seq > after));
+    channel = h.channel;
+    await flush();
+    h.sockets[0]!.accept();
+    await flush();
+    wait(3000);
+    h.sockets[0]!.receive(helloAt(5));
+    await flush();
+    expect(h.refreshAll).not.toHaveBeenCalled();
+    expect(h.fetches).toEqual([0]);
+    expect(h.routed.filter((e) => e.type === "event").map(seqOf)).toEqual([5]);
+    expect(channel.cursor()).toBe(5);
+  });
+
+  it("reads only the last page of the stream", async () => {
+    const stream = [at(400, "11:00:00"), at(401, "12:00:02")];
+    const { h, wait } = opened((after) => stream.filter((e) => e.seq > after), 2);
+    channel = h.channel;
+    await flush();
+    h.sockets[0]!.accept();
+    await flush();
+    wait(3000);
+    h.sockets[0]!.receive(helloAt(401));
+    await flush();
+    expect(h.fetches).toEqual([399]);
+    expect(h.routed.filter((e) => e.type === "event").map(seqOf)).toEqual([401]);
+    expect(h.refreshAll).not.toHaveBeenCalled();
+  });
+
+  it("refreshes wholesale when the whole tail is recent, since older records may lie before it", async () => {
+    const stream = [at(400, "12:00:01"), at(401, "12:00:02")];
+    const { h, wait } = opened((after) => stream.filter((e) => e.seq > after), 2);
+    channel = h.channel;
+    await flush();
+    h.sockets[0]!.accept();
+    await flush();
+    wait(3000);
+    h.sockets[0]!.receive(helloAt(401));
+    await flush();
+    expect(h.refreshAll).toHaveBeenCalledTimes(1);
+    expect(h.routed.filter((e) => e.type === "event")).toEqual([]);
+  });
+
+  it("reads nothing for an empty stream", async () => {
+    const { h } = opened(() => []);
+    channel = h.channel;
+    await flush();
+    h.sockets[0]!.accept();
+    await flush();
+    h.sockets[0]!.receive(helloAt(0));
+    await flush();
+    expect(h.fetches).toEqual([]);
+    expect(h.refreshAll).not.toHaveBeenCalled();
+  });
+
+  it("refreshes wholesale when the hello carries no time", async () => {
+    const h = harness();
+    channel = h.channel;
+    await flush();
+    h.sockets[0]!.accept();
+    await flush();
+    h.sockets[0]!.receive(hello(5));
+    await flush();
+    expect(h.refreshAll).toHaveBeenCalledTimes(1);
+    expect(h.fetches).toEqual([]);
+  });
+
+  it("refreshes wholesale when the socket stays open without a hello", async () => {
+    const h = harness();
+    channel = h.channel;
+    await flush();
+    h.sockets[0]!.accept();
+    await flush();
+    expect(h.refreshAll).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(STABLE_OPEN_MS);
+    expect(h.refreshAll).toHaveBeenCalledTimes(1);
+  });
+
+  it("replays from the cursor on a reconnect, never from the tail", async () => {
+    const stream = [at(6, "12:00:04")];
+    const { h, wait } = opened((after) => stream.filter((e) => e.seq > after));
+    channel = h.channel;
+    await flush();
+    h.sockets[0]!.accept();
+    await flush();
+    wait(3000);
+    h.sockets[0]!.receive(helloAt(5));
+    await flush();
+    h.sockets[0]!.drop();
+    await vi.advanceTimersByTimeAsync(60_000);
+    h.sockets[1]!.accept();
+    await flush();
+    expect(h.fetches).toEqual([0, 5]);
+    expect(h.refreshAll).not.toHaveBeenCalled();
   });
 });
 

@@ -45,3 +45,27 @@ export function eventEnvelope(event: EventView): EventEnvelope {
 export function isLastPage(received: number, limit: number): boolean {
   return received < limit;
 }
+
+// How far before the page began reading its first catch-up looks. A write's
+// record is stamped inside its transaction, and the commit that makes it
+// visible can trail the stamp by up to a statement's ten-second deadline, so
+// the margin is past it.
+export const FIRST_CATCH_UP_MARGIN_MS = 15_000;
+
+// The server's time, in epoch milliseconds, at which the page began reading,
+// less the margin: the hello's `sent_at` is the server's clock, and the time
+// the tab waited for it is taken off. The wait as measured here includes the
+// frame's trip, so the answer errs early, which reads more and never less.
+export function readsBegan(helloSentAt: string, waitedMs: number, marginMs = FIRST_CATCH_UP_MARGIN_MS): number {
+  return Date.parse(helloSentAt) - waitedMs - marginMs;
+}
+
+// Of the stream's tail, the records produced since `since`: what a page that
+// began reading then may not have seen. Null when the tail cannot tell: it
+// was read from a seq past the stream's start and its first record is
+// already that recent, so older records since then may lie before it.
+export function tailSince(tail: EventView[], after: number, since: number): EventView[] | null {
+  const recent = tail.filter((event) => Date.parse(event.produced_at) >= since);
+  if (after > 0 && tail.length > 0 && recent.length === tail.length) return null;
+  return recent;
+}

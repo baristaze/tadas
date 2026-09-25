@@ -1082,7 +1082,14 @@ alone, and neither key may touch what the other's work does not need
   replay pages until the last page, a failed fetch, or a page that moved
   the cursor nowhere (a seq between is not in storage yet), and the
   cursor never moves past a seq that was not applied, so the next push
-  or pong retries from where it stands.
+  or pong retries from where it stands. The first hello has no cursor
+  before it: what the page read before the socket subscribed may predate
+  a change never pushed. So the client reads the last page of the stream
+  and routes the records produced since the page began reading (the
+  hello's `sent_at` less the time the tab waited for it, less fifteen
+  seconds, past a statement's deadline), and the rest of the cache stays
+  as read. Only a tail that cannot tell (every record on it that recent)
+  or a hello with no time refreshes every query.
   Errors go to the Sentry-compatible backend named by `sentryDsn` in
   the runtime `config.json` (locally, by `VITE_SENTRY_DSN`), through
   every route's `errorElement` and React's root error hooks; the DSN is
