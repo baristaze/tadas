@@ -838,13 +838,16 @@ async def test_sessions_are_listed_revoked_and_logged_out(
     manager: TenancyManagerImpl, storage: TenancyStorageMemoryImpl
 ) -> None:
     _, org = await manager.bootstrap(request(), "Acme", "acme", "ann@example.test", "Ann")
-    login = await manager.dev_sign_in(request(), "ann@example.test")
-    first = await manager.exchange_login(
-        await manager.authenticate_login(request(), login.token), org.id
-    )
-    second = await manager.exchange_login(
-        await manager.authenticate_login(request(), login.token), org.id
-    )
+    # Two sign-ins, since each makes one session: two tabs of one person.
+    first, second = [
+        await manager.exchange_login(
+            await manager.authenticate_login(
+                request(), (await manager.dev_sign_in(request(), "ann@example.test")).token
+            ),
+            org.id,
+        )
+        for _ in range(2)
+    ]
     ctx = await manager.authenticate(request(), first.token)
     other = await manager.authenticate(request(), second.token)
 
@@ -948,14 +951,8 @@ async def test_a_page_of_dead_sessions_never_hides_a_live_one(
         storage, infra, TenancyOptions(dev_sign_in=True, max_limit=1), outbox=outbox
     )
     _, org = await manager.bootstrap(request(), "Acme", "acme", "ann@example.test", "Ann")
-    login = await manager.dev_sign_in(request(), "ann@example.test")
-    ictx = await manager.authenticate_login(request(), login.token)
-    older = await manager.authenticate(
-        request(), (await manager.exchange_login(ictx, org.id)).token
-    )
-    newer = await manager.authenticate(
-        request(), (await manager.exchange_login(ictx, org.id)).token
-    )
+    older = await sign_in(manager, "ann@example.test", org.id)
+    newer = await sign_in(manager, "ann@example.test", org.id)
     stale = await storage.read_session(org.id, older.security.credential_id)
     assert stale is not None
     await storage.write_session(
@@ -2128,7 +2125,10 @@ async def test_a_switch_ends_the_session_it_was_presented_with_in_the_same_write
     login = await manager.dev_sign_in(request(), "ann@example.test")
     ictx = await manager.authenticate_login(request(), login.token)
     tab = await manager.exchange_login(ictx, acme.id)
-    other_tab = await manager.exchange_login(ictx, acme.id)
+    other_login = await manager.dev_sign_in(request(), "ann@example.test")
+    other_tab = await manager.exchange_login(
+        await manager.authenticate_login(request(), other_login.token), acme.id
+    )
 
     # The tab presents its session to the exchange with the other org's id.
     switched = await manager.exchange_login(
@@ -2181,6 +2181,56 @@ async def test_two_switches_on_one_session_admit_one(manager: TenancyManagerImpl
     assert len(won) == 1 and len(lost) == 1
     assert isinstance(lost[0], CredentialExpired)
     assert (await manager.authenticate(request(), won[0].token)).org_id == acme.id
+
+
+async def test_a_sign_in_is_exchanged_once(
+    manager: TenancyManagerImpl, storage: TenancyStorageMemoryImpl
+) -> None:
+    _, acme = await manager.bootstrap(request(), "Acme", "acme", "ann@example.test", "Ann")
+    _, gamma = await manager.bootstrap(request(), "Gamma", "gamma", "gus@example.test", "Gus")
+    login = await manager.dev_sign_in(request(), "ann@example.test")
+    ictx = await manager.authenticate_login(request(), login.token)
+    # A refused exchange ends nothing: the sign-in still stands.
+    with pytest.raises(NotAuthorized):
+        await manager.exchange_login(ictx, gamma.id)
+    issued = await manager.exchange_login(ictx, acme.id)
+    ctx = await manager.authenticate(request(), issued.token)
+    # The sign-in ended in the write that made the session.
+    ended = await storage.read_session_by_id(ictx.credential_id)
+    assert ended is not None and ended[0] == EMPTY_UUID
+    assert ended[1].revoked_at == ended[1].updated_at is not None
+    # A second exchange, a replay or a retry after a lost answer, lands nothing.
+    with pytest.raises(CredentialExpired, match="sign in again"):
+        await manager.exchange_login(ictx, acme.id)
+    # Presented again, the sign-in proves nothing any more, the list of
+    # places included; the session is what the person holds.
+    with pytest.raises(CredentialExpired, match="sign in again"):
+        await manager.authenticate_login(request(), login.token)
+    assert [s.id for s in await manager.get_sessions(ctx, limit=10)] == [ctx.security.credential_id]
+    # A new sign-in makes a new session.
+    again = await sign_in(manager, "ann@example.test", acme.id)
+    assert again.security.credential_id != ctx.security.credential_id
+
+
+async def test_two_exchanges_of_one_sign_in_admit_one(
+    manager: TenancyManagerImpl, storage: TenancyStorageMemoryImpl
+) -> None:
+    """Three clicks on the picker at once, or a replayed request: the sign-in
+    ends in the write that lands the one session, so the others find it
+    ended."""
+    _, acme = await manager.bootstrap(request(), "Acme", "acme", "ann@example.test", "Ann")
+    login = await manager.dev_sign_in(request(), "ann@example.test")
+    # All verified before any writes: the storage decides.
+    proofs = [await manager.authenticate_login(request(), login.token) for _ in range(3)]
+    outcomes = await asyncio.gather(
+        *(manager.exchange_login(ictx, acme.id) for ictx in proofs), return_exceptions=True
+    )
+    won = [o for o in outcomes if not isinstance(o, BaseException)]
+    lost = [o for o in outcomes if isinstance(o, BaseException)]
+    assert len(won) == 1 and len(lost) == 2
+    assert all(isinstance(error, CredentialExpired) for error in lost)
+    ctx = await manager.authenticate(request(), won[0].token)
+    assert [s.id for s in await manager.get_sessions(ctx, limit=10)] == [ctx.security.credential_id]
 
 
 async def test_a_person_records_their_time_zone_and_the_org_reads_it(
