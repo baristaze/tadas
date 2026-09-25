@@ -58,8 +58,12 @@ services:
       timeout: 2s
       retries: 30
 
+  # MinIO serves no public image to pull, so this is the community fork of
+  # the same server that PGSTY builds (github.com/pgsty/minio): the same
+  # settings and data format, `mc` bundled, and the console kept. The tag
+  # names the release and the digest pins it.
   minio:
-    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
+    image: docker.io/pgsty/minio:RELEASE.2026-08-04T00-00-00Z@sha256:b6bfe7239bfc83fb90d31612d9704d86039dd714f7904b3f1ad68f211e602372
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: tadas
