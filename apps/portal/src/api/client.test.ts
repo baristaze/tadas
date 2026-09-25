@@ -155,6 +155,8 @@ describe("transport client response handling", () => {
     const fetchImpl: typeof fetch = () => Promise.resolve(textResponse(401, "Unauthorized", "text/plain"));
     const failure = await client({ fetchImpl, onUnauthorized }).get("/v1/me").catch((error: unknown) => error);
     expect(onUnauthorized).toHaveBeenCalledTimes(1);
+    // The refused token is named, so a switch in flight can tell it is the one it hands over.
+    expect(onUnauthorized).toHaveBeenCalledWith("tok_1");
     expect(failure).toBeInstanceOf(ApiError);
     expect(failure).toMatchObject({ status: 401 });
   });

@@ -5,6 +5,7 @@ import { useBilling } from "../queries/billing";
 import { useMe, useMyMemberships, useSwitchOrg } from "../queries/tenancy";
 import { useNoticesStore } from "../store/notices";
 import { adoptSession } from "./adoptSession";
+import { forgetSession, holdSession } from "./forgetSession";
 import { planName } from "../features/billing/billingModel";
 import { chipChoices } from "./orgChipModel";
 import { switchOrg } from "./switchOrg";
@@ -24,7 +25,9 @@ export function useOrgChipVm() {
     setOpen(false);
     const outcome = await switchOrg({
       exchange: () => exchange.mutateAsync(membership.org.id),
+      hold: holdSession,
       adopt: adoptSession,
+      forget: forgetSession,
       report: notify,
     });
     // The new tenant starts on its task list; a page of the old one may not exist here.

@@ -78,7 +78,8 @@ export interface ClientOptions {
   /** The wait before the first extra attempt; it doubles and carries jitter. */
   retryBaseDelayMs?: number;
   getToken: () => string | null;
-  onUnauthorized: () => void;
+  /** A 401 to the bearer the tab holds; the refused token is handed over. */
+  onUnauthorized: (token: string) => void;
   fetchImpl?: typeof fetch;
 }
 
@@ -224,7 +225,7 @@ export function createClient(options: ClientOptions): ApiClient {
     const requestId = response.headers.get("x-request-id");
     // A refusal belongs to the bearer sent, not a replacement session or
     // a separate login credential used to choose an org.
-    if (response.status === 401 && token && token === options.getToken()) options.onUnauthorized();
+    if (response.status === 401 && token && token === options.getToken()) options.onUnauthorized(token);
     const parsed = isJson(response.headers.get("content-type")) ? parseJson(text) : undefined;
     if (!response.ok) {
       const retryAfterMs = retryAfterHeaderMs(response.headers.get("retry-after"));
