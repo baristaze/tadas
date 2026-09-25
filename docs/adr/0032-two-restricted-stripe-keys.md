@@ -2,7 +2,9 @@
 
 **Status**: accepted (2026-09-23). Supersedes the key's name and kind in
 [ADR 0031](0031-plans-are-levers-and-the-processor-is-mirrored.md); the
-rest of that record stands.
+rest of that record stands. The rollback's room is closed (2026-09-25):
+`<prefix>stripe_org_key` is gone from every environment, and so is the
+boot's refusal of `TADAS_STRIPE_ORG_KEY`.
 
 ## Context
 

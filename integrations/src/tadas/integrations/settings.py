@@ -46,10 +46,6 @@ class IntegrationsSettings(BaseSettings):
     # reads it from the person's shell.
     stripe_runtime_key: SecretStr | None = Field(default=None, repr=False)
     stripe_webhook_secret: SecretStr | None = Field(default=None, repr=False)
-    # The name the runtime key had before it was split from the bootstrap's.
-    # It is read only to refuse it at boot with the new names, so a leftover
-    # line in a laptop's .env is not a silent "not configured".
-    stripe_org_key: SecretStr | None = Field(default=None, repr=False)
     stripe_timeout_seconds: float = Field(default=10.0, gt=0)
 
     # Slack: the app's real client, or its twin in memory (the tests, and a
@@ -76,7 +72,6 @@ class IntegrationsSettings(BaseSettings):
     @field_validator(
         "stripe_runtime_key",
         "stripe_webhook_secret",
-        "stripe_org_key",
         "slack_client_secret",
         "slack_signing_secret",
         mode="before",
