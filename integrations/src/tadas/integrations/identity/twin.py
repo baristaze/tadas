@@ -40,6 +40,7 @@ TWIN_ISSUER = "twin://identity"
 TWIN_AUTHORIZE = "https://identity.twin.invalid/authorize"
 TWIN_PORTAL = "https://identity.twin.invalid/portal"
 TWIN_DEVICE = "https://identity.twin.invalid/device"
+TWIN_LOGOUT = "https://identity.twin.invalid/logout"
 
 
 def s256(verifier: str) -> str:
@@ -103,13 +104,17 @@ class IdentityProviderTwinImpl(IdentityProviderInterface):
         code_challenge: str | None = None,
     ) -> str:
         """A person finished the hosted sign-in: the code the browser brings
-        back. With `code_challenge`, the exchange must present its verifier."""
+        back, and the twin's session in that browser, which the sign-in names.
+        With `code_challenge`, the exchange must present its verifier."""
         person = self.user(
             email, first_name=first_name, last_name=last_name, email_verified=email_verified
         )
         code = self._id("code")
         self._codes[code] = ProvidedSignIn(
-            user=person, organization_id=organization_id, via_sso=via_sso
+            user=person,
+            organization_id=organization_id,
+            via_sso=via_sso,
+            session_id=self._id("session"),
         )
         if code_challenge is not None:
             self._challenges[code] = code_challenge
@@ -142,7 +147,9 @@ class IdentityProviderTwinImpl(IdentityProviderInterface):
             update={"state": InvitationState.ACCEPTED, "accepted_user_id": person.id}
         )
         code = self._id("code")
-        self._codes[code] = ProvidedSignIn(user=person, organization_id=invitation.organization_id)
+        self._codes[code] = ProvidedSignIn(
+            user=person, organization_id=invitation.organization_id, session_id=self._id("session")
+        )
         return code
 
     def verify_domain(self, organization_id: str, domain: str) -> None:
@@ -181,6 +188,12 @@ class IdentityProviderTwinImpl(IdentityProviderInterface):
         if screen_hint is not None:
             query["screen_hint"] = screen_hint
         return f"{TWIN_AUTHORIZE}?{urlencode(query)}"
+
+    def logout_url(self, *, session_id: str, return_to: str | None) -> str:
+        query = {"session_id": session_id}
+        if return_to is not None:
+            query["return_to"] = return_to
+        return f"{TWIN_LOGOUT}?{urlencode(query)}"
 
     async def authenticate_code(
         self, code: str, *, code_verifier: str | None, invitation_token: str | None = None

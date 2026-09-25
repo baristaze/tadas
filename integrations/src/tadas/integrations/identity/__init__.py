@@ -39,11 +39,15 @@ class ProvidedSignIn(_Frozen):
     """A completed sign-in: who, and, when the provider signed them in to one
     of its organizations (an invitation accepted, a single sign-on), which.
     `via_sso` is True only when the person's own identity provider, through
-    the organization's connection, vouched for them."""
+    the organization's connection, vouched for them. `session_id` is the
+    provider's own session in the browser that signed in, when it keeps one:
+    the session its logout ends. It is not a secret, and it stays on the
+    server beside the sign-in it came with."""
 
     user: ProvidedUser
     organization_id: str | None = None
     via_sso: bool = False
+    session_id: str | None = None
 
 
 class DeviceAuthorization(_Frozen):
@@ -123,6 +127,14 @@ class IdentityProviderInterface(ABC):
         """Exchanges the code the browser brought back, server-side, with the
         verifier the sign-in started with. ProviderRefused for a code that is
         spent, expired, or never issued, or a verifier that does not match."""
+        ...
+
+    @abstractmethod
+    def logout_url(self, *, session_id: str, return_to: str | None) -> str:
+        """Where the browser goes to end the provider's session `session_id`;
+        the provider then sends it on to `return_to`, which must be one of the
+        application's sign-out URIs, or to its default one when None. No
+        network call."""
         ...
 
     @abstractmethod
