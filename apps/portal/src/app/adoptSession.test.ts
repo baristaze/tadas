@@ -53,4 +53,17 @@ describe("adoptSession", () => {
     expect(JSON.parse(sessionStorage.getItem("tadas.portal.session") ?? "{}").state.token).toBe("ses_new");
     expect(localStorage.length).toBe(0);
   });
+
+  it("holds a token at every change the store announces, so the tab never looks signed out", async () => {
+    const { adoptSession } = await import("./adoptSession");
+    const { useSessionStore } = await import("../store/session");
+    useSessionStore.getState().setSession("ses_old", "acme");
+    const seen: (string | null)[] = [];
+    const stop = useSessionStore.subscribe((state) => seen.push(state.token));
+
+    adoptSession({ token: "ses_new", org: org("beta") });
+    stop();
+
+    expect(seen).toEqual(["ses_new"]);
+  });
 });
