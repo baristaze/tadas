@@ -143,8 +143,8 @@ person's sign-in.
 `deployment/workos/environments.yaml` is the desired state of the Tadas
 App, the WorkOS application Tadas signs people in through, in each WorkOS
 environment: its client id, its redirect URIs and which one is the
-default, its login initiation URI, its App homepage URL, and its
-webhooks, which are none. `staging` serves the local stack and staging;
+default, its login initiation URI, its App homepage URL, its sign-out
+URIs and which one is the default, and its webhooks, which are none. `staging` serves the local stack and staging;
 `production` serves production alone.
 
 ```bash
@@ -172,7 +172,7 @@ refuses is named as a dashboard step, and the command exits 1. So is a
 default redirect that is not the one the file names: the API reports the
 default and does not set it. The Redirects tab's other fields have no
 API, so the command prints what each should hold as a check to make on
-the tab. A second run against unchanged config says `nothing to
+the tab. The sign-out URIs are among them. A second run against unchanged config says `nothing to
 change`.
 
 ## The skills

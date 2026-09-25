@@ -78,7 +78,10 @@ uv run tadas listen                           # the team's tasks, reminders amon
   first of them (default 0.25, doubling from there). `logout` revokes the
   session the file keeps, at the API that issued it, and forgets the file
   whatever the API answers; a session already gone is not an error, and
-  `TADAS_TOKEN` is left alone.
+  `TADAS_TOKEN` is left alone. It ends Tadas's session only: the device
+  sign-in leaves Tadas no WorkOS session to end, since the browser that
+  confirmed the code may be another machine's. A person who confirmed it
+  on a shared computer signs out of WorkOS there, in that browser.
 - `listen` opens the socket on a single-use ticket, subscribes to
   `entity_changed`, and tells each push after reading the task it names;
   the push says who and what, the record says the rest. A deleted task is

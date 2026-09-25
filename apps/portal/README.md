@@ -84,7 +84,13 @@ Zustand, one realtime channel.
   hands the code to the API, which exchanges it with WorkOS server-side,
   and a person nobody knew is signed up by it, with their personal org. A
   tab that just signed out waits on `/login` for the person to ask, rather
-  than being signed straight back in. `/sign-in` and `/sign-up` still lead
+  than being signed straight back in. The sign-out itself asks the API to
+  end the session with a return to this origin's `/signed-out`; when the
+  API answers WorkOS's logout, the browser goes there last
+  (`src/features/settings/signOut.ts`), WorkOS ends its AuthKit session,
+  and sends the browser back to `/signed-out`, the sign-in page waiting
+  with "You are signed out." So the next sign-in on this browser asks who
+  it is. A session from the local sign-in stays on the portal. `/sign-in` and `/sign-up` still lead
   there. The local stack also serves `/login/dev`, a sign-in by address
   alone for the seeded people and anyone a developer names, offered only
   when the runtime config says `devSignIn` (true locally, absent in the
