@@ -1,5 +1,5 @@
 import base64
-from datetime import date, datetime
+from datetime import datetime
 from uuid import UUID
 
 from tadas.om.base import utcnow
@@ -21,19 +21,6 @@ from tadas.services.api.types.tasks import (
     TaskView,
     UpdateTaskRequest,
 )
-
-
-def due_on_sent(body: AddTaskRequest | UpdateTaskRequest) -> tuple[bool, date | None]:
-    """Whether the body names a due date, and which: `due_on` when sent, or
-    else the date of the deprecated `remind_at` in its own offset. An
-    explicit null of either clears it."""
-    sent = body.model_fields_set
-    if "due_on" in sent:
-        return True, body.due_on
-    if "remind_at" in sent:
-        at = body.__dict__["remind_at"]  # read without the deprecation warning
-        return True, None if at is None else at.date()
-    return False, None
 
 
 def encode_cursor(status: TaskStatus, task: Task) -> str:
@@ -125,7 +112,7 @@ class TasksServiceImpl(TasksServiceInterface):
             title=body.title,
             notes=body.notes,
             assignee_id=body.assignee_id,
-            due_on=due_on_sent(body)[1],
+            due_on=body.due_on,
         )
         return TaskView.model_validate(await self._tasks.create_task(ctx, task))
 
@@ -139,14 +126,9 @@ class TasksServiceImpl(TasksServiceInterface):
         # travels beside the entity: the manager conditions the write on it.
         changes = {
             name: value
-            for name, value in body.model_dump(
-                exclude_unset=True, exclude={"due_on", "remind_at"}
-            ).items()
-            if value is not None or name == "assignee_id"
+            for name, value in body.model_dump(exclude_unset=True).items()
+            if value is not None or name in ("assignee_id", "due_on")
         }
-        due_sent, due_on = due_on_sent(body)
-        if due_sent:
-            changes["due_on"] = due_on
         # model_copy does not validate; a copy that carries caller input does.
         changed = Task.model_validate({**current.model_dump(), **changes})
         return TaskView.model_validate(await self._tasks.update_task(ctx, changed, expected))

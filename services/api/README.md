@@ -61,9 +61,7 @@ change. A name the image does not host refuses the boot.
   `.../confirm`, `.../download`, `/v1/media/usage`)
   edit, move, delete. A task's due date (`due_on`, `YYYY-MM-DD`, never a
   time) is set on the create and set, moved, or cleared (`null`) on the
-  edit. `remind_at`, the due time it replaces, is deprecated: a request
-  that sends it sets the due date to its date, and a response carries
-  it as `null`. The release after this one removes it.
+  edit.
   (`/v1/tasks`, `/v1/tasks/{task_id}`, `/v1/tasks/{task_id}/move`)
 - **Slack.** The org's installation (its workspace, its channel, and
   whether it works), any member; the install, which answers Slack's
