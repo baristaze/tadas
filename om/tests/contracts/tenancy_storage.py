@@ -1034,6 +1034,17 @@ class TenancyStorageContract:
         assert await storage.read_session_by_id(session.id) == (org.id, session)
         assert await storage.read_session_by_id(new_id()) is None
 
+    async def test_a_session_keeps_the_provider_session_behind_it(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        org = make_org()
+        session = make_session(new_id(), new_id(), uuid4().hex).model_copy(
+            update={"provider_session_id": "session_01K5PROVIDER"}
+        )
+        await storage.write_session(org.id, session)
+        found = await storage.read_session_by_digest(session.token_hash)
+        assert found is not None and found[1].provider_session_id == "session_01K5PROVIDER"
+
     async def test_replace_session_ends_one_and_lands_the_other_in_one_commit(
         self, storage: TenancyStorageInterface, outbox: OutboxStorageInterface
     ) -> None:

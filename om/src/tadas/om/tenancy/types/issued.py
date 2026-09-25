@@ -6,6 +6,7 @@ from tadas.om.base import Platform
 from tadas.om.opcontext import OperatorRole, Role
 from tadas.om.tenancy.types.api_key import ApiKey
 from tadas.om.tenancy.types.org import Org
+from tadas.om.tenancy.types.session import Session
 from tadas.om.tenancy.types.user import User
 
 
@@ -63,3 +64,12 @@ class SignInStart(Platform):
 
     authorization_url: str
     code_verifier: str
+
+
+class SignedOut(Platform):
+    """A session ended by its own holder, and where the browser goes next to
+    end the identity provider's session behind it: None when the sign-in
+    left none there (the device sign-in, the local sign-in)."""
+
+    session: Session
+    provider_logout_url: str | None = None

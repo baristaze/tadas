@@ -27,6 +27,7 @@ from tadas.om.tenancy.types.issued import (
     IssuedSession,
     IssuedTicket,
     OrgMembership,
+    SignedOut,
     SignInStart,
 )
 from tadas.om.tenancy.types.membership import Membership
@@ -482,8 +483,12 @@ class TenancyManagerInterface(ABC):
     async def revoke_session(self, ctx: OpContext, session_id: UUID) -> Session: ...
 
     @abstractmethod
-    async def logout(self, ctx: OpContext) -> Session:
-        """Revokes the session the caller presented."""
+    async def logout(self, ctx: OpContext, return_to: str | None = None) -> SignedOut:
+        """Revokes the session the caller presented, and answers where the
+        browser goes to end the identity provider's session behind it, when
+        the sign-in left one there. `return_to` is where the provider sends
+        the browser after: one of `sign_out_return_uris`, else refused; None
+        leaves it to the provider's default."""
         ...
 
     @abstractmethod

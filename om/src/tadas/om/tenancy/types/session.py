@@ -18,6 +18,7 @@ class Session(Identifiable, Trackable):
         "last_seen_at",
         "second_factor_at",
         "operator_role",
+        "provider_session_id",
     )
     """Every fact of a credential is the manager's: a caller names a session,
     never writes one."""
@@ -36,3 +37,9 @@ class Session(Identifiable, Trackable):
     second_factor_at: datetime | None = None
     # An operator token's one permission; None on every other kind.
     operator_role: OperatorRole | None = None
+    # The identity provider's own session in the browser that signed in, when
+    # the sign-in left one (AuthKit's, through its hosted page): the sign-out
+    # ends it too. Carried from the sign-in to every session exchanged from
+    # it. Not a secret, and never on the wire but in the sign-out's answer;
+    # None for the device sign-in, the local sign-in, and an operator token.
+    provider_session_id: str | None = None

@@ -871,8 +871,11 @@ async def test_sessions_are_listed_revoked_and_logged_out(
     with pytest.raises(ValidationFailed):
         await manager.logout(key_ctx)
 
-    out = await manager.logout(ctx)
+    signed_out = await manager.logout(ctx)
+    out = signed_out.session
     assert out.id == ctx.security.credential_id and out.revoked_at is not None
+    # The local sign-in leaves no session at the provider to end.
+    assert signed_out.provider_logout_url is None
     with pytest.raises(CredentialExpired):
         await manager.authenticate(request(), first.token)
 
@@ -931,7 +934,7 @@ async def test_revoking_a_session_announces_it_on_the_bus_without_its_token(
     ]
 
     # Logging out is the same revocation, announced the same way.
-    out = await manager.logout(ctx)
+    out = (await manager.logout(ctx)).session
     assert [r.target_id for _, r in relay.rows if r.kind == "tenancy.session.revoked"] == [
         revoked.id,
         out.id,

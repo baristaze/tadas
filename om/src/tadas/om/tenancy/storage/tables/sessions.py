@@ -19,3 +19,4 @@ class Sessions(IdentifiableMixin, TrackableMixin, Base):
     last_seen_at: Mapped[datetime | None]
     second_factor_at: Mapped[datetime | None]
     operator_role: Mapped[str | None]
+    provider_session_id: Mapped[str | None]
