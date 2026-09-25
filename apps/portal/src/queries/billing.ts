@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { BillingView, Plan, RedirectView } from "../api";
+import type { BillingView, OpenPortalRequest, Plan, RedirectView } from "../api";
 import { api } from "../app/api";
 import { keys } from "./keys";
 
@@ -8,6 +8,9 @@ import { keys } from "./keys";
 export function billingReturnUrl(origin: string = window.location.origin): string {
   return `${origin}/settings/billing`;
 }
+
+/** A task the processor's page opens on. */
+export type PortalFlow = NonNullable<OpenPortalRequest["flow"]>;
 
 /** Where a hosted page is opened; a test hands in its own. */
 export type Go = (url: string) => void;
@@ -34,10 +37,12 @@ export function useStartCheckout(go: Go = leave) {
   });
 }
 
-/** The processor's page for payment methods, invoices, and a change of plan. */
+/** The processor's page for payment methods, invoices, and a change of plan;
+ * with a flow, the page opens on that one task and comes back when it is done. */
 export function useOpenBillingPortal(go: Go = leave) {
   return useMutation({
-    mutationFn: () => api.post<RedirectView>("/v1/billing/portal", { return_url: billingReturnUrl() }),
+    mutationFn: (flow?: PortalFlow) =>
+      api.post<RedirectView>("/v1/billing/portal", { return_url: billingReturnUrl(), flow: flow ?? null }),
     onSuccess: (redirect) => go(redirect.url),
   });
 }

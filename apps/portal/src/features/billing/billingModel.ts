@@ -157,3 +157,23 @@ export function checkoutReturn(search: string): "done" | "cancelled" | null {
 
 export const CHECKOUT_DONE = "Payment received. Your plan updates in a moment.";
 export const CHECKOUT_CANCELLED = "Checkout cancelled; nothing changed.";
+
+/** What an owner or an admin is told when the processor could not collect
+ * the latest invoice, or null when there is nothing to tell them. A member
+ * cannot fix it, so a member is not told. */
+export function paymentFailedSentence(billing: BillingView): string | null {
+  if (!billing.payment_failed || !billing.can_manage) return null;
+  if (billing.status === "unpaid") {
+    return (
+      "The last payment did not go through and the retries have stopped, so the org is on " +
+      `${planName(billing.plan)} until it is paid. Update the payment method to pay it.`
+    );
+  }
+  const plan = billing.paid_plan ? `your ${planName(billing.paid_plan)} plan` : "your plan";
+  return (
+    `The last payment for ${plan} did not go through. It is being tried again, and the org ` +
+    "keeps the plan while it is. Update the payment method to keep it."
+  );
+}
+
+export const UPDATE_PAYMENT_METHOD = "Update payment method";

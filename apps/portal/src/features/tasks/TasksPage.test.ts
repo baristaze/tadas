@@ -20,6 +20,7 @@ const vm = vi.hoisted(() => ({
 
 vi.mock("./useTasksVm", () => ({ useTasksVm: () => vm }));
 vi.mock("../../app/AppNav", () => ({ AppNav: () => null }));
+vi.mock("../billing/PaymentNotice", () => ({ PaymentNotice: () => null }));
 vi.mock("./TaskItem", () => ({ TaskItem: () => null }));
 vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
 
