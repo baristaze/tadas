@@ -1385,10 +1385,14 @@ page; this section says what exists.
   (`deployment/local/grafana/dashboards/tadas-overview.json`), and
   `infra/tests/test_dashboard_parity.py` holds the titles equal.
   `modules/alarms` declares the SNS topic `tadas-<env>-alarms`, the
-  email subscription from `alarm_email`, and seven alarms: the load
-  balancer's 5xx ratio, its unhealthy targets, its p95, the database's
-  CPU and free storage, and each of the two services running below its
-  desired count. [runbooks/operate.md](runbooks/operate.md) reads them.
+  email subscription from `alarm_email`, and eight alarms: the load
+  balancer's 5xx ratio, its unhealthy targets, its p95, the p95 of
+  `GET /v1/billing` on its own, the database's CPU and free storage, and
+  each of the two services running below its desired count. A read's own
+  p95 comes from the API's access lines: each carries its route and its
+  time as JSON fields, and a log metric filter writes them to
+  `tadas_read_latency_ms`, which the dashboard draws beside the alarm.
+  [runbooks/operate.md](runbooks/operate.md) reads them.
 - **Scale-out.** Every service declares an autoscaling target and a
   CPU target-tracking policy in `modules/service`, created only when
   its `autoscaling.enabled` is true. The environment module ANDs each

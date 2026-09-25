@@ -13,6 +13,12 @@ output "alarm_names" {
       aws_cloudwatch_metric_alarm.database_cpu.alarm_name,
       aws_cloudwatch_metric_alarm.database_free_storage.alarm_name,
     ],
+    [for alarm in aws_cloudwatch_metric_alarm.read_latency : alarm.alarm_name],
     [for alarm in aws_cloudwatch_metric_alarm.tasks_below_desired : alarm.alarm_name],
   )
+}
+
+output "read_latency_routes" {
+  description = "The GET routes with a latency alarm of their own, for the dashboard that draws them."
+  value       = keys(var.read_latency_p95_seconds)
 }

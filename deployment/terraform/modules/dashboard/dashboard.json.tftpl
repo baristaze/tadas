@@ -156,6 +156,23 @@
         "yAxis": { "left": { "min": 0 } },
         "metrics": ${running_tasks}
       }
+    },
+    {
+      "type": "metric",
+      "x": 0,
+      "y": 18,
+      "width": 12,
+      "height": 6,
+      "properties": {
+        "title": "Read latency p95, the reads with an alarm",
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "${region}",
+        "period": 60,
+        "stat": "p95",
+        "yAxis": { "left": { "min": 0, "label": "milliseconds" } },
+        "metrics": ${read_latency}
+      }
     }
   ]
 }

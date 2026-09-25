@@ -38,3 +38,9 @@ variable "http_statuses" {
   type        = list(number)
   default     = [200, 201, 204, 400, 401, 403, 404, 409, 422, 429, 500, 503]
 }
+
+variable "read_latency_routes" {
+  description = "The GET routes the alarms module keeps a latency alarm on; one line each."
+  type        = list(string)
+  default     = []
+}

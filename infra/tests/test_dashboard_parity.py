@@ -44,14 +44,34 @@ def test_the_cloud_dashboard_carries_every_local_panel_by_title() -> None:
     assert cloud[: len(local)] == expected, "the first cloud widgets are the local panels, in order"
 
 
-def test_the_cloud_dashboard_adds_one_row_for_the_backing_services() -> None:
+def test_the_cloud_dashboard_adds_the_backing_services_and_the_alarmed_reads() -> None:
     extra = _cloud_titles()[len(_grafana_titles()) :]
     assert extra == [
         "Database CPU and connections",
         "Cache CPU",
         "Queue messages visible and dead",
         "Running tasks",
+        "Read latency p95, the reads with an alarm",
     ]
+
+
+def test_the_read_latency_widget_draws_the_metric_the_read_alarms_watch() -> None:
+    """The alarms module's log filter writes `tadas_read_latency_ms`, one
+    series per route, and its alarms read the p95 of it; the widget draws the
+    same, for the routes the alarms module names."""
+    body = json.loads(re.sub(r"\$\{\w+\}", "null", CLOUD.read_text()))
+    (widget,) = [
+        widget
+        for widget in body["widgets"]
+        if widget["properties"]["title"] == "Read latency p95, the reads with an alarm"
+    ]
+    assert widget["properties"]["stat"] == "p95"
+    dashboard = (CLOUD.parent / "main.tf").read_text()
+    assert '"Tadas", "tadas_read_latency_ms", "route"' in dashboard
+    alarms = (CLOUD.parent.parent / "alarms" / "main.tf").read_text()
+    assert 'name       = "tadas_read_latency_ms"' in alarms
+    assert 'metric_name         = "tadas_read_latency_ms"' in alarms
+    assert 'extended_statistic  = "p95"' in alarms
 
 
 def test_the_cloud_dashboard_reads_the_application_metrics_from_the_tadas_namespace() -> None:

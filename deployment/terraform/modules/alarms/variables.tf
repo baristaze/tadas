@@ -28,6 +28,11 @@ variable "cluster_name" {
   type        = string
 }
 
+variable "api_log_group_name" {
+  description = "The API's log group; a read's latency is read from its access lines there."
+  type        = string
+}
+
 variable "service_names" {
   description = "One tasks-below-desired alarm per service named here."
   type        = list(string)
@@ -74,4 +79,12 @@ variable "database_free_storage_bytes" {
   description = "Free storage below which the database alarm fires; 2 GiB by default."
   type        = number
   default     = 2147483648
+}
+
+variable "read_latency_p95_seconds" {
+  description = "One latency alarm per read named here: the GET route's template, and the p95 in seconds above which it fires."
+  type        = map(number)
+  default = {
+    "/v1/billing" = 1
+  }
 }

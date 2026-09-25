@@ -1,7 +1,8 @@
 # The default alarm set of one environment, and the one topic they all go
-# to. Seven alarms: the edge (5xx ratio, unhealthy targets, p95 latency), the
-# database (CPU, free storage), and the runtime (a service running fewer
-# tasks than it wants, one per service). The thresholds are inputs with defaults here, at the
+# to: the edge (5xx ratio, unhealthy targets, p95 latency), one per read
+# that has a latency of its own to keep (GET /v1/billing), the database
+# (CPU, free storage), and the runtime (a service running fewer tasks than
+# it wants, one per service). The thresholds are inputs with defaults here, at the
 # leaf, because a threshold is a number and not shape; an environment that
 # wants another number passes it through the environment module, which
 # exposes none of them yet.
@@ -129,6 +130,57 @@ resource "aws_cloudwatch_metric_alarm" "http_p95_latency" {
   alarm_actions       = [aws_sns_topic.alarms.arn]
   ok_actions          = [aws_sns_topic.alarms.arn]
   tags                = local.tags
+}
+
+# One read's own latency. The load balancer's p95 is every route together,
+# so a slow read that is a small share of the traffic never moves it. The
+# API writes each request's route and time as fields of its access line, and
+# a metric filter on its log group turns one route's lines into a metric of
+# raw values, from which CloudWatch computes a true p95.
+
+locals {
+  # A route template as an alarm name can carry it: /v1/billing is v1-billing.
+  read_latency_slugs = {
+    for route, seconds in var.read_latency_p95_seconds :
+    route => trim(replace(route, "/[^a-zA-Z0-9]+/", "-"), "-")
+  }
+}
+
+resource "aws_cloudwatch_log_metric_filter" "read_latency" {
+  for_each = var.read_latency_p95_seconds
+
+  name           = "${local.prefix}-read-latency-${local.read_latency_slugs[each.key]}"
+  log_group_name = var.api_log_group_name
+  pattern        = "{ $.http.method = \"GET\" && $.http.route = \"${each.key}\" }"
+
+  metric_transformation {
+    name       = "tadas_read_latency_ms"
+    namespace  = "Tadas"
+    value      = "$.http.duration_ms"
+    unit       = "Milliseconds"
+    dimensions = { route = "$.http.route" }
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "read_latency" {
+  for_each = var.read_latency_p95_seconds
+
+  alarm_name          = "${local.prefix}-read-latency-${local.read_latency_slugs[each.key]}"
+  alarm_description   = "GET ${each.key} answered slower than ${each.value}s at p95 for ${var.evaluation_periods} periods of ${var.period_seconds}s, as the API timed it."
+  namespace           = "Tadas"
+  metric_name         = "tadas_read_latency_ms"
+  dimensions          = { route = each.key }
+  extended_statistic  = "p95"
+  period              = var.period_seconds
+  evaluation_periods  = var.evaluation_periods
+  comparison_operator = "GreaterThanThreshold"
+  threshold           = each.value * 1000
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = [aws_sns_topic.alarms.arn]
+  ok_actions          = [aws_sns_topic.alarms.arn]
+  tags                = local.tags
+
+  depends_on = [aws_cloudwatch_log_metric_filter.read_latency]
 }
 
 # The database.

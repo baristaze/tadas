@@ -109,6 +109,11 @@ class JsonFormatter(logging.Formatter):
         caused_by = getattr(record, "caused_by_request_id", "-")
         if caused_by != "-":
             line["caused_by_request_id"] = caused_by
+        # The access line's own fields, as fields and not only as text, so a
+        # log metric filter reads one route's latency (the alarms module).
+        http = getattr(record, "http", None)
+        if isinstance(http, dict):
+            line["http"] = http
         if record.exc_info:
             line["exception"] = self.formatException(record.exc_info)
         return json.dumps(line)

@@ -67,3 +67,15 @@ def test_configuring_error_reporting_does_not_name_the_process() -> None:
     configure_error_reporting(None, "prod", "somebody-else")
     written = line(record())
     assert (written["service"], written["environment"]) == ("api", "staging")
+
+
+def test_the_access_line_carries_its_fields_as_fields() -> None:
+    access = record()
+    access.http = {"method": "GET", "route": "/v1/billing", "status": 200, "duration_ms": 12.5}
+    assert line(access)["http"] == {
+        "method": "GET",
+        "route": "/v1/billing",
+        "status": 200,
+        "duration_ms": 12.5,
+    }
+    assert "http" not in line(record()), "a line that is not the access line carries none"
