@@ -164,6 +164,8 @@ class Verdict:
             f"measured: p95 {report.working.p95_ms:.1f} ms over {report.working.requests} "
             f"working requests, error ratio {report.error_ratio:.4f} over {report.requests} "
             f"requests, {report.sessions.completed} sessions completed",
+            f"conflicts: {report.sessions.conflicts} answered by a fresh read, "
+            f"{report.sessions.gone} on a task found gone; counted, not judged",
             f"beside it: {report.auth.requests} sign-ins and sign-outs, "
             f"p50 {report.auth.p50_ms:.1f} ms, p95 {report.auth.p95_ms:.1f} ms, "
             "reported and not judged",

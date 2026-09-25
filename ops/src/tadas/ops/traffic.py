@@ -913,6 +913,8 @@ async def run_traffic(
         completed=sum(o.completed for o in outcomes),
         failed=sum(1 for o in outcomes if o.failure),
         cut=sum(o.cut for o in outcomes),
+        conflicts=sum(o.conflicts for o in outcomes),
+        gone=sum(o.gone for o in outcomes),
     )
     report = Report.of(
         samples,

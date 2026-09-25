@@ -520,3 +520,34 @@ async def test_a_404_on_a_task_that_is_still_there_fails_the_session() -> None:
     assert (outcome.conflicts, outcome.gone) == (0, 0)
     assert steps[-2:] == ["DELETE /v1/tasks/{id}", "GET /v1/tasks/{id}"]
 
+
+async def test_a_run_counts_conflicts_apart_from_errors_and_failures() -> None:
+    """A run whose sessions met conflicts completes them, exits 0, and says
+    how many it met: a line in the table and two numbers in the JSON."""
+    api = FakeApi(
+        interfere={
+            "POST /v1/tasks/{id}/move": ["bump"],
+            "DELETE /v1/tasks/{id}": ["delete"],
+        }
+    )
+    result = await run_traffic(
+        local_env(),
+        Profile("light", 1, 2, 2, (0.0, 0.0), 60),
+        duration_seconds=20,
+        orgs=0,
+        max_sessions=2,
+        transport=httpx.MockTransport(api),
+        connect=connect_to(api),
+    )
+    report = result.report
+    s = report.sessions
+    assert (s.completed, s.failed, s.conflicts, s.gone) == (2, 0, 1, 1)
+    assert report.errors == 0
+    assert any(r.status == 412 for r in report.routes)
+    assert "conflicts: 1 re-read, 1 gone" in report.table()
+    assert json.loads(report.to_json())["sessions"]["conflicts"] == 1
+    assert traffic_exit_code(report) == OK
+    # The stress run drives the same sessions and says the same, beside its verdict.
+    scenario = load_scenario(HERE / "smoke.yaml")
+    text = verdict(scenario, report, Readback(100, 0)).text(scenario, report, Readback(100, 0))
+    assert "conflicts: 1 answered by a fresh read, 1 on a task found gone" in text

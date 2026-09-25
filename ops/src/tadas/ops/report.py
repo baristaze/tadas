@@ -112,6 +112,13 @@ class Sessions:
     failed: int = 0
     cut: int = 0
     """Ended by the duration bound mid-session; neither a success nor a failure."""
+    conflicts: int = 0
+    """The 412s the sessions met on a write, each answered by reading the task
+    afresh: the API's optimistic concurrency at work under shared tasks,
+    counted on its own and never as an error or a failure."""
+    gone: int = 0
+    """The tasks the sessions found gone when they went to write them, left
+    out of the rest of the session. Also neither an error nor a failure."""
 
     @property
     def started(self) -> int:
@@ -203,7 +210,8 @@ class Report:
         lines = [
             f"tadas-ops traffic  env={self.environment}  profile={self.profile}  "
             f"duration={self.duration_seconds:.1f}s  "
-            f"sessions: {s.completed} completed, {s.failed} failed, {s.cut} cut",
+            f"sessions: {s.completed} completed, {s.failed} failed, {s.cut} cut; "
+            f"conflicts: {s.conflicts} re-read, {s.gone} gone",
             header,
             "-" * len(header),
         ]
