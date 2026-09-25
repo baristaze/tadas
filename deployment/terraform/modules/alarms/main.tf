@@ -1,8 +1,9 @@
 # The default alarm set of one environment, and the one topic they all go
 # to: the edge (5xx ratio, unhealthy targets, p95 latency), one per read
 # that has a latency of its own to keep (GET /v1/billing), the database
-# (CPU, free storage), and the runtime (a service running fewer tasks than
-# it wants, one per service). The thresholds are inputs with defaults here, at the
+# (CPU, free storage), the queues (a backlog and a dead letter, per
+# inbound queue), and the runtime (a service running fewer tasks than it
+# wants, one per service). The thresholds are inputs with defaults here, at the
 # leaf, because a threshold is a number and not shape; an environment that
 # wants another number passes it through the environment module, which
 # exposes none of them yet.
@@ -214,6 +215,54 @@ resource "aws_cloudwatch_metric_alarm" "database_free_storage" {
   evaluation_periods  = var.evaluation_periods
   comparison_operator = "LessThanThreshold"
   threshold           = var.database_free_storage_bytes
+  alarm_actions       = [aws_sns_topic.alarms.arn]
+  ok_actions          = [aws_sns_topic.alarms.arn]
+  tags                = local.tags
+}
+
+# The queues: two alarms per inbound queue. Stripe's calls in and Slack's
+# are answered at the edge and handled by the worker from here, so a worker
+# that stops draining one leaves the caller answered and nothing done.
+# A backlog is the oldest message waiting past a bound, which reads the same
+# at any volume; a dead letter is one message in the queue's `-dead` twin,
+# where a message lands after its last attempt, and one is enough to look.
+# An idle queue stops reporting after some hours, and a dead-letter queue
+# that holds a message goes idle too, so missing data keeps the alarm's
+# state instead of clearing it.
+
+resource "aws_cloudwatch_metric_alarm" "queue_backlog" {
+  for_each = toset(var.queue_names)
+
+  alarm_name          = "${each.key}-backlog"
+  alarm_description   = "The oldest message on ${each.key} waited longer than ${var.queue_oldest_message_seconds}s for ${var.evaluation_periods} periods of ${var.period_seconds}s: the worker is not draining it."
+  namespace           = "AWS/SQS"
+  metric_name         = "ApproximateAgeOfOldestMessage"
+  dimensions          = { QueueName = each.key }
+  statistic           = "Maximum"
+  period              = var.period_seconds
+  evaluation_periods  = var.evaluation_periods
+  comparison_operator = "GreaterThanThreshold"
+  threshold           = var.queue_oldest_message_seconds
+  treat_missing_data  = "ignore"
+  alarm_actions       = [aws_sns_topic.alarms.arn]
+  ok_actions          = [aws_sns_topic.alarms.arn]
+  tags                = local.tags
+}
+
+resource "aws_cloudwatch_metric_alarm" "queue_dead_letter" {
+  for_each = toset(var.queue_names)
+
+  alarm_name          = "${each.key}-dead-letter"
+  alarm_description   = "A message is in ${each.key}-dead: it failed every attempt on ${each.key}."
+  namespace           = "AWS/SQS"
+  metric_name         = "ApproximateNumberOfMessagesVisible"
+  dimensions          = { QueueName = "${each.key}-dead" }
+  statistic           = "Maximum"
+  period              = var.period_seconds
+  evaluation_periods  = 1
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  threshold           = 1
+  treat_missing_data  = "ignore"
   alarm_actions       = [aws_sns_topic.alarms.arn]
   ok_actions          = [aws_sns_topic.alarms.arn]
   tags                = local.tags

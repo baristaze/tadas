@@ -52,6 +52,7 @@ def test_the_cloud_dashboard_adds_the_backing_services_and_the_alarmed_reads() -
         "Queue messages visible and dead",
         "Running tasks",
         "Read latency p95, the reads with an alarm",
+        "Queue oldest message age",
     ]
 
 
@@ -94,3 +95,19 @@ def test_the_cloud_latency_widget_reads_the_load_balancer_p95() -> None:
     ]
     assert widget["properties"]["stat"] == "p95"
     assert widget["properties"]["metrics"][0][:2] == ["AWS/ApplicationELB", "TargetResponseTime"]
+
+
+def test_the_queue_widgets_draw_what_the_queue_alarms_watch() -> None:
+    """Each inbound queue's backlog alarm reads the age of its oldest
+    message, and its dead-letter alarm the messages visible on its `-dead`
+    twin; the dashboard draws both, for the same list of queues."""
+    dashboard = (CLOUD.parent / "main.tf").read_text()
+    assert '["AWS/SQS", "ApproximateAgeOfOldestMessage", "QueueName", name' in dashboard
+    assert '"ApproximateNumberOfMessagesVisible", "QueueName", "${name}-dead"' in dashboard
+    alarms = (CLOUD.parent.parent / "alarms" / "main.tf").read_text()
+    assert 'metric_name         = "ApproximateAgeOfOldestMessage"' in alarms
+    assert 'dimensions          = { QueueName = "${each.key}-dead" }' in alarms
+    environment = (CLOUD.parent.parent / "environment" / "main.tf").read_text()
+    # Both modules take the queue module's one list, so a queue added there
+    # is drawn and alarmed on together.
+    assert environment.count("queue_names              = module.queue.queue_names") == 2

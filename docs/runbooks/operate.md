@@ -61,13 +61,20 @@ now=$(date +%s); aws cloudwatch get-metric-data \
 
 ## The alarms
 
-Eight per environment (one of them per service), to the topic `tadas-<environment>-alarms`, from
+Twelve per environment (one per service, two per inbound queue), to the topic `tadas-<environment>-alarms`, from
 `deployment/terraform/modules/alarms`. Their thresholds are the
 module's inputs with defaults: 5 percent 5xx, 1 second p95 at the load
 balancer, 1 second p95 for `GET /v1/billing` as the API times it, 80
 percent database CPU, 2 GiB free storage, one unhealthy target, one task
-below desired; three periods of one minute each, six for the tasks below
-desired, which a routine worker deploy would otherwise trip.
+below desired, a queue's oldest message older than ten minutes (past
+the five tries a failing message gets before it is dead-lettered), and
+one message in a queue's `-dead` twin; three periods of one minute each,
+six for the tasks below desired, which a routine worker deploy would
+otherwise trip, and one for a dead letter. A queue that goes idle stops
+reporting, so a queue alarm keeps its state through missing data: a
+dead-letter alarm stays in `ALARM` until a person takes the message off
+`-dead`, not until the queue goes quiet. The last command below counts
+what a dead-letter queue holds.
 
 ```bash
 aws cloudwatch describe-alarms --alarm-name-prefix tadas-staging- \
@@ -107,8 +114,10 @@ aws ecs describe-services --cluster tadas-staging --services api maintenance \
   --query 'services[].{name:serviceName,desired:desiredCount,running:runningCount,rollout:deployments[0].rolloutState}' --output table
 aws rds describe-db-instances --db-instance-identifier tadas-staging \
   --query 'DBInstances[0].{status:DBInstanceStatus,class:DBInstanceClass,storage:AllocatedStorage,max:MaxAllocatedStorage}'
-aws sqs get-queue-attributes --queue-url "$(aws sqs get-queue-url --queue-name tadas-staging-webhooks-dead --query QueueUrl --output text)" \
-  --attribute-names ApproximateNumberOfMessages
+for queue in webhooks slack; do
+  aws sqs get-queue-attributes --queue-url "$(aws sqs get-queue-url --queue-name tadas-staging-$queue-dead --query QueueUrl --output text)" \
+    --attribute-names ApproximateNumberOfMessages
+done
 ```
 
 What the role refuses, by design, and what the refusal looks like:

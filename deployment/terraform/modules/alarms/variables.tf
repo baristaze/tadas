@@ -33,6 +33,11 @@ variable "api_log_group_name" {
   type        = string
 }
 
+variable "queue_names" {
+  description = "The inbound queues, prefix included; each gets a backlog alarm, and its -dead twin a dead-letter alarm."
+  type        = list(string)
+}
+
 variable "service_names" {
   description = "One tasks-below-desired alarm per service named here."
   type        = list(string)
@@ -87,4 +92,10 @@ variable "read_latency_p95_seconds" {
   default = {
     "/v1/billing" = 1
   }
+}
+
+variable "queue_oldest_message_seconds" {
+  description = "How long the oldest message on an inbound queue may wait before the backlog alarm fires. Ten minutes: past the five receives of a sixty-second visibility a failing message has before it is dead-lettered, which the dead-letter alarm reports."
+  type        = number
+  default     = 600
 }

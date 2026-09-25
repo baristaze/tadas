@@ -1385,10 +1385,12 @@ page; this section says what exists.
   (`deployment/local/grafana/dashboards/tadas-overview.json`), and
   `infra/tests/test_dashboard_parity.py` holds the titles equal.
   `modules/alarms` declares the SNS topic `tadas-<env>-alarms`, the
-  email subscription from `alarm_email`, and eight alarms: the load
+  email subscription from `alarm_email`, and twelve alarms: the load
   balancer's 5xx ratio, its unhealthy targets, its p95, the p95 of
-  `GET /v1/billing` on its own, the database's CPU and free storage, and
-  each of the two services running below its desired count. A read's own
+  `GET /v1/billing` on its own, the database's CPU and free storage,
+  each of the two inbound queues (`webhooks`, `slack`) backing up and a
+  message landing in its dead-letter queue, and each of the two services
+  running below its desired count. A read's own
   p95 comes from the API's access lines: each carries its route and its
   time as JSON fields, and a log metric filter writes them to
   `tadas_read_latency_ms`, which the dashboard draws beside the alarm.

@@ -19,7 +19,7 @@ the cloud from Terraform. Nothing is clicked into place in either.
 | Buckets | MinIO over the S3 API | S3, private and versioned |
 | Secrets | the settings object, from `.env` | Secrets Manager, including the Slack app's client and signing secrets, and each org's Slack bot token under the org's own prefix |
 | Logs, metrics, traces, errors | Prometheus, Grafana, Jaeger, GlitchTip, under the `devx` profile | CloudWatch, X-Ray, Sentry, through a collector sidecar in every task |
-| Alarms and the dashboard | Grafana's provisioned overview | one CloudWatch dashboard per environment, eight alarms to one topic |
+| Alarms and the dashboard | Grafana's provisioned overview | one CloudWatch dashboard per environment, twelve alarms to one topic |
 
 Every process is one image, built in two stages, running as a
 non-root user, with a liveness probe. Liveness decides whether a

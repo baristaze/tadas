@@ -14,6 +14,8 @@ output "alarm_names" {
       aws_cloudwatch_metric_alarm.database_free_storage.alarm_name,
     ],
     [for alarm in aws_cloudwatch_metric_alarm.read_latency : alarm.alarm_name],
+    [for alarm in aws_cloudwatch_metric_alarm.queue_backlog : alarm.alarm_name],
+    [for alarm in aws_cloudwatch_metric_alarm.queue_dead_letter : alarm.alarm_name],
     [for alarm in aws_cloudwatch_metric_alarm.tasks_below_desired : alarm.alarm_name],
   )
 }

@@ -110,14 +110,16 @@ with the same panels as Grafana's overview locally: targets up, HTTP
 requests per second by route, HTTP responses per second by status,
 HTTP latency p95 by route, outcomes per second; plus one row for the
 database, the cache, and the queue, and one for the reads with a latency
-alarm of their own. A test holds the shared titles
+alarm of their own and the age of each queue's oldest message. A test holds the shared titles
 equal between the two definitions.
 
-**The alarms.** Eight per environment, to one topic, `tadas-<env>-alarms`,
+**The alarms.** Twelve per environment, to one topic, `tadas-<env>-alarms`,
 with an email subscription: the load balancer's 5xx ratio, unhealthy
 targets, database CPU, database free storage, running tasks below
 desired for the API and the worker, the load balancer's p95 latency,
-and the p95 of `GET /v1/billing` on its own. The numbers are the team's; the shape is not.
+the p95 of `GET /v1/billing` on its own, and, for each inbound queue
+(`webhooks`, `slack`), a backlog and a message in its dead-letter
+queue. The numbers are the team's; the shape is not.
 
 **Cost.** A budget per account with alerts at 50, 80, and 100 percent
 actual and 100 percent forecast, and an anomaly monitor, both to the
