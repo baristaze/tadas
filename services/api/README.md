@@ -184,5 +184,7 @@ container the server does.
 | `add-member` | Seeds a person into an existing org; a no-op for a member. |
 | `openapi` | Emits the OpenAPI document the clients are generated from. |
 
-The migration runs inside every cloud deploy, as a one-off task before
-the service rolls; a failed migration leaves the old tasks serving.
+The migration runs inside the cloud deploy that brings one, as a one-off
+task before the service rolls; a failed migration leaves the old tasks
+serving. A deploy whose release changes none of the files
+`deployment/migration-inputs.json` names runs no migrate task.

@@ -13,6 +13,30 @@ locals {
   # The company site is made only when it has a name (see the site below).
   site_enabled = var.site_domain_name != ""
 
+  # What the migrate task does to a database is decided by these files alone:
+  # the migrations, and the runner and the logins code the migrate command
+  # imports. deployment/migration-inputs.json names them, and
+  # om/tests/unit/test_migration_inputs.py holds the list to what the
+  # command imports. The fingerprint is of the commit being applied, the one
+  # its API image was built from, so a change to it is a release that brings
+  # the database something new. The root sits four levels up.
+  repository_root = "${path.module}/../../../.."
+  migration_files = sort(distinct(flatten([
+    for pattern in jsondecode(file("${local.repository_root}/deployment/migration-inputs.json")).paths :
+    fileset(local.repository_root, pattern)
+  ])))
+  migration_fingerprint = sha256(join("\n", [
+    for f in local.migration_files : "${f} ${filesha256("${local.repository_root}/${f}")}"
+  ]))
+
+  # The migrate task's secrets: the serving logins' URLs, which
+  # `ensure-logins` sets the passwords from, and the master's and the
+  # migration login's.
+  migrate_secrets = merge(local.process_secrets, {
+    TADAS_DATABASE_MIGRATION_URL = module.secrets.database_migration_url_secret_arn
+    TADAS_DATABASE_MASTER_URL    = module.secrets.database_master_url_secret_arn
+  })
+
   # The environment every process reads, mirrored from .env.example. Every
   # backend is the hosted one, and TADAS_ENVIRONMENT makes the process refuse
   # anything else at boot.
@@ -319,10 +343,7 @@ module "migrate" {
     TADAS_SERVICE_NAME = "migrate"
   })
 
-  secrets = merge(local.process_secrets, {
-    TADAS_DATABASE_MIGRATION_URL = module.secrets.database_migration_url_secret_arn
-    TADAS_DATABASE_MASTER_URL    = module.secrets.database_master_url_secret_arn
-  })
+  secrets = local.migrate_secrets
 }
 
 # The grant task runs `tadas-api grant-operator`: a person's operator
@@ -347,9 +368,10 @@ module "grant" {
 }
 
 # A stateless service rolls with one extra replica (the module's defaults).
-# Before it rolls, the migrate task runs on the new image, once per step; a
-# migration is compatible with the release before it (expand and contract),
-# so the old tasks serve the new schema until the roll ends.
+# Before it rolls, the migrate task runs on the new image whenever the
+# release brings the database something it lacks; a migration is compatible
+# with the release before it (expand and contract), so the old tasks serve
+# the new schema until the roll ends.
 module "api" {
   source = "../service"
 
@@ -395,6 +417,14 @@ module "api" {
     "python -c \"import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz').status == 200 else 1)\"",
   ]
 
+  # The migration runs inside the apply, before the roll, whenever one of its
+  # triggers differs from what the last run that succeeded recorded in the
+  # state: the migration files, a new database (a replacement or a restore
+  # gives it a new resource id), a password rotation, or a login's secret
+  # made anew. A release that changes none of them brings nothing a database
+  # lacks: the last run already applied every migration it carries, and set
+  # every password it names. A run that fails leaves the record as it was, so
+  # the next apply runs it again.
   pre_rollout = {
     task_definition_arn = module.migrate.task_definition_arn
     container           = module.migrate.container_name
@@ -402,6 +432,12 @@ module "api" {
       ["tadas-api", "migrate", "ensure-logins"],
       ["tadas-api", "migrate", "--all"],
     ]
+    triggers = {
+      migrations       = local.migration_fingerprint
+      database         = module.database.resource_id
+      password_version = tostring(var.database_password_version)
+      secrets          = jsonencode(local.migrate_secrets)
+    }
   }
 
   autoscaling = {

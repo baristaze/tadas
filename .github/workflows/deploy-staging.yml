@@ -3,8 +3,9 @@
 # the portal and the company site are built once and kept by the commit, and
 # staging is planned and applied in one job. Inside the apply the migration runs as a one-off
 # task on the new API image before the services roll (the service module
-# orders it), so a migration that fails ends the apply with the old tasks
-# still serving. A migration is compatible with the release before it
+# orders it), when the release brings one (deployment/migration-inputs.json
+# names what counts), so a migration that fails ends the apply with the old
+# tasks still serving. A migration is compatible with the release before it
 # (expand and contract), so the old tasks serve the new schema meanwhile.
 #
 # Production (deploy-production.yml) never rebuilds: it resolves the digests
@@ -400,7 +401,8 @@ jobs:
           if-no-files-found: error
           retention-days: 30
       # The migration runs inside this apply, on the new API task definition,
-      # before either service rolls; the apply waits until the new tasks serve.
+      # before either service rolls, when the release brings one; the apply
+      # waits until the new tasks serve.
       - name: apply staging (migrate, then roll)
         run: terraform -chdir=deployment/terraform/environments/staging apply -input=false tfplan
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1

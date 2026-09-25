@@ -248,18 +248,31 @@ resource "aws_ecs_task_definition" "this" {
   }
 }
 
-# What runs before the service rolls, on every new task definition: for the
-# API, the migration. Each command is one one-off task, in order, on the task
-# definition `pre_rollout` names (the migrate task's, whose credentials no
-# serving task holds), run from the machine that applies with the same
-# credentials. The service depends on it, so a step that fails ends the apply
-# with the old tasks still serving. A new revision of either definition runs
-# it again. A service that waits for another's pre-rollout run passes its
-# `rollout_gate` output as `rollout_after`.
+# What runs before the service rolls: for the API, the migration. The
+# commands run in order, in one one-off task on the task definition
+# `pre_rollout` names (the migrate task's, whose credentials no serving task
+# holds), started from the machine that applies with the same credentials.
+# One task, not one per command: each task start is a Fargate cold start,
+# about a minute. The service depends on it, so a command that fails ends the
+# apply with the old tasks still serving.
+#
+# It runs when its triggers change. A caller that names `triggers` decides
+# what calls for a run (the API: the migration files, the database, the
+# passwords); one that names none runs it on every new revision of either
+# task definition. The commands are always a trigger. A run that fails
+# leaves the resource tainted, so the next apply runs it again. A service
+# that waits for another's pre-rollout run passes its `rollout_gate` output
+# as `rollout_after`.
 resource "terraform_data" "pre_rollout" {
   count = var.pre_rollout == null ? 0 : 1
 
-  triggers_replace = [aws_ecs_task_definition.this.arn, var.pre_rollout.task_definition_arn]
+  triggers_replace = [
+    var.pre_rollout.triggers == null ? {
+      task_definition        = aws_ecs_task_definition.this.arn
+      pre_rollout_definition = var.pre_rollout.task_definition_arn
+    } : var.pre_rollout.triggers,
+    var.pre_rollout.commands,
+  ]
 
   provisioner "local-exec" {
     command = "${path.module}/pre_rollout.sh"

@@ -1,6 +1,7 @@
 # The company site is optional: with no site name the whole environment
 # plans, the API, the workers, and the portal as always, with no site and
-# no certificate lookup; with a name the site joins it. Runs offline under
+# no certificate lookup; with a name the site joins it. The same plan finds
+# the migration inputs in the checkout. Runs offline under
 # mock providers, whose values stand in for what AWS would answer:
 # `terraform test` in this folder.
 
@@ -79,6 +80,11 @@ run "no_site_name_plans_everything_else" {
   assert {
     condition     = output.portal_url == "https://app.staging.example.test" && output.api_url == "https://api.staging.example.test"
     error_message = "the portal and the API are there as always"
+  }
+
+  assert {
+    condition     = length([for f in module.environment.migration_files : f if startswith(f, "om/migrations/sql/")]) > 0
+    error_message = "the migration fingerprint covers the migrations' SQL, found from the checkout"
   }
 }
 

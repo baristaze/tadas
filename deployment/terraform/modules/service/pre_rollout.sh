@@ -1,16 +1,23 @@
 #!/usr/bin/env bash
-# Run commands in order, each as a one-off task on a task definition, and
-# stop at the first that fails. Terraform runs it from the service module
-# before the service rolls to a new task definition (the API's: the logins,
-# then the migration); the inputs arrive as environment variables from the
-# provisioner, and the credentials are the ones the apply runs with.
-# COMMANDS is a JSON array of commands, each a JSON array of words.
+# Run commands in order, in one one-off task on a task definition, and stop
+# at the first that fails. Terraform runs it from the service module before
+# the service rolls (the API's: the logins, then the migration); the inputs
+# arrive as environment variables from the provisioner, and the credentials
+# are the ones the apply runs with. COMMANDS is a JSON array of commands,
+# each a JSON array of words.
+#
+# One task for all of them: each task start is a Fargate cold start, so a
+# task per command would pay it once per command. The task runs them as one
+# shell script, each word quoted, under `set -e`; the container's exit code
+# is the first failing command's.
 set -euo pipefail
 
 : "${CLUSTER:?}" "${TASK_DEFINITION:?}" "${SUBNETS:?}" "${SECURITY_GROUPS:?}" "${CONTAINER:?}" "${COMMANDS:?}"
 
-run_one() {
-  local command="$1" overrides task_arn exit_code reason
+run_all() {
+  local command overrides task_arn exit_code reason
+  command="$(jq -cn --argjson commands "$COMMANDS" \
+    '["sh", "-c", (["set -eu"] + [$commands[] | map(@sh) | join(" ")] | join("\n"))]')"
   overrides="$(jq -cn --arg name "$CONTAINER" --argjson command "$command" \
     '{containerOverrides: [{name: $name, command: $command}]}')"
 
@@ -55,6 +62,5 @@ run_one() {
   echo "pre-rollout task finished: $command"
 }
 
-while IFS= read -r command; do
-  run_one "$command"
-done < <(jq -c '.[]' <<<"$COMMANDS")
+[ "$(jq 'length' <<<"$COMMANDS")" -gt 0 ] || { echo "pre-rollout has no commands" >&2; exit 1; }
+run_all
