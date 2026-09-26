@@ -317,11 +317,43 @@ context on keeps the stage the callee needs.
   its attachments after the task's own commit, in writes of their own,
   since no commit holds two namespaces' rows; a failure there is logged
   and counted (`tasks` / `detach_failed`) and never undoes the delete.
+  The import of tasks from a CSV file and the daily cleanup of old done
+  tasks are kinds of `orchestrations`; the tasks manager steps both
+  (`step_import`, `step_cleanup`) and its storage lands each step's
+  effect with the record's next cursor in one commit
+  (`create_tasks_in_step`, `update_archived_in_step`). An imported row's
+  task takes an id derived from the import and the row, and goes to the
+  bottom of the open list. A task the cleanup archived keeps its status
+  and gains `archived_at`: it leaves the done list, is listed apart
+  (`read_archived_tasks`), and is restored by a compare-and-set
+  (`restore_task`) or by a reopen.
+- `orchestrations`: long-running records, in the `core` role, `org` scope
+  (`Orchestration`: a kind, an input whose shape the kind fixes, a
+  status (`running`, `parked`, `succeeded`, `failed`), a cursor, a
+  total, the rows applied and skipped with the first twenty named, a
+  park reason, a fail reason, a version, and, for a record kept per
+  period, the period), advanced one step per work item of kind
+  `ORCHESTRATION` ([ADR 0039](adr/0039-long-running-work-is-a-record-a-guard-parks-and-a-bound-fails.md)).
+  A step's write is a `Step` another namespace's storage lands in its
+  own transaction beside its effect, a compare-and-set on the version
+  (`orchestrations.storage.impl.postgres.step_statement`, and the
+  memory twin's `StepLandingInterface`), with the record's hint
+  (`orchestrations.orchestration.updated`) and the next step's work row.
+  A guard parks the record in the step's commit (`plan_limit`, the one
+  reason); a plan that rises lands a `WAKE_PARKED` work row in the
+  billing account's commit, whose handler resumes the org's records
+  parked for it, staggered; a person resumes one too. A bound of the
+  input fails it. Any other error is the work queue's retry from the
+  cursor, and the record fails as `defect` on its item's last attempt.
+  The unique key `(org_id, kind, period)` is how a record kept per day
+  opens once: the sweep's chore `open_cleanup` tries every thirty
+  seconds, and only the day's first try inserts. Settled records are
+  purged after thirty days.
 - `media`: the files a tenant keeps, as references and never bytes, in
   the `core` role, `org` scope (`File`: the object key, the original
   name, the extension, the MIME type, the size in bytes, the uploader as
-  `created_by`, a `purpose` enum, `task_attachment` or
-  `voice_dictation`, the subject the purpose names, and a status,
+  `created_by`, a `purpose` enum, `task_attachment`, `voice_dictation`,
+  or `task_import`, the subject the purpose names, and a status,
   `pending` or `stored`). It is horizontal: another namespace composes
   its manager for its own files and media knows nothing of what the
   subject is. An upload is bounded before anything is signed
@@ -997,7 +1029,9 @@ alone, and neither key may touch what the other's work does not need
   seven-day database backup retention, so a role restored to an earlier
   point than its siblings is reconciled by relaying the outbox again,
   and purge every tenant's done or failed work items past their retention
-  in one statement, `purge_items`).
+  in one statement, `purge_items`). Beside the purges, the sweep runs one
+  chore per tenant: it opens the day's cleanup of old done tasks
+  (`open_cleanup`) for an org that has one to do.
   Under a tenant whose org row is deleted longer ago than the retention
   it is every row that goes, its open and done tasks among them, since
   an open task carries no `deleted_at` of its own and the sweep that

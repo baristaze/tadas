@@ -86,12 +86,33 @@ uv run tadas login --dev-email bob@example.test --org acme   # the local sign-in
 uv run tadas add "Do groceries"
 uv run tadas ls
 uv run tadas done <id>                        # the short id ls shows; also edit, reopen, rm, mv
+uv run tadas import tasks.csv                 # one task a row; follows the import to its end
 uv run tadas listen                           # every change, live; --mine for your own tasks
 ```
 
 See [apps/cli/README.md](apps/cli/README.md) for the conventions and the
 exit codes, and [clients/python/README.md](clients/python/README.md) for
 the Python client every Python caller goes through.
+
+## Importing, and what ninety days means
+
+A team brings its list along as a CSV file, one task a row: `title`,
+and if it likes `notes`, `due_on` (`2026-10-01`), and `assignee_email`,
+a member of the org. The portal's Import action beside the task list,
+or `tadas import`, uploads it, and a worker reads it a hundred rows at
+a time while the page shows how far it is. A bad row is skipped and
+named. A file too large, too long, or not a CSV file is refused, and
+nothing is created. An import that reaches the plan's active tasks
+(ten on Free) pauses there, keeping what it made; upgrading resumes it
+on its own, and so does Resume after finishing some tasks.
+
+A done task that nobody touched for ninety days is archived once a day.
+It leaves the Done list and every count, and nothing is deleted: its
+notes and its files stay. "Show archived" under the Done list shows it
+(`GET /v1/tasks/archived`), and Restore puts it back at the top of Done,
+with ninety more days before the next cleanup. Editing or reopening a done task
+starts its ninety days again. The number is a setting of the worker,
+`TADAS_TASKS_ARCHIVE_AFTER_DAYS`.
 
 ## Set up
 
