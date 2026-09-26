@@ -15,6 +15,8 @@ import pytest
 from tadas.ops.environments import repository_root
 from tadas.ops.workos import (
     CREDENTIAL_CHECK_CODE,
+    SESSION_IDLE_LIFETIME,
+    SESSION_LIFETIME,
     desired_file,
     load_desired,
     workos_bootstrap_command,
@@ -245,7 +247,25 @@ async def test_the_tabs_other_fields_are_printed_as_checks(
     )
     for field in ("sign-up URL", "user invitation URL", "password reset URL"):
         assert f"{field}: not set" in out
+    assert "maximum session length: 30 days" in out and "its Sessions tab" in out
+    assert "inactivity timeout: 14 days" in out
     assert "webhooks: none" in out and "nothing to change" in out
+
+
+def test_the_sessions_tab_matches_the_session_lifetimes() -> None:
+    """The Sessions tab's values are the lifetimes `.env.example` gives a
+    Tadas session, so the two never drift apart."""
+    root = repository_root()
+    assert root is not None
+    values = dict(
+        line.split("=", 1)
+        for line in (root / ".env.example").read_text().splitlines()
+        if line.startswith("TADAS_SESSION_")
+    )
+    assert int(values["TADAS_SESSION_LIFETIME_SECONDS"]) == SESSION_LIFETIME.total_seconds()
+    assert (
+        int(values["TADAS_SESSION_IDLE_LIFETIME_SECONDS"]) == SESSION_IDLE_LIFETIME.total_seconds()
+    )
 
 
 async def test_a_credential_check_workos_cannot_answer_is_an_error(tmp_path: Path) -> None:
