@@ -99,7 +99,7 @@ class World:
             if not page.has_more:
                 return titles
             last = page.items[-1]
-            after = OpenTaskCursor(position=last.position, id=last.id)
+            after = OpenTaskCursor(rank=last.rank, id=last.id)
 
     async def queued(self, ctx: OpContext, kind: WorkKind) -> int:
         """The work items of a kind waiting in the org's queue."""

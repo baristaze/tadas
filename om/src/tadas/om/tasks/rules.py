@@ -1,5 +1,5 @@
 """Pure rules of the tasks namespace: which tasks a filter shows, where a
-cursor cuts, the arithmetic of the open list's manual order, when a due
+cursor cuts, the ranks of the open list's manual order, when a due
 date's reminder goes out, what an import file and its rows may be, which
 done tasks the cleanup archives, and which tasks a bulk change leaves alone.
 Values in,
@@ -12,6 +12,7 @@ import csv
 import io
 from collections.abc import Mapping, Sequence
 from datetime import UTC, date, datetime, time, timedelta
+from decimal import MAX_EMAX, MAX_PREC, MIN_EMIN, ROUND_CEILING, ROUND_FLOOR, Context, Decimal
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -21,13 +22,162 @@ from tadas.om.tasks.types.bulk import BulkAction, SkipReason
 from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor, TaskFilter
 from tadas.om.tasks.types.task import Task, TaskScope, TaskStatus
 
-Place = tuple[float, UUID]
-"""Where an open task sits: its position and its id, the pair the open list is
-ordered by. A position is not unique — two writers that read the same list
-place two tasks at the same one — so every rule below compares the pair, the
-way `is_after` and the storage's ordering do. Which place follows the anchor
-is decided on the pair; whether there is room between them is decided on the
-positions alone, so a placement never adds a tie of its own."""
+Place = tuple[Decimal, UUID]
+"""Where an open task sits: its rank and its id, the pair the open list is
+ordered by. A rank is not unique: two writers that read the same list place
+two tasks at the same one. So the list, the cursor, and every read of places
+compare the pair, and the id decides between two tasks that share a rank."""
+
+RANK_SCALE_BOUND = 24
+"""The longest rank a move leaves as it is, in digits after the point. A move
+always writes its one row; a rank past this is respaced later, by the sweep
+(`respace_run`). Seventy-odd moves into one and the same gap make a rank this
+long."""
+
+RANK_SCALE_SHORT = 12
+"""A rank at most this long bounds a respaced run: the run is every task
+between two such ranks, and it takes ranks between them that are short again."""
+
+RESPACE_REACH = 100
+"""How far a respace looks from the long rank, each way, for the ranks that
+bound its run; the most tasks one respace writes is twice this, and one."""
+
+
+_EXACT = Context(prec=MAX_PREC, Emax=MAX_EMAX, Emin=MIN_EMIN)
+"""Rank arithmetic never rounds: the context holds every digit a rank has."""
+
+
+def rank_scale(rank: Decimal) -> int:
+    """How many digits a rank has after the point, trailing zeros aside."""
+    exponent = rank.normalize(_EXACT).as_tuple().exponent
+    assert isinstance(exponent, int), "a rank is a finite number"
+    return max(0, -exponent)
+
+
+def _plain(units: int, scale: int) -> Decimal:
+    """`units` times ten to the minus `scale`, written without trailing zeros
+    and never in exponent form, so a rank reads the same everywhere."""
+    while scale > 0 and units % 10 == 0:
+        units //= 10
+        scale -= 1
+    return Decimal(units).scaleb(-scale, _EXACT)
+
+
+def spread(low: Decimal | None, high: Decimal | None, count: int) -> list[Decimal]:
+    """`count` ranks strictly between `low` and `high`, ascending and evenly
+    spaced, each as short as it can be. None is the open end: above the top
+    they are whole numbers below it, below the bottom whole numbers after it,
+    and in an empty list they start at zero. Between two ranks they take the
+    fewest digits after the point that leave room for all of them, which is
+    at most one or two more than the longer of the two. `low` must be below
+    `high`."""
+    if count <= 0:
+        return []
+    if low is None and high is None:
+        return [Decimal(index) for index in range(count)]
+    if low is None:
+        assert high is not None
+        top = int(high.to_integral_value(ROUND_FLOOR, _EXACT))
+        return [Decimal(top - count + index) for index in range(count)]
+    if high is None:
+        bottom = int(low.to_integral_value(ROUND_FLOOR, _EXACT))
+        return [Decimal(bottom + 1 + index) for index in range(count)]
+    if not low < high:
+        raise ValueError(f"no rank lies between {low} and {high}")
+    scale = 0
+    while True:
+        first = int(low.scaleb(scale, _EXACT).to_integral_value(ROUND_FLOOR, _EXACT)) + 1
+        last = int(high.scaleb(scale, _EXACT).to_integral_value(ROUND_CEILING, _EXACT)) - 1
+        room = last - first + 1
+        if room >= count:
+            return [
+                _plain(first + (index + 1) * (room + 1) // (count + 1) - 1, scale)
+                for index in range(count)
+            ]
+        scale += 1
+
+
+def rank_between(low: Decimal | None, high: Decimal | None) -> Decimal:
+    """The one rank strictly between `low` and `high` (`spread` of one): the
+    shortest there is, near the middle."""
+    return spread(low, high, 1)[0]
+
+
+def top_rank(places: Sequence[Place]) -> Decimal:
+    """The rank above every open task, given their places ascending: the
+    whole number below the smallest rank, or zero when the list is empty.
+    Only the first place is read, so the top place alone is enough."""
+    return rank_between(None, places[0][0] if places else None)
+
+
+def rank_after(anchor: Decimal, following: Decimal | None) -> Decimal:
+    """The rank right after an anchor whose rank is `anchor`, given the
+    smallest rank past it (`following`, None when the anchor is last): a rank
+    between the two, so the move writes the moved task and no other. The
+    following rank is strictly past the anchor's; a task that shares the
+    anchor's rank is not between them, so a task placed after one of two
+    tasks that share a rank goes after both."""
+    return rank_between(anchor, following)
+
+
+def needs_respace(rank: Decimal) -> bool:
+    """Whether a rank has grown past `RANK_SCALE_BOUND`, and its run is the
+    sweep's to respace."""
+    return rank_scale(rank) > RANK_SCALE_BOUND
+
+
+def is_short(rank: Decimal) -> bool:
+    """Whether a rank may bound a respaced run (`RANK_SCALE_SHORT`)."""
+    return rank_scale(rank) <= RANK_SCALE_SHORT
+
+
+class Run(Platform):
+    """The tasks a respace gives new ranks, top first, and the ranks around
+    them that stay: `low` above the first, `high` below the last, None at an
+    end of the list."""
+
+    places: tuple[Place, ...]
+    low: Decimal | None
+    high: Decimal | None
+
+
+def respace_run(long: Place, above: Sequence[Place], below: Sequence[Place], reach: int) -> Run:
+    """The run around a rank that grew too long. `above` is the places before
+    it, nearest first, and `below` the places after it, nearest first, each
+    read `reach` deep. The run is every place from the nearest short rank
+    above to the nearest short rank below (`is_short`), those two left out
+    and kept. A side read to its end without one is open (None) when it is
+    shorter than `reach`, since the list ends there; when it is `reach` long,
+    its farthest place bounds the run instead, so one respace writes at most
+    twice `reach` tasks and one."""
+    before: list[Place] = []
+    low: Decimal | None = None
+    for index, place in enumerate(above):
+        if is_short(place[0]) or index == reach - 1:
+            low = place[0]
+            break
+        before.append(place)
+    after: list[Place] = []
+    high: Decimal | None = None
+    for index, place in enumerate(below):
+        if is_short(place[0]) or index == reach - 1:
+            high = place[0]
+            break
+        after.append(place)
+    return Run(places=(*reversed(before), long, *after), low=low, high=high)
+
+
+def respaced(run: Run) -> list[Decimal]:
+    """The new ranks of a run's places, in their order: evenly spread between
+    the ranks around it, short again."""
+    return spread(run.low, run.high, len(run.places))
+
+
+def placed(rank: Decimal) -> dict[str, object]:
+    """The fields a placement writes: the rank, and the position beside it,
+    the rank as the float the release before orders by. The position goes
+    with that release (ADR 0050)."""
+    return {"rank": rank, "position": float(rank)}
 
 
 def is_visible(task: Task, criterion: TaskFilter) -> bool:
@@ -47,58 +197,9 @@ def is_before(task: Task, cursor: TaskCursor) -> bool:
 
 
 def is_after(task: Task, cursor: OpenTaskCursor) -> bool:
-    """The open list is by position, top first; a task is on the next page
-    when its (position, id) sorts strictly after the cursor's."""
-    return (task.position, task.id) > (cursor.position, cursor.id)
-
-
-def top_position(places: Sequence[Place]) -> float:
-    """The position above every open task, given their places ascending:
-    one below the smallest, or 0.0 when the list is empty. Only the first
-    place is read, so the top place alone is enough."""
-    return places[0][0] - 1.0 if places else 0.0
-
-
-def follows(place: Place, anchor: Place) -> bool:
-    """Whether `place` comes after `anchor` in the order the open list reads:
-    the pair compared, so a place that ties with the anchor on position and
-    follows it on id is after it."""
-    return place > anchor
-
-
-def _following(anchor: Place, places: Sequence[Place]) -> Place | None:
-    """The open place right after `anchor` in the order the list reads. A place
-    that ties with the anchor on position and follows it on id is after it;
-    reading positions alone would skip over it to the next larger position and
-    place a task the caller asked to follow the anchor behind its twin. The
-    places may be every open place or only the first one after the anchor;
-    the answer is the same."""
-    after = [place for place in places if follows(place, anchor)]
-    return min(after) if after else None
-
-
-def position_after(anchor: Place, places: Sequence[Place]) -> float:
-    """The position right after `anchor`, given the other open places: halfway
-    to the one that follows it, or one past the anchor when it is last."""
-    following = _following(anchor, places)
-    return (anchor[0] + following[0]) / 2 if following is not None else anchor[0] + 1.0
-
-
-def is_between(anchor: Place, position: float, places: Sequence[Place]) -> bool:
-    """Whether `position` falls strictly after the anchor's and strictly before
-    that of the place which follows it, so the order it was chosen for is the
-    order the list reads back and no two open tasks share it. Halving a gap
-    ends at float precision, and so does a position that already ties with its
-    neighbour: once the midpoint equals either of them there is no room left
-    and the list is renumbered."""
-    following = _following(anchor, places)
-    return anchor[0] < position and (following is None or position < following[0])
-
-
-def renumbered(count: int) -> list[float]:
-    """The positions of a renumbered open list, top first: whole numbers, so
-    every gap is wide again."""
-    return [float(index) for index in range(count)]
+    """The open list is by rank, top first; a task is on the next page when
+    its (rank, id) sorts strictly after the cursor's."""
+    return (task.rank, task.id) > (cursor.rank, cursor.id)
 
 
 REMINDER_HOUR = time(9)
@@ -175,12 +276,12 @@ BULK_REPORT_CAP = BULK_MAX_IDS
 the ones it skipped; the counts beside the lists are whole."""
 
 
-def bulk_positions(top: float, count: int) -> list[float]:
-    """The places of `count` tasks a bulk reopen puts on top of the open list,
-    given the place above the current top (`top_position`): each one above
-    the one before, as if they were reopened one at a time in the order
-    given, so the last one given is the top."""
-    return [top - index for index in range(count)]
+def bulk_ranks(top: Decimal | None, count: int) -> list[Decimal]:
+    """The ranks of `count` tasks a bulk reopen puts on top of the open list,
+    given the rank of the current top (None when the list is empty): each
+    one above the one before, as if they were reopened one at a time in the
+    order given, so the last one given is the top."""
+    return list(reversed(spread(None, top, count)))
 
 
 def bulk_skip(task: Task | None, action: BulkAction) -> SkipReason | None:

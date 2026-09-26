@@ -177,5 +177,5 @@ class UnassignTasksHandlerImpl(WorkHandlerInterface):
             if not page.has_more or not page.items:
                 break
             last = page.items[-1]
-            after = OpenTaskCursor(position=last.position, id=last.id)
+            after = OpenTaskCursor(rank=last.rank, id=last.id)
         log.info("unassigned %d open tasks of a person who left org %s", cleared, ctx.org_id)

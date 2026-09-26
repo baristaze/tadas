@@ -1,5 +1,6 @@
 import random
 from datetime import UTC, date, datetime
+from decimal import Decimal
 from uuid import UUID
 
 import pytest
@@ -7,20 +8,28 @@ from contracts.task_storage import make_task
 
 from tadas.om.base import new_id, utcnow
 from tadas.om.tasks.rules import (
+    RANK_SCALE_BOUND,
+    RANK_SCALE_SHORT,
+    RESPACE_REACH,
     Place,
-    bulk_positions,
+    bulk_ranks,
     bulk_skip,
     earliest_reminder_time,
-    follows,
     is_after,
     is_before,
-    is_between,
+    is_short,
     is_visible,
-    position_after,
+    needs_respace,
+    placed,
+    rank_after,
+    rank_between,
+    rank_scale,
     reminder_person,
     reminder_time,
-    renumbered,
-    top_position,
+    respace_run,
+    respaced,
+    spread,
+    top_rank,
 )
 from tadas.om.tasks.types.bulk import BulkAction, SkipReason
 from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor, TaskFilter
@@ -48,85 +57,234 @@ def test_the_cursor_cuts_strictly_before_by_updated_at_then_id() -> None:
     assert not is_before(task, TaskCursor(updated_at=task.updated_at, id=UUID(int=task.id.int - 1)))
 
 
-# Three ids in ascending order, so a place is written as (position, id) and
-# two places that tie on position are told apart the way the list tells them.
+# Three ids in ascending order, so a place is written as (rank, id) and two
+# places that share a rank are told apart the way the list tells them.
 A, B, C = (UUID(int=n) for n in (10, 20, 30))
 
 
-def test_placement_arithmetic() -> None:
-    assert top_position([]) == 0.0
-    assert top_position([(-1.0, A), (2.0, B)]) == -2.0
-    assert position_after((1.0, A), [(1.0, A), (2.0, B)]) == 1.5
-    assert position_after((2.0, B), [(1.0, A), (2.0, B)]) == 3.0
-    assert position_after((0.5, A), []) == 1.5
+def D(value: str | int) -> Decimal:  # noqa: N802 - a literal, read as one
+    return Decimal(str(value))
 
 
-def test_a_tie_with_the_anchor_is_the_next_place_and_leaves_no_room() -> None:
-    """Two open tasks can share a position: two creates that read the same list,
-    or two moves after the same last anchor. The list orders them by id, so the
-    task that ties with the anchor and follows it on id is what a task dropped
-    after the anchor must land before. Reading positions alone, the next place
-    after A was C at 6.0, the midpoint 5.5 landed past B, and "after A" read
-    back as A, B, moved. There is no position strictly between A and B, so the
-    placement asks for a renumber instead of tying too."""
-    tied = [(5.0, A), (5.0, B), (6.0, C)]
-    assert position_after((5.0, A), tied) == 5.0
-    assert not is_between((5.0, A), 5.0, tied)
-    # After the last of a tie there is room, as after any last place.
-    assert position_after((5.0, B), [(5.0, A), (5.0, B)]) == 6.0
-    assert is_between((5.0, B), 6.0, [(5.0, A), (5.0, B)])
+def random_rank(rng: random.Random) -> Decimal:
+    """A rank as the rules or the fill write one: a whole number, or a few
+    digits after the point, negative too."""
+    scale = rng.choice([0, 0, 1, 2, 5, 12, 20])
+    return spread(None, None, 1)[0] + Decimal(rng.randint(-(10**6), 10**6)).scaleb(-scale)
 
 
-def test_a_gap_is_open_until_halving_meets_a_neighbour() -> None:
-    assert is_between((1.0, A), 1.5, [(1.0, A), (2.0, B)])
-    assert is_between((2.0, B), 3.0, [(1.0, A), (2.0, B)]), "past the last there is room"
-    assert not is_between((1.0, A), 1.0, [(1.0, A), (2.0, B)]), "the midpoint rounded to the anchor"
-    assert not is_between((1.0, A), 2.0, [(1.0, A), (2.0, B)]), "the midpoint rounded to the next"
-    # Halving from a gap of one meets the anchor after fifty-odd steps.
-    anchor, following = (-1.0, A), (0.0, B)
-    steps = 0
-    while is_between(anchor, position_after(anchor, [anchor, following]), [anchor, following]):
-        following = (position_after(anchor, [anchor, following]), B)
-        steps += 1
-    assert 50 <= steps <= 54
-    assert renumbered(3) == [0.0, 1.0, 2.0] and renumbered(0) == []
+def test_ranks_between_ends_and_neighbours() -> None:
+    assert spread(None, None, 3) == [D(0), D(1), D(2)]
+    assert top_rank([]) == D(0)
+    assert top_rank([(D(-1), A), (D(2), B)]) == D(-2)
+    assert top_rank([(D("-1.5"), A)]) == D(-3), "a whole number, below by at least one"
+    assert rank_after(D(1), D(2)) == D("1.5")
+    assert rank_after(D(1), D(3)) == D(2), "the shortest there is"
+    assert rank_after(D(2), None) == D(3)
+    assert rank_after(D("0.1"), D("0.2")) == D("0.15")
+    assert rank_after(D(0), D("0.5")) == D("0.2")
+    assert spread(D(0), D(1), 9) == [D(f"0.{n}") for n in range(1, 10)]
+    with pytest.raises(ValueError, match="between"):
+        rank_between(D(1), D(1))
 
 
-def test_is_after_cuts_the_open_list_by_position_then_id() -> None:
-    task = make_task(position=2.0)
-    at = OpenTaskCursor(position=task.position, id=task.id)
+def test_a_rank_is_written_without_trailing_zeros_or_an_exponent() -> None:
+    for rank in [*spread(D(0), D(1), 20), rank_between(D(0), D("0.0000001"))]:
+        _, digits, exponent = rank.as_tuple()
+        assert isinstance(exponent, int) and (exponent >= 0 or digits[-1] != 0)
+        assert "E" not in format(rank, "f")
+        assert rank_scale(rank) == max(0, -exponent)
+    assert rank_scale(D("1.500")) == 1 and rank_scale(D(100)) == 0
+    # Past the twenty-eight digits of Python's default context, every digit
+    # still counts.
+    assert rank_scale(D("-1.999999999999999999999999999998")) == 30
+
+
+def test_between_any_two_ranks_there_is_one_and_it_is_short() -> None:
+    """The property a move leans on: between two different ranks there is
+    always another, strictly between, at most one digit longer than the
+    longer of the two. So a move writes its one row and never runs out of
+    room."""
+    rng = random.Random(81)
+    for _ in range(5000):
+        low, high = sorted({random_rank(rng), random_rank(rng)} | {random_rank(rng)})[:2]
+        if low == high:
+            continue
+        rank = rank_between(low, high)
+        assert low < rank < high
+        assert rank_scale(rank) <= max(rank_scale(low), rank_scale(high)) + 1
+        count = rng.randint(1, 50)
+        ranks = spread(low, high, count)
+        assert len(ranks) == count
+        assert all(a < b for a, b in zip([low, *ranks], [*ranks, high], strict=True))
+        assert rank_scale(ranks[-1]) <= max(rank_scale(low), rank_scale(high)) + 3
+
+
+def test_prepending_and_appending_stay_whole_numbers() -> None:
+    """A create goes on top and an import at the bottom, every time: the
+    ranks stay whole numbers however many there are."""
+    places: list[Place] = []
+    for _ in range(1000):
+        places.insert(0, (top_rank(places), new_id()))
+    assert all(rank_scale(rank) == 0 for rank, _ in places)
+    assert [rank for rank, _ in places] == sorted(rank for rank, _ in places)
+    bottom = places[-1][0]
+    appended = spread(bottom, None, 1000)
+    assert appended[0] > bottom and appended == sorted(set(appended))
+    assert all(rank_scale(rank) == 0 for rank in appended)
+
+
+def following_rank(
+    order: list[tuple[Decimal, UUID]], task_id: UUID, anchor: Place
+) -> Decimal | None:
+    """What the manager reads for a move: the smallest rank past the
+    anchor's, the moved task aside."""
+    past = [rank for rank, other in order if other != task_id and rank > anchor[0]]
+    return min(past) if past else None
+
+
+def test_many_moves_keep_the_order_they_asked_for() -> None:
+    """Random moves over a list, each placed by the one neighbour a move
+    reads: after every move the list sorted by (rank, id) is the list the
+    moves asked for, and each move changed one rank."""
+    rng = random.Random(7)
+    for _ in range(40):
+        ids = [new_id() for _ in range(rng.randint(2, 30))]
+        ranks = dict(zip(ids, spread(None, None, len(ids)), strict=True))
+        wanted = list(ids)
+        for _ in range(300):
+            task_id = rng.choice(wanted)
+            rest = [other for other in wanted if other != task_id]
+            anchor_id = rng.choice([None, *rest])
+            order = sorted((rank, other) for other, rank in ranks.items())
+            if anchor_id is None:
+                new = top_rank([place for place in order if place[1] != task_id])
+                wanted = [task_id, *rest]
+            else:
+                anchor = (ranks[anchor_id], anchor_id)
+                new = rank_after(anchor[0], following_rank(order, task_id, anchor))
+                at = rest.index(anchor_id) + 1
+                wanted = [*rest[:at], task_id, *rest[at:]]
+            before = dict(ranks)
+            ranks[task_id] = new
+            assert [other for other in ids if ranks[other] != before[other]] in ([], [task_id])
+            assert [other for _, other in sorted((r, o) for o, r in ranks.items())] == wanted
+
+
+def test_moves_into_one_gap_grow_the_rank_slowly() -> None:
+    """The worst case for a move: every move lands right after the same task,
+    so every rank halves the same gap. A digit comes every three moves or so,
+    and it takes seventy-odd moves to pass the bound the sweep respaces at.
+    A float ran out after fifty-odd, and every open task was renumbered."""
+    anchor, following = D(0), D(1)
+    moves = 0
+    while not needs_respace(following):
+        following = rank_after(anchor, following)
+        moves += 1
+    assert 70 <= moves <= 80
+    assert rank_after(anchor, following) > anchor, "and there is still room"
+
+
+def test_a_move_after_a_task_that_shares_its_rank_goes_after_both() -> None:
+    """Two open tasks can share a rank: two creates that read the same top.
+    The list orders them by id. The rank past the anchor's is the one a move
+    places before, so a task moved after either twin lands after both, never
+    on their rank."""
+    order = [(D(5), A), (D(5), B), (D(6), C)]
+    moved = new_id()
+    rank = rank_after(D(5), following_rank(order, moved, (D(5), A)))
+    assert D(5) < rank < D(6)
+    assert [task for _, task in sorted([*order, (rank, moved)])] == [A, B, moved, C]
+
+
+def test_is_after_cuts_the_open_list_by_rank_then_id() -> None:
+    task = make_task(rank=2)
+    at = OpenTaskCursor(rank=task.rank, id=task.id)
     assert not is_after(task, at), "the cursor's own task is on the previous page"
-    assert is_after(task, OpenTaskCursor(position=1.0, id=task.id))
-    assert not is_after(task, OpenTaskCursor(position=3.0, id=task.id))
-    assert is_after(task, OpenTaskCursor(position=2.0, id=UUID(int=task.id.int - 1)))
-    assert not is_after(task, OpenTaskCursor(position=2.0, id=UUID(int=task.id.int + 1)))
+    assert is_after(task, OpenTaskCursor(rank=D(1), id=task.id))
+    assert not is_after(task, OpenTaskCursor(rank=D(3), id=task.id))
+    assert is_after(task, OpenTaskCursor(rank=D(2), id=UUID(int=task.id.int - 1)))
+    assert not is_after(task, OpenTaskCursor(rank=D(2), id=UUID(int=task.id.int + 1)))
+    assert is_after(make_task(rank="2.0000000000000000000001"), at), "every digit counts"
 
 
-def test_the_one_place_a_bounded_read_returns_decides_as_every_place_does() -> None:
-    """A placement reads one place, not the open list: the top place for a task
-    placed on top, the first place that follows the anchor for a move. Over
-    lists with ties and with tight gaps, the rules answer the same from that
-    one place as from every place."""
-    rng = random.Random(29)
-    for _ in range(500):
-        positions = [float(rng.choice([0, 1, 1, 2, 2.5, 3])) for _ in range(rng.randint(0, 8))]
-        places: list[Place] = sorted((p, new_id()) for p in positions)
-        top = places[:1]
-        assert top_position(top) == top_position(places)
-        for anchor in [*places, (rng.choice([0.5, 1.0, 4.0]), new_id())]:
-            following = [p for p in places if p != anchor and follows(p, anchor)][:1]
-            others = [p for p in places if p != anchor]
-            position = position_after(anchor, others)
-            assert position_after(anchor, following) == position
-            assert is_between(anchor, position, following) == is_between(anchor, position, others)
+def test_a_placement_writes_the_rank_and_its_float() -> None:
+    assert placed(D("1.25")) == {"rank": D("1.25"), "position": 1.25}
 
 
-def test_follows_compares_the_pair() -> None:
-    low, high = sorted((new_id(), new_id()))
-    assert follows((1.0, high), (1.0, low))
-    assert not follows((1.0, low), (1.0, high))
-    assert not follows((1.0, low), (1.0, low))
-    assert follows((2.0, low), (1.0, high))
+def chain(length: int) -> list[Place]:
+    """The places a run of moves into one gap leaves: zero, then `length`
+    tasks each moved right after it, then one."""
+    places: list[Place] = [(D(0), A)]
+    following = D(1)
+    for _ in range(length):
+        following = rank_after(D(0), following)
+        places.append((following, new_id()))
+    places.append((D(1), C))
+    return sorted(places)
+
+
+def test_the_run_is_bounded_by_the_nearest_short_ranks() -> None:
+    places = chain(90)
+    long = next(place for place in places if needs_respace(place[0]))
+    at = places.index(long)
+    above = list(reversed(places[:at]))
+    below = places[at + 1 :]
+    run = respace_run(long, above, below, RESPACE_REACH)
+    assert run.low == D(0) and run.high is not None and is_short(run.high)
+    assert long in run.places
+    assert all(not is_short(rank) for rank, _ in run.places)
+    first = places.index(run.places[0])
+    assert list(run.places) == places[first : first + len(run.places)], "contiguous, in order"
+    ranks = respaced(run)
+    assert len(ranks) == len(run.places)
+    assert all(D(0) < rank < run.high for rank in ranks)
+    assert ranks == sorted(set(ranks))
+    assert all(
+        not needs_respace(rank) and rank_scale(rank) <= RANK_SCALE_SHORT + 3 for rank in ranks
+    )
+
+
+def test_a_run_at_an_end_of_the_list_is_open_there() -> None:
+    long = (D("0." + "0" * RANK_SCALE_BOUND + "1"), A)
+    run = respace_run(long, [], [], RESPACE_REACH)
+    assert run.low is None and run.high is None and respaced(run) == [D(0)]
+    tail = [(long[0] * 2, B)]
+    run = respace_run(long, [(D(-1), C)], tail, RESPACE_REACH)
+    assert run.low == D(-1) and run.high is None
+    assert respaced(run) == [D(0), D(1)], "whole numbers after the last short one"
+
+
+def test_a_run_stops_at_the_reach() -> None:
+    """With no short rank within the reach, the farthest place read bounds
+    the run, so one respace writes at most twice the reach and one."""
+    long_ranks = spread(D(0), D("0." + "0" * 30 + "1"), 7)
+    places = [(rank, new_id()) for rank in long_ranks]
+    run = respace_run(places[3], list(reversed(places[:3])), places[4:], 3)
+    assert run.low == places[0][0] and run.high == places[6][0]
+    assert list(run.places) == places[1:6]
+
+
+def test_respacing_keeps_the_order_whatever_the_list() -> None:
+    """Random lists with runs of long ranks: applying one respace changes no
+    task's place in the list and leaves no rank past the bound in the run."""
+    rng = random.Random(50)
+    for _ in range(300):
+        places = chain(rng.randint(80, 150))
+        extra = [(random_rank(rng), new_id()) for _ in range(rng.randint(0, 20))]
+        order = sorted(set(places) | set(extra))
+        long = next((p for p in order if needs_respace(p[0])), None)
+        assert long is not None
+        at = order.index(long)
+        reach = rng.choice([RESPACE_REACH, 5, 40])
+        above = list(reversed(order[:at]))[:reach]
+        below = order[at + 1 :][:reach]
+        run = respace_run(long, above, below, reach)
+        new = dict(zip([task for _, task in run.places], respaced(run), strict=True))
+        after = sorted((new.get(task, rank), task) for rank, task in order)
+        assert [task for _, task in after] == [task for _, task in order]
+        if reach == RESPACE_REACH:
+            assert not any(needs_respace(rank) for rank in new.values())
 
 
 # A due date's reminder: nine in the morning, in the person's time zone.
@@ -183,6 +341,7 @@ def test_a_bulk_change_takes_a_task_only_from_the_status_it_starts_from() -> Non
 
 
 def test_a_bulk_reopen_stacks_each_task_above_the_one_before() -> None:
-    assert bulk_positions(-1.0, 3) == [-1.0, -2.0, -3.0]
-    assert bulk_positions(top_position([]), 2) == [0.0, -1.0]
-    assert bulk_positions(4.0, 0) == []
+    assert bulk_ranks(D(0), 3) == [D(-1), D(-2), D(-3)]
+    assert bulk_ranks(D("-0.5"), 2) == [D(-2), D(-3)]
+    assert bulk_ranks(None, 2) == [D(1), D(0)]
+    assert bulk_ranks(D(4), 0) == []

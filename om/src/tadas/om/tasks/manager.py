@@ -93,8 +93,10 @@ class TasksManagerInterface(ABC):
         self, ctx: OpContext, task_id: UUID, after_id: UUID | None, expected_version: int
     ) -> Task:
         """Places an open task right after `after_id` in the open list, or at
-        the top when it is None. `expected_version` is the one the caller
-        read, as on `update_task`."""
+        the top when it is None, by giving it a rank between its new
+        neighbours: the one write is the moved task's, and no other task's
+        version moves. `expected_version` is the one the caller read, as on
+        `update_task`."""
         ...
 
     @abstractmethod
@@ -247,6 +249,17 @@ class TasksManagerInterface(ABC):
         one write conditioned on the task still being open and due on `due_on`
         and not yet reminded. None when it no longer is, which is a reminder
         gone stale: nothing is written and nothing is announced."""
+        ...
+
+    @abstractmethod
+    async def respace_ranks(self, ctx: OpContext) -> int:
+        """The sweep, for one tenant: when an open task's rank grew past
+        `tasks.rules.RANK_SCALE_BOUND`, gives its run (the tasks between the
+        nearest short ranks around it, `tasks.rules.respace_run`) ranks that
+        are short again, in the order they had, in one write conditioned on
+        each task's version. Each task it writes moves its version on and is
+        announced as an edit is. A run written meanwhile is left for the next
+        pass. Returns how many tasks it respaced; zero when none needed it."""
         ...
 
     @abstractmethod

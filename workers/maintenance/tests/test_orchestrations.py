@@ -1,8 +1,9 @@
 """Long-running records in the worker: the import's steps claimed and run
 from the queue until the plan's bound parks it, the processor's delivery of
 a higher plan waking it, a step that errors retried by the queue from its
-cursor and failed as a defect on its last attempt, and the sweep opening the
-day's cleanup, whose steps archive the old done tasks."""
+cursor and failed as a defect on its last attempt, the sweep opening the
+day's cleanup, whose steps archive the old done tasks, and the sweep
+respacing a run of long ranks."""
 
 from datetime import timedelta
 from pathlib import Path
@@ -25,6 +26,7 @@ from tadas.om.orchestrations.types.orchestration import (
     ParkReason,
 )
 from tadas.om.storage.impl.memory import StorageMemoryImpl
+from tadas.om.tasks.rules import needs_respace
 from tadas.om.tasks.types.filter import TaskFilter
 from tadas.om.tasks.types.task import Task, TaskScope, TaskStatus
 from tadas.om.work.types.work_item import WorkItem, WorkKind
@@ -224,3 +226,39 @@ async def test_the_sweep_opens_the_days_cleanup_and_its_steps_archive_old_done_t
     team = TaskFilter(scope=TaskScope.TEAM, user_id=ctx.user_id)
     archived = await container.managers.tasks.get_archived_tasks(ctx, team, None, 10)
     assert [t.title for t in archived.items] == ["old"]
+
+
+async def test_the_sweep_respaces_a_run_of_long_ranks(tmp_path: Path) -> None:
+    """Ninety moves into one gap leave ranks past the bound; one sweep gives
+    them short ones, and the list reads as it did."""
+    container = WorkerContainer.for_tests(StorageMemoryImpl(), InfraLocalImpl(tmp_path))
+    ctx = await sign_in(container)
+    tasks = container.managers.tasks
+
+    async def add(title: str) -> Task:
+        now = utcnow()
+        return await tasks.create_task(
+            ctx,
+            Task(
+                id=new_id(),
+                created_at=now,
+                updated_at=now,
+                created_by=ctx.user_id,
+                updated_by=ctx.user_id,
+                title=title,
+            ),
+        )
+
+    c, a, b = [await add(title) for title in ("c", "a", "b")]
+    for index in range(90):
+        moved = await tasks.get_task(ctx, (a if index % 2 == 0 else c).id)
+        await tasks.move_task(ctx, moved.id, b.id, moved.version)
+    team = TaskFilter(scope=TaskScope.TEAM, user_id=ctx.user_id)
+    before = (await tasks.get_open_tasks(ctx, team, None, 10)).items
+    assert any(needs_respace(t.rank) for t in before)
+
+    await build_loop(container)._sweep_once()
+
+    after = (await tasks.get_open_tasks(ctx, team, None, 10)).items
+    assert [t.title for t in after] == [t.title for t in before]
+    assert not any(needs_respace(t.rank) for t in after)

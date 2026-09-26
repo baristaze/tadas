@@ -1,5 +1,6 @@
 import base64
 from datetime import datetime
+from decimal import Decimal
 from uuid import UUID
 
 from tadas.om.base import utcnow
@@ -36,9 +37,10 @@ from tadas.services.api.types.tasks import (
 
 def encode_cursor(status: TaskStatus, task: Task) -> str:
     """Opaque on the wire: the list it belongs to and where its page ended,
-    the last task's (position, id) for the open list and (updated_at, id)
-    for the done one."""
-    mark = repr(task.position) if status == TaskStatus.OPEN else task.updated_at.isoformat()
+    the last task's (rank, id) for the open list and (updated_at, id) for
+    the done one. A cursor the release before issued names the position,
+    which a rank is filled from exactly, so it reads the same."""
+    mark = format(task.rank, "f") if status == TaskStatus.OPEN else task.updated_at.isoformat()
     raw = f"{status.value}|{mark}|{task.id}".encode()
     return base64.urlsafe_b64encode(raw).decode().rstrip("=")
 
@@ -52,9 +54,12 @@ def decode_cursor(status: TaskStatus, cursor: str) -> OpenTaskCursor | TaskCurso
         if issued_for != status.value:
             raise ValueError(issued_for)
         if status == TaskStatus.OPEN:
-            return OpenTaskCursor(position=float(mark), id=UUID(task_id))
+            rank = Decimal(mark)
+            if not rank.is_finite():
+                raise ValueError(mark)
+            return OpenTaskCursor(rank=rank, id=UUID(task_id))
         return TaskCursor(updated_at=datetime.fromisoformat(mark), id=UUID(task_id))
-    except ValueError:
+    except ValueError, ArithmeticError:
         raise ValidationFailed("the cursor is not one this list issued") from None
 
 

@@ -3,6 +3,7 @@ manager and the storage interfaces unchanged, so the relational impl
 spells the criterion in SQL and the memory impl in Python from one shape."""
 
 from datetime import datetime
+from decimal import Decimal
 from uuid import UUID
 
 from tadas.om.base import Platform
@@ -27,7 +28,7 @@ class TaskCursor(Platform):
 
 class OpenTaskCursor(Platform):
     """Where the previous page of the open list ended: its last task's
-    (position, id). The next page is strictly after it."""
+    (rank, id). The next page is strictly after it."""
 
-    position: float
+    rank: Decimal
     id: UUID
