@@ -63,7 +63,7 @@ const slugOf = (token: string | null) => (Object.keys(orgs) as Slug[]).find((slu
 
 const taskOf = (slug: Slug): TaskView => ({
   id: `t_${slug}`, title: `${orgs[slug].name}'s task`, notes: "", status: "open", assignee_id: null,
-  position: 0, version: 1, created_by: "u1", deleted_at: null, due_on: null, reminded_at: null,
+  rank: "0", version: 1, created_by: "u1", deleted_at: null, due_on: null, reminded_at: null,
   created_at: at, updated_at: at,
 });
 

@@ -1,8 +1,17 @@
 # ADR 0050: A move writes one row
 
-**Status**: accepted (2026-10-12). Deviates from STO-05 for one release:
-the trigger of migration 202610120000 lives in the schema until the
-release after this one drops it with the position.
+**Status**: accepted (2026-10-12). Deviates from STO-05 until the
+position is dropped: the triggers of migrations 202610120000 and
+202610200000 live in the schema until then. The first contract step is
+done (2026-10-20). `position` is out of the mapping and out of every
+reader. The wire still sends it, optional, as the rank's float, since a
+client of the release before requires it. The column stays not null:
+the release before reads it as a number, so the trigger of 202610200000
+gives every row this release writes its rank's float. The trigger of
+202610120000 stays: the release before's own integration tests insert
+tasks by the position alone, and fail without it. The position's
+index goes now, since nothing reads it. The second step drops the
+column, both triggers and their functions, and the field.
 
 ## Context
 

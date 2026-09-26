@@ -100,6 +100,7 @@ def routes(org_id: str) -> list[tuple[str, str, str, dict[str, Any]]]:
 
 async def test_every_route_is_held_to_its_permission(
     client: httpx.AsyncClient,
+    container: AppContainer,
     owner: dict[str, str],
     reader: dict[str, str],
     writer: dict[str, str],
@@ -108,6 +109,7 @@ async def test_every_route_is_held_to_its_permission(
     """A read operator passes every read and is refused every write with the
     `not_authorized` shape a viewer's write gets; a write operator passes
     both; a tenant session is not an operator at all."""
+    await container.managers.tenancy_operator.tally_size()
     for permission, method, path, extra in routes(org_id):
         as_tenant = await client.request(method, path, headers=owner, **extra)
         assert as_tenant.status_code == 401, f"{method} {path}: {as_tenant.text}"
@@ -231,8 +233,14 @@ async def test_the_org_list_pages_past_one_page(
 
 
 async def test_the_size_is_what_the_first_responder_reads(
-    client: httpx.AsyncClient, reader: dict[str, str], org_id: str
+    client: httpx.AsyncClient, container: AppContainer, reader: dict[str, str], org_id: str
 ) -> None:
+    """The route reads the tally the worker's sweep keeps, and says when it
+    was counted; before the first count it is `404`, not a size of zero."""
+    early = await client.get("/v1/admin/size", headers=reader)
+    assert early.status_code == 404, early.text
+    assert "not counted yet" in early.json()["error"]["message"]
+    await container.managers.tenancy_operator.tally_size()
     size = await client.get("/v1/admin/size", headers=reader)
     assert size.status_code == 200, size.text
     body = size.json()
@@ -240,7 +248,8 @@ async def test_the_size_is_what_the_first_responder_reads(
     # org; the two owners, once in each.
     assert (body["tenants"], body["users"]) == (4, 4)
     assert (body["tasks_last_24h"], body["events_last_24h"]) == (3, 4)
-    assert body["since"].endswith("Z") or "+" in body["since"]
+    for moment in (body["since"], body["counted_at"]):
+        assert moment.endswith("Z") or "+" in moment
 
 
 async def test_the_creates_run_under_the_operators_idempotency_record(

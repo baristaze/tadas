@@ -136,7 +136,9 @@ change. A name the image does not host refuses the boot.
   an org's plan and grant it one with no payment, send one of an org's
   failed work items back to the queue, and read the
   platform's size: the tenant count, the
-  user count, and the tasks of the last twenty-four hours.
+  user count, and the tasks and events of twenty-four hours, as the
+  maintenance worker last counted them, with the moment it did (`404`
+  before its first count; the route counts nothing).
   (`/v1/admin/orgs`, `/v1/admin/orgs/{org_id}`,
   `/v1/admin/orgs/{org_id}/members`, `/v1/admin/orgs/{org_id}/tasks`,
   `/v1/admin/orgs/{org_id}/events`, `/v1/admin/orgs/{org_id}/billing`,

@@ -26,7 +26,7 @@ served to it. Exposure is by listing, never by folder.
 - [Infrastructure](infra/README.md): cache, buckets, topics, queues, secrets, observability; what each promises and which twin runs where
 - [Integrations](integrations/README.md): the third-party providers, each an interface, a real client, and a twin: Slack (its install, its signed calls in, its tokens), the identity provider (WorkOS), and the payment processor (Stripe); the errors a caller decides on; what a provider that hangs costs a call, and the request's deadline its calls share
 - [The API process](services/api/README.md): the routes by area, the gateway's guarantees, the subcommands
-- [The maintenance worker](workers/maintenance/README.md): claim, handle, complete; reminders and Slack posts; a deleted account's providers; what Slack sends; the sweep; liveness
+- [The maintenance worker](workers/maintenance/README.md): claim, handle, complete; reminders and Slack posts; a deleted account's providers; what Slack sends; the sweep and its count of the platform's size; liveness
 - [Deployment](deployment/README.md): the two twins and the branch convention
 - [The local stack](deployment/local/README.md): every URL and port, one service at a time
 - [Terraform](deployment/terraform/modules/README.md): the roots, the modules, the state, the credentials, and the portal's CDN, which serves the API's paths too

@@ -1,6 +1,7 @@
 """The operator plane of the tenancy swimlane: what a platform operator may
 do across every tenant. Every operation takes `OperatorContext` and nothing
-else; the tenant manager takes `OpContext` and nothing else, so the type
+else, but the sweep's tally of the platform's size, which takes no context
+at all; the tenant manager takes `OpContext` and nothing else, so the type
 system keeps the two planes apart. A read requires `OperatorPermission.READ`
 and a write `OperatorPermission.WRITE`, which the allowlist entry grants.
 
@@ -103,7 +104,18 @@ class TenancyOperatorManagerInterface(ABC):
     @abstractmethod
     async def size(self, admin: OperatorContext) -> PlatformSize:
         """How big the platform is: live tenants and users, and the tasks and
-        events of the last twenty-four hours."""
+        events of the twenty-four hours before `counted_at`, as the sweep last
+        counted them (`tally_size`). It reads the one tally row and counts
+        nothing. NotFound until the first count."""
+        ...
+
+    @abstractmethod
+    async def tally_size(self) -> PlatformSize:
+        """Platform-internal: the sweep's count of the platform's size across
+        every tenant, the live orgs and users and the tasks and events of the
+        day before now, written as the one tally row `size` reads. A count
+        older than the row's is not written. Takes no context: it counts for
+        no tenant and no principal."""
         ...
 
     @abstractmethod
@@ -170,7 +182,7 @@ class TenancyOperatorManagerInterface(ABC):
         limit: int,
     ) -> TaskPage:
         """One page of the tenant's tasks in `status`, every task of the team,
-        in the order the tenant's own list reads: the open list by position
+        in the order the tenant's own list reads: the open list by rank
         after an `OpenTaskCursor`, the done list newest first before a
         `TaskCursor`. A cursor of the other list is `ValidationFailed`."""
         ...

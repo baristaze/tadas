@@ -6,11 +6,19 @@ SHELL := /bin/bash
 # (which `make up` copies from it) the developer's overrides. Make reads both
 # so `make seed` and `make urls` say what the compose stack does, and compose
 # reads the same two files for the dashboard ports.
-include .env.example
-ifneq ($(wildcard .env),)
-include .env
-endif
-COMPOSE_ENV := --env-file .env.example $(if $(wildcard .env),--env-file .env)
+#
+# Both files are defaults. A variable exported in the shell wins over them,
+# as it does for the settings, for compose, and for scripts/dev.sh, so the
+# four TADAS_DATABASE_* URLs exported at another database take migrate,
+# migrate-check, seed, and test-integration there. Make lets an included
+# file beat the environment, so each name the files set and the shell
+# exports is kept aside before the includes and put back after them.
+ENV_FILES := .env.example $(wildcard .env)
+EXPORTED := $(foreach name,$(sort $(shell sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' $(ENV_FILES))),$(if $(filter environment,$(origin $(name))),$(name)))
+$(foreach name,$(EXPORTED),$(eval EXPORTED.$(name) := $$(value $(name))))
+include $(ENV_FILES)
+$(foreach name,$(EXPORTED),$(eval $(name) := $$(EXPORTED.$(name))))
+COMPOSE_ENV := $(foreach file,$(ENV_FILES),--env-file $(file))
 # The one switch between hosts: on Linux, host.docker.internal is the bridge
 # gateway, which a process on 127.0.0.1 never answers, so the devx collector
 # that scrapes the host processes joins the host's network there.

@@ -10,7 +10,7 @@ const task = (id: string, overrides: Partial<TaskView> = {}): TaskView => ({
   notes: "",
   status: "open",
   assignee_id: null,
-  rank: "0", position: 0,
+  rank: "0",
   created_at: "2026-09-20T10:00:00Z",
   updated_at: "2026-09-20T10:00:00Z",
   created_by: "u1",
@@ -36,9 +36,9 @@ function cache() {
     return Promise.resolve();
   };
   queryClient.setQueryData(keys.me, me);
-  queryClient.setQueryData(keys.tasks.open("team"), listOf(task("a", { rank: "0", position: 0 }), task("b", { rank: "1", position: 1 })));
+  queryClient.setQueryData(keys.tasks.open("team"), listOf(task("a", { rank: "0" }), task("b", { rank: "1" })));
   queryClient.setQueryData(keys.tasks.done("team"), listOf());
-  queryClient.setQueryData(keys.tasks.open("mine"), listOf(task("a", { rank: "0", position: 0 })));
+  queryClient.setQueryData(keys.tasks.open("mine"), listOf(task("a", { rank: "0" })));
   queryClient.setQueryData(keys.tasks.done("mine"), listOf());
   const ids = (key: QueryKey) =>
     queryClient.getQueryData<InfiniteData<TaskPageView>>(key)!.pages.flatMap((p) => p.items.map((t) => t.id));
@@ -48,7 +48,7 @@ function cache() {
 describe("the task cache", () => {
   it("places a write's answer in every cached scope, each by its own rule", () => {
     const { queryClient, invalidated, ids } = cache();
-    placeTask(queryClient, task("n", { rank: "-1", position: -1, created_by: "u2" }));
+    placeTask(queryClient, task("n", { rank: "-1", created_by: "u2" }));
     expect(ids(keys.tasks.open("team"))).toEqual(["n", "a", "b"]);
     // Someone else's unassigned task is not in mine.
     expect(ids(keys.tasks.open("mine"))).toEqual(["a"]);
@@ -76,7 +76,7 @@ describe("the task cache", () => {
   it("keeps a task a newer answer placed when an older read answers 404", () => {
     const { queryClient, ids } = cache();
     const issued = taskStamp(queryClient);
-    placeTask(queryClient, task("n", { rank: "5", position: 5, version: 4 }));
+    placeTask(queryClient, task("n", { rank: "5", version: 4 }));
     removeTask(queryClient, "n", { since: issued });
     expect(ids(keys.tasks.open("team"))).toContain("n");
     // A 404 on a read issued after the answer does take it out.
@@ -88,7 +88,7 @@ describe("the task cache", () => {
     const { queryClient, ids } = cache();
     const issued = taskStamp(queryClient);
     removeTask(queryClient, "b", { since: issued });
-    placeTask(queryClient, task("b", { rank: "1", position: 1, version: 1 }), { since: issued });
+    placeTask(queryClient, task("b", { rank: "1", version: 1 }), { since: issued });
     expect(ids(keys.tasks.open("team"))).toEqual(["a"]);
   });
 
@@ -130,7 +130,7 @@ describe("the task cache", () => {
       initialPageParam: null as string | null,
       queryFn: () => new Promise<TaskPageView>((resolve) => (answer = resolve)),
     });
-    placeTask(queryClient, task("n", { rank: "-1", position: -1 }));
+    placeTask(queryClient, task("n", { rank: "-1" }));
     // The list's answer was read before the task was created.
     answer({ items: [task("a")], next_cursor: null });
     await read;

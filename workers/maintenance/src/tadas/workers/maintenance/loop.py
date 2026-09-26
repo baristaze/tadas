@@ -8,8 +8,8 @@ tenants, then the chores of the tenants one read across tenants finds with
 a chore due, then the purge of a tenant past its retention per tenant, then
 every namespace's purge of its rows past their retention across tenants,
 then the purges of done outbox rows and settled work items, within a time
-budget, then the three gauges of the queue and the outbox), and drain first
-on stop."""
+budget, then the tally of the platform's size when it is due, then the three
+gauges of the queue and the outbox), and drain first on stop."""
 
 import asyncio
 import contextlib
@@ -68,6 +68,11 @@ ChoreStep = Callable[[OpContext], Awaitable[object]]
 """A standing chore per tenant that is not a purge: opening the next period
 of a record kept per period (`TasksManagerInterface.open_cleanup`)."""
 
+TallyStep = Callable[[], Awaitable[object]]
+"""The count of the platform's size across every tenant, kept as the tally the
+operator plane reads (`TenancyOperatorManagerInterface.tally_size`); it runs
+once every `LoopOptions.tally_interval`, not every pass."""
+
 ChoreTenants = Callable[[UUID | None, int], Awaitable[list[UUID]]]
 """The one read a pass, across tenants in the system scope, of the tenants
 with a chore due: at most `limit` of them, in id order, after `after` when
@@ -106,6 +111,10 @@ class LoopOptions(Platform):
     # less, so one failure reads as one for this long and then goes. The
     # alarm on it says the same window (the alarms module).
     failed_window: timedelta = timedelta(minutes=15)
+    # The platform's size is counted this often, not every pass: its counts
+    # cover a day, and a tally five minutes old answers what the operator
+    # plane asks of it (ADR 0074). Each worker counts on its own clock.
+    tally_interval: timedelta = timedelta(minutes=5)
 
 
 class WorkerLoop:
@@ -120,6 +129,7 @@ class WorkerLoop:
         chore_tenants: ChoreTenants | None = None,
         across: Mapping[str, AcrossStep] | None = None,
         across_batches: Mapping[str, int] | None = None,
+        tally: TallyStep | None = None,
         topics: TopicsInterface,
         liveness: CacheInterface,
         options: LoopOptions,
@@ -135,6 +145,7 @@ class WorkerLoop:
         # A purge across tenants whose batch is not the loop's `purge_batch`,
         # by name: what it returns is held against its own batch.
         self._across_batches = dict(across_batches or {})
+        self._tally_step = tally
         self._handlers = handlers
         self._topics = topics
         self._liveness = liveness
@@ -153,6 +164,9 @@ class WorkerLoop:
         # Where the next pass reads the tenants with a chore due from: after
         # the last one this pass ran, or None to read from the first.
         self._chores_after: UUID | None = None
+        # When this worker last counted the platform's size, on the event
+        # loop's clock; None until it has, so its first pass counts.
+        self._tallied_at: float | None = None
 
     @property
     def kinds(self) -> list[WorkKind]:
@@ -478,9 +492,11 @@ class WorkerLoop:
         in turn with the others, while the budget lasts. The purges across
         tenants run on every pass, each at least once and again while its
         batch comes back full and the budget lasts. A living tenant with no
-        chore due costs a pass no read at all. The three reads of the queue
-        and the outbox end every pass, whatever the budget, since the alarms
-        read them."""
+        chore due costs a pass no read at all. The count of the platform's
+        size runs once an interval, whatever the budget, as the gauges do:
+        it is three counts and a write, and the operator plane reads it. The
+        three reads of the queue and the outbox end every pass, whatever the
+        budget, since the alarms read them."""
         clock = asyncio.get_running_loop().time
         started = clock()
         deadline = started + self._options.sweep_budget.total_seconds()
@@ -538,6 +554,7 @@ class WorkerLoop:
                 log.info("sweep: purged %d settled work items", purged)
         except Exception:
             log.exception("sweep: work item purge failed")
+        await self._tally()
         gauges = await self._gauges()
         self.sweeps += 1
         seconds = clock() - started
@@ -562,6 +579,26 @@ class WorkerLoop:
                 }
             },
         )
+
+    async def _tally(self) -> None:
+        """The count of the platform's size, when the interval has passed
+        since this worker last made one. One that fails is logged and tried
+        again on the next pass; the tally the operator plane reads stays as
+        it was, and says how old it is."""
+        if self._tally_step is None:
+            return
+        clock = asyncio.get_running_loop().time
+        due = self._options.tally_interval.total_seconds()
+        if self._tallied_at is not None and clock() - self._tallied_at < due:
+            return
+        started = clock()
+        try:
+            await self._tally_step()
+        except Exception:
+            log.exception("sweep: the tally of the platform's size failed")
+            return
+        self._tallied_at = clock()
+        log.info("sweep: counted the platform's size in %.3fs", self._tallied_at - started)
 
     async def _gauges(self) -> dict[str, int]:
         """The three numbers the queue and outbox alarms read, one read each
