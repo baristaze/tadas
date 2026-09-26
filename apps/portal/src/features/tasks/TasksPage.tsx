@@ -1,9 +1,27 @@
 import { useState, type DragEvent } from "react";
 import { AppNav } from "../../app/AppNav";
-import { Banner, Button, Card, LinkButton, Muted, Page, SegmentedControl } from "../../design/kit";
+import {
+  ActionBar,
+  Banner,
+  Button,
+  CloseIcon,
+  ConfirmDialog,
+  FoldingCard,
+  IconButton,
+  LinkButton,
+  Menu,
+  MenuItem,
+  MenuSeparator,
+  MoreIcon,
+  Muted,
+  Page,
+  SegmentedControl,
+} from "../../design/kit";
 import { tokens } from "../../design/tokens";
 import { ArchivedTasks } from "./ArchivedTasks";
-import { TaskItem } from "./TaskItem";
+import { TaskItem, type RowSelection } from "./TaskItem";
+import { useBulkVm, type BulkVm } from "./useBulkVm";
+import type { TaskSection } from "../../store/preferences";
 import type { DropSide } from "./tasksModel";
 import { SCOPE_CHOICES, scopeHeading } from "./scopeModel";
 import { useTasksVm, type TasksVm } from "./useTasksVm";
@@ -94,11 +112,41 @@ function TaskGroups({ vm }: { vm: TasksVm }) {
   const [grabbedId, setGrabbedId] = useState<string | null>(null);
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const [over, setOver] = useState<{ id: string; side: DropSide } | null>(null);
+  // The row the keyboard enters each list on; the first row until one is focused.
+  const [entryRows, setEntryRows] = useState<Record<TaskSection, string | null>>({ open: null, done: null });
+  const openTasks = vm.open.filter((e) => !e.leaving).map((e) => e.task);
+  const doneTasks = vm.done.map((e) => e.task);
+  const bulk = useBulkVm({ scope: vm.scope, open: openTasks, done: doneTasks, canWrite: vm.canWrite });
 
   const endDrag = () => {
     setGrabbedId(null);
     setDraggedId(null);
     setOver(null);
+  };
+
+  // A folded section keeps no selection: nothing hidden is acted on.
+  const toggleFolded = (section: TaskSection) => {
+    if (!vm.folded[section] && bulk.selecting(section)) bulk.clear();
+    vm.toggleFolded(section);
+  };
+
+  const rowSelection = (section: TaskSection, tasks: TasksVm["open"][number]["task"][], id: string): RowSelection => {
+    const ids = tasks.map((t) => t.id);
+    const kept = entryRows[section];
+    const entryId = kept !== null && ids.includes(kept) ? kept : ids[0];
+    return {
+      selected: bulk.isSelected(section, id),
+      active: bulk.selecting(section),
+      entry: id === entryId,
+      onPick: (how) => bulk.select(section, id, how),
+      onStep: (step, extend) => {
+        const next = ids[ids.indexOf(id) + step];
+        if (next === undefined) return;
+        document.querySelector<HTMLElement>(`[data-task-row="${next}"]`)?.focus();
+        if (extend) bulk.select(section, next, bulk.selecting(section) ? "range" : "toggle");
+      },
+      onFocus: () => setEntryRows((current) => (current[section] === id ? current : { ...current, [section]: id })),
+    };
   };
 
   const itemProps = (entry: TasksVm["open"][number]) => ({
@@ -116,15 +164,31 @@ function TaskGroups({ vm }: { vm: TasksVm }) {
     onDelete: () => void vm.destroy(entry.task),
   });
 
+  const listProps = (section: TaskSection) =>
+    vm.canWrite
+      ? {
+          role: "grid",
+          "aria-multiselectable": true,
+          "aria-label": section === "open" ? "Open tasks" : "Done tasks",
+          className: bulk.selecting(section) ? "tadas-selecting" : undefined,
+        }
+      : {};
+
   return (
     <>
-      <Card title={`Open (${vm.open.filter((e) => !e.leaving).length})`}>
+      <FoldingCard
+        title={`Open (${openTasks.length})`}
+        folded={vm.folded.open}
+        onToggle={() => toggleFolded("open")}
+        actions={vm.canWrite ? <SectionMenu section="open" empty={openTasks.length === 0} bulk={bulk} /> : null}
+      >
         {vm.open.length === 0 ? <Muted>Nothing open. Add a task above.</Muted> : null}
-        <ul style={{ margin: 0, padding: 0 }}>
+        <ul style={{ margin: 0, padding: 0 }} {...listProps("open")}>
           {vm.open.map((entry) => (
             <TaskItem
               key={entry.task.id}
               {...itemProps(entry)}
+              select={vm.canWrite && !entry.leaving ? rowSelection("open", openTasks, entry.task.id) : undefined}
               onToggle={() => void vm.complete(entry.task)}
               drag={
                 vm.canWrite && !entry.leaving
@@ -162,12 +226,22 @@ function TaskGroups({ vm }: { vm: TasksVm }) {
             {vm.loadingMoreOpen ? <Muted>Loading</Muted> : <LinkButton onClick={vm.showMoreOpen}>Show more</LinkButton>}
           </div>
         ) : null}
-      </Card>
-      <Card title="Done">
+      </FoldingCard>
+      <FoldingCard
+        title="Done"
+        folded={vm.folded.done}
+        onToggle={() => toggleFolded("done")}
+        actions={vm.canWrite ? <SectionMenu section="done" empty={doneTasks.length === 0} bulk={bulk} /> : null}
+      >
         {vm.done.length === 0 ? <Muted>Nothing done yet.</Muted> : null}
-        <ul style={{ margin: 0, padding: 0 }}>
+        <ul style={{ margin: 0, padding: 0 }} {...listProps("done")}>
           {vm.done.map((entry) => (
-            <TaskItem key={entry.task.id} {...itemProps(entry)} onToggle={() => void vm.reopen(entry.task)} />
+            <TaskItem
+              key={entry.task.id}
+              {...itemProps(entry)}
+              select={vm.canWrite ? rowSelection("done", doneTasks, entry.task.id) : undefined}
+              onToggle={() => void vm.reopen(entry.task)}
+            />
           ))}
         </ul>
         {vm.hasMoreDone ? (
@@ -175,8 +249,64 @@ function TaskGroups({ vm }: { vm: TasksVm }) {
             {vm.loadingMoreDone ? <Muted>Loading</Muted> : <LinkButton onClick={vm.showMoreDone}>Show more</LinkButton>}
           </div>
         ) : null}
-      </Card>
-      <ArchivedTasks scope={vm.scope} canWrite={vm.canWrite} />
+      </FoldingCard>
+      {/* The archive is under the done list, and folds with it. */}
+      {vm.folded.done ? null : <ArchivedTasks scope={vm.scope} canWrite={vm.canWrite} />}
+      <SelectionBar bulk={bulk} />
+      {bulk.asking ? (
+        <ConfirmDialog
+          title={bulk.asking.title}
+          confirmLabel={bulk.asking.confirmLabel}
+          tone="danger"
+          busy={bulk.asking.waiting}
+          onConfirm={bulk.confirmAll}
+          onCancel={bulk.cancelAll}
+        >
+          {bulk.asking.body}
+        </ConfirmDialog>
+      ) : null}
     </>
+  );
+}
+
+/** A section's ⋯ menu: select every task of the section, loaded or not, and
+ * the change of all of them behind a question. */
+function SectionMenu({ section, empty, bulk }: { section: TaskSection; empty: boolean; bulk: BulkVm }) {
+  const name = section === "open" ? "Open" : "Done";
+  return (
+    <Menu
+      label={`${name} tasks`}
+      trigger={<MoreIcon />}
+      triggerLabel={`More actions for ${name.toLowerCase()} tasks`}
+      triggerTitle="More actions"
+      align="end"
+      minWidth={200}
+    >
+      <MenuItem onSelect={() => bulk.selectAll(section)} disabled={empty}>
+        Select all
+      </MenuItem>
+      <MenuSeparator />
+      <MenuItem tone="danger" onSelect={() => bulk.askAll(section)} disabled={empty}>
+        {section === "open" ? "Mark all as done…" : "Reopen all…"}
+      </MenuItem>
+    </Menu>
+  );
+}
+
+/** The bar at the foot of the window while anything is selected. */
+function SelectionBar({ bulk }: { bulk: BulkVm }) {
+  if (bulk.action === null) return null;
+  return (
+    <ActionBar label="Selected tasks">
+      <span className="tadas-action-bar-count" aria-live="polite">
+        {bulk.count === null ? "Counting…" : `${bulk.count} selected`}
+      </span>
+      <Button onClick={bulk.apply} disabled={bulk.busy || bulk.count === null || bulk.count === 0}>
+        {bulk.action}
+      </Button>
+      <IconButton label="Clear the selection" onClick={bulk.clear}>
+        <CloseIcon />
+      </IconButton>
+    </ActionBar>
   );
 }

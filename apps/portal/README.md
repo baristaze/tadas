@@ -85,8 +85,8 @@ Zustand, one realtime channel.
   dialog a write refused for a plan's bound opens instead of a notice
   (`upgrade.ts`, opened from the query cache's one mutation error hook and
   rendered once by `src/features/billing/UpgradeDialog.tsx`), and the
-  preferences kept across visits (`preferences.ts`, the task scope and
-  the theme, persisted in local storage). The token is kept in memory and in the
+  preferences kept across visits (`preferences.ts`, the task scope, the
+  theme, and the folded sections per org, persisted in local storage). The token is kept in memory and in the
   tab's session storage, so a reload survives and a closed tab forgets;
   never in local storage, which is for preferences only. No feature
   reads a storage directly; a store does.
@@ -190,6 +190,39 @@ Zustand, one realtime channel.
   ahead, or "due Sep 30" further out, and "Overdue" once the day has
   passed with no reminder out. The reminder goes out at nine in the
   morning of the date, in the time zone of the person the task is for.
+- The tasks page's two sections, Open and Done, fold under their titles.
+  The title is a button (`aria-expanded`), so a click, Enter, or Space
+  folds it, and the caret turns with it. Open starts unfolded and Done
+  folded; after that each section stays as the person left it, per org,
+  in the preferences (`folded`). The archive folds with Done.
+- Many tasks at once (`src/features/tasks/`: `selectionModel.ts` and
+  `bulkModel.ts` are pure, `useBulkVm.ts` decides). ⌘-click (Ctrl-click)
+  adds a row to the selection or drops it, Shift-click reaches from the
+  row picked last, and on touch a finger resting on a row for half a
+  second picks it. Once a selection is open, a plain click or tap picks
+  too. From the keyboard, each list is a grid with one tab stop: the
+  arrows move between rows, Space picks, and Shift reaches. Escape lets
+  the selection go. A selected row is tinted, with `aria-selected`; its
+  box still means done or open and is never a second box. A selection
+  lives in one section of the list on screen; a pick in the other
+  section starts over there, and a switch of scope or org starts with
+  none. There is no drag to select, since dragging a row reorders the
+  open list. While anything is selected, a bar at the foot of the window
+  says how many and offers the one action that applies: Mark done for
+  open tasks, Reopen for done ones. Each section's ⋯ menu (the kit's
+  `Menu`) has Select all, which selects every task of the section in the
+  scope, loaded or not, counted on the server (`GET /v1/tasks/count`),
+  and, in red, "Mark all as done…" on Open and "Reopen all…" on Done,
+  which ask first with that count. Every change is one call,
+  `POST /v1/tasks/bulk`, under an idempotency key: the rows move at once,
+  and the lists are read again when the server answers, since the answer
+  names ids. A toast then says what changed, with Undo for ten seconds;
+  Undo is the other action over exactly the ids the answer named, sent
+  bottom first for a reopen, so the list reads as it did. A change of
+  more tasks than the answer names (a thousand) offers no Undo. A reopen
+  past the plan's active tasks changes what it can and opens the upgrade
+  dialog for the rest. The toast is the notices store's (`notices.ts`,
+  its `done` tone and its one action), drawn with the kit's `Toast`.
 - The person's time zone. After sign-in, the shell (`TimeZoneSync` in
   `src/app/useTimeZoneSync.ts`) reads `/v1/me/identity` and, when the
   browser's IANA zone differs from the one held there, sends it once with

@@ -1,8 +1,11 @@
 import { useInfiniteQuery, useMutation, useQuery } from "@tanstack/react-query";
 import type {
   AddTaskRequest,
+  BulkTasksRequest,
+  BulkTasksView,
   MoveTaskRequest,
   RestoreTaskRequest,
+  TaskCountView,
   TaskPageView,
   TaskScope,
   TaskStatus,
@@ -103,5 +106,23 @@ export function useRestoreTask() {
   return useMutation({
     mutationFn: ({ id, version }: { id: string; version: number }) =>
       api.post<TaskView>(`/v1/tasks/${id}/restore`, { expected_version: version } satisfies RestoreTaskRequest),
+  });
+}
+
+/** How many tasks one list shows on the server, whatever the page loaded:
+ * the number "Mark all" asks about. Read when it is asked, never cached. */
+export function fetchTaskCount(status: TaskStatus, scope: TaskScope): Promise<number> {
+  return api
+    .get<TaskCountView>(`/v1/tasks/count?status=${status}&scope=${scope}`)
+    .then((counted) => counted.count);
+}
+
+/** Completes or reopens many tasks in one call: the ones named, or a whole
+ * list as the server reads it. A write of many rows goes under a key of its
+ * own, like a create, so the transport's retry of it is safe. */
+export function useBulkTasks() {
+  return useMutation({
+    mutationFn: (body: BulkTasksRequest) =>
+      api.post<BulkTasksView>("/v1/tasks/bulk", body, { idempotencyKey: crypto.randomUUID() }),
   });
 }

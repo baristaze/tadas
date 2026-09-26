@@ -1174,7 +1174,14 @@ alone, and neither key may touch what the other's work does not need
   tasks screen at `/` (its heading the list: My tasks | Team in an org
   with more than one member, My tasks alone for a person alone in one; open in
   manual order and done newest first, both paged by the server's cursor
-  with Show more, inline edit, drag to reorder, and in a task's open
+  with Show more, each section folding under its title (Done folded at
+  first, then as the person left it, per org), a selection of rows by
+  ⌘-click, Shift-click, a long press, or the keyboard with a bar that
+  completes or reopens them in one `POST /v1/tasks/bulk`, a ⋯ menu per
+  section with Select all and "Mark all as done…" behind a question
+  that names the count `GET /v1/tasks/count` reads, and a toast with
+  Undo, the other action over the ids the answer named,
+  inline edit, drag to reorder, and in a task's open
   view its attachments: dropped or picked, posted straight to the store
   with the form the API signed and confirmed, listed with name, size, and
   type, previewed inline by the signed inline link (an image as a

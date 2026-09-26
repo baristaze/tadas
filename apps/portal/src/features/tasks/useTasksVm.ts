@@ -15,7 +15,7 @@ import {
   useUpdateTask,
 } from "../../queries/tasks";
 import { useMe, useUsers } from "../../queries/tenancy";
-import { usePreferencesStore } from "../../store/preferences";
+import { isFolded, usePreferencesStore, type TaskSection } from "../../store/preferences";
 import { errorMessage } from "../../app/errorMessage";
 import { isPlanLimit } from "../../store/upgrade";
 import { isStale, reorder, STALE_MESSAGE } from "./reorder";
@@ -50,6 +50,10 @@ export function useTasksVm() {
   const members = users.isPending ? undefined : (users.data?.length ?? undefined);
   const scope = shownScope(usePreferencesStore((s) => s.taskScope), members);
   const setScope = usePreferencesStore((s) => s.setTaskScope);
+  // Which sections are folded, kept per org: each org's list is its own.
+  const orgId = me.data?.org.id ?? null;
+  const foldedByOrg = usePreferencesStore((s) => s.folded);
+  const setFolded = usePreferencesStore((s) => s.setFolded);
   const open = useOpenTasks(scope);
   const done = useDoneTasks(scope);
   const create = useCreateTask();
@@ -274,6 +278,10 @@ export function useTasksVm() {
     loadingMoreDone: done.isFetchingNextPage,
     showMoreDone: () =>
       doneHeld.length > doneTasks.length ? setExtraDone((n) => n + 1) : void done.fetchNextPage(),
+    folded: { open: isFolded(foldedByOrg, orgId, "open"), done: isFolded(foldedByOrg, orgId, "done") },
+    toggleFolded: (section: TaskSection) => {
+      if (orgId !== null) setFolded(orgId, section, !isFolded(foldedByOrg, orgId, section));
+    },
     editingId,
     startEditing: setEditingId,
     stopEditing: () => setEditingId(null),
