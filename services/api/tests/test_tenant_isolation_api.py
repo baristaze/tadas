@@ -279,6 +279,50 @@ async def test_a_write_that_names_another_tenants_id_is_refused(
     assert unchanged.json()["version"] == 1
 
 
+async def test_a_bulk_change_never_reaches_another_tenants_tasks(
+    client: httpx.AsyncClient, tenants: tuple[Tenant, Tenant]
+) -> None:
+    """A bulk change names B's ids beside one of A's, and then asks for A's
+    whole lists: B's tasks are skipped as `not_found`, the way an id that
+    never existed is, and B's tasks and counts are as they were."""
+    caller, other = tenants
+    mine = caller.task_ids[0]
+    named = await client.post(
+        "/v1/tasks/bulk",
+        headers=caller.headers,
+        json={"action": "complete", "ids": [*other.task_ids, mine]},
+    )
+    assert named.status_code == 200, named.text
+    body = named.json()
+    assert body["changed"] == [mine]
+    assert {s["id"]: s["reason"] for s in body["skipped"]} == dict.fromkeys(
+        other.task_ids, "not_found"
+    )
+    reopened = await client.post(
+        "/v1/tasks/bulk",
+        headers=caller.headers,
+        json={"action": "reopen", "ids": [other.done_task_id]},
+    )
+    assert reopened.json()["skipped"] == [{"id": other.done_task_id, "reason": "not_found"}]
+    for action, status in (("complete", "open"), ("reopen", "done")):
+        whole = await client.post(
+            "/v1/tasks/bulk",
+            headers=caller.headers,
+            json={"action": action, "all": {"scope": "team", "status": status}},
+        )
+        assert whole.status_code == 200, whole.text
+        assert not ids_in(whole.json()) & other.ids
+    for task_id in other.task_ids:
+        theirs = await client.get(f"/v1/tasks/{task_id}", headers=other.headers)
+        assert theirs.json()["status"] == "open" and theirs.json()["version"] == 1
+    done = await client.get(f"/v1/tasks/{other.done_task_id}", headers=other.headers)
+    assert done.json()["status"] == "done"
+    counted = await client.get(
+        "/v1/tasks/count", headers=other.headers, params={"status": "open", "scope": "team"}
+    )
+    assert counted.json()["count"] == len(other.task_ids)
+
+
 async def test_a_sign_in_is_not_exchangeable_for_another_tenant(
     client: httpx.AsyncClient, tenants: tuple[Tenant, Tenant]
 ) -> None:

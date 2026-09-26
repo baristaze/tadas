@@ -8,8 +8,10 @@ from tadas.om.orchestrations.types.orchestration import (
     OrchestrationStatus,
     ParkReason,
 )
-from tadas.om.tasks.types.task import TaskStatus
-from tadas.services.api.types.common import RequestBody, View
+from tadas.om.tasks.rules import BULK_MAX_IDS
+from tadas.om.tasks.types.bulk import BulkAction, SkipReason
+from tadas.om.tasks.types.task import TaskScope, TaskStatus
+from tadas.services.api.types.common import PlanLimitDetail, RequestBody, View
 
 
 class TaskView(View):
@@ -89,6 +91,66 @@ class RestoreTaskRequest(RequestBody):
     task is not archived."""
 
     expected_version: int | None = Field(default=None, ge=1)
+
+
+class TaskCountView(View):
+    """How many tasks one list shows: the open list, or the done list without
+    the archived tasks, in the scope asked for."""
+
+    status: TaskStatus
+    scope: TaskScope
+    count: int
+
+
+class BulkListRequest(RequestBody):
+    """A whole list, by the scope and the status it shows."""
+
+    scope: TaskScope
+    status: TaskStatus
+
+
+class BulkTasksRequest(RequestBody):
+    """A change to many tasks in one call: `complete` or `reopen`, over the
+    tasks named in `ids` (at most 1000) or over every task of one list in
+    `all`, never both. `all` reads the list on the server, not the page a
+    client loaded: `complete` goes with the open list and `reopen` with the
+    done list. Each task is an edit of its own, under the rules a single edit
+    applies and fenced on the version the call read: a task that is not the
+    org's, already in the status asked for, or changed between the read and
+    the write is skipped and named, never a refusal of the rest. A reopen
+    puts each task on top of the open list, the last one named on top, up to
+    the plan's bound on active tasks. The call runs under an
+    `Idempotency-Key`, and a retry of it answers what the first one did."""
+
+    action: BulkAction
+    ids: list[UUID] | None = Field(default=None, max_length=BULK_MAX_IDS)
+    all: BulkListRequest | None = None
+
+
+class SkippedTaskView(View):
+    """A task the bulk change left alone, and why: `not_found`,
+    `already_done`, `already_open`, `changed`, or `plan_limit`."""
+
+    id: UUID
+    reason: SkipReason
+
+
+class BulkTasksView(View):
+    """What a bulk change did. `changed` lists the tasks it wrote, in the order
+    it wrote them, and `skipped` the ones it left alone; each lists at most
+    1000, and the counts beside them are whole. To undo a change, send the
+    other action with `changed` as `ids`. `plan_limit` is set when a reopen
+    met the plan's bound on active tasks: the tasks past it are skipped as
+    `plan_limit`, and it carries what a `plan_limit_reached` refusal does, so
+    a client offers the plan that lifts it. Every changed task is announced
+    on the realtime channel as `tasks.task.updated`, as a single edit is."""
+
+    action: BulkAction
+    changed: list[UUID]
+    changed_count: int
+    skipped: list[SkippedTaskView]
+    skipped_count: int
+    plan_limit: PlanLimitDetail | None = None
 
 
 class StartImportRequest(RequestBody):

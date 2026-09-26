@@ -938,6 +938,43 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/tasks/bulk": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Change Tasks */
+        post: operations["change_tasks_v1_tasks_bulk_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/tasks/count": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Count Tasks
+         * @description How many tasks one list shows: the number a "Mark all" asks about.
+         */
+        get: operations["count_tasks_v1_tasks_count_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/tasks/imports": {
         parameters: {
             query?: never;
@@ -1342,6 +1379,64 @@ export interface components {
             status: components["schemas"]["SubscriptionStatus"] | null;
             /** Storage Bytes */
             storage_bytes: number;
+        };
+        /**
+         * BulkAction
+         * @description What a bulk change does to each task: the status a single edit would
+         *     write.
+         * @enum {string}
+         */
+        BulkAction: "complete" | "reopen";
+        /**
+         * BulkListRequest
+         * @description A whole list, by the scope and the status it shows.
+         */
+        BulkListRequest: {
+            scope: components["schemas"]["TaskScope"];
+            status: components["schemas"]["TaskStatus"];
+        };
+        /**
+         * BulkTasksRequest
+         * @description A change to many tasks in one call: `complete` or `reopen`, over the
+         *     tasks named in `ids` (at most 1000) or over every task of one list in
+         *     `all`, never both. `all` reads the list on the server, not the page a
+         *     client loaded: `complete` goes with the open list and `reopen` with the
+         *     done list. Each task is an edit of its own, under the rules a single edit
+         *     applies and fenced on the version the call read: a task that is not the
+         *     org's, already in the status asked for, or changed between the read and
+         *     the write is skipped and named, never a refusal of the rest. A reopen
+         *     puts each task on top of the open list, the last one named on top, up to
+         *     the plan's bound on active tasks. The call runs under an
+         *     `Idempotency-Key`, and a retry of it answers what the first one did.
+         */
+        BulkTasksRequest: {
+            action: components["schemas"]["BulkAction"];
+            all?: components["schemas"]["BulkListRequest"] | null;
+            /** Ids */
+            ids?: string[] | null;
+        };
+        /**
+         * BulkTasksView
+         * @description What a bulk change did. `changed` lists the tasks it wrote, in the order
+         *     it wrote them, and `skipped` the ones it left alone; each lists at most
+         *     1000, and the counts beside them are whole. To undo a change, send the
+         *     other action with `changed` as `ids`. `plan_limit` is set when a reopen
+         *     met the plan's bound on active tasks: the tasks past it are skipped as
+         *     `plan_limit`, and it carries what a `plan_limit_reached` refusal does, so
+         *     a client offers the plan that lifts it. Every changed task is announced
+         *     on the realtime channel as `tasks.task.updated`, as a single edit is.
+         */
+        BulkTasksView: {
+            action: components["schemas"]["BulkAction"];
+            /** Changed */
+            changed: string[];
+            /** Changed Count */
+            changed_count: number;
+            plan_limit?: components["schemas"]["PlanLimitDetail"] | null;
+            /** Skipped */
+            skipped: components["schemas"]["SkippedTaskView"][];
+            /** Skipped Count */
+            skipped_count: number;
         };
         /**
          * CompPlanRequest
@@ -2338,6 +2433,26 @@ export interface components {
             revoked_at: string | null;
         };
         /**
+         * SkipReason
+         * @description Why a bulk change left one task alone. Every reason is a fact about the
+         *     task as the change found it, never a failure of the change.
+         * @enum {string}
+         */
+        SkipReason: "not_found" | "already_done" | "already_open" | "changed" | "plan_limit";
+        /**
+         * SkippedTaskView
+         * @description A task the bulk change left alone, and why: `not_found`,
+         *     `already_done`, `already_open`, `changed`, or `plan_limit`.
+         */
+        SkippedTaskView: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            reason: components["schemas"]["SkipReason"];
+        };
+        /**
          * SlackEventAnswerView
          * @description Slack's check of the events URL gets its `challenge` back; every other
          *     event is acknowledged with nothing.
@@ -2496,6 +2611,17 @@ export interface components {
          * @enum {string}
          */
         SubscriptionStatus: "incomplete" | "incomplete_expired" | "trialing" | "active" | "past_due" | "canceled" | "unpaid" | "paused";
+        /**
+         * TaskCountView
+         * @description How many tasks one list shows: the open list, or the done list without
+         *     the archived tasks, in the scope asked for.
+         */
+        TaskCountView: {
+            /** Count */
+            count: number;
+            scope: components["schemas"]["TaskScope"];
+            status: components["schemas"]["TaskStatus"];
+        };
         /**
          * TaskPageView
          * @description One page of a task list. `next_cursor` fetches the next page of the same
@@ -4980,6 +5106,80 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TaskPageView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    change_tasks_v1_tasks_bulk_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
+                "idempotency-key"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BulkTasksRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BulkTasksView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    count_tasks_v1_tasks_count_get: {
+        parameters: {
+            query?: {
+                status?: components["schemas"]["TaskStatus"];
+                scope?: components["schemas"]["TaskScope"];
+            };
+            header?: {
+                authorization?: string | null;
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskCountView"];
                 };
             };
             /** @description Validation Error */

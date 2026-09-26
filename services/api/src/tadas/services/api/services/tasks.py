@@ -8,11 +8,14 @@ from tadas.om.tasks.types.task import TaskScope, TaskStatus
 from tadas.services.api.types.media import AddFileRequest, FilePageView, FileView
 from tadas.services.api.types.tasks import (
     AddTaskRequest,
+    BulkTasksRequest,
+    BulkTasksView,
     ImportPageView,
     ImportView,
     MoveTaskRequest,
     RestoreTaskRequest,
     StartImportRequest,
+    TaskCountView,
     TaskPageView,
     TaskView,
     UpdateTaskRequest,
@@ -34,6 +37,17 @@ class TasksServiceInterface(ABC):
     async def get_archived_tasks(
         self, ctx: OpContext, scope: TaskScope, cursor: str | None, limit: int
     ) -> TaskPageView: ...
+
+    @abstractmethod
+    async def count_tasks(
+        self, ctx: OpContext, status: TaskStatus, scope: TaskScope
+    ) -> TaskCountView: ...
+
+    @abstractmethod
+    async def change_tasks(self, ctx: OpContext, body: BulkTasksRequest) -> BulkTasksView:
+        """The named tasks, or a whole list; a body that names both or neither
+        is `ValidationFailed`."""
+        ...
 
     @abstractmethod
     async def get_task(self, ctx: OpContext, task_id: UUID) -> TaskView: ...

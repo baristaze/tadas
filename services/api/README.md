@@ -56,6 +56,13 @@ change. A name the image does not host refuses the boot.
 - **Tasks.** Open and done lists a page at a time, one task, create,
   edit, move, delete. (`/v1/tasks`, `/v1/tasks/{task_id}`,
   `/v1/tasks/{task_id}/move`)
+- **Many tasks at once.** How many tasks the open or the done list
+  shows in a scope; completing or reopening the tasks named, at most a
+  thousand, or every task of one list, under an Idempotency-Key. The
+  answer names what changed and what was left alone, with the reason;
+  a reopen past the plan's active tasks changes up to the bound and
+  carries `plan_limit` beside what it did. (`/v1/tasks/count`,
+  `/v1/tasks/bulk`)
 - **The archive.** The done tasks the daily cleanup archived, a page at
   a time, and restoring one to the done list, naming the version read.
   (`/v1/tasks/archived`, `/v1/tasks/{task_id}/restore`)
@@ -144,7 +151,10 @@ change. A name the image does not host refuses the boot.
   same id, and a refusal quotes it.
 - **An idempotency key on every create.** A creating `POST` may carry
   `Idempotency-Key`, one to 255 characters; every client this repository
-  ships sends one, and a create without it runs once per request. The same key with the same
+  ships sends one, and a create without it runs once per request. The
+  bulk change of tasks is a write of many rows and carries one too: a
+  retried "Mark all" answers what the first call did, and never reaches
+  a task that joined the list since. The same key with the same
   request gets the first answer back, marked `Idempotent-Replayed:
   true`; the same key with a different request is refused. A secret
   is in the first answer only. A 429 and a plan's bound (402) are
