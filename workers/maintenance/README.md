@@ -69,21 +69,42 @@ second lane is a second replica told its lane.
     attempts are spent. One sweep takes a batch per org (a hundred by
     default, `requeue_batch`), bounded in the statement; the rest wait
     for the next sweep.
-  - **Purge** each namespace's rows past its retention: deleted tasks,
-    removed files and uploads never confirmed (the object in the store
-    first, then the row, a batch of a hundred per org per sweep),
-    removed members with their ended memberships, revoked keys, dead
-    sessions, spent tickets, finished idempotency records, the payment
-    processor's delivery marks, and settled work items. Under an org deleted longer ago than the retention,
-    every row goes, its event stream included, and the org row stays as
-    the record. Each namespace
-    purges its own rows and asks tenancy the one question, whether the
-    org has expired.
+  - **Purge** each namespace's rows past its retention: deleted tasks
+    (their attachments first, so a detach that failed when the task was
+    deleted is tried again, and the task waits for the next sweep while
+    its files will not go), removed files and uploads never confirmed
+    (the object in the store first, then the row, a batch of a hundred
+    per org per sweep), removed members with their ended memberships,
+    revoked keys, expired sessions and tickets, closed invitations,
+    finished idempotency records, the payment processor's delivery
+    marks, Slack's old install states and posts, and settled work
+    items. Under an org deleted longer ago than the retention, every
+    row goes, its event stream included, and the org row stays as the
+    record. Each namespace purges its own rows and asks tenancy the one
+    question, whether the org has expired, which a sweep reads once per
+    org.
   - **Relay** the outbox rows the request path left behind, one
     attempt each with a growing delay, and fail the ones whose
     attempts are spent.
   - **Purge** the outbox rows done or failed past eight days, which
     outlives the database backup retention.
+
+  Every purge statement deletes a batch at most, a thousand rows by
+  default, chosen with `FOR UPDATE SKIP LOCKED`, so no statement grows
+  with a backlog past the database's statement deadline and two workers
+  split a backlog between them. A purge whose batch comes back full runs
+  again while the sweep's budget lasts, twenty seconds by default. Past
+  the budget the sweep takes no new org, and the next sweep starts at the
+  org it stopped at, so every org is reached in turn. An org deleted
+  past its retention that a sweep finds nothing left of is marked
+  purged, and the sweep leaves it out from then on. Each sweep logs one
+  line with its duration, which the sweep alarm reads.
+
+  The knobs, all in `.env.example`: `TADAS_WORKER_PURGE_BATCH`,
+  `TADAS_WORKER_SWEEP_BUDGET_SECONDS`, and one retention per kind of
+  row, `TADAS_<KIND>_RETENTION_DAYS` or `_HOURS`. Each defaults to what
+  it has always been but the socket tickets', a day: a ticket lives a
+  minute.
 - **Liveness.** The worker beats every ten seconds by default, in
   memory, and publishes each beat to the cache as best effort, bounded
   by its interval, so other replicas can see it. Its `/healthz`, served
