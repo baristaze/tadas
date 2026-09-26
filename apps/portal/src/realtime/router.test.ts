@@ -2,7 +2,8 @@ import { QueryClient, type QueryKey } from "@tanstack/react-query";
 import { describe, expect, it } from "vitest";
 import { keys } from "../queries/keys";
 import { parseEnvelope } from "./envelopes";
-import { reminderOf, routeEnvelope } from "./router";
+import { entityOf } from "./envelopes";
+import { isKeptFresh, PUSHED_ENTITIES, reminderOf, routeEnvelope } from "./router";
 
 function recording() {
   const queryClient = new QueryClient();
@@ -231,5 +232,25 @@ describe("reminderOf", () => {
       }),
     );
     expect(reminderOf(other!)).toBeNull();
+  });
+});
+
+describe("isKeptFresh", () => {
+  it("names every entity the server pushes", () => {
+    expect([...new Set(SERVER_KINDS.map(entityOf))].sort()).toEqual([...PUSHED_ENTITIES].sort());
+  });
+
+  it("holds every query a push reaches, and no query no push names", () => {
+    for (const kind of SERVER_KINDS) {
+      const { queryClient } = recording();
+      for (const routed of routeEnvelope(queryClient, pushOf(kind)).invalidated) {
+        expect(isKeptFresh(routed), `${kind} reaches ${JSON.stringify(routed)}`).toBe(true);
+      }
+    }
+    expect(isKeptFresh(keys.tasks.open("team"))).toBe(true);
+    expect(isKeptFresh(keys.me)).toBe(true);
+    expect(isKeptFresh(keys.billing)).toBe(true);
+    expect(isKeptFresh(keys.identity)).toBe(false);
+    expect(isKeptFresh(keys.files.preview("f1"))).toBe(false);
   });
 });

@@ -43,6 +43,32 @@ function targetsOf(entity: string): readonly QueryKey[] {
   return CARRIED_BY[entity] ?? [[entity]];
 }
 
+// Every entity the server pushes on the channel. The router test holds it to
+// the kinds the service sends.
+export const PUSHED_ENTITIES = [
+  "account",
+  "api_key",
+  "file",
+  "installation",
+  "invitation",
+  "membership",
+  "orchestration",
+  "session",
+  "task",
+  "user",
+] as const;
+
+const KEPT_FRESH = new Set(PUSHED_ENTITIES.flatMap((entity) => targetsOf(entity).map((key) => key[0])));
+
+/** Whether a push reaches the query under this key: its first element is a
+ * pushed entity, or a key the table above names. While the socket is open
+ * such a query is as fresh as the last push, so it is not read again on its
+ * own (`queryClient.ts`). A query no push names (the person's identity, a
+ * file's signed preview) is not. */
+export function isKeptFresh(queryKey: QueryKey): boolean {
+  return KEPT_FRESH.has(queryKey[0] as string);
+}
+
 /** Routes one envelope. With `tasks`, a push about a task is read as that
  * one task; without it (a replay, whose records are coalesced one per entity)
  * the task lists are read again, as every other entity's queries are. */
