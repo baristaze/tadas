@@ -202,6 +202,18 @@ class IdentityProviderInterface(ABC):
         ...
 
     @abstractmethod
+    async def delete_user(self, user_id: str) -> None:
+        """Deletes the person the provider knows by `user_id` (the subject),
+        for good, so a sign-in through the provider meets nobody it knows.
+        A user it no longer holds is deleted already, and that is no error:
+        a rerun is one deletion.
+        ProviderUnavailable when the provider cannot be reached, answers with
+        a server error, or refuses the process's own key (revoked, or
+        without the permission), which a person fixes; ProviderRefused when
+        it refuses the call itself."""
+        ...
+
+    @abstractmethod
     def describe(self) -> str: ...
 
     @abstractmethod

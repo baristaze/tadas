@@ -98,6 +98,15 @@ class BillingManagerInterface(EntitlementsInterface):
         ...
 
     @abstractmethod
+    async def close_account(self, ctx: OpContext) -> Billing:
+        """Platform-internal, a step of `DELETE_ACCOUNT`: the org is going with
+        its person, so its subscription is canceled now and its customer at
+        the processor deleted; the processor keeps the invoices. The account
+        then names neither, so a rerun calls nothing. An org that never
+        started a checkout calls nothing either."""
+        ...
+
+    @abstractmethod
     async def grant_seeded_plan(self, ctx: OpContext, plan: Plan) -> Billing:
         """Platform-internal: the local seed's grant, so the team a laptop is
         seeded with is not on Free. It takes the context a seeding transition

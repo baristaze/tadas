@@ -601,6 +601,23 @@ export interface paths {
         patch: operations["update_me_v1_me_patch"];
         trace?: never;
     };
+    "/v1/me/deletion": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Delete Account */
+        post: operations["delete_account_v1_me_deletion_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/me/identity": {
         parameters: {
             query?: never;
@@ -1180,6 +1197,22 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * AccountDeletedView
+         * @description The account is gone: `deleted_at` is when. The database's backups
+         *     still hold it until they expire, seven days on. `provider_logout_url` is
+         *     where the browser goes next, as on a sign-out; null when the sign-in
+         *     left no session there.
+         */
+        AccountDeletedView: {
+            /**
+             * Deleted At
+             * Format: date-time
+             */
+            deleted_at: string;
+            /** Provider Logout Url */
+            provider_logout_url?: string | null;
+        };
         /** AddApiKeyRequest */
         AddApiKeyRequest: {
             /** Name */
@@ -1360,6 +1393,18 @@ export interface components {
          */
         CredentialKind: "api_key" | "session_token" | "login" | "socket_ticket" | "operator_token" | "internal";
         /**
+         * DeleteAccountRequest
+         * @description The account's email as the person typed it, which is how they say
+         *     they mean it; and, as on the sign-out, where the identity provider sends
+         *     the browser once it has ended its own session.
+         */
+        DeleteAccountRequest: {
+            /** Email */
+            email: string;
+            /** Return To */
+            return_to?: string | null;
+        };
+        /**
          * DeliveryReceivedView
          * @description The delivery checked out and is queued; the processor stops retrying.
          */
@@ -1416,6 +1461,25 @@ export interface components {
         DeviceTokenRequest: {
             /** Device Code */
             device_code: string;
+        };
+        /** ErrorBody */
+        ErrorBody: {
+            /** Code */
+            code: string;
+            last_owner?: components["schemas"]["LastOwnerDetail"] | null;
+            /** Message */
+            message: string;
+            plan_limit?: components["schemas"]["PlanLimitDetail"] | null;
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+            stream?: components["schemas"]["StreamTruncatedDetail"] | null;
+        };
+        /** ErrorResponse */
+        ErrorResponse: {
+            error: components["schemas"]["ErrorBody"];
         };
         /**
          * EventView
@@ -1785,6 +1849,15 @@ export interface components {
             url: string | null;
         };
         /**
+         * LastOwnerDetail
+         * @description What a `last_owner` refusal carries: every team org the person is the
+         *     last owner of, which they hand on or delete before their account goes.
+         */
+        LastOwnerDetail: {
+            /** Orgs */
+            orgs: components["schemas"]["OwnedOrgRef"][];
+        };
+        /**
          * LogoutRequest
          * @description Where the identity provider sends the browser once it has ended its own
          *     session: this environment's portal page for it, and nothing else. Left
@@ -2003,6 +2076,21 @@ export interface components {
             slug: string;
         };
         /**
+         * OwnedOrgRef
+         * @description An org named in a refusal: enough to find it and to say which.
+         */
+        OwnedOrgRef: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /** Slug */
+            slug: string;
+        };
+        /**
          * ParkReason
          * @description Why a record waits, and so what wakes it.
          * @enum {string}
@@ -2018,6 +2106,22 @@ export interface components {
          * @enum {string}
          */
         Plan: "free" | "pro" | "team" | "max";
+        /**
+         * PlanLimitDetail
+         * @description What a `plan_limit_reached` refusal carries, so a client can offer the
+         *     plan that lifts the bound: the lever, the org's plan, the bound, and the
+         *     first plan above it that admits one more (null when none does).
+         */
+        PlanLimitDetail: {
+            /** Lever */
+            lever: string;
+            /** Limit */
+            limit: number | null;
+            /** Plan */
+            plan: string;
+            /** Suggested Plan */
+            suggested_plan: string | null;
+        };
         /**
          * PlanLimitsView
          * @description A plan's bounds; a null count is no bound.
@@ -2373,6 +2477,18 @@ export interface components {
             total_count: number;
             /** Total Size Bytes */
             total_size_bytes: number;
+        };
+        /**
+         * StreamTruncatedDetail
+         * @description What a `stream_truncated` refusal carries: the floor, the highest seq
+         *     trimmed from the stream, and the head. A client drops its cursor, reads
+         *     afresh what it shows, and goes on from the head.
+         */
+        StreamTruncatedDetail: {
+            /** Floor */
+            floor: number;
+            /** Head */
+            head: number;
         };
         /**
          * SubscriptionStatus
@@ -3954,6 +4070,61 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["UserView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_account_v1_me_deletion_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeleteAccountRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountDeletedView"];
+                };
+            };
+            /** @description operator_role_held */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description last_owner: `error.last_owner.orgs` */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Validation Error */

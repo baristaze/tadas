@@ -10,10 +10,12 @@ from tadas.om.tenancy.types.issued import IssuedLogin
 from tadas.services.api.services.tenancy import TenancyServiceInterface
 from tadas.services.api.types.common import clamp_limit
 from tadas.services.api.types.tenancy import (
+    AccountDeletedView,
     AddApiKeyRequest,
     ApiKeyPageView,
     ApiKeyView,
     CreateTeamOrgRequest,
+    DeleteAccountRequest,
     DeviceSignInView,
     DeviceTokenRequest,
     DevSignInRequest,
@@ -147,6 +149,12 @@ class TenancyServiceImpl(TenancyServiceInterface):
         return SignedOutView.model_validate(signed_out.session).model_copy(
             update={"provider_logout_url": signed_out.provider_logout_url}
         )
+
+    async def delete_account(
+        self, ctx: OpContext, body: DeleteAccountRequest
+    ) -> AccountDeletedView:
+        deleted = await self._tenancy.delete_account(ctx, body.email, body.return_to)
+        return AccountDeletedView.model_validate(deleted)
 
     async def get_me(self, ctx: OpContext) -> MeView:
         # The context carries ids; the entities are loaded by the manager.

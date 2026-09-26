@@ -1,6 +1,32 @@
 {
   "components": {
     "schemas": {
+      "AccountDeletedView": {
+        "description": "The account is gone: `deleted_at` is when. The database's backups\nstill hold it until they expire, seven days on. `provider_logout_url` is\nwhere the browser goes next, as on a sign-out; null when the sign-in\nleft no session there.",
+        "properties": {
+          "deleted_at": {
+            "format": "date-time",
+            "title": "Deleted At",
+            "type": "string"
+          },
+          "provider_logout_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider Logout Url"
+          }
+        },
+        "required": [
+          "deleted_at"
+        ],
+        "title": "AccountDeletedView",
+        "type": "object"
+      },
       "AddApiKeyRequest": {
         "additionalProperties": false,
         "properties": {
@@ -464,6 +490,36 @@
         "title": "CredentialKind",
         "type": "string"
       },
+      "DeleteAccountRequest": {
+        "additionalProperties": false,
+        "description": "The account's email as the person typed it, which is how they say\nthey mean it; and, as on the sign-out, where the identity provider sends\nthe browser once it has ended its own session.",
+        "properties": {
+          "email": {
+            "maxLength": 320,
+            "minLength": 1,
+            "title": "Email",
+            "type": "string"
+          },
+          "return_to": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Return To"
+          }
+        },
+        "required": [
+          "email"
+        ],
+        "title": "DeleteAccountRequest",
+        "type": "object"
+      },
       "DeliveryReceivedView": {
         "description": "The delivery checked out and is queued; the processor stops retrying.",
         "properties": {
@@ -555,6 +611,72 @@
           "device_code"
         ],
         "title": "DeviceTokenRequest",
+        "type": "object"
+      },
+      "ErrorBody": {
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "last_owner": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LastOwnerDetail"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "plan_limit": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PlanLimitDetail"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "request_id": {
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          },
+          "stream": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StreamTruncatedDetail"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "request_id"
+        ],
+        "title": "ErrorBody",
+        "type": "object"
+      },
+      "ErrorResponse": {
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ErrorBody"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "title": "ErrorResponse",
         "type": "object"
       },
       "EventView": {
@@ -1264,6 +1386,23 @@
         "title": "IssuedUploadView",
         "type": "object"
       },
+      "LastOwnerDetail": {
+        "description": "What a `last_owner` refusal carries: every team org the person is the\nlast owner of, which they hand on or delete before their account goes.",
+        "properties": {
+          "orgs": {
+            "items": {
+              "$ref": "#/components/schemas/OwnedOrgRef"
+            },
+            "title": "Orgs",
+            "type": "array"
+          }
+        },
+        "required": [
+          "orgs"
+        ],
+        "title": "LastOwnerDetail",
+        "type": "object"
+      },
       "LogoutRequest": {
         "additionalProperties": false,
         "description": "Where the identity provider sends the browser once it has ended its own\nsession: this environment's portal page for it, and nothing else. Left\nout, the provider sends it to its default sign-out address.",
@@ -1752,6 +1891,31 @@
         "title": "OrgView",
         "type": "object"
       },
+      "OwnedOrgRef": {
+        "description": "An org named in a refusal: enough to find it and to say which.",
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "slug"
+        ],
+        "title": "OwnedOrgRef",
+        "type": "object"
+      },
       "ParkReason": {
         "description": "Why a record waits, and so what wakes it.",
         "enum": [
@@ -1780,6 +1944,49 @@
         ],
         "title": "Plan",
         "type": "string"
+      },
+      "PlanLimitDetail": {
+        "description": "What a `plan_limit_reached` refusal carries, so a client can offer the\nplan that lifts the bound: the lever, the org's plan, the bound, and the\nfirst plan above it that admits one more (null when none does).",
+        "properties": {
+          "lever": {
+            "title": "Lever",
+            "type": "string"
+          },
+          "limit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Limit"
+          },
+          "plan": {
+            "title": "Plan",
+            "type": "string"
+          },
+          "suggested_plan": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Suggested Plan"
+          }
+        },
+        "required": [
+          "lever",
+          "plan",
+          "limit",
+          "suggested_plan"
+        ],
+        "title": "PlanLimitDetail",
+        "type": "object"
       },
       "PlanLimitsView": {
         "description": "A plan's bounds; a null count is no bound.",
@@ -2457,6 +2664,25 @@
           "pending_size_bytes"
         ],
         "title": "StorageUsageView",
+        "type": "object"
+      },
+      "StreamTruncatedDetail": {
+        "description": "What a `stream_truncated` refusal carries: the floor, the highest seq\ntrimmed from the stream, and the head. A client drops its cursor, reads\nafresh what it shows, and goes on from the head.",
+        "properties": {
+          "floor": {
+            "title": "Floor",
+            "type": "integer"
+          },
+          "head": {
+            "title": "Head",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "floor",
+          "head"
+        ],
+        "title": "StreamTruncatedDetail",
         "type": "object"
       },
       "SubscriptionStatus": {
@@ -6574,6 +6800,117 @@
           }
         },
         "summary": "Update Me",
+        "tags": [
+          "tenancy"
+        ]
+      }
+    },
+    "/v1/me/deletion": {
+      "post": {
+        "operationId": "delete_account_v1_me_deletion_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app-version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Version"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeleteAccountRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountDeletedView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "operator_role_held"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "last_owner: `error.last_owner.orgs`"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Account",
         "tags": [
           "tenancy"
         ]

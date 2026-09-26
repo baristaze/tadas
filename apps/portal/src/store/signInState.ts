@@ -105,3 +105,35 @@ export function takeSignedOut(): boolean {
   signedOut = false;
   return was;
 }
+
+// A person who deleted their account lands on `/signed-out`, through the
+// identity provider's logout or straight there, and the page says what
+// became of the account. The flag rides the tab's session storage, since
+// the provider's logout is a full page load away, and it is read once.
+
+export const ACCOUNT_DELETED_KEY = "tadas.portal.accountDeleted";
+
+type Flag = Pick<Storage, "getItem" | "setItem" | "removeItem">;
+
+function flagStore(): Flag | undefined {
+  return typeof sessionStorage === "undefined" ? undefined : sessionStorage;
+}
+
+export function noteAccountDeleted(storage: Flag | undefined = flagStore()): void {
+  try {
+    storage?.setItem(ACCOUNT_DELETED_KEY, "1");
+  } catch {
+    // Storage unavailable: the page says "signed out" and nothing more.
+  }
+}
+
+/** Whether this tab just deleted its account; asking clears it. */
+export function takeAccountDeleted(storage: Flag | undefined = flagStore()): boolean {
+  try {
+    const was = storage?.getItem(ACCOUNT_DELETED_KEY) === "1";
+    storage?.removeItem(ACCOUNT_DELETED_KEY);
+    return was;
+  } catch {
+    return false;
+  }
+}

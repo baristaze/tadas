@@ -200,7 +200,8 @@ resource "aws_secretsmanager_secret_version" "stripe" {
 
 # The Tadas App application's API key: the client secret the API exchanges
 # sign-in codes with, and the key it sends invitations with. A process
-# credential, injected into the API alone as TADAS_WORKOS_API_KEY, and named
+# credential, injected into the API and the worker as TADAS_WORKOS_API_KEY
+# (the worker deletes a deleted account's person with it), and named
 # outside the application prefix so no process reaches it through the
 # secrets capability. Each environment holds a key of the Tadas App in its
 # own WorkOS environment (staging's, production's), made on that
@@ -210,7 +211,7 @@ resource "aws_secretsmanager_secret_version" "stripe" {
 # every sign-in through WorkOS answers 503 until the key is set), and never
 # writes it again: set the real value once with
 #   aws secretsmanager put-secret-value --secret-id <prefix>workos_api_key --secret-string <key>
-# and roll the API so its tasks start with it.
+# and roll the API and the worker so their tasks start with it.
 resource "aws_secretsmanager_secret" "workos_api_key" {
   name                    = "${var.prefix}workos_api_key"
   recovery_window_in_days = local.recovery_window_in_days

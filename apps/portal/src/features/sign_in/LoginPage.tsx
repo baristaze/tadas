@@ -1,6 +1,7 @@
 import { useNavigate } from "react-router-dom";
 import { Button, Card, ErrorText, LinkButton, Muted, Page } from "../../design/kit";
 import { tokens } from "../../design/tokens";
+import { GONE_LINE } from "../settings/deleteAccountModel";
 import { useLoginVm } from "./useLoginVm";
 
 /** `signedOut` is the page `/signed-out` shows: the identity provider's
@@ -21,7 +22,13 @@ export function LoginPage({ signedOut = false }: { signedOut?: boolean }) {
             </>
           ) : vm.wait ? (
             <>
-              {vm.signedOut ? <Muted>You are signed out.</Muted> : null}
+              {vm.accountDeleted ? (
+                <div data-account-deleted>
+                  <strong>Your account is deleted.</strong> <Muted>{GONE_LINE}</Muted>
+                </div>
+              ) : vm.signedOut ? (
+                <Muted>You are signed out.</Muted>
+              ) : null}
               <Button wide onClick={vm.retry}>
                 Sign in
               </Button>

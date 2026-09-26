@@ -1,6 +1,6 @@
 """Pure rules of the tenancy namespace: credential parsing, hashing, the
 role cap, the TOTP code, who a single sign-on admits, a person's time
-zone, and where a list cursor cuts. Values in, values out;
+zone, where a list cursor cuts, and what an account's deletion asks. Values in, values out;
 no clock, no storage, no settings. Both storage impls call the cursor rules;
 the relational one spells them in SQL and names the rule it mirrors."""
 
@@ -15,6 +15,7 @@ from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from tadas.om.opcontext import CredentialKind, Role
+from tadas.om.tenancy.types.org import Org
 from tadas.om.tenancy.types.role import ROLE_RANK
 
 MAX_API_KEY_TTL = timedelta(days=90)
@@ -263,3 +264,28 @@ def sign_in_delay(
         return timedelta(0)
     wait = min(base * (2 ** (failures - free)), cap)
     return max(last_failed_at + wait - now, timedelta(0))
+
+
+def confirms_deletion(email: str, typed: str) -> bool:
+    """Whether what the person typed is the account's email: the one check
+    that a deletion is meant. Surrounding space and letter case are forgiven,
+    since an address is read that way everywhere else; anything else is not."""
+    return typed.strip().lower() == email.strip().lower()
+
+
+def left_without_owner(org: Org, role: Role, owners: int) -> bool:
+    """Whether a person leaving `org`, where they hold `role` and the org has
+    `owners` live owners (them included), would leave a team org with nobody
+    to run it. A personal org is never counted: it goes with its person, or
+    is someone else's, which they do not own."""
+    return not org.personal and role is Role.OWNER and owners <= 1
+
+
+def past_retention(org: Org, before: datetime) -> bool:
+    """A tenant whose rows go: deleted before `before`, the retention's
+    start. A deleted personal org keeps no retention: it is deleted only with
+    its person, who asked for it gone now, so its rows go at the next sweep
+    (ADR 0041)."""
+    if org.deleted_at is None:
+        return False
+    return org.personal or org.deleted_at < before

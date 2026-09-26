@@ -35,8 +35,16 @@ second lane is a second replica told its lane.
   next step's item land in one commit. A step that raises is retried by
   the queue from the cursor the last commit left; on its last attempt the
   record fails as `defect`. A wake-up resumes the org's records parked
-  for the reason a plan that rose cleared. The last kind does nothing and
-  keeps the loop honest.
+  for the reason a plan that rose cleared. A deleted account's item runs
+  in the person's personal org: it deletes the person at WorkOS, cancels
+  the org's subscription at once and deletes its customer at Stripe,
+  removes its Slack app, and then deletes the org, which the next sweep
+  purges whole. A provider that does not answer parks it for a minute,
+  spending no attempt; a provider that refuses fails it. Each step finds
+  its own work done on a rerun. The person's open tasks in each team org
+  they left go unassigned by an item of their own, run under their name.
+  The last kind does nothing and keeps the loop honest. The worker holds
+  the WorkOS key for the account's item, as the API does.
 - **What Slack sends.** Slack calls the API, which checks each call's
   signature, acknowledges it within Slack's three seconds, and queues
   it on `slack`. The worker reads that queue: `/tadas` commands,

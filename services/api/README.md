@@ -33,6 +33,12 @@ change. A name the image does not host refuses the boot.
 - **Me.** The current org, my user, my identity, and my display name;
   a new team org I own. (`/v1/orgs/current`, `/v1/me`,
   `/v1/me/identity`, `/v1/orgs`)
+- **Delete my account.** From a session, with the account's email typed
+  to confirm: the account goes at once, in every org, and the answer
+  names the identity provider's logout, as a sign-out does. `409
+  last_owner` names each team org the person is the last owner of, in
+  the envelope's `last_owner.orgs`; `403 operator_role_held` refuses an
+  operator. (`POST /v1/me/deletion`, ADR 0041)
 - **Members.** The org's members and their roles a page at a time,
   a member's role, removing a member. (`/v1/users`, `/v1/memberships`,
   `/v1/memberships/{user_id}`)

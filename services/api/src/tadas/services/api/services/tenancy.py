@@ -10,10 +10,12 @@ from uuid import UUID
 from tadas.om.idempotency.types.attempt import Attempt
 from tadas.om.opcontext import IdentityContext, OpContext, RequestContext
 from tadas.services.api.types.tenancy import (
+    AccountDeletedView,
     AddApiKeyRequest,
     ApiKeyPageView,
     ApiKeyView,
     CreateTeamOrgRequest,
+    DeleteAccountRequest,
     DeviceSignInView,
     DeviceTokenRequest,
     DevSignInRequest,
@@ -102,6 +104,11 @@ class TenancyServiceInterface(ABC):
 
     @abstractmethod
     async def get_me(self, ctx: OpContext) -> MeView: ...
+
+    @abstractmethod
+    async def delete_account(
+        self, ctx: OpContext, body: DeleteAccountRequest
+    ) -> AccountDeletedView: ...
 
     @abstractmethod
     async def update_me(self, ctx: OpContext, body: UpdateMeRequest) -> UserView: ...

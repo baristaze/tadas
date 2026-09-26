@@ -72,6 +72,12 @@ services:
     environment:
       <<: *app-env
       TADAS_METRICS_HOST: 0.0.0.0
+      # The same Tadas App as the API's: the worker deletes a deleted
+      # account's person there. Without the key, that step waits, and the
+      # account's personal org waits with it.
+      TADAS_IDENTITY_PROVIDER: workos
+      TADAS_WORKOS_CLIENT_ID: ${TADAS_WORKOS_CLIENT_ID:-client_01M3640D8WBF9KC0P89YW4E72N}
+      TADAS_WORKOS_API_KEY: ${TADAS_WORKOS_API_KEY:-}
     depends_on:
       postgres:
         condition: service_healthy
