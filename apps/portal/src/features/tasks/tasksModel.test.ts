@@ -54,7 +54,7 @@ describe("tasks model", () => {
       done: false,
     });
     expect(taskRow(task("2", { created_by: "gone", status: "done" }), users, "ann")).toMatchObject({
-      createdBy: "someone",
+      createdBy: "Former member",
       assignee: null,
       done: true,
     });

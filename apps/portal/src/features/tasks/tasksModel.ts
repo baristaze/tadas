@@ -29,9 +29,14 @@ export function canAdd(title: string): boolean {
   return title.trim().length > 0;
 }
 
+/** What a person no longer in the org is called: their user is gone, and
+ * the id on what they made names nobody. The list of members is read whole
+ * before any name is shown, so an id it lacks is one that left. */
+export const FORMER_MEMBER = "Former member";
+
 export function nameOf(userId: string, users: ReadonlyMap<string, UserView>, meId: string | null): string {
   if (userId === meId) return "you";
-  return users.get(userId)?.display_name ?? "someone";
+  return users.get(userId)?.display_name ?? FORMER_MEMBER;
 }
 
 export function taskRow(

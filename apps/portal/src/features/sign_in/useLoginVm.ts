@@ -3,7 +3,7 @@ import { useLocation } from "react-router-dom";
 import { errorMessage } from "../../app/errorMessage";
 import { runtimeConfig } from "../../app/config";
 import { useStartSignIn } from "../../queries/tenancy";
-import { newState, rememberSignIn, takeSignedOut } from "../../store/signInState";
+import { newState, rememberSignIn, takeAccountDeleted, takeSignedOut } from "../../store/signInState";
 import { landingPath, readStart } from "./signInModel";
 
 /** `/login`, the identity provider's "initiate login" address: it starts a
@@ -21,7 +21,9 @@ export function useLoginVm({ arrivedSignedOut = false }: { arrivedSignedOut?: bo
   const started = useRef(false);
   // Read once per visit: a tab that just signed out waits to be asked.
   const [justSignedOut] = useState(() => takeSignedOut() || arrivedSignedOut);
-  const wait = asked.offerDev || justSignedOut;
+  // Read once too: a tab whose account was just deleted says so, and waits.
+  const [accountDeleted] = useState(() => takeAccountDeleted());
+  const wait = asked.offerDev || justSignedOut || accountDeleted;
 
   const go = useCallback(async () => {
     setError(null);
@@ -59,6 +61,7 @@ export function useLoginVm({ arrivedSignedOut = false }: { arrivedSignedOut?: bo
     error,
     wait,
     signedOut: justSignedOut,
+    accountDeleted,
     devSignIn,
     retry: () => void go(),
   };

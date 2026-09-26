@@ -153,6 +153,20 @@ Zustand, one realtime channel.
   pending ones to send again or revoke. A team org's settings also open
   WorkOS's admin portal, where the org's admin connects their identity
   provider for single sign-on or proves a domain; a personal org has none.
+- "Delete my account", the last card of Settings, for everyone. The
+  person types their email to confirm, and the card says what goes: the
+  account, the personal org with its tasks and files, and their place
+  in every team org, "gone now, and gone from backups within 7 days".
+  A refusal stays on the card: the last owner of a team org is told
+  which orgs (`last_owner` in the error envelope). Once deleted, the tab
+  forgets its session and notes the deletion in its session storage,
+  and the browser goes through WorkOS's logout, when the API names one,
+  to `/signed-out`, which says "Your account is deleted." once
+  (`src/features/settings/deleteAccount.ts`).
+- "Former member". A task names its maker and its assignee from the
+  org's member list, read whole; an id the list does not hold is a
+  person who left the org or deleted their account, and reads "Former
+  member" (`tasksModel.nameOf`).
 - Design tokens and the kit live in `src/design/`; the operator console,
   when it is built (ADR 0010), imports them from here. A colour or a
   shadow token is a CSS custom property, and `theme.css` gives each its

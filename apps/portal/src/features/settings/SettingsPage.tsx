@@ -1,8 +1,10 @@
 import { Banner, Button, Card, ErrorText, LinkButton, Muted, Page, Select, Table, TextField } from "../../design/kit";
 import { AppNav } from "../../app/AppNav";
 import { tokens } from "../../design/tokens";
+import { DeleteAccountCard } from "./DeleteAccountCard";
 import { SettingsTabs } from "./SettingsTabs";
 import { StorageCard } from "./StorageCard";
+import { useDeleteAccountVm } from "./useDeleteAccountVm";
 import { useInvitationsVm } from "./useInvitationsVm";
 import { useSettingsVm, type SettingsVm } from "./useSettingsVm";
 import { PaymentNotice } from "../billing/PaymentNotice";
@@ -10,6 +12,7 @@ import { PaymentNotice } from "../billing/PaymentNotice";
 export function SettingsPage() {
   const vm = useSettingsVm();
   const invites = useInvitationsVm(vm.me);
+  const leaving = useDeleteAccountVm(vm.me);
   return (
     <Page title="Settings" nav={<AppNav />} notice={<PaymentNotice />}>
       <SettingsTabs />
@@ -140,6 +143,7 @@ export function SettingsPage() {
         </Card>
       ) : null}
       <SlackCard slack={vm.slack} />
+      <DeleteAccountCard vm={leaving} />
     </Page>
   );
 }

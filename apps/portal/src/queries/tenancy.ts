@@ -1,10 +1,12 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import type {
+  AccountDeletedView,
   AddApiKeyRequest,
   ApiKeyPageView,
   ApiKeyView,
   CreateTeamOrgRequest,
+  DeleteAccountRequest,
   DevSignInRequest,
   ExchangeSessionRequest,
   IdentityView,
@@ -54,7 +56,7 @@ export function useIdentity() {
 
 /** Every member of the org, page after page. The list is not a screen of its
  * own: it names the people on tasks and fills the assignee picker, and a
- * member missing from it reads as "someone" and cannot be assigned, so this
+ * member missing from it reads as a former member and cannot be assigned, so this
  * follows the cursor to the end rather than stopping at one page. The pages
  * loaded so far are returned as they arrive. */
 export function useUsers() {
@@ -80,7 +82,7 @@ export function useUsers() {
     ...query,
     data: query.data?.pages.flatMap((page) => page.items) as UserView[] | undefined,
     /** Pending until the whole list is in hand: a caller that maps ids to
-     * names would otherwise render "someone" for a member still on the way. */
+     * names would otherwise call a member still on the way a former member. */
     isPending: query.isPending || walking,
   };
 }
@@ -186,6 +188,15 @@ export function useDevSignIn() {
 export function useLogout() {
   return useMutation({
     mutationFn: (body: LogoutRequest) => api.post<SignedOutView>("/v1/auth/logout", body),
+  });
+}
+
+/** Deletes the caller's whole account. The server answers once it is gone,
+ * with where the browser goes to end the identity provider's session, as a
+ * sign-out does. Sent once: a retry would meet a session that is gone. */
+export function useDeleteAccount() {
+  return useMutation({
+    mutationFn: (body: DeleteAccountRequest) => api.post<AccountDeletedView>("/v1/me/deletion", body),
   });
 }
 
