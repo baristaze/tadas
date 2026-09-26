@@ -1505,7 +1505,12 @@ alone, and neither key may touch what the other's work does not need
   hello's `sent_at` less the time the tab waited for it, less fifteen
   seconds, past a statement's deadline), and the rest of the cache stays
   as read. Only a tail that cannot tell (every record on it that recent)
-  or a hello with no time refreshes every query.
+  or a hello with no time refreshes every query. A record read back
+  (a replay, the first catch-up) is routed once per entity, the last,
+  but a reminder is kept whatever follows it and announced when the
+  read-back ends: each by its task's title up to three, and past three
+  one notice that counts them, with nothing read to find them
+  ([ADR 0075](adr/0075-a-reminder-missed-while-away-is-announced-after-the-reconnect.md)).
   Errors go to the Sentry-compatible backend named by `sentryDsn` in
   the runtime `config.json` (locally, by `VITE_SENTRY_DSN`), through
   every route's `errorElement` and React's root error hooks; the DSN is
