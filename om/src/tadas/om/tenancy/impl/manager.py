@@ -1554,15 +1554,9 @@ class TenancyManagerImpl(TenancyManagerInterface):
                 "an operator's account is deleted once the operator role is taken off"
             )
         places = await self._memberships_of(identity.id)
-        stranded = [
-            place.org
-            for place in places
-            if left_without_owner(
-                place.org, place.role, await self._storage.count_members(place.org.id, Role.OWNER)
-            )
-        ]
-        if stranded:
-            raise LastOwner(tuple((str(org.id), org.name, org.slug) for org in stranded))
+        refusal = await self._last_owner(places)
+        if refusal.orgs:
+            raise refusal
         asking = await self._storage.read_session(ctx.org_id, ctx.security.credential_id)
         rows: list[OutboxRow] = []
         for place in places:
@@ -1606,13 +1600,22 @@ class TenancyManagerImpl(TenancyManagerInterface):
                 app=ctx.app.type.value,
             )
 
+        # The tenants that must keep an owner once the person goes: the
+        # storage counts their owners again under a lock, so two owners who
+        # leave at once never leave one with none.
+        owned = tuple(
+            place.org.id for place in places if not place.org.personal and place.role is Role.OWNER
+        )
         now = utcnow()
         try:
             revocations = await self._storage.delete_person(
-                identity.id, email_digest(identity.email), tuple(rows), revocation
+                identity.id, identity.email, owned, tuple(rows), revocation
             )
         except NotFound:
             raise InvalidCredential("the identity is gone") from None
+        except Conflict:
+            # Another owner left first: the refusal the check above would give now.
+            raise await self._last_owner(places) from None
         # Each removal first, so a socket closes because its person left;
         # then each revocation, as the record it is. Every row is durable
         # already: whatever a crash leaves unrelayed, the sweep relays.
@@ -1621,6 +1624,18 @@ class TenancyManagerImpl(TenancyManagerInterface):
         log.info("identity %s deleted its account", identity.id)
         provider_logout = None if asking is None else self._provider_logout(asking, return_to)
         return AccountDeleted(deleted_at=now, provider_logout_url=provider_logout)
+
+    async def _last_owner(self, places: tuple[OrgMembership, ...]) -> LastOwner:
+        """The refusal naming every team org the person is the last owner of;
+        one naming none when there is no such org."""
+        stranded = [
+            place.org
+            for place in places
+            if left_without_owner(
+                place.org, place.role, await self._storage.count_members(place.org.id, Role.OWNER)
+            )
+        ]
+        return LastOwner(tuple((str(org.id), org.name, org.slug) for org in stranded))
 
     def _provider_user_id(self, identity: Identity) -> str | None:
         """The person's name at the identity provider, when this environment's

@@ -22,6 +22,7 @@ from tadas.om.storage.impl.pg_base import (
     violated_constraint,
 )
 from tadas.om.storage.utils.translation import apply_row, to_model, to_row
+from tadas.om.tenancy.rules import email_digest
 from tadas.om.tenancy.storage import TenancyStorageInterface
 from tadas.om.tenancy.storage.tables.api_keys import ApiKeys
 from tadas.om.tenancy.storage.tables.identities import Identities
@@ -372,15 +373,16 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
     async def delete_person(
         self,
         identity_id: UUID,
-        email_digest: str,
+        email: str,
+        owned: tuple[UUID, ...],
         outbox_rows: tuple[OutboxRow, ...],
         revocation_row: Callable[[UUID, str, UUID], OutboxRow],
     ) -> tuple[OutboxRow, ...]:
         # One transaction under the system scope: a person's rows are in every
-        # tenant they joined, and the erasure is one commit or none. Every
-        # statement names the person (the identity, or the users it is) and
-        # the tenants those users are in, so each one reads through an index
-        # and touches nobody else's row.
+        # tenant they joined, and the erasure is one commit or none, a hard
+        # delete outside the sweep (ADR 0041). Every statement names the
+        # person (the identity, its address, or the users it is) and, where
+        # a row is a tenant's, the tenants those users are in.
         revoked: list[OutboxRow] = []
         async with self._session_for(Identities, org_id=EMPTY_UUID) as session:
             gone = await session.execute(
@@ -389,6 +391,29 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
             if gone.first() is None:
                 await session.rollback()
                 raise NotFound(f"identity {identity_id} not found")
+            if owned:
+                # The owners of each tenant the person owns, locked: a second
+                # owner leaving at once waits here and then finds only itself.
+                owners = (
+                    select(Memberships.org_id, Users.identity_id)
+                    .join(Users, Users.id == Memberships.user_id)
+                    .where(
+                        Memberships.org_id.in_(owned),
+                        Memberships.role == Role.OWNER.value,
+                        Memberships.deleted_at.is_(None),
+                        Users.deleted_at.is_(None),
+                    )
+                    .with_for_update(of=Memberships)
+                )
+                kept = {
+                    org_id
+                    for org_id, owner in (await session.execute(owners)).all()
+                    if owner != identity_id
+                }
+                alone = [org_id for org_id in owned if org_id not in kept]
+                if alone:
+                    await session.rollback()
+                    raise Conflict(f"no owner would be left in {', '.join(map(str, alone))}")
             users = (
                 await session.execute(
                     delete(Users)
@@ -429,8 +454,21 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
                     SocketTickets.org_id.in_(org_ids), SocketTickets.user_id.in_(user_ids)
                 )
             )
+            # An invitation holds the address it was sent to: every one sent
+            # to the person's, and every one they accepted, goes with them.
             await session.execute(
-                delete(SignInDelays).where(SignInDelays.email_digest == email_digest)
+                delete(Invitations).where(
+                    or_(
+                        Invitations.email.in_({email, email.lower()}),
+                        and_(
+                            Invitations.org_id.in_(org_ids),
+                            Invitations.accepted_user_id.in_(user_ids),
+                        ),
+                    )
+                )
+            )
+            await session.execute(
+                delete(SignInDelays).where(SignInDelays.email_digest == email_digest(email))
             )
             for outbox_row in (*outbox_rows, *revoked):
                 session.add(to_row(outbox_row, OutboxRows, org_id=outbox_row.org_id))

@@ -149,7 +149,7 @@ of the seven kinds of thing [Tadas is made of](../../../../README.md).
   operator allowlist. Otherwise one commit erases them for good: the
   identity with its second factor, their user and membership in every
   org, every session, api key, sign-in, and operator token they hold,
-  and the sign-in delay of their address. Each live credential is
+  the sign-in delay of their address, and every invitation sent to it. Each live credential is
   announced as revoked, so their sockets close. What they made in a
   team org stays the org's, under an id that no longer names anyone,
   and their open tasks there go unassigned. Their personal org goes

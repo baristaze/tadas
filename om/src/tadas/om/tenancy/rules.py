@@ -284,7 +284,8 @@ def left_without_owner(org: Org, role: Role, owners: int) -> bool:
 def past_retention(org: Org, before: datetime) -> bool:
     """A tenant whose rows go: deleted before `before`, the retention's
     start. A deleted personal org keeps no retention: it is deleted only with
-    its person, who asked for it gone now, so its rows go at the next sweep."""
+    its person, who asked for it gone now, so its rows go at the next sweep
+    (ADR 0041)."""
     if org.deleted_at is None:
         return False
     return org.personal or org.deleted_at < before

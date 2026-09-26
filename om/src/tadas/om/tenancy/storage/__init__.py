@@ -222,7 +222,8 @@ class TenancyStorageInterface(ABC):
     async def delete_person(
         self,
         identity_id: UUID,
-        email_digest: str,
+        email: str,
+        owned: tuple[UUID, ...],
         outbox_rows: tuple[OutboxRow, ...],
         revocation_row: Callable[[UUID, str, UUID], OutboxRow],
     ) -> tuple[OutboxRow, ...]:
@@ -231,14 +232,22 @@ class TenancyStorageInterface(ABC):
         one commit or not at all: the identity (its second factor with it),
         every user it is in any tenant, live or removed, with their
         memberships, api keys, and socket tickets, every session it holds
-        (the tenants' sessions, its sign-ins, and its operator tokens), and
-        the sign-in delay keyed on `email_digest`. The outbox rows land in the
-        same commit, each under the tenant it names. A session or an api key
-        that was still live when it went lands the row
-        `revocation_row(org_id, kind, id)` builds, `tenancy.session.revoked` or
-        `tenancy.api_key.deleted`, so a socket it opened closes; those rows
-        come back, for the caller to relay after the ones it passed. NotFound,
-        and nothing lands, when the identity is gone already."""
+        (the tenants' sessions, its sign-ins, and its operator tokens), the
+        sign-in delay keyed on the digest of `email`, and every invitation
+        that holds `email` or names one of those users as the one who
+        accepted it. The outbox rows land in the same commit, each under the
+        tenant it names. A session or an api key that was still live when it
+        went lands the row `revocation_row(org_id, kind, id)` builds,
+        `tenancy.session.revoked` or `tenancy.api_key.deleted`, so a socket
+        it opened closes; those rows come back, for the caller to relay
+        after the ones it passed.
+
+        `owned` names the tenants the person owns that must keep an owner:
+        their live owner memberships are locked in this transaction, and
+        when one of them has no live owner but the person, nothing lands
+        and it is Conflict, so two owners who leave at once never leave a
+        tenant with none. NotFound, and nothing lands, when the identity is
+        gone already."""
         ...
 
     @abstractmethod

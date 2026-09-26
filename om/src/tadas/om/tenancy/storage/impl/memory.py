@@ -339,7 +339,8 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
     async def delete_person(
         self,
         identity_id: UUID,
-        email_digest: str,
+        email: str,
+        owned: tuple[UUID, ...],
         outbox_rows: tuple[OutboxRow, ...],
         revocation_row: Callable[[UUID, str, UUID], OutboxRow],
     ) -> tuple[OutboxRow, ...]:
@@ -347,13 +348,30 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
         async with self._lock:
             if identity_id not in self._identities:
                 raise NotFound(f"identity {identity_id} not found")
+            live = {
+                user.id: user.identity_id
+                for _, user in self._rows_across_tenants(self._users)
+                if user.deleted_at is None
+            }
+            alone = [
+                org_id
+                for org_id in owned
+                if not any(
+                    m.role is Role.OWNER
+                    and m.deleted_at is None
+                    and live.get(m.user_id, identity_id) != identity_id
+                    for m in self._rows(self._memberships, org_id)
+                )
+            ]
+            if alone:
+                raise Conflict(f"no owner would be left in {', '.join(map(str, alone))}")
             places = {
                 (org_id, user.id)
                 for org_id, user in self._rows_across_tenants(self._users)
                 if user.identity_id == identity_id
             }
 
-            def theirs(org_id: UUID, user_id: UUID) -> bool:
+            def theirs(org_id: UUID, user_id: UUID | None) -> bool:
                 return (org_id, user_id) in places
 
             revoked: list[OutboxRow] = []
@@ -375,10 +393,15 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
                 for row_id, (org_id, row) in list(table.items()):
                     if theirs(org_id, row.user_id):
                         del table[row_id]
+            for invitation_id, (org_id, invitation) in list(self._invitations.items()):
+                if invitation.email in {email, email.lower()} or theirs(
+                    org_id, invitation.accepted_user_id
+                ):
+                    del self._invitations[invitation_id]
             for user_id, (org_id, _) in list(self._users.items()):
                 if theirs(org_id, user_id):
                     del self._users[user_id]
-            self._sign_in_delays.pop(email_digest, None)
+            self._sign_in_delays.pop(digest_of(email), None)
             del self._identities[identity_id]
             for row in (*outbox_rows, *revoked):
                 self._land(row.org_id, (row,))

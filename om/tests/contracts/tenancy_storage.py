@@ -35,6 +35,7 @@ from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.tenancy.rules import email_digest
 from tadas.om.tenancy.storage import TenancyStorageInterface
 from tadas.om.tenancy.types.api_key import ApiKey
+from tadas.om.tenancy.types.identity import Identity
 from tadas.om.tenancy.types.invitation import InvitationState
 from tadas.om.tenancy.types.session import Session
 from tadas.om.tenancy.types.user import User
@@ -1059,6 +1060,20 @@ class TenancyStorageContract:
         key = make_api_key(mine.id, uuid4().hex)
         ticket = make_socket_ticket(bob.id, uuid4().hex)
         cid_session = make_session(stays.id, cid.id, uuid4().hex)
+        cid_key = make_api_key(cid.id, uuid4().hex)
+        cid_ticket = make_socket_ticket(cid.id, uuid4().hex)
+        await storage.write_api_key(team.id, cid_key)
+        await storage.write_socket_ticket(team.id, cid_ticket)
+        # An invitation to the person's address, one they accepted, and one
+        # to somebody else.
+        sent = make_invitation(identity.email)
+        accepted = make_invitation("bob.old@example.test").model_copy(
+            update={"state": InvitationState.ACCEPTED, "accepted_user_id": bob.id}
+        )
+        other = make_invitation("dee@example.test")
+        await storage.write_invitation(left.id, sent)
+        await storage.write_invitation(team.id, accepted)
+        await storage.write_invitation(team.id, other)
         await storage.write_session(team.id, live)
         await storage.write_session(team.id, dead)
         await storage.write_session(EMPTY_UUID, sign_in)
@@ -1073,9 +1088,7 @@ class TenancyStorageContract:
         def revocation(org_id: UUID, kind: str, credential_id: UUID) -> OutboxRow:
             return revocations_by(EMPTY_UUID, org_id)(kind, credential_id)
 
-        rows = await storage.delete_person(
-            identity.id, email_digest(identity.email), (removal,), revocation
-        )
+        rows = await storage.delete_person(identity.id, identity.email, (), (removal,), revocation)
         assert sorted((r.org_id, r.kind, r.target_id) for r in rows) == sorted(
             [
                 (team.id, "tenancy.session.revoked", live.id),
@@ -1098,6 +1111,11 @@ class TenancyStorageContract:
         assert await storage.read_user(team.id, cid.id) == cid
         assert await storage.read_membership_for_user(team.id, cid.id) == cids
         assert await storage.read_session(team.id, cid_session.id) == cid_session
+        assert await storage.read_api_key(team.id, cid_key.id) == cid_key
+        assert await storage.read_invitation(left.id, sent.id) is None
+        assert await storage.read_invitation(team.id, accepted.id) is None
+        assert await storage.read_invitation(team.id, other.id) == other
+        assert await storage.redeem_socket_ticket(cid_ticket.ticket_hash, utcnow()) is not None
         ours = {removal.id} | {r.id for r in rows}
         landed = {(r.org_id, r.kind, r.target_id) for r in await claim_all(outbox) if r.id in ours}
         assert landed == {
@@ -1108,9 +1126,36 @@ class TenancyStorageContract:
         # Gone already: nothing lands.
         with pytest.raises(NotFound):
             again = (make_user_row(team.id, bob),)
-            await storage.delete_person(
-                identity.id, email_digest(identity.email), again, revocation
-            )
+            await storage.delete_person(identity.id, identity.email, (), again, revocation)
+
+    async def test_an_owner_who_leaves_never_leaves_a_tenant_with_none(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        """The two owners of a tenant leave at once: the owner rows are locked,
+        or the memory lock is held, so one goes and the other is refused with
+        nothing landed."""
+        org = make_org("Team")
+        people = [make_identity(), make_identity()]
+        users = [make_user(p.id, p.email) for p in people]
+        for person, user in zip(people, users, strict=True):
+            await storage.write_identity(person)
+            await storage.create_member(org.id, user, make_membership(user.id, Role.OWNER), ())
+
+        def revocation(org_id: UUID, kind: str, credential_id: UUID) -> OutboxRow:
+            return revocations_by(EMPTY_UUID, org_id)(kind, credential_id)
+
+        async def leave(person: Identity) -> Identity | None:
+            try:
+                await storage.delete_person(person.id, person.email, (org.id,), (), revocation)
+            except Conflict:
+                return None
+            return person
+
+        run = await race(*(leave(person) for person in people))
+        assert len(run.admitted) == 1, run.summary()
+        [stayed] = [p for p in people if p not in run.admitted]
+        assert await storage.read_identity(stayed.id) == stayed
+        assert await storage.count_members(org.id, Role.OWNER) == 1
 
     async def test_users_by_identity_span_tenants(self, storage: TenancyStorageInterface) -> None:
         identity = make_identity()
