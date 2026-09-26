@@ -18,7 +18,7 @@ seven kinds of thing [Tadas is made of](../../../../README.md).
   a deleted account (the person at the identity provider, the personal
   org's subscription, customer, and Slack app, then the org itself), the
   open tasks a person who deleted their account leaves assigned in a
-  team org, what is left of a team org its owner deleted (its
+  team org, what is left of a team org its owner or an operator deleted (its
   organization at the identity provider, its subscription, customer,
   and Slack app, then the org itself), and one that does nothing but keep the loop honest. A kind
   whose payload names a time waits in the queue until then. Each kind
