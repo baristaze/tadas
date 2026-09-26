@@ -24,7 +24,7 @@ served to it. Exposure is by listing, never by folder.
 - [Idempotency records](om/src/tadas/om/idempotency/README.md): the outcome of a request that may arrive twice
 - [Outbox rows](om/src/tadas/om/outbox/README.md): the note written beside every change
 - [Infrastructure](infra/README.md): cache, buckets, topics, queues, secrets, observability; what each promises and which twin runs where
-- [Integrations](integrations/README.md): the third-party providers, each an interface, a real client, and a twin: Slack (its install, its signed calls in, its tokens), the identity provider (WorkOS), and the payment processor (Stripe); the errors a caller decides on; what a provider that hangs costs a call
+- [Integrations](integrations/README.md): the third-party providers, each an interface, a real client, and a twin: Slack (its install, its signed calls in, its tokens), the identity provider (WorkOS), and the payment processor (Stripe); the errors a caller decides on; what a provider that hangs costs a call, and the request's deadline its calls share
 - [The API process](services/api/README.md): the routes by area, the gateway's guarantees, the subcommands
 - [The maintenance worker](workers/maintenance/README.md): claim, handle, complete; reminders and Slack posts; a deleted account's providers; what Slack sends; the sweep; liveness
 - [Deployment](deployment/README.md): the two twins and the branch convention

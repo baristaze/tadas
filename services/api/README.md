@@ -194,6 +194,15 @@ change. A name the image does not host refuses the boot.
   so a saturated process answers and says why instead of queueing
   work it cannot start. Admission fails closed and is counted in the
   process's own memory.
+- **A deadline on every admitted request.** A request gets one when it
+  takes its slot, `TADAS_REQUEST_DEADLINE_SECONDS` (20) from then, and
+  every call it makes to WorkOS, Stripe, Slack, or AWS shares it. A
+  provider that hangs costs the request its deadline, not the call's
+  timeouts times its retries, and the answer is the one a provider that
+  does not answer gets: `503 unavailable`, or, on Slack's install
+  callback, the settings page with `slack=failed`. It sits under
+  the 30 seconds the portal and the command line wait
+  ([ADR 0069](../../docs/adr/0069-a-request-has-a-deadline-its-provider-calls-share.md)).
 - **Rate limits.** Counted in the shared cache, so every replica
   shares one budget. Past a budget the answer is a 429,
   `rate_limited`, in the one envelope, with a `Retry-After` in
