@@ -13,7 +13,11 @@ from tadas.om.storage.migrate import (
 )
 from tadas.om.storage.roles import DatabaseRole
 from tadas.om.tasks.rules import RANK_SCALE_BOUND
-from tadas.om.tasks.storage.impl.postgres import _LONG_RANK  # pyright: ignore[reportPrivateUsage]
+from tadas.om.tasks.storage.impl.postgres import (  # pyright: ignore[reportPrivateUsage]
+    _DONE_SHELF,
+    _LONG_RANK,
+)
+from tadas.om.tasks.types.task import TaskStatus
 
 
 def test_every_sql_file_names_only_its_own_role() -> None:
@@ -222,3 +226,26 @@ def test_the_pending_uploads_index_and_the_migration_spell_one_literal() -> None
         path.read_text() for path in sorted((MIGRATIONS_DIR / "sql" / "core").glob("*.up.sql"))
     )
     assert f"core.files (created_at) WHERE {predicate};" in chain
+
+
+def test_the_done_shelf_index_and_its_read_spell_one_literal() -> None:
+    """The index the sweep's read of the tenants with a chore due walks names
+    the done status in its predicate, and the chain builds it with that
+    predicate. The read names the status as the same literal, so a generic
+    plan proves the predicate and reads the index; the integration suite
+    reads that plan."""
+    index = next(
+        i
+        for t in role_metadata(DatabaseRole.CORE).tables.values()
+        for i in t.indexes
+        if i.name == "ix_tasks_updated_at_org_id_done_unarchived"
+    )
+    predicate = f"status = '{TaskStatus.DONE.value}' AND archived_at IS NULL AND deleted_at IS NULL"
+    assert str(index.dialect_kwargs["postgresql_where"]) == predicate
+    assert [c.name for c in index.columns] == ["updated_at", "org_id"]
+    compiled = str(_DONE_SHELF.compile(dialect=postgresql.dialect()))
+    assert f"= '{TaskStatus.DONE.value}'" in compiled and "%(" not in compiled
+    chain = "\n".join(
+        path.read_text() for path in sorted((MIGRATIONS_DIR / "sql" / "core").glob("*.up.sql"))
+    )
+    assert f"core.tasks (updated_at, org_id) WHERE {predicate};" in chain

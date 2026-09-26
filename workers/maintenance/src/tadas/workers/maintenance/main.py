@@ -109,11 +109,15 @@ def build_loop(container: WorkerContainer, lane: str | None = None) -> WorkerLoo
         # A record kept per day opens here: the org's cleanup of old done
         # tasks. Its unique key makes every sweep after the day's first a no-op.
         # The respace gives short ranks back to a run of open tasks whose
-        # ranks grew long; a tenant with none costs one empty read.
+        # ranks grew long.
         chores={
             "cleanup": container.managers.tasks.open_cleanup,
             "respace": container.managers.tasks.respace_ranks,
         },
+        # The tenants the chores run in: one read a pass across tenants finds
+        # those with an archivable task or a long rank, so a tenant with
+        # neither costs the pass nothing.
+        chore_tenants=container.managers.tasks.tenants_with_chores,
         handlers={
             WorkKind.NOOP: NoopHandlerImpl(),
             WorkKind.SYNC_SEATS: SyncSeatsHandlerImpl(

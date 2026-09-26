@@ -201,6 +201,17 @@ class TasksStorageMemoryImpl(MemoryStorageBase, TasksStorageInterface):
         ordered = sorted(gone, key=lambda pair: (pair[1].deleted_at, pair[1].id))
         return [(org_id, t.id) for org_id, t in ordered][:limit]
 
+    async def read_tenants_with_chores(
+        self, archivable_before: datetime, after: UUID | None, limit: int
+    ) -> list[UUID]:
+        due = {
+            org_id
+            for org_id, t in self._rows_across_tenants(self._tasks)
+            if is_archivable(t, archivable_before)
+            or (t.deleted_at is None and t.status is TaskStatus.OPEN and needs_respace(t.rank))
+        }
+        return sorted(org_id for org_id in due if after is None or org_id > after)[:limit]
+
     async def purge_deleted(self, before: datetime, task_ids: list[UUID]) -> int:
         chosen = set(task_ids)
         gone = [

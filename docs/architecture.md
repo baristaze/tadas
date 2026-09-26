@@ -350,7 +350,8 @@ context on keeps the stage the callee needs.
   move) and writes the placed task alone, and no other task's version
   moves ([ADR 0050](adr/0050-a-move-writes-one-row.md)). A rank past 24
   digits after the point is found by the sweep through a partial index
-  that holds only such ranks, and its run (between the nearest ranks of
+  that holds only such ranks (which tenants have one, then where it sits
+  in the tenant), and its run (between the nearest ranks of
   at most 12 digits, 100 places each way at most) is respaced in one
   compare-and-set over its rows (`update_tasks`, `respace_ranks`), each
   announced. The float `position` is written beside the rank for the
@@ -441,9 +442,12 @@ context on keeps the stage the callee needs.
   input fails it. Any other error is the work queue's retry from the
   cursor, and the record fails as `defect` on its item's last attempt.
   The unique key `(org_id, kind, period)` is how a record kept per day
-  opens once: the sweep's chore `open_cleanup` tries every thirty
-  seconds, and only the day's first try inserts. Settled records are
-  purged after thirty days.
+  opens once: the sweep's chore `open_cleanup` tries on every pass that
+  finds the org with a task to archive, and only the day's first try
+  inserts. The day's cleanup takes the done tasks that were past the
+  archive age when the UTC day began (`tasks.rules.archive_cutoff`), so
+  once it has run, the org has nothing to archive until the next day.
+  Settled records are purged after thirty days.
 - `media`: the files a tenant keeps, as references and never bytes, in
   the `core` role, `org` scope (`File`: the object key, the original
   name, the extension, the MIME type, the size in bytes, the uploader as
@@ -1259,13 +1263,22 @@ alone, and neither key may touch what the other's work does not need
   and one whose tenant is gone is logged and counted as the claim's
   orphan is; then claim and relay the pending outbox rows, a batch of
   `outbox_batch` (100) at a time and again while a batch comes back
-  whole, one attempt each with a growing delay; then, under one service
-  context per tenant, the system scope first and deleted tenants
-  included, the work shaped by the tenant: the purge of a tenant whose
-  org row is deleted longer ago than the retention, and the chore that
-  opens the day's cleanup of old done tasks (`open_cleanup`) for an org
-  that has one to do; then, once a pass for every tenant, in the system
-  scope, each namespace's purge of its rows past their retention
+  whole, one attempt each with a growing delay; then the standing
+  chores, the opening of the day's cleanup of old done tasks
+  (`open_cleanup`) and the respace of a long rank (`respace_ranks`), in
+  the tenants one read across tenants names
+  (`tenants_with_chores`, `read_tenants_with_chores`: the tenants with a
+  done task past the day's archive cut, on the partial index
+  `ix_tasks_updated_at_org_id_done_unarchived`, or with an open task
+  whose rank grew long, on `ix_tasks_org_id_rank_long`), a page of
+  `chore_batch` (1000) a pass in id order, the next pass reading on from
+  the last tenant this one ran, each under its tenant's service context,
+  and in no other tenant
+  ([ADR 0070](adr/0070-the-sweep-reads-only-the-tenants-with-a-chore-due.md));
+  then, under one service context per tenant, the system scope first
+  and deleted tenants included, the purge of a tenant whose org row is
+  deleted longer ago than the retention; then, once a pass for every
+  tenant, in the system scope, each namespace's purge of its rows past their retention
   (`purge_across_tenants`): soft-deleted tasks (their attachments
   first, through the media manager under the task's tenant, so a detach
   that failed at the delete is retried here and a task whose files still
@@ -1302,11 +1315,12 @@ alone, and neither key may touch what the other's work does not need
   other full ones, while the pass's budget lasts
   (`TADAS_WORKER_SWEEP_BUDGET_SECONDS`, 20). Past the budget the pass
   takes no new tenant; the next pass starts at the tenant it stopped at,
-  so every tenant is reached in turn and every step of a tenant runs
-  whenever the tenant does. The chores run once whenever the tenant
-  does, before any second round of its purges, so a backlog never spends
-  the budget they need. The requeue, the relay, and the purges across
-  tenants run on every pass, each again while its batch comes back full
+  so every tenant is reached in turn and every purge of a tenant runs
+  whenever the tenant does. The chores run before the tenants' purges
+  and take no new tenant past the budget either, but always one, so a
+  backlog never spends the budget they need. A living tenant with no
+  chore due costs a pass no read at all. The requeue, the relay, and the
+  purges across tenants run on every pass, each again while its batch comes back full
   and the budget lasts; the pass always takes one tenant, even past the
   budget.
   Each pass ends with three reads across tenants, one statement each,

@@ -128,6 +128,7 @@ tenantless = [
     "TasksStorageInterface.count_created_since",
     "TasksStorageInterface.purge_deleted",
     "TasksStorageInterface.read_deleted",
+    "TasksStorageInterface.read_tenants_with_chores",
     "TenancyStorageInterface.clear_failed_sign_ins",
     "TenancyStorageInterface.confirm_totp",
     "TenancyStorageInterface.count_orgs",

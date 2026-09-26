@@ -50,6 +50,7 @@ from tadas.om.tasks.rules import (
     ImportedTask,
     ImportFileRefused,
     Place,
+    archive_cutoff,
     bulk_ranks,
     bulk_skip,
     cleanup_part,
@@ -671,7 +672,7 @@ class TasksManagerImpl(TasksManagerInterface):
     async def open_cleanup(self, ctx: OpContext) -> Orchestration | None:
         ctx.require(Permission.WRITE)
         now = utcnow()
-        before = now - self._options.archive_after
+        before = archive_cutoff(now, self._options.archive_after)
         if not await self._storage.read_archivable(ctx.org_id, before, 1):
             return None
         period = cleanup_period(now)
@@ -843,6 +844,10 @@ class TasksManagerImpl(TasksManagerInterface):
             return 0  # a task of the run was written meanwhile; the next pass reads again
         await self._relay_all(ctx, [row for _, _, rows in updates for row in rows])
         return len(updates)
+
+    async def tenants_with_chores(self, after: UUID | None, limit: int) -> list[UUID]:
+        cut = archive_cutoff(utcnow(), self._options.archive_after)
+        return await self._storage.read_tenants_with_chores(cut, after, limit)
 
     async def purge_across_tenants(self, rctx: RequestContext) -> int:
         before = utcnow() - self._options.retention

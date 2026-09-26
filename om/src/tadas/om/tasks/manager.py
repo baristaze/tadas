@@ -212,10 +212,11 @@ class TasksManagerInterface(ABC):
     @abstractmethod
     async def open_cleanup(self, ctx: OpContext) -> Orchestration | None:
         """The sweep, for one tenant: opens today's cleanup record when the org
-        has a done task unchanged for the archive age and today's record is
-        not open yet; the org, the kind, and the day are its unique key, so
-        every sweep after the first one of the day opens nothing. None when
-        there is nothing to archive."""
+        has a done task unchanged since the day began, less the archive age
+        (`tasks.rules.archive_cutoff`), and today's record is not open yet;
+        the org, the kind, and the day are its unique key, so every sweep
+        after the first one of the day opens nothing. None when there is
+        nothing to archive."""
         ...
 
     @abstractmethod
@@ -260,6 +261,16 @@ class TasksManagerInterface(ABC):
         each task's version. Each task it writes moves its version on and is
         announced as an edit is. A run written meanwhile is left for the next
         pass. Returns how many tasks it respaced; zero when none needed it."""
+        ...
+
+    @abstractmethod
+    async def tenants_with_chores(self, after: UUID | None, limit: int) -> list[UUID]:
+        """Platform-internal: the sweep's one read a pass, across tenants, of
+        the tenants whose tasks have a chore due: a done task today's cleanup
+        archives (`open_cleanup`), or an open task whose rank grew long
+        (`respace_ranks`). At most `limit` of them, in id order, after `after`
+        when one is given; the sweep runs the chores in those tenants alone.
+        Takes no context, because it reads for no tenant and no principal."""
         ...
 
     @abstractmethod

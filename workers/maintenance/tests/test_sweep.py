@@ -2,15 +2,17 @@
 a pass across tenants and again while a batch comes back full, its budget and
 where the next pass resumes, a purge called again while its batch comes back
 full, each namespace's purge past its retention once a pass across tenants,
-a living tenant that costs the purges nothing, a deleted tenant marked purged
-once nothing of it is left and left out after, the tenant's expiry read once
-per pass, and the pass's duration and the three gauges of the queue and the
-outbox on its own line."""
+a living tenant that costs the purges nothing, the chores run in the tenants
+one read across tenants finds with a chore due and in no other, a page of
+them a pass, a deleted tenant marked purged once nothing of it is left and
+left out after, the tenant's expiry read once per pass, and the pass's
+duration and the three gauges of the queue and the outbox on its own line."""
 
 import json
 import logging
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import timedelta
+from decimal import Decimal
 from pathlib import Path
 from uuid import UUID
 
@@ -22,12 +24,22 @@ from tadas.infra.cache import CacheScope
 from tadas.infra.observability import WORK_OLDEST_READY_SECONDS, JsonFormatter
 from tadas.om.base import EMPTY_UUID, new_id, utcnow
 from tadas.om.opcontext import CredentialKind, OpContext, RequestContext, Role, build_context
+from tadas.om.orchestrations.types.orchestration import OrchestrationKind
 from tadas.om.outbox import OutboxRelayInterface
+from tadas.om.tasks.rules import RANK_SCALE_BOUND, placed
+from tadas.om.tasks.types.filter import TaskFilter
+from tadas.om.tasks.types.task import Task, TaskScope, TaskStatus
 from tadas.om.tenancy.types.org import Org
 from tadas.om.tenancy.types.role import permissions_of
 from tadas.om.work import WorkManagerInterface
 from tadas.workers.maintenance.container import WorkerContainer
-from tadas.workers.maintenance.loop import AcrossStep, LoopOptions, PurgeStep, WorkerLoop
+from tadas.workers.maintenance.loop import (
+    AcrossStep,
+    ChoreTenants,
+    LoopOptions,
+    PurgeStep,
+    WorkerLoop,
+)
 from tadas.workers.maintenance.main import build_loop
 
 
@@ -73,6 +85,10 @@ class Tenants(WorkManagerInterface):
 
 
 Tenants.__abstractmethods__ = frozenset()
+
+
+def team_of(ctx: OpContext) -> TaskFilter:
+    return TaskFilter(scope=TaskScope.TEAM, user_id=ctx.user_id)
 
 
 def listed(contexts: Sequence[OpContext], requeued: Sequence[int] = (0,)) -> Tenants:
@@ -133,12 +149,14 @@ def sweeping(
     outbox: OutboxRelayInterface | None = None,
     chores: dict[str, PurgeStep] | None = None,
     across: dict[str, AcrossStep] | None = None,
+    chore_tenants: ChoreTenants | None = None,
 ) -> WorkerLoop:
     return WorkerLoop(
         work=work,
         outbox=outbox or quiet_outbox(),
         purges=purges,
         chores=chores,
+        chore_tenants=chore_tenants,
         across=across,
         handlers={},
         topics=container.infra.get_topics(),
@@ -394,12 +412,61 @@ async def test_a_gauge_that_cannot_be_read_is_left_off_the_line_and_as_it_was(
     assert REGISTRY.get_sample_value("tadas_work_oldest_ready_seconds") == 900
 
 
+class Due:
+    """The read of the tenants with a chore due: a fixed set, answered as the
+    storage answers it (in id order, after `after`, at most `limit`), with a
+    record of the `after` each pass asked from."""
+
+    def __init__(self, org_ids: Sequence[UUID]) -> None:
+        self.org_ids = sorted(org_ids)
+        self.asked: list[UUID | None] = []
+
+    async def __call__(self, after: UUID | None, limit: int) -> list[UUID]:
+        self.asked.append(after)
+        return [org_id for org_id in self.org_ids if after is None or org_id > after][:limit]
+
+
+async def test_the_chores_run_in_the_tenants_found_due_and_in_no_other(
+    tmp_path: Path,
+) -> None:
+    """One read a pass names the tenants with a chore due, and each of them
+    runs every chore once; every other tenant is purged in turn and runs
+    none. A chore that fails stops neither the other chores nor the other
+    tenants, and the purges run as ever."""
+    container = build_container(tmp_path)
+    contexts = service_contexts(4)
+    tenants = sorted(ctx.org_id for ctx in contexts if ctx.org_id != EMPTY_UUID)
+    due = Due([tenants[1], tenants[3]])
+    calls: list[tuple[str, UUID]] = []
+
+    async def failing(ctx: OpContext) -> int:
+        calls.append(("failing", ctx.org_id))
+        raise RuntimeError("the database is down")
+
+    loop = sweeping(
+        container,
+        listed(contexts),
+        {"purge": recording(calls, "purge")},
+        fast_options(),
+        chores={"cleanup": failing, "respace": recording(calls, "respace")},
+        chore_tenants=due,
+    )
+    await loop._sweep_once()  # pyright: ignore[reportPrivateUsage]
+    chores = [(name, org_id) for name, org_id in calls if name != "purge"]
+    assert chores == [(name, org_id) for org_id in due.org_ids for name in ("failing", "respace")]
+    purged = sorted(org_id for name, org_id in calls if name == "purge")
+    assert purged == sorted(ctx.org_id for ctx in contexts), "every tenant is purged in turn"
+    assert due.asked == [None], "one read a pass"
+
+
 async def test_a_backlog_spends_no_budget_a_chore_needs(tmp_path: Path) -> None:
     """With no budget left and a purge whose batch keeps coming back full,
-    every tenant a pass takes still runs its chores (the day's cleanup
-    opening among them), once, before any second round of purges."""
+    every pass still runs the chores of one tenant with a chore due (the
+    day's cleanup opening among them), before the tenants' purges, and the
+    next pass reads on from it."""
     container = build_container(tmp_path)
     contexts = service_contexts(2)
+    first, second = sorted(ctx.org_id for ctx in contexts if ctx.org_id != EMPTY_UUID)
     calls: list[tuple[str, UUID]] = []
     loop = sweeping(
         container,
@@ -407,11 +474,107 @@ async def test_a_backlog_spends_no_budget_a_chore_needs(tmp_path: Path) -> None:
         {"backlog": recording(calls, "backlog", (2,))},
         fast_options(purge_batch=2, sweep_budget=timedelta(0)),
         chores={"cleanup": recording(calls, "cleanup")},
+        chore_tenants=Due([first, second]),
     )
-    for _ in range(len(contexts)):
+    for _ in range(2):
         await loop._sweep_once()  # pyright: ignore[reportPrivateUsage]
-    ids = sorted(ctx.org_id for ctx in contexts)
-    assert calls == [(name, org_id) for org_id in ids for name in ("backlog", "cleanup")]
+    assert calls == [
+        ("cleanup", first),
+        ("backlog", EMPTY_UUID),
+        ("cleanup", second),
+        ("backlog", first),
+    ]
+
+
+async def test_the_tenants_with_a_chore_due_are_read_a_page_a_pass(tmp_path: Path) -> None:
+    """A page that comes back whole sends the next pass on from its last
+    tenant; one that comes back short and ran whole sends it back to the
+    first. So a backlog of tenants with a chore due is a page a pass, and
+    every one of them is reached in turn."""
+    container = build_container(tmp_path)
+    contexts = service_contexts(3)
+    tenants = sorted(ctx.org_id for ctx in contexts if ctx.org_id != EMPTY_UUID)
+    due = Due(tenants)
+    calls: list[tuple[str, UUID]] = []
+    loop = sweeping(
+        container,
+        listed(contexts),
+        {},
+        fast_options(chore_batch=2),
+        chores={"cleanup": recording(calls, "cleanup")},
+        chore_tenants=due,
+    )
+    for _ in range(3):
+        await loop._sweep_once()  # pyright: ignore[reportPrivateUsage]
+    assert due.asked == [None, tenants[1], None]
+    assert [org_id for _, org_id in calls] == [*tenants, *tenants[:2]]
+
+
+async def test_a_spent_budget_stops_the_chores_and_the_next_pass_reads_on(
+    tmp_path: Path,
+) -> None:
+    """Past the budget the chores take no new tenant, but always one, and
+    the next pass reads on from the last tenant this one ran, however short
+    the page came back. A tenant the read names with no context in the pass
+    (purged, or made since the list) is left for the next pass."""
+    container = build_container(tmp_path)
+    contexts = service_contexts(3)
+    tenants = sorted(ctx.org_id for ctx in contexts if ctx.org_id != EMPTY_UUID)
+    unlisted = new_id()
+    due = Due([*tenants, unlisted])
+    calls: list[tuple[str, UUID]] = []
+    loop = sweeping(
+        container,
+        listed(contexts),
+        {},
+        fast_options(sweep_budget=timedelta(0)),
+        chores={"cleanup": recording(calls, "cleanup")},
+        chore_tenants=due,
+    )
+    for _ in range(5):
+        await loop._sweep_once()  # pyright: ignore[reportPrivateUsage]
+    assert due.asked == [None, *tenants, None]
+    assert [org_id for _, org_id in calls] == [*tenants, tenants[0]]
+
+
+async def test_a_failing_read_of_the_tenants_with_a_chore_due_stops_no_other_step(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    container = build_container(tmp_path)
+    contexts = service_contexts(2)
+    calls: list[tuple[str, UUID]] = []
+
+    async def failing(after: UUID | None, limit: int) -> list[UUID]:
+        raise RuntimeError("the database is down")
+
+    outbox = quiet_outbox()
+    loop = sweeping(
+        container,
+        listed(contexts),
+        {"purge": recording(calls, "purge")},
+        fast_options(),
+        outbox,
+        chores={"cleanup": recording(calls, "cleanup")},
+        chore_tenants=failing,
+    )
+    with caplog.at_level(logging.INFO, logger="tadas.workers.maintenance.loop"):
+        await loop._sweep_once()  # pyright: ignore[reportPrivateUsage]
+    assert sorted(org_id for _, org_id in calls) == sorted(ctx.org_id for ctx in contexts)
+    assert all(name == "purge" for name, _ in calls)
+    assert outbox.purges == 1
+    assert pass_line(caplog)["chores"] == 0
+
+
+def test_chores_come_with_the_read_of_the_tenants_they_are_due_in(tmp_path: Path) -> None:
+    container = build_container(tmp_path)
+    with pytest.raises(ValueError, match="name the read"):
+        sweeping(
+            container,
+            listed(service_contexts(1)),
+            {},
+            fast_options(),
+            chores={"cleanup": recording([], "cleanup")},
+        )
 
 
 async def test_the_requeue_runs_once_a_pass_across_tenants_before_any_tenant(
@@ -671,3 +834,93 @@ async def test_a_living_tenant_costs_the_purges_nothing(
     assert per_tenant == [], "no living tenant is purged in its own right"
     assert len(calls) == len(set(calls)), f"each purge once a pass: {calls}"
     assert len(calls) == 11, calls
+
+
+TASK_READS = ("read_archivable", "read_long_place", "read_tenants_with_chores")
+"""The reads of the two chores, per tenant, and the one read across tenants
+that says which tenants have one due."""
+
+
+async def test_a_tenant_with_no_chore_due_costs_the_pass_no_read_of_its_tasks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With the worker's own wiring and three living tenants, each with an
+    open task and a done one from today, a pass reads the tenants with a
+    chore due once, across tenants, and no tenant's tasks. Once one tenant
+    has a done task untouched for a hundred days and another an open task
+    whose rank grew long, the next pass runs the chores in those two alone:
+    the first opens the day's cleanup, the second is respaced."""
+    container = build_container(tmp_path)
+    tasks = container.managers.tasks
+    storage = container.storage.get_tasks_storage()
+    owners: list[OpContext] = []
+    for slug in ("acme", "beta", "gamma"):
+        ctx, _ = await container.managers.tenancy.bootstrap(
+            request(), slug.title(), slug, f"ann@{slug}.test", "Ann"
+        )
+        owners.append(ctx)
+        now = utcnow()
+        for title in ("open", "done"):
+            made = await tasks.create_task(
+                ctx,
+                Task(
+                    id=new_id(),
+                    created_at=now,
+                    updated_at=now,
+                    created_by=ctx.user_id,
+                    updated_by=ctx.user_id,
+                    title=title,
+                ),
+            )
+            if title == "done":
+                await tasks.update_task(
+                    ctx, made.model_copy(update={"status": TaskStatus.DONE}), made.version
+                )
+    calls: list[tuple[str, object]] = []
+    for name in TASK_READS:
+        method = getattr(storage, name)
+
+        def counted(
+            method: Callable[..., Awaitable[object]] = method, name: str = name
+        ) -> Callable[..., Awaitable[object]]:
+            async def call(*args: object) -> object:
+                calls.append((name, args[0]))
+                return await method(*args)
+
+            return call
+
+        monkeypatch.setattr(storage, name, counted())
+    loop = build_loop(container)
+
+    await loop._sweep_once()  # pyright: ignore[reportPrivateUsage]
+    assert [name for name, _ in calls] == ["read_tenants_with_chores"]
+
+    archivable, long, _ = owners
+    (done,) = await storage.read_done_tasks(archivable.org_id, team_of(archivable), None, 10)
+    await storage.update_task(
+        archivable.org_id,
+        done.model_copy(
+            update={"updated_at": utcnow() - timedelta(days=100), "version": done.version + 1}
+        ),
+        done.version,
+        (),
+    )
+    (spaced,) = await storage.read_open_tasks(long.org_id, team_of(long), None, 10)
+    stretched = Decimal("0." + "0" * RANK_SCALE_BOUND + "1")
+    await storage.update_task(
+        long.org_id,
+        spaced.model_copy(update={**placed(stretched), "version": spaced.version + 1}),
+        spaced.version,
+        (),
+    )
+    calls.clear()
+
+    await loop._sweep_once()  # pyright: ignore[reportPrivateUsage]
+    assert calls[0][0] == "read_tenants_with_chores"
+    visited = {tenant for _, tenant in calls[1:]}
+    assert visited == {archivable.org_id, long.org_id}, "no read of the idle tenant's tasks"
+    opened = await container.managers.orchestrations.get_recent(
+        archivable, OrchestrationKind.TASK_CLEANUP, 10
+    )
+    assert len(opened.items) == 1, "the day's cleanup is open"
+    assert await storage.read_long_place(long.org_id) is None, "the long rank was respaced"

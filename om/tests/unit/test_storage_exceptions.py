@@ -79,6 +79,10 @@ STORAGE_EXCEPTIONS: frozenset[tuple[str, str]] = frozenset(
         ("TasksStorageInterface", "read_deleted"),
         ("TasksStorageInterface", "purge_deleted"),
         ("TenancyStorageInterface", "purge_deleted"),
+        # The sweep's read of the tenants with a chore due: one statement a
+        # pass in the system scope, so a tenant with no chore due costs a pass
+        # nothing, where a read of each tenant cost every tenant two.
+        ("TasksStorageInterface", "read_tenants_with_chores"),
         ("IdempotencyStorageInterface", "purge_records"),
         ("MediaStorageInterface", "read_purgeable"),
         ("MediaStorageInterface", "purge_files_across_tenants"),
@@ -139,6 +143,9 @@ MANAGER_EXCEPTIONS: frozenset[tuple[str, str]] = frozenset(
         ("BillingManagerInterface", "purge_across_tenants"),
         ("SlackManagerInterface", "purge_across_tenants"),
         ("OrchestrationsManagerInterface", "purge_across_tenants"),
+        # And the sweep's read of the tenants whose tasks have a chore due,
+        # across tenants like the purges: it reads for no tenant.
+        ("TasksManagerInterface", "tenants_with_chores"),
         # The sweep's gauges of the queue, read across tenants like the purge.
         ("WorkManagerInterface", "oldest_ready_age"),
         ("WorkManagerInterface", "failed_within"),

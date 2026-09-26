@@ -107,7 +107,9 @@ nothing is created. An import that reaches the plan's active tasks
 on its own, and so does Resume after finishing some tasks.
 
 A done task that nobody touched for ninety days is archived once a day.
-It leaves the Done list and every count, and nothing is deleted: its
+Each UTC day's cleanup takes the done tasks that were ninety days old
+when the day began, so a task that turns ninety during a day goes the
+next day. It leaves the Done list and every count, and nothing is deleted: its
 notes and its files stay. "Show archived" under the Done list shows it
 (`GET /v1/tasks/archived`), and Restore puts it back at the top of Done,
 with ninety more days before the next cleanup. Editing or reopening a done task

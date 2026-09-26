@@ -90,9 +90,9 @@ second lane is a second replica told its lane.
   the task is cancelled at half the lease if none succeeds, so no
   worker keeps working an item it may no longer settle.
 - **The sweep**, every thirty seconds by default. The requeue, the
-  relay, and every purge of rows past their retention reach every org
-  at once; only the work shaped by one org runs under that org's
-  service context, the system scope first and deleted orgs included:
+  relay, every purge of rows past their retention, and the read of the
+  orgs with a chore due reach every org at once; only the work shaped
+  by one org runs under that org's service context:
   - **Requeue** items whose lease has expired, or fail them when their
     attempts are spent. This runs first, once for every org together,
     in the system scope: a batch of a hundred at a time (`requeue_batch`),
@@ -108,28 +108,37 @@ second lane is a second replica told its lane.
     comes back whole, so a backlog after an outage of the bus drains at
     the pace of the budget. A batch with a row that failed ends it, so
     a bus that is still down is not asked again until the next sweep.
-  - **Per org**, the work that needs the org:
-    - **Purge an org deleted longer ago than the retention.** Every row
-      goes, its event stream included, and the org row stays as the
-      record. Each namespace asks tenancy the one question, whether the
-      org has expired, and the sweep answers it from the org rows it
-      read to list the orgs. So an org that lives costs these purges
-      nothing. Once a sweep finds nothing left of an expired org, it
-      marks the org purged and leaves it out from then on.
-    - **Open the day's cleanup** of each org that has a done task
+  - **The chores**, in the orgs that have one due and in no other. One
+    read across every org names them: the orgs with a done task past the
+    day's archive cut, and the orgs with an open task whose rank grew
+    long, each found on a partial index that holds only such tasks. The
+    read takes a page of a thousand orgs a sweep, in id order, and the
+    next sweep reads on from the last org this one ran, so a backlog of
+    them is a page a sweep. An org with no chore due costs a sweep
+    nothing (ADR 0070). The chores run before the purges per org, and
+    past the budget they still take one org, so no backlog elsewhere
+    skips them. Each org they take runs both, under its service context:
+    - **Open the day's cleanup** of the org when it has a done task
       nobody changed for the archive age
-      (`TADAS_TASKS_ARCHIVE_AFTER_DAYS`, ninety by default). The org,
-      the kind, and the day are the record's unique key, so the first
-      sweep of the day opens it and every later one opens nothing. No
-      scheduler is involved. It runs whenever its org is swept, before
-      any second round of purges, so no budget skips it.
-    - **Respace a long rank** of each org whose open list has one: a
+      (`TADAS_TASKS_ARCHIVE_AFTER_DAYS`, ninety by default) when the day
+      began, in UTC. The org, the kind, and the day are the record's
+      unique key, so the first sweep of the day opens it and every later
+      one opens nothing. Once the record has run, the org has nothing to
+      archive until the next day begins, and the read stops naming it.
+      No scheduler is involved.
+    - **Respace a long rank** of the org when its open list has one: a
       rank past 24 digits after the point, which only many moves into
       one and the same gap make. The run of tasks around it takes short
       ranks, in the order it had, in one write, each task announced like
-      an edit. An org with no long rank costs one read of an index that
-      holds only such ranks. It runs beside the cleanup, once per org per
-      sweep.
+      an edit.
+  - **Per org**, the system scope first and deleted orgs included, the
+    **purge of an org deleted longer ago than the retention.** Every row
+    goes, its event stream included, and the org row stays as the
+    record. Each namespace asks tenancy the one question, whether the
+    org has expired, and the sweep answers it from the org rows it read
+    to list the orgs. So an org that lives costs these purges nothing.
+    Once a sweep finds nothing left of an expired org, it marks the org
+    purged and leaves it out from then on.
   - **Purge** each namespace's rows past its retention, once for every
     org together, in the system scope: deleted tasks (their attachments
     first, under the task's org, so a detach that failed when the task

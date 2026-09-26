@@ -1,7 +1,8 @@
 """The hot reads, held by a live Postgres: the `mine` scope, the done list and
-the archive, the cleanup's read of the archivable tasks, the re-mint's fence,
-the idempotency, invitations, and Slack purges, and the sweep's three gauges
-each read the index made for them.
+the archive, the cleanup's read of the archivable tasks, the sweep's read of
+the tenants with a chore due, the re-mint's fence, the idempotency,
+invitations, and Slack purges, and the sweep's three gauges each read the
+index made for them.
 
 The plans are read off the statements the storage impls send, captured as
 they go to the driver, and explained under the scope the statement ran in, by
@@ -248,6 +249,53 @@ async def test_each_shelf_of_done_tasks_pages_in_its_own_index(
         )
         assert served(custom, "ix_tasks_org_id_status_updated_at_id_unarchived"), custom
         assert served(generic, "ix_tasks_org_id_status_updated_at_id_unarchived"), generic
+
+
+async def test_the_read_of_the_tenants_with_a_chore_due_walks_two_partial_indexes(
+    watched: Watched, migrated: dict[DatabaseRole, str]
+) -> None:
+    """The sweep's one read a pass across tenants reads the archivable tasks as
+    a range of the done shelf by its last change, and the long ranks from
+    their own index, and never the open or archived tasks of any tenant, as
+    the system login in the system scope, the first page and a page after a
+    tenant. It is planned with its values, as the purges across tenants are,
+    so the plan with its values is the one it runs."""
+    sessions = watched[0]
+    orgs = [new_id() for _ in range(TENANTS)]
+    await seed_tasks(sessions, orgs[0])
+    async with sessions.system[DatabaseRole.CORE]() as session:
+        await set_scope(session, EMPTY_UUID, None, None)
+        # Open and done tasks over every tenant: one done task in fifty is
+        # past the cut, and one open task in fifty has a long rank.
+        await session.execute(
+            text(
+                "INSERT INTO core.tasks (id, org_id, created_at, updated_at, created_by,"
+                " updated_by, title, notes, status, position, rank, version)"
+                " SELECT uuidv7(), t.a[1 + g % :n], now(),"
+                " CASE WHEN g % 100 = 0 THEN now() - interval '200 days'"
+                " ELSE now() - g * interval '1 minute' END,"
+                " gen_random_uuid(), gen_random_uuid(), 'Task', '',"
+                " CASE WHEN g % 2 = 0 THEN 'done' ELSE 'open' END, g,"
+                " CASE WHEN g % 100 = 1 THEN g + 0.0000000000000000000000001 ELSE g END, 1"
+                " FROM generate_series(1, 20000) g, (SELECT CAST(:orgs AS uuid[]) AS a) t"
+            ),
+            {"orgs": orgs, "n": TENANTS},
+        )
+        await session.commit()
+    await analyze(migrated, "core.tasks")
+    tasks = TasksStoragePostgresImpl(sessions)
+    cut = utcnow() - timedelta(days=90)
+    for after in (None, orgs[0]):
+
+        async def read(after: UUID | None = after) -> list[UUID]:
+            return await tasks.read_tenants_with_chores(cut, after, 100)
+
+        statements = [sql for sql, _ in await sent(watched[1], read)]
+        assert "SET LOCAL plan_cache_mode = force_custom_plan" in statements[0], statements
+        custom, _ = await plans(watched, EMPTY_UUID, read, "UNION")
+        assert served(
+            custom, "ix_tasks_updated_at_org_id_done_unarchived", "ix_tasks_org_id_rank_long"
+        ), custom
 
 
 async def test_the_pending_markers_serve_the_purge_and_the_re_mint_fence(

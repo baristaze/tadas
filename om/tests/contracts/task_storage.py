@@ -820,6 +820,61 @@ class TaskStorageContract:
         assert await storage.read_long_place(org) == (lower.rank, lower.id)
         assert await storage.read_long_place(new_id()) is None, "another tenant's is not read"
 
+    async def test_the_tenants_with_a_chore_due_are_read_across_tenants_once_each(
+        self, storage: TasksStorageInterface
+    ) -> None:
+        """A tenant with an archivable task, one with an open task whose rank
+        grew long, and one with both (two archivable, one long) are each read
+        once, in id order. A tenant whose done task is younger than the cut,
+        archived, or deleted, and whose long rank is on a done task or a
+        deleted one, has no chore due. The cut stands a century back and the
+        read starts after an id minted before every tenant of the case, so
+        the case owns every tenant it reads in a shared database."""
+        cut = utcnow() - timedelta(days=36500)
+        older = timedelta(days=36501)
+        long_rank = "0." + "0" * RANK_SCALE_BOUND + "1"
+        start = new_id()
+        archivable, long, both, none = new_id(), new_id(), new_id(), new_id()
+        await seed(storage, archivable, make_task(status=TaskStatus.DONE, updated_ago=older))
+        await seed(storage, long, make_task(rank=long_rank))
+        for task in (
+            make_task(status=TaskStatus.DONE, updated_ago=older),
+            make_task(status=TaskStatus.DONE, updated_ago=older),
+            make_task(rank=long_rank),
+        ):
+            await seed(storage, both, task)
+        gone = {"deleted_at": utcnow(), "deleted_by": new_id()}
+        for task in (
+            make_task(status=TaskStatus.DONE, updated_ago=timedelta(days=36499)),
+            make_task(status=TaskStatus.DONE, updated_ago=older).model_copy(
+                update={"archived_at": utcnow()}
+            ),
+            make_task(status=TaskStatus.DONE, updated_ago=older).model_copy(update=gone),
+            make_task(status=TaskStatus.DONE, rank=long_rank),
+            make_task(rank=long_rank).model_copy(update=gone),
+        ):
+            await seed(storage, none, task)
+        assert await storage.read_tenants_with_chores(cut, start, 10) == [archivable, long, both]
+
+    async def test_the_tenants_with_a_chore_due_page_after_a_tenant(
+        self, storage: TasksStorageInterface
+    ) -> None:
+        """At most `limit` tenants a read, and the next read starts after the
+        last one it gave, as the sweep's next pass does."""
+        cut = utcnow() - timedelta(days=36500)
+        start = new_id()
+        tenants = [new_id() for _ in range(3)]
+        for org_id in tenants:
+            await seed(
+                storage,
+                org_id,
+                make_task(status=TaskStatus.DONE, updated_ago=timedelta(days=36501)),
+            )
+        first = await storage.read_tenants_with_chores(cut, start, 2)
+        assert first == tenants[:2]
+        assert await storage.read_tenants_with_chores(cut, first[-1], 2) == tenants[2:]
+        assert await storage.read_tenants_with_chores(cut, tenants[-1], 2) == []
+
     async def test_open_list_pages_by_rank_cursor(self, storage: TasksStorageInterface) -> None:
         # Two tasks share a rank (two writers that placed at once): the id
         # breaks the tie, in the list and in the cursor alike.

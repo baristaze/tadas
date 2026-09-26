@@ -1,5 +1,5 @@
 import random
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta, timezone
 from decimal import Decimal
 from uuid import UUID
 
@@ -12,8 +12,10 @@ from tadas.om.tasks.rules import (
     RANK_SCALE_SHORT,
     RESPACE_REACH,
     Place,
+    archive_cutoff,
     bulk_ranks,
     bulk_skip,
+    cleanup_period,
     earliest_reminder_time,
     is_after,
     is_before,
@@ -345,3 +347,17 @@ def test_a_bulk_reopen_stacks_each_task_above_the_one_before() -> None:
     assert bulk_ranks(D("-0.5"), 2) == [D(-2), D(-3)]
     assert bulk_ranks(None, 2) == [D(1), D(0)]
     assert bulk_ranks(D(4), 0) == []
+
+
+def test_the_days_archive_cut_holds_from_the_start_of_the_utc_day() -> None:
+    """Every moment of one UTC day gives the same cut, the day's start less the
+    archive age, and the day `cleanup_period` names is that day, whatever the
+    moment's own zone."""
+    age = timedelta(days=90)
+    start = datetime(2030, 5, 20, tzinfo=UTC)
+    for moment in (start, start + timedelta(hours=13), start + timedelta(days=1, microseconds=-1)):
+        assert archive_cutoff(moment, age) == start - age
+        assert cleanup_period(moment) == "2030-05-20"
+    east = datetime(2030, 5, 21, 1, tzinfo=timezone(timedelta(hours=3)))  # 22:00 UTC the 20th
+    assert archive_cutoff(east, age) == start - age
+    assert archive_cutoff(start + timedelta(days=1), age) == start + timedelta(days=1) - age

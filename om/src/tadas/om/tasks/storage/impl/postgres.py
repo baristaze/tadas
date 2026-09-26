@@ -19,6 +19,7 @@ from sqlalchemy import (
     select,
     true,
     tuple_,
+    union,
     update,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, insert
@@ -30,7 +31,7 @@ from tadas.om.orchestrations.storage.impl.postgres import land_step
 from tadas.om.orchestrations.types.orchestration import Step
 from tadas.om.outbox.storage.tables.outbox_rows import OutboxRows
 from tadas.om.outbox.types.row import OutboxRow
-from tadas.om.storage.impl.pg_base import PgStorageBase, delete_batch, deleted
+from tadas.om.storage.impl.pg_base import PLAN_WITH_VALUES, PgStorageBase, delete_batch, deleted
 from tadas.om.storage.utils.translation import to_model, to_row, to_values
 from tadas.om.tasks.rules import RANK_SCALE_BOUND, Place
 from tadas.om.tasks.storage import TasksStorageInterface
@@ -121,6 +122,15 @@ _LONG_RANK = func.scale(Tasks.rank) > literal_column(str(RANK_SCALE_BOUND))
 predicate spells it: a literal, never a bound value, which a generic plan
 could not match to the index. A rank is written without trailing zeros
 (tasks.rules.spread), so its scale is its length after the point."""
+
+_DONE_SHELF = and_(
+    Tasks.status == literal_column(f"'{TaskStatus.DONE.value}'"),
+    Tasks.archived_at.is_(None),
+    Tasks.deleted_at.is_(None),
+)
+"""The done tasks not archived, of every tenant, spelled as the predicate of
+the partial index the read across tenants walks: the status a literal, never
+a bound value, so a generic plan proves the predicate and reads the index."""
 
 
 class TasksStoragePostgresImpl(PgStorageBase, TasksStorageInterface):
@@ -369,6 +379,30 @@ class TasksStoragePostgresImpl(PgStorageBase, TasksStorageInterface):
         # Every tenant's deleted tasks, so the system scope, spelled here.
         async with self._session_for(stmt, org_id=EMPTY_UUID) as session:
             return [(org_id, task_id) for org_id, task_id in await session.execute(stmt)]
+
+    async def read_tenants_with_chores(
+        self, archivable_before: datetime, after: UUID | None, limit: int
+    ) -> list[UUID]:
+        # Two arms, each on a partial index that holds only the rows it may
+        # find: the done shelf by its last change, so the cut is a range and
+        # only the archivable tasks are read (mirrors tasks.rules.is_archivable),
+        # and the long ranks. A tenant with neither is in no index this reads.
+        # Planned with its values, as the purges across tenants are: a generic
+        # plan knows neither the cut nor the tenant a page starts after, and
+        # would walk the tenant-led index of every open and done task.
+        archivable = select(Tasks.org_id).where(_DONE_SHELF, Tasks.updated_at < archivable_before)
+        long = select(Tasks.org_id).where(
+            _LONG_RANK, Tasks.deleted_at.is_(None), Tasks.status == TaskStatus.OPEN.value
+        )
+        if after is not None:
+            archivable = archivable.where(Tasks.org_id > after)
+            long = long.where(Tasks.org_id > after)
+        due = union(archivable, long).subquery("due")
+        stmt = select(due.c.org_id).order_by(due.c.org_id).limit(limit)
+        # Every tenant's tasks, so the system scope, spelled here.
+        async with self._session_for(Tasks, org_id=EMPTY_UUID) as session:
+            await session.execute(PLAN_WITH_VALUES)
+            return list((await session.execute(stmt)).scalars())
 
     async def purge_deleted(self, before: datetime, task_ids: list[UUID]) -> int:
         if not task_ids:

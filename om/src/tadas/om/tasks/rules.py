@@ -419,6 +419,16 @@ def cleanup_period(now: datetime) -> str:
     return now.astimezone(UTC).date().isoformat()
 
 
+def archive_cutoff(now: datetime, archive_after: timedelta) -> datetime:
+    """The day's cleanup archives the done tasks unchanged since before this:
+    the start of the UTC day `cleanup_period` names, less the archive age.
+    The cut holds all day. So once the day's record has run, no task of the
+    org is archivable again before the next day begins, and the sweep's read
+    of the tenants with a chore due stops finding the org."""
+    day = datetime.combine(now.astimezone(UTC).date(), time(), tzinfo=UTC)
+    return day - archive_after
+
+
 def import_row_part(number: int) -> str:
     """What an imported row's task id is derived from beside the import's id
     (`base.derived_id`): the same row stepped twice presents the same id."""
