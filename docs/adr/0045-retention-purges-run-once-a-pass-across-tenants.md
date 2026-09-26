@@ -15,12 +15,11 @@ each tenant, one transaction at a time.
 
 A tenant with nothing to purge paid for every one of those asks. On
 the query index audit's seed (5,001 tenants, one of them heavy), an
-idle tenant cost 29 ms p50 a pass: about 2.3 ms a step, 5.2 ms for
-tenancy's purge, and 6.9 ms for Slack's three transactions. The time
-is round trips, not the database. A pass reached about 670 tenants,
-so a full cycle took about 7.5 passes, near six minutes, and it grows
-with every tenant. A tenant's rows waited that long past their
-retention.
+idle tenant cost 21 to 24 ms p50 a pass, most of it the eight purges,
+1.5 to 4.8 ms each, of round trips rather than database time. A pass reached
+740 to 930 tenants, so a full cycle took six or seven passes, over
+five minutes, and it grows with every tenant. A tenant's rows waited
+that long past their retention.
 
 The rows a retention purge deletes need no tenant to find them. Each
 is picked by its own column: `deleted_at`, `expires_at`, `created_at`,
@@ -77,10 +76,12 @@ Namespace by namespace:
 
 ## Consequences
 
-A living tenant costs a pass its chores and nothing else: about 2 ms,
-the cleanup's probe. On the same seed a pass takes 10 to 13 seconds
-and reaches all 5,001 tenants, where it took 20 seconds for about 670.
-The purges across tenants cost about 50 ms a pass when idle.
+A living tenant costs a pass its chores and nothing else: about 3 ms,
+the cleanup's probe and the respace's. On the same seed a pass takes
+14 to 16.5 seconds and reaches all 5,001 tenants, where it took 20
+seconds for 740 to 930. The purges across tenants cost about 20 ms a
+pass when idle. The chores are what a pass spends per tenant now, so
+they are what bounds the tenants one pass reaches.
 
 Twenty indexes lead with a retention column, and the three indexes
 that only the per-tenant purges read go. The idempotency markers' index
