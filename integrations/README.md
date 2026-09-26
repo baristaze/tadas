@@ -97,7 +97,7 @@ vocabulary:
 | Error | Means | What the caller does |
 |-------|-------|----------------------|
 | `SlackRateLimited` | Slack asked to wait (429), `retry_after` says how long | The worker parks the item for that long |
-| `SlackChannelUnusable` | `channel_not_found`, `not_in_channel`, `is_archived` | Marks the installation broken; `/tadas connect` says to invite the bot |
+| `SlackChannelUnusable` | `channel_not_found`, `not_in_channel`, `is_archived` | Marks the installation broken; `/tadas connect` says to invite the bot. The bot's join to the channel (`member_joined_channel`) mends it |
 | `SlackTokenRevoked` | `invalid_auth`, `token_revoked`, `invalid_refresh_token`, and the like: the install is gone | Marks the installation broken; a new install mends it |
 | `SlackRequestRefused` | A call in whose signature, timestamp, or body did not check out (`401`) | The API refuses it and queues nothing |
 | `SlackNotConfigured` | This process holds none of the app's credentials (`503`) | Nothing reaches Slack, and nothing from Slack is accepted |
@@ -113,8 +113,10 @@ Three impls:
 - `SlackTwinImpl`, the twin: Slack's side in memory. It approves an
   install at once for its own workspace, issues tokens that expire and
   refresh tokens that work once, signs requests with Slack's scheme under
-  a secret of its own, records every post, fails on request (one method
-  or any), and stamps each message `twin.<n>`. A token names its
+  a secret of its own, records every post, refuses a channel its bot was
+  removed from and hands back the `member_joined_channel` event Slack
+  sends when the bot is invited again, fails on request (one method or
+  any), and stamps each message `twin.<n>`. A token names its
   workspace, so a token the local API's twin issued works in the local
   worker's. It refuses to run outside `local` and `test`.
 - `SlackOffImpl`: what a process holds when any of the three credentials
