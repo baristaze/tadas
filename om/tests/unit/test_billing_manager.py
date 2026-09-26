@@ -4,7 +4,6 @@ any order; a cancellation that holds the plan to its period's end; a
 per-seat subscription that follows the members; an operator's grant; and
 the levers of the tasks and tenancy managers that read the plan."""
 
-import asyncio
 from collections import Counter
 from datetime import timedelta
 from pathlib import Path
@@ -727,7 +726,13 @@ async def test_every_writer_of_the_account_makes_the_next_read_fresh(
     assert reads.count == 0, "and each fresh read is cached again"
 
 
-async def test_a_lost_bump_is_stale_for_the_ttl_and_no_longer(world: World) -> None:
+async def test_a_lost_bump_is_stale_for_the_ttl_and_no_longer(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The cache keeps time on the world's clock, which moves only when the
+    # test moves it, so the TTL runs out where the test says and not where a
+    # slow runner leaves it.
+    monkeypatch.setattr("tadas.infra.cache.memory.utcnow", lambda: world.now)
     ttl = timedelta(milliseconds=100)
     cache = world.infra.get_cache(CacheScope.BILLING_ACCOUNT)
     reader = billing_over(world, cache, ttl)
@@ -737,8 +742,10 @@ async def test_a_lost_bump_is_stale_for_the_ttl_and_no_longer(world: World) -> N
     assert (await reader.get_billing(ctx)).plan is Plan.PRO
     await writer.grant_seeded_plan(ctx, Plan.MAX)
     assert (await reader.get_billing(ctx)).plan is Plan.PRO, "the bump was lost"
-    await asyncio.sleep(0.15)
-    assert (await reader.get_billing(ctx)).plan is Plan.MAX, "the TTL bounds it"
+    world.now += ttl - timedelta(microseconds=1)
+    assert (await reader.get_billing(ctx)).plan is Plan.PRO, "stale for the TTL"
+    world.now += timedelta(microseconds=1)
+    assert (await reader.get_billing(ctx)).plan is Plan.MAX, "and no longer"
 
 
 async def test_a_valkey_that_cannot_be_reached_reads_storage(
