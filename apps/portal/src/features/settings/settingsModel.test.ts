@@ -5,6 +5,7 @@ import {
   canManageKeys,
   canManageMembers,
   checkInvite,
+  grantableRoles,
   invitableRoles,
   invitationRows,
   keyState,
@@ -45,7 +46,7 @@ describe("settings model", () => {
       { id: "k1", name: "ci", role: "member", state: "active", expires: "2026-12-01" },
     ]);
     expect(memberRows([me.user])).toEqual([
-      { id: "u1", name: "Ann", email: "a@b.c", joined: "2026-09-01" },
+      { id: "u1", name: "Ann", email: "a@b.c", joined: "2026-09-01", role: null, roles: [] },
     ]);
   });
 
@@ -99,5 +100,44 @@ describe("members and single sign-on", () => {
   it("asks for an address to invite", () => {
     expect(checkInvite("bob")).not.toBeNull();
     expect(checkInvite(" bob@example.test ")).toBeNull();
+  });
+});
+
+describe("the role control", () => {
+  const bob = { id: "u2", email: "bob@b.c", display_name: "Bob", created_at: "2026-09-02T00:00:00Z" };
+  const cid = { id: "u3", email: "cid@b.c", display_name: "Cid", created_at: "2026-09-03T00:00:00Z" };
+  const as = (role: MeView["role"], permissions: MeView["permissions"]): MeView => ({ ...me, role, permissions });
+  const admin = as("admin", ["read", "write", "manage_members", "manage_keys"]);
+
+  it("pairs each member with their role and what the caller may give them", () => {
+    const rows = memberRows(
+      [me.user, bob],
+      [
+        { id: "m1", user_id: "u1", role: "owner", teams: [] },
+        { id: "m2", user_id: "u2", role: "member", teams: [] },
+      ],
+      me,
+    );
+    expect(rows.map((row) => [row.name, row.role, row.roles])).toEqual([
+      ["Ann", "owner", []],
+      ["Bob", "member", ["viewer", "member", "admin", "owner"]],
+    ]);
+  });
+
+  it("lets an owner make someone else an owner, and never change their own role", () => {
+    expect(grantableRoles(me, bob.id, "member")).toContain("owner");
+    expect(grantableRoles(me, cid.id, "owner")).toEqual(["viewer", "member", "admin", "owner"]);
+    expect(grantableRoles(me, me.user.id, "owner")).toEqual([]);
+  });
+
+  it("lets an admin give roles up to admin, and leaves an owner alone", () => {
+    expect(grantableRoles(admin, bob.id, "member")).toEqual(["viewer", "member", "admin"]);
+    expect(grantableRoles(admin, cid.id, "owner")).toEqual([]);
+  });
+
+  it("offers nothing to a member who does not manage members, or before the role is known", () => {
+    expect(grantableRoles(as("member", ["read", "write", "manage_keys"]), bob.id, "viewer")).toEqual([]);
+    expect(grantableRoles(me, bob.id, null)).toEqual([]);
+    expect(grantableRoles(undefined, bob.id, "member")).toEqual([]);
   });
 });
