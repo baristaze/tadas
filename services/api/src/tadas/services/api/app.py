@@ -17,6 +17,7 @@ from tadas.services.api.gateway.admission import AdmissionMiddleware
 from tadas.services.api.gateway.edge import EdgeClientMiddleware
 from tadas.services.api.gateway.errors import register_error_handlers
 from tadas.services.api.gateway.observability import RequestIdMiddleware
+from tadas.services.api.gateway.relay import RelayAfterAnswerMiddleware
 from tadas.services.api.routers import all_routers, webhooks
 from tadas.services.api.settings import ApiSettings
 
@@ -67,6 +68,11 @@ def create_app(container: AppContainer | None = None) -> FastAPI:
     # is only the little the two middlewares above it do, and it takes its
     # lane's bound before routing, the request body, and every dependency:
     # the lane is the method's, which the scope carries this far out.
+    # Innermost of all: the relay of a request's outbox rows, once its answer
+    # is sent (`gateway/relay.py`). Inside admission, so a relay holds its
+    # request's slot; inside the request id, so it runs under the request's
+    # id and span.
+    app.add_middleware(RelayAfterAnswerMiddleware, relay=container.managers.outbox)
     app.add_middleware(
         AdmissionMiddleware,
         limit_reads=settings.admission_limit_reads,

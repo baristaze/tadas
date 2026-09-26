@@ -21,10 +21,15 @@ push come. This is one of the seven kinds of thing
 - **Written with the change.** The rows that announce a write are
   handed over with the write itself, and both land in one commit.
   There is no second step anyone could forget.
-- **Relayed at once.** The row is relayed in the request's own path.
-  A change appends its event and publishes a push; a request for work
-  enqueues the item under the row's id and wakes the workers. Then
-  every row the write landed is marked done at once, in one statement.
+- **Relayed at once.** A change appends its event and publishes a
+  push; a request for work enqueues the item under the row's id and
+  wakes the workers. Then every row the write landed is marked done at
+  once, in one statement.
+- **After the answer, in the API.** A request's rows are relayed once
+  its answer is sent, still under its request id and its trace. The
+  answer never waits for the relay and carries nothing from it. The
+  rows of one org are relayed together, however many writes the
+  request made. A worker relays at once, in its own loop.
 - **Relayed by the sweep.** Whatever the request path left behind is
   claimed by the maintenance sweep, oldest first, a hundred rows at a
   time and again while a batch comes back whole, one attempt a row,
@@ -50,7 +55,8 @@ push come. This is one of the seven kinds of thing
 - **Relaying twice is harmless.** The relay is idempotent on the row's
   id: the event is appended once and the work item is enqueued once.
 - **A failed relay never fails the request.** It is logged and
-  counted; the row is durable and the sweep relays it again.
+  counted; the row is durable and the sweep relays it again. So is a
+  relay the process never ran because it stopped after the answer.
 - **A stuck row blocks nothing behind it.** Each attempt sets the next
   one later, so a row that will not relay waits on its own.
 - **A young row is the request path's.** The sweep leaves rows younger
