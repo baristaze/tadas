@@ -10,7 +10,8 @@ from tadas.om.storage.tables.base import Base, IdentifiableMixin, TrackableMixin
 
 class WorkItems(IdentifiableMixin, TrackableMixin, Base):
     __tablename__ = "work_items"
-    # org_id leads the sweep's compound index, so it gets no index of its own.
+    # org_id leads the unique index on the idempotency key, so it gets no
+    # index of its own.
     __org_id_index__ = False
     __table_args__ = (
         # The key collides within its tenant, so the index leads with it, and
@@ -19,9 +20,8 @@ class WorkItems(IdentifiableMixin, TrackableMixin, Base):
         # The purge reads settled items across tenants by their last change.
         Index("ix_work_items_status_updated_at", "status", "updated_at"),
         Index("ix_work_items_lane_status_available_at", "lane", "status", "available_at"),
-        Index(
-            "ix_work_items_org_id_status_lease_expires_at", "org_id", "status", "lease_expires_at"
-        ),
+        # The sweep requeues expired leases across tenants.
+        Index("ix_work_items_status_lease_expires_at", "status", "lease_expires_at"),
     )
     kind: Mapped[str]
     target_id: Mapped[UUID]
