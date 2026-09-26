@@ -21,6 +21,7 @@ from tadas.om.tenancy.types.api_key import ApiKey
 from tadas.om.tenancy.types.identity import Identity
 from tadas.om.tenancy.types.invitation import Invitation
 from tadas.om.tenancy.types.issued import (
+    AccountDeleted,
     IssuedApiKey,
     IssuedLogin,
     IssuedOperatorToken,
@@ -474,6 +475,39 @@ class TenancyManagerInterface(ABC):
         transaction; no list shows them, no role change reaches them, and
         each revocation is announced, so their sockets close. The person of a
         personal org is never removed from it (PersonalOrgFixed)."""
+        ...
+
+    @abstractmethod
+    async def delete_account(
+        self, ctx: OpContext, confirm_email: str, return_to: str | None = None
+    ) -> AccountDeleted:
+        """The caller's whole account, gone for good, from a session only
+        (NotAuthorized for an api key, which is a program's). `confirm_email`
+        is the account's email as the person typed it (ValidationFailed when
+        it is not). Refused while the person is on the operator allowlist
+        (OperatorRoleHeld), and while they are the last owner of a team org
+        (LastOwner, naming each one).
+
+        One commit erases the person (`TenancyStorageInterface.delete_person`):
+        the identity, their user and membership in every org, every
+        credential they hold, each live one announced as revoked, and the
+        sign-in delay of their address. What they made in a team org stays
+        the org's, under an id that no longer names anyone. The same commit
+        asks for the rest: in each org they leave, their open tasks go
+        unassigned (`UNASSIGN_TASKS`), and a per-seat plan follows the count;
+        in their personal org, the provider's side goes and then the org
+        itself (`DELETE_ACCOUNT`). The answer says where the browser goes to
+        end the provider's session, as `logout` does with `return_to`."""
+        ...
+
+    @abstractmethod
+    async def delete_personal_org(self, ctx: OpContext) -> Org | None:
+        """Platform-internal, the last step of `DELETE_ACCOUNT`: deletes the
+        caller's tenant when it is a personal org whose person is gone, and
+        announces it, so its sockets close. A deleted personal org keeps no
+        retention, so the sweep purges every row of it at its next pass
+        (`tenancy.rules.past_retention`). None, and nothing written, when it
+        is deleted already; PersonalOrgFixed for any other org."""
         ...
 
     @abstractmethod

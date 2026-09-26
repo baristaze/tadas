@@ -7,6 +7,7 @@ from collections.abc import Callable
 from datetime import datetime
 from uuid import UUID
 
+from tadas.om.opcontext import Role
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.tenancy.types.api_key import ApiKey
 from tadas.om.tenancy.types.identity import Identity
@@ -218,6 +219,29 @@ class TenancyStorageInterface(ABC):
         ...
 
     @abstractmethod
+    async def delete_person(
+        self,
+        identity_id: UUID,
+        email_digest: str,
+        outbox_rows: tuple[OutboxRow, ...],
+        revocation_row: Callable[[UUID, str, UUID], OutboxRow],
+    ) -> tuple[OutboxRow, ...]:
+        """Cross-tenant: a person is erased across every tenant they are in,
+        which is the one thing this write is. A named atomic hard delete, in
+        one commit or not at all: the identity (its second factor with it),
+        every user it is in any tenant, live or removed, with their
+        memberships, api keys, and socket tickets, every session it holds
+        (the tenants' sessions, its sign-ins, and its operator tokens), and
+        the sign-in delay keyed on `email_digest`. The outbox rows land in the
+        same commit, each under the tenant it names. A session or an api key
+        that was still live when it went lands the row
+        `revocation_row(org_id, kind, id)` builds, `tenancy.session.revoked` or
+        `tenancy.api_key.deleted`, so a socket it opened closes; those rows
+        come back, for the caller to relay after the ones it passed. NotFound,
+        and nothing lands, when the identity is gone already."""
+        ...
+
+    @abstractmethod
     async def read_users(self, org_id: UUID, after: UUID | None, limit: int) -> list[User]:
         """The tenant's live users, by id ascending; a removed one is hidden.
         `after` is the id the previous page ended on, and the page starts
@@ -268,8 +292,10 @@ class TenancyStorageInterface(ABC):
         ...
 
     @abstractmethod
-    async def count_members(self, org_id: UUID) -> int:
-        """How many live memberships the tenant holds: the seats its plan counts."""
+    async def count_members(self, org_id: UUID, role: Role | None = None) -> int:
+        """How many live memberships the tenant holds: the seats its plan counts.
+        With `role`, only those of that role: the owners a leaving owner
+        would leave behind."""
         ...
 
     @abstractmethod

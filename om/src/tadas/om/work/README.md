@@ -11,11 +11,14 @@ seven kinds of thing [Tadas is made of](../../../../README.md).
   available, who claimed it and until when, how many attempts it has
   spent of how many it has, and its last error.
 - **Kind**: the job's shape. The payload of each kind is fixed. There
-  are six: a task's reminder, a post to the org's Slack channel, the
+  are eight: a task's reminder, a post to the org's Slack channel, the
   seat count of a per-seat subscription brought in step with the org's
   members, one step of an [orchestration](../orchestrations/README.md),
-  the wake of the orchestrations a plan that rose freed, and one that
-  does nothing but keep the loop honest. A kind
+  the wake of the orchestrations a plan that rose freed, what is left of
+  a deleted account (the person at the identity provider, the personal
+  org's subscription, customer, and Slack app, then the org itself), the
+  open tasks a person who deleted their account leaves assigned in a
+  team org, and one that does nothing but keep the loop honest. A kind
   whose payload names a time waits in the queue until then. Each kind
   names the permission a person needs to ask for it, and whoever holds
   that permission may do everything the job does.
@@ -29,7 +32,7 @@ seven kinds of thing [Tadas is made of](../../../../README.md).
   when a change asked for work: setting a due date, a task created,
   completed, or reminded in an org with a Slack channel, a member
   added or removed in an org on Max, an orchestration started, stepped,
-  or woken, and a plan that rose. The item starts queued with zero
+  or woken, a plan that rose, and an account deleted. The item starts queued with zero
   attempts and no claim, whatever the caller sent.
 - **Claim.** A worker takes the oldest available item on its lane, in
   one statement, and gets a claim token and the context the job runs
@@ -38,7 +41,8 @@ seven kinds of thing [Tadas is made of](../../../../README.md).
 - **Complete**, **fail** (requeued with a growing delay, or a dead
   letter once the attempts are spent), **defer** (hand it back for
   later), **release** (hand it back now), **extend the lease**.
-- **Park.** A job that must wait (Slack asked for a pause) is handed
+- **Park.** A job that must wait (Slack asked for a pause, or a
+  provider did not answer a deleted account's cleanup) is handed
   back for the time it named, with the reason as its note, and spends
   no attempt: a guard parks, only a real limit fails.
 - **Sweep.** Items whose lease has expired go back to the queue, or

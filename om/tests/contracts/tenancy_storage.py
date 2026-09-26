@@ -395,6 +395,24 @@ class TenancyStorageContract:
         assert await storage.count_members(org_a.id) == 1
         assert await storage.count_members(org_b.id) == 0
 
+    async def test_the_owner_count_is_the_tenants_live_owners(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        """The owners a leaving owner would leave behind: live owner
+        memberships of this tenant, and no other tenant's."""
+        org_a, org_b = make_org("A"), make_org("B")
+        owner, member = make_membership(new_id(), Role.OWNER), make_membership(new_id())
+        ended = make_membership(new_id(), Role.OWNER)
+        for membership in (owner, member, ended):
+            await storage.write_membership(org_a.id, membership)
+        await storage.write_membership(
+            org_a.id, ended.model_copy(update={"deleted_at": utcnow(), "deleted_by": new_id()})
+        )
+        await storage.write_membership(org_b.id, make_membership(new_id(), Role.OWNER))
+        assert await storage.count_members(org_a.id, Role.OWNER) == 1
+        assert await storage.count_members(org_a.id, Role.MEMBER) == 1
+        assert await storage.count_members(org_a.id) == 2
+
     async def test_the_session_reads_and_writes_are_tenant_scoped(
         self, storage: TenancyStorageInterface
     ) -> None:
@@ -1008,6 +1026,91 @@ class TenancyStorageContract:
             (org.id, "tenancy.session.revoked", live.id),
             (org.id, "tenancy.api_key.deleted", key.id),
         }
+
+    async def test_a_person_is_deleted_in_every_tenant_in_one_commit(
+        self, storage: TenancyStorageInterface, outbox: OutboxStorageInterface
+    ) -> None:
+        """The identity, every user it is (a removed one too), their
+        memberships, sessions, keys, and tickets, its sign-ins and its sign-in
+        delay go together; each live credential lands the row that announces
+        it, and the rows handed in land under their own tenants. Another
+        person in the same tenants keeps everything."""
+        identity, stays = make_identity(), make_identity()
+        team, personal, left = make_org("Team"), make_org("Mine"), make_org("Left")
+        bob = make_user(identity.id, identity.email)
+        mine = make_user(identity.id, identity.email)
+        old = make_user(identity.id, identity.email)
+        cid = make_user(stays.id, stays.email)
+        await storage.write_identity(identity)
+        await storage.write_identity(stays)
+        await storage.create_member(team.id, bob, make_membership(bob.id), ())
+        await storage.create_member(personal.id, mine, make_membership(mine.id, Role.OWNER), ())
+        await storage.create_member(left.id, old, make_membership(old.id), ())
+        await storage.write_user(
+            left.id, old.model_copy(update={"deleted_at": utcnow(), "deleted_by": old.id})
+        )
+        cids = make_membership(cid.id)
+        await storage.create_member(team.id, cid, cids, ())
+        live = make_session(identity.id, bob.id, uuid4().hex)
+        dead = make_session(identity.id, bob.id, uuid4().hex).model_copy(
+            update={"revoked_at": utcnow()}
+        )
+        sign_in = make_sign_in(identity.id, uuid4().hex)
+        key = make_api_key(mine.id, uuid4().hex)
+        ticket = make_socket_ticket(bob.id, uuid4().hex)
+        cid_session = make_session(stays.id, cid.id, uuid4().hex)
+        await storage.write_session(team.id, live)
+        await storage.write_session(team.id, dead)
+        await storage.write_session(EMPTY_UUID, sign_in)
+        await storage.write_session(team.id, cid_session)
+        await storage.write_api_key(personal.id, key)
+        await storage.write_socket_ticket(team.id, ticket)
+        await storage.record_failed_sign_in(email_digest(identity.email), utcnow())
+        await storage.record_failed_sign_in(email_digest(stays.email), utcnow())
+
+        removal = make_user_row(team.id, bob)
+
+        def revocation(org_id: UUID, kind: str, credential_id: UUID) -> OutboxRow:
+            return revocations_by(EMPTY_UUID, org_id)(kind, credential_id)
+
+        rows = await storage.delete_person(
+            identity.id, email_digest(identity.email), (removal,), revocation
+        )
+        assert sorted((r.org_id, r.kind, r.target_id) for r in rows) == sorted(
+            [
+                (team.id, "tenancy.session.revoked", live.id),
+                (personal.id, "tenancy.api_key.deleted", key.id),
+            ]
+        )
+        assert await storage.read_identity(identity.id) is None
+        assert await storage.read_sign_in_delay(email_digest(identity.email)) is None
+        for org_id, user in ((team.id, bob), (personal.id, mine), (left.id, old)):
+            assert await storage.read_user(org_id, user.id) is None
+            assert await storage.read_membership_for_user(org_id, user.id) is None
+        for org_id, session_id in ((team.id, live.id), (team.id, dead.id)):
+            assert await storage.read_session(org_id, session_id) is None
+        assert await storage.read_session_by_id(sign_in.id) is None
+        assert await storage.read_api_key(personal.id, key.id) is None
+        assert await storage.redeem_socket_ticket(ticket.ticket_hash, utcnow()) is None
+        # Everyone else keeps what they had.
+        assert await storage.read_identity(stays.id) == stays
+        assert await storage.read_sign_in_delay(email_digest(stays.email)) is not None
+        assert await storage.read_user(team.id, cid.id) == cid
+        assert await storage.read_membership_for_user(team.id, cid.id) == cids
+        assert await storage.read_session(team.id, cid_session.id) == cid_session
+        ours = {removal.id} | {r.id for r in rows}
+        landed = {(r.org_id, r.kind, r.target_id) for r in await claim_all(outbox) if r.id in ours}
+        assert landed == {
+            (team.id, "tenancy.user.created", bob.id),
+            (team.id, "tenancy.session.revoked", live.id),
+            (personal.id, "tenancy.api_key.deleted", key.id),
+        }
+        # Gone already: nothing lands.
+        with pytest.raises(NotFound):
+            again = (make_user_row(team.id, bob),)
+            await storage.delete_person(
+                identity.id, email_digest(identity.email), again, revocation
+            )
 
     async def test_users_by_identity_span_tenants(self, storage: TenancyStorageInterface) -> None:
         identity = make_identity()

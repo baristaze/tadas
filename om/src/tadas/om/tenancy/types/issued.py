@@ -73,3 +73,12 @@ class SignedOut(Platform):
 
     session: Session
     provider_logout_url: str | None = None
+
+
+class AccountDeleted(Platform):
+    """A person's account, gone: when, and where the browser goes next to end
+    the identity provider's session behind the session that asked, as a
+    sign-out answers. None when the sign-in left no session there."""
+
+    deleted_at: datetime
+    provider_logout_url: str | None = None

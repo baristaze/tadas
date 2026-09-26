@@ -127,11 +127,32 @@ class NotAnOperator(TenancyException, NotAuthorized):
 
 
 class PersonalOrgFixed(TenancyException, Conflict):
-    """A personal org stays its person's: it is not deleted, and its person
-    is not removed from it and does not change role in it, so it never
-    changes hands."""
+    """A personal org stays its person's: it is deleted only with its person,
+    and its person is not removed from it and does not change role in it, so
+    it never changes hands."""
 
     code = "personal_org_fixed"
+
+
+class LastOwner(TenancyException, Conflict):
+    """An account is not deleted while its person is the last owner of a team
+    org: the org would be left with nobody to run it. The refusal names each
+    such org, by id, name, and slug, so the person hands it on first."""
+
+    code = "last_owner"
+
+    def __init__(self, orgs: tuple[tuple[str, str, str], ...]) -> None:
+        names = ", ".join(name for _, name, _ in orgs)
+        super().__init__(f"you are the last owner of {names}; make someone else an owner first")
+        self.orgs = orgs
+
+
+class OperatorRoleHeld(TenancyException, NotAuthorized):
+    """An account on the operator allowlist is not deleted: the operator role
+    is taken off first, by the grant job, so the platform never loses an
+    operator by a click."""
+
+    code = "operator_role_held"
 
 
 class SecondFactorRequired(TenancyException, NotAuthenticated):
