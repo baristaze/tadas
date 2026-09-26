@@ -82,3 +82,12 @@ class AccountDeleted(Platform):
 
     deleted_at: datetime
     provider_logout_url: str | None = None
+
+
+class OrgDeleted(Platform):
+    """A team org its owner deleted: when, and the session the owner lands on
+    in their personal org, which replaces the one that asked. None when that
+    session could not be made; the owner then signs in again."""
+
+    deleted_at: datetime
+    session: IssuedSession | None = None

@@ -16,6 +16,7 @@ from tadas.services.api.types.tenancy import (
     ApiKeyView,
     CreateTeamOrgRequest,
     DeleteAccountRequest,
+    DeleteOrgRequest,
     DeviceSignInView,
     DeviceTokenRequest,
     DevSignInRequest,
@@ -33,6 +34,7 @@ from tadas.services.api.types.tenancy import (
     MembershipPageView,
     MembershipView,
     MeView,
+    OrgDeletedView,
     OrgView,
     SecondFactorRequest,
     SessionView,
@@ -181,6 +183,9 @@ class TenancyServiceImpl(TenancyServiceInterface):
 
     async def get_org(self, ctx: OpContext) -> OrgView:
         return OrgView.model_validate(await self._tenancy.get_org(ctx))
+
+    async def delete_org(self, ctx: OpContext, body: DeleteOrgRequest) -> OrgDeletedView:
+        return OrgDeletedView.model_validate(await self._tenancy.delete_org(ctx, body.name))
 
     async def create_org(
         self, ctx: OpContext, body: CreateTeamOrgRequest, attempt: Attempt

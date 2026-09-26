@@ -58,6 +58,27 @@ class WorkStoragePostgresImpl(PgStorageBase, WorkStorageInterface):
             await session.commit()
             return written
 
+    async def write_item_if_failed(self, org_id: UUID, item: WorkItem) -> WorkItem | None:
+        values = to_values(item, WorkItems)
+        values.pop("id", None)
+        stmt = (
+            update(WorkItems)
+            .where(
+                WorkItems.id == item.id,
+                WorkItems.org_id == org_id,
+                WorkItems.status == WorkStatus.FAILED.value,
+            )
+            .values(**values)
+            .returning(WorkItems)
+        )
+        async with self._session_for(stmt, org_id=org_id) as session:
+            row = (await session.execute(stmt)).scalar_one_or_none()
+            if row is None:
+                return None
+            written = to_model(row, WorkItem)
+            await session.commit()
+            return written
+
     async def claim_next(
         self, lane: str, kinds: Sequence[WorkKind], worker_id: str, lease: timedelta
     ) -> tuple[UUID, WorkItem] | None:

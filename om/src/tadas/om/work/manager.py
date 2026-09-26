@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from datetime import timedelta
 from uuid import UUID
 
-from tadas.om.opcontext import OpContext, RequestContext
+from tadas.om.opcontext import OpContext, OperatorContext, RequestContext
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.work.types.work_item import WorkItem, WorkKind
 
@@ -74,6 +74,14 @@ class WorkManagerInterface(ABC):
         ...
 
     @abstractmethod
+    async def fail_for_good(self, ctx: OpContext, item: WorkItem, error: str) -> WorkItem:
+        """Fails the item at once, whatever attempts it has left: the handler
+        said no retry changes the outcome. The same dead letter as an item
+        whose attempts are spent: an audit event names it and a metric counts
+        it. The attempt the claim spent stays spent."""
+        ...
+
+    @abstractmethod
     async def defer(self, ctx: OpContext, item: WorkItem, delay: timedelta) -> WorkItem:
         """Hands the item back for later without spending an attempt."""
         ...
@@ -115,4 +123,20 @@ class WorkManagerInterface(ABC):
     async def mark_purged(self, ctx: OpContext) -> bool:
         """Platform-internal: the tenancy manager's `mark_purged`, for the sweep,
         once a pass found nothing left of the tenant to trim."""
+        ...
+
+
+class WorkOperatorManagerInterface(ABC):
+    """The operator plane of the work queue: one named org's failed item,
+    sent back to the queue. Takes `OperatorContext` and nothing else."""
+
+    @abstractmethod
+    async def requeue(self, admin: OperatorContext, org_id: UUID, item_id: UUID) -> WorkItem:
+        """Moves one failed item back to the queue, available now, with its
+        attempts reset, so it runs as a fresh item would: every attempt, and
+        the growing delay between them. The write is conditional on the item
+        still being failed. An audit event in the org's diary names the item
+        and the operator who requeued it. Requires the write permission.
+        NotFound when the org or the item is not there; WorkNotFailed when
+        the item is not failed."""
         ...

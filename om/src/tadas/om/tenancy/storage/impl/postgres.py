@@ -370,6 +370,76 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
             await session.commit()
         return tuple(revoked)
 
+    async def write_closed_org(
+        self,
+        org_id: UUID,
+        org: Org,
+        outbox_rows: tuple[OutboxRow, ...],
+        member_row: Callable[[User], OutboxRow],
+        revocation_row: Callable[[str, UUID, UUID], OutboxRow],
+    ) -> tuple[OutboxRow, ...]:
+        # The org row, locked, then one statement per table, each naming the
+        # tenant: a member added while this runs waits on the lock and then
+        # finds the org it joins closed by the same commit.
+        at, by = org.updated_at, org.updated_by
+        ended = {"deleted_at": at, "deleted_by": by, "updated_at": at, "updated_by": by}
+        async with self._session_for(Orgs, org_id=org_id) as session:
+            row = (
+                await session.execute(
+                    select(Orgs).where(Orgs.id == org.id, Orgs.org_id == org_id).with_for_update()
+                )
+            ).scalar_one_or_none()
+            if row is None or row.deleted_at is not None:
+                await session.rollback()
+                raise NotFound(f"org {org.id} is not live in {org_id}")
+            apply_row(row, org)
+            users = (
+                (
+                    await session.execute(
+                        update(Users)
+                        .where(Users.org_id == org_id, Users.deleted_at.is_(None))
+                        .values(**ended)
+                        .returning(Users)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            built = [member_row(to_model(user, User)) for user in users]
+            await session.execute(
+                update(Memberships)
+                .where(Memberships.org_id == org_id, Memberships.deleted_at.is_(None))
+                .values(**ended)
+            )
+            sessions = await session.execute(
+                update(Sessions)
+                .where(Sessions.org_id == org_id, Sessions.revoked_at.is_(None))
+                .values(revoked_at=at, updated_at=at, updated_by=by)
+                .returning(Sessions.id, Sessions.user_id)
+            )
+            for session_id, user_id in sessions.all():
+                built.append(revocation_row("tenancy.session.revoked", session_id, user_id))
+            keys = await session.execute(
+                update(ApiKeys)
+                .where(ApiKeys.org_id == org_id, ApiKeys.deleted_at.is_(None))
+                .values(**ended)
+                .returning(ApiKeys.id, ApiKeys.user_id)
+            )
+            for key_id, user_id in keys.all():
+                built.append(revocation_row("tenancy.api_key.deleted", key_id, user_id))
+            await session.execute(
+                update(Invitations)
+                .where(
+                    Invitations.org_id == org_id,
+                    Invitations.state == InvitationState.PENDING.value,
+                )
+                .values(state=InvitationState.REVOKED.value, updated_at=at, updated_by=by)
+            )
+            for outbox_row in (*outbox_rows, *built):
+                session.add(to_row(outbox_row, OutboxRows, org_id=org_id))
+            await session.commit()
+        return tuple(built)
+
     async def delete_person(
         self,
         identity_id: UUID,

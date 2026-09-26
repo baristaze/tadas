@@ -64,6 +64,8 @@ class IdentityProviderTwinImpl(IdentityProviderInterface):
         self._devices: dict[str, ProvidedSignIn | Literal["pending", "denied", "expired"]] = {}
         self.deleted: list[str] = []
         """Every user the twin deleted, in order."""
+        self.deleted_organizations: list[str] = []
+        """Every organization the twin deleted, in order."""
         self.unavailable_for = 0
         """How many of the next deletions answer as a provider that is down,
         for a test of the retry."""
@@ -332,6 +334,16 @@ class IdentityProviderTwinImpl(IdentityProviderInterface):
             raise ProviderUnavailable("deleting the user: the twin is down")
         if self.users.pop(user_id, None) is not None:
             self.deleted.append(user_id)
+
+    async def delete_organization(self, organization_id: str) -> None:
+        if self.unavailable_for > 0:
+            self.unavailable_for -= 1
+            raise ProviderUnavailable("deleting the organization: the twin is down")
+        if self.organizations.pop(organization_id, None) is not None:
+            self.deleted_organizations.append(organization_id)
+            for invitation_id, invitation in list(self.invitations.items()):
+                if invitation.organization_id == organization_id:
+                    del self.invitations[invitation_id]
 
     def describe(self) -> str:
         return "identity provider: the twin (in-process, local only)"

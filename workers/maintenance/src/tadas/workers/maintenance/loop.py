@@ -31,7 +31,7 @@ from tadas.om.exceptions import LeaseLost, NotFound
 from tadas.om.opcontext import AppContext, AppType, OpContext, RequestContext
 from tadas.om.outbox import OutboxRelayInterface
 from tadas.om.work import WorkManagerInterface
-from tadas.om.work.types.handler import WorkHandlerInterface, WorkParked
+from tadas.om.work.types.handler import WorkHandlerInterface, WorkParked, WorkRefused
 from tadas.om.work.types.work_item import WorkItem, WorkKind
 
 log = logging.getLogger(__name__)
@@ -272,6 +272,11 @@ class WorkerLoop:
             log.info("parked %s for %s: %s", item.id, parked.resume_after, parked.reason)
             note = item.model_copy(update={"last_error": f"parked: {parked.reason}"})
             await self._settle(item, self._work.defer(ctx, note, parked.resume_after), "parked")
+        except WorkRefused as refused:
+            # No retry changes the answer: failed at once, a dead letter.
+            log.warning("refused %s: %s", item.id, refused.reason)
+            reason = f"refused: {refused.reason}"[:500]
+            await self._settle(item, self._work.fail_for_good(ctx, item, reason), "refused")
         except Exception as error:
             log.exception("handler failed on %s", item.id)
             failure = self._work.fail(ctx, item, f"{type(error).__name__}: {error}"[:500])

@@ -42,6 +42,14 @@ class WorkStorageMemoryImpl(MemoryStorageBase, WorkStorageInterface):
             self._items[item.id] = (org_id, item)
             return item
 
+    async def write_item_if_failed(self, org_id: UUID, item: WorkItem) -> WorkItem | None:
+        async with self._lock:
+            stored = self._get(self._items, org_id, item.id)
+            if stored is None or stored.status is not WorkStatus.FAILED:
+                return None
+            self._items[item.id] = (org_id, item)
+            return item
+
     async def claim_next(
         self, lane: str, kinds: Sequence[WorkKind], worker_id: str, lease: timedelta
     ) -> tuple[UUID, WorkItem] | None:

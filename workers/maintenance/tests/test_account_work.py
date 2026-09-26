@@ -2,7 +2,8 @@
 provider, the personal org's subscription canceled and its customer deleted,
 its Slack app removed, the org deleted and then purged whole by the sweep;
 the person's open tasks in a team org unassigned; and a provider that is
-down parking the work until it answers."""
+down, or refusing the process's key, parking the work until it answers;
+and a provider that refuses the call itself failing it at once."""
 
 from datetime import timedelta
 from pathlib import Path
@@ -16,6 +17,12 @@ from worker_support import request
 
 from tadas.infra.buckets import Buckets
 from tadas.infra.cache import CacheScope
+from tadas.integrations.exceptions import (
+    PaymentsRefused,
+    ProviderConflict,
+    ProviderRefused,
+    ProviderUnavailable,
+)
 from tadas.integrations.identity.twin import IdentityProviderTwinImpl
 from tadas.integrations.payments.twin import PaymentsTwinImpl
 from tadas.om.base import new_id, utcnow
@@ -24,7 +31,7 @@ from tadas.om.media.types.file import File, FilePurpose
 from tadas.om.opcontext import OpContext, Role
 from tadas.om.tasks.types.task import TaskStatus
 from tadas.om.tenancy.impl.manager import TenancyManagerImpl, TenancyOptions
-from tadas.om.work.types.handler import WorkParked
+from tadas.om.work.types.handler import WorkParked, WorkRefused
 from tadas.om.work.types.work_item import WorkItem, WorkKind
 from tadas.workers.maintenance.container import WorkerContainer
 from tadas.workers.maintenance.main import build_loop
@@ -191,3 +198,86 @@ async def test_a_provider_that_is_down_parks_the_work_until_it_answers(tmp_path:
     # A second run finds every step done.
     await handlers[item.kind].handle(ctx, item)
     assert len(identity_of(container).deleted) == 1
+
+
+async def claimed_deletion(
+    tmp_path: Path,
+) -> tuple[WorkerContainer, OpContext, OpContext, WorkItem]:
+    """Bob deleted his account; the worker holds its DELETE_ACCOUNT item."""
+    container, _ = build(tmp_path)
+    ann = await owner_of(container, "acme")
+    bob, home = await bob_signs_in(container, ann.org_id)
+    await container.managers.tenancy.delete_account(bob, "bob@example.test")
+    claimed = await container.managers.work.claim(
+        request(), "default", [WorkKind.DELETE_ACCOUNT], "test", LEASE
+    )
+    assert claimed is not None
+    ctx, item = claimed
+    return container, home, ctx, item
+
+
+@pytest.mark.parametrize(
+    ("error", "outcome"),
+    [
+        # What the WorkOS client raises for a 4xx on the request (400, 404
+        # past the one that means gone, 422), and for a 5xx or a 401/403 on
+        # its own key, which it answers as unavailable.
+        (ProviderRefused("deleting the user: bad id"), WorkRefused),
+        (ProviderConflict("deleting the user: in the way"), WorkRefused),
+        (ProviderUnavailable("deleting the user: WorkOS answered 503"), WorkParked),
+        (ProviderUnavailable("deleting the user: WorkOS refused the key (401)"), WorkParked),
+    ],
+)
+async def test_a_refusal_of_the_call_fails_and_one_that_may_pass_parks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    error: Exception,
+    outcome: type[Exception],
+) -> None:
+    container, home, ctx, item = await claimed_deletion(tmp_path)
+
+    async def answer(user_id: str) -> None:
+        raise error
+
+    monkeypatch.setattr(identity_of(container), "delete_user", answer)
+    with pytest.raises(outcome) as raised:
+        await build_loop(container)._handlers[item.kind].handle(ctx, item)
+    assert str(error) in str(raised.value)
+    # Either way nothing moved on: the org waits, for the provider or a person.
+    org = await container.storage.get_tenancy_storage().read_org(home.org_id)
+    assert org is not None and org.deleted_at is None
+
+
+@pytest.mark.parametrize(
+    ("error", "outcome"),
+    [
+        (PaymentsRefused("delete customer", "invalid_request_error"), WorkRefused),
+        (ProviderUnavailable("the runtime key may not delete customer"), WorkParked),
+    ],
+)
+async def test_the_processor_refusing_the_call_fails_it_and_its_key_parks_it(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    error: Exception,
+    outcome: type[Exception],
+) -> None:
+    container, _ = build(tmp_path)
+    ann = await owner_of(container, "acme")
+    bob, home = await bob_signs_in(container, ann.org_id)
+    payload = await checkout(container, home, Plan.PRO, 1)
+    assert await consumer_of(container).handle(await queued(container, payload)) == "applied"
+    await container.managers.tenancy.delete_account(bob, "bob@example.test")
+    claimed = await container.managers.work.claim(
+        request(), "default", [WorkKind.DELETE_ACCOUNT], "test", LEASE
+    )
+    assert claimed is not None
+    ctx, item = claimed
+
+    async def answer(customer_id: str) -> None:
+        raise error
+
+    monkeypatch.setattr(cast(PaymentsTwinImpl, container.payments), "delete_customer", answer)
+    with pytest.raises(outcome):
+        await build_loop(container)._handlers[item.kind].handle(ctx, item)
+    org = await container.storage.get_tenancy_storage().read_org(home.org_id)
+    assert org is not None and org.deleted_at is None

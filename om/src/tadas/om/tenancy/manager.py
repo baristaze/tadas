@@ -27,6 +27,7 @@ from tadas.om.tenancy.types.issued import (
     IssuedOperatorToken,
     IssuedSession,
     IssuedTicket,
+    OrgDeleted,
     OrgMembership,
     SignedOut,
     SignInStart,
@@ -508,6 +509,36 @@ class TenancyManagerInterface(ABC):
         retention, so the sweep purges every row of it at its next pass
         (`tenancy.rules.past_retention`). None, and nothing written, when it
         is deleted already; PersonalOrgFixed for any other org."""
+        ...
+
+    @abstractmethod
+    async def delete_org(self, ctx: OpContext, confirm_name: str) -> OrgDeleted:
+        """The caller's team org, deleted by its owner, from a session only
+        (NotAuthorized for an api key, which is a program's, and for any role
+        but owner). `confirm_name` is the org's name as the owner typed it
+        (ValidationFailed when it is not). A personal org is refused
+        (PersonalOrgFixed): it goes only with its person's account.
+
+        One commit closes the org (`TenancyStorageInterface.write_closed_org`): every
+        member's user and membership end, every session and api key in it is
+        revoked, each announced, so every socket closes, every pending
+        invitation is revoked, and the org lets go of its organization at the
+        identity provider. The same commit asks for the rest (`DELETE_ORG`):
+        the provider's organization, the subscription and the customer at
+        the processor, and the Slack app go, then the org is deleted as an
+        operator deletes one, and the sweep purges it after the retention.
+        The answer carries a session in the owner's personal org, which the
+        tab takes up, as a switch does."""
+        ...
+
+    @abstractmethod
+    async def delete_closed_org(self, ctx: OpContext) -> Org | None:
+        """Platform-internal, the last step of `DELETE_ORG`, on the service
+        role only (NotAuthorized otherwise): deletes the caller's team org as
+        an operator's deletion does, and announces it, so its sockets close.
+        The sweep purges it once the retention has passed. None, and nothing
+        written, when it is deleted already; PersonalOrgFixed for a personal
+        org."""
         ...
 
     @abstractmethod

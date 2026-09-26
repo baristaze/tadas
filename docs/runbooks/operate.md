@@ -156,6 +156,46 @@ terraform -chdir=deployment/terraform/environments/staging plan -lock=false -ref
 The account and the two names are staging's entry in
 `deployment/cloud/environments.json`.
 
+## A work item that failed for good
+
+A background job fails for good when its attempts run out, or at once
+when a provider refused the call itself (a `4xx` for the request, not
+its availability and not the process's own key, which park). It stays
+failed until a person sends it back. A `DELETE_ACCOUNT` item is the one
+that matters most: the deleted person's personal org stays until it
+runs.
+
+Find it in the worker's log. The line names the item, its kind, its
+org, and the reason:
+
+```bash
+now=$(date +%s); query=$(aws logs start-query --log-group-name /tadas/staging/maintenance \
+  --start-time "$((now - 86400))" --end-time "$now" \
+  --query-string 'fields @timestamp, @message | filter @message like /failed for good/ | sort @timestamp desc | limit 20' \
+  --query queryId --output text)
+sleep 2; aws logs get-query-results --query-id "$query" --query 'results[][].value' --output text
+# work item <item id> (DELETE_ACCOUNT) in org <org id> failed for good: refused: a provider refused the call: ...
+```
+
+The org's diary holds it too, as a `work.item.failed` event whose
+`target_id` is the item, which `ops-root-cause` reads on the operator
+plane (`GET /v1/admin/orgs/<org id>/events`).
+
+Fix the cause first: the reason says whose it is. Then a person with a
+`write` operator entry sends it back, in their own terminal:
+
+```bash
+uv run tadas-ops work requeue --env staging --org <org id> <item id>
+# requeued <item id> (DELETE_ACCOUNT) in org <org id>: queued, 0 of 3 attempts spent, available now
+```
+
+It signs you in with the second factor and mints a `write` token for
+that one call; the env file keeps its `read` token. The item runs again
+as a fresh one, with every attempt it had. A `work.item.requeued` event
+in the org's diary names you. An item that is not failed is refused
+(`work_not_failed`), so running it twice does nothing the second time.
+This is a write, so no agent runs it.
+
 ## The costs
 
 Each account has its own budget and anomaly monitor, declared by its

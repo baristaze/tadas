@@ -520,6 +520,23 @@
         "title": "DeleteAccountRequest",
         "type": "object"
       },
+      "DeleteOrgRequest": {
+        "additionalProperties": false,
+        "description": "The org's name as its owner typed it, which is how they say they mean\nit.",
+        "properties": {
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "DeleteOrgRequest",
+        "type": "object"
+      },
       "DeliveryReceivedView": {
         "description": "The delivery checked out and is queued; the processor stops retrying.",
         "properties": {
@@ -1796,6 +1813,69 @@
         "title": "OperatorView",
         "type": "object"
       },
+      "OperatorWorkItemView": {
+        "description": "One background job as an operator reads it: what it does and for\nwhich record, where it stands, and how many of its attempts are spent.\nThe payload and the claim stay the worker's.",
+        "properties": {
+          "attempts": {
+            "title": "Attempts",
+            "type": "integer"
+          },
+          "available_at": {
+            "format": "date-time",
+            "title": "Available At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/WorkKind"
+          },
+          "last_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error"
+          },
+          "max_attempts": {
+            "title": "Max Attempts",
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "#/components/schemas/WorkStatus"
+          },
+          "target_id": {
+            "format": "uuid",
+            "title": "Target Id",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "target_id",
+          "status",
+          "available_at",
+          "attempts",
+          "max_attempts",
+          "last_error",
+          "updated_at"
+        ],
+        "title": "OperatorWorkItemView",
+        "type": "object"
+      },
       "OrchestrationStatus": {
         "enum": [
           "running",
@@ -1805,6 +1885,31 @@
         ],
         "title": "OrchestrationStatus",
         "type": "string"
+      },
+      "OrgDeletedView": {
+        "description": "The org is gone for everyone in it: `deleted_at` is when. `session` is\nthe owner's new session in their personal org, which replaces the one\nthat asked, as a switch's does; null when none could be made, and the\nowner signs in again.",
+        "properties": {
+          "deleted_at": {
+            "format": "date-time",
+            "title": "Deleted At",
+            "type": "string"
+          },
+          "session": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IssuedSessionView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "deleted_at"
+        ],
+        "title": "OrgDeletedView",
+        "type": "object"
       },
       "OrgKind": {
         "description": "What an org is for. Every person has exactly one personal org, made\nwith them; every other org is a team org, made on purpose.",
@@ -3112,6 +3217,31 @@
         ],
         "title": "ValidationError",
         "type": "object"
+      },
+      "WorkKind": {
+        "enum": [
+          "NOOP",
+          "SYNC_SEATS",
+          "TASK_REMINDER",
+          "SLACK_POST",
+          "ORCHESTRATION",
+          "WAKE_PARKED",
+          "DELETE_ACCOUNT",
+          "UNASSIGN_TASKS",
+          "DELETE_ORG"
+        ],
+        "title": "WorkKind",
+        "type": "string"
+      },
+      "WorkStatus": {
+        "enum": [
+          "queued",
+          "claimed",
+          "done",
+          "failed"
+        ],
+        "title": "WorkStatus",
+        "type": "string"
       }
     }
   },
@@ -4545,6 +4675,108 @@
           }
         },
         "summary": "List Tasks",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/v1/admin/orgs/{org_id}/work/{item_id}/requeue": {
+      "post": {
+        "description": "Sends one failed work item back to the queue, available now, with its\nattempts reset; the org's diary names the operator who did. Refused\nwith `409 work_not_failed` for an item that is not failed, so a second\ncall finds the first one's work done and says so.",
+        "operationId": "requeue_work_v1_admin_orgs__org_id__work__item_id__requeue_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Org Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Item Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app-version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Version"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperatorWorkItemView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Requeue Work",
         "tags": [
           "admin"
         ]
@@ -8225,6 +8457,117 @@
           }
         },
         "summary": "Current Org",
+        "tags": [
+          "tenancy"
+        ]
+      }
+    },
+    "/v1/orgs/current/deletion": {
+      "post": {
+        "operationId": "delete_org_v1_orgs_current_deletion_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app-version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Version"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeleteOrgRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrgDeletedView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "not_authorized: an owner's session only"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "personal_org_fixed"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Org",
         "tags": [
           "tenancy"
         ]

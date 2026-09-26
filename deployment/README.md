@@ -11,7 +11,7 @@ the cloud from Terraform. Nothing is clicked into place in either.
 |-------|-------------------|--------------------------|
 | The API process | the `api` container, or a host process with hot reload | a container service behind a load balancer, as many replicas as the size names, rolled one task definition at a time |
 | The maintenance worker | the `maintenance` container, or a host process | a container service of its own, rolled one at a time because it holds leases |
-| The portal | nginx in a container, or Vite on the host | a private bucket behind a CDN, publishing the build staging made |
+| The portal | nginx in a container, or Vite on the host; each forwards `/v1` to the API, so the page calls it on its own origin | a private bucket behind a CDN, publishing the build staging made; the same CDN serves the API's `/v1` from its load balancer, so the page calls it on its own origin |
 | The company site | Vite on the host (`pnpm --filter @tadas/site dev`) | the same module as the portal: a private bucket behind a CDN at `tadas.fyi` (`staging.tadas.fyi` on staging), publishing the page for its environment from the one build staging made |
 | Postgres | one container, four schemas, one per database role | a managed instance with backups and storage that grows on its own |
 | Valkey (cache, topics) | one container | a managed cluster, encrypted in transit |

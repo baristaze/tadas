@@ -1,6 +1,7 @@
 """The client's ping interval, the server's protocol ping and its timeout,
-and the load balancer idle timeout are pinned in one shared file, so the
-clients, the server, and the infrastructure cannot drift apart."""
+the load balancer's idle timeout, and the edge's are pinned in one shared
+file, so the clients, the server, and the infrastructure cannot drift
+apart."""
 
 import asyncio
 import json
@@ -44,6 +45,18 @@ def test_the_server_ping_matches_the_shared_file_and_fits_the_idle_timeout() -> 
         SERVER_PING_INTERVAL_SECONDS + SERVER_PING_TIMEOUT_SECONDS
         < pin["load_balancer_idle_timeout_seconds"]
     )
+
+
+def test_the_load_balancer_is_the_tightest_idle_limit_on_the_way() -> None:
+    """The portal's socket passes CloudFront before the load balancer.
+    CloudFront closes a socket that has carried nothing from the origin for
+    its own idle limit, a fixed quota and not a setting; the server's
+    protocol ping is such a byte. The load balancer's timeout is the shorter
+    of the two, so every bound the tests above hold against it holds against
+    the edge too."""
+    pin = pinned()
+    assert pin["load_balancer_idle_timeout_seconds"] <= pin["edge_websocket_idle_timeout_seconds"]
+    assert SERVER_PING_INTERVAL_SECONDS < pin["edge_websocket_idle_timeout_seconds"]
 
 
 async def test_the_server_ping_reaches_uvicorn_and_the_selected_protocol_honors_it() -> None:
