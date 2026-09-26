@@ -881,6 +881,9 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
             row = (await session.execute(stmt)).scalar_one_or_none()
             return None if row is None else (row.org_id, to_model(row, Session))
 
+    async def create_session(self, org_id: UUID, session: Session) -> bool:
+        return await self._insert(Sessions, org_id, session)
+
     async def write_session(
         self, org_id: UUID, session: Session, outbox_rows: tuple[OutboxRow, ...] = ()
     ) -> None:
@@ -1143,8 +1146,8 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
             await session.commit()
         return purged
 
-    async def write_socket_ticket(self, org_id: UUID, ticket: SocketTicket) -> None:
-        await self._upsert(SocketTickets, org_id, ticket)
+    async def create_socket_ticket(self, org_id: UUID, ticket: SocketTicket) -> bool:
+        return await self._insert(SocketTickets, org_id, ticket)
 
     async def redeem_socket_ticket(
         self, ticket_hash: str, redeemed_at: datetime

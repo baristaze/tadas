@@ -701,6 +701,16 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
     async def read_session_by_id(self, session_id: UUID) -> tuple[UUID, Session] | None:
         return self._sessions.get(session_id)
 
+    async def create_session(self, org_id: UUID, session: Session) -> bool:
+        async with self._lock:
+            self._require_free(
+                self._every(self._sessions),
+                session,
+                lambda other: other.token_hash == session.token_hash,
+                "uq_sessions_token_hash",
+            )
+            return self._insert(self._sessions, org_id, session)
+
     async def write_session(
         self, org_id: UUID, session: Session, outbox_rows: tuple[OutboxRow, ...] = ()
     ) -> None:
@@ -961,14 +971,15 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
             del table[row_id]
         return len(gone)
 
-    async def write_socket_ticket(self, org_id: UUID, ticket: SocketTicket) -> None:
-        self._require_free(
-            self._every(self._socket_tickets),
-            ticket,
-            lambda other: other.ticket_hash == ticket.ticket_hash,
-            "uq_socket_tickets_ticket_hash",
-        )
-        self._put(self._socket_tickets, org_id, ticket)
+    async def create_socket_ticket(self, org_id: UUID, ticket: SocketTicket) -> bool:
+        async with self._lock:
+            self._require_free(
+                self._every(self._socket_tickets),
+                ticket,
+                lambda other: other.ticket_hash == ticket.ticket_hash,
+                "uq_socket_tickets_ticket_hash",
+            )
+            return self._insert(self._socket_tickets, org_id, ticket)
 
     async def redeem_socket_ticket(
         self, ticket_hash: str, redeemed_at: datetime

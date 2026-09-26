@@ -3,8 +3,9 @@
 The API checks each call's signature, answers Slack within its three seconds,
 and puts the call on the `slack` queue as a `SlackInbound`; this module is
 the other side of that queue. A call is a slash command (`/tadas ...`) or an
-event: an app mention, the App Home being opened, or the app being
-uninstalled. Each is handled here and then deleted from the queue; one whose
+event: an app mention, the App Home being opened, the app being uninstalled,
+or the bot joining a channel, which mends an installation broken by that
+channel. Each is handled here and then deleted from the queue; one whose
 handling failed is left there and comes back after its visibility timeout,
 and the hosted queue moves it to its dead-letter queue after a few returns.
 
@@ -18,7 +19,8 @@ queue's redeliveries safe. A task `/tadas add` creates takes an id derived
 from the call's key and the time it was received (ADR 0027), so the second
 create meets the row already there. The reply to a mention is recorded under
 the call's key, so it is posted once. The rest are answers to the person who
-typed, which say the same thing again, and reads, which change nothing."""
+typed, which say the same thing again, and reads, which change nothing. A
+join mends an installation once; a second finds it well."""
 
 import asyncio
 import contextlib
@@ -297,7 +299,7 @@ class SlackInboundHandler:
         if found is None:
             log.info("slack event %s for a workspace no org holds; ignored", kind)
             return
-        org_ctx, _ = found
+        org_ctx, installation = found
         if kind == "app_uninstalled" or (
             kind == "tokens_revoked" and (event.get("tokens") or {}).get("bot")
         ):
@@ -307,6 +309,8 @@ class SlackInboundHandler:
         elif kind == "app_home_opened" and event.get("tab", "home") == "home":
             token = await self._slack.bot_token(org_ctx)
             await self._client.publish_home(token, str(event.get("user", "")), home_view())
+        elif kind == "member_joined_channel" and event.get("user") == installation.bot_user_id:
+            await self._slack.bot_joined(org_ctx, str(event.get("channel", "")))
         else:
             log.info("slack event %s ignored", kind)
 

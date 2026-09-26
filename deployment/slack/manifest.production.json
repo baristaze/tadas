@@ -39,7 +39,9 @@
         "chat:write",
         "app_mentions:read",
         "users:read",
-        "users:read.email"
+        "users:read.email",
+        "channels:read",
+        "groups:read"
       ]
     }
   },
@@ -50,7 +52,8 @@
         "app_home_opened",
         "app_mention",
         "app_uninstalled",
-        "tokens_revoked"
+        "tokens_revoked",
+        "member_joined_channel"
       ]
     },
     "interactivity": {

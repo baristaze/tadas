@@ -13,7 +13,13 @@ from tadas.integrations.slack import BOT_SCOPES
 
 REPO = Path(__file__).resolve().parents[2]
 ENVIRONMENTS = json.loads((REPO / "deployment/cloud/environments.json").read_text())
-EVENTS = {"app_home_opened", "app_mention", "app_uninstalled", "tokens_revoked"}
+EVENTS = {
+    "app_home_opened",
+    "app_mention",
+    "app_uninstalled",
+    "tokens_revoked",
+    "member_joined_channel",
+}
 
 
 def manifest(environment: str) -> dict[str, Any]:

@@ -59,7 +59,10 @@ second lane is a second replica told its lane.
 - **What Slack sends.** Slack calls the API, which checks each call's
   signature, acknowledges it within Slack's three seconds, and queues
   it on `slack`. The worker reads that queue: `/tadas` commands,
-  mentions, the App Home opening, and the app's uninstall. The org is
+  mentions, the App Home opening, the app's uninstall, and the bot
+  joining a channel. When someone invites the bot back to the channel
+  Tadas posts to, an installation that channel broke is well again and
+  posts resume. The org is
   the one that installed the app in the call's workspace. The person
   is the org's member whose sign-in proved the email their Slack
   profile holds; someone Tadas cannot match is told how to join.
