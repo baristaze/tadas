@@ -2046,13 +2046,30 @@ class TenancyStorageContract:
     async def test_the_email_digest_finds_the_identity_the_rule_names(
         self, storage: TenancyStorageInterface
     ) -> None:
-        """The database computes the digest of the stored address and the rule
-        computes it of the given one; the two agree, non-ASCII included."""
+        """The database computes the digest of the stored address, folded, and
+        the rule computes it of the given one, folded; the two agree in any
+        spelling, non-ASCII included."""
         email = f"zo\u00eb-{uuid4().hex[:8]}@example.test"
         identity = make_identity(email)
         await storage.write_identity(identity)
         assert await storage.read_identity_by_email_digest(email_digest(email)) == identity
-        assert await storage.read_identity_by_email_digest(email_digest(email.upper())) is None
+        assert await storage.read_identity_by_email_digest(email_digest(email.upper())) == identity
+        other = email.replace("zo", "zoe", 1)
+        assert await storage.read_identity_by_email_digest(email_digest(other)) is None
+
+    async def test_one_identity_holds_an_address_in_any_case(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        """The unique index is on the folded digest, so a writer that keeps a
+        second spelling of an address, one that does not fold among them,
+        meets it, and nothing lands."""
+        email = f"dee-{uuid4().hex[:8]}@example.test"
+        identity = make_identity(email)
+        await storage.write_identity(identity)
+        second = make_identity(email.upper())
+        with pytest.raises(UniqueKeyTaken):
+            await storage.write_identity(second)
+        assert await storage.read_identity(second.id) is None
 
     async def test_an_identity_write_lands_its_audit_row_under_the_system_scope(
         self, storage: TenancyStorageInterface, outbox: OutboxStorageInterface

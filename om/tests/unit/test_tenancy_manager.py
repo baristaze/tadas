@@ -1506,6 +1506,53 @@ async def test_the_grant_job_puts_an_identity_on_the_allowlist_and_audits_it(
         await manager.grant_operator_token(request(), "ann@example.test")
 
 
+async def test_the_operator_allowlist_takes_an_address_in_any_case(
+    manager: TenancyManagerImpl,
+) -> None:
+    """The grant, the grant job's token, and the disable each find the
+    person the seeding made as `Root@Example.test` by another spelling, and
+    the platform's own identity is kept folded and found the same way."""
+    await manager.bootstrap(request(), "Root", "root", "Root@Example.test", "Root")
+    granted = await manager.grant_operator(request(), "root@EXAMPLE.test", OperatorRole.READ)
+    assert granted.email == "root@example.test" and granted.operator_role is OperatorRole.READ
+    issued = await manager.grant_operator_token(request(), "ROOT@example.test")
+    admin = await manager.admit_operator(await manager.authenticate_login(request(), issued.token))
+    assert admin.identity_id == granted.id
+    disabled = await manager.disable_operator(request(), "Root@Example.Test")
+    assert disabled.id == granted.id and disabled.operator_role is None
+    provisioner = await manager.grant_operator(
+        request(), "Provisioner@Platform.Tadas.Invalid", OperatorRole.WRITE
+    )
+    assert provisioner.email == "provisioner@platform.tadas.invalid"
+    again = await manager.grant_operator(
+        request(), "provisioner@platform.tadas.invalid", OperatorRole.WRITE
+    )
+    assert again.id == provisioner.id
+
+
+async def test_a_member_added_by_another_spelling_is_the_same_person(
+    manager: TenancyManagerImpl,
+) -> None:
+    """Adding by address finds the identity whatever the case, whether the
+    seeding or the person's own sign-in made it, and the user keeps the
+    identity's folded address."""
+    await manager.bootstrap(request(), "Acme", "acme", "ann@example.test", "Ann")
+    _, dee, created = await manager.add_member(
+        request(), "acme", "Dee@Example.test", "Dee", Role.MEMBER
+    )
+    assert created and dee.email == "dee@example.test"
+    _, again, created = await manager.add_member(
+        request(), "acme", "dee@EXAMPLE.test", "Dee", Role.MEMBER
+    )
+    assert not created and again.id == dee.id
+    signed_up = await manager.dev_sign_in(request(), "cid@example.test")
+    identity_id = signed_up.memberships[0].user.identity_id
+    _, cid, created = await manager.add_member(
+        request(), "acme", "CID@Example.test", "Cid", Role.MEMBER
+    )
+    assert created and cid.identity_id == identity_id and cid.email == "cid@example.test"
+
+
 async def test_an_operator_closes_an_org_at_once_and_the_queue_deletes_it(
     manager: TenancyManagerImpl, operator: TenancyOperatorManagerImpl, infra: InfraLocalImpl
 ) -> None:

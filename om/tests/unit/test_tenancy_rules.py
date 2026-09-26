@@ -12,6 +12,7 @@ from tadas.om.tenancy.rules import (
     check_time_zone,
     email_digest,
     email_domain,
+    fold_email,
     is_platform_email,
     matching_totp_step,
     otpauth_uri,
@@ -71,11 +72,21 @@ def test_the_otpauth_uri_carries_the_secret_the_account_and_the_issuer() -> None
     )
 
 
-def test_the_email_digest_is_the_sha_256_of_the_address_as_given() -> None:
+def test_an_address_folds_to_lower_case_all_of_it() -> None:
+    """The local part and the domain alike, by Unicode's full mapping, which
+    is what `lower(... COLLATE pg_unicode_fast)` gives in the database."""
+    assert fold_email("Ann.Lee@Example.TEST") == "ann.lee@example.test"
+    assert fold_email("ÜNAL@Örnek.test") == "ünal@örnek.test"
+    assert fold_email("İPEK@x.test") == "i\u0307pek@x.test"
+    assert fold_email("ann@example.test") == "ann@example.test"
+
+
+def test_the_email_digest_is_the_sha_256_of_the_folded_address() -> None:
     assert email_digest("ann@example.test") == (
         "eff90234b5c0d7bb3000e7e2faa01214ffecef55617da623def7482021cc124f"
     )
-    assert email_digest("Ann@example.test") != email_digest("ann@example.test")
+    assert email_digest("Ann@EXAMPLE.test") == email_digest("ann@example.test")
+    assert email_digest("ann@example.test") != email_digest("anne@example.test")
 
 
 @pytest.mark.parametrize(

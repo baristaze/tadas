@@ -299,3 +299,7 @@ async def test_a_slack_user_is_matched_to_a_member_by_address(world: World) -> N
     assert await tenancy.member_context(request(), owner.org_id, "nobody@acme.test") is None
     # A person of another org is nobody here.
     assert await tenancy.member_context(request(), owner.org_id, "owner@fabrikam.test") is None
+    # Added as `Dee@Acme.test`, spelled `DEE@acme.TEST` on the profile: one address.
+    dee = await world.member("acme", "Dee@Acme.test")
+    dee_found = await tenancy.member_context(request(), owner.org_id, "DEE@acme.TEST")
+    assert dee_found is not None and dee_found.user_id == dee.user_id
