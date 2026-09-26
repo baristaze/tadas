@@ -28,6 +28,16 @@ export function DeleteAccountCard({ vm }: { vm: DeleteAccountVm }) {
               onChange={vm.setTyped}
             />
             {vm.refusal ? <ErrorText>{vm.refusal}</ErrorText> : null}
+            {vm.strandedHere ? (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: tokens.space.md }} data-ways-out>
+                <a href="#members" className="tadas-link">
+                  Make someone else an owner
+                </a>
+                <a href="#delete-organization" className="tadas-link">
+                  Delete this organization
+                </a>
+              </div>
+            ) : null}
             <div style={{ display: "flex", flexWrap: "wrap", gap: tokens.space.sm }}>
               <Button type="submit" tone="danger" disabled={!vm.mayConfirm}>
                 {vm.deleting ? "Deleting…" : "Delete my account"}

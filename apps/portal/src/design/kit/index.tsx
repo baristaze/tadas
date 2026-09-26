@@ -85,9 +85,10 @@ export function Page({
   );
 }
 
-export function Card({ title, children }: { title?: string; children: ReactNode }) {
+/** `id` is where a link on the page lands. */
+export function Card({ title, id, children }: { title?: string; id?: string; children: ReactNode }) {
   return (
-    <section className="tadas-card">
+    <section className="tadas-card" id={id}>
       {title ? <h2 className="tadas-card-title">{title}</h2> : null}
       {children}
     </section>

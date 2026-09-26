@@ -22,6 +22,7 @@ vi.mock("./useSettingsVm", () => ({ useSettingsVm: () => vm }));
 vi.mock("./useInvitationsVm", () => ({ useInvitationsVm: () => ({ mayManage: false, sso: false, rows: [] }) }));
 vi.mock("./useDeleteAccountVm", () => ({ useDeleteAccountVm: () => ({}) }));
 vi.mock("./DeleteAccountCard", () => ({ DeleteAccountCard: () => null }));
+vi.mock("./useDeleteOrgVm", () => ({ useDeleteOrgVm: () => ({ shown: false }) }));
 vi.mock("./StorageCard", () => ({ StorageCard: () => null }));
 vi.mock("../../app/AppNav", () => ({ AppNav: () => null }));
 vi.mock("../billing/PaymentNotice", () => ({ PaymentNotice: () => null }));
