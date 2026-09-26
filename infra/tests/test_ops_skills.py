@@ -10,6 +10,7 @@ lines that stop a secret leaking stay written in each skill that could
 break them, and this test holds them there.
 """
 
+import re
 from pathlib import Path
 
 import pytest
@@ -22,6 +23,8 @@ REFERENCE = ".claude/skills/_shared/ops-preamble.md"
 
 # Every skill that can reach an environment, and so holds a credential.
 READERS = [
+    "audit-deploy-time",
+    "audit-retention",
     "ops-cloud-deployment-create",
     "ops-cloud-deployment-nuke",
     "ops-infra-as-code",
@@ -40,9 +43,14 @@ TOKEN_HOLDERS = [
     "stress-test-run",
 ]
 # The skills that read an environment under the investigate profile.
-INVESTIGATORS = [*TOKEN_HOLDERS, "ops-infra-as-code"]
+INVESTIGATORS = [*TOKEN_HOLDERS, "ops-infra-as-code", "audit-deploy-time", "audit-retention"]
 # The skills that run under an account's administrator.
 ADMINISTRATORS = ["ops-cloud-deployment-create", "ops-cloud-deployment-nuke"]
+# The audits: read-only analyses that write a report and propose tickets.
+AUDITS = ["audit-database-calls", "audit-deploy-time", "audit-query-indexes", "audit-retention"]
+# The audits that build a database of their own on the local stack.
+DATABASE_AUDITS = ["audit-database-calls", "audit-query-indexes", "audit-retention"]
+SKILL_DIR = re.compile(r"\$\{CLAUDE_SKILL_DIR\}/([^\s`'\")]+)")
 
 
 def _skill(name: str) -> str:
@@ -110,3 +118,56 @@ def test_the_refusal_of_a_wider_profile_stays_inline(name: str) -> None:
 @pytest.mark.parametrize("name", ADMINISTRATORS)
 def test_the_refusal_of_anything_but_the_administrator_stays_inline(name: str) -> None:
     assert "Refuse any profile but the environment's administrator" in _prose(name)
+
+
+def test_the_audits_are_the_skills_named_for_one() -> None:
+    assert sorted(p.parent.name for p in SKILLS.glob("audit-*/SKILL.md")) == AUDITS
+
+
+@pytest.mark.parametrize("name", [*AUDITS, "tickets-triage"])
+def test_an_audit_reports_and_never_changes_the_code(name: str) -> None:
+    text = _prose(name)
+    assert "Never modifies a tracked file, never commits, never opens a pull request" in text
+    assert f"~/Downloads/tadas_{name.removeprefix('audit-').replace('-', '_')}" in text or (
+        name == "tickets-triage" and "~/Downloads/tadas_ticket_triage_" in text
+    )
+    for section in ("## Input", "## Role and credential", "## Procedure", "## What it never does"):
+        assert section in _skill(name), f"{name} has no {section}"
+    assert "## Output" in _skill(name)
+
+
+@pytest.mark.parametrize("name", AUDITS)
+def test_an_audit_writes_to_no_shared_database_and_no_environment(name: str) -> None:
+    text = _prose(name)
+    assert "Never writes to" in text and "an environment" in text
+    assert "proposed ticket" in text.lower()
+
+
+@pytest.mark.parametrize("name", DATABASE_AUDITS)
+def test_a_database_audit_builds_its_own_database_and_drops_it(name: str) -> None:
+    text = _prose(name)
+    run = f"audit_{name.removeprefix('audit-').replace('-', '_')}_<yyyymmdd>"
+    assert f"uv run python ops/audit/auditdb.py create {run}" in text
+    assert f"uv run python ops/audit/auditdb.py drop {run}" in text
+    assert "it logs in only to the database it made on the local stack, and drops it" in text
+
+
+def test_triage_closes_nothing_without_the_persons_word() -> None:
+    text = _prose("tickets-triage")
+    assert "Never closes a ticket without `--apply` and the person's word in this session" in text
+
+
+@pytest.mark.parametrize("name", sorted(p.parent.name for p in SKILLS.glob("*/SKILL.md")))
+def test_every_reference_resolves_and_every_reference_file_is_named_by_a_step(name: str) -> None:
+    """A skill keeps its spine and names its detail: a file beside SKILL.md
+    is read by the step that names it, so one no step names is an orphan."""
+    folder = SKILLS / name
+    body = _skill(name)
+    for ref in SKILL_DIR.findall(body):
+        assert (folder / ref).resolve().exists(), f"{name}: {ref} does not exist"
+    procedure = body.split("## Procedure", 1)[-1].split("\n## ", 1)[0]
+    for extra in folder.rglob("*.md"):
+        if extra.name == "SKILL.md":
+            continue
+        relative = extra.relative_to(folder).as_posix()
+        assert f"${{CLAUDE_SKILL_DIR}}/{relative}" in procedure, f"{name}: no step names {relative}"
