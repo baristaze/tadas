@@ -128,9 +128,10 @@ class TenancyStorageInterface(ABC):
         ...
 
     @abstractmethod
-    async def count_users(self) -> int:
-        """Global: how many users are live across every tenant, the user count
-        the operator plane's size reads; a person in two orgs counts twice."""
+    async def count_orgs_and_users(self) -> tuple[int, int]:
+        """Global, one statement: the live orgs, as `count_orgs` counts them,
+        and the live users across every tenant, the two counts the operator
+        plane's size reads; a person in two orgs counts twice."""
         ...
 
     @abstractmethod

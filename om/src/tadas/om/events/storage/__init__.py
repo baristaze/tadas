@@ -11,6 +11,7 @@ from datetime import datetime
 from uuid import UUID
 
 from tadas.om.events.types.event import Event
+from tadas.om.events.types.page import StreamPage
 
 
 class EventStorageInterface(ABC):
@@ -32,6 +33,14 @@ class EventStorageInterface(ABC):
     @abstractmethod
     async def read_after(self, org_id: UUID, after_seq: int, limit: int) -> list[Event]:
         """The tenant's events with seq greater than `after_seq`, ascending."""
+        ...
+
+    @abstractmethod
+    async def read_page(self, org_id: UUID, after_seq: int, limit: int) -> StreamPage:
+        """One transaction: the events `read_after` answers, then the floor
+        and the head `read_floor` and `read_head` answer, read after the
+        events. A trim that committed before the events were read is in the
+        floor, so a page with a hole below it is always seen as one."""
         ...
 
     @abstractmethod
