@@ -20,6 +20,8 @@ from tadas.client.types import (
     EventView,
     FilePageView,
     FileView,
+    ImportPageView,
+    ImportView,
     InvitationPageView,
     InvitationView,
     IssuedDownloadView,
@@ -698,12 +700,16 @@ class ApiClient:
         return StorageUsageView.model_validate(await self.request("GET", "/v1/media/usage"))
 
     async def attach(self, task_id: UUID, name: str, content_type: str, data: bytes) -> FileView:
-        """The whole upload: start it, post the bytes straight to the store with
-        the form the API signed (or through the API when the store cannot take
-        a post), then confirm. The post to the store carries no credential of
-        ours: the form is the credential, and it holds the post to this file's
-        type and size."""
+        """The whole upload of a task's attachment: start it, then `upload`."""
         started = await self.start_attachment(task_id, name, content_type, len(data))
+        return await self.upload(started, data)
+
+    async def upload(self, started: FileView, data: bytes) -> FileView:
+        """The bytes of a started upload, then its confirm. They go straight to
+        the store with the form the API signed, or through the API when the
+        store cannot take a post. The post to the store carries no credential
+        of ours: the form is the credential, and it holds the post to this
+        file's type and size."""
         form = await self.issue_upload(started.id)
         if form.url is None:
             await self.put_content(started.id, data)
@@ -712,11 +718,58 @@ class ApiClient:
                 posted = await store.post(
                     form.url,
                     data={field.name: field.value for field in form.fields},
-                    files={"file": (name, data, content_type)},
+                    files={"file": (started.name, data, started.content_type)},
                 )
             if posted.is_error:
                 raise ApiError(posted.status_code, "upload_refused", posted.text[:200], None)
         return await self.confirm_file(started.id)
+
+    # Imports
+
+    async def start_import_file(
+        self, name: str, size_bytes: int, *, idempotency_key: str | None = None
+    ) -> FileView:
+        """A pending CSV file to import: the upload may begin. Always under an
+        idempotency key, so a retry lands one file."""
+        body = {"name": name, "content_type": "text/csv", "size_bytes": size_bytes}
+        started = await self.request(
+            "POST",
+            "/v1/tasks/imports/files",
+            json=body,
+            idempotency_key=idempotency_key or str(uuid4()),
+        )
+        return FileView.model_validate(started)
+
+    async def start_import(
+        self, file_id: UUID, *, idempotency_key: str | None = None
+    ) -> ImportView:
+        """Starts the import of a stored file; the worker reads it."""
+        started = await self.request(
+            "POST",
+            "/v1/tasks/imports",
+            json={"file_id": str(file_id)},
+            idempotency_key=idempotency_key or str(uuid4()),
+        )
+        return ImportView.model_validate(started)
+
+    async def import_tasks(self, name: str, data: bytes) -> ImportView:
+        """The whole start: the file's upload, then its import."""
+        started = await self.start_import_file(name, len(data))
+        stored = await self.upload(started, data)
+        return await self.start_import(stored.id)
+
+    async def task_import(self, import_id: UUID) -> ImportView:
+        return ImportView.model_validate(
+            await self.request("GET", f"/v1/tasks/imports/{import_id}")
+        )
+
+    async def task_imports(self, limit: int = 10) -> ImportPageView:
+        page = await self.request("GET", "/v1/tasks/imports", params={"limit": limit})
+        return ImportPageView.model_validate(page)
+
+    async def resume_import(self, import_id: UUID) -> ImportView:
+        resumed = await self.request("POST", f"/v1/tasks/imports/{import_id}/resume")
+        return ImportView.model_validate(resumed)
 
     async def download(self, file_id: UUID) -> bytes:
         """A stored file's bytes: by the signed link, or through the API when

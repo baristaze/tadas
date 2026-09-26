@@ -1,8 +1,8 @@
 # Tadas CLI
 
 The product from the terminal, in two modes. Command mode does one thing
-and returns: `add`, `ls`, `edit`, `done`, `reopen`, `rm`, `mv`, and a
-task's files, `attach`, `attachments`, `download`, `detach`. Realtime
+and returns: `add`, `ls`, `edit`, `done`, `reopen`, `rm`, `mv`, a task's
+files, `attach`, `attachments`, `download`, `detach`, and `import`. Realtime
 mode stays: `listen` prints every change the team makes as it happens, one
 line each, over the same channel the portal uses.
 
@@ -20,6 +20,7 @@ uv run tadas attach 8b949fce spec.pdf         # the type from the name, or --typ
 uv run tadas attachments 8b949fce             # id, size, type, name
 uv run tadas download 8b949fce 1c2d3e4f       # the file's short id; --out <path>
 uv run tadas detach 8b949fce 1c2d3e4f
+uv run tadas import tasks.csv                 # title, notes, due_on, assignee_email; follows it to the end
 uv run tadas listen                           # the team's tasks, reminders among them; --mine for yours
 ```
 
@@ -91,6 +92,17 @@ uv run tadas listen                           # the team's tasks, reminders amon
   at the wire or with a 5xx on every attempt is told on stderr and that
   change is skipped; the task's next change shows its state. Only a dead
   credential ends the listener.
+- `import <file.csv>` uploads the file as the portal does (the form
+  straight to the store, or the bytes through the API where the store
+  cannot take one), starts its import, and follows it on the same channel
+  `listen` uses: it reads the import once the channel is open and again on
+  every push about it, printing `created N of M, skipped K` as it moves.
+  It ends when the import does: exit 0 when it succeeded; exit 1 when it
+  parked on the plan's active tasks (the line says who lifts the bound,
+  and a plan that rises resumes the import by itself) or failed on a bound
+  of the file, with the reason. The columns are `title` (needed),
+  `notes`, `due_on` (`2026-10-01`), and `assignee_email` (a member), by
+  header name; the file is at most 1 MB and 5,000 rows.
 - `src/tadas/apps/cli/model.py` is pure and unit tested: how a change is
   told, which tasks are mine, how a short id resolves.
 - The short id is the tail of the task's id, because ids are time-ordered
