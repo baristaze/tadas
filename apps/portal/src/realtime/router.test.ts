@@ -14,13 +14,13 @@ function recording() {
   return { queryClient, seen };
 }
 
-function pushOf(kind: string) {
+function pushOf(kind: string, extra: Record<string, unknown> = {}) {
   const envelope = parseEnvelope(
     JSON.stringify({
       type: "event",
       sent_at: null,
       topic: "entity_changed",
-      payload: { kind, target_id: "x", seq: 3, actor_id: "u1" },
+      payload: { kind, target_id: "x", seq: 3, actor_id: "u1", ...extra },
     }),
   );
   expect(envelope).not.toBeNull();
@@ -153,6 +153,19 @@ describe("routeEnvelope", () => {
       expect(hinted).toEqual(["x"]);
       expect(seen).toEqual([]);
     }
+  });
+
+  it("hands the hints the version a task push names, and none when it names none or not a number", () => {
+    const hinted: [string, number | undefined][] = [];
+    const sink = { hint: (id: string, version?: number) => hinted.push([id, version]) };
+    routeEnvelope(recording().queryClient, pushOf("tasks.task.updated", { version: 4 }), sink);
+    routeEnvelope(recording().queryClient, pushOf("tasks.task.updated"), sink);
+    routeEnvelope(recording().queryClient, pushOf("tasks.task.updated", { version: "4" }), sink);
+    expect(hinted).toEqual([
+      ["x", 4],
+      ["x", undefined],
+      ["x", undefined],
+    ]);
   });
 
   it("refreshes an import's own record on its progress, and no task list", () => {

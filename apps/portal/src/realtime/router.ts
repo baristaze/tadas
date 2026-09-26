@@ -15,9 +15,10 @@ export interface RouteOutcome {
   hinted?: string[];
 }
 
-/** Where a live push about a task goes; see `taskHints.ts`. */
+/** Where a live push about a task goes, with the version its change wrote
+ * when the push names one; see `taskHints.ts`. */
 export interface TaskHintSink {
-  hint(id: string): unknown;
+  hint(id: string, version?: number): unknown;
 }
 
 /** The entity whose pushes are read one record at a time. */
@@ -49,8 +50,9 @@ export function routeEnvelope(queryClient: QueryClient, envelope: Envelope, task
   if (!isEntityChanged(envelope)) return { invalidated: [] };
   const entity = entityOf(envelope.payload.kind);
   if (tasks && entity === TASK_ENTITY) {
-    tasks.hint(envelope.payload.target_id);
-    return { invalidated: [], hinted: [envelope.payload.target_id] };
+    const { target_id: id, version } = envelope.payload;
+    tasks.hint(id, typeof version === "number" ? version : undefined);
+    return { invalidated: [], hinted: [id] };
   }
   const targets = [...targetsOf(entity)];
   for (const queryKey of targets) void queryClient.invalidateQueries({ queryKey });

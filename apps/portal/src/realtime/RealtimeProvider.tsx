@@ -8,7 +8,7 @@ import { api } from "../app/api";
 import { forgetSessionIfHeld } from "../app/forgetSession";
 import { Banner } from "../design/kit";
 import { EVENTS_PAGE, fetchEventsAfter } from "../queries/events";
-import { placeTask, refreshTaskLists, removeTask, taskStamp } from "../queries/taskCache";
+import { heldTask, placeTask, refreshTaskLists, removeTask, taskStamp } from "../queries/taskCache";
 import { fetchTask } from "../queries/tasks";
 import { useConnectionStore } from "../store/connection";
 import { notify } from "../store/notices";
@@ -28,6 +28,7 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
     if (!token) return;
     const hints = createTaskHints({
       readTask: fetchTask,
+      held: (id, version) => heldTask(queryClient, id, version),
       isGone: (cause) => cause instanceof ApiError && cause.status === 404,
       stamp: () => taskStamp(queryClient),
       place: (task, since) => placeTask(queryClient, task, { since }),
