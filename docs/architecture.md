@@ -905,7 +905,16 @@ alone, and neither key may touch what the other's work does not need
   an address or a CIDR block, never `*`, which the settings refuse at
   boot because a wildcard trusts every peer and so lets any caller pick
   its own address), so behind the load balancer the login limit still
-  counts per client and a peer outside it cannot pick its own address. The envelope carries the
+  counts per client and a peer outside it cannot pick its own address.
+  A request through the portal's CloudFront distribution is one hop
+  further in: CloudFront appends the viewer's address, the load balancer
+  appends CloudFront's, and the walk stops at CloudFront. The
+  distribution sends `TADAS_EDGE_SECRET` in `X-Tadas-Edge` on every
+  request, and beside it, and only beside it, `gateway/edge.py` takes
+  the address CloudFront appended as the client. CloudFront's address
+  ranges are never trusted: any customer's distribution appends from
+  them, and its owner can write the header before it. The header is
+  stripped from the scope whether it matches or not. The envelope carries the
   exception's code and status; for a status of 500 or more its message
   is `internal error` and the real one goes to the log under the
   request id. An unhandled exception is answered inside the
@@ -1002,7 +1011,9 @@ alone, and neither key may touch what the other's work does not need
   A peer that drops mid-stream ends the drainer with a disconnect; the
   teardown treats that as the normal end of a socket, not an error.
   Two pings keep a socket alive, one per direction, both pinned with the
-  load balancer's idle timeout in `deployment/realtime-timeouts.json`
+  load balancer's idle timeout (and CloudFront's, ten minutes, a fixed
+  quota the load balancer's sixty seconds sit well inside) in
+  `deployment/realtime-timeouts.json`
   (`realtime/timeouts.py`, held to the file by
   `test_realtime_timeouts.py`): the client's application ping every 25
   seconds from a timer of its own, whatever the inbound traffic, whose
@@ -1434,17 +1445,31 @@ alone, and neither key may touch what the other's work does not need
   names are written in `deployment/cloud/environments.json`, and the
   workflows pass them from the environment's variables. The
   portal reads `/config.json`, written per environment by Terraform, before
-  it renders, and calls the API cross-origin; locally it falls back to the
-  `VITE_` build variables. The distribution's response headers policy,
+  it renders; locally it falls back to the `VITE_` build variables.
+  The portal calls the API on its own origin. Its distribution serves
+  `/v1/*`, the realtime socket included, from the load balancer at
+  `api_domain_name`: the managed CachingDisabled policy, the managed
+  AllViewerExceptHostHeader origin request policy (so the bearer, the
+  socket's upgrade headers, and its ticket pass, and Host and TLS name the
+  API, which its certificate matches), every method, HTTPS only, no
+  compression. No request the page makes is cross-origin, so no browser
+  sends a preflight; the API keeps its CORS for other origins, and
+  `api_domain_name` keeps serving everything it served (the Stripe and
+  Slack deliveries, the command line, the operators). The origin's read
+  timeout is the load balancer's idle timeout and its keep-alive five
+  seconds less, both from `deployment/realtime-timeouts.json`. The
+  distribution's response headers policy,
   declared beside it in the `static_site` module, sends the security headers:
-  a `Content-Security-Policy` that names the page's own origin, the API
-  over HTTPS and over the websocket (both from `api_url`), the error
-  reporter's origin when a DSN is set, and nothing else, with no unsafe
-  directive because the build has no inline script or style; plus
-  `nosniff`, `DENY` framing, the referrer policy, and HSTS. An offline
-  `terraform test` in the module pins the header. The local nginx sends
-  no such header: the API and GlitchTip origins it would name are build
-  arguments the static config cannot read. The company site is the same
+  a `Content-Security-Policy` that names the page's own origin (the API
+  with it) and its socket as `wss://` on the same host, the object store,
+  the error reporter's origin when a DSN is set, and nothing else, with
+  no unsafe directive because the build has no inline script or style;
+  plus `nosniff`, `DENY` framing, the referrer policy, and HSTS. An
+  offline `terraform test` in the module pins the header and the API's
+  behavior. Locally the Vite dev server and the portal container's nginx
+  forward `/v1` to the API the same way. The local nginx sends no
+  security header: the GlitchTip origin it would name is a build argument
+  the static config cannot read. The company site is the same
   module called a second time, with no API and no config: its policy
   names its own origin alone, and a missing path gets its `404.html`.
 
