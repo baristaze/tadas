@@ -179,9 +179,10 @@ class TenancyOperatorManagerImpl(TenancyOperatorManagerInterface):
     async def size(self, admin: OperatorContext) -> PlatformSize:
         admin.require(OperatorPermission.READ)
         since = utcnow() - SIZE_WINDOW
+        tenants, users = await self._storage.count_orgs_and_users()
         return PlatformSize(
-            tenants=await self._storage.count_orgs(),
-            users=await self._storage.count_users(),
+            tenants=tenants,
+            users=users,
             tasks_last_24h=await self._tasks.count_created_since(since),
             events_last_24h=await self._events.count_since(since),
             since=since,

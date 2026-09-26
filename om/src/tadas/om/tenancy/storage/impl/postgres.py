@@ -194,10 +194,13 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
         async with self._session_for(stmt, org_id=EMPTY_UUID) as session:
             return (await session.execute(stmt)).scalar_one()
 
-    async def count_users(self) -> int:
-        stmt = select(func.count()).select_from(Users).where(Users.deleted_at.is_(None))
+    async def count_orgs_and_users(self) -> tuple[int, int]:
+        orgs = select(func.count()).select_from(Orgs).where(Orgs.deleted_at.is_(None))
+        users = select(func.count()).select_from(Users).where(Users.deleted_at.is_(None))
+        stmt = select(orgs.scalar_subquery(), users.scalar_subquery())
         async with self._session_for(stmt, org_id=EMPTY_UUID) as session:
-            return (await session.execute(stmt)).scalar_one()
+            found = (await session.execute(stmt)).one()
+            return found[0], found[1]
 
     async def read_orgs(self, limit: int, after_id: UUID | None = None) -> list[Org]:
         stmt = select(Orgs).order_by(Orgs.id).limit(limit)
