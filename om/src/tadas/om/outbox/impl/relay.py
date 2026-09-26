@@ -90,6 +90,10 @@ class OutboxRelayImpl(OutboxRelayInterface):
             log.info("outbox sweep relayed %d rows", relayed)
         return relayed
 
+    async def oldest_pending_age(self) -> timedelta:
+        oldest = await self._storage.oldest_pending_at()
+        return timedelta(0) if oldest is None else max(utcnow() - oldest, timedelta(0))
+
     async def purge_done(self, retention: timedelta, limit: int) -> int:
         purged = await self._storage.purge_done(utcnow() - retention, limit)
         if purged:

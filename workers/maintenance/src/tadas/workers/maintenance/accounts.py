@@ -35,32 +35,21 @@ retention. Every step, and every wait and failure, is the account's
 
 import logging
 from collections.abc import Awaitable, Callable
-from datetime import timedelta
 from typing import ClassVar
 
-from tadas.infra.exceptions import InfraException
-from tadas.integrations.exceptions import PaymentsRefused, ProviderRefused
 from tadas.integrations.identity import IdentityProviderInterface
 from tadas.om.billing import BillingManagerInterface
-from tadas.om.exceptions import PlatformException
 from tadas.om.opcontext import OpContext, Permission
 from tadas.om.slack import SlackManagerInterface
 from tadas.om.tasks import TasksManagerInterface
 from tadas.om.tasks.types.filter import OpenTaskCursor, TaskFilter
 from tadas.om.tasks.types.task import TaskScope
 from tadas.om.tenancy import TenancyManagerInterface
-from tadas.om.work.types.handler import WorkHandlerInterface, WorkParked, WorkRefused
+from tadas.om.work.types.handler import WorkHandlerInterface
 from tadas.om.work.types.work_item import DeleteAccountPayload, DeleteOrgPayload, WorkItem
+from tadas.workers.maintenance.providers import provider_calls
 
 log = logging.getLogger(__name__)
-
-PROVIDER_WAIT = timedelta(minutes=1)
-"""How long an item waits for a provider that did not answer before it asks
-again. No attempt is spent, so it asks until the provider answers."""
-
-UNAVAILABLE = 503
-"""The status of every "not right now": a provider out of reach, or with no
-credential in this process."""
 
 TASKS_PAGE = 100
 """Open tasks read a page at a time while their assignee is cleared."""
@@ -130,21 +119,10 @@ async def end_providers(
     provider's record of it, then the processor's subscription and customer,
     then the Slack app. A provider out of reach parks the item; one that
     refuses the request fails it for good."""
-    try:
+    async with provider_calls():
         if identity_step is not None:
             await identity_step()
         await billing.close_account(ctx)
-    except (InfraException, PlatformException) as error:
-        # Read by status, as every boundary reads an exception: 503 is
-        # "not right now", a provider unreachable, not configured here, or
-        # refusing the process's own key.
-        if error.http_status == UNAVAILABLE:
-            raise WorkParked(f"a provider is out of reach: {error}", PROVIDER_WAIT) from None
-        # The provider answered and refused the request itself: the same
-        # call gets the same answer, so it is not asked again.
-        if isinstance(error, ProviderRefused | PaymentsRefused):
-            raise WorkRefused(f"a provider refused the call: {error}") from None
-        raise
     # Slack's side is best effort, as every removal of the app is: a Slack
     # that cannot be reached leaves the app in the workspace, and the token
     # goes from Tadas either way.

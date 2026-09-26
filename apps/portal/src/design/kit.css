@@ -563,9 +563,8 @@ select.tadas-field {
 
 .tadas-menu-item {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  gap: 16px;
+  gap: 10px;
   width: 100%;
   font: inherit;
   text-align: left;
@@ -582,8 +581,44 @@ select.tadas-field {
   background: var(--tadas-surface-subtle);
 }
 
-/* A choice that changes many things at once. */
-.tadas-menu-item[data-tone="danger"] {
+/* An item's words, and a note at the far end when it has one. */
+.tadas-menu-label {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  flex: 1;
+  min-width: 0;
+}
+
+/* An item's icon: a fixed slot before the words, in the muted color of the
+   menu's secondary text, and in the text's color under the pointer or the
+   keyboard. An item without one, in a menu where others have one, keeps
+   the same space, so the words line up. */
+.tadas-menu-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  color: var(--tadas-muted);
+}
+
+.tadas-menu:has(.tadas-menu-icon) .tadas-menu-item:not(:has(> .tadas-menu-icon))::before {
+  content: "";
+  width: 16px;
+  flex-shrink: 0;
+}
+
+.tadas-menu-item:not([data-tone="danger"], :disabled):hover .tadas-menu-icon,
+.tadas-menu-item:not([data-tone="danger"]):focus-visible .tadas-menu-icon {
+  color: var(--tadas-text);
+}
+
+/* A choice that changes many things at once: its icon is red with it. */
+.tadas-menu-item[data-tone="danger"],
+.tadas-menu-item[data-tone="danger"] .tadas-menu-icon {
   color: var(--tadas-danger-text);
 }
 

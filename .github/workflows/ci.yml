@@ -72,10 +72,8 @@ jobs:
       - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
       - run: uv sync --all-packages
       - run: cp .env.example .env
-      # The data services and the dashboards. `up --wait` holds until every
-      # healthcheck passes, GlitchTip's included, and then reports the seed's
-      # clean exit (a one-shot service) as a failure, so the seed's own exit
-      # code and GlitchTip's health are read back instead of the wait's.
+      # The data services and the dashboards. `make devx-up` fails when a
+      # long-running service is not healthy or GlitchTip's seed fails.
       # The runner is Linux, so the Makefile puts the collector that scrapes
       # the host processes on the host's network; the round trip's counter
       # leg is the proof that it reaches the API on 127.0.0.1, at the free
@@ -84,10 +82,7 @@ jobs:
       # traffic step below then needs.
       - name: the compose stack with the devx profile
         run: |
-          make devx-up || true
-          test "$(docker inspect -f '{{.State.Health.Status}}' tadas-glitchtip-1)" = healthy
-          test "$(docker inspect -f '{{.State.ExitCode}}' tadas-glitchtip-seed-1)" = 0
-          docker logs tadas-glitchtip-seed-1 | tail -n 1
+          make devx-up
           test "$(docker inspect -f '{{.HostConfig.NetworkMode}}' tadas-otel-collector-1)" = host
       - run: make migrate seed
       # The round trip skips, naming what is missing, on a machine that has
@@ -166,3 +161,7 @@ jobs:
         run: terraform -chdir=deployment/terraform/modules/dashboard init -backend=false -input=false
       - if: matrix.root == 'environments/staging'
         run: terraform -chdir=deployment/terraform/modules/dashboard test
+      - if: matrix.root == 'environments/staging'
+        run: terraform -chdir=deployment/terraform/modules/alarms init -backend=false -input=false
+      - if: matrix.root == 'environments/staging'
+        run: terraform -chdir=deployment/terraform/modules/alarms test

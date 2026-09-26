@@ -92,6 +92,15 @@ named with `-dead` after it. Slack's calls in are in
    - running processes: the `up` targets again, one per process
    - the database's CPU and free storage: no local exporter; report
      them as not read
+   - work backlog: `max(tadas_work_oldest_ready_seconds)`, alarm above
+     600 (the item ready longest waited ten minutes: no worker claims)
+   - work dead letter: `max(tadas_work_failed_recently)`, alarm at 1 or
+     more (an item failed for good in the last fifteen minutes)
+   - outbox lag: `max(tadas_outbox_oldest_pending_seconds)`, alarm above
+     300 (the oldest row not yet relayed landed five minutes ago)
+
+   The last three are the worker's sweep reads, one per pass; a local
+   stack whose worker is not running has none, which is "not read".
    With `--alarm <name>`, start here and apply the first responder
    rule of step 11 before reading anything else.
 4. Request rate, error ratio, p95, by route. Cloud, one query per
@@ -142,10 +151,31 @@ named with `-dead` after it. Slack's calls in are in
    the org's (`<kind> <id> in org <org> failed: defect ...`), so step 7
    finds it. A running cleanup whose `_succeeded` never follows in a day
    is a step the queue keeps retrying: read the worker's `failed`
-   outcomes beside it. Queue depth, the oldest
-   age, and pool checkouts have no metric; the cloud reads the pool
-   from the database's connection count, and each queue and its dead
-   letter from SQS:
+   outcomes beside it. The work queue and the outbox are Postgres
+   tables, and each sweep pass reads three numbers of them across every
+   tenant: `tadas_work_oldest_ready_seconds` (how long the item ready
+   longest has waited), `tadas_work_failed_recently` (items failed in the
+   last fifteen minutes and still failed), and
+   `tadas_outbox_oldest_pending_seconds` (how long ago the oldest row not
+   yet relayed landed). Locally they are gauges on Prometheus. In the
+   cloud they are metrics of the same names in `Tadas` with no dimension,
+   which the alarms `tadas-<env>-work-backlog`, `-work-dead-letter`, and
+   `-outbox-lag` read, filtered from the worker's sweep line:
+
+   ```bash
+   aws cloudwatch get-metric-data --profile tadas-<env>-investigate \
+     --start-time <start> --end-time <end> \
+     --metric-data-queries '[{"Id":"ready","MetricStat":{"Metric":{"Namespace":"Tadas","MetricName":"tadas_work_oldest_ready_seconds"},"Period":60,"Stat":"Maximum"}},{"Id":"failed","MetricStat":{"Metric":{"Namespace":"Tadas","MetricName":"tadas_work_failed_recently"},"Period":60,"Stat":"Maximum"}},{"Id":"outbox","MetricStat":{"Metric":{"Namespace":"Tadas","MetricName":"tadas_outbox_oldest_pending_seconds"},"Period":60,"Stat":"Maximum"}}]'
+   ```
+
+   A backlog with the maintenance service at its desired count is a
+   worker that claims nothing: read its log for `claim failed`. An
+   outbox lag is a relay that keeps failing: its log names each attempt,
+   `outbox relay of <row id> (<kind>) failed on attempt <n>: <error>`.
+   A work item failed for good is step 7's line. The inbound queues'
+   depth and oldest age, and pool checkouts, have no metric of the
+   worker's; the cloud reads the pool from the database's connection
+   count, and each queue and its dead letter from SQS:
 
    ```bash
    for q in webhooks webhooks-dead slack slack-dead; do
@@ -237,7 +267,7 @@ named with `-dead` after it. Slack's calls in are in
    aws logs start-query --profile tadas-<env>-investigate \
      --log-group-names /tadas/<env>/api /tadas/<env>/maintenance \
      --start-time <start> --end-time <end> \
-     --query-string 'fields @timestamp, @log, @message | filter @message like /identity provider|WorkOS application|WorkOS credential check|payments=stripe|billing_unavailable|slack=|webhooks\/slack\/[a-z]+ (401|503)|v1\/slack\/installation 503|no Slack app is configured|slack token of org|slack channel of org|slack install failed/ | sort @timestamp desc | limit 50'
+     --query-string 'fields @timestamp, @log, @message | filter @message like /identity provider|WorkOS application|WorkOS credential check|payments=stripe|billing_unavailable|payments_key_refused|refused the runtime key|slack=|webhooks\/slack\/[a-z]+ (401|503)|v1\/slack\/installation 503|no Slack app is configured|slack token of org|slack channel of org|slack install failed/ | sort @timestamp desc | limit 50'
    ```
 
    What each line means, and the secret it points to:
@@ -260,7 +290,11 @@ named with `-dead` after it. Slack's calls in are in
      the runtime key could not read at start, and the log line `the
      stripe runtime key lacks <resource> (group <group>)` says where
      the dashboard's editor keeps it: the person adds it to the key,
-     which takes effect at once. A `503` on
+     which takes effect at once. `payments_key_refused` (503) on a
+     request, or `stripe refused the runtime key for <call>` in either
+     log group, is the same key refused on a call while the process
+     runs: revoked, or without that permission. Work that made the call
+     stays parked until the key is fixed. A `503` on
      `/webhooks/stripe` is `tadas/<env>/stripe_webhook_secret`; a
      `400` there is a signing secret that does not match the
      endpoint's, and the processor retries it.
@@ -373,7 +407,7 @@ named with `-dead` after it. Slack's calls in are in
 ## Signals
 
 - Requests: <rate>, error ratio <ratio>, p95 <ms> by route
-- Workers: <outcomes per kind>, queue depth <n>, oldest <age>
+- Workers: <outcomes per kind>, oldest ready item <age>, failed in the last fifteen minutes <n>, oldest pending outbox row <age>
 - Failed work items: <item id, kind, org id, reason; or none>
 - Orchestrations: imports <started, parked, succeeded, failed>, cleanups <opened, succeeded, failed>, defects <record and org ids, or none>
 - Queues: webhooks <n> (dead <n>), slack <n> (dead <n>); services api, maintenance <running>/<desired>

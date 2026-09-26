@@ -128,6 +128,18 @@ it("opens the account menu on a click, not on hover, with the email, the org, Se
   expect(document.activeElement).toBe(item("Settings"));
 });
 
+it("gives each account menu item its icon, and keeps the words as the items' names", async () => {
+  await act(async () => trigger().click());
+  const items = [...menu()!.querySelectorAll<HTMLElement>("[role^='menuitem']")];
+  expect(items.map((node) => node.getAttribute("role"))).toEqual(["menuitem", "menuitemradio", "menuitemradio", "menuitemradio", "menuitem"]);
+  expect(items.map((node) => node.textContent)).toEqual(["Settings", "System", "Light", "Dark", "Sign out"]);
+  const drawings = items.map((node) => node.querySelector(".tadas-menu-icon[aria-hidden='true'] svg[aria-hidden='true']")?.innerHTML);
+  expect(drawings.every(Boolean)).toBe(true);
+  expect(new Set(drawings).size).toBe(5);
+  // The gear in the menu is the gear in the bar.
+  expect(drawings[0]).toBe(q("a[aria-label='Settings'] svg")!.innerHTML);
+});
+
 it("moves by the arrows, closes on Escape, and gives the keyboard back to its button", async () => {
   trigger().focus();
   await key(trigger(), "ArrowDown");

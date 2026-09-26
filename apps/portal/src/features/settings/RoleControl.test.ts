@@ -55,6 +55,15 @@ it("offers the roles the caller may give, the current one checked, and asks for 
   expect(onChange).toHaveBeenCalledTimes(1);
 });
 
+it("marks each role with its own icon, hidden from assistive technology", async () => {
+  await draw(bob);
+  await act(async () => container.querySelector("button")!.click());
+  const items = [...container.querySelectorAll('[role="menuitemradio"]')];
+  const drawings = items.map((item) => item.querySelector('.tadas-menu-icon[aria-hidden="true"] svg')?.innerHTML);
+  expect(drawings.every(Boolean)).toBe(true);
+  expect(new Set(drawings).size).toBe(4);
+});
+
 it("opens from the keyboard and closes on Escape, giving the keyboard back", async () => {
   await draw(bob);
   const trigger = container.querySelector("button")!;

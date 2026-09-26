@@ -233,6 +233,15 @@ export function useLogout() {
   });
 }
 
+/** Ends a session this tab no longer holds, with that session's own token: a
+ * sign-in over a tab that was signed in ends the session it replaced. It
+ * sends no `return_to`, and its answer's provider logout is not followed. */
+export function useEndReplacedSession() {
+  return useMutation({
+    mutationFn: (token: string) => api.post<SignedOutView>("/v1/auth/logout", undefined, { token }),
+  });
+}
+
 /** Deletes the caller's whole account. The server answers once it is gone,
  * with where the browser goes to end the identity provider's session, as a
  * sign-out does. Sent once: a retry would meet a session that is gone. */

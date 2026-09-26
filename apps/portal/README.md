@@ -141,7 +141,13 @@ Zustand, one realtime channel.
   none says so. The exchange turns the choice into the one session the tab
   holds. One choice sends one exchange: while it is in flight the picker's
   buttons are disabled, and a click that still gets through is dropped
-  (`src/app/oneAtATime.ts`). The org chip in the chrome (`src/app/OrgChip.tsx`) shows the
+  (`src/app/oneAtATime.ts`). A sign-in over a tab that is still signed in
+  replaces the session the tab held (`src/app/takeUpSignIn.ts`): the new
+  one is taken up first, then the old one is ended at the server with its
+  own token, the logout a sign-out makes. That is best effort, and a
+  session the server could not end lapses when it expires. The logout's
+  answer may name the identity provider's logout; the tab does not go
+  there, since the person is signing in, not out. The org chip in the chrome (`src/app/OrgChip.tsx`) shows the
   current org and marks a personal one. Its name goes home, to the task
   list; its caret opens a menu: the other places to
   switch to, and a new team org (`/orgs/new`, `src/features/new_org/`: a
@@ -276,6 +282,16 @@ Zustand, one realtime channel.
   `data-theme` attribute on the root, set before the app renders. The
   typeface is Inter, bundled with the build (`@fontsource-variable/inter`),
   so the page loads no font from another origin.
+- Every item of a kit menu carries a 16-pixel icon before its words: the
+  gear, the theme's screen, sun, and moon, and the door of Sign out; a
+  person or two for an org, a plus for a new one; the list, the double
+  check, and the arrow back of a tasks section; a crown, a shield, a
+  person, and an eye for the roles. The icons are inline SVG in
+  `src/design/kit/icons.tsx`, Lucide's drawings under its ISC license
+  (four of them Feather's, under MIT; the gear is the bar's own). They take the muted text colour and are
+  hidden from a screen reader, which says the words alone. Each sits in a
+  slot of fixed width, so the words line up down a menu, and a radio
+  item's check stays at the far end.
 - The tab's icon is the product's mark, the company site's
   `favicon.svg`, in `public/` with two drawings of it:
   `favicon-32.png` for a browser that takes no SVG icon, and

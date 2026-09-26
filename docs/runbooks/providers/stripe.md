@@ -90,8 +90,8 @@ box at the top of the editor, **Search by resource or endpoint**.
 > [!WARNING]
 > **Checkout Sessions is a group of its own.** Setting Core or Billing
 > to Write does not include it. A runtime key without it makes every
-> checkout fail with a permission error, while the rest of billing
-> works.
+> checkout answer `503` `payments_key_refused`, while the rest of
+> billing works.
 
 ### The runtime key: `tadas-<env>-runtime`
 
@@ -437,12 +437,13 @@ later, so nothing is lost.
 | What you see | Why | Where to look |
 |--------------|-----|---------------|
 | A checkout or the portal answers `503` `billing_unavailable` | The runtime key is `off` or empty, or the task started before it was written | The API's start line in `/tadas/<env>/api`: `payments=stripe (not configured)` |
-| A checkout fails and the log says `stripe refused create checkout session` | The runtime key lacks **Checkout Sessions**, its own group in the editor | The start line says `the key lacks Checkout Sessions`. Set that group to Write on the key; it takes effect at once |
+| A checkout answers `503` `payments_key_refused`, and the log says `stripe refused the runtime key for create checkout session` | The runtime key lacks **Checkout Sessions**, its own group in the editor | The start line says `the key lacks Checkout Sessions`. Set that group to Write on the key; it takes effect at once |
 | The API or the worker does not start, and the deploy rolls back | A key of the wrong mode (a live key in staging, a test key in production), an organization key, or a secret key. The boot check refuses it | `/tadas/<env>/api` and `/tadas/<env>/maintenance`; the refusal names the setting and says why |
 | Stripe shows failed deliveries answered `400` | The signing secret does not match the endpoint's | Stripe: **Developers** → **Webhooks** → the endpoint → its deliveries. Roll the secret as above |
 | Failed deliveries answered `503` | `tadas/<env>/stripe_webhook_secret` is `off` | The same page. Run the bootstrap, then roll the API |
 | A plan does not change after a paid checkout | The worker could not apply the delivery | `/tadas/<env>/maintenance`, and the queue `tadas-<env>-webhooks-dead`, where a delivery lands after its retries |
-| A call fails with a permission error naming a resource | The key lacks that permission | Add it to the key the call runs under (the tables above). It takes effect at once |
+| A call answers `503` `payments_key_refused`, or a work item stays parked with `the payment processor refused the runtime key` | The runtime key lacks the permission the call needs, or it is revoked | The log line `stripe refused the runtime key for <call>`, and the key's **View request logs** in Stripe, which names the permission. Add it to the key (the tables above); it takes effect at once, and the parked item goes through on its next try |
+| A call answers `502` `payments_refused`, or a work item failed for good with `the payment processor refused` | Stripe refused the request itself: a price it does not know, a card it declined, a request it calls invalid. The same request gets the same answer | The log line `stripe refused <call>: <code>`. Fix what the code names, then send the item back (the operate runbook) |
 | The bootstrap stops with `set TADAS_STRIPE_BOOTSTRAP_KEY` | The shell holds no bootstrap key. It does not read the runtime key | Export the bootstrap key as in step 5 |
 
 Stripe retries a failed delivery on its own, with a growing delay: for

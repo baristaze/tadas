@@ -248,3 +248,32 @@ class OutboxStorageContract:
         assert await outbox.purge_done(utcnow() - timedelta(hours=1), 1000) == 0
         assert await outbox.purge_done(utcnow() + timedelta(seconds=1), 1000) >= 1
         assert pending_row.id in {r.id for r in await claim_all(outbox)}
+
+    async def test_the_oldest_pending_row_is_read_across_tenants(
+        self, tasks: TasksStorageInterface, outbox: OutboxStorageInterface
+    ) -> None:
+        """The relay gauge's read: the oldest row neither done nor failed, in
+        any tenant, a row waiting out its delay after a failed attempt
+        included; nothing once every row is settled."""
+        assert await outbox.oldest_pending_at() is None
+        org, other = new_id(), new_id()
+        rows: dict[str, OutboxRow] = {}
+        for name, owner, age in (
+            ("done", org, timedelta(hours=3)),
+            ("failed", org, timedelta(hours=2)),
+            ("retrying", other, timedelta(hours=1)),
+            ("fresh", org, timedelta(seconds=1)),
+        ):
+            task = make_task()
+            rows[name] = make_row(owner, task.id, age=age)
+            await tasks.create_task(owner, task, (rows[name],))
+        await outbox.mark_done(org, rows["done"].id)
+        await outbox.record_failure(org, rows["failed"].id, "for good", utcnow())
+        # One attempt spent and failed: the row waits for its next attempt.
+        await claim_all(outbox, backoff=timedelta(hours=1))
+        await outbox.record_failure(other, rows["retrying"].id, "bus down", None)
+        assert await outbox.oldest_pending_at() == rows["retrying"].created_at
+        await outbox.mark_done(other, rows["retrying"].id)
+        assert await outbox.oldest_pending_at() == rows["fresh"].created_at
+        await outbox.mark_done(org, rows["fresh"].id)
+        assert await outbox.oldest_pending_at() is None

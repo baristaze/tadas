@@ -122,6 +122,7 @@ reason = "a static page with no script and no state; the portal and every app th
 tenantless = [
     "EventStorageInterface.count_since",
     "OutboxStorageInterface.claim_pending",
+    "OutboxStorageInterface.oldest_pending_at",
     "OutboxStorageInterface.purge_done",
     "SlackStorageInterface.read_installation_by_team",
     "SlackStorageInterface.redeem_install_state",
@@ -150,6 +151,8 @@ tenantless = [
     "TenancyStorageInterface.write_time_zone",
     "TenancyStorageInterface.write_totp_secret",
     "WorkStorageInterface.claim_next",
+    "WorkStorageInterface.count_failed_since",
+    "WorkStorageInterface.oldest_ready_at",
     "WorkStorageInterface.purge_items",
     "WorkStorageInterface.requeue_stale",
 ]

@@ -742,3 +742,26 @@ async def test_a_transition_writes_the_stored_row_and_not_the_workers_copy(
     assert released.last_error == "returned: worker stopping"
     stored = await storage.get_work_storage().read_item(ctx.org_id, item.id)
     assert stored == released
+
+
+async def test_the_gauges_read_the_backlog_and_the_dead_letters_of_late(
+    managers: Managers, ctx: OpContext
+) -> None:
+    """The age of the item ready longest, zero when nothing waits, and the
+    items failed within a window, which an operator's requeue takes back out."""
+    assert await managers.work.oldest_ready_age() == timedelta(0)
+    assert await managers.work.failed_within(timedelta(minutes=15)) == 0
+    waiting = make_item(available_in=-timedelta(minutes=12))
+    await managers.work.enqueue(ctx, waiting.model_copy(update={"created_by": ctx.user_id}))
+    parked = make_item(available_in=timedelta(hours=1))
+    await managers.work.enqueue(ctx, parked.model_copy(update={"created_by": ctx.user_id}))
+    age = await managers.work.oldest_ready_age()
+    assert timedelta(minutes=12) <= age < timedelta(minutes=13)
+    claimed = await managers.work.claim(request(), "default", [WorkKind.NOOP], "w1", LEASE)
+    assert claimed is not None
+    assert await managers.work.oldest_ready_age() == timedelta(0)
+    failed = await managers.work.fail_for_good(claimed[0], claimed[1], "refused: no")
+    assert await managers.work.failed_within(timedelta(minutes=15)) == 1
+    assert await managers.work.failed_within(timedelta(0)) == 0
+    await managers.work_operator.requeue(operator(), ctx.org_id, failed.id)
+    assert await managers.work.failed_within(timedelta(minutes=15)) == 0

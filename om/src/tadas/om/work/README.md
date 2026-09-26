@@ -63,6 +63,10 @@ seven kinds of thing [Tadas is made of](../../../../README.md).
   start of each sweep, so a crashed worker's item waits one sweep at
   most. Done and failed items are erased after the retention, thirty
   days by default, every org's in one step.
+- **Watched.** Each sweep reads how long the item ready longest has
+  waited and how many items failed in the last fifteen minutes, across
+  every org, and an alarm fires on a wait past ten minutes and on any
+  failure. An item parked until later is not waiting yet.
 
 ## The rules
 
