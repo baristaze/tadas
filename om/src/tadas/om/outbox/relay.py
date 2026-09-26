@@ -2,8 +2,8 @@
 row behind every push, the work item a write starts) is never a second
 statement a manager remembers to make. The manager writes the core row and
 the `OutboxRow`s that announce it in one named atomic storage method, then
-relays each at once; the maintenance sweep
-claims whatever a crash left behind, one attempt at a time with a growing
+relays each at once (in the API, once the request's answer is sent); the
+maintenance sweep claims whatever a crash left behind, one attempt at a time with a growing
 delay, fails a row whose attempts are spent (a dead letter), and purges what
 is settled. The relay is idempotent on the row's id, so relaying twice is
 harmless."""
@@ -38,6 +38,43 @@ class OutboxRelayInterface(ABC):
         marked done in one statement, once all of them are delivered. Returns
         False, and never raises, when a step failed: the rows are durable and
         the sweep relays them."""
+        ...
+
+    @abstractmethod
+    def hold(self, request_id: UUID) -> None:
+        """Platform-internal, for the API's edge, which holds each request
+        before it runs: until `release`, a row that names this request is
+        held and not relayed, and `relay` and `relay_all` return True for it.
+        The row names its request (`OutboxRow.request_id`), so the hold is
+        found by that field, never by ambient state. A worker holds nothing
+        and relays at once. Two holds of one id (a caller that sent the same
+        request id twice) share the rows: each release relays what is held
+        when it runs, and the hold ends with the last."""
+        ...
+
+    @abstractmethod
+    def held(self, request_id: UUID) -> int:
+        """Platform-internal, for the API's edge: how many rows the request's
+        hold keeps now; zero with no hold."""
+        ...
+
+    @abstractmethod
+    async def release(self, request_id: UUID) -> int:
+        """Platform-internal, for the API's edge: ends a hold and relays the
+        rows it kept, each org's rows in one `relay_all`, in the order they
+        were handed over. The edge calls it once the answer is sent, so the
+        caller never waits for the relay.
+        Never raises for a failed relay: it is logged and counted, and the
+        sweep relays the rows. A cancellation logs how many rows it leaves to
+        the sweep. Returns how many rows it relayed or tried to."""
+        ...
+
+    @abstractmethod
+    def abandon(self, request_id: UUID) -> int:
+        """Platform-internal, for the API's edge: ends a hold without its
+        relay, as a process that is stopping does. The rows are durable, and
+        the sweep relays them past its grace. Logs and returns how many rows
+        it leaves."""
         ...
 
     @abstractmethod

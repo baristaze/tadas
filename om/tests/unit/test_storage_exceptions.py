@@ -121,6 +121,9 @@ MANAGER_EXCEPTIONS: frozenset[tuple[str, str]] = frozenset(
         ("OutboxRelayInterface", "relay_pending"),
         ("OutboxRelayInterface", "purge_done"),
         ("OutboxRelayInterface", "oldest_pending_age"),
+        # And the release of the hold the API's edge keeps around a request,
+        # by the request id the rows name, before any stage is established.
+        ("OutboxRelayInterface", "release"),
         # And the enqueue the relay makes: it runs on the relay's side of the
         # handoff, under the tenant the row names, and stamps the actor from it.
         ("WorkManagerInterface", "enqueue_relayed"),
