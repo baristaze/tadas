@@ -36,11 +36,20 @@ ORDER BY available_at, id LIMIT 1 FOR UPDATE SKIP LOCKED;
 - `-- user:` sets `app.user_id` for a table whose policy reads it.
 - `-- params:` measures the generic plan, the one asyncpg's prepared
   statement settles on after five runs: write `$1`, `$2` where the driver
-  binds a value, and give the values in order as SQL literals.
+  binds a value, and give the values in order as SQL literals or
+  expressions (`now() - interval '30 days'`).
+- `-- user:` sets `app.user_id`; only a table whose policy reads it
+  needs one (`\d <table>` in the inventory's database shows the policy).
 - A statement ends with `;` at the end of a line.
 
 Write the statement the storage impl sends: the same `WHERE`, `ORDER BY`,
-`LIMIT`, and locking clause. When the ORM makes that hard to read, run
+`LIMIT`, and locking clause. A purge's batch is `delete_batch` in
+`om/src/tadas/om/storage/impl/pg_base.py` (a `MATERIALIZED` CTE that picks
+and locks the batch, then the `DELETE`); its batch size and every
+retention window are settings in
+`workers/maintenance/src/tadas/workers/maintenance/settings.py`, and a
+claim's lanes, kinds, and lease are in that folder's `loop.py` and
+`main.py`. When the ORM makes that hard to read, run
 the flow through the counter (`uv run python ops/audit/dbcalls.py run
 <db> --only <flow> --out <file>`) and read the statement from the
 `detail` lines of its row.
@@ -54,11 +63,22 @@ prints what one `SELECT` returns:
 ```bash
 # the heavy org's busiest assignee
 uv run python ops/audit/explain.py rows <db> "SELECT assignee_id, count(*) FROM core.tasks WHERE org_id = '01900000-0000-7000-8000-00000000b16b' AND assignee_id IS NOT NULL GROUP BY 1 ORDER BY 2 DESC LIMIT 1"
-# a member of the heavy org with no task at all
+# a member of the heavy org with no task at all (the seed keeps its last member idle)
 uv run python ops/audit/explain.py rows <db> "SELECT u.id FROM core.users u WHERE u.org_id = '01900000-0000-7000-8000-00000000b16b' AND u.deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM core.tasks t WHERE t.org_id = u.org_id AND (t.assignee_id = u.id OR t.created_by = u.id)) LIMIT 1"
 # a small tenant
 uv run python ops/audit/explain.py rows <db> "SELECT id FROM core.orgs WHERE kind = 'personal' LIMIT 1"
 ```
+
+## When an index cannot help
+
+Row-level security runs the policy before any filter whose function is
+not leakproof, so such a filter stays out of the index condition and is
+applied row by row after it, whatever index exists. A `numeric` or row
+comparison (`(rank, id) > (...)`) is one: a cursor on it cannot seek. The
+plan shows it as a `Filter` beside `Rows Removed by Filter`; `SELECT
+proname, proleakproof FROM pg_proc WHERE proname = '<function>'` (through
+`explain.py rows`) says which. The finding is the statement's shape, not
+a missing index.
 
 ## The cases
 

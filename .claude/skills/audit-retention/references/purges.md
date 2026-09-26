@@ -24,20 +24,38 @@ DELETE FROM core.outbox_rows WHERE id IN (
 - `-- scope:` is the org the purge runs for, or `system` for a purge
   across tenants. The seed's heavy org is
   `01900000-0000-7000-8000-00000000b16b`; a personal org is any other
-  `org_id` of `core.orgs` (read one with a statement of its own under
-  `-- scope: system`, e.g. `SELECT id FROM core.orgs WHERE kind =
-  'personal' LIMIT 1;`).
+  (`uv run python ops/audit/explain.py rows <db> "SELECT id FROM
+  core.orgs WHERE kind = 'personal' LIMIT 1"`).
 - Write the statement the storage impl sends, not a simpler one: the
   same `WHERE`, the same `LIMIT`, the same `ORDER BY`. `delete_batch` in
   `om/src/tadas/om/storage/impl/pg_base.py` is the shape of a batched
   purge: a `MATERIALIZED` CTE that picks and locks the batch, then a
   `DELETE ... WHERE id IN (SELECT id FROM batch)`.
-- When the SQL is hard to read off the ORM, run the purge through the
-  counter and read the statement it sent:
-  `uv run python ops/audit/dbcalls.py run <db> --only sweep --out <file>`,
-  then the `detail` lines of the sweep rows in that file.
+- The exact SQL is the storage's own statement, compiled. Write a
+  scratch script in the evidence folder (never in the repository) that
+  builds the statement the storage method builds and prints it, and run
+  it with `uv run python <script>`:
+
+  ```python
+  from sqlalchemy.dialects import postgresql
+
+  statement = ...  # e.g. delete_batch(TaskRow, TaskRow.org_id == org, ..., limit=1000)
+  print(statement.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}))
+  ```
+
+- A statement that binds ids read earlier in the purge (the tasks
+  `read_deleted` returns, the files `read_purgeable` returns) names real
+  ids of the seed: read them with
+  `uv run python ops/audit/explain.py rows <db> "<the read's SELECT>"`.
+- A per-tenant purge runs for an org past its retention, which the seed
+  does not make; measure it under the heavy org's scope, whose rows are
+  the most, and say so.
+- Literals are enough for a purge: it runs once a pass, and its generic
+  plan (`-- params:`) matters only for a statement that runs on every
+  request.
 - The cut-off is `now() - interval '<retention>'`, with the retention
-  from `workers/maintenance/src/tadas/workers/maintenance/settings.py`.
+  from `workers/maintenance/src/tadas/workers/maintenance/settings.py`,
+  or the manager's options default when no setting names it.
 - A statement ends with `;` at the end of a line.
 
 A plan answers three questions for the report: which index it used (or

@@ -1,7 +1,7 @@
 ---
 name: audit-retention
 description: "Audit which stores grow without bound and what trims them: every table of every role, with what writes it, when a row is stale, the purge that deletes it, its retention, and whether that purge is batched and indexed; then the stores outside the database (log groups, buckets, queues, the cache). Measures the purges on a database of its own, reads staging's retention settings read-only, and writes a report with verdicts and proposed tickets. Never changes anything."
-allowed-tools: Read, Grep, Glob, Write, Bash(uv run:*), Bash(git:*), Bash(aws:*)
+allowed-tools: Read, Grep, Glob, Write, Bash(uv run:*), Bash(git:*), Bash(aws:*), Bash(mkdir:*)
 ---
 
 # audit-retention
@@ -16,49 +16,68 @@ profiles, the account check, and the env file are there.
 
 ## Input
 
-`[--env local|staging] [--scale <n>] [--ref <git ref>]`
+`[--env local|staging|production] [--scale <n>]`
 
 `--env` is where the stores outside the database are read: `staging` by
 default, `local` to read none and say so. `--scale` is the seed's, `1`
-by default (5,000 people, a team org of 100,000 tasks, a million
-events); `0.01` is a quick run with the same shape. `--ref` is the code
-audited, `origin/main` by default.
+by default (5,000 people, a team org of 200 members and 100,000 tasks, a
+million events); `0.01` is a quick run with the same shape, whose plans
+prove the wiring: a sequential scan on a small table is the planner's
+choice, and a quick run's plan findings say "verify at scale 1". The
+audit reads and runs the checkout, tools and code alike; to audit
+another commit, run it from a checkout of that commit that has
+`ops/audit/`. Every command runs from the repository root.
 
 ## Role and credential
 
 Investigator, read-only. The database half runs on the local stack
 (`make infra-up`, with `make migrate` run once), in a database the run
-makes, seeds, and drops; it holds no cloud credential. The staging half
-runs under `tadas-staging-investigate`, checked with `sts
-get-caller-identity` before any other `aws` command, as the preamble
-states. Refuse any profile wider than the investigate role. Every `aws`
-command carries `--profile tadas-staging-investigate`. The skill reads no
-env file and no token: it calls no route.
+makes, seeds, and drops; it holds no cloud credential. The cloud half
+runs under `tadas-<env>-investigate` (`tadas-staging-investigate`,
+`tadas-production-investigate`), checked with `sts get-caller-identity`
+before any other `aws` command, as the preamble states. Refuse any
+profile wider than the investigate role. Every `aws` command carries
+`--profile tadas-<env>-investigate` and `--region` with the value of
+`.region` in `deployment/cloud/environments.json`, written out in full on
+each command: a shell's own region answers from another region, and an
+empty answer there looks like nothing deployed. The skill uses the `aws`
+command line, not another AWS tool of the session, so the profile check
+holds. It reads no env file and no token: it calls no route.
 
 ## Procedure
 
-1. Name the run: `audit_retention_<yyyymmdd>`, the date of today. Make
-   the evidence folder `~/Downloads/tadas_retention_<yyyy-mm-dd>/`. Check
-   out nothing: read `--ref` with `git show <ref>:<path>` when it is not
-   the checkout's own commit, and say which commit the report read.
-2. List every table. The migrations are the truth
-   (`om/migrations/sql/<role>/*.up.sql`, newest last); the table classes
-   are `om/src/tadas/om/*/storage/tables/*.py`. A table a later migration
-   drops is not live. For each live table find: what writes it (the
-   storage impl's inserts, `om/src/tadas/om/*/storage/impl/postgres.py`),
-   what it grows with, and when a row is stale.
+1. Name the run: `audit_retention_<yyyymmdd>`, today's date in UTC. When
+   `uv run python ops/audit/auditdb.py list` shows that name taken,
+   another run holds it: add a suffix (`_2`), and never drop a database
+   this run did not make. Make the evidence folder
+   `~/Downloads/tadas_retention_<yyyy-mm-dd>/` (`mkdir -p`). Say which
+   commit the report read (`git rev-parse HEAD`).
+2. List every live table. `explain.py inventory` on the run's database
+   (step 4) is the live list; the migrations say why each exists
+   (`om/migrations/sql/<role>/*.up.sql`, newest last, a role with no
+   folder has no tables), and the table classes are
+   `om/src/tadas/om/*/storage/tables/*.py`. For each table: what writes
+   it (the namespace and the storage method, from
+   `om/src/tadas/om/<namespace>/storage/impl/postgres.py`), what it grows
+   with, and when a row is stale.
 3. Find the purge of each table. The sweep is
    `workers/maintenance/src/tadas/workers/maintenance/loop.py`
-   (`_sweep_once`); the per-tenant purges and the purges across tenants
-   are the two maps in `workers/maintenance/src/tadas/workers/maintenance/main.py`;
-   each calls a manager's `purge_*`, which calls its storage's delete.
-   The retention of each is a setting in
-   `workers/maintenance/src/tadas/workers/maintenance/settings.py`
-   (`TADAS_*_RETENTION_*`), passed into the manager's options in
-   `container.py`. For each purge note: its statement, whether it deletes
-   a batch (`delete_batch`, `LIMIT`) or everything at once, and which
-   index serves its `WHERE`. A table no purge reaches is a gap unless it
-   is kept on purpose (the org row, the record); say which.
+   (`_sweep_once`, which also purges the outbox and the work items
+   itself); `build_loop` in that folder's `main.py` wires the rest: the
+   per-tenant `purges`, the `across` and `across_batches` purges across
+   tenants, and the `chores`. Each calls a manager
+   (`om/src/tadas/om/<namespace>/impl/manager.py`; the outbox's is
+   `outbox/impl/relay.py`), which calls its storage's delete. A
+   retention is a field of `settings.py` in that folder (read as
+   `TADAS_<FIELD>`), passed into the manager's options in `container.py`,
+   or an options default in the manager when no setting names it; say
+   which. For each purge note its statement, whether it deletes a batch
+   (`delete_batch`, `LIMIT`) or everything at once, and which index serves
+   its `WHERE`. A table no purge reaches is a gap, unless the product keeps
+   its rows as the record (the org row), as one row per tenant (the
+   billing account, the event cursor), or as a person's until they are
+   erased (the identity), or it is live data (a living org's tasks);
+   say which.
 4. Measure the purges. Make and seed the run's database:
 
    ```bash
@@ -69,8 +88,9 @@ env file and no token: it calls no route.
 
    Write each purge's statement into
    `~/Downloads/tadas_retention_<yyyy-mm-dd>/purges.sql`, in the file
-   format `${CLAUDE_SKILL_DIR}/purges.md` gives (read it before writing
-   the file), with the cut-offs the settings give, and run:
+   format `${CLAUDE_SKILL_DIR}/references/purges.md` gives (read it before writing
+   the file: it says how to get the exact SQL and the ids a statement
+   binds), and run:
 
    ```bash
    uv run python ops/audit/explain.py plans audit_retention_<yyyymmdd> ~/Downloads/tadas_retention_<yyyy-mm-dd>/purges.sql
@@ -78,27 +98,35 @@ env file and no token: it calls no route.
    ```
 
    A plan with a `Seq Scan` on a large table, or rows read far beyond the
-   rows deleted, is a finding with its numbers. Each plan runs in a
-   transaction that is rolled back, so nothing is deleted.
+   rows deleted, is a finding with its numbers. A table the seed leaves
+   empty is "not measured", never "fine". Each plan runs in a transaction
+   that is rolled back, so nothing is deleted.
 5. The stores outside the database. The Terraform modules under
    `deployment/terraform/modules/` state each one's retention: log groups
-   (`log_retention_days`), buckets' lifecycle rules, queues'
-   `message_retention_seconds`, and the cache's TTLs
-   (`infra/src/tadas/infra/cache/`). With `--env staging`, check what is
-   live, read-only:
+   (`log_retention_days`), buckets' lifecycle rules, and queues'
+   `message_retention_seconds`; every cache write carries a TTL
+   (`infra/src/tadas/infra/cache/valkey.py`). With a cloud `--env`, check
+   what is live, read-only (each command with the profile and the region
+   of the Role section):
 
    ```bash
-   aws logs describe-log-groups --log-group-name-prefix /tadas/staging --profile tadas-staging-investigate
-   aws logs describe-log-groups --log-group-name-prefix /aws/ecs --profile tadas-staging-investigate
-   aws sqs list-queues --queue-name-prefix tadas-staging --profile tadas-staging-investigate
-   aws sqs get-queue-attributes --queue-url <url> --attribute-names MessageRetentionPeriod --profile tadas-staging-investigate
-   aws s3api list-buckets --profile tadas-staging-investigate
-   aws s3api get-bucket-lifecycle-configuration --bucket <name> --profile tadas-staging-investigate
+   aws logs describe-log-groups --profile tadas-<env>-investigate --region <region>
+   aws sqs list-queues --queue-name-prefix tadas-<env> --profile tadas-<env>-investigate --region <region>
+   aws sqs get-queue-attributes --queue-url <url> --attribute-names MessageRetentionPeriod --profile tadas-<env>-investigate --region <region>
+   aws s3api list-buckets --profile tadas-<env>-investigate --region <region>
+   aws s3api get-bucket-lifecycle-configuration --bucket <name> --profile tadas-<env>-investigate --region <region>
+   aws rds describe-db-instances --profile tadas-<env>-investigate --region <region>
    ```
 
-   A log group with no `retentionInDays` is a finding. The database's
-   size in staging is `FreeStorageSpace` in `AWS/RDS`
-   (`aws cloudwatch get-metric-statistics`), since no role logs in to it.
+   The buckets are the environment's and the account's own (artifacts,
+   audit, state); read all of them. A log group with no
+   `retentionInDays`, or a bucket that keeps current objects for ever,
+   is a finding. The database's size is its `AllocatedStorage` against
+   `FreeStorageSpace` (`aws cloudwatch get-metric-statistics --namespace
+   AWS/RDS --metric-name FreeStorageSpace --dimensions
+   Name=DBInstanceIdentifier,Value=<id> --start-time <a day ago>
+   --end-time <now> --period 3600 --statistics Minimum`), since no role
+   logs in to it.
 6. Drop the run's database, whatever happened before:
 
    ```bash
@@ -116,7 +144,7 @@ env file and no token: it calls no route.
 - Never modifies a tracked file, never commits, never opens a pull
   request: it writes a report and proposes tickets.
 - No `aws` verb that is not `describe`, `get`, or `list`; no secret read.
-- No row count from staging: no role reads its rows, and the report says
+- No row count from a cloud: no role reads its rows, and the report says
   so rather than guessing.
 
 ## Output
@@ -126,7 +154,7 @@ env file and no token: it calls no route.
 ```markdown
 # Tadas: which stores grow for ever, and what trims them
 
-Read at <commit>; seeded at scale <n>; stores read in <env> under <profile and Arn>.
+Read at <commit>; seeded at scale <n>; stores read in <env> under <profile and Arn>, <region>.
 
 ## The answer
 
@@ -134,10 +162,10 @@ Read at <commit>; seeded at scale <n>; stores read in <env> under <profile and A
 
 ## Every table
 
-| table | what writes it | grows with | stale when | trimmed by (file:line) | retention | batched / indexed | verdict |
+| table | what writes it | grows with | stale when | trimmed by (the storage's file:line) | retention (setting or default) | batched / indexed | verdict |
 |---|---|---|---|---|---|---|---|
 
-Verdicts: fine, risk, gap, kept on purpose.
+Verdicts: fine, risk, gap, kept on purpose, not measured.
 
 ## Findings, by impact
 

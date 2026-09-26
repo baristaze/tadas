@@ -1,7 +1,7 @@
 ---
 name: audit-query-indexes
 description: "Audit whether the indexes fit the queries, and what breaks first under load: every statement the Postgres storage sends, mapped to the index that serves it and measured with EXPLAIN on a database of its own seeded at a stated scale, under the login and the tenant scope the application uses. Reports each statement's verdict, the hot paths, the unused indexes, and fixes tested on the same data. Never changes anything."
-allowed-tools: Read, Grep, Glob, Write, Bash(uv run:*), Bash(git:*)
+allowed-tools: Read, Grep, Glob, Write, Bash(uv run:*), Bash(git:*), Bash(mkdir:*)
 ---
 
 # audit-query-indexes
@@ -13,14 +13,18 @@ security policy, and scope the storage funnel uses.
 
 ## Input
 
-`[--scale <n>] [--ref <git ref>] [--focus <namespace,...>]`
+`[--scale <n>] [--focus <namespace,...>] [--contention]`
 
-`--scale` is the seed's, `1` by default (5,000 people, a team org of
-100,000 tasks, a million events, 50,000 work items); `0.01` is a quick
-run with the same shape, whose times prove the wiring and nothing about
-scale. `--ref` is the code audited, `origin/main` by default. `--focus`
-narrows the audit to some namespaces (`tasks`, `events`, `work`, ...);
-every namespace by default.
+`--scale` is the seed's, `1` by default (5,000 people, a team org of 200
+members and 100,000 tasks, a million events, 50,000 work items); `0.01`
+is a quick run with the same shape, whose times prove the wiring and
+nothing about scale. `--focus` narrows the audit, the hot paths of step
+5 included, to some namespaces (`tasks`, `events`, `work`, ...); every
+namespace by default. `--contention` adds the measure of locks held
+across round trips. The audit reads and runs the checkout, tools and
+code alike; to audit another commit, run it from a checkout of that
+commit that has `ops/audit/`. Every command runs from the repository
+root.
 
 ## Role and credential
 
@@ -30,20 +34,24 @@ and drops. It holds no cloud credential and reads no environment.
 
 ## Procedure
 
-1. Name the run: `audit_query_indexes_<yyyymmdd>`, the date of today.
-   Make the evidence folder `~/Downloads/tadas_query_indexes_<yyyy-mm-dd>/`.
-   Read `--ref` with `git show <ref>:<path>` when it is not the checkout's
-   own commit; say which commit the report read.
+1. Name the run: `audit_query_indexes_<yyyymmdd>`, today's date in UTC.
+   When `uv run python ops/audit/auditdb.py list` shows that name taken,
+   another run holds it: add a suffix (`_2`), and never drop a database
+   this run did not make. Make the evidence folder
+   `~/Downloads/tadas_query_indexes_<yyyy-mm-dd>/` (`mkdir -p`). Say
+   which commit the report read (`git rev-parse HEAD`).
 2. List every statement. The storage impls are
    `om/src/tadas/om/<namespace>/storage/impl/postgres.py`; the indexes
    are in the table classes (`om/src/tadas/om/*/storage/tables/*.py`) and
    the migrations (`om/migrations/sql/<role>/`, newest last). For each
    statement note its caller and how often it runs: every request, every
    write, every creating POST, once per sweep pass per tenant, once per
-   pass, or rare. The callers are the managers
-   (`om/src/tadas/om/*/impl/`), the routes
-   (`services/api/src/tadas/services/api/routes/`), and the worker
-   (`workers/maintenance/src/tadas/workers/maintenance/`).
+   pass, or rare: grep each storage method's callers in the managers
+   (`om/src/tadas/om/*/impl/`), the routers
+   (`services/api/src/tadas/services/api/routers/`), and the worker
+   (`workers/maintenance/src/tadas/workers/maintenance/`, whose sweep is
+   `loop.py`), tests left out. A read by the primary key alone may be
+   listed as `fine` without a plan; every other statement is measured.
 3. Make and seed the run's database:
 
    ```bash
@@ -54,8 +62,9 @@ and drops. It holds no cloud credential and reads no environment.
 
 4. Measure every statement. Write them into
    `~/Downloads/tadas_query_indexes_<yyyy-mm-dd>/statements.sql` in the
-   format and with the cases `${CLAUDE_SKILL_DIR}/statements.md` gives
-   (read it before writing the file), then run:
+   format and with the cases `${CLAUDE_SKILL_DIR}/references/statements.md` gives
+   (read it before writing the file), then run (each statement opens its
+   own connection, so a file may hold any number of generic plans):
 
    ```bash
    uv run python ops/audit/explain.py plans audit_query_indexes_<yyyymmdd> ~/Downloads/tadas_query_indexes_<yyyy-mm-dd>/statements.sql > ~/Downloads/tadas_query_indexes_<yyyy-mm-dd>/plans.txt
@@ -69,10 +78,19 @@ and drops. It holds no cloud credential and reads no environment.
    pass, say what it costs and what grows it, from the plans and from the
    frequency of step 2. A per-tenant cost times the number of tenants is
    the sweep's; a lock held across round trips (the event cursor) caps a
-   tenant's write rate. Contention is measured only when `--focus` asks
-   for it, with the storage impls as `${CLAUDE_SKILL_DIR}/statements.md`
-   shows.
-6. Test each fix on the same data before proposing it. Create the
+   tenant's write rate. With `--contention`, measure those locks with the
+   storage impls as `${CLAUDE_SKILL_DIR}/references/statements.md` shows; without
+   it, say they were not measured.
+6. Read the inventory now, before any candidate adds scans: an index
+   with no scans after step 4 serves no statement the audit measured;
+   weigh it against the writes it costs.
+
+   ```bash
+   uv run python ops/audit/explain.py inventory audit_query_indexes_<yyyymmdd> > ~/Downloads/tadas_query_indexes_<yyyy-mm-dd>/inventory.md
+   ```
+
+7. Test each fix on the same data before proposing it. The before is
+   step 4's plan. Create the
    candidate index on the run's database, measure the statements it
    serves again from a file of their own, and drop it before the next
    candidate, so each after is measured against the migrations' indexes
@@ -86,14 +104,9 @@ and drops. It holds no cloud credential and reads no environment.
 
    Say the before and the after, and whether the generic plan picks the
    index too (a partial index whose predicate names a bound value is
-   one a generic plan cannot use).
-7. Read the inventory: an index with no scans after step 4 serves no
-   statement the audit measured; weigh it against the writes it costs.
-
-   ```bash
-   uv run python ops/audit/explain.py inventory audit_query_indexes_<yyyymmdd> > ~/Downloads/tadas_query_indexes_<yyyy-mm-dd>/inventory.md
-   ```
-
+   one a generic plan cannot use). A candidate that does not help is a
+   finding too: say why, as `${CLAUDE_SKILL_DIR}/references/statements.md` explains
+   for a filter row-level security keeps out of the index condition.
 8. Drop the run's database, whatever happened before:
 
    ```bash
@@ -120,7 +133,7 @@ and drops. It holds no cloud credential and reads no environment.
 ```markdown
 # Tadas: query patterns, indexes, and load
 
-Scope: <commit>. Seed: scale <n> (<the counts seed.py printed>). Postgres <version>, local.
+Commit <sha> (code and tools). Seed: scale <n> (<the counts seed.py printed>). Postgres <version>, local.
 
 ## The answer
 
