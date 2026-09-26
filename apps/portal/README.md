@@ -69,7 +69,7 @@ Zustand, one realtime channel.
   (`GET /v1/tasks/{id}`) and places it the same way; a 404 takes it
   out. A push that names no version (the reminder, the daily archive)
   is always read (ADR 0061). Where it goes is one pure function (`src/queries/taskPlacement.ts`):
-  the open list by position then id, the done list newest first, the
+  the open list by rank then id, the done list newest first, the
   `mine` scope by the server's rule, archived and deleted tasks in
   neither. A list is the window the page loaded, and its last row is
   the one the next page's cursor names: a task that sorts past it is

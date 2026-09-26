@@ -9,7 +9,7 @@ const task = (title: string): TaskView => ({
   notes: "",
   status: "open",
   assignee_id: null,
-  position: 0,
+  rank: "0",
   created_at: "2026-09-22T10:00:00Z",
   updated_at: "2026-09-22T10:00:00Z",
   created_by: "ann",

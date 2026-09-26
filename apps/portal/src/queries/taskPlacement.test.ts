@@ -8,6 +8,7 @@ import {
   flatten,
   isVisible,
   microsOf,
+  ON_TOP,
   placeTask,
   windowOf,
   type PlacementRules,
@@ -25,7 +26,6 @@ const task = (id: string, overrides: Partial<TaskView> = {}): TaskView => ({
   status: "open",
   assignee_id: null,
   rank: "0",
-  position: 0,
   created_at: "2026-09-20T10:00:00Z",
   updated_at: "2026-09-20T10:00:00Z",
   created_by: ME,
@@ -37,9 +37,9 @@ const task = (id: string, overrides: Partial<TaskView> = {}): TaskView => ({
   ...overrides,
 });
 
-// An open task at a rank, with the float the server writes beside it.
+// An open task at a rank.
 const open = (id: string, rank: number | string, overrides: Partial<TaskView> = {}) =>
-  task(id, { rank: String(rank), position: Number(rank), ...overrides });
+  task(id, { rank: String(rank), ...overrides });
 const done = (id: string, minute: number, overrides: Partial<TaskView> = {}) =>
   task(id, { status: "done", updated_at: `2026-09-20T10:${String(minute).padStart(2, "0")}:00Z`, ...overrides });
 
@@ -64,10 +64,10 @@ describe("the rank", () => {
 
   it("orders the open list as the server does: rank, then id", () => {
     const tasks = [
-      task("d", { rank: "2", position: 2 }),
-      task("b", { rank: "-1.75", position: -1.75 }),
-      task("c", { rank: "-1.75", position: -1.75 }),
-      task("a", { rank: "-10", position: -10 }),
+      task("d", { rank: "2" }),
+      task("b", { rank: "-1.75" }),
+      task("c", { rank: "-1.75" }),
+      task("a", { rank: "-10" }),
     ];
     expect([...tasks].sort(compareOpen).map((t) => t.id)).toEqual(["a", "b", "c", "d"]);
   });
@@ -126,8 +126,8 @@ describe("placeTask", () => {
     expect(ids(placed.open.data)).toEqual(["a", "b", "c"]);
   });
 
-  it("puts a reopen shown before the answer on top, by its position", () => {
-    const shown = task("y", { rank: null, position: Number.NEGATIVE_INFINITY, version: 2 });
+  it("puts a reopen shown before the answer on top", () => {
+    const shown = task("y", { rank: ON_TOP, version: 2 });
     const placed = placeTask(lists(), { task: shown }, team, { optimistic: true });
     expect(ids(placed.open.data)).toEqual(["y", "a", "b", "c"]);
   });

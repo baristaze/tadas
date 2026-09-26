@@ -106,7 +106,7 @@ def describe(
         return f"{actor} assigned a task to {name_of(after.assignee_id)}: {title}"
     if before.notes != after.notes:
         return f"{actor} edited the notes of a task: {title}"
-    if (before.rank, before.position) != (after.rank, after.position):
+    if before.rank != after.rank:
         return f"{actor} moved a task: {title}"
     return f"{actor} updated a task: {title}"
 
