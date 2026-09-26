@@ -35,7 +35,7 @@ subscriptions; Tadas owns what a plan entitles an org to.
 
 | Implementation | What it is |
 |----------------|------------|
-| `PaymentsStripeImpl` | The SDK over one client opened at start, with the account in `Stripe-Context`, `Stripe-Version` pinned to the SDK's release, and a timeout on every call. At start it reads one item under each permission of the runtime key, and names in the start line and the log any resource the key cannot read. Without a key it is unconfigured: every call answers `billing_unavailable` (503). |
+| `PaymentsStripeImpl` | The SDK over one client opened at start, with the account in `Stripe-Context`, `Stripe-Version` pinned to the SDK's release, and a timeout on every call. At start it reads one item under each permission of the runtime key, and names in the start line and the log any resource the key cannot read. Without a key it is unconfigured: every call answers `billing_unavailable` (503). A refusal of the key on a call (401 revoked, 403 without the permission) is `PaymentsKeyRefused` (503, `payments_key_refused`), a throttle is `ProviderUnavailable` (503), and a refusal of the request itself (400, 402, 404) is `PaymentsRefused` (502). |
 | `PaymentsTwinImpl` | Customers, checkouts, and subscriptions in memory. It signs its own deliveries with the processor's scheme, so they pass the same check, and it lets a test complete a checkout, move a subscription, end a period, and have any event delivered. Every id it makes carries `twin`. |
 
 ## The catalog
@@ -167,6 +167,13 @@ says.
   is a `503`, `ProviderRefused` a `400`, `ProviderConflict` a `409`),
   and the one caller translates the sign-in leaves into the platform's
   own. The key never appears in a message.
+- **A refused key is unavailable, a refused request is refused.** A
+  provider that refuses the process's own credential (revoked, or
+  without the permission) answers unavailable: nothing is wrong with
+  the call, and it goes through once a person fixes the key. Only a
+  refusal of the request itself is a refusal, since the same request
+  gets the same answer. Work parks on the first and fails for good on
+  the second.
 - **A twin that says it is one.** Every id the twin mints starts with
   `twin_`, and the configured root refuses it in a deployed
   environment.

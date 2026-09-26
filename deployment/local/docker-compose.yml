@@ -197,6 +197,12 @@ services:
   # two one-shot services create that database and seed an admin and a
   # project whose DSN key is fixed:
   #   http://0123456789abcdef0123456789abcdef@localhost:58000/1
+  # `up --wait` holds until a one-shot that another service depends on with
+  # service_completed_successfully has exited 0, and counts any other
+  # one-shot's exit as a failure, even a clean one. glitchtip-db is the first
+  # kind. Nothing depends on glitchtip-seed, so it has a profile of its own
+  # that `up` leaves out, and the Makefile runs it as a step whose exit code
+  # is the seed's.
   glitchtip-db:
     image: postgres:18-alpine
     profiles: [devx]
@@ -240,7 +246,7 @@ services:
 
   glitchtip-seed:
     image: glitchtip/glitchtip:6.2.6
-    profiles: [devx]
+    profiles: [devx-seed]
     command: ["sh", "-c", "./manage.py shell < /seed/seed.py"]
     environment:
       <<: *glitchtip-env

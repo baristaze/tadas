@@ -65,7 +65,11 @@ uv run tadas listen                           # the team's tasks, reminders amon
   exchange with the other org; the API ends it in the same write and the
   file keeps the new one, so the CLI never holds two. Only the kept session
   switches: `TADAS_TOKEN` is the environment's credential, not the CLI's to
-  end. `orgs` marks the person's personal org. There is no command that
+  end. A `login` over a kept session ends that session too, once the new
+  one is kept: it goes back to the API that issued it, as `logout` sends
+  it. That is best effort. The new session is kept whatever the API
+  answers, and one the API could not end lapses when it expires, which
+  stderr says. `orgs` marks the person's personal org. There is no command that
   creates an org; a person creates a team org in the portal.
   `TADAS_TOKEN` in the environment wins over the file and may hold an api
   key; `TADAS_API_URL` or `--api` names the API (default

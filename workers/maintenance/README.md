@@ -30,7 +30,10 @@ second lane is a second replica told its lane.
   broken when Slack refuses the channel for good. `SYNC_SEATS` reads an org's
   active members when it runs and holds a Max subscription's quantity to
   them, with no proration and under a key made of the item and the
-  count, so a retried run is one change. An orchestration step reads its
+  count, so a retried run is one change. A processor out of reach, or
+  refusing the process's own key, parks it for a minute, spending no
+  attempt; a processor that refuses the request itself fails it at
+  once. An orchestration step reads its
   record and, while it runs, does one batch of it: an import makes the
   tasks of the next hundred rows, a cleanup archives the next five
   hundred old done tasks. The batch, the record's next cursor, and the
