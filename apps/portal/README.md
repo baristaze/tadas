@@ -74,10 +74,10 @@ Zustand, one realtime channel.
   reads that one list again. A task placed into a full window stays
   held past what the page shows, and shows on Show more. An answer
   older than one already placed is dropped, by the task's version.
-  Pushes are gathered for 100 ms (`src/realtime/taskHints.ts`): a task
-  pushed twice is read once, and past twenty tasks in one window (an
-  import, a move that renumbers the open list) the lists are read once
-  instead. The other features still invalidate on a push.
+  Pushes are gathered until 100 ms pass without one, and for 500 ms at
+  most (`src/realtime/taskHints.ts`): a task pushed twice is read once,
+  and past twenty tasks in one window (an import, a move that renumbers
+  the open list) the lists are read once instead. The other features still invalidate on a push.
 - Client state lives in Zustand (`src/store/`): the session token, the
   connection status, the transient notices a failed write leaves
   (`notices.ts`, rendered by `src/app/Notices.tsx` over the kit's

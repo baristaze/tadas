@@ -1,6 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TaskView } from "../api";
-import { createTaskHints, HINT_BURST, HINT_WINDOW_MS, ReadAsList, type TaskHintEffects } from "./taskHints";
+import {
+  createTaskHints,
+  HINT_BURST,
+  HINT_WINDOW_MAX_MS,
+  HINT_WINDOW_MS,
+  ReadAsList,
+  type TaskHintEffects,
+} from "./taskHints";
 
 const task = (id: string, version = 1) => ({ id, version }) as TaskView;
 
@@ -103,6 +110,33 @@ describe("createTaskHints", () => {
     expect(fx.readTask).not.toHaveBeenCalled();
     expect(fx.refreshLists).toHaveBeenCalledTimes(1);
     await expect(reads[0]).rejects.toBeInstanceOf(ReadAsList);
+  });
+
+  it("keeps the window open while pushes keep coming, so a burst spread over time is one burst", async () => {
+    // An import's pushes arrive a few milliseconds apart, over longer than
+    // one quiet window.
+    const fx = effects();
+    const hints = createTaskHints(fx);
+    for (let i = 0; i < 50; i += 1) {
+      hints.hint(`t${i}`);
+      await vi.advanceTimersByTimeAsync(6);
+    }
+    await settle();
+    expect(fx.readTask).not.toHaveBeenCalled();
+    expect(fx.refreshLists).toHaveBeenCalledTimes(1);
+  });
+
+  it("closes a window at its longest, so a steady stream is still read", async () => {
+    const fx = effects();
+    const hints = createTaskHints(fx);
+    for (let i = 0; i < 10; i += 1) {
+      hints.hint(`t${i}`);
+      await vi.advanceTimersByTimeAsync(HINT_WINDOW_MAX_MS / 5);
+    }
+    expect(fx.readTask.mock.calls.length).toBeGreaterThan(0);
+    await settle();
+    expect(fx.readTask).toHaveBeenCalledTimes(10);
+    expect(fx.refreshLists).not.toHaveBeenCalled();
   });
 
   it("places one window's answers together, after the last read lands", async () => {

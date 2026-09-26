@@ -1,16 +1,20 @@
 // A push about a task is a hint: it names the task, never its fields. The
 // page reads that one task through the authorized read and places the
 // answer into the lists it holds; a 404 (deleted, or no longer this org's to
-// see) takes it out. Hints are gathered for a short window, so a task pushed
-// twice is read once, and a burst reads the lists once instead of task by
-// task. Everything it reaches for is handed in, so it runs in a test with
+// see) takes it out. Hints are gathered while they keep coming, so a task
+// pushed twice is read once, and a burst reads the lists once instead of task
+// by task. Everything it reaches for is handed in, so it runs in a test with
 // fake timers and no query cache.
 import type { TaskView } from "../api";
 
-/** How long hints are gathered before they are read. Long enough to catch the
- * burst one write sends (a renumber, an import step), short enough to go
- * unnoticed. */
+/** How long a window stays open after its last hint. The pushes of one
+ * write that touches many tasks (an import step, a renumber) arrive a few
+ * milliseconds apart, and a person's own writes seconds apart. */
 export const HINT_WINDOW_MS = 100;
+
+/** How long a window stays open at most, so a steady stream of pushes is
+ * still read while it lasts. */
+export const HINT_WINDOW_MAX_MS = 500;
 
 /** Past this many distinct tasks in one window, the lists are read once
  * instead of each task on its own. An import step lands up to a hundred
@@ -66,11 +70,18 @@ function waiter(): Waiter {
 
 export function createTaskHints(effects: TaskHintEffects): TaskHints {
   let gathered = new Map<string, Waiter>();
-  let timer: ReturnType<typeof setTimeout> | null = null;
+  let quiet: ReturnType<typeof setTimeout> | null = null;
+  let longest: ReturnType<typeof setTimeout> | null = null;
   let stopped = false;
 
+  const close = () => {
+    if (quiet) clearTimeout(quiet);
+    if (longest) clearTimeout(longest);
+    quiet = longest = null;
+  };
+
   const flush = async () => {
-    timer = null;
+    close();
     const batch = gathered;
     gathered = new Map();
     if (stopped || batch.size === 0) return;
@@ -110,13 +121,14 @@ export function createTaskHints(effects: TaskHintEffects): TaskHints {
       if (held) return held.promise;
       const w = waiter();
       gathered.set(id, w);
-      timer ??= setTimeout(() => void flush(), HINT_WINDOW_MS);
+      if (quiet) clearTimeout(quiet);
+      quiet = setTimeout(() => void flush(), HINT_WINDOW_MS);
+      longest ??= setTimeout(() => void flush(), HINT_WINDOW_MAX_MS);
       return w.promise;
     },
     stop() {
       stopped = true;
-      if (timer) clearTimeout(timer);
-      timer = null;
+      close();
       for (const w of gathered.values()) w.reject(new Error("the channel stopped"));
       gathered = new Map();
     },
