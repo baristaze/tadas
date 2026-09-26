@@ -38,8 +38,10 @@ field and forbids extra ones.
 
 The context model is two orthogonal ideas. The stages are four frozen
 types ordered by evidence: `RequestContext` (a request exists: its id,
-the calling app, the trace id, and the request that caused it where a
-handoff named one, empty at the edge), `IdentityContext` (a person is verified
+the calling app, the trace id and the trace context as the `traceparent`
+header, read off the tracer once where the stage is minted, and the
+request that caused it where a handoff named one, empty at the edge),
+`IdentityContext` (a person is verified
 by their own sign-in; no tenant, on purpose), `OpContext` (a membership
 is established: the user, the org, the role and its permissions, the
 credential), and `OperatorContext` (an identity on the operator allowlist;
@@ -152,7 +154,12 @@ context on keeps the stage the callee needs.
   (`read_identity_by_issuer_subject`, a system-scope lookup, unique
   `(issuer, subject)` where the subject is set), else by the email
   digest and linked, else made with its personal org; an unverified
-  address is `EmailNotVerified` (401). `sign_in_url` builds the
+  address is `EmailNotVerified` (401). An address is kept and looked up
+  folded (`rules.fold_email`, all of it in lower case), and the
+  database computes `identities.email_digest` from the folded address,
+  so every spelling finds one identity and a second spelling meets the
+  unique index
+  ([ADR 0072](adr/0072-an-address-is-one-address-in-any-case.md)). `sign_in_url` builds the
   provider's URL for a redirect the environment names as its own
   (`TenancyOptions.sign_in_redirect_uris`, a deployed environment's one
   https callback, refused otherwise) and the caller's `state`. The
@@ -657,8 +664,9 @@ context on keeps the stage the callee needs.
   hands the storage the `OutboxRow`s that announce it (`org_id`, `kind`,
   `target_id`, a `payload` of ids only (a task's names the version its
   change wrote, which the push carries: ADR 0061), the actor, the
-  request, and that request's `traceparent`, read off the tracer, since
-  the context carries the trace id and a span links to the header) as one tuple, and the storage base inserts them all in one
+  request, and that request's `traceparent`, read off the stage, which
+  carries the header a later span links to) as one tuple, and the
+  storage base inserts them all in one
   commit (`_insert(..., outbox_rows)` for a create, which
   reports an existing id and changes nothing then; `_upsert(...,
   outbox_rows)` for an update; `core` role). An entity change is one
@@ -1439,7 +1447,11 @@ alone, and neither key may touch what the other's work does not need
   span links to the trace context the item carried instead of becoming its
   child, because a durable queue holds an item well past the end of the
   request that filled it; an item that carries none starts a trace of its
-  own, which is what a process with no tracer configured does anyway.
+  own, which is what a process with no tracer configured does anyway. The
+  run's span starts at the claim, so the stage minted for the claim
+  carries the run's own trace context, and a row the run lands hands it on;
+  a claim that finds nothing never ends its span, so nothing is exported
+  for it.
 - `apps/portal` (`@tadas/portal`): React, Vite, TanStack Query,
   Zustand; sign-in at `/login`, which starts WorkOS AuthKit at once (it
   is the initiate-login address) with a random `state` the tab keeps in

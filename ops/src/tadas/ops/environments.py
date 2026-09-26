@@ -5,11 +5,13 @@ carries `read` and is what every read runs as; the provisioner's carries
 needs. Neither is a sign-in: an agent never signs in to the operator plane,
 it presents a token that expires within the hour (`tadas-ops token` writes
 one). `staging` and `production` are read from an owner-only file outside
-the repository, `~/.config/tadas/ops/<env>.env`; `local` reads the same file
-when it exists and otherwise the compose stack's own knobs (`.env.example`,
-then `.env`) from the repository root, so the local stack is an environment
-with nothing to set up. The process environment overrides either file, key
-by key. A file that anyone but its owner can read is refused."""
+the repository, `~/.config/tadas/ops/<env>.env`. `local` reads the same
+file, which `make seed` writes when it is absent: the compose stack's
+addresses and the tokens of the two local operators it puts on the
+allowlist. Under the file, `local` reads the compose stack's own knobs
+(`.env.example`, then `.env`) from the repository root, so a key the file
+leaves out still names the local stack. The process environment overrides
+either, key by key. A file that anyone but its owner can read is refused."""
 
 import os
 import stat
@@ -46,6 +48,16 @@ KEYS = (
 """Every key an environment file may set; anything else in it is ignored."""
 
 CLOUD_ENVIRONMENTS = frozenset({"staging", "production"})
+
+LOCAL_OPERATORS = {
+    "operator": "operator@platform.tadas.invalid",
+    "provisioner": "provisioner@platform.tadas.invalid",
+}
+"""The two operator identities `make seed` puts on the local allowlist: the
+read operator, whose `read` token is the file's `TADAS_OPERATOR_TOKEN`, and
+the provisioner, whose `write` token is its `TADAS_PROVISIONER_TOKEN`. They
+are the platform's own, made by their first grant, so no person signs in as
+either and nothing but the grant command mints their tokens."""
 
 CLOUD_REGION = "us-west-2"
 """The region deployment/cloud/environments.json names; a test holds them equal."""
@@ -219,17 +231,35 @@ def load_environment(
     return environment_of(name, {k: v for k, v in values.items() if k in KEYS})
 
 
+def local_addresses(env: Environment) -> dict[str, str]:
+    """What a new `local.env` names beside its tokens: the compose stack's API,
+    its error tracker, and the dashboards of the `devx` profile, as the
+    repository's knobs resolve them, so a skill that sources the file reaches
+    the local stack with nothing else to read."""
+    named = {
+        "TADAS_API_URL": env.api_url,
+        "TADAS_ERROR_TRACKER_URL": env.error_tracker_url,
+        "TADAS_ERROR_TRACKER_TOKEN": env.error_tracker_token,
+        "TADAS_ERROR_TRACKER_ORG": env.error_tracker_org,
+        "TADAS_ERROR_TRACKER_PROJECT": env.error_tracker_project,
+        "TADAS_PROMETHEUS_URL": env.prometheus_url,
+        "TADAS_JAEGER_URL": env.jaeger_url,
+    }
+    return {key: value for key, value in named.items() if value}
+
+
 def write_value(file: Path, key: str, value: str) -> None:
     """Sets `key` in the env file, replacing its line or appending one, and
     leaves every other line as it was. The file is created owner-only when
-    missing and refused when it is not; the value is never echoed."""
+    missing, in a folder only its owner opens when that is missing too, and
+    refused when it is not owner-only; the value is never echoed."""
     if key not in KEYS:
         raise ValueError(f"{key} is not a key an environment file holds")
     if file.is_file():
         refuse_unless_owner_only(file)
         lines = file.read_text().splitlines()
     else:
-        file.parent.mkdir(parents=True, exist_ok=True)
+        file.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         lines = []
     line = f"{key}={value}"
     for index, raw in enumerate(lines):

@@ -213,6 +213,22 @@ async def test_a_person_the_seeding_made_is_linked_by_the_verified_email(
     assert linked.issuer == TWIN_ISSUER
 
 
+async def test_a_person_the_seeding_made_is_linked_whatever_the_case_of_the_address(
+    manager: TenancyManagerImpl, storage: TenancyStorageMemoryImpl, twin: IdentityProviderTwinImpl
+) -> None:
+    """The seeding typed `Dee@Example.test` and the provider vouches for
+    `dee@EXAMPLE.test`: one address, so one person, linked on the first
+    sign-in, and nobody new."""
+    _, org = await manager.bootstrap(request(), "Acme", "acme", "Dee@Example.test", "Dee")
+    seeded = await storage.read_identity_by_email_digest(email_digest("dee@example.test"))
+    assert seeded is not None and seeded.email == "dee@example.test"
+    login = await manager.sign_in_with_code(request(), twin.issue_code("dee@EXAMPLE.test"))
+    assert org.id in {m.org.id for m in login.memberships}
+    linked = await storage.read_identity(seeded.id)
+    assert linked is not None and linked.subject == twin.user("dee@EXAMPLE.test").id
+    assert await storage.count_orgs() == 2, "Acme and Dee's personal org"
+
+
 async def test_a_linked_person_is_found_by_the_subject_whatever_their_address(
     manager: TenancyManagerImpl, storage: TenancyStorageMemoryImpl, twin: IdentityProviderTwinImpl
 ) -> None:
@@ -317,6 +333,17 @@ async def test_the_local_sign_in_makes_a_person_once_and_then_finds_them(
     assert await storage.count_orgs() == 1
 
 
+async def test_the_local_sign_in_finds_a_person_in_any_case(
+    manager: TenancyManagerImpl, storage: TenancyStorageMemoryImpl
+) -> None:
+    first = await manager.dev_sign_in(request(), "Dee@Example.test", "Dee")
+    [place] = first.memberships
+    assert place.user.email == "dee@example.test"
+    again = await manager.dev_sign_in(request(), "DEE@example.TEST")
+    assert [m.org.id for m in again.memberships] == [place.org.id]
+    assert await storage.count_orgs() == 1
+
+
 # Invitations.
 
 
@@ -373,6 +400,24 @@ async def test_a_member_or_an_open_invitation_is_not_invited_again(
     await manager.invite_member(ann, "bob@acme.example", Role.MEMBER)
     with pytest.raises(Conflict):
         await manager.invite_member(ann, "bob@acme.example", Role.MEMBER)
+    assert len(twin.sent) == 1
+
+
+async def test_an_address_is_invited_once_in_any_case(
+    manager: TenancyManagerImpl, twin: IdentityProviderTwinImpl
+) -> None:
+    """The invitation keeps the address folded and sends it so. Another
+    spelling of a pending invitation's address, or of a member's, is the
+    same address."""
+    ann = await owner_of_team(manager)
+    invitation = await manager.invite_member(ann, "Bob@Acme.example", Role.MEMBER)
+    assert invitation.email == "bob@acme.example"
+    [sent] = twin.sent
+    assert sent.email == "bob@acme.example"
+    with pytest.raises(Conflict):
+        await manager.invite_member(ann, "bob@ACME.example", Role.MEMBER)
+    with pytest.raises(Conflict):
+        await manager.invite_member(ann, "ANN@acme.example", Role.MEMBER)
     assert len(twin.sent) == 1
 
 

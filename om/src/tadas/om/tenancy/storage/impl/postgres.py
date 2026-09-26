@@ -25,7 +25,7 @@ from tadas.om.storage.impl.pg_base import (
     violated_constraint,
 )
 from tadas.om.storage.utils.translation import apply_row, to_model, to_row, to_values
-from tadas.om.tenancy.rules import email_digest
+from tadas.om.tenancy.rules import email_digest, fold_email
 from tadas.om.tenancy.storage import TenancyStorageInterface
 from tadas.om.tenancy.storage.tables.api_keys import ApiKeys
 from tadas.om.tenancy.storage.tables.identities import Identities
@@ -591,7 +591,7 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
             await session.execute(
                 delete(Invitations).where(
                     or_(
-                        Invitations.email.in_({email, email.lower()}),
+                        Invitations.email == fold_email(email),
                         and_(
                             Invitations.org_id.in_(org_ids),
                             Invitations.accepted_user_id.in_(user_ids),
@@ -1106,7 +1106,7 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
     async def read_pending_invitation(self, org_id: UUID, email: str) -> Invitation | None:
         stmt = select(Invitations).where(
             Invitations.org_id == org_id,
-            Invitations.email == email,
+            Invitations.email == fold_email(email),
             Invitations.state == InvitationState.PENDING.value,
         )
         async with self._session_for(stmt, org_id=org_id) as session:

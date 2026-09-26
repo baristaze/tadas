@@ -441,6 +441,13 @@ async def test_a_run_names_the_request_that_caused_it_and_links_to_its_trace(
     assert span.parent is None, "one trace is not stretched over the queue"
     assert [link.context.trace_id for link in span.links or ()] == [causing_trace_id]
     assert span.get_span_context().trace_id != causing_trace_id, "a trace of its own, linked"
+    # The run's stage carries the run's own trace context, so a row the run
+    # lands hands its far side a trace to link to in turn.
+    assert run.traceparent is not None
+    assert run.traceparent.split("-")[1:3] == [
+        f"{span.get_span_context().trace_id:032x}",
+        f"{span.get_span_context().span_id:016x}",
+    ]
 
 
 async def test_a_run_of_work_nothing_asked_for_starts_its_own_trace(tmp_path: Path) -> None:

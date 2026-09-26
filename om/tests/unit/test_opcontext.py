@@ -2,12 +2,14 @@
 operation of the tenancy manager, or one that asks it, as the worker's claim
 does), and five scopes every stage satisfies structurally."""
 
+import ast
 from pathlib import Path
 
 import pytest
 from contracts.plans import ON_TEAM
 from pydantic import ValidationError
 
+import tadas.om
 from tadas.infra.cache import CacheScope
 from tadas.infra.impl.local import InfraLocalImpl
 from tadas.integrations.identity.absent import IdentityProviderAbsentImpl
@@ -41,8 +43,13 @@ from tadas.om.tenancy.storage.impl.memory import TenancyStorageMemoryImpl
 APP = AppContext(type=AppType.PORTAL, version="portal@test")
 
 
+TRACEPARENT = f"00-{'0' * 31}1-{'0' * 15}2-01"
+
+
 def request() -> RequestContext:
-    return RequestContext(request_id=new_id(), app=APP, trace_id="0" * 31 + "1")
+    return RequestContext(
+        request_id=new_id(), app=APP, trace_id="0" * 31 + "1", traceparent=TRACEPARENT
+    )
 
 
 @pytest.fixture
@@ -93,7 +100,12 @@ async def test_login_then_authenticate_login_produces_the_identity_stage(
     assert ictx.credential_kind is CredentialKind.LOGIN
     assert ictx.credential_id != EMPTY_UUID
     # The identity stage refines the request stage it was minted from.
-    assert (ictx.request_id, ictx.app, ictx.trace_id) == (rctx.request_id, rctx.app, rctx.trace_id)
+    assert (ictx.request_id, ictx.app, ictx.trace_id, ictx.traceparent) == (
+        rctx.request_id,
+        rctx.app,
+        rctx.trace_id,
+        rctx.traceparent,
+    )
 
 
 async def test_authenticate_login_takes_a_session_token_and_refuses_an_api_key(
@@ -141,7 +153,12 @@ async def test_authenticate_produces_the_tenant_stage_and_refuses_a_login_token(
     assert ctx.org_id == org.id and ctx.security.role is Role.OWNER
     assert ctx.credential_kind is CredentialKind.SESSION_TOKEN
     assert ctx.credential_id != EMPTY_UUID
-    assert (ctx.request_id, ctx.app, ctx.trace_id) == (rctx.request_id, rctx.app, rctx.trace_id)
+    assert (ctx.request_id, ctx.app, ctx.trace_id, ctx.traceparent) == (
+        rctx.request_id,
+        rctx.app,
+        rctx.trace_id,
+        rctx.traceparent,
+    )
     with pytest.raises(InvalidCredential):
         await manager.authenticate(request(), login.token)
 
@@ -174,10 +191,11 @@ async def test_admit_operator_produces_the_operator_stage_for_operators_only(
         ictx.email,
         ictx.credential_id,
     )
-    assert (admin.request_id, admin.app, admin.trace_id) == (
+    assert (admin.request_id, admin.app, admin.trace_id, admin.traceparent) == (
         ictx.request_id,
         ictx.app,
         ictx.trace_id,
+        ictx.traceparent,
     )
     assert not hasattr(admin, "org_id")
     # The entry's role travels on the stage as permissions, as a membership's does.
@@ -266,7 +284,12 @@ def test_build_context_copies_the_request_stage_and_reads_security() -> None:
         credential_kind=CredentialKind.API_KEY,
         credential_id=new_id(),
     )
-    assert (ctx.request_id, ctx.app, ctx.trace_id) == (rctx.request_id, rctx.app, rctx.trace_id)
+    assert (ctx.request_id, ctx.app, ctx.trace_id, ctx.traceparent) == (
+        rctx.request_id,
+        rctx.app,
+        rctx.trace_id,
+        rctx.traceparent,
+    )
     assert ctx.credential_kind is ctx.security.credential_kind
     assert ctx.credential_id == ctx.security.credential_id
     assert ctx.org_id == ctx.security.org_id and ctx.user_id == ctx.security.user_id
@@ -351,3 +374,19 @@ def test_every_stage_satisfies_the_scopes_it_carries() -> None:
         ctx.request_id,
         ctx.app,
     )
+
+
+def test_the_object_model_reads_the_trace_context_off_the_stage_and_never_the_tracer() -> None:
+    """The traceparent rides the context: it is read off the tracer once,
+    where a stage is minted at the edge, and every row the object model lands
+    takes it from the stage it was handed. A static scan of `tadas.om`."""
+    root = Path(tadas.om.__file__).parent
+    readers = sorted(
+        str(path.relative_to(root))
+        for path in root.rglob("*.py")
+        for node in ast.walk(ast.parse(path.read_text()))
+        if isinstance(node, ast.ImportFrom)
+        and node.module == "tadas.infra.observability"
+        and any(alias.name in {"current_traceparent", "traceparent_of"} for alias in node.names)
+    )
+    assert readers == []
