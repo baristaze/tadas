@@ -23,7 +23,7 @@ from tadas.om.outbox.storage import OutboxStorageInterface
 from tadas.om.outbox.storage.impl.postgres import OutboxStoragePostgresImpl
 from tadas.om.slack.storage import SlackStorageInterface
 from tadas.om.slack.storage.impl.postgres import SlackStoragePostgresImpl
-from tadas.om.storage.impl.pg_base import LoginSessions, SessionFactory
+from tadas.om.storage.impl.pg_base import LoginSessions, ScopedConnection, SessionFactory
 from tadas.om.storage.roles import DatabaseRole
 from tadas.om.storage.root import StorageInterface
 from tadas.om.storage.settings import RolePool
@@ -41,11 +41,14 @@ def connect_args(pool: RolePool) -> dict[str, Any]:
     runs past the deadline on every connection the pool opens: the deadline
     holds for every statement of every role and no call site carries it. The
     driver's own `timeout` bounds opening a connection, so a database that
-    accepts no connection fails a call within the same bound a checkout has."""
+    accepts no connection fails a call within the same bound a checkout has.
+    Every connection is a `ScopedConnection`, which carries the funnel's scope
+    in the message that begins a transaction."""
     milliseconds = round(pool.statement_timeout_seconds * 1000)
     return {
         "timeout": pool.checkout_timeout_seconds,
         "server_settings": {"statement_timeout": str(milliseconds)},
+        "connection_class": ScopedConnection,
     }
 
 
@@ -69,10 +72,9 @@ def engine_for(url: str, pool: RolePool) -> AsyncEngine:
     No ping before a checkout: that is three round trips (BEGIN, a probe,
     ROLLBACK) before every transaction. The pool recycles a connection before
     anything on the path can drop it, and a connection the server closed anyway
-    fails the transaction's first statement, which writes nothing, so the
-    storage funnel opens the transaction again on a fresh connection
-    (`pg_base.scoped_session`). The failure also invalidates every connection
-    the pool opened before it, so the others are replaced at their checkout."""
+    fails the message that begins the transaction and sets its scope, which
+    writes nothing, so the storage funnel drops it and begins again on the
+    next connection (`pg_base.scoped_session`)."""
     return create_async_engine(
         url,
         pool_recycle=POOL_RECYCLE_SECONDS,
