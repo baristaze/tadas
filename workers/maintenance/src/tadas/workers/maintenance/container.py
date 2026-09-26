@@ -29,8 +29,8 @@ log = logging.getLogger(__name__)
 
 
 def events_options(settings: MaintenanceSettings) -> EventsOptions:
-    """The sweep's trim of each living org's stream, off at 0 days, a batch
-    per call like every purge."""
+    """The sweep's trim of each living org's stream, 90 days by default and
+    off at 0, a batch per call like every purge."""
     days = settings.event_retention_days
     return EventsOptions(
         retention=timedelta(days=days) if days else None, purge_batch=settings.worker_purge_batch

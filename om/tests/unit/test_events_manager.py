@@ -166,7 +166,7 @@ async def append_aged(manager: EventsManagerImpl, ctx: OpContext, *days_ago: int
 
 
 async def test_with_no_retention_the_sweep_keeps_every_event(retention: Retention) -> None:
-    """The trim ships off: no floor moves until a release turns it on."""
+    """No retention keeps every event: no floor moves."""
     manager = keeping(retention, None)
     ctx = context(Role.OWNER)
     await append_aged(manager, ctx, 400, 200)

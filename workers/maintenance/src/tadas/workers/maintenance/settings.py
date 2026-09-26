@@ -63,7 +63,7 @@ class MaintenanceSettings(StorageSettings, InfraSettings, IntegrationsSettings):
     # How many days a living org's events are kept; the sweep trims what is
     # older, a batch per org per call. 0 keeps every event and never moves a
     # floor (ADR 0040).
-    event_retention_days: int = Field(default=0, ge=0)
+    event_retention_days: int = Field(default=90, ge=0)
 
     # Where people open Tadas in this environment: a list answered in Slack
     # links to the task list there. The local stack's portal by default; a deployed

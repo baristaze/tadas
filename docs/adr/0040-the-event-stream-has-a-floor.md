@@ -1,6 +1,7 @@
 # ADR 0040: The event stream has a floor, and a read below it is gone
 
-**Status**: accepted (2026-09-26)
+**Status**: accepted (2026-09-26). Both steps of the rollout are done:
+the worker keeps 90 days of events by default.
 
 ## Context
 
@@ -81,7 +82,8 @@ bundle keeps its cursor and asks again on every pong, and an old
    insert it makes, and the default fills the floor.
 2. The next release sets the retention to 90 in code. Every API task
    serving then answers the 410, and every portal bundle and CLI of
-   this release resyncs on it.
+   this release resyncs on it. Done: `TADAS_EVENT_RETENTION_DAYS`
+   defaults to 90.
 
 A tab or a CLI older than this release can still meet the trim if it
 lives through two deploys with its cursor 90 days behind. A portal
