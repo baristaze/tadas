@@ -14,6 +14,7 @@ from worker_support import (
     build_container,
     fast_options,
     make_item,
+    on_the_test_clock,
     request,
     sign_in,
 )
@@ -46,20 +47,28 @@ from tadas.workers.maintenance.settings import MaintenanceSettings
 
 
 class SlowHandler(WorkHandlerInterface):
+    """Holds each item for `hold` seconds, and records on the loop's clock
+    when each run started and when a cancel reached it."""
+
     def __init__(self, hold: float) -> None:
         self.hold = hold
         self.started: list[UUID] = []
         self.finished: list[UUID] = []
         self.cancelled: list[UUID] = []
+        self.started_at: list[float] = []
+        self.cancelled_at: list[float] = []
         self.request_ids: dict[UUID, str | None] = {}
 
     async def handle(self, ctx: OpContext, item: WorkItem) -> None:
+        clock = asyncio.get_running_loop().time
         self.started.append(item.id)
+        self.started_at.append(clock())
         self.request_ids[item.id] = request_id_var.get()
         try:
             await asyncio.sleep(self.hold)
         except asyncio.CancelledError:
             self.cancelled.append(item.id)
+            self.cancelled_at.append(clock())
             raise
         self.finished.append(item.id)
 
@@ -104,11 +113,15 @@ def ensure_tracer_provider() -> None:
 
 
 class LeaseLosingWork(WorkManagerInterface):
-    """Decorates the real manager: every renewal fails as if another worker held the item."""
+    """Decorates the real manager: every renewal fails as if another worker held the item.
+    Each renewal asked for is recorded on the loop's clock."""
 
     def __init__(self, inner: WorkManagerInterface) -> None:
         self._inner = inner
-        self.renewals = 0
+        self.renewals: list[float] = []
+
+    def _record_renewal(self) -> None:
+        self.renewals.append(asyncio.get_running_loop().time())
 
     async def enqueue(self, ctx: OpContext, item: WorkItem) -> WorkItem:
         return await self._inner.enqueue(ctx, item)
@@ -142,7 +155,7 @@ class LeaseLosingWork(WorkManagerInterface):
         return await self._inner.release(ctx, item)
 
     async def extend_lease(self, ctx: OpContext, item: WorkItem, lease: timedelta) -> WorkItem:
-        self.renewals += 1
+        self._record_renewal()
         raise LeaseLost("held elsewhere")
 
     async def requeue_stale(self, rctx: RequestContext, limit: int) -> int:
@@ -168,7 +181,7 @@ class StallingWork(LeaseLosingWork):
     """Decorates the real manager: every renewal hangs, as an unreachable database behaves."""
 
     async def extend_lease(self, ctx: OpContext, item: WorkItem, lease: timedelta) -> WorkItem:
-        self.renewals += 1
+        self._record_renewal()
         await asyncio.Event().wait()
         raise AssertionError("unreachable")
 
@@ -178,7 +191,7 @@ class FailingWork(LeaseLosingWork):
     nothing about who holds the item, as an engine out of reach behaves."""
 
     async def extend_lease(self, ctx: OpContext, item: WorkItem, lease: timedelta) -> WorkItem:
-        self.renewals += 1
+        self._record_renewal()
         raise RuntimeError("engine out of reach")
 
 
@@ -187,11 +200,19 @@ class FailThenStallWork(LeaseLosingWork):
     hangs, as an engine that refuses once and then stops answering behaves."""
 
     async def extend_lease(self, ctx: OpContext, item: WorkItem, lease: timedelta) -> WorkItem:
-        self.renewals += 1
-        if self.renewals == 1:
+        self._record_renewal()
+        if len(self.renewals) == 1:
             raise RuntimeError("engine out of reach")
         await asyncio.Event().wait()
         raise AssertionError("unreachable")
+
+
+class RenewingWork(LeaseLosingWork):
+    """Decorates the real manager: every renewal goes through."""
+
+    async def extend_lease(self, ctx: OpContext, item: WorkItem, lease: timedelta) -> WorkItem:
+        self._record_renewal()
+        return await self._inner.extend_lease(ctx, item, lease)
 
 
 class FailingReleaseWork(LeaseLosingWork):
@@ -386,6 +407,19 @@ async def until(predicate: Callable[[], bool], within: float = 3.0) -> None:
         await asyncio.sleep(0.01)
 
 
+# On the test clock the loop runs on its own defaults: a lease of a minute,
+# renewed every twenty seconds and fenced at thirty. A minute passes there in
+# no wall time, and the lease the storage stamps from the wall clock outlives
+# any stall of the process.
+DEFAULTS = LoopOptions(worker_id="maintenance-test")
+
+
+def after(start: float, times: Sequence[float]) -> list[float]:
+    """Each of `times` on the loop's clock, in seconds after `start`, to the
+    millisecond."""
+    return [round(at - start, 3) for at in times]
+
+
 @pytest.mark.parametrize(
     ("error", "level"),
     [
@@ -424,11 +458,12 @@ async def test_a_claim_that_fails_is_counted_and_logged_at_its_level(
     assert {r.levelno for r in claims} == {level}
 
 
+@on_the_test_clock
 async def test_claims_within_capacity_and_completes(tmp_path: Path) -> None:
     container = build_container(tmp_path)
     ctx = await sign_in(container)
     handler = SlowHandler(hold=0.15)
-    loop, task = start_loop(container, handler, fast_options(capacity=1))
+    loop, task = start_loop(container, handler, DEFAULTS.model_copy(update={"capacity": 1}))
     items = [make_item(ctx) for _ in range(3)]
     for item in items:
         await container.managers.work.enqueue(ctx, item)
@@ -580,113 +615,122 @@ async def test_any_other_error_requeues_the_item_with_a_delay(tmp_path: Path) ->
     assert await container.managers.events.get_events(ctx, after_seq=0, limit=10) == []
 
 
+@on_the_test_clock
 async def test_lease_is_renewed_while_an_item_runs(tmp_path: Path) -> None:
+    # An item that runs for five sixths of the lease is renewed a third of the
+    # lease in and a third after that, and is still this worker's to complete.
     container = build_container(tmp_path)
     ctx = await sign_in(container)
-    handler = SlowHandler(hold=0.7)
-    loop, task = start_loop(container, handler, fast_options(lease=timedelta(seconds=0.3)))
+    lease = DEFAULTS.lease.total_seconds()
+    handler = SlowHandler(hold=lease * 5 / 6)
+    work = RenewingWork(container.managers.work)
+    loop, task = start_loop(container, handler, DEFAULTS, work=work)
     item = make_item(ctx)
     await container.managers.work.enqueue(ctx, item)
     await until(lambda: len(handler.started) == 1)
     storage = container.storage.get_work_storage()
     first = await storage.read_item(ctx.org_id, item.id)
     assert first is not None and first.lease_expires_at is not None
-    await asyncio.sleep(0.35)
+    await asyncio.sleep(lease / 2)
     renewed = await storage.read_item(ctx.org_id, item.id)
     assert renewed is not None and renewed.lease_expires_at is not None
     assert renewed.lease_expires_at > first.lease_expires_at
     assert renewed.status is WorkStatus.CLAIMED
-    await until(lambda: len(handler.finished) == 1)
+    await asyncio.sleep(lease / 2)
+    assert handler.finished == [item.id]
+    assert after(handler.started_at[0], work.renewals) == [lease / 3, lease * 2 / 3]
+    done = await storage.read_item(ctx.org_id, item.id)
+    assert done is not None and done.status is WorkStatus.DONE
     loop.stop()
     await task
 
 
+@on_the_test_clock
 async def test_a_lost_lease_cancels_the_task_at_once(tmp_path: Path) -> None:
     # A renewal refused with LeaseLost is definitive: another worker holds the
     # item, so the task is cancelled on the first refusal, a third of the lease
     # in, and not once half the lease has passed.
     container = build_container(tmp_path)
     ctx = await sign_in(container)
-    handler = SlowHandler(hold=5.0)
+    lease = DEFAULTS.lease.total_seconds()
+    handler = SlowHandler(hold=lease * 2)
     losing = LeaseLosingWork(container.managers.work)
-    lease = timedelta(seconds=0.9)
-    loop, task = start_loop(container, handler, fast_options(lease=lease), work=losing)
-    item = make_item(ctx)
-    await container.managers.work.enqueue(ctx, item)
-    await until(lambda: len(handler.started) == 1)
-    started = asyncio.get_running_loop().time()
-    await until(lambda: len(handler.cancelled) == 1, within=2.0)
-    cancelled = asyncio.get_running_loop().time()
-    assert losing.renewals == 1, "the first refusal is the answer"
-    assert cancelled - started < (lease / 2).total_seconds(), "at once, not after half the lease"
+    loop, task = start_loop(container, handler, DEFAULTS, work=losing)
+    await container.managers.work.enqueue(ctx, make_item(ctx))
+    await asyncio.sleep(lease)
+    (started,) = handler.started_at
+    assert after(started, losing.renewals) == [lease / 3], "the first refusal is the answer"
+    assert handler.cancelled_at == losing.renewals, "at once: the clock did not move"
     assert handler.finished == []
     loop.stop()
     await task
 
 
+@on_the_test_clock
 async def test_any_other_renewal_failure_cancels_after_half_the_lease(tmp_path: Path) -> None:
     # A renewal that fails for any other reason says nothing about who holds
-    # the item, so it is retried; the task is cancelled once half the lease has
-    # passed without a renewal, half the lease before it expires.
+    # the item, so it is retried, halfway between the first attempt and the
+    # fence; the task is cancelled once half the lease has passed without a
+    # renewal, half the lease before it expires.
     container = build_container(tmp_path)
     ctx = await sign_in(container)
-    handler = SlowHandler(hold=5.0)
+    lease = DEFAULTS.lease.total_seconds()
+    handler = SlowHandler(hold=lease * 2)
     failing = FailingWork(container.managers.work)
-    lease = timedelta(seconds=0.9)
-    loop, task = start_loop(container, handler, fast_options(lease=lease), work=failing)
-    item = make_item(ctx)
-    await container.managers.work.enqueue(ctx, item)
-    await until(lambda: len(handler.started) == 1)
-    started = asyncio.get_running_loop().time()
-    await until(lambda: len(handler.cancelled) == 1, within=2.0)
-    cancelled = asyncio.get_running_loop().time()
-    assert failing.renewals == 2, (
+    loop, task = start_loop(container, handler, DEFAULTS, work=failing)
+    await container.managers.work.enqueue(ctx, make_item(ctx))
+    await asyncio.sleep(lease)
+    (started,) = handler.started_at
+    third, half = lease / 3, lease / 2
+    assert after(started, failing.renewals) == [third, (third + half) / 2], (
         "the first failure is retried once; the fence comes before a third"
     )
-    assert (lease / 3).total_seconds() < cancelled - started < (lease * 2 / 3).total_seconds()
+    assert after(started, handler.cancelled_at) == [half]
     assert handler.finished == []
     loop.stop()
     await task
 
 
+@on_the_test_clock
 async def test_a_stalled_renewal_counts_as_failed_and_cancels_in_time(tmp_path: Path) -> None:
+    # The renewal a third of the lease in never answers. Its wait is bounded
+    # by the time left to the fence, so the task is cancelled at half the
+    # lease, well before the lease expires.
     container = build_container(tmp_path)
     ctx = await sign_in(container)
-    handler = SlowHandler(hold=5.0)
+    lease = DEFAULTS.lease.total_seconds()
+    handler = SlowHandler(hold=lease * 2)
     stalling = StallingWork(container.managers.work)
-    lease = timedelta(seconds=1.0)
-    loop, task = start_loop(container, handler, fast_options(lease=lease), work=stalling)
-    item = make_item(ctx)
-    await container.managers.work.enqueue(ctx, item)
-    await until(lambda: len(handler.started) == 1)
-    started = asyncio.get_running_loop().time()
-    await until(lambda: len(handler.cancelled) == 1, within=2.0)
-    cancelled = asyncio.get_running_loop().time()
-    assert cancelled - started < lease.total_seconds(), "cancelled before the lease expired"
-    assert stalling.renewals >= 1
+    loop, task = start_loop(container, handler, DEFAULTS, work=stalling)
+    await container.managers.work.enqueue(ctx, make_item(ctx))
+    await asyncio.sleep(lease)
+    (started,) = handler.started_at
+    assert after(started, stalling.renewals) == [lease / 3]
+    assert after(started, handler.cancelled_at) == [lease / 2], "cancelled at the fence"
     assert handler.finished == []
     loop.stop()
     await task
 
 
+@on_the_test_clock
 async def test_a_renewal_that_stalls_after_a_failure_still_cancels_in_time(tmp_path: Path) -> None:
     # A fast failure a third of the lease in is retried; the retry stalls. Each
     # attempt is bounded by the time left to the fence at half the lease, so
     # the task is cancelled there, not when the lease has already expired.
     container = build_container(tmp_path)
     ctx = await sign_in(container)
-    handler = SlowHandler(hold=5.0)
+    lease = DEFAULTS.lease.total_seconds()
+    handler = SlowHandler(hold=lease * 2)
     work = FailThenStallWork(container.managers.work)
-    lease = timedelta(seconds=0.9)
-    loop, task = start_loop(container, handler, fast_options(lease=lease), work=work)
-    item = make_item(ctx)
-    await container.managers.work.enqueue(ctx, item)
-    await until(lambda: len(handler.started) == 1)
-    started = asyncio.get_running_loop().time()
-    await until(lambda: len(handler.cancelled) == 1, within=2.0)
-    cancelled = asyncio.get_running_loop().time()
-    assert work.renewals == 2, "the fast failure is retried once, the retry stalls"
-    assert cancelled - started < (lease * 2 / 3).total_seconds(), "fenced at half the lease"
+    loop, task = start_loop(container, handler, DEFAULTS, work=work)
+    await container.managers.work.enqueue(ctx, make_item(ctx))
+    await asyncio.sleep(lease)
+    (started,) = handler.started_at
+    third, half = lease / 3, lease / 2
+    assert after(started, work.renewals) == [third, (third + half) / 2], (
+        "the fast failure is retried once, the retry stalls"
+    )
+    assert after(started, handler.cancelled_at) == [half], "fenced at half the lease"
     assert handler.finished == []
     loop.stop()
     await task
@@ -877,6 +921,7 @@ async def test_a_lost_lease_is_never_written_over(tmp_path: Path) -> None:
     [MissingLiveness(), StallingLiveness(), RaisingLiveness()],
     ids=["missing", "stalling", "raising"],
 )
+@on_the_test_clock
 async def test_a_cache_outage_neither_stops_claiming_nor_fails_liveness(
     tmp_path: Path, liveness: CacheInterface
 ) -> None:

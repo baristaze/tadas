@@ -1,5 +1,9 @@
 """Helpers the worker tests share."""
 
+import asyncio
+import functools
+import selectors
+from collections.abc import Callable, Coroutine
 from datetime import timedelta
 from pathlib import Path
 from uuid import UUID
@@ -95,3 +99,55 @@ def fast_options(**overrides: object) -> LoopOptions:
         "poll_interval": timedelta(seconds=0.05),
     }
     return LoopOptions.model_validate({**base, **overrides})
+
+
+# A real clock reads a little past the timer it woke for, never on it. The
+# test clock does too, by a microsecond, so a deadline is never met to the
+# instant, where a rounding error of the float decides which side it is on.
+PAST_THE_TIMER = 1e-6
+
+
+class _TestClockSelector(selectors.DefaultSelector):
+    """The selector of a loop on the test clock. When nothing is ready and the
+    loop would wait for its next timer, the clock moves to just past that
+    timer and the wait ends at once. The loop still sees a socket or a thread
+    that answers, but the clock does not wait for one, so a test on it keeps
+    its work on the loop."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.now = 0.0
+
+    def select(self, timeout: float | None = None) -> list[tuple[selectors.SelectorKey, int]]:
+        ready = super().select(0)
+        if ready or timeout == 0:
+            return ready
+        if timeout is None:
+            return super().select(None)
+        self.now += timeout + PAST_THE_TIMER
+        return []
+
+
+class _TestClockLoop(asyncio.SelectorEventLoop):
+    def __init__(self) -> None:
+        self._test_clock = _TestClockSelector()
+        super().__init__(self._test_clock)
+
+    def time(self) -> float:
+        return self._test_clock.now
+
+
+def on_the_test_clock[**P](test: Callable[P, Coroutine[object, object, None]]) -> Callable[P, None]:
+    """Runs an async test on the test clock: an event loop whose clock stands
+    still while the process works, and moves to the next timer only once
+    every task waits on one. A stall of the process, a collection or a busy
+    runner, moves no deadline on it, so a test can assert to the millisecond
+    when the loop did something, and a lease of a minute passes in no wall
+    time."""
+
+    @functools.wraps(test)
+    def run(*args: P.args, **kwargs: P.kwargs) -> None:
+        with asyncio.Runner(loop_factory=_TestClockLoop) as runner:
+            runner.run(test(*args, **kwargs))
+
+    return run
