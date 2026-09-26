@@ -4,8 +4,9 @@
 points whose content differs from the bucket's copy, invalidates those alone,
 and skips the invalidation when none differs. `pre_rollout.sh` runs the
 migration's commands in one one-off task, in order, stopping at the first
-that fails. No cloud is needed: the fakes record every call and answer from
-a JSON file the test writes.
+that fails, and runs the task again when it asks to, a bounded number of
+times. No cloud is needed: the fakes record every call and answer from a
+JSON file the test writes.
 """
 
 import hashlib
@@ -23,23 +24,29 @@ DESCRIBE = f"aws ecs describe-tasks --cluster c --tasks {TASK} --query tasks[0]"
 PRE_ROLLOUT = ROOT / "deployment" / "terraform" / "modules" / "service" / "pre_rollout.sh"
 
 # One fake for both tools: it appends its argv to calls.jsonl and answers
-# from answers.json, keyed by the first words of the call.
+# from answers.json, keyed by the first words of the call. A list answers
+# each matching call in turn, and its last entry every call after.
 FAKE = """#!/usr/bin/env python3
 import json, os, sys
 state = os.environ["FAKE_STATE"]
 tool = os.path.basename(sys.argv[0])
 args = sys.argv[1:]
-with open(os.path.join(state, "calls.jsonl"), "a") as log:
+calls = os.path.join(state, "calls.jsonl")
+with open(calls, "a") as log:
     log.write(json.dumps([tool, *args]) + "\\n")
 answers = json.load(open(os.path.join(state, "answers.json")))
 for prefix, answer in answers.items():
     if " ".join([tool, *args]).startswith(prefix):
+        if isinstance(answer, list):
+            made = [" ".join(json.loads(line)) for line in open(calls)]
+            seen = sum(1 for call in made if call.startswith(prefix))
+            answer = answer[min(seen, len(answer)) - 1]
         sys.stdout.write(answer)
         break
 """
 
 
-def _tools(tmp_path: Path, answers: dict[str, str]) -> dict[str, str]:
+def _tools(tmp_path: Path, answers: dict[str, str | list[str]]) -> dict[str, str]:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     for tool in ("aws", "terraform"):
@@ -170,13 +177,15 @@ def test_hashed_assets_are_compared_by_size_not_by_time(tmp_path: Path) -> None:
 
 
 def _pre_rollout(
-    tmp_path: Path, commands: list[list[str]], exit_code: str
+    tmp_path: Path, commands: list[list[str]], exit_code: str | list[str]
 ) -> tuple[subprocess.CompletedProcess[str], list[list[str]]]:
+    """`exit_code` is the container's, or one per run of the task in turn."""
+    codes = [exit_code] if isinstance(exit_code, str) else exit_code
     env = _tools(
         tmp_path,
         {
             "aws ecs run-task": f"{TASK}\n",
-            f"{DESCRIBE}.containers": f"{exit_code}\n",
+            f"{DESCRIBE}.containers": [f"{code}\n" for code in codes],
             f"{DESCRIBE}.stoppedReason": "Essential container in task exited\n",
         },
     )
@@ -192,8 +201,12 @@ def _pre_rollout(
     return result, _calls(env)
 
 
+def _run_tasks(calls: list[list[str]]) -> list[list[str]]:
+    return [call for call in calls if call[:3] == ["aws", "ecs", "run-task"]]
+
+
 def _task_command(calls: list[list[str]]) -> list[str]:
-    run_tasks = [call for call in calls if call[:3] == ["aws", "ecs", "run-task"]]
+    run_tasks = _run_tasks(calls)
     assert len(run_tasks) == 1, "every command runs in one task, so the cold start is paid once"
     overrides = json.loads(run_tasks[0][run_tasks[0].index("--overrides") + 1])
     (container,) = overrides["containerOverrides"]
@@ -245,7 +258,29 @@ def test_the_task_script_stops_at_the_first_command_that_fails(tmp_path: Path) -
 
 
 def test_a_failed_task_fails_the_apply(tmp_path: Path) -> None:
-    result, _ = _pre_rollout(tmp_path, [["tadas-api", "migrate", "--all"]], "1")
+    result, calls = _pre_rollout(tmp_path, [["tadas-api", "migrate", "--all"]], "1")
     assert result.returncode == 1
     assert "pre-rollout task failed" in result.stderr
     assert "the service keeps its current tasks" in result.stderr
+    assert len(_run_tasks(calls)) == 1, "a failure that is not a lock wait is not run again"
+
+
+MIGRATE = [["tadas-api", "migrate", "ensure-logins"], ["tadas-api", "migrate", "--all"]]
+
+
+def test_a_task_that_asks_to_run_again_runs_again(tmp_path: Path) -> None:
+    """75 is what the migrate command exits with when a lock was not granted
+    within its bound: nothing of that role was applied, and the same task,
+    run again, resumes where the first stopped."""
+    result, calls = _pre_rollout(tmp_path, MIGRATE, ["75", "0"])
+    assert result.returncode == 0, result.stderr
+    assert "asked to run again" in result.stdout and "run 2 of 3" in result.stdout
+    runs = _run_tasks(calls)
+    assert len(runs) == 2 and runs[0] == runs[1]
+
+
+def test_a_task_that_keeps_asking_fails_the_apply_after_three_runs(tmp_path: Path) -> None:
+    result, calls = _pre_rollout(tmp_path, MIGRATE, ["75"])
+    assert result.returncode == 1
+    assert "exited 75" in result.stderr and "the service keeps its current tasks" in result.stderr
+    assert len(_run_tasks(calls)) == 3
