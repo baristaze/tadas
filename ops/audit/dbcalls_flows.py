@@ -162,7 +162,8 @@ async def auth(w: Any) -> None:
         "/v1/api-keys", headers=st["H"], json={"name": "audit", "role": "member"}
     )
     key = r.json()["key"]
-    await w.http(base, "GET /v1/me (api key)", "GET", "/v1/me", headers=headers(key, "api"))
+    st["keyH"] = headers(key, "api")
+    await w.http(base, "GET /v1/me (api key)", "GET", "/v1/me", headers=st["keyH"])
 
 
 # ---------------------------------------------------------------- tenancy
@@ -471,6 +472,20 @@ async def events(w: Any) -> None:
         )
     finally:
         detach()
+    r = await w.client.post("/v1/realtime/tickets", headers=w.state["keyH"])
+    principal = await w.measure(
+        area,
+        "WS /v1/realtime: redeem the ticket (api key)",
+        lambda: tenancy.redeem_ticket(seed_request(), r.json()["ticket"]),
+        note="the handshake's manager call",
+    )
+    if principal is not None:
+        await w.measure(
+            area,
+            "WS /v1/realtime: the socket's recheck (api key)",
+            lambda: realtime.recheck(principal),
+            note="once per socket per TADAS_REALTIME_RECHECK_SECONDS",
+        )
 
 
 # ---------------------------------------------------------------- billing
