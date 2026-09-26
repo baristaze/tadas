@@ -8,7 +8,11 @@ from tadas.om.tasks.types.task import TaskScope, TaskStatus
 from tadas.services.api.types.media import AddFileRequest, FilePageView, FileView
 from tadas.services.api.types.tasks import (
     AddTaskRequest,
+    ImportPageView,
+    ImportView,
     MoveTaskRequest,
+    RestoreTaskRequest,
+    StartImportRequest,
     TaskPageView,
     TaskView,
     UpdateTaskRequest,
@@ -27,7 +31,40 @@ class TasksServiceInterface(ABC):
     ) -> TaskPageView: ...
 
     @abstractmethod
+    async def get_archived_tasks(
+        self, ctx: OpContext, scope: TaskScope, cursor: str | None, limit: int
+    ) -> TaskPageView: ...
+
+    @abstractmethod
     async def get_task(self, ctx: OpContext, task_id: UUID) -> TaskView: ...
+
+    @abstractmethod
+    async def restore_task(
+        self, ctx: OpContext, task_id: UUID, body: RestoreTaskRequest
+    ) -> TaskView: ...
+
+    @abstractmethod
+    async def create_import_file(
+        self, ctx: OpContext, body: AddFileRequest, file_id: UUID
+    ) -> FileView:
+        """`file_id` is minted by the gateway before the idempotency marker."""
+        ...
+
+    @abstractmethod
+    async def start_import(
+        self, ctx: OpContext, body: StartImportRequest, import_id: UUID
+    ) -> ImportView:
+        """`import_id` is minted by the gateway before the idempotency marker."""
+        ...
+
+    @abstractmethod
+    async def get_imports(self, ctx: OpContext, limit: int) -> ImportPageView: ...
+
+    @abstractmethod
+    async def get_import(self, ctx: OpContext, import_id: UUID) -> ImportView: ...
+
+    @abstractmethod
+    async def resume_import(self, ctx: OpContext, import_id: UUID) -> ImportView: ...
 
     @abstractmethod
     async def create_task(self, ctx: OpContext, body: AddTaskRequest, task_id: UUID) -> TaskView:

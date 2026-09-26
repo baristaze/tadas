@@ -3,6 +3,11 @@ from uuid import UUID
 
 from pydantic import Field
 
+from tadas.om.orchestrations.types.orchestration import (
+    FailReason,
+    OrchestrationStatus,
+    ParkReason,
+)
 from tadas.om.tasks.types.task import TaskStatus
 from tadas.services.api.types.common import RequestBody, View
 
@@ -23,6 +28,8 @@ class TaskView(View):
     # predates them.
     due_on: date | None = None
     reminded_at: datetime | None = None
+    # Set when the daily cleanup archived the task; null otherwise.
+    archived_at: datetime | None = None
 
 
 class TaskPageView(View):
@@ -73,3 +80,63 @@ class MoveTaskRequest(RequestBody):
 
     after_id: UUID | None = None
     expected_version: int | None = Field(default=None, ge=1)
+
+
+class RestoreTaskRequest(RequestBody):
+    """Takes an archived task back to the done list. `expected_version` is the
+    task's as the caller read it: 412 `precondition_failed` when it changed
+    since, and 422 `validation_failed` when the request names none or the
+    task is not archived."""
+
+    expected_version: int | None = Field(default=None, ge=1)
+
+
+class StartImportRequest(RequestBody):
+    """The import of a CSV file uploaded under the `task_import` purpose
+    (`POST /v1/tasks/imports/files`, then the media routes) and confirmed.
+    Its columns are `title` (needed), `notes`, `due_on` (`YYYY-MM-DD`), and
+    `assignee_email` (a member of the org), by header name."""
+
+    file_id: UUID
+
+
+class RowErrorView(View):
+    """A row the import skipped: its number, the first data row being 1, and why."""
+
+    row: int
+    reason: str
+
+
+class ImportView(View):
+    """An import of tasks from a CSV file, read as it runs. `status` is
+    `running`, `parked`, `succeeded`, or `failed`. `total` is the file's data
+    rows, null until the first step counted them; `cursor` is how many were
+    read; `created` the tasks the import made, `skipped` the rows it passed
+    over, and `row_errors` the first twenty of those with the reason. A
+    `parked` import names its `park_reason`: `plan_limit` is the plan's bound
+    on active tasks, lifted by a higher plan (which resumes it) or by tasks
+    finished and `POST /v1/tasks/imports/{id}/resume`. A `failed` one names
+    its `fail_reason`: `file_too_large`, `too_many_rows`, `not_csv`,
+    `no_title_column`, `file_gone`, or `defect`. Every change is pushed as
+    `orchestrations.orchestration.updated` on the realtime channel."""
+
+    id: UUID
+    file_id: UUID
+    status: OrchestrationStatus
+    total: int | None
+    cursor: int
+    created: int
+    skipped: int
+    row_errors: list[RowErrorView]
+    park_reason: ParkReason | None
+    fail_reason: FailReason | None
+    created_at: datetime
+    updated_at: datetime
+    finished_at: datetime | None
+    created_by: UUID
+
+
+class ImportPageView(View):
+    """The org's newest imports, newest first."""
+
+    items: list[ImportView]

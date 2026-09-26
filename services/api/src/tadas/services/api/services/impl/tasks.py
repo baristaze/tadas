@@ -6,6 +6,7 @@ from tadas.om.base import utcnow
 from tadas.om.exceptions import ValidationFailed
 from tadas.om.media.types.file import File, FilePurpose
 from tadas.om.opcontext import OpContext
+from tadas.om.orchestrations.types.orchestration import Orchestration, TaskImportInput
 from tadas.om.tasks import TasksManagerInterface
 from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor, TaskFilter
 from tadas.om.tasks.types.page import TaskPage
@@ -16,7 +17,12 @@ from tadas.services.api.types.common import clamp_limit
 from tadas.services.api.types.media import AddFileRequest, FilePageView, FileView
 from tadas.services.api.types.tasks import (
     AddTaskRequest,
+    ImportPageView,
+    ImportView,
     MoveTaskRequest,
+    RestoreTaskRequest,
+    RowErrorView,
+    StartImportRequest,
     TaskPageView,
     TaskView,
     UpdateTaskRequest,
@@ -59,6 +65,27 @@ def encode_file_cursor(file_id: UUID) -> str:
     return base64.urlsafe_b64encode(str(file_id).encode()).decode().rstrip("=")
 
 
+def import_view(record: Orchestration) -> ImportView:
+    """An import on the wire: the record's counts under the words of an
+    import, and its file. What a defect was is the operators' to read."""
+    return ImportView(
+        id=record.id,
+        file_id=TaskImportInput.model_validate(dict(record.input)).file_id,
+        status=record.status,
+        total=record.total,
+        cursor=record.cursor,
+        created=record.applied,
+        skipped=record.skipped,
+        row_errors=[RowErrorView(row=e.row, reason=e.reason) for e in record.row_errors],
+        park_reason=record.park_reason,
+        fail_reason=record.fail_reason,
+        created_at=record.created_at,
+        updated_at=record.updated_at,
+        finished_at=record.finished_at,
+        created_by=record.created_by,
+    )
+
+
 def expected_version(named: int | None) -> int:
     """The version a write compares with: the one the request names, in
     `If-Match` or `expected_version`. A request that names none would
@@ -98,8 +125,59 @@ class TasksServiceImpl(TasksServiceInterface):
             next_cursor=encode_cursor(status, page.items[-1]) if page.has_more else None,
         )
 
+    async def get_archived_tasks(
+        self, ctx: OpContext, scope: TaskScope, cursor: str | None, limit: int
+    ) -> TaskPageView:
+        # The archived list pages as the done list does, by (updated_at, id).
+        before = decode_cursor(TaskStatus.DONE, cursor) if cursor else None
+        assert before is None or isinstance(before, TaskCursor)
+        criterion = TaskFilter(scope=scope, user_id=ctx.user_id)
+        page = await self._tasks.get_archived_tasks(ctx, criterion, before, clamp_limit(limit))
+        return TaskPageView(
+            items=[TaskView.model_validate(t) for t in page.items],
+            next_cursor=encode_cursor(TaskStatus.DONE, page.items[-1]) if page.has_more else None,
+        )
+
     async def get_task(self, ctx: OpContext, task_id: UUID) -> TaskView:
         return TaskView.model_validate(await self._tasks.get_task(ctx, task_id))
+
+    async def restore_task(
+        self, ctx: OpContext, task_id: UUID, body: RestoreTaskRequest
+    ) -> TaskView:
+        expected = expected_version(body.expected_version)
+        return TaskView.model_validate(await self._tasks.restore_task(ctx, task_id, expected))
+
+    async def create_import_file(
+        self, ctx: OpContext, body: AddFileRequest, file_id: UUID
+    ) -> FileView:
+        now = utcnow()
+        file = File(
+            id=file_id,
+            name=body.name,
+            created_at=now,
+            updated_at=now,
+            created_by=ctx.user_id,
+            updated_by=ctx.user_id,
+            content_type=body.content_type,
+            size_bytes=body.size_bytes,
+            purpose=FilePurpose.TASK_IMPORT,
+        )
+        return file_view(await self._tasks.create_import_file(ctx, file))
+
+    async def start_import(
+        self, ctx: OpContext, body: StartImportRequest, import_id: UUID
+    ) -> ImportView:
+        return import_view(await self._tasks.start_import(ctx, import_id, body.file_id))
+
+    async def get_imports(self, ctx: OpContext, limit: int) -> ImportPageView:
+        page = await self._tasks.get_imports(ctx, clamp_limit(limit))
+        return ImportPageView(items=[import_view(r) for r in page.items])
+
+    async def get_import(self, ctx: OpContext, import_id: UUID) -> ImportView:
+        return import_view(await self._tasks.get_import(ctx, import_id))
+
+    async def resume_import(self, ctx: OpContext, import_id: UUID) -> ImportView:
+        return import_view(await self._tasks.resume_import(ctx, import_id))
 
     async def create_task(self, ctx: OpContext, body: AddTaskRequest, task_id: UUID) -> TaskView:
         now = utcnow()
