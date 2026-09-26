@@ -81,7 +81,7 @@ context on keeps the stage the callee needs.
   it by name before the ladder is asked. An api key never mints another:
   revoking a leaked key has to end the access it gave, and a successor
   would outlive it, so `create_api_key` refuses an api key credential the
-  way `logout` refuses anything but a session. The operator plane (every org, delete an org) is a second
+  way `logout` refuses anything but a session. The operator plane (every org, delete an org; an owner deletes their own team org through the tenant's manager) is a second
   manager, `TenancyOperatorManagerInterface`, which takes `OperatorContext`
   and nothing else. Deleting an org soft-deletes the row and lands
   `tenancy.org.deleted` beside it, so every socket of the tenant closes;
@@ -250,13 +250,28 @@ context on keeps the stage the callee needs.
   deleted personal org as past its retention at once, so the next
   sweep purges it through every namespace's tenant purge
   ([ADR 0041](adr/0041-an-account-is-deleted-at-once-and-its-providers-by-the-queue.md)).
+  `delete_org` deletes the caller's team org from an owner's session,
+  once the typed name is the org's (`rules.confirms_org_deletion`); an
+  admin, a member, and an api key are refused (`NotAuthorized`, 403),
+  and a personal org (`PersonalOrgFixed`, 409). One named atomic write,
+  `write_closed_org`, under the tenant's own scope, lands the org row
+  with its `provider_org_id` cleared, soft-deletes every live user with
+  their membership, revokes every live session, api key, and pending
+  invitation, and lands in the same commit `tenancy.user.deleted` per
+  user, a revocation row per credential, and one `work.DELETE_ORG` row
+  carrying the WorkOS organization's id. The same request writes a
+  session in the owner's personal org, as a switch does, and answers
+  with it. `delete_closed_org`, that item's last step, on the service
+  role only, writes what the operator's deletion writes, and the sweep
+  purges the tenant after the retention
+  ([ADR 0042](adr/0042-an-owner-deletes-a-team-org-closed-at-once-and-its-providers-by-the-queue.md)).
 - `work`: the table-backed work queue in the `queue` role; a row's
   routing field is its `lane`, payload shapes are fixed per `WorkKind`
   by `WORK_PAYLOADS`, and the permission each kind is asked for with by
   `WORK_ENQUEUE_PERMISSIONS`, which the worker's tests hold to every
   handler's `REQUIRES`. The kinds are `NOOP`, `SYNC_SEATS`,
   `TASK_REMINDER`, `SLACK_POST`, `ORCHESTRATION`, `WAKE_PARKED`,
-  `DELETE_ACCOUNT`, and `UNASSIGN_TASKS`. Enqueue is a create: it validates the payload, and
+  `DELETE_ACCOUNT`, `UNASSIGN_TASKS`, and `DELETE_ORG`. Enqueue is a create: it validates the payload, and
   the manager's copy stamps the actor from the context, the timestamps,
   status `QUEUED`, zero attempts, and clears every claim field whatever
   the caller sent; the insert reports an existing id and changes nothing,
@@ -1039,7 +1054,7 @@ alone, and neither key may touch what the other's work does not need
   any other failure to its visibility and the queue's dead letter; the
   claim loop for the kinds `TASK_REMINDER`, `SLACK_POST`, `SYNC_SEATS`,
   `ORCHESTRATION`, `WAKE_PARKED`, `DELETE_ACCOUNT`, `UNASSIGN_TASKS`,
-  and `NOOP` on one lane
+  `DELETE_ORG`, and `NOOP` on one lane
   (`TADAS_WORKER_LANE`, or `serve --lane`); a handler that raises
   `WorkParked` has its item deferred for the time it names, no attempt
   spent, and a Slack rate limit is that case; lease

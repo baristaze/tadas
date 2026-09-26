@@ -143,11 +143,11 @@ person signed in as. Their next sign-in makes a WorkOS user again, and
 Tadas links it to them by the verified address, as it links any person
 WorkOS knows under a new id.
 
-The refusal asks the last owner to make someone else an owner, which
-the API does (`PATCH /v1/memberships/{user_id}`); the portal has no
-control for it yet. A tenant cannot delete a team org yet either: an
-operator does. So a team org whose only member is its owner holds its
-owner's account until an operator deletes the org.
+The refusal asks the last owner to make someone else an owner, or to
+delete the organization. Settings does both: a role control on each
+member, and an owner's deletion of a team org
+([ADR 0042](0042-an-owner-deletes-a-team-org-closed-at-once-and-its-providers-by-the-queue.md)).
+So no account waits on an operator.
 
 The WorkOS organization a personal org gets when its owner invites
 someone to it stays at WorkOS under the org's id.
