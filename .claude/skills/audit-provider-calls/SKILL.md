@@ -23,7 +23,7 @@ to audit another commit, run it from a checkout of that commit that has
 
 ## Role and credential
 
-Investigator, local only. The counted run is on the local stack (`make
+None, local only. The counted run is on the local stack (`make
 infra-up`, with `make migrate` run once), in a database the run makes
 and drops, with the provider twins in place of every provider. It holds
 no cloud credential, reads no environment and no env file, and calls no

@@ -133,7 +133,11 @@ Zustand, one realtime channel.
   route into the query cache (`router.ts`), never into components. A
   record read back from the stream (a replay, the first catch-up) is
   routed once per entity, so a task record there reads the task lists
-  whole, as every other entity's queries are. The
+  whole, as every other entity's queries are. A reminder there is kept
+  whatever record of its task follows it, and announced once the
+  read-back ends: each by its title up to three, and past three one
+  notice that counts them, "You missed 5 reminders while you were away"
+  (`reminder.ts`, ADR 0075). The
   ping interval comes from
   `deployment/realtime-timeouts.json`.
 - A person signs in through WorkOS AuthKit, which the API fronts. `/login`
