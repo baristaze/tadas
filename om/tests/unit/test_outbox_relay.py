@@ -341,3 +341,27 @@ async def test_the_sweep_relays_each_tenants_rows_together(infra: InfraLocalImpl
     assert poison.last_error == "RuntimeError: cannot append this one"
     assert all(stored[row.id].done_at is not None for row in (*bob_rows, ann_rows[0], ann_rows[2]))
     assert len(await events.read_after(bob, 0, 10)) == 4
+
+
+async def test_a_work_row_is_done_once_enqueued_though_its_wake_up_is_dropped(
+    infra: InfraLocalImpl, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The queue is a work row's truth and the workers poll it, so a dropped
+    wake-up costs latency and the row is done. The entity change beside it
+    told no one, so it stays pending."""
+    storage = StorageMemoryImpl()
+    managers = build_managers(storage, infra, TenancyOptions(dev_sign_in=True))
+    ctx = await sign_in(managers)
+    task = make_task(created_by=ctx.user_id)
+    change = outbox_row(ctx, "tasks.task.created", task.id, snapshot(task))
+    asked = outbox_row(ctx, work_row_kind(WorkKind.NOOP), task.id, {})
+    assert await storage.get_tasks_storage().create_task(ctx.org_id, task, (change, asked))
+
+    async def dropped(topic: Topics, payload: TopicPayload) -> bool:
+        return False
+
+    monkeypatch.setattr(infra.get_topics(), "publish", dropped)
+    assert not await managers.outbox.relay_all(ctx.org_id, (change, asked))
+    assert await storage.get_work_storage().read_item_by_key(ctx.org_id, asked.id) is not None
+    pending = await claim_all(storage.get_outbox_storage())
+    assert [row.id for row in pending] == [change.id]
