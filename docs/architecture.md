@@ -109,12 +109,19 @@ context on keeps the stage the callee needs.
   digests a fresh random secret that is never created again. A partial
   index serves none of the sweep's reads, which are the dead rows and a
   deleted tenant's, so users and memberships each carry a plain
-  `(org_id, deleted_at)` index beside their unique one. Every other purge
-  has its index too: deleted tasks `(org_id, deleted_at)` over the deleted
-  ones, sessions and socket tickets `(org_id, expires_at)`, idempotency
-  records and Slack posts `(org_id, created_at)`, and the outbox's dead
-  letters `(failed_at)` over the failed ones, beside the `(done_at, id)`
-  the done ones walk. The seeding
+  `(org_id, deleted_at)` index beside their unique one, for a tenant's
+  rows. The purges past a retention run across tenants, so each reads
+  an index that leads with the column its retention is counted on:
+  deleted tasks, files, users, memberships, keys, and Slack
+  installations by `deleted_at` over the deleted ones; keys, sessions,
+  socket tickets, invitations, and Slack's install states by
+  `expires_at`; invitations by `updated_at`, and redeemed install states
+  by `redeemed_at`; idempotency records, delivery marks, and Slack posts
+  by `created_at`; the pending markers by `attempt_id`; pending uploads
+  by `(status, created_at)` and settled orchestrations by `(status,
+  updated_at)`; events by `produced_at`; and the outbox's dead letters
+  `(failed_at)` over the failed ones, beside the `(done_at, id)` the done
+  ones walk ([ADR 0045](adr/0045-retention-purges-run-once-a-pass-across-tenants.md)). The seeding
   transitions are named atomic creates:
   `bootstrap` lands the org, its first user, and the owner's membership in
   one commit (`create_org_with_owner`), `add_member` the user, the
@@ -184,9 +191,9 @@ context on keeps the stage the callee needs.
   sessions and socket tickets expired past their retention: a revoked
   session expires within its twelve hours, so its expiry alone decides,
   and a socket ticket, which lives a minute, is kept a day. Login credentials are stored under the system scope,
-  and the sweep mints a service context for that scope first, so the
-  expired ones are purged like a tenant's dead sessions; api keys are
-  purged once revoked or expired. Exchanging a login for an org that is
+  and the purge runs across tenants in that scope, so the expired ones
+  go with every tenant's dead sessions; api keys are purged once
+  revoked or expired. Exchanging a login for an org that is
   gone, or a membership that has ended, is `NotAuthorized` (403), not a
   sign-in failure: the login itself still stands. Every person has
   exactly one personal org (`Org.kind`, `personal` or `team`, and
@@ -448,8 +455,9 @@ context on keeps the stage the callee needs.
   ending in `usage_from_totals`; it is a manager operation so a plan's
   limit can be held against it. A removed file stops counting at once;
   its object and then its row are erased by the sweep after a day
-  (`purge_deleted`, a batch of 100 per tenant per sweep), and an upload
-  pending for a day is erased the same way.
+  (`purge_across_tenants`, a batch of 100 for every org at once, again
+  while a batch comes back whole), and an upload pending for a day is
+  erased the same way.
   A due date is the caller's field and `reminded_at` the manager's
   ([ADR 0034](adr/0034-a-task-is-due-on-a-date.md)). A write that
   changes `due_on` clears `reminded_at` and, when the new one is set,
@@ -679,11 +687,13 @@ context on keeps the stage the callee needs.
   before the number is spent, over both impls, as Postgres rolls the
   number back with the insert it refused, so a write this tenant cannot
   make never moves its cursor. No update, and two deletes. The trim takes
-  the oldest events of a living tenant past the event retention (90
-  days by default, `TADAS_EVENT_RETENTION_DAYS`), a
-  bounded batch from the bottom, and moves the cursor row's `floor` to
-  the last of them in the same transaction, so the stream is whole
-  above the floor; `get_events` after a seq below the floor is refused as
+  the oldest events past the event retention (90 days by default,
+  `TADAS_EVENT_RETENTION_DAYS`) for every tenant at once, in the system
+  scope: one statement reads a bounded batch of the oldest by
+  `produced_at`, locks each tenant's cursor row it names (skipping one
+  an append holds), deletes each tenant's run from the bottom of its
+  stream, and moves each cursor row's `floor` to the last of its run in
+  the same statement, so the stream is whole above the floor; `get_events` after a seq below the floor is refused as
   `StreamTruncated` (410, naming the floor and the head). The sweep also
   drops a tenant's whole stream once the deleted tenant is past the
   retention ([ADR 0040](adr/0040-the-event-stream-has-a-floor.md)). An
@@ -1128,16 +1138,22 @@ alone, and neither key may touch what the other's work does not need
   `outbox_batch` (100) at a time and again while a batch comes back
   whole, one attempt each with a growing delay; then, under one service
   context per tenant, the system scope first and deleted tenants
-  included,
-  purge the tenant's soft-deleted tasks (their attachments first,
-  through the media manager, so a detach that failed at the delete is
-  retried here and a task whose files still will not go waits for the
-  next pass), its removed files and abandoned
-  uploads (the object first, then the row), removed
-  members with their ended memberships, revoked api keys, expired
-  sessions and socket tickets, and closed invitations past their
-  retention (the one hard delete), its finished idempotency records and
-  abandoned markers, then purge
+  included, the work shaped by the tenant: the purge of a tenant whose
+  org row is deleted longer ago than the retention, and the chore that
+  opens the day's cleanup of old done tasks (`open_cleanup`) for an org
+  that has one to do; then, once a pass for every tenant, in the system
+  scope, each namespace's purge of its rows past their retention
+  (`purge_across_tenants`): soft-deleted tasks (their attachments
+  first, through the media manager under the task's tenant, so a detach
+  that failed at the delete is retried here and a task whose files still
+  will not go waits for the next pass), removed files and abandoned
+  uploads (the object first, then the row), removed members with their
+  ended memberships, revoked api keys, expired sessions and socket
+  tickets, and closed invitations past their retention (the one hard
+  delete), finished idempotency records and abandoned markers, delivery
+  marks, Slack's ended installations, spent states, and posts, settled
+  orchestrations, and the events past the event retention, each
+  tenant's floor moving with its own; then purge
   the done and failed outbox rows after eight days, which outlives the
   seven-day database backup retention, so a role restored to an earlier
   point than its siblings is reconciled by relaying the outbox again,
@@ -1146,34 +1162,38 @@ alone, and neither key may touch what the other's work does not need
   (`TADAS_*_RETENTION_DAYS` or `_HOURS`), which the worker hands to the
   manager that purges. Every purge statement deletes a batch at most
   (`TADAS_WORKER_PURGE_BATCH`, 1000; the media purge keeps its own 100,
-  since each row costs an object delete): it chooses the rows with
+  since each row costs an object delete, and the loop holds its count
+  against that batch): it chooses the rows with
   `FOR UPDATE SKIP LOCKED` and deletes them in a transaction of its own,
   so no statement grows with a backlog past the statement deadline and
-  two workers split a backlog instead of queueing on it. An index serves
-  each one. A purge whose batch comes back full is called again, in turn
-  with the tenant's other full ones, while the pass's budget lasts
+  two workers split a backlog instead of queueing on it. An index that
+  leads with the retention column serves each purge across tenants, so a
+  tenant with nothing to purge costs the pass nothing there
+  ([ADR 0045](adr/0045-retention-purges-run-once-a-pass-across-tenants.md)).
+  A purge whose batch comes back full is called again, in turn with the
+  other full ones, while the pass's budget lasts
   (`TADAS_WORKER_SWEEP_BUDGET_SECONDS`, 20). Past the budget the pass
   takes no new tenant; the next pass starts at the tenant it stopped at,
   so every tenant is reached in turn and every step of a tenant runs
-  whenever the tenant does. Beside the purges, the sweep runs one chore
-  per tenant: it opens the day's cleanup of old done tasks
-  (`open_cleanup`) for an org that has one to do. The chores run once
-  whenever the tenant does, before any second round of purges, so a
-  backlog never spends the budget they need. The requeue, the relay,
-  and the cross-tenant purges run on every pass, each again while its
-  batch comes back full and the budget lasts; the pass always takes one
-  tenant, even past the budget.
+  whenever the tenant does. The chores run once whenever the tenant
+  does, before any second round of its purges, so a backlog never spends
+  the budget they need. The requeue, the relay, and the purges across
+  tenants run on every pass, each again while its batch comes back full
+  and the budget lasts; the pass always takes one tenant, even past the
+  budget.
   Each pass writes its duration on one line, which an alarm reads.
   Under a tenant whose org row is deleted longer ago than the retention
   it is every row that goes, its open and done tasks among them, since
-  an open task carries no `deleted_at` of its own and the sweep that
+  an open task carries no `deleted_at` of its own and the purge that
   reads one would leave it forever; the org row stays as the record.
   Once a pass finds nothing left of such a tenant, it stamps the org
   `purged_at`, and the sweep leaves the tenant out from then on.
-  Each namespace purges its own rows and asks tenancy the one question,
+  Each namespace's purge of a tenant asks tenancy the one question,
   `tenant_expired`, and within a pass tenancy answers it from the org
-  rows it read to list the tenants, so the pass reads one answer per
-  tenant and no org row per namespace.
+  rows it read to list the tenants, so a living tenant costs these
+  purges no read at all. The tasks' purge across tenants asks tenancy
+  for the pass's context of each tenant it found a row of
+  (`sweep_context`), which reads nothing within the pass.
   Beside the loop, `serve` consumes the `slack` queue: each command or
   event the API checked and acknowledged is handled (`/tadas`, `/tadas
   team`, `/tadas add`, `/tadas connect`, `/tadas help`, a mention, the

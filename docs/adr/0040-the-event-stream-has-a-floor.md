@@ -1,7 +1,11 @@
 # ADR 0040: The event stream has a floor, and a read below it is gone
 
 **Status**: accepted (2026-09-26). Both steps of the rollout are done:
-the worker keeps 90 days of events by default.
+the worker keeps 90 days of events by default. Where the sweep runs
+the trim is amended (2026-09-26) by
+[ADR 0045](0045-retention-purges-run-once-a-pass-across-tenants.md):
+once a pass for every org, in one statement that moves each org's
+floor with its own events.
 
 ## Context
 
