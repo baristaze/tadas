@@ -44,15 +44,20 @@ no cloud credential, reads no environment, and reads no env file.
 2. List the credential kinds. `CredentialKind` in
    `om/src/tadas/om/opcontext.py` names the ones the platform mints; the
    tenancy manager (`om/src/tadas/om/tenancy/impl/manager.py`) mints and
-   checks them, with each lifetime in its options (`TenancyOptions`) and
-   the settings that feed them
-   (`services/api/src/tadas/services/api/settings.py`). Add every other
+   checks them, with each lifetime in its options (`TenancyOptions`).
+   The values that apply are the settings
+   (`services/api/src/tadas/services/api/settings.py`) as the container
+   passes them in (`services/api/src/tadas/services/api/container.py`),
+   not the options' own defaults, which can differ. Add every other
    proof the code trusts: an inbound provider delivery's signature
-   (`services/api/src/tadas/services/api/gateway/webhooks.py`,
-   `routers/webhooks.py`, `routers/slack.py`), a provider's token the
-   platform holds (Slack's, in `om/src/tadas/om/slack/`), and the
-   identity provider's own session behind a sign-in. A kind the code has
-   and this list misses is a finding of its own.
+   (read at `services/api/src/tadas/services/api/gateway/webhooks.py`,
+   checked in `integrations/src/tadas/integrations/payments/deliveries.py`
+   and `integrations/src/tadas/integrations/slack/requests.py`), a
+   provider's token the platform holds (Slack's, in
+   `om/src/tadas/om/slack/`), and the identity provider's own session
+   behind a sign-in (ended at sign-out, `_provider_logout` in the tenancy
+   manager). Each goes in the row of the channel that uses it. A kind the
+   code has and this list misses is a finding of its own.
 3. List the channels, and which kinds reach each:
    - HTTP request: the gateway's dependencies in
      `services/api/src/tadas/services/api/gateway/auth.py`
@@ -70,12 +75,14 @@ no cloud credential, reads no environment, and reads no env file.
      what a process trusts or does, such as a revocation that ends a
      socket. Read how it is published (the outbox relay,
      `om/src/tadas/om/outbox/impl/relay.py`) and delivered (the Valkey
-     impl, `topics/valkey.py`, and its breaker): say whether it is at
+     impl, `topics/valkey.py`, and `topics/breaker.py`): say whether it is at
      most once, and what happens to a message sent while a subscriber
      is reconnecting.
-   - Worker: a work item carries the context of the request that made it
-     (`om/src/tadas/om/work/`, `workers/maintenance/src/tadas/workers/maintenance/loop.py`,
-     `_run_item`); read whether a handler checks the actor's credential,
+   - Worker: a work item runs under a context the claim mints
+     (`claim` in `om/src/tadas/om/work/impl/manager.py`, through the
+     tenancy manager's `service_context`), and a handler may mint another
+     (`member_context`, as `workers/maintenance/src/tadas/workers/maintenance/slack_inbound.py`
+     does); read whether a handler checks the actor's credential,
      membership, or role again when it runs, or acts on what the request
      knew when it enqueued.
    A kind that never travels a channel is `n/a` in that cell, with the
@@ -91,9 +98,9 @@ no cloud credential, reads no environment, and reads no env file.
      recheck interval, a cache's TTL, the credential's own expiry. A
      path that depends on a message the bus may drop takes the next
      bound that does not;
-   - how a change of role, the member's teams, or the membership's end
-     reaches it: read again on the next check, pushed and closed, or
-     never until expiry;
+   - how a change of role, the member's teams, the membership's end, or
+     the org's plan (a plan without API keys) reaches it: read again on
+     the next check, pushed and closed, or never until expiry;
    - its rate limit or budget
      (`services/api/src/tadas/services/api/gateway/ratelimit.py`, the
      settings), or none;
@@ -112,12 +119,19 @@ no cloud credential, reads no environment, and reads no env file.
    uv run python ops/audit/dbcalls.py summary ~/Downloads/tadas_credential_lifetimes_<yyyy-mm-dd>/calls.json
    ```
 
-   The built-in `auth` flow measures the session, the API key, and the
-   sign-in credential on `GET /v1/me` and `GET /v1/auth/memberships`;
-   `events` measures the ticket's redemption and the socket's recheck. A
-   credential they do not reach (the operator token on an operator
-   route, a sign-in with its second factor) goes in a flows file of the
-   run's own, written as
+   The built-in `auth` flow measures the session and the API key on
+   `GET /v1/me` (area `baseline`) and the sign-in credential on
+   `GET /v1/auth/memberships` (area `auth`); `events` measures the
+   ticket's redemption and the socket's recheck (area `realtime`). The
+   check's cost is the credential's own transactions in each call's
+   `detail`, apart from what the route reads after it; tally
+   `calls.json` with a scratch script (`uv run python <script>`), never
+   a file in the repository. The counter runs the cache and the bus in
+   memory, so no count includes a Valkey round trip: a check in the
+   cache is read from the code. A credential they do not reach (the
+   operator token on an operator route, whose mint takes an
+   `Idempotency-Key`; a sign-in with its second factor; an API key warm)
+   goes in a flows file of the run's own, written as
    `.claude/skills/audit-database-calls/references/flows.md` shows (read
    it before writing one). Use the warm round trips, and say so. A cost
    the counter cannot reach (a check made only in the cache) is read
@@ -136,8 +150,8 @@ no cloud credential, reads no environment, and reads no env file.
      message leaves it open until the credential expires;
    - a worst case above the bound, with its number;
    - a check that fails open on a path that decides access (a rate limit
-     that fails open is a stated choice when the code says so, and is
-     listed, not flagged);
+     that fails open is a stated choice when the code says so, and goes
+     under "Stated choices", not flagged);
    - a change of role that only a new credential reaches;
    - a check that costs more than its credential's baseline needs (a
      read repeated, a transaction per check that one would serve).
@@ -175,12 +189,16 @@ no cloud credential, reads no environment, and reads no env file.
 | Credential | Channel | Checked at (file:line) | How often | One check (round trips, transactions) | Worst case after revocation | Role or membership change | Rate limit | Cache down | Verdict |
 |---|---|---|---|---|---|---|---|---|---|
 
-Verdicts: within bound, above bound, push only, n/a. Costs: measured or read.
+Verdicts: within bound, above bound, push only, not traced, n/a. Costs: measured or read.
 
 ## Findings, by harm
 
 1. **<finding>.** Where (file:line). The worst case (numbers). The fix.
    Effort S/M/L. Proposed ticket: <title>.
+
+## Stated choices
+
+- <a fail-open or a missing recheck the code states as a choice, with file:line>
 
 ## What I could not trace
 ```
