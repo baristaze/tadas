@@ -84,7 +84,6 @@ CROSS_TENANT_CASES: frozenset[str] = frozenset(
         "read_users",
         "remove_member",
         "replace_session",
-        "touch_session",
         "write_api_key",
         "write_membership",
         "write_org",
@@ -1952,21 +1951,33 @@ class TenancyStorageContract:
         assert run.outcomes.count(True) == 1, run.summary()
         assert not await storage.write_totp_secret(new_id(), "v1.x", now), "no such identity"
 
-    async def test_touching_a_session_records_its_use_in_its_own_tenant_only(
+    async def test_the_principal_read_records_a_sessions_use_in_its_own_tenant_only(
         self, storage: TenancyStorageInterface
     ) -> None:
+        """A session's use rides the read of its principal: under another
+        tenant, or for another user, it records nothing, and a revoked
+        session is left as it is."""
         org, other = make_org(), make_org("Other")
-        session = make_session(new_id(), new_id(), uuid4().hex)
+        user = make_user(make_identity().id)
+        membership = make_membership(user.id)
+        await storage.create_org_with_owner(org.id, org, user, membership)
+        session = make_session(user.identity_id, user.id, uuid4().hex)
         await storage.write_session(org.id, session)
         seen = utcnow()
-        await storage.touch_session(other.id, session.id, seen)
+        assert await storage.read_principal(other.id, user.id, (session.id, seen)) == (
+            None,
+            None,
+            None,
+        )
+        await storage.read_principal(org.id, new_id(), (session.id, seen))
         assert await storage.read_session(org.id, session.id) == session
-        await storage.touch_session(org.id, session.id, seen)
+        found = await storage.read_principal(org.id, user.id, (session.id, seen))
+        assert found == (org, user, membership)
         touched = await storage.read_session(org.id, session.id)
         assert touched is not None and touched.last_seen_at == seen
         revoked = touched.model_copy(update={"revoked_at": seen})
         await storage.write_session(org.id, revoked)
-        await storage.touch_session(org.id, session.id, seen + timedelta(minutes=5))
+        await storage.read_principal(org.id, user.id, (session.id, seen + timedelta(minutes=5)))
         assert await storage.read_session(org.id, session.id) == revoked
 
     async def test_purge_removes_members_with_their_memberships_and_revoked_keys(

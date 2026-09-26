@@ -660,24 +660,47 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
             return None if row is None else to_model(row, Membership)
 
     async def read_principal(
-        self, org_id: UUID, user_id: UUID
+        self, org_id: UUID, user_id: UUID, seen: tuple[UUID, datetime] | None = None
     ) -> tuple[Org | None, User | None, Membership | None]:
-        # The three reads of `read_org`, `read_user`, and
-        # `read_membership_for_user`, in one transaction under the tenant and
-        # the user: one checkout and one scope instead of three.
-        org_stmt = select(Orgs).where(Orgs.org_id == org_id, Orgs.id == org_id)
-        user_stmt = select(Users).where(Users.org_id == org_id, Users.id == user_id)
-        membership_stmt = select(Memberships).where(
-            Memberships.org_id == org_id,
-            Memberships.user_id == user_id,
-            Memberships.deleted_at.is_(None),
+        # The rows of `read_org`, `read_user`, and `read_membership_for_user`
+        # in one statement under the tenant and the user: the org, and beside
+        # it the user and the live membership when they exist.
+        stmt = (
+            select(Orgs, Users, Memberships)
+            .select_from(Orgs)
+            .outerjoin(Users, and_(Users.org_id == Orgs.org_id, Users.id == user_id))
+            .outerjoin(
+                Memberships,
+                and_(
+                    Memberships.org_id == Orgs.org_id,
+                    Memberships.user_id == user_id,
+                    Memberships.deleted_at.is_(None),
+                ),
+            )
+            .where(Orgs.org_id == org_id, Orgs.id == org_id)
         )
         async with self._session_for(Orgs, org_id=org_id, user_id=user_id) as session:
-            org = (await session.execute(org_stmt)).scalar_one_or_none()
-            user = (await session.execute(user_stmt)).scalar_one_or_none()
-            membership = (await session.execute(membership_stmt)).scalar_one_or_none()
+            found = (await session.execute(stmt)).one_or_none()
+            if seen is not None:
+                # The session's use rides the principal's transaction instead
+                # of opening one of its own.
+                session_id, seen_at = seen
+                await session.execute(
+                    update(Sessions)
+                    .where(
+                        Sessions.org_id == org_id,
+                        Sessions.id == session_id,
+                        Sessions.user_id == user_id,
+                        Sessions.revoked_at.is_(None),
+                    )
+                    .values(last_seen_at=seen_at)
+                )
+                await session.commit()
+            if found is None:
+                return None, None, None
+            org, user, membership = found
             return (
-                None if org is None else to_model(org, Org),
+                to_model(org, Org),
                 None if user is None else to_model(user, User),
                 None if membership is None else to_model(membership, Membership),
             )
@@ -716,20 +739,6 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
         async with self._session_for(stmt, org_id=EMPTY_UUID) as session:
             row = (await session.execute(stmt)).scalar_one_or_none()
             return None if row is None else (row.org_id, to_model(row, Session))
-
-    async def touch_session(self, org_id: UUID, session_id: UUID, seen_at: datetime) -> None:
-        stmt = (
-            update(Sessions)
-            .where(
-                Sessions.org_id == org_id,
-                Sessions.id == session_id,
-                Sessions.revoked_at.is_(None),
-            )
-            .values(last_seen_at=seen_at)
-        )
-        async with self._session_for(stmt, org_id=org_id) as session:
-            await session.execute(stmt)
-            await session.commit()
 
     async def read_session_by_id(self, session_id: UUID) -> tuple[UUID, Session] | None:
         stmt = select(Sessions).where(Sessions.id == session_id)
