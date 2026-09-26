@@ -336,6 +336,66 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
                 self._put(self._api_keys, org_id, key)
             return revoked
 
+    async def write_closed_org(
+        self,
+        org_id: UUID,
+        org: Org,
+        outbox_rows: tuple[OutboxRow, ...],
+        member_row: Callable[[User], OutboxRow],
+        revocation_row: Callable[[str, UUID, UUID], OutboxRow],
+    ) -> tuple[OutboxRow, ...]:
+        at, by = org.updated_at, org.updated_by
+        ended = {"deleted_at": at, "deleted_by": by, "updated_at": at, "updated_by": by}
+        # Every check, then every write: the twin of one commit.
+        async with self._lock:
+            stored = self._get(self._orgs, org_id, org.id)
+            if stored is None or stored.deleted_at is not None:
+                raise NotFound(f"org {org.id} is not live in {org_id}")
+            users = [
+                u.model_copy(update=ended)
+                for u in self._rows(self._users, org_id)
+                if u.deleted_at is None
+            ]
+            memberships = [
+                m.model_copy(update=ended)
+                for m in self._rows(self._memberships, org_id)
+                if m.deleted_at is None
+            ]
+            sessions = [
+                s.model_copy(update={"revoked_at": at, "updated_at": at, "updated_by": by})
+                for s in self._rows(self._sessions, org_id)
+                if s.revoked_at is None
+            ]
+            keys = [
+                k.model_copy(update=ended)
+                for k in self._rows(self._api_keys, org_id)
+                if k.deleted_at is None
+            ]
+            invitations = [
+                i.model_copy(
+                    update={"state": InvitationState.REVOKED, "updated_at": at, "updated_by": by}
+                )
+                for i in self._rows(self._invitations, org_id)
+                if i.state is InvitationState.PENDING
+            ]
+            built = tuple(
+                [member_row(u) for u in users]
+                + [revocation_row("tenancy.session.revoked", s.id, s.user_id) for s in sessions]
+                + [revocation_row("tenancy.api_key.deleted", k.id, k.user_id) for k in keys]
+            )
+            self._put(self._orgs, org_id, org, (*outbox_rows, *built))
+            for user in users:
+                self._put(self._users, org_id, user)
+            for membership in memberships:
+                self._put(self._memberships, org_id, membership)
+            for session in sessions:
+                self._put(self._sessions, org_id, session)
+            for key in keys:
+                self._put(self._api_keys, org_id, key)
+            for invitation in invitations:
+                self._put(self._invitations, org_id, invitation)
+            return built
+
     async def delete_person(
         self,
         identity_id: UUID,

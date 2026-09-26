@@ -219,6 +219,29 @@ class TenancyStorageInterface(ABC):
         ...
 
     @abstractmethod
+    async def write_closed_org(
+        self,
+        org_id: UUID,
+        org: Org,
+        outbox_rows: tuple[OutboxRow, ...],
+        member_row: Callable[[User], OutboxRow],
+        revocation_row: Callable[[str, UUID, UUID], OutboxRow],
+    ) -> tuple[OutboxRow, ...]:
+        """A named atomic write: the tenant's owner deletes it, and nobody
+        keeps a way in. In one commit or not at all: the org as given, every
+        live user of the tenant soft-deleted with their membership ended,
+        every live session and unrevoked api key revoked, every pending
+        invitation revoked, and the outbox rows, all stamped with the org's
+        `updated_at` and `updated_by`. Each user it ends lands the row
+        `member_row(user)` builds, `tenancy.user.deleted`, so their sockets
+        close; each credential lands the row `revocation_row(kind, id,
+        user_id)` builds, `tenancy.session.revoked` or
+        `tenancy.api_key.deleted`. Those rows come back, the users' first,
+        for the caller to relay after the ones it passed. NotFound, and
+        nothing lands, when the org is not live in `org_id`."""
+        ...
+
+    @abstractmethod
     async def delete_person(
         self,
         identity_id: UUID,
