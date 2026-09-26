@@ -190,7 +190,7 @@ context on keeps the stage the callee needs.
   keeps it out, so a limit is a page size and never a ceiling past which
   a live key stops being listed. The purge also removes
   sessions and socket tickets expired past their retention: a revoked
-  session expires within its twelve hours, so its expiry alone decides,
+  session expires within its thirty days, so its expiry alone decides,
   and a socket ticket, which lives a minute, is kept a day. Login credentials are stored under the system scope,
   and the purge runs across tenants in that scope, so the expired ones
   go with every tenant's dead sessions; api keys are purged once

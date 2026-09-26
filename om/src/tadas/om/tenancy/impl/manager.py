@@ -166,9 +166,9 @@ class TenancyOptions(Platform):
     """Tunables, built once at boot; the manager never reads the environment."""
 
     login_ttl: timedelta = timedelta(minutes=10)
-    session_ttl: timedelta = timedelta(hours=12)
+    session_ttl: timedelta = timedelta(days=30)
     """A session's absolute lifetime, from its exchange."""
-    session_idle_ttl: timedelta = timedelta(hours=4)
+    session_idle_ttl: timedelta = timedelta(days=14)
     """A session not presented for this long has ended, whatever is left of
     its absolute lifetime. It ends at whichever passes first."""
     session_seen_every: timedelta = timedelta(minutes=1)
