@@ -62,9 +62,13 @@ Zustand, one realtime channel.
 - The task lists are written, not read again. A write answers with the
   task as the server wrote it, and that answer goes into every cached
   list, in every scope, at once (`src/queries/taskCache.ts`). A live
-  push about a task names only its id, so the page reads that one task
+  push about a task names its id and the version its change wrote, never
+  a field. A tab that already placed the task at that version reads
+  nothing: the tab that made the write holds its answer, and the push is
+  about that answer. Any other tab reads that one task
   (`GET /v1/tasks/{id}`) and places it the same way; a 404 takes it
-  out. Where it goes is one pure function (`src/queries/taskPlacement.ts`):
+  out. A push that names no version (the reminder, the daily archive)
+  is always read (ADR 0061). Where it goes is one pure function (`src/queries/taskPlacement.ts`):
   the open list by position then id, the done list newest first, the
   `mine` scope by the server's rule, archived and deleted tasks in
   neither. A list is the window the page loaded, and its last row is
@@ -77,7 +81,18 @@ Zustand, one realtime channel.
   Pushes are gathered until 100 ms pass without one, and for 500 ms at
   most (`src/realtime/taskHints.ts`): a task pushed twice is read once,
   and past twenty tasks in one window (an import step, a bulk change,
-  the sweep's respace of a run of ranks) the lists are read once instead. The other features still invalidate on a push.
+  the sweep's respace of a run of ranks) the lists are read once instead. Whether a task is held is asked when the window closes, so
+  the push of a tab's own write that beats the write's answer is still
+  skipped, and only the tasks left to read count toward the twenty. The other features still invalidate on a push.
+- A query a push reaches (`isKeptFresh` in `src/realtime/router.ts`: the
+  tasks, `me`, the members, the plan, the files, the invitations, the
+  keys, an import, the Slack installation, the person's places) is fresh
+  for five minutes and is not read again when the tab regains focus,
+  while the socket is open (`src/app/queryClient.ts`). The push says
+  when it changed, and a push the socket missed comes back in the replay
+  that follows. A query no push names, such as the person's identity,
+  is fresh for ten seconds and read again on focus. While the socket is
+  connecting, degraded, or closed, every query is.
 - Client state lives in Zustand (`src/store/`): the session token, the
   connection status, the transient notices a failed write leaves
   (`notices.ts`, rendered by `src/app/Notices.tsx` over the kit's

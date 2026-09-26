@@ -14,14 +14,14 @@ from opentelemetry.sdk.trace import TracerProvider
 
 from tadas.infra.impl.local import InfraLocalImpl
 from tadas.infra.observability import OUTCOMES
-from tadas.infra.topics import TopicPayload, Topics
+from tadas.infra.topics import EntityChangedPayload, TopicPayload, Topics
 from tadas.om.base import EMPTY_UUID, new_id, utcnow
 from tadas.om.events.storage.impl.memory import EventStorageMemoryImpl
 from tadas.om.events.types.event import Event
 from tadas.om.opcontext import AppContext, AppType, OpContext, RequestContext
 from tadas.om.outbox.impl.relay import DEAD_LETTER_KIND, OutboxOptions, OutboxRelayImpl
 from tadas.om.outbox.storage.impl.memory import OutboxStorageMemoryImpl
-from tadas.om.outbox.types.row import OutboxRow, outbox_row, snapshot
+from tadas.om.outbox.types.row import OutboxRow, outbox_row, snapshot, versioned_row
 from tadas.om.root import Managers, build_managers
 from tadas.om.storage.impl.memory import StorageMemoryImpl
 from tadas.om.tasks.storage.impl.memory import TasksStorageMemoryImpl
@@ -341,3 +341,37 @@ async def test_the_sweep_relays_each_tenants_rows_together(infra: InfraLocalImpl
     assert poison.last_error == "RuntimeError: cannot append this one"
     assert all(stored[row.id].done_at is not None for row in (*bob_rows, ann_rows[0], ann_rows[2]))
     assert len(await events.read_after(bob, 0, 10)) == 4
+
+
+async def test_the_push_names_the_version_a_versioned_row_carries_and_none_otherwise(
+    infra: InfraLocalImpl,
+) -> None:
+    """A versioned record's row names the version its change wrote, and the
+    push carries it, so the tab that made the write reads nothing. Any other
+    row, and a payload whose `version` is not a whole number, pushes none."""
+    seen: list[EntityChangedPayload] = []
+
+    async def record(payload: TopicPayload) -> None:
+        assert isinstance(payload, EntityChangedPayload)
+        seen.append(payload)
+
+    infra.get_topics().subscribe(Topics.ENTITY_CHANGED, "test", record)
+    outbox = OutboxStorageMemoryImpl()
+    tasks = TasksStorageMemoryImpl(outbox)
+    managers = build_managers(StorageMemoryImpl(), infra, TenancyOptions(dev_sign_in=True))
+    ctx = await sign_in(managers)
+    rows = []
+    for payload in ({"version": 4}, {}, {"version": "4"}, {"version": True}):
+        task = make_task(created_by=ctx.user_id)
+        row = outbox_row(ctx, "tasks.task.updated", task.id, payload)
+        await tasks.create_task(ctx.org_id, task, (row,))
+        rows.append(row)
+    assert versioned_row(ctx, "tasks.task.updated", rows[0].target_id, 4).payload == {"version": 4}
+    relay = OutboxRelayImpl(outbox, EventStorageMemoryImpl(), infra.get_topics())
+    assert await relay.relay_all(ctx.org_id, rows)
+    assert [(p.target_id, p.version) for p in seen] == [
+        (rows[0].target_id, 4),
+        (rows[1].target_id, None),
+        (rows[2].target_id, None),
+        (rows[3].target_id, None),
+    ]

@@ -2,7 +2,8 @@ import { QueryClient, type QueryKey } from "@tanstack/react-query";
 import { describe, expect, it } from "vitest";
 import { keys } from "../queries/keys";
 import { parseEnvelope } from "./envelopes";
-import { reminderOf, routeEnvelope } from "./router";
+import { entityOf } from "./envelopes";
+import { isKeptFresh, PUSHED_ENTITIES, reminderOf, routeEnvelope } from "./router";
 
 function recording() {
   const queryClient = new QueryClient();
@@ -14,13 +15,13 @@ function recording() {
   return { queryClient, seen };
 }
 
-function pushOf(kind: string) {
+function pushOf(kind: string, extra: Record<string, unknown> = {}) {
   const envelope = parseEnvelope(
     JSON.stringify({
       type: "event",
       sent_at: null,
       topic: "entity_changed",
-      payload: { kind, target_id: "x", seq: 3, actor_id: "u1" },
+      payload: { kind, target_id: "x", seq: 3, actor_id: "u1", ...extra },
     }),
   );
   expect(envelope).not.toBeNull();
@@ -155,6 +156,19 @@ describe("routeEnvelope", () => {
     }
   });
 
+  it("hands the hints the version a task push names, and none when it names none or not a number", () => {
+    const hinted: [string, number | undefined][] = [];
+    const sink = { hint: (id: string, version?: number) => hinted.push([id, version]) };
+    routeEnvelope(recording().queryClient, pushOf("tasks.task.updated", { version: 4 }), sink);
+    routeEnvelope(recording().queryClient, pushOf("tasks.task.updated"), sink);
+    routeEnvelope(recording().queryClient, pushOf("tasks.task.updated", { version: "4" }), sink);
+    expect(hinted).toEqual([
+      ["x", 4],
+      ["x", undefined],
+      ["x", undefined],
+    ]);
+  });
+
   it("refreshes an import's own record on its progress, and no task list", () => {
     // An import step lands a hundred tasks; each is its own task push. The
     // record's progress push reads the progress line, never the lists.
@@ -218,5 +232,25 @@ describe("reminderOf", () => {
       }),
     );
     expect(reminderOf(other!)).toBeNull();
+  });
+});
+
+describe("isKeptFresh", () => {
+  it("names every entity the server pushes", () => {
+    expect([...new Set(SERVER_KINDS.map(entityOf))].sort()).toEqual([...PUSHED_ENTITIES].sort());
+  });
+
+  it("holds every query a push reaches, and no query no push names", () => {
+    for (const kind of SERVER_KINDS) {
+      const { queryClient } = recording();
+      for (const routed of routeEnvelope(queryClient, pushOf(kind)).invalidated) {
+        expect(isKeptFresh(routed), `${kind} reaches ${JSON.stringify(routed)}`).toBe(true);
+      }
+    }
+    expect(isKeptFresh(keys.tasks.open("team"))).toBe(true);
+    expect(isKeptFresh(keys.me)).toBe(true);
+    expect(isKeptFresh(keys.billing)).toBe(true);
+    expect(isKeptFresh(keys.identity)).toBe(false);
+    expect(isKeptFresh(keys.files.preview("f1"))).toBe(false);
   });
 });
