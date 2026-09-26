@@ -58,6 +58,39 @@
   margin: 0 0 24px;
 }
 
+/* The way back, above a page's title. */
+.tadas-back {
+  margin: -12px 0 12px;
+}
+
+.tadas-back a {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 550;
+  color: var(--tadas-muted);
+  text-decoration: none;
+  border-radius: 4px;
+}
+
+.tadas-back a:hover {
+  color: var(--tadas-text);
+}
+
+/* Said to a screen reader, not drawn. */
+.tadas-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 .tadas-page[data-narrow] .tadas-title {
   text-align: center;
   font-size: 22px;
@@ -349,6 +382,14 @@ select.tadas-field {
     box-shadow 120ms ease;
 }
 
+/* The control that stands as a page's heading. */
+.tadas-segmented[data-large] .tadas-segment {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 24px;
+  padding: 4px 16px;
+}
+
 .tadas-segment:hover {
   color: var(--tadas-text);
 }
@@ -372,18 +413,21 @@ select.tadas-field {
   border-radius: 8px;
   background: transparent;
   color: var(--tadas-muted);
+  text-decoration: none;
   cursor: pointer;
   transition:
     background-color 120ms ease,
     color 120ms ease;
 }
 
-.tadas-icon-button:hover {
+.tadas-icon-button:hover,
+.tadas-icon-button[aria-current="page"] {
   background: var(--tadas-surface-subtle);
   color: var(--tadas-text);
 }
 
-/* The chrome: the destinations, the org chip and its menu. */
+/* The chrome: the org chip on the left, the settings gear and the account
+   menu on the right. */
 .tadas-nav {
   display: flex;
   align-items: center;
@@ -391,71 +435,108 @@ select.tadas-field {
   min-width: 0;
 }
 
-.tadas-nav-link {
+.tadas-nav-end {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  margin-left: auto;
+}
+
+/* The chip is two controls in one frame: the org's name, which goes home,
+   and the caret, which opens the switcher. */
+.tadas-org-chip {
+  display: inline-flex;
+  align-items: center;
   flex-shrink: 0;
-  padding: 5px 10px;
-  border-radius: 7px;
-  color: var(--tadas-muted);
-  font-weight: 550;
+  gap: 2px;
+}
+
+.tadas-org-home {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  color: var(--tadas-text);
   text-decoration: none;
+  border-radius: 8px;
+  padding: 4px 8px 4px 4px;
+  transition: background-color 120ms ease;
+}
+
+.tadas-org-home:hover {
+  background: var(--tadas-surface-subtle);
+}
+
+.tadas-org-caret,
+.tadas-menu-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font: inherit;
+  color: var(--tadas-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
   transition:
     background-color 120ms ease,
     color 120ms ease;
 }
 
-.tadas-nav-link:hover {
-  color: var(--tadas-text);
-  background: var(--tadas-surface-subtle);
+.tadas-org-caret {
+  justify-content: center;
+  width: 24px;
+  height: 32px;
+  padding: 0;
 }
 
-.tadas-nav-link.active {
-  color: var(--tadas-text);
-  background: var(--tadas-surface-subtle);
+.tadas-menu-trigger {
+  height: 32px;
+  padding: 0 8px;
+  font-size: 13px;
 }
 
-.tadas-nav-email {
-  margin-left: auto;
+.tadas-org-caret:not(:disabled):hover,
+.tadas-org-caret[aria-expanded="true"],
+.tadas-menu-trigger:not(:disabled):hover,
+.tadas-menu-trigger[aria-expanded="true"] {
+  background: var(--tadas-surface-subtle);
+  color: var(--tadas-text);
+}
+
+.tadas-org-caret:disabled,
+.tadas-menu-trigger:disabled {
+  cursor: default;
+}
+
+/* The account's address in its button: cut short with an ellipsis when the
+   bar is tight, and only the part before the @ on a narrow window. */
+.tadas-account-email {
   min-width: 0;
+  max-width: 240px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--tadas-muted);
-  font-size: 13px;
-  padding: 0 8px;
 }
 
-/* Half a laptop screen has no room for the address; the settings page shows it. */
+.tadas-account-email[data-short] {
+  display: none;
+}
+
 @media (max-width: 600px) {
-  .tadas-nav-email {
-    visibility: hidden;
-    padding: 0;
-    flex: 1 1 0;
+  .tadas-account-email {
+    max-width: 120px;
   }
-}
 
-.tadas-org-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
-  font: inherit;
-  font-weight: 600;
-  color: var(--tadas-text);
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  padding: 4px 8px 4px 4px;
-  margin-right: 8px;
-  transition: background-color 120ms ease;
-}
+  .tadas-account-email[data-short] {
+    display: inline;
+  }
 
-.tadas-org-chip:not(:disabled):hover,
-.tadas-org-chip[aria-expanded="true"] {
-  background: var(--tadas-surface-subtle);
-}
-
-.tadas-org-chip:disabled {
-  color: var(--tadas-text);
+  .tadas-account-email:not([data-short]) {
+    display: none;
+  }
 }
 
 .tadas-org-avatar {
@@ -505,6 +586,27 @@ select.tadas-field {
 .tadas-menu-item:disabled {
   cursor: progress;
   opacity: 0.6;
+}
+
+.tadas-menu-text {
+  padding: 4px 10px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--tadas-muted);
+  overflow-wrap: anywhere;
+}
+
+.tadas-menu-text[data-strong] {
+  padding-top: 6px;
+  font-size: 13px;
+  font-weight: 550;
+  color: var(--tadas-text);
+}
+
+.tadas-menu-separator {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--tadas-border);
 }
 
 /* The task rows. */
