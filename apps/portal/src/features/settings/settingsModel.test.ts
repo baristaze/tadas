@@ -9,7 +9,6 @@ import {
   invitationRows,
   keyState,
   memberRows,
-  signedInAs,
   ssoAvailable,
 } from "./settingsModel";
 
@@ -54,8 +53,6 @@ describe("settings model", () => {
     expect(canManageKeys(me)).toBe(true);
     expect(canManageKeys({ ...me, permissions: ["read"] })).toBe(false);
     expect(canManageKeys(undefined)).toBe(false);
-    expect(signedInAs(undefined)).toBe("");
-    expect(signedInAs(me)).toBe("Signed in to Acme as Ann (owner)");
   });
 });
 

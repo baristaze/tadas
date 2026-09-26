@@ -1,19 +1,16 @@
-// Pure: the theme a person can pick, what the toggle offers next, and how a
-// choice reaches the page (an attribute on the root the theme's CSS reads).
+// Pure: the theme a person can pick, the choices the account menu offers,
+// and how a choice reaches the page (an attribute on the root the theme's CSS
+// reads).
 
 /** "system" follows the operating system's light or dark mode. */
 export type ThemePreference = "system" | "light" | "dark";
 
-const ORDER: ThemePreference[] = ["system", "light", "dark"];
-
-/** The toggle cycles: system, light, dark, and back to system. */
-export function nextTheme(current: ThemePreference): ThemePreference {
-  return ORDER[(ORDER.indexOf(current) + 1) % ORDER.length] ?? "system";
-}
-
-export function themeLabel(theme: ThemePreference): string {
-  return theme === "system" ? "system theme" : `${theme} theme`;
-}
+/** The account menu's choices, in the order it lists them. */
+export const THEME_CHOICES: readonly { value: ThemePreference; label: string }[] = [
+  { value: "system", label: "System" },
+  { value: "light", label: "Light" },
+  { value: "dark", label: "Dark" },
+];
 
 /** A stored value an older or a tampered build left is read as "system". */
 export function parseTheme(value: unknown): ThemePreference {

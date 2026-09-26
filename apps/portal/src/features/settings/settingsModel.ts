@@ -51,11 +51,6 @@ export function canManageKeys(me: MeView | undefined): boolean {
   return me?.permissions.includes("manage_keys") ?? false;
 }
 
-export function signedInAs(me: MeView | undefined): string {
-  if (!me) return "";
-  return `Signed in to ${me.org.name} as ${me.user.display_name} (${me.role})`;
-}
-
 export function canManageMembers(me: MeView | undefined): boolean {
   return me?.permissions.includes("manage_members") ?? false;
 }

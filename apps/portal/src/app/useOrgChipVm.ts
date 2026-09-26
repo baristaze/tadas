@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import type { MembershipChoiceView } from "../api";
 import { useBilling } from "../queries/billing";
@@ -19,13 +19,11 @@ export function useOrgChipVm() {
   // The plan badge is a courtesy: the chip works the same when billing fails to load.
   const billing = useBilling();
   const notify = useNoticesStore((s) => s.notify);
-  const [open, setOpen] = useState(false);
   const switching = useRef(inFlight());
   const choices = chipChoices(memberships.isPending ? undefined : memberships.data, me.data?.org.id);
 
   // One pick, one exchange: a second click while the first is in flight is dropped.
   const pick = async (membership: MembershipChoiceView) => {
-    setOpen(false);
     const outcome = await oneAtATime(switching.current, () =>
       switchOrg({
         exchange: () => exchange.mutateAsync(membership.org.id),
@@ -47,14 +45,8 @@ export function useOrgChipVm() {
     canOpen: me.data !== undefined,
     canSwitch: choices.canSwitch,
     others: choices.others,
-    open,
     switching: exchange.isPending,
-    toggle: () => setOpen((value) => me.data !== undefined && !value),
-    close: () => setOpen(false),
     pick,
-    newOrg: () => {
-      setOpen(false);
-      navigate("/orgs/new");
-    },
+    newOrg: () => navigate("/orgs/new"),
   };
 }

@@ -1,6 +1,7 @@
 // The org's plan: what it is, what it allows, what the org uses of it, and
 // the changes an owner or an admin can make. A member reads it all.
 import { AppNav } from "../../app/AppNav";
+import { BackToTasks } from "../../app/BackToTasks";
 import { Banner, Button, Card, ErrorText, Muted, Page, Pill } from "../../design/kit";
 import { SettingsTabs } from "../settings/SettingsTabs";
 import {
@@ -21,7 +22,7 @@ export function BillingPage() {
   const vm = useBillingVm();
   const billing = vm.billing;
   return (
-    <Page title="Settings" nav={<AppNav />}>
+    <Page title="Settings" back={<BackToTasks />} nav={<AppNav />}>
       <SettingsTabs />
       {vm.error ? <Banner>{vm.error.message}</Banner> : null}
       {vm.loading || !billing || !vm.actions ? (

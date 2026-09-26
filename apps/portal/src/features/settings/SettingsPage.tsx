@@ -1,5 +1,6 @@
 import { Banner, Button, Card, ErrorText, LinkButton, Muted, Page, Select, Table, TextField } from "../../design/kit";
 import { AppNav } from "../../app/AppNav";
+import { BackToTasks } from "../../app/BackToTasks";
 import { tokens } from "../../design/tokens";
 import { SettingsTabs } from "./SettingsTabs";
 import { StorageCard } from "./StorageCard";
@@ -11,14 +12,8 @@ export function SettingsPage() {
   const vm = useSettingsVm();
   const invites = useInvitationsVm(vm.me);
   return (
-    <Page title="Settings" nav={<AppNav />} notice={<PaymentNotice />}>
+    <Page title="Settings" back={<BackToTasks />} nav={<AppNav />} notice={<PaymentNotice />}>
       <SettingsTabs />
-      <div style={{ display: "flex", gap: 16, alignItems: "center" }}>
-        {vm.signedInAs ? <Muted>{vm.signedInAs}</Muted> : null}
-        <Button tone="plain" onClick={vm.signOut} disabled={vm.signingOut}>
-          Sign out
-        </Button>
-      </div>
       {vm.error ? <Banner>{vm.error.message}</Banner> : null}
       <Card title="Members">
         {vm.loading ? (
