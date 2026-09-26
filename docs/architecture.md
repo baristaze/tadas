@@ -731,7 +731,10 @@ missing. `PgStorageBase._session_for` is the funnel every statement
 already passes, and it takes the scope of the call, so the tenant is
 named once per transaction and not once per query: it writes
 `app.org_id`, and `app.user_id` when the call narrows to one person,
-with `set_config(..., true)`, which dies with the transaction. Each
+with `set_config(..., true)`, which dies with the transaction. The
+settings go out in the message that begins the transaction, `BEGIN;
+SELECT set_config(...);`, so the scope costs no round trip of its own
+([ADR 0053](adr/0053-the-scope-rides-in-the-message-that-begins.md)). Each
 policy is `FOR ALL`, `USING` and `WITH CHECK` the same expression, with
 `FORCE ROW LEVEL SECURITY` so the owner is held too. `queue.work_items`
 is the one table fenced by login, with two such policies, the tenant
