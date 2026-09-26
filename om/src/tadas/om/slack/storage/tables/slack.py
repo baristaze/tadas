@@ -17,8 +17,9 @@ class SlackInstallations(IdentifiableMixin, TrackableMixin, SoftDeletableMixin, 
     __tablename__ = "slack_installations"
     # One living installation per org, and one org per living workspace:
     # unique among the living, so an uninstalled org or workspace installs
-    # again. Both hold only the living, so the sweep's reads of a tenant's
-    # uninstalled ones, and of all of them, have an index of their own.
+    # again. Both hold only the living, so the sweep's reads of the
+    # uninstalled ones across tenants, and of all of a tenant's, have an
+    # index of their own.
     __org_id_index__ = False
     __table_args__ = (
         Index(
@@ -34,6 +35,11 @@ class SlackInstallations(IdentifiableMixin, TrackableMixin, SoftDeletableMixin, 
             postgresql_where=text("deleted_at IS NULL"),
         ),
         Index("ix_slack_installations_org_id_deleted_at", "org_id", "deleted_at"),
+        Index(
+            "ix_slack_installations_deleted_at",
+            "deleted_at",
+            postgresql_where=text("deleted_at IS NOT NULL"),
+        ),
     )
     team_id: Mapped[str]
     team_name: Mapped[str]
@@ -51,7 +57,17 @@ class SlackInstallations(IdentifiableMixin, TrackableMixin, SoftDeletableMixin, 
 
 class SlackInstallStates(IdentifiableMixin, CreatedMixin, Base):
     __tablename__ = "slack_install_states"
-    __table_args__ = (Index("uq_slack_install_states_state_hash", "state_hash", unique=True),)
+    __table_args__ = (
+        Index("uq_slack_install_states_state_hash", "state_hash", unique=True),
+        # The sweep's purge reads spent states across tenants: expired, or
+        # redeemed.
+        Index("ix_slack_install_states_expires_at", "expires_at"),
+        Index(
+            "ix_slack_install_states_redeemed_at",
+            "redeemed_at",
+            postgresql_where=text("redeemed_at IS NOT NULL"),
+        ),
+    )
     user_id: Mapped[UUID]
     state_hash: Mapped[str]
     expires_at: Mapped[datetime]
@@ -63,8 +79,8 @@ class SlackPosts(IdentifiableMixin, CreatedMixin, Base):
     __org_id_index__ = False
     __table_args__ = (
         Index("uq_slack_posts_org_id_key", "org_id", "key", unique=True),
-        # What the purge reads: the tenant's posts by birth.
-        Index("ix_slack_posts_org_id_created_at", "org_id", "created_at"),
+        # What the sweep's purge reads: the posts by birth, across tenants.
+        Index("ix_slack_posts_created_at", "created_at"),
     )
     key: Mapped[UUID]
     channel_id: Mapped[str]

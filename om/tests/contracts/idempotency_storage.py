@@ -18,7 +18,6 @@ from tadas.om.idempotency.types.record import IdempotencyRecord
 CROSS_TENANT_CASES: frozenset[str] = frozenset(
     {
         "finish_pending",
-        "purge_records",
         "read_record",
         "rearm_released",
         "release_pending",
@@ -47,6 +46,19 @@ def make_record(
         attempt_id=attempt_minted_at(born),
         created_at=born,
     )
+
+
+async def drained(storage: IdempotencyStorageInterface) -> datetime:
+    """The moment a purge case stands at: ten years back, so no other case's
+    record is past its cuts, with whatever an earlier run of these cases left
+    behind them purged first. The purge reaches across tenants, so a case
+    owns the records behind its cuts. A token carries its moment since 1970,
+    so the moment is not a century back."""
+    now = utcnow() - timedelta(days=3650)
+    cut, attempts_before = now - timedelta(days=1), lease_bound(now - timedelta(minutes=20))
+    while await storage.purge_records(cut, attempts_before, 1000):
+        pass
+    return now
 
 
 def attempt_minted_at(moment: datetime) -> UUID:
@@ -341,8 +353,10 @@ class IdempotencyStorageContract:
     async def test_purge_counts_finished_and_released_past_the_cut_and_pending_past_theirs(
         self, storage: IdempotencyStorageInterface
     ) -> None:
+        """The purge runs across tenants: every tenant's records past their cut
+        go in one call."""
         org, other_org = new_id(), new_id()
-        now = utcnow()
+        now = await drained(storage)
         old_finished = make_record(key="old-done", created_at=now - timedelta(days=2)).model_copy(
             update={"status": 201, "body": "{}"}
         )
@@ -378,8 +392,8 @@ class IdempotencyStorageContract:
             await storage.write_record(org, record)
         await storage.write_record(other_org, elsewhere)
         attempts_before = lease_bound(now - timedelta(minutes=20))
-        purged = await storage.purge_records(org, now - timedelta(days=1), attempts_before, 10)
-        assert purged == 3
+        purged = await storage.purge_records(now - timedelta(days=1), attempts_before, 10)
+        assert purged == 4, "three of this tenant's and the other's one"
         kept = [await storage.read_record(org, r.user_id, r.key) for r in mine]
         assert kept == [
             None,
@@ -390,18 +404,18 @@ class IdempotencyStorageContract:
             None,
             fresh_released,
         ]
-        assert await storage.read_record(other_org, elsewhere.user_id, elsewhere.key) == elsewhere
-        assert await storage.purge_records(org, now - timedelta(days=1), attempts_before, 10) == 0
+        assert await storage.read_record(other_org, elsewhere.user_id, elsewhere.key) is None
+        assert await storage.purge_records(now - timedelta(days=1), attempts_before, 10) == 0
 
     async def test_a_backlog_past_a_batch_goes_a_batch_at_a_time(
         self, storage: IdempotencyStorageInterface
     ) -> None:
         org = new_id()
-        now = utcnow()
+        now = await drained(storage)
         for i in range(3):
             old = make_record(key=f"old-{i}", created_at=now - timedelta(days=2))
             await storage.write_record(org, old.model_copy(update={"status": 201, "body": "{}"}))
         cut, attempts_before = now - timedelta(days=1), lease_bound(now - timedelta(minutes=20))
-        assert await storage.purge_records(org, cut, attempts_before, 2) == 2
-        assert await storage.purge_records(org, cut, attempts_before, 2) == 1
-        assert await storage.purge_records(org, cut, attempts_before, 2) == 0
+        assert await storage.purge_records(cut, attempts_before, 2) == 2
+        assert await storage.purge_records(cut, attempts_before, 2) == 1
+        assert await storage.purge_records(cut, attempts_before, 2) == 0

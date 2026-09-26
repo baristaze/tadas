@@ -3,6 +3,7 @@ from uuid import UUID
 
 from sqlalchemy import and_, or_, select, update
 
+from tadas.om.base import EMPTY_UUID
 from tadas.om.exceptions import DuplicateIdempotencyKey, UniqueKeyTaken
 from tadas.om.idempotency.storage import IdempotencyStorageInterface
 from tadas.om.idempotency.storage.tables.idempotency_records import IdempotencyRecords
@@ -72,11 +73,10 @@ class IdempotencyStoragePostgresImpl(PgStorageBase, IdempotencyStorageInterface)
             return released
 
     async def purge_records(
-        self, org_id: UUID, finished_before: datetime, attempts_before: UUID, limit: int
+        self, finished_before: datetime, attempts_before: UUID, limit: int
     ) -> int:
         stmt = delete_batch(
             IdempotencyRecords,
-            IdempotencyRecords.org_id == org_id,
             or_(
                 and_(
                     or_(
@@ -92,7 +92,8 @@ class IdempotencyStoragePostgresImpl(PgStorageBase, IdempotencyStorageInterface)
             ),
             limit=limit,
         )
-        async with self._session_for(stmt, org_id=org_id) as session:
+        # Every tenant's records past their cut, so the system scope, spelled here.
+        async with self._session_for(stmt, org_id=EMPTY_UUID) as session:
             purged = deleted(await session.execute(stmt))
             await session.commit()
             return purged

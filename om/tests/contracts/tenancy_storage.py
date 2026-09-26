@@ -4,7 +4,7 @@ asserts that nothing is found and nothing changes. The negative control that
 says what they catch is in `docs/runbooks/tenant-isolation.md`."""
 
 from collections.abc import Callable
-from datetime import timedelta
+from datetime import datetime, timedelta
 from unittest.mock import ANY
 from uuid import UUID, uuid4
 
@@ -40,6 +40,23 @@ from tadas.om.tenancy.types.invitation import InvitationState
 from tadas.om.tenancy.types.session import Session
 from tadas.om.tenancy.types.user import User
 
+
+async def drained(storage: TenancyStorageInterface) -> datetime:
+    """A cut no other case's row is past, with whatever an earlier run of
+    these cases left behind it purged first: the purge reaches across
+    tenants, so a case owns the rows behind its cut."""
+    cut = utcnow() - timedelta(days=36500)
+    while await storage.purge_deleted(cut, cut, 1000):
+        pass
+    return cut
+
+
+def before(cut: datetime, by: timedelta) -> timedelta:
+    """The lifetime from now that ends `by` before `cut`, for a factory that
+    takes a lifetime and not an instant."""
+    return cut - by - utcnow()
+
+
 CROSS_TENANT_CASES: frozenset[str] = frozenset(
     {
         "write_closed_org",
@@ -49,7 +66,6 @@ CROSS_TENANT_CASES: frozenset[str] = frozenset(
         "create_org_with_owner",
         "issue_api_key",
         "mark_org_purged",
-        "purge_deleted",
         "read_invitation",
         "read_invitation_by_provider_id",
         "read_invitations",
@@ -287,18 +303,20 @@ class TenancyStorageContract:
         batch of each, and the next call takes the rest."""
         org = make_org()
         await storage.write_org(org.id, org)
-        cut = utcnow()
+        cut = await drained(storage)
         user = make_user(make_identity().id)
         for _ in range(3):
             await storage.write_session(
-                org.id, make_session(new_id(), user.id, uuid4().hex, ttl=timedelta(days=-1))
+                org.id,
+                make_session(new_id(), user.id, uuid4().hex, ttl=before(cut, timedelta(days=1))),
             )
             await storage.write_socket_ticket(
-                org.id, make_socket_ticket(user.id, uuid4().hex, ttl=timedelta(days=-1))
+                org.id,
+                make_socket_ticket(user.id, uuid4().hex, ttl=before(cut, timedelta(days=1))),
             )
-        assert await storage.purge_deleted(org.id, cut, cut, 2) == 4, "two of each"
-        assert await storage.purge_deleted(org.id, cut, cut, 2) == 2, "the rest"
-        assert await storage.purge_deleted(org.id, cut, cut, 2) == 0
+        assert await storage.purge_deleted(cut, cut, 2) == 4, "two of each"
+        assert await storage.purge_deleted(cut, cut, 2) == 2, "the rest"
+        assert await storage.purge_deleted(cut, cut, 2) == 0
         for _ in range(3):
             await storage.write_session(org.id, make_session(new_id(), user.id, uuid4().hex))
         assert await storage.purge_tenant(org.id, 2) == 2
@@ -509,13 +527,14 @@ class TenancyStorageContract:
         assert await storage.read_user(org.id, user.id) == user
         assert await storage.read_membership_for_user(org.id, user.id) == membership
 
-    async def test_the_retention_sweep_takes_only_its_own_tenants_rows(
+    async def test_the_retention_purge_takes_every_tenants_rows_past_the_cut(
         self, storage: TenancyStorageInterface
     ) -> None:
-        """The sweep runs per tenant, one service context at a time, so a cut
-        that clears one tenant's dead rows leaves the next tenant's alone."""
+        """The purge runs once across tenants, in the system scope, so one call
+        clears every tenant's dead rows, and leaves a row not yet past the
+        cut, whatever its tenant."""
         org, other = make_org("A"), make_org("B")
-        cut = utcnow()
+        cut = await drained(storage)
         long_ago = cut - timedelta(days=1)
         dead: dict[UUID, tuple[UUID, UUID]] = {}
         for tenant in (org, other):
@@ -529,11 +548,15 @@ class TenancyStorageContract:
             )
             await storage.write_api_key(tenant.id, key)
             dead[tenant.id] = (user.id, key.id)
-        assert await storage.purge_deleted(org.id, cut, cut, 10) == 2
-        assert await storage.read_user(org.id, dead[org.id][0]) is None
-        assert await storage.read_api_key(org.id, dead[org.id][1]) is None
-        assert await storage.read_user(other.id, dead[other.id][0]) is not None
-        assert await storage.read_api_key(other.id, dead[other.id][1]) is not None
+        recent = make_user(make_identity().id)
+        await storage.write_user(
+            other.id, recent.model_copy(update={"deleted_at": cut, "deleted_by": recent.id})
+        )
+        assert await storage.purge_deleted(cut, cut, 10) == 4
+        for tenant in (org, other):
+            assert await storage.read_user(tenant.id, dead[tenant.id][0]) is None
+            assert await storage.read_api_key(tenant.id, dead[tenant.id][1]) is None
+        assert await storage.read_user(other.id, recent.id) is not None, "not past the cut"
 
     async def test_update_by_copy_and_write(self, storage: TenancyStorageInterface) -> None:
         org = make_org()
@@ -1525,7 +1548,7 @@ class TenancyStorageContract:
         self, storage: TenancyStorageInterface
     ) -> None:
         org = make_org()
-        cut = utcnow()
+        cut = await drained(storage)
         live, ended = make_membership(new_id()), make_membership(new_id())
         await storage.write_membership(org.id, live)
         await storage.write_membership(org.id, ended)
@@ -1536,9 +1559,9 @@ class TenancyStorageContract:
         assert await storage.read_memberships(org.id, limit=10) == [live]
         assert await storage.read_membership_for_user(org.id, ended.user_id) is None
         assert await storage.read_membership_for_user(org.id, live.user_id) == live
-        assert await storage.purge_deleted(org.id, cut, cut, 10) == 1  # the ended membership
+        assert await storage.purge_deleted(cut, cut, 10) == 1  # the ended membership
         assert await storage.read_memberships(org.id, limit=10) == [live]
-        assert await storage.purge_deleted(org.id, cut, cut, 10) == 0
+        assert await storage.purge_deleted(cut, cut, 10) == 0
 
     async def test_a_session_write_lands_its_outbox_row_beside_it(
         self, storage: TenancyStorageInterface
@@ -1951,7 +1974,7 @@ class TenancyStorageContract:
     ) -> None:
         org = make_org()
         await storage.write_org(org.id, org)
-        cut = utcnow()
+        cut = await drained(storage)
         gone, kept = make_user(make_identity().id), make_user(make_identity().id)
         await storage.write_user(
             org.id,
@@ -1971,10 +1994,10 @@ class TenancyStorageContract:
         await storage.write_api_key(org.id, expired_key)
         await storage.write_api_key(org.id, live_key)
         dead_sessions = [
-            make_session(new_id(), kept.id, uuid4().hex, ttl=timedelta(days=-1)).model_copy(
-                update={"revoked_at": cut - timedelta(days=2)}
-            ),
-            make_session(new_id(), kept.id, uuid4().hex, ttl=timedelta(days=-1)),
+            make_session(
+                new_id(), kept.id, uuid4().hex, ttl=before(cut, timedelta(days=1))
+            ).model_copy(update={"revoked_at": cut - timedelta(days=2)}),
+            make_session(new_id(), kept.id, uuid4().hex, ttl=before(cut, timedelta(days=1))),
         ]
         live_sessions = [
             make_session(new_id(), kept.id, uuid4().hex),
@@ -1988,22 +2011,24 @@ class TenancyStorageContract:
         for session in (*dead_sessions, *live_sessions):
             await storage.write_session(org.id, session)
         spent_tickets = [
-            make_socket_ticket(kept.id, uuid4().hex, ttl=timedelta(days=-1)).model_copy(
+            make_socket_ticket(kept.id, uuid4().hex, ttl=before(cut, timedelta(days=1))).model_copy(
                 update={"redeemed_at": cut - timedelta(days=1)}
             ),
-            make_socket_ticket(kept.id, uuid4().hex, ttl=timedelta(days=-1)),
+            make_socket_ticket(kept.id, uuid4().hex, ttl=before(cut, timedelta(days=1))),
         ]
         fresh_tickets = [
             make_socket_ticket(kept.id, uuid4().hex),
             make_socket_ticket(kept.id, uuid4().hex).model_copy(update={"redeemed_at": cut}),
         ]
         # Tickets keep a retention of their own: one expired within it stays.
-        recent_ticket = make_socket_ticket(kept.id, uuid4().hex, ttl=timedelta(hours=-1))
+        recent_ticket = make_socket_ticket(
+            kept.id, uuid4().hex, ttl=before(cut, timedelta(hours=1))
+        )
         await storage.write_socket_ticket(org.id, recent_ticket)
         for ticket in (*spent_tickets, *fresh_tickets):
             await storage.write_socket_ticket(org.id, ticket)
         # The user, its membership, two keys, two sessions, two tickets.
-        assert await storage.purge_deleted(org.id, cut, cut - timedelta(hours=2), 10) == 8
+        assert await storage.purge_deleted(cut, cut - timedelta(hours=2), 10) == 8
         for session in dead_sessions:
             assert await storage.read_session(org.id, session.id) is None
         for session in live_sessions:
@@ -2021,8 +2046,8 @@ class TenancyStorageContract:
         assert await storage.read_api_key(org.id, old_key.id) is None
         assert await storage.read_api_key(org.id, expired_key.id) is None
         assert await storage.read_api_key(org.id, live_key.id) == live_key
-        assert await storage.purge_deleted(org.id, cut, cut - timedelta(hours=2), 10) == 0
-        assert await storage.purge_deleted(org.id, cut, cut, 10) == 1, "the recent ticket"
+        assert await storage.purge_deleted(cut, cut - timedelta(hours=2), 10) == 0
+        assert await storage.purge_deleted(cut, cut, 10) == 1, "the recent ticket"
 
     # Invitations: a tenant's rows.
 
@@ -2144,12 +2169,12 @@ class TenancyStorageContract:
         self, storage: TenancyStorageInterface
     ) -> None:
         org, other = make_org(), make_org("Other")
-        cut = utcnow()
+        cut = await drained(storage)
         old = cut - timedelta(days=1)
         revoked = make_invitation("a@example.test").model_copy(
             update={"state": InvitationState.REVOKED, "updated_at": old}
         )
-        expired = make_invitation("b@example.test", expires_in=timedelta(days=-2))
+        expired = make_invitation("b@example.test", expires_in=before(cut, timedelta(days=2)))
         open_ = make_invitation("c@example.test")
         just_closed = make_invitation("d@example.test").model_copy(
             update={"state": InvitationState.ACCEPTED}
@@ -2160,15 +2185,17 @@ class TenancyStorageContract:
             update={"state": InvitationState.REVOKED, "updated_at": old}
         )
         await storage.write_invitation(other.id, theirs)
-        assert await storage.purge_deleted(org.id, cut, cut, 10) == 2
+        kept = make_invitation("e@example.test")
+        await storage.write_invitation(other.id, kept)
+        assert await storage.purge_deleted(cut, cut, 10) == 3, "every tenant's"
         assert await storage.read_invitation(org.id, revoked.id) is None
         assert await storage.read_invitation(org.id, expired.id) is None
+        assert await storage.read_invitation(other.id, theirs.id) is None
         assert await storage.read_invitation(org.id, open_.id) == open_
         assert await storage.read_invitation(org.id, just_closed.id) == just_closed
-        assert await storage.read_invitation(other.id, theirs.id) == theirs
         assert await storage.purge_tenant(org.id, 10) == 2
         assert await storage.read_invitation(org.id, open_.id) is None
-        assert await storage.read_invitation(other.id, theirs.id) == theirs
+        assert await storage.read_invitation(other.id, kept.id) == kept, "per tenant"
 
     # The identity provider's link.
 

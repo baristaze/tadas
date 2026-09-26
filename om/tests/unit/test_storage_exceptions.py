@@ -69,6 +69,22 @@ STORAGE_EXCEPTIONS: frozenset[tuple[str, str]] = frozenset(
         # pass for it, not the turn of its tenant in a ring of every tenant.
         ("WorkStorageInterface", "requeue_stale"),
         ("WorkStorageInterface", "purge_items"),
+        # The sweep's purges of rows past their retention: one named statement
+        # a namespace a pass in the system scope, like the queue's purge, so a
+        # tenant with nothing to purge costs a pass nothing. The tasks' read
+        # comes first so a task's attachments go before it; the media's read
+        # names each object's tenant, whose key the store holds it under; the
+        # trim moves each tenant's floor with its events, in its statement.
+        ("TasksStorageInterface", "read_deleted"),
+        ("TasksStorageInterface", "purge_deleted"),
+        ("TenancyStorageInterface", "purge_deleted"),
+        ("IdempotencyStorageInterface", "purge_records"),
+        ("MediaStorageInterface", "read_purgeable"),
+        ("MediaStorageInterface", "purge_files_across_tenants"),
+        ("EventStorageInterface", "trim"),
+        ("BillingStorageInterface", "purge_deliveries"),
+        ("SlackStorageInterface", "purge"),
+        ("OrchestrationsStorageInterface", "purge_settled"),
         # The sweep's gauges: one read each across every tenant's rows.
         ("WorkStorageInterface", "oldest_ready_at"),
         ("WorkStorageInterface", "count_failed_since"),
@@ -110,6 +126,15 @@ MANAGER_EXCEPTIONS: frozenset[tuple[str, str]] = frozenset(
         ("WorkManagerInterface", "enqueue_relayed"),
         # The queue's purge, like the outbox's: one sweep step across tenants.
         ("WorkManagerInterface", "purge_items"),
+        # And each namespace's purge of its rows past their retention, the
+        # same kind of step: it runs for no tenant and no principal.
+        ("MediaManagerInterface", "purge_across_tenants"),
+        ("TenancyManagerInterface", "purge_across_tenants"),
+        ("IdempotencyManagerInterface", "purge_across_tenants"),
+        ("EventsManagerInterface", "purge_across_tenants"),
+        ("BillingManagerInterface", "purge_across_tenants"),
+        ("SlackManagerInterface", "purge_across_tenants"),
+        ("OrchestrationsManagerInterface", "purge_across_tenants"),
         # The sweep's gauges of the queue, read across tenants like the purge.
         ("WorkManagerInterface", "oldest_ready_age"),
         ("WorkManagerInterface", "failed_within"),
@@ -146,6 +171,11 @@ REQUEST_TRANSITIONS: frozenset[tuple[str, str]] = frozenset(
         # as the claim mints one.
         ("WorkManagerInterface", "requeue_stale"),
         ("WorkManagerInterface", "maintenance_contexts"),
+        # The tasks' purge across tenants: a deleted task's attachments are
+        # detached under its tenant's service context, which `sweep_context`
+        # mints from this stage, as the requeue's dead letter does.
+        ("TasksManagerInterface", "purge_across_tenants"),
+        ("TenancyManagerInterface", "sweep_context"),
         # The org a verified delivery from the payment processor names, before
         # any stage exists for it: the webhook consumer's lookup.
         ("BillingManagerInterface", "org_of_delivery"),

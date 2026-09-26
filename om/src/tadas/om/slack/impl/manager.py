@@ -325,12 +325,16 @@ class SlackManagerImpl(SlackManagerInterface):
             raise NotFound(f"slack post {key} vanished while it was recorded")
         return existing
 
-    async def purge_deleted(self, ctx: OpContext) -> int:
+    async def purge_across_tenants(self) -> int:
+        return await self._storage.purge(
+            utcnow() - self._options.retention, self._options.purge_batch
+        )
+
+    async def purge_tenant(self, ctx: OpContext) -> int:
         ctx.require(Permission.WRITE)
-        batch = self._options.purge_batch
-        if await self._tenancy.tenant_expired(ctx):
-            return await self._storage.purge_tenant(ctx.org_id, batch)
-        return await self._storage.purge(ctx.org_id, utcnow() - self._options.retention, batch)
+        if not await self._tenancy.tenant_expired(ctx):
+            return 0
+        return await self._storage.purge_tenant(ctx.org_id, self._options.purge_batch)
 
     async def _revoke_quietly(self, tokens: SlackTokens) -> None:
         try:

@@ -380,12 +380,16 @@ async def test_removing_a_member_of_a_team_org_asks_for_nothing(world: World) ->
 
 
 async def test_the_sweep_purges_old_delivery_marks(world: World) -> None:
+    """Across tenants, once a pass: the marks past the retention go, and the
+    account stays; the purge of a living tenant takes nothing."""
     ctx = await world.org("acme")
     await world.buy(ctx, Plan.PRO)
     sweep = await world.managers.tenancy.service_context(request(), ctx.org_id, new_id())
-    assert await world.billing.purge_deleted(sweep) == 0
+    assert await world.billing.purge_across_tenants() == 0
     world.now += timedelta(days=31)
-    assert await world.billing.purge_deleted(sweep) == 1
+    assert await world.billing.purge_tenant(sweep) == 0, "a living tenant keeps its rows"
+    assert await world.billing.purge_across_tenants() == 1
+    assert await world.billing.purge_across_tenants() == 0
 
 
 # The levers.

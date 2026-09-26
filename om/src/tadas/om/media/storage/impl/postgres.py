@@ -4,13 +4,14 @@ from uuid import UUID
 
 from sqlalchemy import and_, delete, func, or_, select
 
+from tadas.om.base import EMPTY_UUID
 from tadas.om.media.rules import usage_from_totals
 from tadas.om.media.storage import MediaStorageInterface
 from tadas.om.media.storage.tables.files import Files
 from tadas.om.media.types.file import File, FilePurpose, FileStatus
 from tadas.om.media.types.usage import StorageUsage
 from tadas.om.outbox.types.row import OutboxRow
-from tadas.om.storage.impl.pg_base import PgStorageBase
+from tadas.om.storage.impl.pg_base import PgStorageBase, deleted
 from tadas.om.storage.utils.translation import to_model
 
 
@@ -56,13 +57,14 @@ class MediaStoragePostgresImpl(PgStorageBase, MediaStorageInterface):
             return [to_model(row, File) for row in (await session.execute(stmt)).scalars()]
 
     async def read_purgeable(
-        self, org_id: UUID, deleted_before: datetime, pending_before: datetime, limit: int
-    ) -> list[File]:
-        # Mirrors media.rules.is_purgeable in SQL.
+        self, deleted_before: datetime, pending_before: datetime, limit: int
+    ) -> list[tuple[UUID, File]]:
+        # Mirrors media.rules.is_purgeable in SQL. No order: the batch is any
+        # `limit` of the rows the two indexes hold, so a backlog is never
+        # sorted to take a batch of it.
         stmt = (
             select(Files)
             .where(
-                Files.org_id == org_id,
                 or_(
                     Files.deleted_at < deleted_before,
                     and_(
@@ -72,11 +74,13 @@ class MediaStoragePostgresImpl(PgStorageBase, MediaStorageInterface):
                     ),
                 ),
             )
-            .order_by(Files.id)
             .limit(limit)
         )
-        async with self._session_for(stmt, org_id=org_id) as session:
-            return [to_model(row, File) for row in (await session.execute(stmt)).scalars()]
+        # Every tenant's files past their cut, so the system scope, spelled here.
+        async with self._session_for(stmt, org_id=EMPTY_UUID) as session:
+            return [
+                (row.org_id, to_model(row, File)) for row in (await session.execute(stmt)).scalars()
+            ]
 
     async def read_usage(self, org_id: UUID) -> StorageUsage:
         # Mirrors media.rules.usage_of in SQL: the live rows, summed per
@@ -115,5 +119,14 @@ class MediaStoragePostgresImpl(PgStorageBase, MediaStorageInterface):
         )
         async with self._session_for(stmt, org_id=org_id) as session:
             purged = len((await session.execute(stmt)).scalars().all())
+            await session.commit()
+            return purged
+
+    async def purge_files_across_tenants(self, file_ids: Sequence[UUID]) -> int:
+        if not file_ids:
+            return 0
+        stmt = delete(Files).where(Files.id.in_(list(file_ids)))
+        async with self._session_for(stmt, org_id=EMPTY_UUID) as session:
+            purged = deleted(await session.execute(stmt))
             await session.commit()
             return purged

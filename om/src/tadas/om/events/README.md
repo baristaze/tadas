@@ -28,10 +28,11 @@ is one of the seven kinds of thing [Tadas is made of](../../../../README.md).
   are not all kept.
 - **Read the head.**
 - **Trim the oldest events.** With an event retention set, the sweep
-  deletes, a batch at a time, the events at the bottom of an org's
-  stream that are older than it, and moves the floor to the last of
-  them. It stops at the first younger event. The worker keeps 90 days by
-  default; with no retention set, every event is kept.
+  deletes, a batch at a time for every org at once, the events at the
+  bottom of each org's stream that are older than it, and moves each
+  org's floor to the last of its own. It stops at the first younger
+  event. The worker keeps 90 days by default; with no retention set,
+  every event is kept.
 - **Drop an expired tenant's stream.** Once a deleted org is past the
   retention, the sweep drops its events and its cursor, as every
   namespace drops that tenant's rows.
@@ -66,7 +67,8 @@ row erases them.
   a skip: it is a replay of the diary from that number.
 - **The floor moves with the trim.** The trim takes the cursor's lock,
   deletes, and moves the floor in one transaction. So a reader never
-  sees events gone above a floor that says they are kept.
+  sees events gone above a floor that says they are kept. A cursor an
+  append holds is left for the next trim; the trim never waits on it.
 - **A screen behind the floor reads afresh.** Its number is below the
   floor, so no replay can close the gap. It reads what it shows again,
   and goes on from the head the refusal named.

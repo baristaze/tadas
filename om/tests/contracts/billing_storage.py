@@ -19,7 +19,6 @@ from tadas.om.outbox.types.row import OutboxRow
 CROSS_TENANT_CASES: frozenset[str] = frozenset(
     {
         "create_account",
-        "purge_deliveries",
         "purge_tenant",
         "read_account",
         "read_delivery",
@@ -83,6 +82,17 @@ def paying(account: BillingAccount) -> BillingAccount:
 
 async def seed(storage: BillingStorageInterface, org_id: UUID, account: BillingAccount) -> None:
     assert await storage.create_account(org_id, account, (make_row(org_id, account, "created"),))
+
+
+async def drained(storage: BillingStorageInterface) -> timedelta:
+    """How far back a purge case stands: a century, so no other case's mark is
+    past its cut, with whatever an earlier run of these cases left behind it
+    purged first. The purge reaches across tenants, so a case owns the marks
+    behind its cut."""
+    back = timedelta(days=36500)
+    while await storage.purge_deliveries(utcnow() - back - timedelta(days=30), 1000):
+        pass
+    return back
 
 
 class BillingStorageContract:
@@ -179,36 +189,45 @@ class BillingStorageContract:
         assert await storage.read_account(org_a) == account
 
     async def test_purges_are_tenant_scoped(self, storage: BillingStorageInterface) -> None:
+        """The purge of a tenant takes its rows and no other's; the purge of
+        marks past the retention takes every tenant's, and none younger."""
         org_a, org_b = new_id(), new_id()
-        account = make_account()
+        back = await drained(storage)
+        account, theirs = make_account(), make_account()
         await seed(storage, org_a, account)
-        old, fresh = make_delivery("evt_old", timedelta(days=40)), make_delivery("evt_new")
+        await seed(storage, org_b, theirs)
+        old = make_delivery("evt_old", back + timedelta(days=40))
+        fresh = make_delivery("evt_new")
+        their_old = make_delivery("evt_their_old", back + timedelta(days=40))
         await storage.write_account(org_a, account, (), old)
         await storage.write_account(org_a, account, (), fresh)
-        cutoff = utcnow() - timedelta(days=30)
-        assert await storage.purge_deliveries(org_b, cutoff, 10) == 0
-        assert await storage.purge_tenant(org_b, 10) == 0
+        await storage.write_account(org_b, theirs, (), their_old)
+        cutoff = utcnow() - back - timedelta(days=30)
+        assert await storage.purge_tenant(new_id(), 10) == 0
         assert await storage.read_delivery(org_a, old.id) == old
-        assert await storage.purge_deliveries(org_a, cutoff, 10) == 1
+        assert await storage.purge_deliveries(cutoff, 10) == 2, "every tenant's"
         assert await storage.read_delivery(org_a, old.id) is None
+        assert await storage.read_delivery(org_b, their_old.id) is None
         assert await storage.read_delivery(org_a, fresh.id) == fresh
         assert await storage.purge_tenant(org_a, 10) == 2
         assert await storage.read_account(org_a) is None
+        assert await storage.read_account(org_b) is not None
 
     async def test_a_backlog_past_a_batch_goes_a_batch_at_a_time(
         self, storage: BillingStorageInterface
     ) -> None:
         org = new_id()
+        back = await drained(storage)
         account = make_account()
         await seed(storage, org, account)
         for i in range(3):
             await storage.write_account(
-                org, account, (), make_delivery(f"evt_{i}", timedelta(days=40))
+                org, account, (), make_delivery(f"evt_{i}", back + timedelta(days=40))
             )
-        cutoff = utcnow() - timedelta(days=30)
-        assert await storage.purge_deliveries(org, cutoff, 2) == 2
-        assert await storage.purge_deliveries(org, cutoff, 2) == 1
-        assert await storage.purge_deliveries(org, cutoff, 2) == 0
+        cutoff = utcnow() - back - timedelta(days=30)
+        assert await storage.purge_deliveries(cutoff, 2) == 2
+        assert await storage.purge_deliveries(cutoff, 2) == 1
+        assert await storage.purge_deliveries(cutoff, 2) == 0
 
     async def test_a_grant_round_trips(self, storage: BillingStorageInterface) -> None:
         org = new_id()

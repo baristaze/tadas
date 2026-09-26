@@ -66,12 +66,12 @@ class IdempotencyStorageMemoryImpl(
             return True
 
     async def purge_records(
-        self, org_id: UUID, finished_before: datetime, attempts_before: UUID, limit: int
+        self, finished_before: datetime, attempts_before: UUID, limit: int
     ) -> int:
         async with self._lock:
             gone = [
                 record.id
-                for record in self._rows(self._records, org_id)
+                for _, record in self._rows_across_tenants(self._records)
                 if _past_its_cut(record, finished_before, attempts_before)
             ][:limit]
             for record_id in gone:

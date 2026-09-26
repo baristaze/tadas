@@ -89,9 +89,10 @@ second lane is a second replica told its lane.
   item now. A renewal that fails for any other reason is retried, and
   the task is cancelled at half the lease if none succeeds, so no
   worker keeps working an item it may no longer settle.
-- **The sweep**, every thirty seconds by default. The requeue and the
-  relay reach every org at once; the rest runs under one service
-  context per org, the system scope first and deleted orgs included:
+- **The sweep**, every thirty seconds by default. The requeue, the
+  relay, and every purge of rows past their retention reach every org
+  at once; only the work shaped by one org runs under that org's
+  service context, the system scope first and deleted orgs included:
   - **Requeue** items whose lease has expired, or fail them when their
     attempts are spent. This runs first, once for every org together,
     in the system scope: a batch of a hundred at a time (`requeue_batch`),
@@ -107,35 +108,43 @@ second lane is a second replica told its lane.
     comes back whole, so a backlog after an outage of the bus drains at
     the pace of the budget. A batch with a row that failed ends it, so
     a bus that is still down is not asked again until the next sweep.
-  - **Purge** each namespace's rows past its retention: deleted tasks
-    (their attachments first, so a detach that failed when the task was
-    deleted is tried again, and the task waits for the next sweep while
-    its files will not go), removed files and uploads never confirmed
-    (the object in the store first, then the row, a batch of a hundred
-    per org per sweep), removed members with their ended memberships,
-    revoked keys, expired sessions and tickets, closed invitations,
-    finished idempotency records, the payment processor's delivery
-    marks, Slack's old install states and posts, settled work items, and
-    orchestrations that succeeded or failed thirty days ago. Events of a
-    living org older than `TADAS_EVENT_RETENTION_DAYS` (90 by default) go
-    too, a batch at a time, and its floor moves with them in the same
-    transaction; 0 keeps every event (ADR 0040). Under an
-    org deleted longer ago than the retention, every row goes, its event
-    stream included, and the org row stays as the record. Each namespace
-    purges its own rows and asks tenancy the one question, whether the
-    org has expired, which a sweep reads once per org.
-  - **Open the day's cleanup** of each org that has a done task nobody
-    changed for the archive age (`TADAS_TASKS_ARCHIVE_AFTER_DAYS`, ninety
-    by default). The org, the kind, and the day are the record's unique
-    key, so the first sweep of the day opens it and every later one
-    opens nothing. No scheduler is involved. It runs whenever its org is
-    swept, before any second round of purges, so no budget skips it.
-  - **Respace a long rank** of each org whose open list has one: a rank
-    past 24 digits after the point, which only many moves into one and
-    the same gap make. The run of tasks around it takes short ranks, in
-    the order it had, in one write, each task announced like an edit. An
-    org with no long rank costs one read of an index that holds only
-    such ranks. It runs beside the cleanup, once per org per sweep.
+  - **Per org**, the work that needs the org:
+    - **Purge an org deleted longer ago than the retention.** Every row
+      goes, its event stream included, and the org row stays as the
+      record. Each namespace asks tenancy the one question, whether the
+      org has expired, and the sweep answers it from the org rows it
+      read to list the orgs. So an org that lives costs these purges
+      nothing. Once a sweep finds nothing left of an expired org, it
+      marks the org purged and leaves it out from then on.
+    - **Open the day's cleanup** of each org that has a done task
+      nobody changed for the archive age
+      (`TADAS_TASKS_ARCHIVE_AFTER_DAYS`, ninety by default). The org,
+      the kind, and the day are the record's unique key, so the first
+      sweep of the day opens it and every later one opens nothing. No
+      scheduler is involved. It runs whenever its org is swept, before
+      any second round of purges, so no budget skips it.
+    - **Respace a long rank** of each org whose open list has one: a
+      rank past 24 digits after the point, which only many moves into
+      one and the same gap make. The run of tasks around it takes short
+      ranks, in the order it had, in one write, each task announced like
+      an edit. An org with no long rank costs one read of an index that
+      holds only such ranks. It runs beside the cleanup, once per org per
+      sweep.
+  - **Purge** each namespace's rows past its retention, once for every
+    org together, in the system scope: deleted tasks (their attachments
+    first, under the task's org, so a detach that failed when the task
+    was deleted is tried again, and the task waits for the next sweep
+    while its files will not go), removed files and uploads never
+    confirmed (the object in the store first, then the row, a hundred
+    at a time), removed members with their ended memberships, revoked
+    keys, expired sessions and tickets, closed invitations, finished
+    idempotency records, the payment processor's delivery marks, Slack's
+    old install states and posts, settled work items, and orchestrations
+    that succeeded or failed thirty days ago. Events older than
+    `TADAS_EVENT_RETENTION_DAYS` (90 by default) go too, and each org's
+    floor moves with its own in the same statement; 0 keeps every event
+    (ADR 0040). Each purge reads an index that leads with the column its
+    retention is counted on (ADR 0045).
   - **Purge** the outbox rows done or failed past eight days, which
     outlives the database backup retention.
 
@@ -146,9 +155,7 @@ second lane is a second replica told its lane.
   again while the sweep's budget lasts, twenty seconds by default, and so
   do the requeue and the relay. Past the budget the sweep takes no new
   org, but always one, and the next sweep starts at the org it stopped
-  at, so every org is reached in turn. An org deleted
-  past its retention that a sweep finds nothing left of is marked
-  purged, and the sweep leaves it out from then on.
+  at, so every org is reached in turn.
 
   Each pass ends with three reads across every tenant, one statement
   each, whatever the budget: how long the work item ready longest has

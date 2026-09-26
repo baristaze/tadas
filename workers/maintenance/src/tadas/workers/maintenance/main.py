@@ -8,6 +8,7 @@ import signal
 import sys
 import urllib.error
 import urllib.request
+from collections.abc import Awaitable, Callable
 from datetime import timedelta
 
 from tadas.infra.cache import CacheScope
@@ -18,7 +19,7 @@ from tadas.infra.observability import (
     name_process,
 )
 from tadas.infra.trust import install_trust_store
-from tadas.om.opcontext import AppContext, AppType
+from tadas.om.opcontext import AppContext, AppType, RequestContext
 from tadas.om.orchestrations.types.orchestration import OrchestrationKind
 from tadas.om.work.types.work_item import WorkKind
 from tadas.workers.maintenance.accounts import (
@@ -26,11 +27,11 @@ from tadas.workers.maintenance.accounts import (
     DeleteOrgHandlerImpl,
     UnassignTasksHandlerImpl,
 )
-from tadas.workers.maintenance.container import WorkerContainer
+from tadas.workers.maintenance.container import MEDIA_PURGE_BATCH, WorkerContainer
 from tadas.workers.maintenance.deliveries import DeliveryConsumer, DeliveryOptions
 from tadas.workers.maintenance.handler import NoopHandlerImpl, SyncSeatsHandlerImpl
 from tadas.workers.maintenance.health import Probe, WorkerHttpServer
-from tadas.workers.maintenance.loop import LoopOptions, WorkerLoop
+from tadas.workers.maintenance.loop import AcrossStep, LoopOptions, WorkerLoop
 from tadas.workers.maintenance.orchestrations import (
     OrchestrationHandlerImpl,
     WakeParkedHandlerImpl,
@@ -62,21 +63,49 @@ def loop_options(settings: MaintenanceSettings, lane: str | None = None) -> Loop
     )
 
 
+def unstaged(purge: Callable[[], Awaitable[int]]) -> AcrossStep:
+    """A purge across tenants that takes no stage, since it runs for no tenant
+    and no principal, as the loop calls it: with the pass's request stage."""
+
+    async def step(rctx: RequestContext) -> int:
+        return await purge()
+
+    return step
+
+
 def build_loop(container: WorkerContainer, lane: str | None = None) -> WorkerLoop:
     return WorkerLoop(
         work=container.managers.work,
         outbox=container.managers.outbox,
+        # Per tenant, what only a tenant deleted past its retention has: every
+        # row of it goes. Any other tenant costs these nothing.
         purges={
-            "tasks": container.managers.tasks.purge_deleted,
-            # A deleted file's object, then its row; an abandoned upload's too.
-            "media": container.managers.media.purge_deleted,
-            "tenancy": container.managers.tenancy.purge_deleted,
-            "idempotency": container.managers.idempotency.purge,
-            "events": container.managers.events.purge_expired,
-            "billing": container.managers.billing.purge_deleted,
-            "slack": container.managers.slack.purge_deleted,
-            "orchestrations": container.managers.orchestrations.purge_deleted,
+            "tasks": container.managers.tasks.purge_tenant,
+            # Every file's object, then its row.
+            "media": container.managers.media.purge_tenant,
+            "tenancy": container.managers.tenancy.purge_tenant,
+            "events": container.managers.events.purge_tenant,
+            "billing": container.managers.billing.purge_tenant,
+            "slack": container.managers.slack.purge_tenant,
+            "orchestrations": container.managers.orchestrations.purge_tenant,
         },
+        # Once a pass, across every tenant: each namespace's rows past their
+        # retention.
+        across={
+            # A deleted task's attachments, under its tenant's context, then the task.
+            "tasks": container.managers.tasks.purge_across_tenants,
+            # A deleted file's object, then its row; an abandoned upload's too.
+            "media": unstaged(container.managers.media.purge_across_tenants),
+            "tenancy": unstaged(container.managers.tenancy.purge_across_tenants),
+            "idempotency": unstaged(container.managers.idempotency.purge_across_tenants),
+            # The trim: each tenant's floor moves with its events.
+            "events": unstaged(container.managers.events.purge_across_tenants),
+            "billing": unstaged(container.managers.billing.purge_across_tenants),
+            "slack": unstaged(container.managers.slack.purge_across_tenants),
+            "orchestrations": unstaged(container.managers.orchestrations.purge_across_tenants),
+        },
+        # The media purge's batch is its own: a whole one says there may be more.
+        across_batches={"media": MEDIA_PURGE_BATCH},
         # A record kept per day opens here: the org's cleanup of old done
         # tasks. Its unique key makes every sweep after the day's first a no-op.
         # The respace gives short ranks back to a run of open tasks whose

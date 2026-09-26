@@ -5,14 +5,19 @@ from typing import Any, cast
 from uuid import UUID
 
 from sqlalchemy import (
+    DateTime,
+    Integer,
+    Select,
     Table,
     Text,
     Uuid,
+    and_,
     bindparam,
     delete,
     exists,
     func,
     insert,
+    or_,
     select,
     true,
     update,
@@ -105,6 +110,115 @@ def _append_statement() -> ReturningInsert[Any]:
 APPEND = _append_statement()
 
 
+def _trim_statement() -> Select[tuple[int, int]]:
+    """The trim, across tenants, in one statement.
+
+    `old` walks `ix_events_produced_at` from its low end and takes the
+    `limit` events produced longest ago: they name the tenants the call
+    trims, and each tenant's share of them bounds its run, so the call
+    deletes `limit` events at most. `locked` takes each named tenant's cursor
+    row as the append does, `FOR UPDATE`, but skips a row an append holds
+    rather than waiting on it. `bounds` reads each tenant's window, its
+    lowest events above the floor, as many as its share, by the `(org_id,
+    seq)` index: the stream above the floor is whole, so those are the seqs
+    from `floor + 1` to `floor + share`. The run is the window below its first
+    young event, and `runs` holds its top. The events of each run go, and the
+    floor moves to its top, in the same statement. A tenant whose window
+    starts with a young event has no run and keeps its floor.
+
+    Built on the tables and not the mapped classes, so it runs as one Core
+    statement, as the append does."""
+    events = cast(Table, Events.__table__)
+    cursors = cast(Table, EventCursors.__table__)
+    before = bindparam("before", type_=DateTime(timezone=True))
+    limit = bindparam("limit", type_=Integer())
+    old = (
+        select(events.c.org_id)
+        .where(events.c.produced_at < before)
+        .order_by(events.c.produced_at)
+        .limit(limit)
+        .cte("old")
+        .prefix_with("MATERIALIZED")
+    )
+    shares = (
+        select(old.c.org_id, func.count().label("share")).group_by(old.c.org_id).subquery("shares")
+    )
+    # The window's top is a column here and not a sum in the joins below:
+    # the policy's clause is evaluated before any operator that may raise,
+    # and `+` may, so a sum in a join would read the window's rows through
+    # the policy's filter instead of bounding the index scan with it.
+    locked = (
+        select(
+            cursors.c.org_id,
+            cursors.c.floor,
+            (cursors.c.floor + shares.c.share).label("upto"),
+        )
+        .join_from(cursors, shares, shares.c.org_id == cursors.c.org_id)
+        .with_for_update(of=cursors, skip_locked=True)
+        .cte("locked")
+        .prefix_with("MATERIALIZED")
+    )
+    bounds = (
+        select(
+            locked.c.org_id,
+            locked.c.floor,
+            locked.c.upto,
+            func.min(events.c.seq).filter(events.c.produced_at >= before).label("young"),
+        )
+        .join_from(
+            locked,
+            events,
+            and_(
+                events.c.org_id == locked.c.org_id,
+                events.c.seq > locked.c.floor,
+                events.c.seq <= locked.c.upto,
+            ),
+        )
+        .group_by(locked.c.org_id, locked.c.floor, locked.c.upto)
+        .cte("bounds")
+    )
+    runs = (
+        select(bounds.c.org_id, bounds.c.floor, func.max(events.c.seq).label("top"))
+        .join_from(
+            bounds,
+            events,
+            and_(
+                events.c.org_id == bounds.c.org_id,
+                events.c.seq > bounds.c.floor,
+                events.c.seq <= bounds.c.upto,
+            ),
+        )
+        .where(or_(bounds.c.young.is_(None), events.c.seq < bounds.c.young))
+        .group_by(bounds.c.org_id, bounds.c.floor)
+        .cte("runs")
+    )
+    gone = (
+        delete(events)
+        .where(
+            events.c.org_id == runs.c.org_id,
+            events.c.seq > runs.c.floor,
+            events.c.seq <= runs.c.top,
+        )
+        .returning(events.c.seq)
+        .cte("gone")
+    )
+    moved = (
+        update(cursors)
+        .where(cursors.c.org_id == runs.c.org_id)
+        .values(floor=runs.c.top)
+        .returning(cursors.c.org_id)
+        .cte("moved")
+    )
+    # Both writes are named in the statement's one row, so both run.
+    return select(
+        select(func.count()).select_from(gone).scalar_subquery().label("trimmed"),
+        select(func.count()).select_from(moved).scalar_subquery().label("moved"),
+    )
+
+
+TRIM = _trim_statement()
+
+
 class EventStoragePostgresImpl(PgStorageBase, EventStorageInterface):
     async def append_events(self, org_id: UUID, events: Sequence[Event]) -> tuple[Event, ...]:
         batch = list(events)
@@ -185,39 +299,14 @@ class EventStoragePostgresImpl(PgStorageBase, EventStorageInterface):
             await session.commit()
             return purged
 
-    async def trim(self, org_id: UUID, before: datetime, limit: int) -> int:
-        # The cursor row's lock first, as the append takes it: a second trim
-        # waits here and then reads the floor the first one left, and an
-        # append waits the few milliseconds one bounded batch takes.
-        lock = select(EventCursors.floor).where(EventCursors.org_id == org_id).with_for_update()
-        async with self._session_for(Events, org_id=org_id) as session:
-            floor = (await session.execute(lock)).scalar_one_or_none()
-            if floor is None:
-                return 0
-            bottom = (
-                select(Events.seq, Events.produced_at)
-                .where(Events.org_id == org_id, Events.seq > floor)
-                .order_by(Events.seq)
-                .limit(limit)
-            )
-            top: int | None = None
-            for seq, produced_at in (await session.execute(bottom)).all():
-                if produced_at >= before:
-                    break
-                top = seq
-            if top is None:
-                await session.rollback()
-                return 0
-            # A range on the (org_id, seq) index, and the floor with it, in one
-            # transaction: no reader sees the events gone and the floor below them.
-            gone = delete(Events).where(
-                Events.org_id == org_id, Events.seq > floor, Events.seq <= top
-            )
-            trimmed = deleted(await session.execute(gone))
-            moved = update(EventCursors).where(EventCursors.org_id == org_id).values(floor=top)
-            await session.execute(moved)
+    async def trim(self, before: datetime, limit: int) -> int:
+        # Every tenant's stream, so the system scope, spelled here. One
+        # statement: the cursor rows are locked, the events deleted, and the
+        # floors moved in one transaction, as the per-tenant trim did it.
+        async with self._session_for(Events, org_id=EMPTY_UUID) as session:
+            trimmed = (await session.execute(TRIM, {"before": before, "limit": limit})).scalar_one()
             await session.commit()
-            return trimmed
+            return int(trimmed)
 
     async def read_floor(self, org_id: UUID) -> int:
         stmt = select(EventCursors.floor).where(EventCursors.org_id == org_id)

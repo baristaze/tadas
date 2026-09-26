@@ -39,6 +39,7 @@ from tadas.om.work.types.handler import WorkHandlerInterface, WorkParked, WorkRe
 from tadas.om.work.types.work_item import WorkItem, WorkKind, WorkStatus
 from tadas.workers.maintenance.container import WorkerContainer
 from tadas.workers.maintenance.loop import LoopOptions, WorkerLoop
+from tadas.workers.maintenance.main import unstaged
 from tadas.workers.maintenance.settings import MaintenanceSettings
 
 
@@ -326,10 +327,15 @@ def start_loop(
         work=work or container.managers.work,
         outbox=container.managers.outbox,
         purges={
-            "tasks": container.managers.tasks.purge_deleted,
-            "tenancy": container.managers.tenancy.purge_deleted,
-            "idempotency": container.managers.idempotency.purge,
-            "events": container.managers.events.purge_expired,
+            "tasks": container.managers.tasks.purge_tenant,
+            "tenancy": container.managers.tenancy.purge_tenant,
+            "events": container.managers.events.purge_tenant,
+        },
+        across={
+            "tasks": container.managers.tasks.purge_across_tenants,
+            "tenancy": unstaged(container.managers.tenancy.purge_across_tenants),
+            "idempotency": unstaged(container.managers.idempotency.purge_across_tenants),
+            "events": unstaged(container.managers.events.purge_across_tenants),
         },
         handlers={WorkKind.NOOP: handler},
         topics=container.infra.get_topics(),
@@ -931,9 +937,10 @@ async def test_sweep_purges_settled_work_items_and_finished_idempotency_records(
 async def test_the_sweep_trims_a_living_stream_a_bounded_batch_a_pass(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Each pass trims one batch from the bottom of each org's stream and
-    moves its floor; once nothing is past the retention, a pass trims
-    nothing and the floor stays where it is."""
+    """A pass trims a batch at a time from the bottom of every org's stream,
+    again while the batch comes back full, and moves each floor; once
+    nothing is past the retention, a pass trims nothing and the floor stays
+    where it is."""
     container = build_container(tmp_path)
     ctx = await sign_in(container)
     storage = container.storage.get_event_storage()
@@ -945,10 +952,9 @@ async def test_the_sweep_trims_a_living_stream_a_bounded_batch_a_pass(
     trims: list[int] = []
     trim = storage.trim
 
-    async def counted(org_id: UUID, before: datetime, limit: int) -> int:
-        trimmed = await trim(org_id, before, limit)
-        if org_id == ctx.org_id:
-            trims.append(trimmed)
+    async def counted(before: datetime, limit: int) -> int:
+        trimmed = await trim(before, limit)
+        trims.append(trimmed)
         return trimmed
 
     monkeypatch.setattr(storage, "trim", counted)
@@ -956,7 +962,7 @@ async def test_the_sweep_trims_a_living_stream_a_bounded_batch_a_pass(
     await until(lambda: len(trims) >= 5)
     loop.stop()
     await task
-    assert trims[:3] == [2, 2, 1], "a batch a pass, from the bottom"
+    assert trims[:3] == [2, 2, 1], "a batch a call, from the bottom, while one comes back full"
     assert set(trims[3:]) == {0}, "nothing left past the retention: the pass is a no-op"
     assert await storage.read_floor(ctx.org_id) == 5
     head = await storage.read_head(ctx.org_id)

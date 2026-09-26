@@ -187,25 +187,28 @@ class MediaManagerImpl(MediaManagerInterface):
         ctx.require(Permission.READ)
         return await self._storage.read_usage(ctx.org_id)
 
-    async def purge_deleted(self, ctx: OpContext) -> int:
-        ctx.require(Permission.WRITE)
-        batch = self._options.purge_batch
-        if await self._tenancy.tenant_expired(ctx):
-            # The tenant keeps nothing but its org row: every file goes, live
-            # or not, a batch per sweep.
-            files = await self._storage.read_every_file(ctx.org_id, None, batch)
-        else:
-            now = utcnow()
-            files = await self._storage.read_purgeable(
-                ctx.org_id,
-                deleted_before=now - self._options.retention,
-                pending_before=now - self._options.pending_expiry,
-                limit=batch,
-            )
+    async def purge_across_tenants(self) -> int:
+        now = utcnow()
+        files = await self._storage.read_purgeable(
+            deleted_before=now - self._options.retention,
+            pending_before=now - self._options.pending_expiry,
+            limit=self._options.purge_batch,
+        )
         # The objects first, then the rows: a failure between the two leaves a
         # row whose object is gone, and the next sweep deletes the object again,
         # which the store answers as done. The other order would leave an
         # object no row names, which nothing would ever find.
+        for org_id, file in files:
+            await self._buckets.delete(org_id, BUCKET, file.key)
+        return await self._storage.purge_files_across_tenants([f.id for _, f in files])
+
+    async def purge_tenant(self, ctx: OpContext) -> int:
+        ctx.require(Permission.WRITE)
+        if not await self._tenancy.tenant_expired(ctx):
+            return 0
+        # The tenant keeps nothing but its org row: every file goes, live or
+        # not, a batch per sweep, the objects first as above.
+        files = await self._storage.read_every_file(ctx.org_id, None, self._options.purge_batch)
         for file in files:
             await self._buckets.delete(ctx.org_id, BUCKET, file.key)
         return await self._storage.purge_files(ctx.org_id, [f.id for f in files])

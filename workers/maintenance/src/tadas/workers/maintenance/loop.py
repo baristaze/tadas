@@ -4,10 +4,10 @@ request that caused the work, raises a span linked to that request's trace,
 renews its lease and cancels itself when the lease is lost or renewal keeps
 failing, beat liveness in memory and publish it to the cache as best
 effort, sweep on a timer (the expired leases and the outbox relay across
-tenants, then every namespace's purge and the standing chores per tenant,
-then the purges of done outbox rows and settled work items, within a time
-budget, then the three gauges of the queue and the outbox), and drain first
-on stop."""
+tenants, then the tenant-shaped work per tenant, then every namespace's
+purge of its rows past their retention across tenants, then the purges of
+done outbox rows and settled work items, within a time budget, then the
+three gauges of the queue and the outbox), and drain first on stop."""
 
 import asyncio
 import contextlib
@@ -49,9 +49,17 @@ CAUSED_BY_ATTRIBUTE = "tadas.caused_by_request_id"
 WORK_ITEM_ATTRIBUTE = "tadas.work_item_id"
 
 PurgeStep = Callable[[OpContext], Awaitable[int]]
-"""A manager's `purge_deleted(ctx)`: the one hard delete, per tenant, after
-retention, a batch per statement; it returns how many rows went, and a count
-of a whole batch or more says there may be more."""
+"""A manager's `purge_tenant(ctx)`: the hard delete of every row of a tenant
+deleted longer ago than the retention, a batch per statement, and nothing
+for any other tenant; it returns how many rows went, and a count of a whole
+batch or more says there may be more."""
+
+AcrossStep = Callable[[RequestContext], Awaitable[int]]
+"""A namespace's purge of its rows past their retention, across tenants in
+the system scope, a batch per statement, under the pass's request stage (the
+tasks' purge mints a tenant's context from it for the attachments it
+detaches); it returns how many rows went, and a whole batch or more says
+there may be more."""
 
 ChoreStep = Callable[[OpContext], Awaitable[object]]
 """A standing chore per tenant that is not a purge: opening the next period
@@ -97,6 +105,8 @@ class WorkerLoop:
         purges: Mapping[str, PurgeStep],
         handlers: Mapping[WorkKind, WorkHandlerInterface],
         chores: Mapping[str, ChoreStep] | None = None,
+        across: Mapping[str, AcrossStep] | None = None,
+        across_batches: Mapping[str, int] | None = None,
         topics: TopicsInterface,
         liveness: CacheInterface,
         options: LoopOptions,
@@ -105,6 +115,10 @@ class WorkerLoop:
         self._outbox = outbox
         self._purges = purges
         self._chores = dict(chores or {})
+        self._across = dict(across or {})
+        # A purge across tenants whose batch is not the loop's `purge_batch`,
+        # by name: what it returns is held against its own batch.
+        self._across_batches = dict(across_batches or {})
         self._handlers = handlers
         self._topics = topics
         self._liveness = liveness
@@ -417,10 +431,12 @@ class WorkerLoop:
         """First the cross-tenant steps that bound recovery: the expired
         leases go back to the queue, and the outbox rows a crash or an outage
         left are relayed. Then one service context per tenant, the system
-        scope first and deleted tenants included (their purges run there),
-        and every step under each; then the cross-tenant purges of the outbox
-        and the queue. Every step is idempotent and wrapped, so a failing
-        tenant or step never stops the rest.
+        scope first and deleted tenants included, and the tenant-shaped work
+        under each: the purge of a tenant past its retention, and the
+        standing chores. Then each namespace's purge of its rows past their
+        retention, once across every tenant, and the cross-tenant purges of
+        the outbox and the queue. Every step is idempotent and wrapped, so a
+        failing tenant or step never stops the rest.
 
         The pass has a budget. The requeue and the relay run on every pass,
         each again while its batch comes back full and the budget lasts, so
@@ -430,9 +446,12 @@ class WorkerLoop:
         the tenant this one stopped at, so every tenant is reached in turn
         however many there are. A tenant it takes runs every step at least
         once; a step whose batch came back full runs again, in turn with the
-        others, while the budget lasts. The cross-tenant purges run on every
-        pass, and so do the three reads of the queue and the outbox that
-        end it, whatever the budget, since the alarms read them."""
+        others, while the budget lasts. The purges across tenants run on
+        every pass, each at least once and again while its batch comes back
+        full and the budget lasts, so a tenant with nothing to purge costs a
+        pass nothing but its chores. So do the three reads of the queue and
+        the outbox that end it, whatever the budget, since the alarms read
+        them."""
         clock = asyncio.get_running_loop().time
         started = clock()
         deadline = started + self._options.sweep_budget.total_seconds()
@@ -470,6 +489,7 @@ class WorkerLoop:
                 break
             await self._sweep_tenant(ctx, deadline)
             swept += 1
+        await self._purge_across(rctx, deadline)
         try:
             await self._while_full(
                 lambda: self._outbox.purge_done(
@@ -554,10 +574,11 @@ class WorkerLoop:
         return ordered[at:] + ordered[:at]
 
     async def _sweep_tenant(self, ctx: OpContext, deadline: float) -> None:
-        """Every step and every chore of one tenant once, then the steps whose batch came back
-        full, round after round, while the budget lasts. A deleted tenant for
-        which nothing was left anywhere is marked purged, and the sweep leaves
-        it out from then on."""
+        """Every step and every chore of one tenant once, then the steps whose
+        batch came back full, round after round, while the budget lasts. A
+        deleted tenant past its retention for which nothing was left is marked
+        purged, and the sweep leaves it out from then on; its rows that have
+        a retention of their own go across tenants, visited or not."""
         settled = True
         full: list[tuple[str, PurgeStep]] = []
         for name, purge in self._purges.items():
@@ -586,6 +607,37 @@ class WorkerLoop:
                     log.info("sweep: nothing is left of deleted org %s; marked purged", ctx.org_id)
             except Exception:
                 log.exception("sweep: mark_purged failed for tenant %s", ctx.org_id)
+
+    async def _purge_across(self, rctx: RequestContext, deadline: float) -> None:
+        """Every namespace's purge across tenants once, then the ones whose
+        batch came back full, round after round, while the budget lasts."""
+        full: list[tuple[str, AcrossStep]] = []
+        for name, purge in self._across.items():
+            if self._whole(name, await self._across_once(rctx, name, purge)):
+                full.append((name, purge))
+        clock = asyncio.get_running_loop().time
+        while full and clock() < deadline:
+            again, full = full, []
+            for name, purge in again:
+                if self._whole(name, await self._across_once(rctx, name, purge)):
+                    full.append((name, purge))
+
+    def _whole(self, name: str, purged: int | None) -> bool:
+        """Whether a purge across tenants took a whole batch, so may have more."""
+        batch = self._across_batches.get(name, self._options.purge_batch)
+        return purged is not None and purged >= batch
+
+    @staticmethod
+    async def _across_once(rctx: RequestContext, name: str, purge: AcrossStep) -> int | None:
+        """One call of one purge across tenants; None when it failed, which it logs."""
+        try:
+            purged = await purge(rctx)
+        except Exception:
+            log.exception("sweep: %s purge across tenants failed", name)
+            return None
+        if purged:
+            log.info("sweep: purged %d %s rows across tenants", purged, name)
+        return purged
 
     @staticmethod
     async def _purge(ctx: OpContext, name: str, purge: PurgeStep) -> int | None:

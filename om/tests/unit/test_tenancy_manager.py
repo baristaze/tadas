@@ -1311,18 +1311,18 @@ async def test_a_deleted_orgs_rows_are_purged_once_the_retention_has_passed(
     assert sweep.role is Role.SERVICE and sweep.user_id == EMPTY_UUID
     # Within the retention nothing of the tenant is deleted in its own right, so
     # nothing goes; past it, every row of the tenant goes and the org row stays.
-    assert await manager.purge_deleted(sweep) == 0
+    assert await manager.purge_tenant(sweep) == 0
     no_retention = make_manager(
         storage, infra, TenancyOptions(dev_sign_in=True, retention=timedelta(0))
     )
-    assert await no_retention.purge_deleted(sweep) == 5, "user, membership, key, session, ticket"
+    assert await no_retention.purge_tenant(sweep) == 5, "user, membership, key, session, ticket"
     assert await storage.read_users(org.id, None, limit=10) == []
     assert await storage.read_memberships(org.id, limit=10) == []
     assert await storage.read_api_keys(org.id, None, limit=10) == []
     assert await storage.read_sessions(org.id, ann.user_id, utcnow(), 10) == []
     tombstone = await storage.read_org(org.id)
     assert tombstone is not None and tombstone.deleted_at is not None
-    assert await no_retention.purge_deleted(sweep) == 0
+    assert await no_retention.purge_tenant(sweep) == 0
 
 
 async def test_a_deleted_tenant_past_its_retention_is_marked_purged_and_left_out(
@@ -1350,6 +1350,40 @@ async def test_a_deleted_tenant_past_its_retention_is_marked_purged_and_left_out
     swept = [c.org_id for c in await manager.service_contexts(request())]
     assert gone.id not in swept and live.id in swept and swept[0] == EMPTY_UUID
     assert await manager.tenant_expired(contexts[gone.id]) is True, "read again outside a pass"
+
+
+async def test_the_sweep_context_is_the_passs_and_none_for_a_purged_tenant(
+    manager: TenancyManagerImpl, storage: TenancyStorageMemoryImpl, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A purge across tenants that found a tenant's row asks for the context
+    the pass minted for that tenant, deleted tenants included: under the
+    pass's request stage it reads nothing. Outside a pass it reads the org
+    row, and a tenant marked purged, or one with no row, has none."""
+    _, live = await manager.bootstrap(request(), "Live", "live", "ann@example.test", "Ann")
+    _, gone = await manager.bootstrap(request(), "Gone", "gone", "bob@example.test", "Bob")
+    stored = await storage.read_org(gone.id)
+    assert stored is not None
+    await storage.write_org(gone.id, stored.model_copy(update={"deleted_at": utcnow()}))
+    rctx = request()
+    await manager.service_contexts(rctx)
+    reads: list[UUID] = []
+    read_org = storage.read_org
+
+    async def counted(org_id: UUID) -> Org | None:
+        reads.append(org_id)
+        return await read_org(org_id)
+
+    monkeypatch.setattr(storage, "read_org", counted)
+    for org_id in (live.id, gone.id):
+        ctx = await manager.sweep_context(rctx, org_id)
+        assert ctx is not None and ctx.org_id == org_id
+        assert ctx.role is Role.SERVICE and ctx.user_id == EMPTY_UUID
+        assert ctx.request_id == rctx.request_id
+    assert reads == [], "the pass's tenants are known"
+    assert await manager.sweep_context(request(), gone.id) is not None, "a deleted tenant"
+    assert await manager.sweep_context(request(), new_id()) is None, "no org row"
+    assert await storage.mark_org_purged(gone.id, utcnow())
+    assert await manager.sweep_context(request(), gone.id) is None, "marked purged"
 
 
 async def test_resume_and_service_contexts(manager: TenancyManagerImpl) -> None:
@@ -1425,21 +1459,24 @@ async def test_a_tenant_whose_members_have_all_left_is_still_swept(
     assert [c.org_id for c in contexts if c.org_id not in personal] == [EMPTY_UUID, org.id]
     ctx = next(c for c in contexts if c.org_id == org.id)
     assert ctx.user_id == EMPTY_UUID and ctx.role is Role.SERVICE
-    # The context does the sweep's work: the one member who left is purged.
-    assert await manager.purge_deleted(ctx) == 0, "retention has not passed"
+    # The purge across tenants takes the one member who left, and the
+    # tenant's own purge takes nothing of a tenant that lives.
+    assert await manager.purge_across_tenants() == 0, "retention has not passed"
     no_retention = make_manager(
         storage, infra, TenancyOptions(dev_sign_in=True, retention=timedelta(0))
     )
-    assert await no_retention.purge_deleted(ctx) == 2, "the user and the membership"
+    assert await no_retention.purge_tenant(ctx) == 0, "the tenant lives"
+    assert await no_retention.purge_across_tenants() == 2, "the user and the membership"
     assert await storage.read_user(org.id, ann.id) is None
 
 
-async def test_the_sweep_visits_the_system_scope_and_purges_expired_logins(
+async def test_the_sweep_purges_the_expired_logins_of_the_system_scope(
     storage: TenancyStorageMemoryImpl, infra: InfraLocalImpl
 ) -> None:
     # A login credential lives under the system scope, one row per sign-in.
-    # The sweep mints a context for that scope too, so the expired ones go
-    # the way a tenant's dead sessions do.
+    # The purge runs across tenants in the system scope, so the expired ones
+    # go with a tenant's dead sessions; the sweep still mints a context for
+    # that scope first.
     manager = make_manager(
         storage, infra, TenancyOptions(dev_sign_in=True, login_ttl=timedelta(seconds=-1))
     )
@@ -1449,11 +1486,12 @@ async def test_the_sweep_visits_the_system_scope_and_purges_expired_logins(
     assert found is not None and found[0] == EMPTY_UUID
     system = next(c for c in await manager.service_contexts(request()) if c.org_id == EMPTY_UUID)
     assert system.user_id == EMPTY_UUID and system.role is Role.SERVICE
-    assert await manager.purge_deleted(system) == 0, "retention has not passed"
+    assert await manager.purge_across_tenants() == 0, "retention has not passed"
     no_retention = make_manager(
         storage, infra, TenancyOptions(dev_sign_in=True, retention=timedelta(0))
     )
-    assert await no_retention.purge_deleted(system) == 1
+    assert await no_retention.purge_tenant(system) == 0, "the system scope never expires"
+    assert await no_retention.purge_across_tenants() == 1
     assert await storage.read_session_by_digest(hash_token(login.token)) is None
 
 
@@ -1473,8 +1511,7 @@ async def test_expired_api_keys_are_purged_like_revoked_ones(
     no_retention = make_manager(
         storage, infra, TenancyOptions(dev_sign_in=True, retention=timedelta(0))
     )
-    sweep = next(c for c in await manager.service_contexts(request()) if c.org_id == org.id)
-    assert await no_retention.purge_deleted(sweep) == 1
+    assert await no_retention.purge_across_tenants() == 1
     assert await storage.read_api_key(org.id, expired.api_key.id) is None
 
 

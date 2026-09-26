@@ -35,6 +35,10 @@ from tadas.workers.maintenance.settings import MaintenanceSettings
 
 log = logging.getLogger(__name__)
 
+MEDIA_PURGE_BATCH = 100
+"""Files one media purge erases. Each is an object deleted from the store, one
+request apiece, before its row, so the batch is smaller than the rows'."""
+
 
 def events_options(settings: MaintenanceSettings) -> EventsOptions:
     """The sweep's trim of each living org's stream, 90 days by default and
@@ -73,6 +77,7 @@ def worker_managers(
         media_options=MediaOptions(
             retention=timedelta(days=settings.media_retention_days),
             pending_expiry=timedelta(hours=settings.media_pending_expiry_hours),
+            purge_batch=MEDIA_PURGE_BATCH,
         ),
         idempotency_options=IdempotencyOptions(
             retention=timedelta(hours=settings.idempotency_retention_hours), purge_batch=batch

@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import and_, delete, func, or_, select, update
+from sqlalchemy import and_, delete, false, func, or_, select, tuple_, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -882,44 +882,45 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
     ) -> None:
         await self._upsert(ApiKeys, org_id, api_key, outbox_rows)
 
-    async def purge_deleted(
-        self, org_id: UUID, before: datetime, tickets_before: datetime, limit: int
-    ) -> int:
-        gone_users = delete_batch(
-            Users, Users.org_id == org_id, Users.deleted_at < before, limit=limit
-        ).returning(Users.id)
-        async with self._session_for(gone_users, org_id=org_id) as session:
-            # The users' ids travel back: their memberships go with them.
-            user_ids = list((await session.execute(gone_users)).scalars().all())
-            purged = len(user_ids)
+    async def purge_deleted(self, before: datetime, tickets_before: datetime, limit: int) -> int:
+        gone_users = delete_batch(Users, Users.deleted_at < before, limit=limit).returning(
+            Users.org_id, Users.id
+        )
+        # Every tenant's rows past the retention, and the sign-in sessions of
+        # the system scope with them, so the system scope, spelled here.
+        async with self._session_for(gone_users, org_id=EMPTY_UUID) as session:
+            # The users travel back with their tenants: their memberships go
+            # with them.
+            gone = (await session.execute(gone_users)).all()
+            purged = len(gone)
+            of_gone_users = (
+                and_(
+                    Memberships.org_id.in_({org_id for org_id, _ in gone}),
+                    tuple_(Memberships.org_id, Memberships.user_id).in_(
+                        [(org_id, user_id) for org_id, user_id in gone]
+                    ),
+                )
+                if gone
+                else false()
+            )
             for stmt in (
                 delete_batch(
                     Memberships,
-                    Memberships.org_id == org_id,
-                    or_(Memberships.user_id.in_(user_ids), Memberships.deleted_at < before),
+                    or_(of_gone_users, Memberships.deleted_at < before),
                     limit=limit,
                 ),
                 delete_batch(
                     ApiKeys,
-                    ApiKeys.org_id == org_id,
                     or_(ApiKeys.deleted_at < before, ApiKeys.expires_at < before),
                     limit=limit,
                 ),
                 # A revoked session expires within its lifetime, so the expiry
-                # alone decides, and `ix_sessions_org_id_expires_at` serves it.
-                delete_batch(
-                    Sessions, Sessions.org_id == org_id, Sessions.expires_at < before, limit=limit
-                ),
+                # alone decides.
+                delete_batch(Sessions, Sessions.expires_at < before, limit=limit),
                 # A ticket is spent within the minute it lives, so the same.
-                delete_batch(
-                    SocketTickets,
-                    SocketTickets.org_id == org_id,
-                    SocketTickets.expires_at < tickets_before,
-                    limit=limit,
-                ),
+                delete_batch(SocketTickets, SocketTickets.expires_at < tickets_before, limit=limit),
                 delete_batch(
                     Invitations,
-                    Invitations.org_id == org_id,
                     or_(
                         and_(
                             Invitations.state != InvitationState.PENDING.value,

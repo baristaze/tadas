@@ -36,12 +36,22 @@ class EventsManagerInterface(ABC):
         ...
 
     @abstractmethod
-    async def purge_expired(self, ctx: OpContext) -> int:
-        """The sweep, for one tenant. When the tenant is deleted longer ago than
-        its retention, its whole stream goes, so it keeps its org row as the
-        record and no row of any other kind. Otherwise, with an event retention
-        set, one bounded batch of the oldest events past it goes and the floor
-        moves up to them. Returns how many events went."""
+    async def purge_across_tenants(self) -> int:
+        """Platform-internal: the sweep's trim, across tenants, once a pass. With
+        an event retention set, one bounded batch of the oldest events past it
+        goes, whatever their tenant, and each tenant's floor moves up to its
+        own in the same transaction (ADR 0040). Returns how many events went;
+        0 with no retention set. It takes no context, because it runs for no
+        tenant and no principal."""
+        ...
+
+    @abstractmethod
+    async def purge_tenant(self, ctx: OpContext) -> int:
+        """The sweep, for one tenant deleted longer ago than its retention: its
+        whole stream goes, a batch at most a call, so it keeps its org row as
+        the record and no row of any other kind. Returns how many events went.
+        Any other tenant returns 0 and reads nothing: its old events go by the
+        trim across tenants."""
         ...
 
     @abstractmethod

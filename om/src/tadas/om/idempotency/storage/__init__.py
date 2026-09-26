@@ -1,5 +1,6 @@
 """Storage of idempotency records. The scope is user-bound within the
-tenant: both keys are passed and both are in every WHERE clause. The writes
+tenant: both keys are passed and both are in every WHERE clause, but the
+sweep's purge, which reaches across tenants in the system scope. The writes
 that move a pending record (take over, re-arm, finish, release) are
 conditional in the statement itself and report what they matched: a
 take-over, a re-arm, and a finish return the record as written or None, a
@@ -65,10 +66,11 @@ class IdempotencyStorageInterface(ABC):
 
     @abstractmethod
     async def purge_records(
-        self, org_id: UUID, finished_before: datetime, attempts_before: UUID, limit: int
+        self, finished_before: datetime, attempts_before: UUID, limit: int
     ) -> int:
-        """For the sweep, per tenant: deletes finished and released records that
-        were born before `finished_before` (past the retention, a retry begins
+        """Cross-tenant, for the sweep, in the system scope, once a pass for
+        every tenant: deletes finished and released records that were born
+        before `finished_before` (past the retention, a retry begins
         afresh) and held pending ones whose attempt token sorts below
         `attempts_before` (a marker no retry ever came back for, measured from
         the attempt like the lease is), at most `limit` of them, skipping rows

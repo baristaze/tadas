@@ -21,7 +21,6 @@ CROSS_TENANT_CASES: frozenset[str] = frozenset(
         "read_every_file",
         "read_file",
         "read_files",
-        "read_purgeable",
         "read_usage",
         "write_file",
     }
@@ -80,6 +79,18 @@ async def seed(storage: MediaStorageInterface, org_id: UUID, file: File) -> File
 def deleted(file: File, ago: timedelta = timedelta(0)) -> File:
     at = utcnow() - ago
     return file.model_copy(update={"deleted_at": at, "deleted_by": file.created_by})
+
+
+async def drained(storage: MediaStorageInterface) -> timedelta:
+    """How far back a purge case stands: a century, so no other case's file is
+    past its cuts, with whatever an earlier run of these cases left behind
+    them purged first. The read reaches across tenants, so a case owns the
+    files behind its cuts."""
+    back = timedelta(days=36500)
+    cut = utcnow() - back - timedelta(days=1)
+    while left := await storage.read_purgeable(cut, cut, 1000):
+        await storage.purge_files_across_tenants([f.id for _, f in left])
+    return back
 
 
 class MediaStorageContract:
@@ -186,28 +197,41 @@ class MediaStorageContract:
     async def test_the_purge_reads_the_deleted_past_the_cut_and_the_abandoned(
         self, storage: MediaStorageInterface
     ) -> None:
-        org = new_id()
-        now = utcnow()
+        """The read and the purge reach across tenants: every tenant's files
+        past their cut, each with its tenant, and none other."""
+        org, other = new_id(), new_id()
+        back = await drained(storage)
         old_delete = await seed(storage, org, make_file(subject_id=new_id()))
-        await storage.write_file(org, deleted(old_delete, timedelta(days=2)), ())
+        await storage.write_file(org, deleted(old_delete, back + timedelta(days=2)), ())
         fresh_delete = await seed(storage, org, make_file(subject_id=new_id()))
         await storage.write_file(org, deleted(fresh_delete), ())
         abandoned = await seed(
             storage,
             org,
             make_file(
-                subject_id=new_id(), status=FileStatus.PENDING, created_ago=timedelta(days=2)
+                subject_id=new_id(),
+                status=FileStatus.PENDING,
+                created_ago=back + timedelta(days=2),
             ),
         )
         await seed(storage, org, make_file(subject_id=new_id(), status=FileStatus.PENDING))
-        await seed(storage, org, make_file(subject_id=new_id(), created_ago=timedelta(days=2)))
-        cut = now - timedelta(days=1)
-        purgeable = await storage.read_purgeable(org, cut, cut, 10)
-        assert [f.id for f in purgeable] == [old_delete.id, abandoned.id]
-        assert [f.id for f in await storage.read_purgeable(org, cut, cut, 1)] == [old_delete.id]
-        assert await storage.purge_files(org, [f.id for f in purgeable]) == 2
+        await seed(
+            storage, org, make_file(subject_id=new_id(), created_ago=back + timedelta(days=2))
+        )
+        theirs = await seed(storage, other, make_file(subject_id=new_id()))
+        await storage.write_file(other, deleted(theirs, back + timedelta(days=2)), ())
+        cut = utcnow() - back - timedelta(days=1)
+        purgeable = await storage.read_purgeable(cut, cut, 10)
+        assert sorted((org_id, f.id) for org_id, f in purgeable) == sorted(
+            [(org, old_delete.id), (org, abandoned.id), (other, theirs.id)]
+        )
+        assert len(await storage.read_purgeable(cut, cut, 1)) == 1, "a batch at most"
+        assert await storage.purge_files_across_tenants([f.id for _, f in purgeable]) == 3
         assert await storage.read_file(org, old_delete.id) is None
-        assert await storage.read_purgeable(org, cut, cut, 10) == []
+        assert await storage.read_file(other, theirs.id) is None
+        assert await storage.read_file(org, fresh_delete.id) is not None
+        assert await storage.read_purgeable(cut, cut, 10) == []
+        assert await storage.purge_files_across_tenants([old_delete.id]) == 0, "idempotent"
 
     async def test_every_file_of_a_tenant_pages_by_id(self, storage: MediaStorageInterface) -> None:
         org = new_id()
@@ -239,14 +263,12 @@ class MediaStorageContract:
         assert await storage.read_every_file(org_b, None, 10) == []
         assert (await storage.read_usage(org_b)).total_count == 0
 
-    async def test_the_purge_reads_and_erases_nothing_of_another_tenant(
+    async def test_the_tenant_purge_erases_nothing_of_another_tenant(
         self, storage: MediaStorageInterface
     ) -> None:
         org_a, org_b = new_id(), new_id()
         file = await seed(storage, org_a, make_file(subject_id=new_id()))
         await storage.write_file(org_a, deleted(file, timedelta(days=2)), ())
-        cut = utcnow() - timedelta(days=1)
-        assert await storage.read_purgeable(org_b, cut, cut, 10) == []
         assert await storage.purge_files(org_b, [file.id]) == 0
         assert await storage.read_file(org_a, file.id) is not None
 

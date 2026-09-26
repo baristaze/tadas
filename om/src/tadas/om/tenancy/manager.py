@@ -597,15 +597,38 @@ class TenancyManagerInterface(ABC):
     async def revoke_api_key(self, ctx: OpContext, api_key_id: UUID) -> ApiKey: ...
 
     @abstractmethod
-    async def purge_deleted(self, ctx: OpContext) -> int:
-        """The sweep, for one tenant: hard-deletes removed members (and their
-        memberships), revoked or expired api keys, revoked or expired sessions,
-        and redeemed or expired socket tickets past the retention period;
-        returns how many rows went. Under the system scope it is the expired
-        login credentials that go; under a tenant deleted longer ago than the
-        retention, every row of the tenant goes and the org row stays as the
-        record. Erasing a person is this purge; personal data lives in named
-        fields (`email`, `display_name`), which no event about a user carries."""
+    async def purge_across_tenants(self) -> int:
+        """Platform-internal: the sweep, across tenants, once a pass, in one
+        transaction: hard-deletes removed members (and their memberships),
+        revoked or expired api keys, revoked or expired sessions (the
+        sign-ins of the system scope among them), redeemed or expired socket
+        tickets, closed invitations past the retention period, and the
+        sign-in delays whose run ended long ago; a batch of each kind at
+        most; returns how many rows went. It takes no context, because it
+        runs for no tenant and no principal. Erasing a person is this purge;
+        personal data lives in named fields (`email`, `display_name`), which
+        no event about a user carries."""
+        ...
+
+    @abstractmethod
+    async def purge_tenant(self, ctx: OpContext) -> int:
+        """The sweep, for one tenant deleted longer ago than the retention: every
+        user, membership, api key, session, socket ticket, and invitation of
+        the tenant goes, a batch of each at most a call, and the org row
+        stays as the record; returns how many rows went. Any other tenant
+        returns 0 and reads nothing: its rows past the retention go across
+        tenants."""
+        ...
+
+    @abstractmethod
+    async def sweep_context(self, rctx: RequestContext, org_id: UUID) -> OpContext | None:
+        """Platform-internal: the service context the sweep does a tenant's
+        tenant-shaped work under, when a purge across tenants found a row of
+        that tenant: the one `service_contexts` mints for it, deleted tenants
+        included, since their rows are the sweep's to settle. Under the
+        request stage of the pass that listed the tenants, it reads nothing.
+        None for a tenant marked purged, or one with no org row: the sweep no
+        longer visits it."""
         ...
 
     @abstractmethod

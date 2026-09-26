@@ -120,18 +120,28 @@ reason = "a static page with no script and no state; the portal and every app th
 # om/tests/unit/test_storage_exceptions.py holds.
 [tool.arch-check.options.CTX-12]
 tenantless = [
+    "BillingStorageInterface.purge_deliveries",
     "EventStorageInterface.count_since",
+    "EventStorageInterface.trim",
+    "IdempotencyStorageInterface.purge_records",
+    "MediaStorageInterface.purge_files_across_tenants",
+    "MediaStorageInterface.read_purgeable",
+    "OrchestrationsStorageInterface.purge_settled",
     "OutboxStorageInterface.claim_pending",
     "OutboxStorageInterface.oldest_pending_at",
     "OutboxStorageInterface.purge_done",
+    "SlackStorageInterface.purge",
     "SlackStorageInterface.read_installation_by_team",
     "SlackStorageInterface.redeem_install_state",
     "TasksStorageInterface.count_created_since",
+    "TasksStorageInterface.purge_deleted",
+    "TasksStorageInterface.read_deleted",
     "TenancyStorageInterface.clear_failed_sign_ins",
     "TenancyStorageInterface.confirm_totp",
     "TenancyStorageInterface.count_orgs",
     "TenancyStorageInterface.count_users",
     "TenancyStorageInterface.delete_person",
+    "TenancyStorageInterface.purge_deleted",
     "TenancyStorageInterface.purge_sign_in_delays",
     "TenancyStorageInterface.read_api_key_by_digest",
     "TenancyStorageInterface.read_identity",
@@ -171,6 +181,7 @@ sites = [
     "om/src/tadas/om/tenancy/impl/manager.py::TenancyManagerImpl.resume",
     "om/src/tadas/om/tenancy/impl/manager.py::TenancyManagerImpl.service_context",
     "om/src/tadas/om/tenancy/impl/manager.py::TenancyManagerImpl.service_contexts",
+    "om/src/tadas/om/tenancy/impl/manager.py::TenancyManagerImpl.sweep_context",
     "om/src/tadas/om/tenancy/impl/manager.py::TenancyManagerImpl.member_context",
 ]
 builders = ["build_context"]

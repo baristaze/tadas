@@ -12,16 +12,16 @@ class IdempotencyRecords(IdentifiableMixin, CreatedMixin, Base):
     __org_id_index__ = False
     __table_args__ = (
         Index("uq_idempotency_records_org_id_user_id_key", "org_id", "user_id", "key", unique=True),
-        # What the purge reads: the tenant's records by birth.
-        Index("ix_idempotency_records_org_id_created_at", "org_id", "created_at"),
-        # The pending markers by their attempt. The purge reads a tenant's
-        # abandoned attempts through it, and the re-mint's fence, another
-        # namespace's statement, reads the one marker its attempt holds; the
-        # unique index above cannot serve either, as it leads with the key the
-        # caller sent.
+        # What the sweep's purge reads across tenants: the records by birth.
+        Index("ix_idempotency_records_created_at", "created_at"),
+        # The pending markers by their attempt. The purge reads the abandoned
+        # ones through it, across tenants, and the re-mint's fence, another
+        # namespace's statement, reads the one marker its attempt holds: an
+        # attempt token is minted once, so it finds one row without the
+        # tenant. The unique index above serves neither, as it leads with the
+        # key the caller sent.
         Index(
-            "ix_idempotency_records_org_id_attempt_id",
-            "org_id",
+            "ix_idempotency_records_attempt_id",
             "attempt_id",
             postgresql_where=text("status IS NULL"),
         ),

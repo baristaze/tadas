@@ -184,19 +184,20 @@ class TasksStorageMemoryImpl(MemoryStorageBase, TasksStorageInterface):
     async def count_created_since(self, since: datetime) -> int:
         return sum(1 for task in self._every(self._tasks) if task.created_at >= since)
 
-    async def read_deleted(self, org_id: UUID, before: datetime, limit: int) -> list[UUID]:
+    async def read_deleted(self, before: datetime, limit: int) -> list[tuple[UUID, UUID]]:
         gone = [
-            t
-            for t in self._rows(self._tasks, org_id)
+            (org_id, t)
+            for org_id, t in self._rows_across_tenants(self._tasks)
             if t.deleted_at is not None and t.deleted_at < before
         ]
-        return [t.id for t in sorted(gone, key=lambda t: (t.deleted_at, t.id))][:limit]
+        ordered = sorted(gone, key=lambda pair: (pair[1].deleted_at, pair[1].id))
+        return [(org_id, t.id) for org_id, t in ordered][:limit]
 
-    async def purge_deleted(self, org_id: UUID, before: datetime, task_ids: list[UUID]) -> int:
+    async def purge_deleted(self, before: datetime, task_ids: list[UUID]) -> int:
         chosen = set(task_ids)
         gone = [
             t.id
-            for t in self._rows(self._tasks, org_id)
+            for _, t in self._rows_across_tenants(self._tasks)
             if t.id in chosen and t.deleted_at is not None and t.deleted_at < before
         ]
         for task_id in gone:

@@ -4,6 +4,7 @@ from uuid import UUID
 from sqlalchemy import Update, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from tadas.om.base import EMPTY_UUID
 from tadas.om.exceptions import PreconditionFailed, UniqueKeyTaken
 from tadas.om.orchestrations.storage import OrchestrationsStorageInterface
 from tadas.om.orchestrations.storage.tables.orchestrations import Orchestrations
@@ -139,15 +140,15 @@ class OrchestrationsStoragePostgresImpl(PgStorageBase, OrchestrationsStorageInte
                 session.add(to_row(outbox_row, OutboxRows, org_id=org_id))
             await session.commit()
 
-    async def purge_settled(self, org_id: UUID, before: datetime, limit: int) -> int:
+    async def purge_settled(self, before: datetime, limit: int) -> int:
         stmt = delete_batch(
             Orchestrations,
-            Orchestrations.org_id == org_id,
             Orchestrations.status.in_([s.value for s in SETTLED]),
             Orchestrations.updated_at < before,
             limit=limit,
         )
-        async with self._session_for(stmt, org_id=org_id) as session:
+        # Every tenant's settled records, so the system scope, spelled here.
+        async with self._session_for(stmt, org_id=EMPTY_UUID) as session:
             purged = deleted(await session.execute(stmt))
             await session.commit()
             return purged

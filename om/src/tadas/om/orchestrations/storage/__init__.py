@@ -77,10 +77,12 @@ class OrchestrationsStorageInterface(ABC):
         ...
 
     @abstractmethod
-    async def purge_settled(self, org_id: UUID, before: datetime, limit: int) -> int:
-        """Removes at most `limit` of the org's records that settled before
-        `before`, skipping rows another transaction holds; returns how many. A
-        parked or a running record is never purged."""
+    async def purge_settled(self, before: datetime, limit: int) -> int:
+        """Cross-tenant, for the sweep, in the system scope, once a pass for
+        every tenant: removes at most `limit` records that settled before
+        `before`, whatever their tenant, skipping rows another transaction
+        holds; returns how many. A parked or a running record is never
+        purged."""
         ...
 
     @abstractmethod

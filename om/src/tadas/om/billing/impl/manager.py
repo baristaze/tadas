@@ -373,14 +373,16 @@ class BillingManagerImpl(BillingManagerInterface):
         await self._write(ctx, updated, wake_rows(ctx, ctx.org_id, account, updated, now))
         return billing_of(updated, now)
 
-    async def purge_deleted(self, ctx: OpContext) -> int:
-        ctx.require(Permission.WRITE)
-        batch = self._options.purge_batch
-        if await self._tenancy().tenant_expired(ctx):
-            return await self._storage.purge_tenant(ctx.org_id, batch)
+    async def purge_across_tenants(self) -> int:
         return await self._storage.purge_deliveries(
-            ctx.org_id, self._clock() - self._options.retention, batch
+            self._clock() - self._options.retention, self._options.purge_batch
         )
+
+    async def purge_tenant(self, ctx: OpContext) -> int:
+        ctx.require(Permission.WRITE)
+        if not await self._tenancy().tenant_expired(ctx):
+            return 0
+        return await self._storage.purge_tenant(ctx.org_id, self._options.purge_batch)
 
     async def _with_customer(
         self, ctx: OpContext, account: BillingAccount | None, customer_id: str
