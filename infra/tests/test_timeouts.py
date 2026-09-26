@@ -42,6 +42,7 @@ CLIENT_CONSTRUCTORS = {
     "StripeClient",
     "AsyncWebClient",  # slack_sdk
     "AsyncWebhookClient",  # slack_sdk
+    "AsyncWorkOSClient",  # names a timeout on every request, over its HTTP client's
 }
 """A call by one of these names is a client being built; `session.client(...)`
 (an AWS client) is matched by its receiver below."""
@@ -137,6 +138,7 @@ def test_every_client_construction_names_a_timeout() -> None:
         "integrations/src/tadas/integrations/payments/stripe.py",
         "integrations/src/tadas/integrations/payments/catalog.py",
         "integrations/src/tadas/integrations/slack/web.py",
+        "integrations/src/tadas/integrations/identity/workos.py",
     }, "the scan no longer sees a client it used to; widen it before trusting it"
     unbounded = [site for site, bounded in found if not bounded]
     assert not unbounded, f"clients built without a timeout: {unbounded}"

@@ -7,7 +7,10 @@ constant time, inside five minutes; the twin signs the way Slack does, stays
 local, issues tokens that renew once, and fails on request; and the off
 client reaches Slack for nothing."""
 
+import asyncio
 import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import parse_qs, urlencode, urlsplit
@@ -327,6 +330,58 @@ async def test_a_transport_failure_is_a_failure_worth_a_retry(
         assert raised.value.slack_code == "TimeoutError"
     finally:
         await client.close()
+
+
+class SilentSlack:
+    """A server that takes a call and never answers: Slack hanging."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def _hold(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        self.calls += 1
+        try:
+            while await reader.read(65536):
+                pass
+        finally:
+            writer.close()
+
+    @asynccontextmanager
+    async def serving(self) -> AsyncIterator[str]:
+        server = await asyncio.start_server(self._hold, "127.0.0.1", 0)
+        try:
+            yield f"http://127.0.0.1:{server.sockets[0].getsockname()[1]}/api/"
+        finally:
+            server.close()
+
+
+@pytest.mark.parametrize("seconds", [0.4, 1.5])
+async def test_a_call_slack_never_answers_ends_at_the_timeout_from_settings(
+    monkeypatch: pytest.MonkeyPatch, seconds: float
+) -> None:
+    """Every call rides the one session, and the session carries the timeout
+    to the fraction: in whole seconds, 1.5 would end at 1, and 0.4 would be
+    zero, which aiohttp takes as no timeout at all. A timeout is not tried
+    again."""
+    slack = SilentSlack()
+    async with slack.serving() as base_url:
+        made = AsyncWebClient.__init__
+
+        def aimed(self: AsyncWebClient, *args: Any, **kwargs: Any) -> None:
+            made(self, *args, base_url=base_url, **kwargs)
+
+        monkeypatch.setattr(AsyncWebClient, "__init__", aimed)
+        client = SlackWebImpl("111.222", CLIENT_SECRET, SECRET, timedelta(seconds=seconds))
+        await client.start()
+        began = time.monotonic()
+        try:
+            with pytest.raises(SlackFailed) as raised:
+                await asyncio.wait_for(client.user_email(TOKEN, "U0ANN"), seconds + 5)
+        finally:
+            await client.close()
+        waited = time.monotonic() - began
+    assert raised.value.slack_code == "TimeoutError"
+    assert waited >= seconds and slack.calls == 1
 
 
 async def test_the_web_client_refuses_a_foreign_response_url_before_any_request() -> None:

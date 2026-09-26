@@ -851,7 +851,9 @@ provider no longer holds is deleted already). `IntegrationsSettings`
 `TADAS_WORKOS_API_KEY`, the Tadas App application's own key) is mixed
 into the API's and the worker's settings, and the configured root refuses the twin in a
 deployed environment. The WorkOS client proves at start that the key is
-the application's and refuses to boot on another (ADR 0033). Every
+the application's and refuses to boot on another (ADR 0033). Its SDK
+names a timeout on every request, over its HTTP client's, so the client
+hands it `TADAS_WORKOS_TIMEOUT_SECONDS` in whole seconds, rounded up. Every
 provider error is translated into a leaf of infra's exception family,
 and the tenancy manager translates the sign-in ones into its own.
 

@@ -5,9 +5,17 @@ signing secret) for the life of the process, and never a workspace's token:
 each Web API call names the token it is made under, and the caller resolved
 it for that one call. One HTTP session for the life of the process, opened at
 start and shared by every call and every command reply, each under the
-timeout from settings."""
+timeout from settings.
+
+The session carries that timeout, to the fraction of a second, and it is the
+one every call rides. The SDK's own timeout, in whole seconds, bounds only a
+session the SDK opens itself, when it is handed none or a closed one; it is
+rounded up and never zero, since aiohttp takes zero as no timeout at all.
+The SDK tries a call again once when its connection drops, never when it
+times out, so a Slack that hangs costs one timeout."""
 
 import logging
+import math
 from datetime import timedelta
 from typing import Any
 from urllib.parse import urlencode
@@ -57,14 +65,13 @@ class SlackWebImpl(SlackInterface):
         self._client_secret = client_secret
         self._signing_secret = signing_secret
         self._timeout = timeout
+        self._whole_seconds = max(1, math.ceil(timeout.total_seconds()))
         self._session: aiohttp.ClientSession | None = None
 
     def _web(self, token: str | None = None) -> AsyncWebClient:
         if self._session is None:
             raise RuntimeError("the Slack client is used before start()")
-        return AsyncWebClient(
-            token=token, session=self._session, timeout=int(self._timeout.total_seconds())
-        )
+        return AsyncWebClient(token=token, session=self._session, timeout=self._whole_seconds)
 
     def authorize_url(self, state: str, redirect_uri: str) -> str:
         query = urlencode(
@@ -151,9 +158,7 @@ class SlackWebImpl(SlackInterface):
     async def respond(self, response_url: str, text: str) -> None:
         if not is_response_url(response_url):
             raise SlackFailed("invalid_response_url", "a response_url that is not Slack's")
-        hook = AsyncWebhookClient(
-            response_url, session=self._session, timeout=int(self._timeout.total_seconds())
-        )
+        hook = AsyncWebhookClient(response_url, session=self._session, timeout=self._whole_seconds)
         try:
             answer = await hook.send(text=text, response_type="ephemeral")
         except Exception as error:
@@ -190,7 +195,7 @@ class SlackWebImpl(SlackInterface):
         return "slack=web"
 
     async def start(self) -> None:
-        seconds = int(self._timeout.total_seconds())
+        seconds = self._timeout.total_seconds()
         self._session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=seconds))
 
     async def close(self) -> None:

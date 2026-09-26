@@ -30,15 +30,21 @@ and a terminal has no browser to send.
 A WorkOS organization stands for a Tadas org and carries its id as
 `external_id`.
 
-The SDK's own HTTP client is replaced by one this impl owns, with the
-timeout from settings, so every call out carries it. The SDK's retries stay:
-they retry a 429 and a server error with backoff. Every SDK error is
-translated here; none crosses the boundary."""
+The SDK's own HTTP client is replaced by one this impl owns. The SDK also
+names a timeout on every request, which overrides its HTTP client's, and it
+falls back to `WORKOS_REQUEST_TIMEOUT` or 60 seconds when it is given none.
+So the timeout from settings goes to both, and every call out carries it.
+The SDK takes whole seconds, so the setting is rounded up, never to zero.
+The SDK's retries stay: they retry a timeout, a failed connection, a 429,
+and a server error with backoff, so a WorkOS that hangs costs four attempts
+of the timeout. Every SDK error is translated here; none crosses the
+boundary."""
 
 import base64
 import binascii
 import json
 import logging
+import math
 from datetime import timedelta
 from typing import Any, Literal, NoReturn
 
@@ -91,6 +97,12 @@ DEVICE_ERRORS: dict[str, type[Exception]] = {
     "access_denied": DeviceDenied,
     "expired_token": DeviceExpired,
 }
+
+
+def whole_seconds(timeout: timedelta) -> int:
+    """The timeout as the SDK takes it: whole seconds, rounded up so a call
+    never waits less than the setting, and never zero."""
+    return max(1, math.ceil(timeout.total_seconds()))
 
 
 def _value(field: Any) -> str:
@@ -194,13 +206,16 @@ class IdentityProviderWorkOSImpl(IdentityProviderInterface):
             raise ValueError("WorkOS needs its client id and its API key")
         self._client_id = client_id
         self._base_url = base_url.rstrip("/")
-        self._http = httpx.AsyncClient(timeout=timeout.total_seconds(), transport=transport)
+        seconds = whole_seconds(timeout)
+        self._http = httpx.AsyncClient(timeout=seconds, transport=transport)
         # One client, one credential: the application's key is the exchange's
-        # client secret and the management calls' bearer alike.
+        # client secret and the management calls' bearer alike. The request
+        # timeout is the one each call is sent with; the client's is the same.
         self._workos = AsyncWorkOSClient(
             api_key=api_key,
             client_id=client_id,
             base_url=self._base_url,
+            request_timeout=seconds,
             max_retries=max_retries,
             http_client=self._http,
         )
