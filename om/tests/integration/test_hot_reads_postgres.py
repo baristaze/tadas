@@ -5,10 +5,11 @@ each read the index made for them.
 
 The plans are read off the statements the storage impls send, captured as
 they go to the driver, and explained under the scope the statement ran in, by
-the login that scope runs on, with row-level security in force. Each is explained twice:
-with the values it was sent with, and as the generic plan a prepared statement
-reaches after five runs, in which every value is a parameter. A partial index
-whose predicate names a bound value serves the first and never the second.
+the login that scope runs on, with row-level security in force. Each is
+explained twice: with the values it was sent with, and as the generic plan a
+prepared statement reaches after five runs, in which every value is a
+parameter. A partial index whose predicate names a bound value serves the
+first and never the second.
 
 The tenant is seeded with enough rows, across enough people, for the planner
 to choose between indexes on statistics, and sequential scans are switched
