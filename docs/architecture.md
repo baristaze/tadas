@@ -1283,8 +1283,10 @@ alone, and neither key may touch what the other's work does not need
   that plan and the publication of the same portal files and of the
   site's production page from the same build. Nothing is
   rebuilt for production. The migration is inside the apply: the
-  `service` module runs the API's `pre_rollout_command` as a one-off
-  task on every new task definition before the service rolls, the
+  `service` module runs the API's `pre_rollout` commands in one one-off
+  task before the service rolls, whenever the release changes a file
+  `deployment/migration-inputs.json` names (the migrations and the code
+  that runs them), the database, or its passwords; the
   worker rolls after it, and every service waits for steady state, so a
   failed migration or a rolled-back rollout fails the apply with the old
   tasks still serving; a migration is compatible with the release before

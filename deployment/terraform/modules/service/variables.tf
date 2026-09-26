@@ -127,11 +127,12 @@ variable "collector_image" {
 }
 
 variable "pre_rollout" {
-  description = "Commands run in order, each as a one-off task on the named task definition and container, whenever this service's task definition or that one changes, before the service rolls: the migration. Null runs nothing."
+  description = "Commands run in order, in one one-off task on the named task definition and container, before the service rolls: the migration. They run when `triggers` or the commands change; with no triggers, whenever this service's task definition or that one changes. Null runs nothing."
   type = object({
     task_definition_arn = string
     container           = string
     commands            = list(list(string))
+    triggers            = optional(map(string))
   })
   default = null
 }

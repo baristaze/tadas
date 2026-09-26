@@ -1,0 +1,10 @@
+{
+  "paths": [
+    "om/migrations/alembic.ini",
+    "om/migrations/**/*.py",
+    "om/migrations/**/*.sql",
+    "om/src/tadas/om/__init__.py",
+    "om/src/tadas/om/storage/*.py",
+    "om/src/tadas/om/storage/tables/*.py"
+  ]
+}

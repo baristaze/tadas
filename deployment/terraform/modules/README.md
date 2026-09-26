@@ -70,16 +70,25 @@ protection and final snapshot.
 The `service` module is instantiated once per process. A worker passes
 `deployment_maximum_percent = 100` so a rollout never runs more workers
 than desired, because a worker holds leases. The API passes
-`pre_rollout`, the migration: on every new task definition the module
-runs `tadas-api migrate ensure-logins`, then `tadas-api migrate --all`,
-each as a one-off task on the migrate task's definition
-(`pre_rollout.sh`, from the machine that applies, with its credentials),
-and the service depends on it, so a step that fails ends the apply with
-the old tasks still serving.
+`pre_rollout`, the migration: the module runs
+`tadas-api migrate ensure-logins`, then `tadas-api migrate --all`, in
+one one-off task on the migrate task's new definition (`pre_rollout.sh`,
+from the machine that applies, with its credentials), and the service
+depends on it, so a step that fails ends the apply with the old tasks
+still serving. It runs when the release brings the database something it
+lacks: the fingerprint of the files `deployment/migration-inputs.json`
+names (the migrations, and the runner and logins code the command
+imports), the database's resource id, the password version, or the
+migrate task's secrets differ from what the last successful run recorded
+in the state. A release that changes none of them rolls with no one-off
+task, and a run that fails is run again by the next apply.
 The worker passes the API's `rollout_gate` as `rollout_after`, so it
 rolls after the migration ran. Every service waits for its new tasks to
 serve (`wait_for_steady_state`): a rollout ECS rolls back fails the
-apply instead of leaving it green over old tasks.
+apply instead of leaving it green over old tasks. The API's health-check
+grace period, 150 seconds, covers a task's start on a fresh Fargate host;
+its target group checks `/healthz` every 10 seconds and drains a
+deregistered target for 15. Each number's reason is beside it.
 
 The `task` module is instantiated twice, and nothing keeps either
 running. The migrate task is the one place the master's URL and the

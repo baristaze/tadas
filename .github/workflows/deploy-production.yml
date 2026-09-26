@@ -40,7 +40,8 @@
 # change production, and that is the line the approval holds.
 #
 # Inside the apply the migration runs as a one-off task on the new API image
-# before the services roll (the service module orders it); a migration that
+# before the services roll (the service module orders it), when the release
+# brings one (deployment/migration-inputs.json names what counts); a migration that
 # fails ends the apply with the old tasks still serving, and the apply waits
 # until the new tasks serve, so a rollout ECS rolls back fails the job.
 #

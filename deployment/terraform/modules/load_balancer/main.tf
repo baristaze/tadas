@@ -20,22 +20,42 @@ resource "aws_lb" "this" {
 }
 
 resource "aws_lb_target_group" "api" {
-  name                 = "tadas-${var.environment}-api"
-  port                 = var.target_port
-  protocol             = "HTTP"
-  target_type          = "ip"
-  vpc_id               = var.vpc_id
-  deregistration_delay = 30
-  tags                 = local.tags
+  name        = "tadas-${var.environment}-api"
+  port        = var.target_port
+  protocol    = "HTTP"
+  target_type = "ip"
+  vpc_id      = var.vpc_id
+  tags        = local.tags
 
-  # The readiness deadline (TADAS_READINESS_TIMEOUT_SECONDS, 2.0) is shorter
-  # than this timeout, so the answer always arrives inside the poll.
+  # How long a deregistered target keeps its open connections before ECS
+  # stops its task. The load balancer stops sending it new requests within a
+  # few seconds, and a request already on it ends well inside 15: the
+  # database's statement timeout (10 seconds) bounds its longest wait. After
+  # the delay the process gets SIGTERM and still finishes what it holds,
+  # inside the task's 30-second stop timeout. A realtime socket still open
+  # on the old task closes when the delay ends, and the client reconnects to
+  # the new one. The pings and the idle timeout in realtime-timeouts.json
+  # keep a living socket open; they ask nothing of a draining one, so they
+  # hold as they are. Every second here is a second of every rollout.
+  deregistration_delay = 15
+
+  # The probe is /healthz, liveness, which reads no dependency and answers
+  # in about a millisecond. The readiness deadline
+  # (TADAS_READINESS_TIMEOUT_SECONDS, 2.0) is shorter than the timeout too,
+  # so either answer arrives inside the poll.
   health_check {
-    path                = var.health_check_path
-    matcher             = "200"
-    interval            = 15
-    timeout             = 5
-    healthy_threshold   = 2
+    path    = var.health_check_path
+    matcher = "200"
+    # A new target serves after two passing checks: 20 seconds from the
+    # process's first answer. Each load balancer node probes on its own, so
+    # this is a few requests a second at most, all to a handler that reads
+    # nothing.
+    interval          = 10
+    timeout           = 5
+    healthy_threshold = 2
+    # Three misses in a row, 30 seconds of silence, take a target out of the
+    # rotation. A slow request never trips it: the probe reads nothing, so
+    # only a stalled or dead process misses three.
     unhealthy_threshold = 3
   }
 }

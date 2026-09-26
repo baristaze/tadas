@@ -248,18 +248,31 @@ resource "aws_ecs_task_definition" "this" {
   }
 }
 
-# What runs before the service rolls, on every new task definition: for the
-# API, the migration. Each command is one one-off task, in order, on the task
-# definition `pre_rollout` names (the migrate task's, whose credentials no
-# serving task holds), run from the machine that applies with the same
-# credentials. The service depends on it, so a step that fails ends the apply
-# with the old tasks still serving. A new revision of either definition runs
-# it again. A service that waits for another's pre-rollout run passes its
-# `rollout_gate` output as `rollout_after`.
+# What runs before the service rolls: for the API, the migration. The
+# commands run in order, in one one-off task on the task definition
+# `pre_rollout` names (the migrate task's, whose credentials no serving task
+# holds), started from the machine that applies with the same credentials.
+# One task, not one per command: each task start is a Fargate cold start,
+# about a minute. The service depends on it, so a command that fails ends the
+# apply with the old tasks still serving.
+#
+# It runs when its triggers change. A caller that names `triggers` decides
+# what calls for a run (the API: the migration files, the database, the
+# passwords); one that names none runs it on every new revision of either
+# task definition. The commands are always a trigger. A run that fails
+# leaves the resource tainted, so the next apply runs it again. A service
+# that waits for another's pre-rollout run passes its `rollout_gate` output
+# as `rollout_after`.
 resource "terraform_data" "pre_rollout" {
   count = var.pre_rollout == null ? 0 : 1
 
-  triggers_replace = [aws_ecs_task_definition.this.arn, var.pre_rollout.task_definition_arn]
+  triggers_replace = [
+    var.pre_rollout.triggers == null ? {
+      task_definition        = aws_ecs_task_definition.this.arn
+      pre_rollout_definition = var.pre_rollout.task_definition_arn
+    } : var.pre_rollout.triggers,
+    var.pre_rollout.commands,
+  ]
 
   provisioner "local-exec" {
     command = "${path.module}/pre_rollout.sh"
@@ -294,13 +307,25 @@ resource "aws_ecs_service" "this" {
   propagate_tags  = "SERVICE"
   tags            = local.tags
 
-  # The apply ends when the new tasks serve; a rollout the circuit breaker
-  # rolls back fails the apply instead of leaving a green job over old tasks.
+  # The apply ends when the new tasks serve and the old ones have stopped; a
+  # rollout the circuit breaker rolls back fails the apply instead of leaving
+  # a green job over old tasks. The wait is what ECS takes, no more: its tail
+  # is the load balancer's drain and the old task's stop, both set short.
   wait_for_steady_state = true
 
   deployment_maximum_percent         = var.deployment_maximum_percent
   deployment_minimum_healthy_percent = var.deployment_minimum_healthy_percent
-  health_check_grace_period_seconds  = var.target_group_arn == null ? null : 60
+
+  # How long ECS ignores the load balancer's verdict on a new task, counted
+  # from the task's start. A task on a fresh Fargate host takes 60 to 90
+  # seconds to answer (the host, the image pulled and unpacked, the process's
+  # imports; 58, 62, 83, and 87 seconds on four starts in a row), and the
+  # target then needs two passing checks, 20 more seconds. 150 covers the
+  # slowest start with 40 seconds to spare. A grace shorter than the start
+  # replaces a healthy task before it answers, and the rollout starts over.
+  # It costs a healthy task nothing: ECS moves on at the second passing
+  # check. Only a task that runs and never answers is replaced later.
+  health_check_grace_period_seconds = var.target_group_arn == null ? null : 150
 
   depends_on = [terraform_data.pre_rollout, terraform_data.rollout_after]
 

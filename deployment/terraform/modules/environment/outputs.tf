@@ -98,3 +98,16 @@ output "alarm_topic_arn" {
 output "alarm_names" {
   value = module.alarms.alarm_names
 }
+
+# The files whose fingerprint decides whether the migrate task runs. A plan
+# that found none, or missed the migrations directory, would key the run on
+# a constant and never migrate again, so it stops here instead.
+output "migration_files" {
+  description = "The repository's files deployment/migration-inputs.json names, as the plan found them."
+  value       = local.migration_files
+
+  precondition {
+    condition     = contains(local.migration_files, "om/migrations/env.py") && contains(local.migration_files, "om/src/tadas/om/storage/migrate.py")
+    error_message = "the migration inputs were not found from the environment module; the repository root is four levels above it"
+  }
+}

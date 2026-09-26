@@ -401,12 +401,16 @@ Read the `plan production` job's summary (the whole text is in the
   release commit by staging.
 - `terraform show`: the resources named match the change; nothing is
   replaced (`-/+`) that holds data. The `terraform_data.pre_rollout`
-  replacement under `module.environment.module.api` is the migration and
-  appears on every image change.
+  replacement under `module.environment.module.api` is the migration. It
+  appears when the release changes a file `deployment/migration-inputs.json`
+  names, or the database, the password version, or the migrate task's
+  secrets changed; a release with none of those has no migration in its
+  plan.
 
 Approve: `apply` applies exactly the saved plan (Terraform refuses it if
-the state moved meanwhile). Inside the apply the migration runs as a
-one-off task on the new API image, then the API rolls, then the worker;
+the state moved meanwhile). Inside the apply the migration, when the
+plan has one, runs as a one-off task on the new API image, then the API
+and the worker roll;
 the apply waits until the new tasks serve; then the portal files staging
 kept for the commit are published, and the site's production page from the
 build staging kept beside its own. Reject: the run is cancelled and
@@ -457,7 +461,8 @@ The migration is a one-off task on the new API task definition that
 runs before either service rolls; the service depends on it. When the
 task exits non-zero, the apply fails at `terraform_data.pre_rollout`,
 the API and the worker keep their current tasks, and nothing else in
-the plan that comes after the services was applied. Read the task's log
+the plan that comes after the services was applied. The failed run is
+tainted in the state, so every later plan runs it again. Read the task's log
 in the API's log group (`/tadas/production/api`, stream prefix `api`).
 Fix on `main` (it runs on staging first, the same way), release again;
 the new plan runs the migration again from where the chain stopped

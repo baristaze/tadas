@@ -3,8 +3,9 @@
 # the portal and the company site are built once and kept by the commit, and
 # staging is planned and applied in one job. Inside the apply the migration runs as a one-off
 # task on the new API image before the services roll (the service module
-# orders it), so a migration that fails ends the apply with the old tasks
-# still serving. A migration is compatible with the release before it
+# orders it), when the release brings one (deployment/migration-inputs.json
+# names what counts), so a migration that fails ends the apply with the old
+# tasks still serving. A migration is compatible with the release before it
 # (expand and contract), so the old tasks serve the new schema meanwhile.
 #
 # Production (deploy-production.yml) never rebuilds: it resolves the digests
@@ -168,6 +169,12 @@ jobs:
       - uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2.1.7
         id: ecr
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      # Every layer is pushed zstd-compressed, the base image's too
+      # (force-compression). Fargate keeps no image cache between tasks, so
+      # each task pulls and unpacks the whole image, and it unpacks on the
+      # task's own vCPU: a quarter of one for the API. zstd unpacks a layer
+      # three to four times faster than gzip there, and it is a little
+      # smaller. Fargate's containerd reads zstd with no setting of its own.
       # The tag is the commit, and the repositories are immutable: a second
       # push of a tag that exists is refused (the provenance attestation alone
       # makes the manifest differ, so even an identical build is a new push).
@@ -196,7 +203,7 @@ jobs:
         with:
           context: .
           file: deployment/docker/api.Dockerfile
-          push: true
+          outputs: type=image,push=true,oci-mediatypes=true,compression=zstd,compression-level=3,force-compression=true
           tags: ${{ steps.ecr.outputs.registry }}/tadas-api:${{ needs.cloud.outputs.sha }}
           cache-from: type=gha,scope=api
           cache-to: type=gha,scope=api,mode=max
@@ -207,7 +214,7 @@ jobs:
         with:
           context: .
           file: deployment/docker/maintenance.Dockerfile
-          push: true
+          outputs: type=image,push=true,oci-mediatypes=true,compression=zstd,compression-level=3,force-compression=true
           tags: ${{ steps.ecr.outputs.registry }}/tadas-maintenance:${{ needs.cloud.outputs.sha }}
           cache-from: type=gha,scope=maintenance
           cache-to: type=gha,scope=maintenance,mode=max
@@ -394,7 +401,8 @@ jobs:
           if-no-files-found: error
           retention-days: 30
       # The migration runs inside this apply, on the new API task definition,
-      # before either service rolls; the apply waits until the new tasks serve.
+      # before either service rolls, when the release brings one; the apply
+      # waits until the new tasks serve.
       - name: apply staging (migrate, then roll)
         run: terraform -chdir=deployment/terraform/environments/staging apply -input=false tfplan
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
