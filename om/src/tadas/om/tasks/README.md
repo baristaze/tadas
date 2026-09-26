@@ -57,7 +57,9 @@ seven kinds of thing [Tadas is made of](../../../../README.md).
   goes back to the top of the done list, and has the archive age again
   before the next cleanup takes it. Reopening an archived task restores
   it too.
-- **Sweep.** Deleted tasks are erased for good after the retention.
+- **Sweep.** Deleted tasks are erased for good after the retention,
+  thirty days by default. A task's files are deleted before it is, so
+  a file its delete could not reach is deleted then.
 
 ## The rules
 

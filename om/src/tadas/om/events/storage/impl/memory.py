@@ -37,13 +37,15 @@ class EventStorageMemoryImpl(MemoryStorageBase, EventStorageInterface):
         newer = [e for e in self._rows(self._events, org_id) if e.seq > after_seq]
         return sorted(newer, key=lambda e: e.seq)[:limit]
 
-    async def purge_tenant(self, org_id: UUID) -> int:
+    async def purge_tenant(self, org_id: UUID, limit: int) -> int:
         async with self._lock:
-            gone = [e.id for e in self._rows(self._events, org_id)]
+            gone = [e.id for e in self._rows(self._events, org_id)][:limit]
             for event_id in gone:
                 del self._events[event_id]
-            self._cursors.pop(org_id, None)
-            self._floors.pop(org_id, None)
+            if len(gone) < limit:
+                # The stream is empty now, so its counter and floor go too.
+                self._cursors.pop(org_id, None)
+                self._floors.pop(org_id, None)
             return len(gone)
 
     async def trim(self, org_id: UUID, before: datetime, limit: int) -> int:

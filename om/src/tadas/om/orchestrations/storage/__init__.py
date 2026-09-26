@@ -77,12 +77,14 @@ class OrchestrationsStorageInterface(ABC):
         ...
 
     @abstractmethod
-    async def purge_settled(self, org_id: UUID, before: datetime) -> int:
-        """Removes the org's records that settled before `before`; returns how
-        many. A parked or a running record is never purged."""
+    async def purge_settled(self, org_id: UUID, before: datetime, limit: int) -> int:
+        """Removes at most `limit` of the org's records that settled before
+        `before`, skipping rows another transaction holds; returns how many. A
+        parked or a running record is never purged."""
         ...
 
     @abstractmethod
-    async def purge_tenant(self, org_id: UUID) -> int:
-        """Every record of a deleted tenant past its retention; returns how many."""
+    async def purge_tenant(self, org_id: UUID, limit: int) -> int:
+        """At most `limit` records of a deleted tenant past its retention;
+        returns how many."""
         ...

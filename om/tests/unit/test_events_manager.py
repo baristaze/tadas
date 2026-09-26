@@ -155,7 +155,7 @@ async def test_the_sweep_drops_a_stream_only_once_its_tenant_has_expired(
 
 def keeping(retention: Retention, days: int | None, batch: int = 1000) -> EventsManagerImpl:
     kept = None if days is None else timedelta(days=days)
-    options = EventsOptions(retention=kept, trim_batch=batch)
+    options = EventsOptions(retention=kept, purge_batch=batch)
     return EventsManagerImpl(EventStorageMemoryImpl(), retention, options)
 
 

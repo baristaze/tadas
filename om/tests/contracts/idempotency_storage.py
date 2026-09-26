@@ -378,7 +378,7 @@ class IdempotencyStorageContract:
             await storage.write_record(org, record)
         await storage.write_record(other_org, elsewhere)
         attempts_before = lease_bound(now - timedelta(minutes=20))
-        purged = await storage.purge_records(org, now - timedelta(days=1), attempts_before)
+        purged = await storage.purge_records(org, now - timedelta(days=1), attempts_before, 10)
         assert purged == 3
         kept = [await storage.read_record(org, r.user_id, r.key) for r in mine]
         assert kept == [
@@ -391,4 +391,17 @@ class IdempotencyStorageContract:
             fresh_released,
         ]
         assert await storage.read_record(other_org, elsewhere.user_id, elsewhere.key) == elsewhere
-        assert await storage.purge_records(org, now - timedelta(days=1), attempts_before) == 0
+        assert await storage.purge_records(org, now - timedelta(days=1), attempts_before, 10) == 0
+
+    async def test_a_backlog_past_a_batch_goes_a_batch_at_a_time(
+        self, storage: IdempotencyStorageInterface
+    ) -> None:
+        org = new_id()
+        now = utcnow()
+        for i in range(3):
+            old = make_record(key=f"old-{i}", created_at=now - timedelta(days=2))
+            await storage.write_record(org, old.model_copy(update={"status": 201, "body": "{}"}))
+        cut, attempts_before = now - timedelta(days=1), lease_bound(now - timedelta(minutes=20))
+        assert await storage.purge_records(org, cut, attempts_before, 2) == 2
+        assert await storage.purge_records(org, cut, attempts_before, 2) == 1
+        assert await storage.purge_records(org, cut, attempts_before, 2) == 0

@@ -35,6 +35,7 @@ CROSS_TENANT_CASES: frozenset[str] = frozenset(
         "purge_tenant",
         "read_archivable",
         "read_archived_tasks",
+        "read_deleted",
         "read_done_tasks",
         "read_last_place",
         "read_open_places",
@@ -664,12 +665,40 @@ class TaskStorageContract:
         await seed(
             storage, elsewhere, other.model_copy(update={"deleted_at": cut - timedelta(days=1)})
         )
-        assert await storage.purge_deleted(org, cut) == 1
+        assert await storage.read_deleted(org, cut, 10) == [old.id]
+        assert await storage.read_deleted(elsewhere, cut, 10) == [other.id]
+        assert await storage.purge_deleted(elsewhere, cut, [old.id]) == 0, "per tenant"
+        assert await storage.purge_deleted(org, cut, [old.id, recent.id, live.id]) == 1
         assert await storage.read_task(org, old.id) is None
         assert await storage.read_task(org, recent.id) is not None
         assert await storage.read_task(org, live.id) == live
         assert await storage.read_task(elsewhere, other.id) is not None, "per tenant"
-        assert await storage.purge_deleted(org, cut) == 0, "idempotent"
+        assert await storage.purge_deleted(org, cut, [old.id]) == 0, "idempotent"
+        assert await storage.read_deleted(org, cut, 10) == []
+
+    async def test_a_backlog_past_a_batch_goes_a_batch_at_a_time(
+        self, storage: TasksStorageInterface
+    ) -> None:
+        org = new_id()
+        cut = utcnow()
+        for i in range(5):
+            gone = make_task(f"gone {i}").model_copy(
+                update={"deleted_at": cut - timedelta(days=1, minutes=5 - i), "deleted_by": org}
+            )
+            await seed(storage, org, gone)
+        first = await storage.read_deleted(org, cut, 2)
+        assert len(first) == 2, "the oldest deletes first, a batch at most"
+        assert await storage.purge_deleted(org, cut, first) == 2
+        second = await storage.read_deleted(org, cut, 2)
+        assert not set(first) & set(second)
+        assert await storage.purge_deleted(org, cut, second) == 2
+        last = await storage.read_deleted(org, cut, 2)
+        assert await storage.purge_deleted(org, cut, last) == 1, "a short batch: drained"
+        assert await storage.read_deleted(org, cut, 2) == []
+        live = make_task("live")
+        await seed(storage, org, live)
+        assert await storage.purge_tenant(org, 2) == 1
+        assert await storage.purge_tenant(org, 2) == 0
 
     async def test_purge_tenant_takes_every_task_of_the_tenant(
         self, storage: TasksStorageInterface
@@ -685,12 +714,13 @@ class TaskStorageContract:
         )
         other = make_task("other")
         await seed(storage, elsewhere, other)
-        assert await storage.purge_tenant(org) == 3, "whatever its state"
+        assert await storage.purge_tenant(org, 2) == 2, "a batch at most"
+        assert await storage.purge_tenant(org, 2) == 1, "whatever its state"
         assert await storage.read_task(org, live.id) is None
         assert await storage.read_task(org, done.id) is None
         assert await storage.read_task(org, gone.id) is None
         assert await storage.read_task(elsewhere, other.id) is not None, "per tenant"
-        assert await storage.purge_tenant(org) == 0, "idempotent"
+        assert await storage.purge_tenant(org, 2) == 0, "idempotent"
 
     async def test_many_updates_land_together_or_not_at_all(
         self, storage: TasksStorageInterface

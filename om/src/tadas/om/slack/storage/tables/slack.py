@@ -60,7 +60,11 @@ class SlackInstallStates(IdentifiableMixin, CreatedMixin, Base):
 class SlackPosts(IdentifiableMixin, CreatedMixin, Base):
     __tablename__ = "slack_posts"
     __org_id_index__ = False
-    __table_args__ = (Index("uq_slack_posts_org_id_key", "org_id", "key", unique=True),)
+    __table_args__ = (
+        Index("uq_slack_posts_org_id_key", "org_id", "key", unique=True),
+        # What the purge reads: the tenant's posts by birth.
+        Index("ix_slack_posts_org_id_created_at", "org_id", "created_at"),
+    )
     key: Mapped[UUID]
     channel_id: Mapped[str]
     ts: Mapped[str]

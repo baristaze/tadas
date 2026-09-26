@@ -214,8 +214,27 @@ class OutboxStorageContract:
         await outbox.record_failure(org, done_row.id, "too late", utcnow())
         # The purge is cross-tenant, so only what it takes of these two rows
         # is asserted: nothing before they settled, both once the cut passes.
-        await outbox.purge_done(failed_at - timedelta(seconds=1))
-        assert await outbox.purge_done(failed_at + timedelta(seconds=1)) >= 2
+        await outbox.purge_done(failed_at - timedelta(seconds=1), 1000)
+        assert await outbox.purge_done(failed_at + timedelta(seconds=1), 1000) >= 2
+
+    async def test_a_backlog_past_a_batch_goes_a_batch_at_a_time(
+        self, tasks: TasksStorageInterface, outbox: OutboxStorageInterface
+    ) -> None:
+        """Done rows and dead letters are two statements, a batch of each per
+        call; a count below the batch says both are drained."""
+        org = new_id()
+        for i in range(6):
+            task = make_task()
+            row = make_row(org, task.id)
+            await tasks.create_task(org, task, (row,))
+            if i % 2:
+                await outbox.record_failure(org, row.id, "for good", utcnow())
+            else:
+                await outbox.mark_done(org, row.id)
+        later = utcnow() + timedelta(seconds=1)
+        assert await outbox.purge_done(later, 2) == 4, "two done, two failed"
+        assert await outbox.purge_done(later, 2) == 2
+        assert await outbox.purge_done(later, 2) == 0
 
     async def test_purge_deletes_only_rows_settled_before_the_cut(
         self, tasks: TasksStorageInterface, outbox: OutboxStorageInterface
@@ -226,6 +245,6 @@ class OutboxStorageContract:
         await tasks.create_task(org, done, (done_row,))
         await tasks.create_task(org, pending, (pending_row,))
         await outbox.mark_done(org, done_row.id)
-        assert await outbox.purge_done(utcnow() - timedelta(hours=1)) == 0
-        assert await outbox.purge_done(utcnow() + timedelta(seconds=1)) >= 1
+        assert await outbox.purge_done(utcnow() - timedelta(hours=1), 1000) == 0
+        assert await outbox.purge_done(utcnow() + timedelta(seconds=1), 1000) >= 1
         assert pending_row.id in {r.id for r in await claim_all(outbox)}

@@ -55,7 +55,9 @@ class OutboxStorageInterface(ABC):
         ...
 
     @abstractmethod
-    async def purge_done(self, before: datetime) -> int:
-        """Cross-tenant, for the sweep: deletes rows done or failed before
-        `before`; returns how many."""
+    async def purge_done(self, before: datetime, limit: int) -> int:
+        """Cross-tenant, for the sweep: deletes rows done before `before`, then
+        rows failed before it, at most `limit` of each, skipping rows another
+        transaction holds; returns how many. A count below `limit` says the
+        rows past the cut are gone; the caller calls again for the rest."""
         ...

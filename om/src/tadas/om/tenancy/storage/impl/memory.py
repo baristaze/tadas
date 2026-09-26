@@ -133,8 +133,10 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
     async def clear_failed_sign_ins(self, email_digest: str) -> None:
         self._sign_in_delays.pop(email_digest, None)
 
-    async def purge_sign_in_delays(self, before: datetime) -> int:
-        gone = [key for key, run in self._sign_in_delays.items() if run.last_failed_at < before]
+    async def purge_sign_in_delays(self, before: datetime, limit: int) -> int:
+        gone = [key for key, run in self._sign_in_delays.items() if run.last_failed_at < before][
+            :limit
+        ]
         for key in gone:
             del self._sign_in_delays[key]
         return len(gone)
@@ -175,6 +177,13 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
         if after_id is not None:
             orgs = [org for org in orgs if org.id > after_id]
         return orgs[:limit]
+
+    async def mark_org_purged(self, org_id: UUID, purged_at: datetime) -> bool:
+        org = self._get(self._orgs, org_id, org_id)
+        if org is None or org.deleted_at is None or org.purged_at is not None:
+            return False
+        self._orgs[org_id] = (org_id, org.model_copy(update={"purged_at": purged_at}))
+        return True
 
     async def write_org(
         self, org_id: UUID, org: Org, outbox_rows: tuple[OutboxRow, ...] = ()
@@ -651,38 +660,36 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
                 "uq_invitations_pending_email",
             )
 
-    async def purge_deleted(self, org_id: UUID, before: datetime) -> int:
+    async def purge_deleted(
+        self, org_id: UUID, before: datetime, tickets_before: datetime, limit: int
+    ) -> int:
         gone_users = [
             u.id
             for u in self._rows(self._users, org_id)
             if u.deleted_at is not None and u.deleted_at < before
-        ]
+        ][:limit]
         gone_memberships = [
             m.id
             for m in self._rows(self._memberships, org_id)
             if m.user_id in gone_users or (m.deleted_at is not None and m.deleted_at < before)
-        ]
+        ][:limit]
         gone_keys = [
             k.id
             for k in self._rows(self._api_keys, org_id)
             if (k.deleted_at is not None and k.deleted_at < before) or k.expires_at < before
-        ]
-        gone_sessions = [
-            s.id
-            for s in self._rows(self._sessions, org_id)
-            if (s.revoked_at is not None and s.revoked_at < before) or s.expires_at < before
+        ][:limit]
+        gone_sessions = [s.id for s in self._rows(self._sessions, org_id) if s.expires_at < before][
+            :limit
         ]
         gone_tickets = [
-            t.id
-            for t in self._rows(self._socket_tickets, org_id)
-            if (t.redeemed_at is not None and t.redeemed_at < before) or t.expires_at < before
-        ]
+            t.id for t in self._rows(self._socket_tickets, org_id) if t.expires_at < tickets_before
+        ][:limit]
         gone_invitations = [
             i.id
             for i in self._rows(self._invitations, org_id)
             if (i.state is not InvitationState.PENDING and i.updated_at < before)
             or i.expires_at < before
-        ]
+        ][:limit]
         for table, ids in (
             (self._users, gone_users),
             (self._memberships, gone_memberships),
@@ -702,19 +709,19 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
             + len(gone_invitations)
         )
 
-    async def purge_tenant(self, org_id: UUID) -> int:
+    async def purge_tenant(self, org_id: UUID, limit: int) -> int:
         return (
-            self._drop_tenant(self._users, org_id)
-            + self._drop_tenant(self._memberships, org_id)
-            + self._drop_tenant(self._api_keys, org_id)
-            + self._drop_tenant(self._sessions, org_id)
-            + self._drop_tenant(self._socket_tickets, org_id)
-            + self._drop_tenant(self._invitations, org_id)
+            self._drop_tenant(self._users, org_id, limit)
+            + self._drop_tenant(self._memberships, org_id, limit)
+            + self._drop_tenant(self._api_keys, org_id, limit)
+            + self._drop_tenant(self._sessions, org_id, limit)
+            + self._drop_tenant(self._socket_tickets, org_id, limit)
+            + self._drop_tenant(self._invitations, org_id, limit)
         )
 
     @classmethod
-    def _drop_tenant[E: HasId](cls, table: MemoryTable[E], org_id: UUID) -> int:
-        gone = [row.id for row in cls._rows(table, org_id)]
+    def _drop_tenant[E: HasId](cls, table: MemoryTable[E], org_id: UUID, limit: int) -> int:
+        gone = [row.id for row in cls._rows(table, org_id)][:limit]
         for row_id in gone:
             del table[row_id]
         return len(gone)

@@ -8,7 +8,6 @@ from sqlalchemy import (
     Double,
     Uuid,
     and_,
-    delete,
     func,
     literal,
     or_,
@@ -25,7 +24,7 @@ from tadas.om.orchestrations.storage.impl.postgres import land_step
 from tadas.om.orchestrations.types.orchestration import Step
 from tadas.om.outbox.storage.tables.outbox_rows import OutboxRows
 from tadas.om.outbox.types.row import OutboxRow
-from tadas.om.storage.impl.pg_base import PgStorageBase
+from tadas.om.storage.impl.pg_base import PgStorageBase, delete_batch, deleted
 from tadas.om.storage.utils.translation import to_model, to_row, to_values
 from tadas.om.tasks.rules import Place
 from tadas.om.tasks.storage import TasksStorageInterface
@@ -255,21 +254,35 @@ class TasksStoragePostgresImpl(PgStorageBase, TasksStorageInterface):
         async with self._session_for(stmt, org_id=EMPTY_UUID) as session:
             return (await session.execute(stmt)).scalar_one()
 
-    async def purge_deleted(self, org_id: UUID, before: datetime) -> int:
+    async def read_deleted(self, org_id: UUID, before: datetime, limit: int) -> list[UUID]:
         stmt = (
-            delete(Tasks)
+            select(Tasks.id)
             .where(Tasks.org_id == org_id, Tasks.deleted_at < before)
-            .returning(Tasks.id)
+            .order_by(Tasks.deleted_at)
+            .limit(limit)
         )
         async with self._session_for(stmt, org_id=org_id) as session:
-            purged = len((await session.execute(stmt)).scalars().all())
+            return list((await session.execute(stmt)).scalars().all())
+
+    async def purge_deleted(self, org_id: UUID, before: datetime, task_ids: list[UUID]) -> int:
+        if not task_ids:
+            return 0
+        stmt = delete_batch(
+            Tasks,
+            Tasks.org_id == org_id,
+            Tasks.id.in_(task_ids),
+            Tasks.deleted_at < before,
+            limit=len(task_ids),
+        )
+        async with self._session_for(stmt, org_id=org_id) as session:
+            purged = deleted(await session.execute(stmt))
             await session.commit()
             return purged
 
-    async def purge_tenant(self, org_id: UUID) -> int:
-        stmt = delete(Tasks).where(Tasks.org_id == org_id).returning(Tasks.id)
+    async def purge_tenant(self, org_id: UUID, limit: int) -> int:
+        stmt = delete_batch(Tasks, Tasks.org_id == org_id, limit=limit)
         async with self._session_for(stmt, org_id=org_id) as session:
-            purged = len((await session.execute(stmt)).scalars().all())
+            purged = deleted(await session.execute(stmt))
             await session.commit()
             return purged
 

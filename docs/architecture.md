@@ -105,7 +105,12 @@ context on keeps the stage the callee needs.
   digests a fresh random secret that is never created again. A partial
   index serves none of the sweep's reads, which are the dead rows and a
   deleted tenant's, so users and memberships each carry a plain
-  `(org_id, deleted_at)` index beside their unique one. The seeding
+  `(org_id, deleted_at)` index beside their unique one. Every other purge
+  has its index too: deleted tasks `(org_id, deleted_at)` over the deleted
+  ones, sessions and socket tickets `(org_id, expires_at)`, idempotency
+  records and Slack posts `(org_id, created_at)`, and the outbox's dead
+  letters `(failed_at)` over the failed ones, beside the `(done_at, id)`
+  the done ones walk. The seeding
   transitions are named atomic creates:
   `bootstrap` lands the org, its first user, and the owner's membership in
   one commit (`create_org_with_owner`), `add_member` the user, the
@@ -172,8 +177,9 @@ context on keeps the stage the callee needs.
   being minted in time order; the manager asks storage for one row past the page and
   keeps it out, so a limit is a page size and never a ceiling past which
   a live key stops being listed. The purge also removes
-  sessions revoked or expired and socket tickets redeemed or expired past
-  the retention. Login credentials are stored under the system scope,
+  sessions and socket tickets expired past their retention: a revoked
+  session expires within its twelve hours, so its expiry alone decides,
+  and a socket ticket, which lives a minute, is kept a day. Login credentials are stored under the system scope,
   and the sweep mints a service context for that scope first, so the
   expired ones are purged like a tenant's dead sessions; api keys are
   purged once revoked or expired. Exchanging a login for an org that is
@@ -1024,26 +1030,50 @@ alone, and neither key may touch what the other's work does not need
   tenant, a batch of `requeue_batch` (100) per tenant per sweep bounded
   in the statement and the rest on the next sweep, the system scope
   first and deleted tenants included, then
-  purge the tenant's soft-deleted tasks, its removed files and abandoned
+  purge the tenant's soft-deleted tasks (their attachments first,
+  through the media manager, so a detach that failed at the delete is
+  retried here and a task whose files still will not go waits for the
+  next pass), its removed files and abandoned
   uploads (the object first, then the row), removed
-  members with their ended memberships, revoked api keys, dead sessions,
-  and spent socket tickets past their retention (the one hard delete,
-  30 days by default), its finished idempotency records and abandoned
-  markers, then claim and relay the
+  members with their ended memberships, revoked api keys, expired
+  sessions and socket tickets, and closed invitations past their
+  retention (the one hard delete), its finished idempotency records and
+  abandoned markers, then claim and relay the
   pending outbox rows, one attempt each with a growing delay, and purge
   the done and failed ones after eight days, which outlives the
   seven-day database backup retention, so a role restored to an earlier
   point than its siblings is reconciled by relaying the outbox again,
-  and purge every tenant's done or failed work items past their retention
-  in one statement, `purge_items`). Beside the purges, the sweep runs one
-  chore per tenant: it opens the day's cleanup of old done tasks
-  (`open_cleanup`) for an org that has one to do.
+  and purge every tenant's done or failed work items past their retention,
+  `purge_items`). Every retention is a worker setting
+  (`TADAS_*_RETENTION_DAYS` or `_HOURS`), which the worker hands to the
+  manager that purges. Every purge statement deletes a batch at most
+  (`TADAS_WORKER_PURGE_BATCH`, 1000; the media purge keeps its own 100,
+  since each row costs an object delete): it chooses the rows with
+  `FOR UPDATE SKIP LOCKED` and deletes them in a transaction of its own,
+  so no statement grows with a backlog past the statement deadline and
+  two workers split a backlog instead of queueing on it. An index serves
+  each one. A purge whose batch comes back full is called again, in turn
+  with the tenant's other full ones, while the pass's budget lasts
+  (`TADAS_WORKER_SWEEP_BUDGET_SECONDS`, 20). Past the budget the pass
+  takes no new tenant; the next pass starts at the tenant it stopped at,
+  so every tenant is reached in turn and every step of a tenant runs
+  whenever the tenant does. Beside the purges, the sweep runs one chore
+  per tenant: it opens the day's cleanup of old done tasks
+  (`open_cleanup`) for an org that has one to do. The chores run once
+  whenever the tenant does, before any second round of purges, so a
+  backlog never spends the budget they need. The cross-tenant purges run
+  on every pass.
+  Each pass writes its duration on one line, which an alarm reads.
   Under a tenant whose org row is deleted longer ago than the retention
   it is every row that goes, its open and done tasks among them, since
   an open task carries no `deleted_at` of its own and the sweep that
   reads one would leave it forever; the org row stays as the record.
+  Once a pass finds nothing left of such a tenant, it stamps the org
+  `purged_at`, and the sweep leaves the tenant out from then on.
   Each namespace purges its own rows and asks tenancy the one question,
-  `tenant_expired`, so the whole sweep reads one answer.
+  `tenant_expired`, and within a pass tenancy answers it from the org
+  rows it read to list the tenants, so the pass reads one answer per
+  tenant and no org row per namespace.
   Beside the loop, `serve` consumes the `slack` queue: each command or
   event the API checked and acknowledged is handled (`/tadas`, `/tadas
   team`, `/tadas add`, `/tadas connect`, `/tadas help`, a mention, the
@@ -1450,12 +1480,15 @@ page; this section says what exists.
   (`deployment/local/grafana/dashboards/tadas-overview.json`), and
   `infra/tests/test_dashboard_parity.py` holds the titles equal.
   `modules/alarms` declares the SNS topic `tadas-<env>-alarms`, the
-  email subscription from `alarm_email`, and twelve alarms: the load
+  email subscription from `alarm_email`, and thirteen alarms: the load
   balancer's 5xx ratio, its unhealthy targets, its p95, the p95 of
   `GET /v1/billing` on its own, the database's CPU and free storage,
   each of the two inbound queues (`webhooks`, `slack`) backing up and a
-  message landing in its dead-letter queue, and each of the two services
-  running below its desired count. A read's own
+  message landing in its dead-letter queue, a sweep pass longer than 30
+  seconds, and each of the two services running below its desired
+  count. The sweep's alarm reads the worker's line per pass the same
+  way: a log metric filter writes its `sweep.duration_ms` to
+  `tadas_sweep_duration_ms`. A read's own
   p95 comes from the API's access lines: each carries its route and its
   time as JSON fields, and a log metric filter writes them to
   `tadas_read_latency_ms`, which the dashboard draws beside the alarm.

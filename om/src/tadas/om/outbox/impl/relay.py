@@ -79,8 +79,8 @@ class OutboxRelayImpl(OutboxRelayInterface):
             log.info("outbox sweep relayed %d rows", relayed)
         return relayed
 
-    async def purge_done(self, retention: timedelta) -> int:
-        purged = await self._storage.purge_done(utcnow() - retention)
+    async def purge_done(self, retention: timedelta, limit: int) -> int:
+        purged = await self._storage.purge_done(utcnow() - retention, limit)
         if purged:
             OUTCOMES.labels(subsystem="outbox", outcome="purged").inc(purged)
         return purged

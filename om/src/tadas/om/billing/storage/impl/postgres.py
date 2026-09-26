@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import delete, select
+from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 
@@ -13,7 +13,7 @@ from tadas.om.billing.types.delivery import BillingDelivery
 from tadas.om.exceptions import RowDeleted, TenantMismatch, UniqueKeyTaken
 from tadas.om.outbox.storage.tables.outbox_rows import OutboxRows
 from tadas.om.outbox.types.row import OutboxRow
-from tadas.om.storage.impl.pg_base import PgStorageBase, violated_constraint
+from tadas.om.storage.impl.pg_base import PgStorageBase, delete_batch, deleted, violated_constraint
 from tadas.om.storage.utils.translation import apply_row, to_model, to_row, to_values, undeletes
 
 ORG_KEY = "uq_billing_accounts_org_id"
@@ -91,30 +91,25 @@ class BillingStoragePostgresImpl(PgStorageBase, BillingStorageInterface):
             row = (await session.execute(stmt)).scalar_one_or_none()
             return None if row is None else to_model(row, BillingDelivery)
 
-    async def purge_deliveries(self, org_id: UUID, before: datetime) -> int:
-        stmt = (
-            delete(BillingDeliveries)
-            .where(BillingDeliveries.org_id == org_id, BillingDeliveries.created_at < before)
-            .returning(BillingDeliveries.id)
+    async def purge_deliveries(self, org_id: UUID, before: datetime, limit: int) -> int:
+        stmt = delete_batch(
+            BillingDeliveries,
+            BillingDeliveries.org_id == org_id,
+            BillingDeliveries.created_at < before,
+            limit=limit,
         )
         async with self._session_for(stmt, org_id=org_id) as session:
-            purged = len((await session.execute(stmt)).scalars().all())
+            purged = deleted(await session.execute(stmt))
             await session.commit()
             return purged
 
-    async def purge_tenant(self, org_id: UUID) -> int:
-        deliveries = (
-            delete(BillingDeliveries)
-            .where(BillingDeliveries.org_id == org_id)
-            .returning(BillingDeliveries.id)
+    async def purge_tenant(self, org_id: UUID, limit: int) -> int:
+        deliveries = delete_batch(
+            BillingDeliveries, BillingDeliveries.org_id == org_id, limit=limit
         )
-        accounts = (
-            delete(BillingAccounts)
-            .where(BillingAccounts.org_id == org_id)
-            .returning(BillingAccounts.id)
-        )
+        accounts = delete_batch(BillingAccounts, BillingAccounts.org_id == org_id, limit=limit)
         async with self._session_for(accounts, org_id=org_id) as session:
-            purged = len((await session.execute(deliveries)).scalars().all())
-            purged += len((await session.execute(accounts)).scalars().all())
+            purged = deleted(await session.execute(deliveries))
+            purged += deleted(await session.execute(accounts))
             await session.commit()
             return purged

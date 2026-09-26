@@ -44,6 +44,7 @@ class WorkOptions(Platform):
     max_retry_delay: timedelta = timedelta(minutes=15)
     stale_stagger: timedelta = timedelta(seconds=5)
     retention: timedelta = timedelta(days=30)  # a done or failed item is purged after this
+    purge_batch: int = 1000  # items one purge statement deletes at most
 
 
 def caused_by(rctx: RequestContext, item: WorkItem) -> RequestContext:
@@ -257,10 +258,15 @@ class WorkManagerImpl(WorkManagerInterface):
         return len(requeued)
 
     async def purge_items(self) -> int:
-        return await self._storage.purge_items(utcnow() - self._options.retention)
+        return await self._storage.purge_items(
+            utcnow() - self._options.retention, self._options.purge_batch
+        )
 
     async def maintenance_contexts(self, rctx: RequestContext) -> list[OpContext]:
         return await self._tenancy.service_contexts(rctx)
+
+    async def mark_purged(self, ctx: OpContext) -> bool:
+        return await self._tenancy.mark_purged(ctx)
 
     async def _stored(self, org_id: UUID, queued: WorkItem, outcome: InsertOutcome) -> WorkItem:
         """The row a reported create met, read back by the key that collided:

@@ -104,13 +104,13 @@ class WorkStorageMemoryImpl(MemoryStorageBase, WorkStorageInterface):
                 changed.append(requeued)
         return changed
 
-    async def purge_items(self, before: datetime) -> int:
+    async def purge_items(self, before: datetime, limit: int) -> int:
         async with self._lock:
             gone = [
                 item.id
                 for _, item in self._rows_across_tenants(self._items)
                 if item.status in (WorkStatus.DONE, WorkStatus.FAILED) and item.updated_at < before
-            ]
+            ][:limit]
             for item_id in gone:
                 del self._items[item_id]
             return len(gone)

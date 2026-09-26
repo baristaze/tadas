@@ -133,8 +133,8 @@ async def test_purge_takes_done_and_failed_rows_past_the_retention(infra: InfraL
     await outbox.mark_done(org, done_row.id)
     await outbox.record_failure(org, failed_row.id, "for good", utcnow())
     relay = OutboxRelayImpl(outbox, EventStorageMemoryImpl(), infra.get_topics())
-    assert await relay.purge_done(timedelta(hours=1)) == 0
-    assert await relay.purge_done(timedelta(seconds=-1)) == 2
+    assert await relay.purge_done(timedelta(hours=1), 1000) == 0
+    assert await relay.purge_done(timedelta(seconds=-1), 1000) == 2
 
 
 async def sign_in(managers: Managers) -> OpContext:

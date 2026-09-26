@@ -30,6 +30,9 @@ class IdempotencyOptions(Platform):
     abandoned_after: int = 10
     """A marker still held by an attempt older than this many pending leases had
     no retry come back for it and is purged."""
+    purge_batch: int = 1000
+    """Records one purge statement deletes at most; the sweep calls again for
+    the rest."""
 
 
 class IdempotencyManagerImpl(IdempotencyManagerInterface):
@@ -125,6 +128,7 @@ class IdempotencyManagerImpl(IdempotencyManagerInterface):
             ctx.org_id,
             now - self._options.retention,
             lease_bound(now - self._options.pending_ttl * self._options.abandoned_after),
+            self._options.purge_batch,
         )
 
     async def release(self, ctx: OpContext, key: str, attempt_id: UUID) -> None:

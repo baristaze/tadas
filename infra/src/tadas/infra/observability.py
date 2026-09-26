@@ -57,6 +57,11 @@ OUTCOMES = Counter(
     "Outcomes of queues, caches, rate limits, and sweeps",
     ["subsystem", "outcome"],
 )
+SWEEP_SECONDS = Histogram(
+    "tadas_sweep_seconds",
+    "How long one maintenance sweep pass took",
+    buckets=(0.1, 0.5, 1, 2.5, 5, 10, 20, 30, 60, 120),
+)
 
 
 @dataclass(frozen=True)
@@ -114,6 +119,10 @@ class JsonFormatter(logging.Formatter):
         http = getattr(record, "http", None)
         if isinstance(http, dict):
             line["http"] = http
+        # The sweep's line carries its pass the same way, for the same reason.
+        sweep = getattr(record, "sweep", None)
+        if isinstance(sweep, dict):
+            line["sweep"] = sweep
         if record.exc_info:
             line["exception"] = self.formatException(record.exc_info)
         return json.dumps(line)

@@ -4,14 +4,15 @@ request that caused the work, raises a span linked to that request's trace,
 renews its lease and cancels itself when the lease is lost or renewal keeps
 failing, beat liveness in memory and publish it to the cache as best
 effort, sweep on a timer (stale leases, every namespace's purge, and the
-standing chores per tenant, then the outbox and done outbox rows), and drain
-first on stop."""
+standing chores per tenant, then the outbox and done outbox rows, within a
+time budget), and drain first on stop."""
 
 import asyncio
 import contextlib
 import logging
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import timedelta
+from uuid import UUID
 
 from opentelemetry import trace
 from opentelemetry.trace import SpanKind
@@ -19,6 +20,7 @@ from opentelemetry.trace import SpanKind
 from tadas.infra.cache import CacheInterface
 from tadas.infra.observability import (
     OUTCOMES,
+    SWEEP_SECONDS,
     caused_by_request_id_var,
     links_to,
     request_id_var,
@@ -42,7 +44,9 @@ CAUSED_BY_ATTRIBUTE = "tadas.caused_by_request_id"
 WORK_ITEM_ATTRIBUTE = "tadas.work_item_id"
 
 PurgeStep = Callable[[OpContext], Awaitable[int]]
-"""A manager's `purge_deleted(ctx)`: the one hard delete, per tenant, after retention."""
+"""A manager's `purge_deleted(ctx)`: the one hard delete, per tenant, after
+retention, a batch per statement; it returns how many rows went, and a count
+of a whole batch or more says there may be more."""
 
 ChoreStep = Callable[[OpContext], Awaitable[object]]
 """A standing chore per tenant that is not a purge: opening the next period
@@ -63,6 +67,13 @@ class LoopOptions(Platform):
     # (`backup_retention_days` in the database module), so a role restored to an
     # earlier point than its siblings is reconciled by relaying the outbox again.
     outbox_retention: timedelta = timedelta(days=8)
+    # Rows one purge statement deletes at most: the managers' batch, which the
+    # loop reads to know a full one. A purge that returns this many or more is
+    # called again while the budget lasts; one that returns fewer is drained.
+    purge_batch: int = 1000
+    # A pass takes no new tenant past this, and the next pass resumes at the
+    # tenant it stopped at, so a pass stays shorter than the interval.
+    sweep_budget: timedelta = timedelta(seconds=20)
 
 
 class WorkerLoop:
@@ -94,6 +105,9 @@ class WorkerLoop:
         self._last_beat: float | None = None
         self.online = False
         self.sweeps = 0
+        # Where the next pass starts: the tenant the last one stopped at, or
+        # None when it reached the end.
+        self._resume_at: UUID | None = None
 
     @property
     def kinds(self) -> list[WorkKind]:
@@ -387,45 +401,143 @@ class WorkerLoop:
         tenants included (their purges run there), then every step under each;
         then the cross-tenant steps of the outbox and the queue. Every step is
         idempotent and wrapped, so a failing tenant or step never stops the
-        rest."""
+        rest.
+
+        The pass has a budget. It takes no new tenant once the budget is
+        spent, and the next pass starts at the tenant this one stopped at, so
+        every tenant is reached in turn however many there are. A tenant it
+        takes runs every step at least once; a step whose batch came back
+        full runs again, in turn with the others, while the budget lasts. The
+        cross-tenant steps run on every pass."""
+        clock = asyncio.get_running_loop().time
+        started = clock()
+        deadline = started + self._options.sweep_budget.total_seconds()
         try:
             contexts = await self._work.maintenance_contexts(self._request())
         except Exception:
             log.exception("sweep: maintenance_contexts failed")
             contexts = []
-        for ctx in contexts:
-            try:
-                await self._work.requeue_stale(ctx, self._options.requeue_batch)
-            except Exception:
-                log.exception("sweep: requeue_stale failed for tenant %s", ctx.org_id)
-            for name, purge in self._purges.items():
-                try:
-                    purged = await purge(ctx)
-                    if purged:
-                        log.info("sweep: purged %d %s rows in org %s", purged, name, ctx.org_id)
-                except Exception:
-                    log.exception("sweep: %s purge failed for tenant %s", name, ctx.org_id)
-            for name, chore in self._chores.items():
-                try:
-                    await chore(ctx)
-                except Exception:
-                    log.exception("sweep: %s failed for tenant %s", name, ctx.org_id)
+        ring = self._from_resume_point(contexts)
+        swept = 0
+        self._resume_at = None
+        for ctx in ring:
+            if swept and clock() >= deadline:
+                self._resume_at = ctx.org_id
+                break
+            await self._sweep_tenant(ctx, deadline)
+            swept += 1
         try:
             # Whatever a crash left between the core write and its push.
             await self._outbox.relay_pending(self._options.outbox_batch)
         except Exception:
             log.exception("sweep: outbox relay failed")
         try:
-            await self._outbox.purge_done(self._options.outbox_retention)
+            await self._purge_across(
+                lambda: self._outbox.purge_done(
+                    self._options.outbox_retention, self._options.purge_batch
+                ),
+                deadline,
+            )
         except Exception:
             log.exception("sweep: outbox purge failed")
         try:
-            purged = await self._work.purge_items()
+            purged = await self._purge_across(self._work.purge_items, deadline)
             if purged:
                 log.info("sweep: purged %d settled work items", purged)
         except Exception:
             log.exception("sweep: work item purge failed")
         self.sweeps += 1
+        seconds = clock() - started
+        SWEEP_SECONDS.observe(seconds)
+        # One line per pass, its numbers as fields: the alarms module's log
+        # filter reads the duration off it.
+        log.info(
+            "sweep: pass took %.3fs over %d of %d tenants%s",
+            seconds,
+            swept,
+            len(ring),
+            "" if self._resume_at is None else f"; the next resumes at {self._resume_at}",
+            extra={
+                "sweep": {
+                    "duration_ms": round(seconds * 1000),
+                    "tenants": swept,
+                    "of": len(ring),
+                    "finished": self._resume_at is None,
+                }
+            },
+        )
+
+    def _from_resume_point(self, contexts: list[OpContext]) -> list[OpContext]:
+        """The pass's tenants in id order, the system scope first, turned to
+        start at the tenant the last pass stopped at. A tenant that went from
+        the list since starts the pass at the next one."""
+        ordered = sorted(contexts, key=lambda ctx: ctx.org_id)
+        if self._resume_at is None:
+            return ordered
+        at = next((i for i, ctx in enumerate(ordered) if ctx.org_id >= self._resume_at), 0)
+        return ordered[at:] + ordered[:at]
+
+    async def _sweep_tenant(self, ctx: OpContext, deadline: float) -> None:
+        """Every step and every chore of one tenant once, then the steps whose batch came back
+        full, round after round, while the budget lasts. A deleted tenant for
+        which nothing was left anywhere is marked purged, and the sweep leaves
+        it out from then on."""
+        settled = True
+        try:
+            settled = await self._work.requeue_stale(ctx, self._options.requeue_batch) == 0
+        except Exception:
+            settled = False
+            log.exception("sweep: requeue_stale failed for tenant %s", ctx.org_id)
+        full: list[tuple[str, PurgeStep]] = []
+        for name, purge in self._purges.items():
+            purged = await self._purge(ctx, name, purge)
+            settled = settled and purged == 0
+            if purged is not None and purged >= self._options.purge_batch:
+                full.append((name, purge))
+        # The standing chores run once whenever the tenant does, before any
+        # second round of purges, so no budget spent on a backlog skips them.
+        for name, chore in self._chores.items():
+            try:
+                await chore(ctx)
+            except Exception:
+                settled = False
+                log.exception("sweep: %s failed for tenant %s", name, ctx.org_id)
+        clock = asyncio.get_running_loop().time
+        while full and clock() < deadline:
+            again, full = full, []
+            for name, purge in again:
+                purged = await self._purge(ctx, name, purge)
+                if purged is not None and purged >= self._options.purge_batch:
+                    full.append((name, purge))
+        if settled:
+            try:
+                if await self._work.mark_purged(ctx):
+                    log.info("sweep: nothing is left of deleted org %s; marked purged", ctx.org_id)
+            except Exception:
+                log.exception("sweep: mark_purged failed for tenant %s", ctx.org_id)
+
+    @staticmethod
+    async def _purge(ctx: OpContext, name: str, purge: PurgeStep) -> int | None:
+        """One call of one step; None when it failed, which it logs."""
+        try:
+            purged = await purge(ctx)
+        except Exception:
+            log.exception("sweep: %s purge failed for tenant %s", name, ctx.org_id)
+            return None
+        if purged:
+            log.info("sweep: purged %d %s rows in org %s", purged, name, ctx.org_id)
+        return purged
+
+    async def _purge_across(self, step: Callable[[], Awaitable[int]], deadline: float) -> int:
+        """A cross-tenant purge, called again while its batch comes back full
+        and the budget lasts; returns how many rows went in all."""
+        clock = asyncio.get_running_loop().time
+        purged = await step()
+        total = purged
+        while purged >= self._options.purge_batch and clock() < deadline:
+            purged = await step()
+            total += purged
+        return total
 
     # Shutdown.
 

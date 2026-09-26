@@ -496,13 +496,14 @@ module "dashboard" {
 module "alarms" {
   source = "../alarms"
 
-  environment              = var.environment
-  alarm_email              = var.alarm_email
-  load_balancer_arn_suffix = module.load_balancer.arn_suffix
-  target_group_arn_suffix  = module.load_balancer.target_group_arn_suffix
-  database_identifier      = module.database.identifier
-  cluster_name             = module.cluster.name
-  api_log_group_name       = module.api.log_group_name
-  queue_names              = module.queue.queue_names
-  service_names            = [module.api.service_name, module.maintenance.service_name]
+  environment                = var.environment
+  alarm_email                = var.alarm_email
+  load_balancer_arn_suffix   = module.load_balancer.arn_suffix
+  target_group_arn_suffix    = module.load_balancer.target_group_arn_suffix
+  database_identifier        = module.database.identifier
+  cluster_name               = module.cluster.name
+  api_log_group_name         = module.api.log_group_name
+  maintenance_log_group_name = module.maintenance.log_group_name
+  queue_names                = module.queue.queue_names
+  service_names              = [module.api.service_name, module.maintenance.service_name]
 }

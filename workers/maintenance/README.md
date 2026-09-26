@@ -76,31 +76,51 @@ second lane is a second replica told its lane.
     attempts are spent. One sweep takes a batch per org (a hundred by
     default, `requeue_batch`), bounded in the statement; the rest wait
     for the next sweep.
-  - **Purge** each namespace's rows past its retention: deleted tasks,
-    removed files and uploads never confirmed (the object in the store
-    first, then the row, a batch of a hundred per org per sweep),
-    removed members with their ended memberships, revoked keys, dead
-    sessions, spent tickets, finished idempotency records, the payment
-    processor's delivery marks, settled work items, and orchestrations
-    that succeeded or failed thirty days ago. With
+  - **Purge** each namespace's rows past its retention: deleted tasks
+    (their attachments first, so a detach that failed when the task was
+    deleted is tried again, and the task waits for the next sweep while
+    its files will not go), removed files and uploads never confirmed
+    (the object in the store first, then the row, a batch of a hundred
+    per org per sweep), removed members with their ended memberships,
+    revoked keys, expired sessions and tickets, closed invitations,
+    finished idempotency records, the payment processor's delivery
+    marks, Slack's old install states and posts, settled work items, and
+    orchestrations that succeeded or failed thirty days ago. With
     `TADAS_EVENT_RETENTION_DAYS` set, the oldest events of a living org
-    go too, a batch of up to a thousand per org per sweep, and its
-    floor moves with them in the same transaction; 0, the default, keeps
-    every event (ADR 0040). Under an org deleted longer ago than the retention,
-    every row goes, its event stream included, and the org row stays as
-    the record. Each namespace
+    go too, a batch at a time, and its floor moves with them in the same
+    transaction; 0, the default, keeps every event (ADR 0040). Under an
+    org deleted longer ago than the retention, every row goes, its event
+    stream included, and the org row stays as the record. Each namespace
     purges its own rows and asks tenancy the one question, whether the
-    org has expired.
+    org has expired, which a sweep reads once per org.
   - **Open the day's cleanup** of each org that has a done task nobody
     changed for the archive age (`TADAS_TASKS_ARCHIVE_AFTER_DAYS`, ninety
     by default). The org, the kind, and the day are the record's unique
     key, so the first sweep of the day opens it and every later one
-    opens nothing. No scheduler is involved.
+    opens nothing. No scheduler is involved. It runs whenever its org is
+    swept, before any second round of purges, so no budget skips it.
   - **Relay** the outbox rows the request path left behind, one
     attempt each with a growing delay, and fail the ones whose
     attempts are spent.
   - **Purge** the outbox rows done or failed past eight days, which
     outlives the database backup retention.
+
+  Every purge statement deletes a batch at most, a thousand rows by
+  default, chosen with `FOR UPDATE SKIP LOCKED`, so no statement grows
+  with a backlog past the database's statement deadline and two workers
+  split a backlog between them. A purge whose batch comes back full runs
+  again while the sweep's budget lasts, twenty seconds by default. Past
+  the budget the sweep takes no new org, and the next sweep starts at the
+  org it stopped at, so every org is reached in turn. An org deleted
+  past its retention that a sweep finds nothing left of is marked
+  purged, and the sweep leaves it out from then on. Each sweep logs one
+  line with its duration, which the sweep alarm reads.
+
+  The knobs, all in `.env.example`: `TADAS_WORKER_PURGE_BATCH`,
+  `TADAS_WORKER_SWEEP_BUDGET_SECONDS`, and one retention per kind of
+  row, `TADAS_<KIND>_RETENTION_DAYS` or `_HOURS`. Each defaults to what
+  it has always been but the socket tickets', a day: a ticket lives a
+  minute.
 - **Liveness.** The worker beats every ten seconds by default, in
   memory, and publishes each beat to the cache as best effort, bounded
   by its interval, so other replicas can see it. Its `/healthz`, served

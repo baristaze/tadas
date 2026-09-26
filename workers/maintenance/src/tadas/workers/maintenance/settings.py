@@ -35,9 +35,34 @@ class MaintenanceSettings(StorageSettings, InfraSettings, IntegrationsSettings):
     worker_heartbeat_seconds: int = Field(default=10, gt=0)
     worker_sweep_seconds: int = Field(default=30, gt=0)
     worker_poll_seconds: int = Field(default=5, gt=0)
+    # The sweep. A purge statement deletes a batch at most, so no statement
+    # grows with a backlog past the database's statement deadline; the sweep
+    # calls again while a batch comes back full. A pass stops taking tenants
+    # at its budget and the next pass resumes at the tenant it stopped at.
+    worker_purge_batch: int = Field(default=1000, gt=0)
+    worker_sweep_budget_seconds: int = Field(default=20, gt=0)
+
+    # How long each kind of row is kept after it stopped mattering, then
+    # purged by the sweep. The outbox's must outlive the database's backups
+    # (`backup_retention_days`, 7 by default in the database module), so a
+    # role restored to an earlier point than its siblings is reconciled by
+    # relaying the outbox again.
+    outbox_retention_days: int = Field(default=8, gt=0)
+    work_retention_days: int = Field(default=30, gt=0)
+    idempotency_retention_hours: int = Field(default=24, gt=0)
+    # Removed members, revoked keys, ended sessions, closed invitations, and
+    # a deleted tenant's rows.
+    tenancy_retention_days: int = Field(default=30, gt=0)
+    socket_ticket_retention_hours: int = Field(default=24, gt=0)
+    sign_in_delay_retention_hours: int = Field(default=720, gt=0)
+    tasks_retention_days: int = Field(default=30, gt=0)
+    media_retention_days: int = Field(default=1, gt=0)
+    media_pending_expiry_hours: int = Field(default=24, gt=0)
+    billing_delivery_retention_days: int = Field(default=30, gt=0)
+    slack_retention_days: int = Field(default=30, gt=0)
     # How many days a living org's events are kept; the sweep trims what is
-    # older, a bounded batch per org per pass. 0 keeps every event and never
-    # moves a floor (ADR 0040).
+    # older, a batch per org per call. 0 keeps every event and never moves a
+    # floor (ADR 0040).
     event_retention_days: int = Field(default=0, ge=0)
 
     # Where people open Tadas in this environment: a list answered in Slack

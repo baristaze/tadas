@@ -40,6 +40,7 @@ class OrchestrationsOptions(Platform):
     stagger: timedelta = timedelta(seconds=2)
     wake_batch: int = 50  # records one wake resumes per org
     retention: timedelta = timedelta(days=30)  # a settled record is purged after this
+    purge_batch: int = 1000  # records one purge statement deletes at most
 
 
 class OrchestrationsManagerImpl(OrchestrationsManagerInterface):
@@ -151,10 +152,11 @@ class OrchestrationsManagerImpl(OrchestrationsManagerInterface):
 
     async def purge_deleted(self, ctx: OpContext) -> int:
         ctx.require(Permission.WRITE)
+        batch = self._options.purge_batch
         if await self._tenancy.tenant_expired(ctx):
-            return await self._storage.purge_tenant(ctx.org_id)
+            return await self._storage.purge_tenant(ctx.org_id, batch)
         return await self._storage.purge_settled(
-            ctx.org_id, self._clock() - self._options.retention
+            ctx.org_id, self._clock() - self._options.retention, batch
         )
 
     async def _resume_all(self, ctx: OpContext, records: list[Orchestration], now: datetime) -> int:

@@ -12,7 +12,7 @@ from tadas.om.events.storage.tables.event_cursors import EventCursors
 from tadas.om.events.storage.tables.events import Events
 from tadas.om.events.types.event import Event
 from tadas.om.exceptions import TenantMismatch, UniqueKeyTaken
-from tadas.om.storage.impl.pg_base import PgStorageBase, violated_constraint
+from tadas.om.storage.impl.pg_base import PgStorageBase, delete_batch, deleted, violated_constraint
 from tadas.om.storage.utils.translation import to_model, to_values
 
 
@@ -73,12 +73,14 @@ class EventStoragePostgresImpl(PgStorageBase, EventStorageInterface):
             result = await session.execute(stmt)
             return [to_model(row, Event) for row in result.scalars()]
 
-    async def purge_tenant(self, org_id: UUID) -> int:
-        events = delete(Events).where(Events.org_id == org_id).returning(Events.id)
+    async def purge_tenant(self, org_id: UUID, limit: int) -> int:
+        events = delete_batch(Events, Events.org_id == org_id, limit=limit)
         cursor = delete(EventCursors).where(EventCursors.org_id == org_id)
         async with self._session_for(Events, org_id=org_id) as session:
-            purged = len((await session.execute(events)).scalars().all())
-            await session.execute(cursor)
+            purged = deleted(await session.execute(events))
+            if purged < limit:
+                # The stream is empty now, so its counter goes too.
+                await session.execute(cursor)
             await session.commit()
             return purged
 
@@ -110,7 +112,7 @@ class EventStoragePostgresImpl(PgStorageBase, EventStorageInterface):
             gone = delete(Events).where(
                 Events.org_id == org_id, Events.seq > floor, Events.seq <= top
             )
-            trimmed = (await session.execute(gone)).rowcount or 0  # type: ignore[attr-defined]
+            trimmed = deleted(await session.execute(gone))
             moved = update(EventCursors).where(EventCursors.org_id == org_id).values(floor=top)
             await session.execute(moved)
             await session.commit()

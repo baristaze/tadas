@@ -69,14 +69,16 @@ record and its org; reading that one org's rows is `ops-root-cause`.
 
 ## The alarms
 
-Twelve per environment (one per service, two per inbound queue), to the topic `tadas-<environment>-alarms`, from
+Thirteen per environment (one per service, two per inbound queue), to the topic `tadas-<environment>-alarms`, from
 `deployment/terraform/modules/alarms`. Their thresholds are the
 module's inputs with defaults: 5 percent 5xx, 1 second p95 at the load
 balancer, 1 second p95 for `GET /v1/billing` as the API times it, 80
 percent database CPU, 2 GiB free storage, one unhealthy target, one task
 below desired, a queue's oldest message older than ten minutes (past
-the five tries a failing message gets before it is dead-lettered), and
-one message in a queue's `-dead` twin; three periods of one minute each,
+the five tries a failing message gets before it is dead-lettered),
+one message in a queue's `-dead` twin, and a sweep pass longer than 30
+seconds (its budget is 20, so a longer pass is one step that is slow on
+its own; the worker's `sweep:` lines name the tenant and the purge); three periods of one minute each,
 six for the tasks below desired, which a routine worker deploy would
 otherwise trip, and one for a dead letter. A queue that goes idle stops
 reporting, so a queue alarm keeps its state through missing data: a

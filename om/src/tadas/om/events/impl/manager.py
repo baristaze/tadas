@@ -16,8 +16,10 @@ class EventsOptions(Platform):
     retention: timedelta | None = None
     """How long a living tenant's events are kept. None keeps every one, and
     the sweep never moves the floor (ADR 0040)."""
-    trim_batch: int = Field(default=1000, gt=0)
-    """The most events one sweep pass trims from one tenant's stream."""
+    purge_batch: int = Field(default=1000, gt=0)
+    """The most events one purge call deletes from one tenant's stream, by
+    the trim or under a tenant past its retention; the sweep calls again
+    while a batch comes back full."""
 
 
 class EventsManagerImpl(EventsManagerInterface):
@@ -58,11 +60,11 @@ class EventsManagerImpl(EventsManagerInterface):
     async def purge_expired(self, ctx: OpContext) -> int:
         ctx.require(Permission.WRITE)
         if await self._tenancy.tenant_expired(ctx):
-            return await self._storage.purge_tenant(ctx.org_id)
+            return await self._storage.purge_tenant(ctx.org_id, self._options.purge_batch)
         if self._options.retention is None:
             return 0
         before = utcnow() - self._options.retention
-        return await self._storage.trim(ctx.org_id, before, self._options.trim_batch)
+        return await self._storage.trim(ctx.org_id, before, self._options.purge_batch)
 
     async def get_head(self, ctx: OpContext) -> int:
         ctx.require(Permission.READ)

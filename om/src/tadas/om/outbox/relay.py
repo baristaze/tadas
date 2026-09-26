@@ -39,8 +39,8 @@ class OutboxRelayInterface(ABC):
         ...
 
     @abstractmethod
-    async def purge_done(self, retention: timedelta) -> int:
+    async def purge_done(self, retention: timedelta, limit: int) -> int:
         """Platform-internal, for the sweep: deletes rows done or failed longer
-        ago than `retention`; returns how many. The one hard delete of the
-        namespace."""
+        ago than `retention`, at most `limit` of each; returns how many. The
+        one hard delete of the namespace."""
         ...

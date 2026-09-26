@@ -196,7 +196,10 @@ class OrchestrationStorageContract:
         for record in (old_done, old_failed, old_parked, fresh):
             await seed(storage, org, record)
         await seed(storage, other, theirs)
-        assert await storage.purge_settled(org, utcnow() - timedelta(days=30)) == 2
+        cut = utcnow() - timedelta(days=30)
+        assert await storage.purge_settled(org, cut, 1) == 1, "a batch at most"
+        assert await storage.purge_settled(org, cut, 1) == 1
+        assert await storage.purge_settled(org, cut, 1) == 0
         assert await storage.read_orchestration(org, old_parked.id) is not None
         assert await storage.read_orchestration(org, fresh.id) is not None
         assert await storage.read_orchestration(other, theirs.id) is not None
@@ -209,5 +212,6 @@ class OrchestrationStorageContract:
         await seed(storage, org, make_record(status=OrchestrationStatus.SUCCEEDED))
         theirs = make_record()
         await seed(storage, other, theirs)
-        assert await storage.purge_tenant(org) == 2
+        assert await storage.purge_tenant(org, 1) == 1, "a batch at most"
+        assert await storage.purge_tenant(org, 1) == 1
         assert await storage.read_orchestration(other, theirs.id) == theirs

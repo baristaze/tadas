@@ -9,7 +9,13 @@ from tadas.om.storage.tables.base import Base, CreatedMixin, IdentifiableMixin
 
 class SocketTickets(IdentifiableMixin, CreatedMixin, Base):
     __tablename__ = "socket_tickets"
-    __table_args__ = (Index("uq_socket_tickets_ticket_hash", "ticket_hash", unique=True),)
+    # The purge reads a tenant's tickets by expiry; that index leads with
+    # org_id, so org_id gets none of its own.
+    __org_id_index__ = False
+    __table_args__ = (
+        Index("uq_socket_tickets_ticket_hash", "ticket_hash", unique=True),
+        Index("ix_socket_tickets_org_id_expires_at", "org_id", "expires_at"),
+    )
     user_id: Mapped[UUID]
     ticket_hash: Mapped[str]
     credential_kind: Mapped[str]

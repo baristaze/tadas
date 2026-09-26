@@ -3,8 +3,9 @@
 # tadas-overview.json). The first five widgets carry that dashboard's panels,
 # one for one, and a unit test holds the two lists of titles equal but for
 # latency; the rows after them are what only the cloud has: the database,
-# the cache, the queue, and the tasks, then the reads with a latency alarm
-# and the age of each queue's oldest message, which the alarms read.
+# the cache, the queue, and the tasks, then the reads with a latency alarm,
+# the age of each queue's oldest message, and the sweep's pass duration,
+# which the alarms read.
 #
 # The body is dashboard.json.tftpl, a JSON document with interpolations and
 # nothing else (no template loops), so the test can read it as JSON. The

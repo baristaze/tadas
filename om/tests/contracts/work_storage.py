@@ -287,6 +287,24 @@ class WorkStorageContract:
             await storage.create_item(org_b, item)
         assert await storage.read_item(org_a, item.id) == item
 
+    async def test_a_backlog_past_a_batch_goes_a_batch_at_a_time(
+        self, storage: WorkStorageInterface, lane: str
+    ) -> None:
+        org = new_id()
+        settled = {
+            "status": WorkStatus.DONE,
+            "updated_at": utcnow() - timedelta(days=2),
+            "claim_token": None,
+            "claimed_by": None,
+            "lease_expires_at": None,
+        }
+        for _ in range(3):
+            await storage.create_item(org, make_item(lane=lane).model_copy(update=settled))
+        cut = utcnow() - timedelta(days=1)
+        assert await storage.purge_items(cut, 2) == 2
+        assert await storage.purge_items(cut, 2) == 1
+        assert await storage.purge_items(cut, 2) == 0
+
     async def test_purge_items_counts_done_and_failed_past_the_cut_in_every_tenant(
         self, storage: WorkStorageInterface, lane: str
     ) -> None:
@@ -308,10 +326,10 @@ class WorkStorageContract:
         await storage.create_item(other_org, elsewhere)
         # The purge is the sweep's, across tenants: another suite's settled
         # items may be in the same table, so the count is at least these three.
-        assert await storage.purge_items(utcnow() - timedelta(days=1)) >= 3
+        assert await storage.purge_items(utcnow() - timedelta(days=1), 1000) >= 3
         assert await storage.read_item(org, old_done.id) is None
         assert await storage.read_item(org, old_failed.id) is None
         assert await storage.read_item(org, old_queued.id) == old_queued
         assert await storage.read_item(org, fresh_done.id) == fresh_done
         assert await storage.read_item(other_org, elsewhere.id) is None
-        assert await storage.purge_items(utcnow() - timedelta(days=1)) == 0
+        assert await storage.purge_items(utcnow() - timedelta(days=1), 1000) == 0

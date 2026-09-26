@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import Update, delete, select, update
+from sqlalchemy import Update, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tadas.om.exceptions import PreconditionFailed, UniqueKeyTaken
@@ -17,7 +17,7 @@ from tadas.om.orchestrations.types.orchestration import (
 )
 from tadas.om.outbox.storage.tables.outbox_rows import OutboxRows
 from tadas.om.outbox.types.row import OutboxRow
-from tadas.om.storage.impl.pg_base import PgStorageBase
+from tadas.om.storage.impl.pg_base import PgStorageBase, delete_batch, deleted
 from tadas.om.storage.utils.translation import to_model, to_row, to_values
 
 PERIOD_KEY = "uq_orchestrations_org_id_kind_period"
@@ -139,28 +139,22 @@ class OrchestrationsStoragePostgresImpl(PgStorageBase, OrchestrationsStorageInte
                 session.add(to_row(outbox_row, OutboxRows, org_id=org_id))
             await session.commit()
 
-    async def purge_settled(self, org_id: UUID, before: datetime) -> int:
-        stmt = (
-            delete(Orchestrations)
-            .where(
-                Orchestrations.org_id == org_id,
-                Orchestrations.status.in_([s.value for s in SETTLED]),
-                Orchestrations.updated_at < before,
-            )
-            .returning(Orchestrations.id)
+    async def purge_settled(self, org_id: UUID, before: datetime, limit: int) -> int:
+        stmt = delete_batch(
+            Orchestrations,
+            Orchestrations.org_id == org_id,
+            Orchestrations.status.in_([s.value for s in SETTLED]),
+            Orchestrations.updated_at < before,
+            limit=limit,
         )
         async with self._session_for(stmt, org_id=org_id) as session:
-            purged = len((await session.execute(stmt)).scalars().all())
+            purged = deleted(await session.execute(stmt))
             await session.commit()
             return purged
 
-    async def purge_tenant(self, org_id: UUID) -> int:
-        stmt = (
-            delete(Orchestrations)
-            .where(Orchestrations.org_id == org_id)
-            .returning(Orchestrations.id)
-        )
+    async def purge_tenant(self, org_id: UUID, limit: int) -> int:
+        stmt = delete_batch(Orchestrations, Orchestrations.org_id == org_id, limit=limit)
         async with self._session_for(stmt, org_id=org_id) as session:
-            purged = len((await session.execute(stmt)).scalars().all())
+            purged = deleted(await session.execute(stmt))
             await session.commit()
             return purged

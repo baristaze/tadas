@@ -13,7 +13,13 @@ from tadas.om.exceptions import Conflict, NotFound, UniqueKeyTaken
 from tadas.om.idempotency.storage.tables.idempotency_records import IdempotencyRecords
 from tadas.om.outbox.storage.tables.outbox_rows import OutboxRows
 from tadas.om.outbox.types.row import OutboxRow
-from tadas.om.storage.impl.pg_base import PgStorageBase, set_scope, violated_constraint
+from tadas.om.storage.impl.pg_base import (
+    PgStorageBase,
+    delete_batch,
+    deleted,
+    set_scope,
+    violated_constraint,
+)
 from tadas.om.storage.utils.translation import apply_row, to_model, to_row
 from tadas.om.tenancy.storage import TenancyStorageInterface
 from tadas.om.tenancy.storage.tables.api_keys import ApiKeys
@@ -162,14 +168,10 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
             await session.execute(stmt)
             await session.commit()
 
-    async def purge_sign_in_delays(self, before: datetime) -> int:
-        stmt = (
-            delete(SignInDelays)
-            .where(SignInDelays.last_failed_at < before)
-            .returning(SignInDelays.id)
-        )
+    async def purge_sign_in_delays(self, before: datetime, limit: int) -> int:
+        stmt = delete_batch(SignInDelays, SignInDelays.last_failed_at < before, limit=limit)
         async with self._session_for(stmt, org_id=EMPTY_UUID) as session:
-            purged = len((await session.execute(stmt)).scalars().all())
+            purged = deleted(await session.execute(stmt))
             await session.commit()
             return purged
 
@@ -202,6 +204,22 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
         async with self._session_for(stmt, org_id=EMPTY_UUID) as session:
             result = await session.execute(stmt)
             return [to_model(row, Org) for row in result.scalars()]
+
+    async def mark_org_purged(self, org_id: UUID, purged_at: datetime) -> bool:
+        stmt = (
+            update(Orgs)
+            .where(
+                Orgs.org_id == org_id,
+                Orgs.id == org_id,
+                Orgs.deleted_at.is_not(None),
+                Orgs.purged_at.is_(None),
+            )
+            .values(purged_at=purged_at)
+        )
+        async with self._session_for(stmt, org_id=org_id) as session:
+            marked = deleted(await session.execute(stmt)) == 1
+            await session.commit()
+            return marked
 
     async def write_org(
         self, org_id: UUID, org: Org, outbox_rows: tuple[OutboxRow, ...] = ()
@@ -685,55 +703,43 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
     ) -> None:
         await self._upsert(ApiKeys, org_id, api_key, outbox_rows)
 
-    async def purge_deleted(self, org_id: UUID, before: datetime) -> int:
-        gone_users = (
-            delete(Users)
-            .where(Users.org_id == org_id, Users.deleted_at < before)
-            .returning(Users.id)
-        )
-        purged = 0
+    async def purge_deleted(
+        self, org_id: UUID, before: datetime, tickets_before: datetime, limit: int
+    ) -> int:
+        gone_users = delete_batch(
+            Users, Users.org_id == org_id, Users.deleted_at < before, limit=limit
+        ).returning(Users.id)
         async with self._session_for(gone_users, org_id=org_id) as session:
+            # The users' ids travel back: their memberships go with them.
             user_ids = list((await session.execute(gone_users)).scalars().all())
-            purged += len(user_ids)
-            memberships = (
-                delete(Memberships)
-                .where(
+            purged = len(user_ids)
+            for stmt in (
+                delete_batch(
+                    Memberships,
                     Memberships.org_id == org_id,
                     or_(Memberships.user_id.in_(user_ids), Memberships.deleted_at < before),
-                )
-                .returning(Memberships.id)
-            )
-            purged += len((await session.execute(memberships)).scalars().all())
-            keys = (
-                delete(ApiKeys)
-                .where(
+                    limit=limit,
+                ),
+                delete_batch(
+                    ApiKeys,
                     ApiKeys.org_id == org_id,
                     or_(ApiKeys.deleted_at < before, ApiKeys.expires_at < before),
-                )
-                .returning(ApiKeys.id)
-            )
-            purged += len((await session.execute(keys)).scalars().all())
-            sessions = (
-                delete(Sessions)
-                .where(
-                    Sessions.org_id == org_id,
-                    or_(Sessions.revoked_at < before, Sessions.expires_at < before),
-                )
-                .returning(Sessions.id)
-            )
-            purged += len((await session.execute(sessions)).scalars().all())
-            tickets = (
-                delete(SocketTickets)
-                .where(
+                    limit=limit,
+                ),
+                # A revoked session expires within its lifetime, so the expiry
+                # alone decides, and `ix_sessions_org_id_expires_at` serves it.
+                delete_batch(
+                    Sessions, Sessions.org_id == org_id, Sessions.expires_at < before, limit=limit
+                ),
+                # A ticket is spent within the minute it lives, so the same.
+                delete_batch(
+                    SocketTickets,
                     SocketTickets.org_id == org_id,
-                    or_(SocketTickets.redeemed_at < before, SocketTickets.expires_at < before),
-                )
-                .returning(SocketTickets.id)
-            )
-            purged += len((await session.execute(tickets)).scalars().all())
-            invitations = (
-                delete(Invitations)
-                .where(
+                    SocketTickets.expires_at < tickets_before,
+                    limit=limit,
+                ),
+                delete_batch(
+                    Invitations,
                     Invitations.org_id == org_id,
                     or_(
                         and_(
@@ -742,10 +748,10 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
                         ),
                         Invitations.expires_at < before,
                     ),
-                )
-                .returning(Invitations.id)
-            )
-            purged += len((await session.execute(invitations)).scalars().all())
+                    limit=limit,
+                ),
+            ):
+                purged += deleted(await session.execute(stmt))
             await session.commit()
         return purged
 
@@ -802,12 +808,12 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
     ) -> None:
         await self._upsert(Invitations, org_id, invitation, outbox_rows)
 
-    async def purge_tenant(self, org_id: UUID) -> int:
+    async def purge_tenant(self, org_id: UUID, limit: int) -> int:
         purged = 0
         async with self._session_for(Users, org_id=org_id) as session:
             for table in (Users, Memberships, ApiKeys, Sessions, SocketTickets, Invitations):
-                stmt = delete(table).where(table.org_id == org_id).returning(table.id)
-                purged += len((await session.execute(stmt)).scalars().all())
+                stmt = delete_batch(table, table.org_id == org_id, limit=limit)
+                purged += deleted(await session.execute(stmt))
             await session.commit()
         return purged
 

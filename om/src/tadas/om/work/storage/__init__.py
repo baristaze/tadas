@@ -75,10 +75,11 @@ class WorkStorageInterface(ABC):
         ...
 
     @abstractmethod
-    async def purge_items(self, before: datetime) -> int:
-        """Cross-tenant, for the sweep, in the system scope: deletes items done
-        or failed whose last change was before `before`; returns how many. The
-        one hard delete of the namespace. It takes no tenant: one statement
+    async def purge_items(self, before: datetime, limit: int) -> int:
+        """Cross-tenant, for the sweep, in the system scope: deletes at most
+        `limit` items done or failed whose last change was before `before`,
+        skipping items another transaction holds; returns how many. The one
+        hard delete of the namespace. It takes no tenant: one statement
         reaches every tenant's settled items."""
         ...
 

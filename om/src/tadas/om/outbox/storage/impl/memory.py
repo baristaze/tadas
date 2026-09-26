@@ -69,13 +69,17 @@ class OutboxStorageMemoryImpl(OutboxStorageInterface, OutboxLandingInterface):
             found[1].model_copy(update={"last_error": error, "failed_at": failed_at}),
         )
 
-    async def purge_done(self, before: datetime) -> int:
-        gone = [
+    async def purge_done(self, before: datetime, limit: int) -> int:
+        done = [
             row_id
             for row_id, (_, row) in self._rows.items()
-            if (row.done_at is not None and row.done_at < before)
-            or (row.failed_at is not None and row.failed_at < before)
-        ]
-        for row_id in gone:
+            if row.done_at is not None and row.done_at < before
+        ][:limit]
+        failed = [
+            row_id
+            for row_id, (_, row) in self._rows.items()
+            if row.failed_at is not None and row.failed_at < before
+        ][:limit]
+        for row_id in {*done, *failed}:
             del self._rows[row_id]
-        return len(gone)
+        return len({*done, *failed})

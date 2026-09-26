@@ -53,6 +53,7 @@ def test_the_cloud_dashboard_adds_the_backing_services_and_the_alarmed_reads() -
         "Running tasks",
         "Read latency p95, the reads with an alarm",
         "Queue oldest message age",
+        "Sweep pass duration, the longest per minute",
     ]
 
 
@@ -110,4 +111,25 @@ def test_the_queue_widgets_draw_what_the_queue_alarms_watch() -> None:
     environment = (CLOUD.parent.parent / "environment" / "main.tf").read_text()
     # Both modules take the queue module's one list, so a queue added there
     # is drawn and alarmed on together.
-    assert environment.count("queue_names              = module.queue.queue_names") == 2
+    assert len(re.findall(r"queue_names\s+= module\.queue\.queue_names", environment)) == 2
+
+
+def test_the_sweep_widget_draws_the_metric_the_sweep_alarm_watches() -> None:
+    """The alarms module's log filter writes `tadas_sweep_duration_ms` from
+    the line the worker writes per pass, and its alarm reads the longest
+    pass; the widget draws the same. The filter reads the worker's log
+    group, which the environment hands it."""
+    body = json.loads(re.sub(r"\$\{\w+\}", "null", CLOUD.read_text()))
+    (widget,) = [
+        widget
+        for widget in body["widgets"]
+        if widget["properties"]["title"] == "Sweep pass duration, the longest per minute"
+    ]
+    assert widget["properties"]["stat"] == "Maximum"
+    assert widget["properties"]["metrics"][0][:2] == ["Tadas", "tadas_sweep_duration_ms"]
+    alarms = (CLOUD.parent.parent / "alarms" / "main.tf").read_text()
+    assert 'pattern        = "{ $.sweep.duration_ms = * }"' in alarms
+    assert 'name      = "tadas_sweep_duration_ms"' in alarms
+    assert 'metric_name         = "tadas_sweep_duration_ms"' in alarms
+    environment = (CLOUD.parent.parent / "environment" / "main.tf").read_text()
+    assert "maintenance_log_group_name = module.maintenance.log_group_name" in environment
