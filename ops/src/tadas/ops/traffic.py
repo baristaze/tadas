@@ -37,8 +37,9 @@ The tenants a run needs come from the operator plane (`POST /v1/admin/orgs`,
 a grant of Max, and its members) under the provisioner's operator token, a
 `write` entry and never a sign-in. They are named for the run, `ops-<run id>-<n>`, so no real
 tenant is touched and anything that counts tenants can leave them out, and
-the run removes them (`DELETE /v1/admin/orgs/{org_id}`) when it ends, a
-failure included; the ones it could not remove are named in the report.
+the run removes them (`DELETE /v1/admin/orgs/{org_id}`, which closes each at
+once and leaves the rest to the worker) when it ends, a failure included; the
+ones it could not remove are named in the report.
 `orgs=0` drives the org and the two people `make seed` created instead, which
 is how the local stack is exercised with nothing provisioned."""
 

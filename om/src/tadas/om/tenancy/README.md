@@ -140,7 +140,9 @@ of the seven kinds of thing [Tadas is made of](../../../../README.md).
   can create an org with its owner, add a member (bound by the org's
   seats like any other door), read an org, its
   members, its tasks, and its events, read the platform's size, list
-  every org, and delete a team org. An operator never deletes a personal
+  every org, and delete a team org. An operator's deletion is an
+  owner's: the org closes for everyone in it at once, and the providers
+  go before the org does (below). An operator never deletes a personal
   org: it goes only with its person.
   A deleted org keeps its row as the record; everything else of it is
   purged once the retention has passed, and once nothing is left the
@@ -154,9 +156,9 @@ of the seven kinds of thing [Tadas is made of](../../../../README.md).
   and a sign-in through the org's single sign-on no longer finds it.
   Then the providers go: the org's organization at the identity
   provider, its subscription and customer at the payment processor, and
-  its Slack app. Then the org is deleted as an operator deletes one,
-  and its data is purged once the retention has passed. The owner lands
-  in their personal org
+  its Slack app. Then the org is deleted, and its data is purged once
+  the retention has passed. The owner lands in their personal org. An
+  operator's deletion takes the same steps
   ([ADR 0042](../../../../../docs/adr/0042-an-owner-deletes-a-team-org-closed-at-once-and-its-providers-by-the-queue.md)).
 - **Delete my account.** A person deletes their own account from a
   session, by typing its email. It is refused while they are the last
