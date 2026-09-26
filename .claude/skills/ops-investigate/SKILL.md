@@ -120,8 +120,22 @@ named with `-dead` after it. Slack's calls in are in
 5. Workers, queue, pool, cache: one counter carries every outcome,
    `tadas_outcomes_total{subsystem, outcome}` (subsystems `worker`,
    `outbox`, `queue`, `cache`, `rate_limit`, `admission`,
-   `idempotency`), read as `sum by (subsystem, outcome)
-   (increase(tadas_outcomes_total[<since>]))`. Queue depth, the oldest
+   `idempotency`, `orchestrations`), read as `sum by (subsystem, outcome)
+   (increase(tadas_outcomes_total[<since>]))`. The long-running records
+   are `orchestrations`, one outcome per kind and state: an import
+   (`task_import_running` when it starts, `task_import_parked` on the
+   plan's bound, `task_import_resumed`, `task_import_succeeded`,
+   `task_import_failed`) and the daily cleanup of old done tasks
+   (`task_cleanup_running` when the sweep opens an org's day,
+   `task_cleanup_succeeded`, `task_cleanup_failed`). A park on the plan
+   is a tenant's own limit, not a finding. A `_failed` is: a bound of
+   the file (a person's to fix; the worker log line says which), or
+   `defect`, a step that still failed on its item's last attempt, which
+   the maintenance log names at level `ERROR` with the record's id and
+   the org's (`<kind> <id> in org <org> failed: defect ...`), so step 7
+   finds it. A running cleanup whose `_succeeded` never follows in a day
+   is a step the queue keeps retrying: read the worker's `failed`
+   outcomes beside it. Queue depth, the oldest
    age, and pool checkouts have no metric; the cloud reads the pool
    from the database's connection count, and each queue and its dead
    letter from SQS:
@@ -343,6 +357,7 @@ named with `-dead` after it. Slack's calls in are in
 
 - Requests: <rate>, error ratio <ratio>, p95 <ms> by route
 - Workers: <outcomes per kind>, queue depth <n>, oldest <age>
+- Orchestrations: imports <started, parked, succeeded, failed>, cleanups <opened, succeeded, failed>, defects <record and org ids, or none>
 - Queues: webhooks <n> (dead <n>), slack <n> (dead <n>); services api, maintenance <running>/<desired>
 - Providers: sign-in <configured | off: tadas/<env>/workos_api_key | not in the window>, billing <configured | off: tadas/<env>/stripe_runtime_key | lacks <resources>>, Slack <configured | off: tadas/<env>/slack_client_secret, tadas/<env>/slack_signing_secret, slack_client_id | signature refused: tadas/<env>/slack_signing_secret | not in the window>, broken installations <org ids, or none>
 - Pool and cache: <checkouts, timeouts, hits, misses>

@@ -87,6 +87,17 @@ remembers who created it and who last changed it. It can carry a
 nine where the person it is for lives, the team gets one reminder, on
 every open screen and in the org's Slack channel.
 
+Tasks can be **imported** from a CSV file: one row, one task. A done
+task left unchanged for ninety days is **archived** by a cleanup that
+runs once a day: it leaves the done list and every count, and it can be
+read and restored.
+
+An **orchestration** is one long job, such as an import or a day's
+cleanup, kept as a record with a status and a place where the next step
+starts. A worker does it a batch at a time, and a job that must wait
+(an import that reached the plan's bound of active tasks) parks with
+what it made kept, until the reason is gone.
+
 ## Slack
 
 A **Slack installation** is the Tadas app added to one Slack workspace
@@ -116,11 +127,13 @@ them, but every one of them belongs to an org like everything else.
 
 An **event** is a line in the org's diary: which thing changed, how,
 by whom, and when. The lines are numbered one, two, three, with no
-gaps, and a line is never edited; the diary goes only with its org, once
-a deleted org's retention has passed. A line about a person records that
+gaps, and a line is never edited. The oldest lines go after a
+retention, and the diary starts after the last one gone; the whole
+diary goes with its org, once a deleted org's retention has passed. A line about a person records that
 something happened to them, never their email or name. The live channel pushes
 each new line to every open screen. A screen that was away reads the
-diary from the last number it saw and catches up.
+diary from the last number it saw and catches up. A screen away for
+longer than the diary reaches back reads everything afresh instead.
 
 An **outbox row** is a note Tadas writes beside a change, in the same
 stroke as the change itself, saying "tell everyone about this". From
@@ -153,7 +166,10 @@ a second task.
   of them.
 - Tasks belong to the org. Each is created by a user and may be
   assigned to a user. A task added from Slack is created by the member
-  who typed it.
+  who typed it; a task imported from a file, by the member who started
+  the import.
+- An orchestration belongs to the org. An import is started by a user
+  and reads a file of the org; the day's cleanup is the platform's.
 - A Slack installation belongs to the org, and a workspace to one org.
 - An org is on one plan. The plan bounds its members, its API keys,
   and its active tasks; meeting a bound is a refusal that offers the
@@ -175,6 +191,7 @@ a second task.
 
 - [Orgs, identities, users, memberships, sessions, API keys, and socket tickets](src/tadas/om/tenancy/README.md)
 - [Tasks](src/tadas/om/tasks/README.md)
+- [Orchestrations: imports and cleanups](src/tadas/om/orchestrations/README.md)
 - [Files](src/tadas/om/media/README.md)
 - [Slack installations and posts](src/tadas/om/slack/README.md)
 - [Plans, billing accounts, and delivery marks](src/tadas/om/billing/README.md)

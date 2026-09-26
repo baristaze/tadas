@@ -40,3 +40,4 @@ class Tasks(IdentifiableMixin, TrackableMixin, SoftDeletableMixin, Base):
     version: Mapped[int] = mapped_column(server_default="1")
     due_on: Mapped[date | None]
     reminded_at: Mapped[datetime | None]
+    archived_at: Mapped[datetime | None]

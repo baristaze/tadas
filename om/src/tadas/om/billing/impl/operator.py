@@ -1,9 +1,17 @@
 import logging
+from datetime import datetime
 from uuid import UUID
 
 from tadas.infra.observability import current_traceparent
 from tadas.om.base import new_id, utcnow
-from tadas.om.billing.impl.manager import ACCOUNT_CREATED, ACCOUNT_UPDATED, billing_of
+from tadas.om.billing.impl.manager import (
+    ACCOUNT_CREATED,
+    ACCOUNT_UPDATED,
+    WAKE_KIND,
+    billing_of,
+    lifts,
+    wake_payload,
+)
 from tadas.om.billing.manager import BillingOperatorManagerInterface
 from tadas.om.billing.storage import BillingStorageInterface
 from tadas.om.billing.types.account import BillingAccount
@@ -55,17 +63,25 @@ class BillingOperatorManagerImpl(BillingOperatorManagerInterface):
                 updated_by=admin.identity_id,
                 comped_plan=grant,
             )
-            row = self._row(admin, org_id, ACCOUNT_CREATED, account.id)
-            if not await self._storage.create_account(org_id, account, (row,)):
+            rows = (
+                self._row(admin, org_id, ACCOUNT_CREATED, account.id),
+                *self._wake(admin, org_id, None, account, now),
+            )
+            if not await self._storage.create_account(org_id, account, rows):
                 # Another write made the account first; the grant goes on it.
                 return await self.comp_plan(admin, org_id, plan)
         else:
+            before = account
             account = account.model_copy(
                 update={"comped_plan": grant, "updated_at": now, "updated_by": admin.identity_id}
             )
-            row = self._row(admin, org_id, ACCOUNT_UPDATED, account.id)
-            await self._storage.write_account(org_id, account, (row,))
-        await self._relay.relay(org_id, row)
+            rows = (
+                self._row(admin, org_id, ACCOUNT_UPDATED, account.id),
+                *self._wake(admin, org_id, before, account, now),
+            )
+            await self._storage.write_account(org_id, account, rows)
+        for row in rows:
+            await self._relay.relay(org_id, row)
         log.info(
             "operator %s granted org %s %s",
             admin.identity_id,
@@ -79,8 +95,28 @@ class BillingOperatorManagerImpl(BillingOperatorManagerInterface):
         if org is None or org.deleted_at is not None:
             raise NotFound(f"org {org_id} not found")
 
+    def _wake(
+        self,
+        admin: OperatorContext,
+        org_id: UUID,
+        before: BillingAccount | None,
+        after: BillingAccount,
+        now: datetime,
+    ) -> tuple[OutboxRow, ...]:
+        """The wake of the org's records parked on a plan's bound, when the
+        grant lifted the plan (`lifts`)."""
+        if not lifts(before, after, now):
+            return ()
+        return (self._row(admin, org_id, WAKE_KIND, org_id, wake_payload()),)
+
     @staticmethod
-    def _row(admin: OperatorContext, org_id: UUID, kind: str, target_id: UUID) -> OutboxRow:
+    def _row(
+        admin: OperatorContext,
+        org_id: UUID,
+        kind: str,
+        target_id: UUID,
+        payload: dict[str, object] | None = None,
+    ) -> OutboxRow:
         """An operator has no user in the tenant, so the row records the
         operator's identity as its actor, as the tenancy operator plane's do."""
         return OutboxRow(
@@ -89,7 +125,7 @@ class BillingOperatorManagerImpl(BillingOperatorManagerInterface):
             org_id=org_id,
             kind=kind,
             target_id=target_id,
-            payload={},
+            payload=payload or {},
             actor_id=admin.identity_id,
             request_id=admin.request_id,
             app=admin.app.type.value,

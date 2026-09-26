@@ -11,9 +11,11 @@ seven kinds of thing [Tadas is made of](../../../../README.md).
   available, who claimed it and until when, how many attempts it has
   spent of how many it has, and its last error.
 - **Kind**: the job's shape. The payload of each kind is fixed. There
-  are four: a task's reminder, a post to the org's Slack channel, the
+  are six: a task's reminder, a post to the org's Slack channel, the
   seat count of a per-seat subscription brought in step with the org's
-  members, and one that does nothing but keep the loop honest. A kind
+  members, one step of an [orchestration](../orchestrations/README.md),
+  the wake of the orchestrations a plan that rose freed, and one that
+  does nothing but keep the loop honest. A kind
   whose payload names a time waits in the queue until then. Each kind
   names the permission a person needs to ask for it, and whoever holds
   that permission may do everything the job does.
@@ -25,8 +27,9 @@ seven kinds of thing [Tadas is made of](../../../../README.md).
 
 - **Enqueue.** Directly by a person's request, or by the outbox relay
   when a change asked for work: setting a due date, a task created,
-  completed, or reminded in an org with a Slack channel, and a member
-  added or removed in an org on Max. The item starts queued with zero
+  completed, or reminded in an org with a Slack channel, a member
+  added or removed in an org on Max, an orchestration started, stepped,
+  or woken, and a plan that rose. The item starts queued with zero
   attempts and no claim, whatever the caller sent.
 - **Claim.** A worker takes the oldest available item on its lane, in
   one statement, and gets a claim token and the context the job runs

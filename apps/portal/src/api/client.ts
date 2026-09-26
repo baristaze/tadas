@@ -21,8 +21,20 @@ export interface PlanLimit {
   suggested_plan: string | null;
 }
 
+/** What a `stream_truncated` refusal carries: the highest seq trimmed, and the head to go on from. */
+export interface StreamTruncated {
+  floor: number;
+  head: number;
+}
+
 export interface ErrorEnvelope {
-  error: { code: string; message: string; request_id: string; plan_limit?: PlanLimit | null };
+  error: {
+    code: string;
+    message: string;
+    request_id: string;
+    plan_limit?: PlanLimit | null;
+    stream?: StreamTruncated | null;
+  };
 }
 
 export class ApiError extends Error {
@@ -33,6 +45,8 @@ export class ApiError extends Error {
   readonly retryAfterMs: number | undefined;
   /** The bound a `plan_limit_reached` refusal met, when the envelope carried one. */
   readonly planLimit: PlanLimit | null;
+  /** Where the stream goes on from, when a `stream_truncated` refusal carried it. */
+  readonly stream: StreamTruncated | null;
 
   constructor(
     status: number,
@@ -41,6 +55,7 @@ export class ApiError extends Error {
     requestId: string | null,
     retryAfterMs?: number,
     planLimit: PlanLimit | null = null,
+    stream: StreamTruncated | null = null,
   ) {
     super(message);
     this.name = "ApiError";
@@ -49,6 +64,7 @@ export class ApiError extends Error {
     this.requestId = requestId;
     this.retryAfterMs = retryAfterMs;
     this.planLimit = planLimit;
+    this.stream = stream;
   }
 }
 
@@ -237,6 +253,7 @@ export function createClient(options: ClientOptions): ApiClient {
           parsed.error.request_id ?? requestId,
           retryAfterMs,
           parsed.error.plan_limit ?? null,
+          parsed.error.stream ?? null,
         );
       }
       throw new ApiError(response.status, "unknown_error", statusMessage(response), requestId, retryAfterMs);

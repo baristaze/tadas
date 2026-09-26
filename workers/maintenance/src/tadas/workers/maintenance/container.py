@@ -15,6 +15,7 @@ from tadas.om.billing.impl.manager import BillingOptions
 from tadas.om.events.impl.manager import EventsOptions
 from tadas.om.idempotency.impl.manager import IdempotencyOptions
 from tadas.om.media.impl.manager import MediaOptions
+from tadas.om.orchestrations.impl.manager import OrchestrationsOptions
 from tadas.om.root import Managers, build_managers
 from tadas.om.slack.impl.manager import SlackOptions
 from tadas.om.storage.impl.postgres import StoragePostgresImpl
@@ -25,6 +26,15 @@ from tadas.om.work.impl.manager import WorkOptions
 from tadas.workers.maintenance.settings import MaintenanceSettings
 
 log = logging.getLogger(__name__)
+
+
+def events_options(settings: MaintenanceSettings) -> EventsOptions:
+    """The sweep's trim of each living org's stream, off at 0 days, a batch
+    per call like every purge."""
+    days = settings.event_retention_days
+    return EventsOptions(
+        retention=timedelta(days=days) if days else None, purge_batch=settings.worker_purge_batch
+    )
 
 
 def worker_managers(
@@ -48,7 +58,9 @@ def worker_managers(
         ),
         integrations=integrations,
         tasks_options=TasksOptions(
-            retention=timedelta(days=settings.tasks_retention_days), purge_batch=batch
+            retention=timedelta(days=settings.tasks_retention_days),
+            purge_batch=batch,
+            archive_after=timedelta(days=settings.tasks_archive_after_days),
         ),
         media_options=MediaOptions(
             retention=timedelta(days=settings.media_retention_days),
@@ -57,7 +69,7 @@ def worker_managers(
         idempotency_options=IdempotencyOptions(
             retention=timedelta(hours=settings.idempotency_retention_hours), purge_batch=batch
         ),
-        events_options=EventsOptions(purge_batch=batch),
+        events_options=events_options(settings),
         billing_options=BillingOptions(
             retention=timedelta(days=settings.billing_delivery_retention_days), purge_batch=batch
         ),
@@ -67,6 +79,7 @@ def worker_managers(
         work_options=WorkOptions(
             retention=timedelta(days=settings.work_retention_days), purge_batch=batch
         ),
+        orchestrations_options=OrchestrationsOptions(purge_batch=batch),
     )
 
 

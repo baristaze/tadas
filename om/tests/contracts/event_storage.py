@@ -3,7 +3,7 @@ tenant fence's evidence: each one presents another tenant's identifier and
 asserts that nothing is found and nothing changes. The negative control that
 says what they catch is in `docs/runbooks/tenant-isolation.md`."""
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 from uuid import UUID
 
 import pytest
@@ -15,21 +15,23 @@ from tadas.om.events.types.event import Event
 from tadas.om.exceptions import TenantMismatch
 
 CROSS_TENANT_CASES: frozenset[str] = frozenset(
-    {"append_event", "purge_tenant", "read_after", "read_head"}
+    {"append_event", "purge_tenant", "read_after", "read_floor", "read_head", "trim"}
 )
 """Every method of `EventStorageInterface` that takes a tenant has a case in
 this module that presents another tenant's. `test_storage_exceptions.py` holds
 the two sets to each other, so a new method arrives with its case."""
 
 
-def make_event(org_id: UUID, kind: str = "tasks.task.created") -> Event:
+def make_event(
+    org_id: UUID, kind: str = "tasks.task.created", produced_at: datetime | None = None
+) -> Event:
     return Event(
         id=new_id(),
         org_id=org_id,
         kind=kind,
         target_id=new_id(),
         payload={"title": "t"},
-        produced_at=utcnow(),
+        produced_at=produced_at or utcnow(),
         actor_id=new_id(),
         request_id=new_id(),
         app="portal",
@@ -190,3 +192,110 @@ class EventStorageContract:
         await storage.append_event(org, event)
         assert (await storage.append_event(org, make_event(org))).seq == 2
         assert await storage.read_head(org) == 2
+
+    async def append_aged(
+        self, storage: EventStorageInterface, org: UUID, *days_ago: int
+    ) -> list[Event]:
+        """One event per age, in stream order, each produced that many days ago."""
+        now = utcnow()
+        return [
+            await storage.append_event(org, make_event(org, produced_at=now - timedelta(days=d)))
+            for d in days_ago
+        ]
+
+    async def test_the_trim_takes_the_old_bottom_and_moves_the_floor_with_it(
+        self, storage: EventStorageInterface
+    ) -> None:
+        org = new_id()
+        assert await storage.read_floor(org) == 0
+        kept = (await self.append_aged(storage, org, 100, 95, 91, 10, 1))[3:]
+        assert await storage.trim(org, utcnow() - timedelta(days=90), 1000) == 3
+        assert await storage.read_floor(org) == 3
+        assert await storage.read_head(org) == 5
+        # Every event above the floor is there: the stream is whole from it.
+        assert await storage.read_after(org, 3, 10) == kept
+        assert await storage.read_after(org, 0, 10) == kept
+        # The next append continues from the head, never from the floor.
+        assert (await storage.append_event(org, make_event(org))).seq == 6
+
+    async def test_the_trim_takes_one_batch_at_a_time(self, storage: EventStorageInterface) -> None:
+        org = new_id()
+        await self.append_aged(storage, org, 100, 100, 100, 100, 100)
+        before = utcnow() - timedelta(days=90)
+        assert await storage.trim(org, before, 2) == 2
+        assert await storage.read_floor(org) == 2
+        assert await storage.trim(org, before, 2) == 2
+        assert await storage.read_floor(org) == 4
+        assert await storage.trim(org, before, 2) == 1
+        assert await storage.read_floor(org) == 5 == await storage.read_head(org)
+        # Nothing is left to trim, and trimming again moves nothing.
+        assert await storage.trim(org, before, 2) == 0
+        assert await storage.read_floor(org) == 5
+        assert await storage.read_after(org, 5, 10) == []
+
+    async def test_the_trim_stops_at_the_first_young_event(
+        self, storage: EventStorageInterface
+    ) -> None:
+        """`seq` follows the relay, not the write, so an old event can sit
+        above a young one. The trim never skips the young one to reach it: the
+        stream above the floor stays whole."""
+        org = new_id()
+        events = await self.append_aged(storage, org, 100, 1, 100)
+        assert await storage.trim(org, utcnow() - timedelta(days=90), 1000) == 1
+        assert await storage.read_floor(org) == 1
+        assert await storage.read_after(org, 1, 10) == events[1:]
+
+    async def test_a_trim_with_nothing_old_enough_moves_nothing(
+        self, storage: EventStorageInterface
+    ) -> None:
+        org = new_id()
+        assert await storage.trim(org, utcnow(), 1000) == 0, "no stream at all"
+        await self.append_aged(storage, org, 1, 100)
+        assert await storage.trim(org, utcnow() - timedelta(days=90), 1000) == 0
+        assert await storage.read_floor(org) == 0
+        assert [e.seq for e in await storage.read_after(org, 0, 10)] == [1, 2]
+
+    async def test_the_trim_and_the_floor_stay_in_their_tenant(
+        self, storage: EventStorageInterface
+    ) -> None:
+        mine, theirs = new_id(), new_id()
+        await self.append_aged(storage, mine, 100)
+        stays = await self.append_aged(storage, theirs, 100)
+        before = utcnow() - timedelta(days=90)
+        assert await storage.trim(mine, before, 1000) == 1
+        assert await storage.read_floor(mine) == 1
+        assert await storage.read_floor(theirs) == 0
+        assert await storage.read_after(theirs, 0, 10) == stays
+        assert await storage.read_floor(new_id()) == 0
+
+    async def test_a_tenant_purge_drops_the_floor_with_the_stream(
+        self, storage: EventStorageInterface
+    ) -> None:
+        org = new_id()
+        await self.append_aged(storage, org, 100, 1)
+        await storage.trim(org, utcnow() - timedelta(days=90), 1000)
+        assert await storage.purge_tenant(org, 1000) == 1
+        assert await storage.read_floor(org) == 0
+        assert await storage.read_head(org) == 0
+
+    async def test_trims_and_appends_at_once_leave_the_stream_whole_above_the_floor(
+        self, storage: EventStorageInterface
+    ) -> None:
+        """Two sweeps trimming one tenant while its writes append: each event
+        goes once, the floor only moves up, and whatever the floor ends at,
+        every seq above it up to the head is stored."""
+        org = new_id()
+        await self.append_aged(storage, org, *([100] * 12))
+        before = utcnow() - timedelta(days=90)
+        run = await race(
+            storage.trim(org, before, 5),
+            storage.trim(org, before, 5),
+            storage.append_event(org, make_event(org)),
+            storage.trim(org, before, 5),
+            storage.append_event(org, make_event(org)),
+        )
+        trimmed = sum(o for o in run.outcomes if isinstance(o, int))
+        assert trimmed == 12, run.summary()
+        floor, head = await storage.read_floor(org), await storage.read_head(org)
+        assert (floor, head) == (12, 14)
+        assert [e.seq for e in await storage.read_after(org, floor, 10)] == [13, 14]

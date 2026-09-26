@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Any, cast
 from uuid import UUID
 
-from sqlalchemy import Table, delete, func, insert, select
+from sqlalchemy import Table, delete, func, insert, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 
@@ -83,6 +83,45 @@ class EventStoragePostgresImpl(PgStorageBase, EventStorageInterface):
                 await session.execute(cursor)
             await session.commit()
             return purged
+
+    async def trim(self, org_id: UUID, before: datetime, limit: int) -> int:
+        # The cursor row's lock first, as the append takes it: a second trim
+        # waits here and then reads the floor the first one left, and an
+        # append waits the few milliseconds one bounded batch takes.
+        lock = select(EventCursors.floor).where(EventCursors.org_id == org_id).with_for_update()
+        async with self._session_for(Events, org_id=org_id) as session:
+            floor = (await session.execute(lock)).scalar_one_or_none()
+            if floor is None:
+                return 0
+            bottom = (
+                select(Events.seq, Events.produced_at)
+                .where(Events.org_id == org_id, Events.seq > floor)
+                .order_by(Events.seq)
+                .limit(limit)
+            )
+            top: int | None = None
+            for seq, produced_at in (await session.execute(bottom)).all():
+                if produced_at >= before:
+                    break
+                top = seq
+            if top is None:
+                await session.rollback()
+                return 0
+            # A range on the (org_id, seq) index, and the floor with it, in one
+            # transaction: no reader sees the events gone and the floor below them.
+            gone = delete(Events).where(
+                Events.org_id == org_id, Events.seq > floor, Events.seq <= top
+            )
+            trimmed = deleted(await session.execute(gone))
+            moved = update(EventCursors).where(EventCursors.org_id == org_id).values(floor=top)
+            await session.execute(moved)
+            await session.commit()
+            return trimmed
+
+    async def read_floor(self, org_id: UUID) -> int:
+        stmt = select(EventCursors.floor).where(EventCursors.org_id == org_id)
+        async with self._session_for(stmt, org_id=org_id) as session:
+            return int(await session.scalar(stmt) or 0)
 
     async def count_since(self, since: datetime) -> int:
         stmt = select(func.count()).select_from(Events).where(Events.produced_at >= since)

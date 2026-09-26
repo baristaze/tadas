@@ -28,7 +28,14 @@ second lane is a second replica told its lane.
   broken when Slack refuses the channel for good. `SYNC_SEATS` reads an org's
   active members when it runs and holds a Max subscription's quantity to
   them, with no proration and under a key made of the item and the
-  count, so a retried run is one change. The last kind does nothing and
+  count, so a retried run is one change. An orchestration step reads its
+  record and, while it runs, does one batch of it: an import makes the
+  tasks of the next hundred rows, a cleanup archives the next five
+  hundred old done tasks. The batch, the record's next cursor, and the
+  next step's item land in one commit. A step that raises is retried by
+  the queue from the cursor the last commit left; on its last attempt the
+  record fails as `defect`. A wake-up resumes the org's records parked
+  for the reason a plan that rose cleared. The last kind does nothing and
   keeps the loop honest.
 - **What Slack sends.** Slack calls the API, which checks each call's
   signature, acknowledges it within Slack's three seconds, and queues
@@ -77,12 +84,21 @@ second lane is a second replica told its lane.
     per org per sweep), removed members with their ended memberships,
     revoked keys, expired sessions and tickets, closed invitations,
     finished idempotency records, the payment processor's delivery
-    marks, Slack's old install states and posts, and settled work
-    items. Under an org deleted longer ago than the retention, every
-    row goes, its event stream included, and the org row stays as the
-    record. Each namespace purges its own rows and asks tenancy the one
-    question, whether the org has expired, which a sweep reads once per
-    org.
+    marks, Slack's old install states and posts, settled work items, and
+    orchestrations that succeeded or failed thirty days ago. With
+    `TADAS_EVENT_RETENTION_DAYS` set, the oldest events of a living org
+    go too, a batch at a time, and its floor moves with them in the same
+    transaction; 0, the default, keeps every event (ADR 0040). Under an
+    org deleted longer ago than the retention, every row goes, its event
+    stream included, and the org row stays as the record. Each namespace
+    purges its own rows and asks tenancy the one question, whether the
+    org has expired, which a sweep reads once per org.
+  - **Open the day's cleanup** of each org that has a done task nobody
+    changed for the archive age (`TADAS_TASKS_ARCHIVE_AFTER_DAYS`, ninety
+    by default). The org, the kind, and the day are the record's unique
+    key, so the first sweep of the day opens it and every later one
+    opens nothing. No scheduler is involved. It runs whenever its org is
+    swept, before any second round of purges, so no budget skips it.
   - **Relay** the outbox rows the request path left behind, one
     attempt each with a growing delay, and fail the ones whose
     attempts are spent.

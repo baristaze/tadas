@@ -900,6 +900,109 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/tasks/archived": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Archived Tasks
+         * @description The done tasks the daily cleanup archived, newest first. An archived
+         *     task leaves the done list; it is still read by its id and restored.
+         */
+        get: operations["list_archived_tasks_v1_tasks_archived_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/tasks/imports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Imports */
+        get: operations["list_imports_v1_tasks_imports_get"];
+        put?: never;
+        /**
+         * Start Import
+         * @description Accepted: the import runs in the background, a hundred rows a step.
+         */
+        post: operations["start_import_v1_tasks_imports_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/tasks/imports/files": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create Import File
+         * @description Starts the upload of a CSV file to import (`text/csv`, a `.csv` name, at
+         *     most 1 MB). Then `POST /v1/media/files/{id}/upload`, the form, and
+         *     `POST /v1/media/files/{id}/confirm`.
+         */
+        post: operations["create_import_file_v1_tasks_imports_files_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/tasks/imports/{import_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Import */
+        get: operations["get_import_v1_tasks_imports__import_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/tasks/imports/{import_id}/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resume Import
+         * @description A parked import runs again from the row it stopped at, and parks again
+         *     at once if the plan still has no room. A running one is answered as it
+         *     is; a finished one is refused (422).
+         */
+        post: operations["resume_import_v1_tasks_imports__import_id__resume_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/tasks/{task_id}": {
         parameters: {
             query?: never;
@@ -965,6 +1068,23 @@ export interface paths {
         put?: never;
         /** Move Task */
         post: operations["move_task_v1_tasks__task_id__move_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/tasks/{task_id}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Restore Task */
+        post: operations["restore_task_v1_tasks__task_id__restore_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1339,6 +1459,12 @@ export interface components {
             org_id: string;
         };
         /**
+         * FailReason
+         * @description Why a record ended without finishing: a bound, never a guard.
+         * @enum {string}
+         */
+        FailReason: "file_too_large" | "too_many_rows" | "not_csv" | "no_title_column" | "file_gone" | "defect";
+        /**
          * FilePageView
          * @description One page of files, oldest first. `next_cursor` fetches the next page and
          *     is null on the last one.
@@ -1355,7 +1481,7 @@ export interface components {
          *     upload is held to and what `subject_id` names.
          * @enum {string}
          */
-        FilePurpose: "task_attachment" | "voice_dictation";
+        FilePurpose: "task_attachment" | "voice_dictation" | "task_import";
         /**
          * FileStatus
          * @enum {string}
@@ -1424,6 +1550,70 @@ export interface components {
             operator_role: components["schemas"]["OperatorRole"] | null;
             /** Time Zone */
             time_zone?: string | null;
+        };
+        /**
+         * ImportPageView
+         * @description The org's newest imports, newest first.
+         */
+        ImportPageView: {
+            /** Items */
+            items: components["schemas"]["ImportView"][];
+        };
+        /**
+         * ImportView
+         * @description An import of tasks from a CSV file, read as it runs. `status` is
+         *     `running`, `parked`, `succeeded`, or `failed`. `total` is the file's data
+         *     rows, null until the first step counted them; `cursor` is how many were
+         *     read; `created` the tasks the import made, `skipped` the rows it passed
+         *     over, and `row_errors` the first twenty of those with the reason. A
+         *     `parked` import names its `park_reason`: `plan_limit` is the plan's bound
+         *     on active tasks, lifted by a higher plan (which resumes it) or by tasks
+         *     finished and `POST /v1/tasks/imports/{id}/resume`. A `failed` one names
+         *     its `fail_reason`: `file_too_large`, `too_many_rows`, `not_csv`,
+         *     `no_title_column`, `file_gone`, or `defect`. Every change is pushed as
+         *     `orchestrations.orchestration.updated` on the realtime channel.
+         */
+        ImportView: {
+            /** Created */
+            created: number;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Created By
+             * Format: uuid
+             */
+            created_by: string;
+            /** Cursor */
+            cursor: number;
+            fail_reason: components["schemas"]["FailReason"] | null;
+            /**
+             * File Id
+             * Format: uuid
+             */
+            file_id: string;
+            /** Finished At */
+            finished_at: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            park_reason: components["schemas"]["ParkReason"] | null;
+            /** Row Errors */
+            row_errors: components["schemas"]["RowErrorView"][];
+            /** Skipped */
+            skipped: number;
+            status: components["schemas"]["OrchestrationStatus"];
+            /** Total */
+            total: number | null;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
         };
         /**
          * InvitationPageView
@@ -1765,6 +1955,11 @@ export interface components {
             operator_role: components["schemas"]["OperatorRole"];
         };
         /**
+         * OrchestrationStatus
+         * @enum {string}
+         */
+        OrchestrationStatus: "running" | "parked" | "succeeded" | "failed";
+        /**
          * OrgKind
          * @description What an org is for. Every person has exactly one personal org, made
          *     with them; every other org is a team org, made on purpose.
@@ -1807,6 +2002,12 @@ export interface components {
             /** Slug */
             slug: string;
         };
+        /**
+         * ParkReason
+         * @description Why a record waits, and so what wakes it.
+         * @enum {string}
+         */
+        ParkReason: "plan_limit";
         /**
          * Permission
          * @enum {string}
@@ -1890,10 +2091,31 @@ export interface components {
             url: string;
         };
         /**
+         * RestoreTaskRequest
+         * @description Takes an archived task back to the done list. `expected_version` is the
+         *     task's as the caller read it: 412 `precondition_failed` when it changed
+         *     since, and 422 `validation_failed` when the request names none or the
+         *     task is not archived.
+         */
+        RestoreTaskRequest: {
+            /** Expected Version */
+            expected_version?: number | null;
+        };
+        /**
          * Role
          * @enum {string}
          */
         Role: "owner" | "admin" | "member" | "viewer" | "service";
+        /**
+         * RowErrorView
+         * @description A row the import skipped: its number, the first data row being 1, and why.
+         */
+        RowErrorView: {
+            /** Reason */
+            reason: string;
+            /** Row */
+            row: number;
+        };
         /**
          * SecondFactorRequest
          * @description The code from an authenticator, presented with a sign-in credential.
@@ -2123,6 +2345,20 @@ export interface components {
             return_url: string;
         };
         /**
+         * StartImportRequest
+         * @description The import of a CSV file uploaded under the `task_import` purpose
+         *     (`POST /v1/tasks/imports/files`, then the media routes) and confirmed.
+         *     Its columns are `title` (needed), `notes`, `due_on` (`YYYY-MM-DD`), and
+         *     `assignee_email` (a member of the org), by header name.
+         */
+        StartImportRequest: {
+            /**
+             * File Id
+             * Format: uuid
+             */
+            file_id: string;
+        };
+        /**
          * StorageUsageView
          * @description What the org keeps in the store, counted from its files: the stored ones
          *     per purpose and in total, and the uploads started and not yet confirmed.
@@ -2169,6 +2405,8 @@ export interface components {
         TaskStatus: "open" | "done";
         /** TaskView */
         TaskView: {
+            /** Archived At */
+            archived_at?: string | null;
             /** Assignee Id */
             assignee_id: string | null;
             /**
@@ -4547,6 +4785,224 @@ export interface operations {
             };
         };
     };
+    list_archived_tasks_v1_tasks_archived_get: {
+        parameters: {
+            query?: {
+                scope?: components["schemas"]["TaskScope"];
+                cursor?: string | null;
+                limit?: number;
+            };
+            header?: {
+                authorization?: string | null;
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskPageView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_imports_v1_tasks_imports_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: {
+                authorization?: string | null;
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportPageView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    start_import_v1_tasks_imports_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
+                "idempotency-key"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StartImportRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_import_file_v1_tasks_imports_files_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
+                "idempotency-key"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AddFileRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FileView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_import_v1_tasks_imports__import_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
+            };
+            path: {
+                import_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    resume_import_v1_tasks_imports__import_id__resume_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
+            };
+            path: {
+                import_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_task_v1_tasks__task_id__get: {
         parameters: {
             query?: never;
@@ -4790,6 +5246,45 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["MoveTaskRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    restore_task_v1_tasks__task_id__restore_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
+            };
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RestoreTaskRequest"];
             };
         };
         responses: {

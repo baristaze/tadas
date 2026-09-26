@@ -1,10 +1,12 @@
+from datetime import timedelta
+
 import pytest
 from contracts.event_storage import make_event
 
-from tadas.om.base import new_id
+from tadas.om.base import new_id, utcnow
 from tadas.om.events.impl.manager import EventsManagerImpl, EventsOptions
 from tadas.om.events.storage.impl.memory import EventStorageMemoryImpl
-from tadas.om.exceptions import NotAuthorized
+from tadas.om.exceptions import NotAuthorized, StreamTruncated
 from tadas.om.opcontext import (
     AppContext,
     AppType,
@@ -149,3 +151,61 @@ async def test_the_sweep_drops_a_stream_only_once_its_tenant_has_expired(
     assert await manager.purge_expired(ann) == 2
     assert await manager.get_events(ann, 0, 2) == []
     assert await manager.get_head(ann) == 0
+
+
+def keeping(retention: Retention, days: int | None, batch: int = 1000) -> EventsManagerImpl:
+    kept = None if days is None else timedelta(days=days)
+    options = EventsOptions(retention=kept, purge_batch=batch)
+    return EventsManagerImpl(EventStorageMemoryImpl(), retention, options)
+
+
+async def append_aged(manager: EventsManagerImpl, ctx: OpContext, *days_ago: int) -> None:
+    for days in days_ago:
+        aged = make_event(ctx.org_id, produced_at=utcnow() - timedelta(days=days))
+        await manager.append_event(ctx, aged)
+
+
+async def test_with_no_retention_the_sweep_keeps_every_event(retention: Retention) -> None:
+    """The trim ships off: no floor moves until a release turns it on."""
+    manager = keeping(retention, None)
+    ctx = context(Role.OWNER)
+    await append_aged(manager, ctx, 400, 200)
+    assert await manager.purge_expired(ctx) == 0
+    assert [e.seq for e in await manager.get_events(ctx, 0, 10)] == [1, 2]
+
+
+async def test_the_sweep_trims_one_batch_of_what_is_past_the_retention(
+    retention: Retention,
+) -> None:
+    manager = keeping(retention, 90, batch=2)
+    ctx = context(Role.OWNER)
+    await append_aged(manager, ctx, 100, 100, 100, 1)
+    assert await manager.purge_expired(ctx) == 2, "one batch a pass"
+    assert await manager.purge_expired(ctx) == 1
+    assert await manager.purge_expired(ctx) == 0, "the young event stays"
+    assert [e.seq for e in await manager.get_events(ctx, 3, 10)] == [4]
+    # A tenant past its own retention loses the rest, floor and all.
+    retention.expired = True
+    assert await manager.purge_expired(ctx) == 1
+    assert await manager.get_head(ctx) == 0
+    assert await manager.get_events(ctx, 0, 10) == []
+
+
+async def test_a_read_below_the_floor_is_refused_with_the_head(retention: Retention) -> None:
+    manager = keeping(retention, 90)
+    ctx = context(Role.OWNER)
+    await append_aged(manager, ctx, 100, 100, 1, 1)
+    assert await manager.purge_expired(ctx) == 2
+    for below in (0, 1, -5):
+        with pytest.raises(StreamTruncated) as refused:
+            await manager.get_events(ctx, below, 10)
+        assert (refused.value.floor, refused.value.head) == (2, 4)
+        assert (refused.value.http_status, refused.value.code) == (410, "stream_truncated")
+    # At the floor and above it, the stream reads as it always did.
+    assert [e.seq for e in await manager.get_events(ctx, 2, 10)] == [3, 4]
+    assert [e.seq for e in await manager.get_events(ctx, 3, 10)] == [4]
+    assert await manager.get_events(ctx, 4, 10) == []
+    # The floor is the tenant's own: another tenant reads from 0.
+    other = context()
+    await manager.append_event(other, make_event(other.org_id))
+    assert [e.seq for e in await manager.get_events(other, 0, 10)] == [1]

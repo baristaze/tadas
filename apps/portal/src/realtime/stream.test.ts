@@ -1,6 +1,15 @@
-import type { EventView } from "../api";
+import { ApiError, type EventView } from "../api";
 import { describe, expect, it } from "vitest";
-import { behind, eventEnvelope, FIRST_CATCH_UP_MARGIN_MS, isLastPage, place, readsBegan, tailSince } from "./stream";
+import {
+  behind,
+  eventEnvelope,
+  FIRST_CATCH_UP_MARGIN_MS,
+  isLastPage,
+  place,
+  readsBegan,
+  tailSince,
+  truncatedHead,
+} from "./stream";
 
 describe("place", () => {
   it("takes the first sequenced push as the cursor", () => {
@@ -80,5 +89,15 @@ describe("the first catch-up's window", () => {
     // From the start, the whole stream is in hand.
     expect(tailSince([at(1, "12:00:01")], 0, noon)).toEqual([at(1, "12:00:01")]);
     expect(tailSince([], 2, noon)).toEqual([]);
+  });
+});
+
+describe("truncatedHead", () => {
+  it("names the head only for a refusal that says the stream is trimmed", () => {
+    const gone = new ApiError(410, "stream_truncated", "gone", null, undefined, null, { floor: 7, head: 9 });
+    expect(truncatedHead(gone)).toBe(9);
+    expect(truncatedHead(new ApiError(410, "stream_truncated", "gone", null))).toBeNull();
+    expect(truncatedHead(new ApiError(503, "unavailable", "later", null))).toBeNull();
+    expect(truncatedHead(new Error("offline"))).toBeNull();
   });
 });

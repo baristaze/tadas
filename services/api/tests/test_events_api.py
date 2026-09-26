@@ -1,13 +1,17 @@
 """Every push is also a record: a task write appears on the channel with its
 stream position and again on /v1/events after the last seq a client saw."""
 
+from datetime import timedelta
 from pathlib import Path
+from uuid import UUID
 
 import httpx
 from api_support import OWNER, build_container, run, seed_request
 from starlette.testclient import TestClient
 
+from tadas.om.base import utcnow
 from tadas.services.api.app import create_app
+from tadas.services.api.container import AppContainer
 
 
 async def test_events_are_paged_by_seq(client: httpx.AsyncClient, owner: dict[str, str]) -> None:
@@ -41,6 +45,32 @@ async def test_events_are_paged_by_seq(client: httpx.AsyncClient, owner: dict[st
         await client.get("/v1/events", headers=owner, params={"after_seq": -1})
     ).status_code == 422
     assert (await client.get("/v1/events")).status_code == 401
+
+
+async def test_a_read_below_the_floor_is_gone_and_names_the_head(
+    client: httpx.AsyncClient, owner: dict[str, str], container: AppContainer
+) -> None:
+    """The trim took the bottom of the stream: a client whose cursor is below
+    the floor cannot be caught up, and is told where the stream goes on from."""
+    for title in ("one", "two", "three"):
+        await client.post("/v1/tasks", headers=owner, json={"title": title})
+    org = UUID((await client.get("/v1/me", headers=owner)).json()["org"]["id"])
+    events = container.storage.get_event_storage()
+    assert await events.trim(org, utcnow() + timedelta(seconds=1), 2) == 2
+
+    for below in (0, 1):
+        gone = await client.get("/v1/events", headers=owner, params={"after_seq": below})
+        assert gone.status_code == 410, gone.text
+        error = gone.json()["error"]
+        assert error["code"] == "stream_truncated"
+        assert error["stream"] == {"floor": 2, "head": 3}
+        assert "plan_limit" not in error
+        assert error["request_id"] == gone.headers["x-request-id"]
+
+    at_floor = await client.get("/v1/events", headers=owner, params={"after_seq": 2})
+    assert at_floor.status_code == 200 and [e["seq"] for e in at_floor.json()] == [3]
+    above = await client.get("/v1/events", headers=owner, params={"after_seq": 3})
+    assert above.status_code == 200 and above.json() == []
 
 
 def test_a_push_carries_the_stream_position(tmp_path: Path) -> None:

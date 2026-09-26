@@ -4,7 +4,9 @@ is fetched, since a push is a hint and the record is the truth. A deleted
 task cannot be fetched, so the listener remembers every task it has seen.
 A read that fails is that change's failure, not the stream's: it is told on
 stderr, the change is skipped, and the task's next change shows its state.
-Only a dead credential (401) ends the listener."""
+Only a dead credential (401) ends the listener. When the stream is trimmed
+past where the listener stood, the changes between are not told: stderr says
+so, the listener reads every task again, and goes on from the stream's head."""
 
 import sys
 from collections.abc import AsyncIterable, Awaitable, Callable
@@ -21,15 +23,17 @@ from tadas.client.realtime import Channel, State
 from tadas.client.types import TaskScope, TaskStatus, TaskView
 
 Changes = AsyncIterable[EntityChanged]
-OpenChannel = Callable[[ApiClient, Callable[[State], None], Callable[[], Awaitable[None]]], Changes]
+ReadState = Callable[[], Awaitable[None]]
+OpenChannel = Callable[[ApiClient, Callable[[State], None], ReadState, ReadState], Changes]
 
 
 def open_channel(
     client: ApiClient,
     on_state: Callable[[State], None],
-    on_first_open: Callable[[], Awaitable[None]],
+    on_first_open: ReadState,
+    on_resync: ReadState,
 ) -> Changes:
-    return Channel(client, on_state=on_state, on_first_open=on_first_open)
+    return Channel(client, on_state=on_state, on_first_open=on_first_open, on_resync=on_resync)
 
 
 ReadFailure = (ApiError, httpx.TransportError)
@@ -103,6 +107,14 @@ async def listen(
     async def remember_every_task() -> None:
         known.update(await known_tasks(client))
 
+    async def read_again() -> None:
+        # What the listener remembers is kept: a task deleted in the lost
+        # stretch still has the title a later line may need.
+        print(
+            "some changes are gone from the stream; reading every task again", file=err, flush=True
+        )
+        await remember_every_task()
+
     scope = "my tasks" if mine else "the team's tasks"
     print(f"listening as {me.user.display_name} at {me.org.name}: {scope}", file=out, flush=True)
 
@@ -116,7 +128,7 @@ async def listen(
             print("connected again; anything missed is replayed", file=err, flush=True)
         last = state
 
-    async for change in channel(client, on_state, remember_every_task):
+    async for change in channel(client, on_state, remember_every_task, read_again):
         if change.entity != "task":
             continue
         before = known.get(change.target_id)

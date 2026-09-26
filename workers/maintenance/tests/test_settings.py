@@ -15,7 +15,7 @@ from pydantic import ValidationError
 
 from tadas.infra.impl.local import InfraLocalImpl
 from tadas.om.storage.impl.memory import StorageMemoryImpl
-from tadas.workers.maintenance.container import WorkerContainer
+from tadas.workers.maintenance.container import WorkerContainer, events_options
 from tadas.workers.maintenance.main import loop_options
 from tadas.workers.maintenance.settings import MaintenanceSettings
 
@@ -45,6 +45,7 @@ LOCAL_DEFAULT_SERVES_THE_CLOUD = {
     "database_statement_timeout_seconds_activity": "one pool for every role until a role moves out",
     "database_statement_timeout_seconds_queue": "one pool for every role until a role moves out",
     "database_statement_timeout_seconds_admin": "one pool for every role until a role moves out",
+    "tasks_archive_after_days": "the product's choice, the same in every environment",
     "buckets_root": "the local buckets backend only",
     "s3_endpoint_url": "the hosted endpoint; only MinIO needs one",
     "s3_presign_endpoint_url": "the hosted endpoint is the browser's too; only MinIO needs one",
@@ -87,6 +88,7 @@ LOCAL_DEFAULT_SERVES_THE_CLOUD = {
     "slack_retention_days": "one retention everywhere",
     "slack_timeout_seconds": "the local default is the tuning",
     "slack_inbound_visibility_seconds": "the local default is the tuning",
+    "event_retention_days": "one retention everywhere, set in code (ADR 0040)",
 }
 
 
@@ -236,3 +238,13 @@ def test_the_worker_hands_each_retention_to_its_manager(tmp_path: Path) -> None:
     options = loop_options(settings)
     assert (options.purge_batch, options.sweep_budget) == (7, timedelta(seconds=20))
     assert options.outbox_retention == timedelta(days=8)
+
+
+def test_the_event_retention_is_off_until_it_is_set() -> None:
+    """0 keeps every event: the sweep never moves a floor (ADR 0040)."""
+    base = {"_env_file": None, "environment": "test"}
+    assert events_options(MaintenanceSettings.model_validate(base)).retention is None
+    kept = MaintenanceSettings.model_validate({**base, "event_retention_days": 90})
+    assert events_options(kept).retention == timedelta(days=90)
+    with pytest.raises(ValidationError):
+        MaintenanceSettings.model_validate({**base, "event_retention_days": -1})

@@ -99,11 +99,13 @@ def sweeping(
     purges: dict[str, PurgeStep],
     options: LoopOptions,
     outbox: OutboxRelayInterface | None = None,
+    chores: dict[str, PurgeStep] | None = None,
 ) -> WorkerLoop:
     return WorkerLoop(
         work=work,
         outbox=outbox or quiet_outbox(),
         purges=purges,
+        chores=chores,
         handlers={},
         topics=container.infra.get_topics(),
         liveness=container.infra.get_cache(CacheScope.WORKER_LIVENESS),
@@ -304,3 +306,23 @@ async def test_a_pass_says_how_long_it_took_on_one_line(
     assert line["sweep"]["tenants"] == 1 and line["sweep"]["of"] == 3
     assert line["sweep"]["finished"] is False
     assert isinstance(line["sweep"]["duration_ms"], int)
+
+
+async def test_a_backlog_spends_no_budget_a_chore_needs(tmp_path: Path) -> None:
+    """With no budget left and a purge whose batch keeps coming back full,
+    every tenant a pass takes still runs its chores (the day's cleanup
+    opening among them), once, before any second round of purges."""
+    container = build_container(tmp_path)
+    contexts = service_contexts(2)
+    calls: list[tuple[str, UUID]] = []
+    loop = sweeping(
+        container,
+        listed(contexts),
+        {"backlog": recording(calls, "backlog", (2,))},
+        fast_options(purge_batch=2, sweep_budget=timedelta(0)),
+        chores={"cleanup": recording(calls, "cleanup")},
+    )
+    for _ in range(len(contexts)):
+        await loop._sweep_once()  # pyright: ignore[reportPrivateUsage]
+    ids = sorted(ctx.org_id for ctx in contexts)
+    assert calls == [(name, org_id) for org_id in ids for name in ("backlog", "cleanup")]

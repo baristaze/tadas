@@ -132,6 +132,19 @@ describe("transport client deadline", () => {
     expect(failure).toBeInstanceOf(ApiError);
     expect(failure).toMatchObject({ status: 402, code: "plan_limit_reached", requestId: "req_2", planLimit });
   });
+
+  it("carries where a trimmed stream goes on from", async () => {
+    const stream = { floor: 7, head: 9 };
+    const fetchImpl: typeof fetch = () =>
+      Promise.resolve(
+        jsonResponse(410, {
+          error: { code: "stream_truncated", message: "gone", request_id: "req_3", stream },
+        }),
+      );
+    const failure = await client({ fetchImpl }).get("/v1/events?after_seq=5").catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(ApiError);
+    expect(failure).toMatchObject({ status: 410, code: "stream_truncated", stream, planLimit: null });
+  });
 });
 
 describe("transport client response handling", () => {

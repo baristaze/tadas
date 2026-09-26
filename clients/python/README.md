@@ -15,7 +15,7 @@ else in Python calls `/v1/*`.
   system's trust store. Request bodies are built by the operation methods
   from keyword arguments; the API validates them. A file's bytes go to
   the object store and come from it through the URL the API signed
-  (`attach`, `download`), on a plain `httpx` client with the same
+  (`attach`, `import_tasks`, `download`), on a plain `httpx` client with the same
   timeout and nothing of ours on it, since the form or the link is the
   credential; where the store cannot sign, they go through the API's
   content route instead.
@@ -42,6 +42,9 @@ else in Python calls `/v1/*`.
   each wait is jitter, because a socket drops for a shared reason: a bare
   curve would bring every listener back at the same instant. `async for
   change in Channel(client)` yields every change once, in stream order.
+  A replay refused as `stream_truncated` runs `on_resync`, where that
+  consumer reads its state again, and the cursor moves to the head the
+  refusal names.
   A consumer that keeps its own copy of the state reads it in
   `on_first_open`, which runs once after the first hello and before any
   change, so nothing committed after that read is missed.

@@ -16,9 +16,12 @@ from sqlalchemy import (
     tuple_,
     update,
 )
+from sqlalchemy.dialects.postgresql import insert
 
 from tadas.om.base import EMPTY_UUID
 from tadas.om.exceptions import PreconditionFailed, TenantMismatch
+from tadas.om.orchestrations.storage.impl.postgres import land_step
+from tadas.om.orchestrations.types.orchestration import Step
 from tadas.om.outbox.storage.tables.outbox_rows import OutboxRows
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.storage.impl.pg_base import PgStorageBase, delete_batch, deleted
@@ -32,6 +35,13 @@ from tadas.om.tasks.types.task import Task, TaskScope, TaskStatus
 
 def _live(org_id: UUID, status: TaskStatus) -> ColumnElement[bool]:
     return and_(Tasks.org_id == org_id, Tasks.status == status.value, Tasks.deleted_at.is_(None))
+
+
+def _archivable(org_id: UUID, before: datetime) -> ColumnElement[bool]:
+    """Mirrors tasks.rules.is_archivable in SQL."""
+    return and_(
+        _live(org_id, TaskStatus.DONE), Tasks.archived_at.is_(None), Tasks.updated_at < before
+    )
 
 
 def _visible(criterion: TaskFilter) -> ColumnElement[bool]:
@@ -103,13 +113,121 @@ class TasksStoragePostgresImpl(PgStorageBase, TasksStorageInterface):
     async def read_done_tasks(
         self, org_id: UUID, criterion: TaskFilter, before: TaskCursor | None, limit: int
     ) -> list[Task]:
-        stmt = select(Tasks).where(_live(org_id, TaskStatus.DONE), _visible(criterion))
+        return await self._done(org_id, criterion, before, limit, archived=False)
+
+    async def read_archived_tasks(
+        self, org_id: UUID, criterion: TaskFilter, before: TaskCursor | None, limit: int
+    ) -> list[Task]:
+        return await self._done(org_id, criterion, before, limit, archived=True)
+
+    async def _done(
+        self,
+        org_id: UUID,
+        criterion: TaskFilter,
+        before: TaskCursor | None,
+        limit: int,
+        *,
+        archived: bool,
+    ) -> list[Task]:
+        shelf = Tasks.archived_at.is_not(None) if archived else Tasks.archived_at.is_(None)
+        stmt = select(Tasks).where(_live(org_id, TaskStatus.DONE), shelf, _visible(criterion))
         if before is not None:
             stmt = stmt.where(_before(before))
         stmt = stmt.order_by(Tasks.updated_at.desc(), Tasks.id.desc()).limit(limit)
         async with self._session_for(stmt, org_id=org_id) as session:
             result = await session.execute(stmt)
             return [to_model(row, Task) for row in result.scalars()]
+
+    async def read_last_place(self, org_id: UUID) -> Place | None:
+        stmt = (
+            select(Tasks.position, Tasks.id)
+            .where(_live(org_id, TaskStatus.OPEN))
+            .order_by(Tasks.position.desc(), Tasks.id.desc())
+            .limit(1)
+        )
+        async with self._session_for(stmt, org_id=org_id) as session:
+            found = (await session.execute(stmt)).one_or_none()
+            return None if found is None else (found.position, found.id)
+
+    async def read_archivable(self, org_id: UUID, before: datetime, limit: int) -> list[UUID]:
+        stmt = (
+            select(Tasks.id)
+            .where(_archivable(org_id, before))
+            .order_by(Tasks.updated_at, Tasks.id)
+            .limit(limit)
+        )
+        async with self._session_for(stmt, org_id=org_id) as session:
+            return list((await session.execute(stmt)).scalars())
+
+    async def create_tasks_in_step(
+        self,
+        org_id: UUID,
+        tasks: Sequence[tuple[Task, tuple[OutboxRow, ...]]],
+        step: Step,
+        step_rows: tuple[OutboxRow, ...],
+    ) -> tuple[bool, ...]:
+        # One transaction: the tasks whose id is not written yet, the rows
+        # that announce them, the record's compare-and-set, and its rows. A
+        # record another holder moved rolls all of it back.
+        async with self._session_for(Tasks, org_id=org_id) as session:
+            written: set[UUID] = set()
+            if tasks:
+                stmt = (
+                    insert(Tasks)
+                    .values([{"org_id": org_id, **to_values(task, Tasks)} for task, _ in tasks])
+                    .on_conflict_do_nothing(index_elements=["id"])
+                    .returning(Tasks.id)
+                )
+                written = set((await session.execute(stmt)).scalars())
+            for task, outbox_rows in tasks:
+                if task.id in written:
+                    for outbox_row in outbox_rows:
+                        session.add(to_row(outbox_row, OutboxRows, org_id=org_id))
+            await land_step(session, org_id, step, len(written))
+            for outbox_row in step_rows:
+                session.add(to_row(outbox_row, OutboxRows, org_id=org_id))
+            await session.commit()
+            return tuple(task.id in written for task, _ in tasks)
+
+    async def update_archived_in_step(
+        self,
+        org_id: UUID,
+        candidates: Sequence[tuple[UUID, tuple[OutboxRow, ...]]],
+        before: datetime,
+        archived_at: datetime,
+        actor: UUID,
+        step: Step,
+        step_rows: tuple[OutboxRow, ...],
+    ) -> tuple[bool, ...]:
+        # The condition is the statement's: a candidate reopened, edited, or
+        # deleted since it was read no longer matches it and is left alone.
+        async with self._session_for(Tasks, org_id=org_id) as session:
+            archived: set[UUID] = set()
+            if candidates:
+                stmt = (
+                    update(Tasks)
+                    .where(
+                        Tasks.id.in_([task_id for task_id, _ in candidates]),
+                        _archivable(org_id, before),
+                    )
+                    .values(
+                        archived_at=archived_at,
+                        updated_at=archived_at,
+                        updated_by=actor,
+                        version=Tasks.version + 1,
+                    )
+                    .returning(Tasks.id)
+                )
+                archived = set((await session.execute(stmt)).scalars())
+            for task_id, outbox_rows in candidates:
+                if task_id in archived:
+                    for outbox_row in outbox_rows:
+                        session.add(to_row(outbox_row, OutboxRows, org_id=org_id))
+            await land_step(session, org_id, step, len(archived))
+            for outbox_row in step_rows:
+                session.add(to_row(outbox_row, OutboxRows, org_id=org_id))
+            await session.commit()
+            return tuple(task_id in archived for task_id, _ in candidates)
 
     async def read_open_places(
         self, org_id: UUID, exclude: UUID | None, after: Place | None, limit: int

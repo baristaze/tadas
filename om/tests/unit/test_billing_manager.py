@@ -44,7 +44,7 @@ from tadas.om.storage.impl.memory import StorageMemoryImpl
 from tadas.om.tasks.types.task import Task, TaskStatus
 from tadas.om.tenancy.impl.manager import TenancyManagerImpl, TenancyOptions
 from tadas.om.tenancy.impl.operator import TenancyOperatorManagerImpl, TenancyOperatorOptions
-from tadas.om.work.types.work_item import WorkKind
+from tadas.om.work.types.work_item import WorkItem, WorkKind
 
 APP = AppContext(type=AppType.PORTAL, version="portal@test")
 SUCCESS, CANCEL = "http://portal.test/billing?done", "http://portal.test/billing?cancelled"
@@ -501,6 +501,39 @@ async def test_an_operator_grants_a_plan_and_takes_it_back(world: World, tmp_pat
     assert (await plane.billing.get_billing(reader, ctx.org_id)).plan is Plan.MAX
     taken = await plane.billing.comp_plan(writer, ctx.org_id, None)
     assert taken.plan is Plan.FREE
+
+
+async def wake_ups(world: World) -> list[tuple[UUID, WorkItem]]:
+    """Every WAKE_PARKED item a billing write queued, claimed off the queue."""
+    found: list[tuple[UUID, WorkItem]] = []
+    while claimed := await world.storage.get_work_storage().claim_next(
+        "default", [WorkKind.WAKE_PARKED], "w", timedelta(seconds=30)
+    ):
+        found.append(claimed)
+    return found
+
+
+async def test_a_plan_that_rises_asks_to_wake_what_parked_on_its_bound(
+    world: World, tmp_path: Path
+) -> None:
+    """A paid plan, and an operator's grant, each land the wake-up in the
+    account's commit; a grant that lowers the plan, and a copy of a delivery
+    already applied, ask for nothing."""
+    ctx = await world.org("acme")
+    await world.buy(ctx, Plan.PRO)
+    [(org_id, paid)] = await wake_ups(world)
+    assert (org_id, paid.target_id, paid.payload["reason"]) == (
+        ctx.org_id,
+        ctx.org_id,
+        "plan_limit",
+    )
+    plane = Plane(world, tmp_path)
+    writer = await plane.admit(OperatorRole.WRITE, "root@example.test")
+    await plane.billing.comp_plan(writer, ctx.org_id, Plan.MAX)
+    [(_, granted)] = await wake_ups(world)
+    assert granted.created_by == writer.identity_id
+    await plane.billing.comp_plan(writer, ctx.org_id, None)
+    assert await wake_ups(world) == []
 
 
 async def test_an_operator_adding_a_member_past_the_seats_is_refused(

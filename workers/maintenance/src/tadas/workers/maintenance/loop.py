@@ -3,8 +3,9 @@ on the lane while a slot is free, run each item as a task that names the
 request that caused the work, raises a span linked to that request's trace,
 renews its lease and cancels itself when the lease is lost or renewal keeps
 failing, beat liveness in memory and publish it to the cache as best
-effort, sweep on a timer (stale leases and every namespace's purge per tenant, then
-the outbox and done outbox rows, within a time budget), and drain first on stop."""
+effort, sweep on a timer (stale leases, every namespace's purge, and the
+standing chores per tenant, then the outbox and done outbox rows, within a
+time budget), and drain first on stop."""
 
 import asyncio
 import contextlib
@@ -47,6 +48,10 @@ PurgeStep = Callable[[OpContext], Awaitable[int]]
 retention, a batch per statement; it returns how many rows went, and a count
 of a whole batch or more says there may be more."""
 
+ChoreStep = Callable[[OpContext], Awaitable[object]]
+"""A standing chore per tenant that is not a purge: opening the next period
+of a record kept per period (`TasksManagerInterface.open_cleanup`)."""
+
 
 class LoopOptions(Platform):
     worker_id: str
@@ -79,6 +84,7 @@ class WorkerLoop:
         outbox: OutboxRelayInterface,
         purges: Mapping[str, PurgeStep],
         handlers: Mapping[WorkKind, WorkHandlerInterface],
+        chores: Mapping[str, ChoreStep] | None = None,
         topics: TopicsInterface,
         liveness: CacheInterface,
         options: LoopOptions,
@@ -86,6 +92,7 @@ class WorkerLoop:
         self._work = work
         self._outbox = outbox
         self._purges = purges
+        self._chores = dict(chores or {})
         self._handlers = handlers
         self._topics = topics
         self._liveness = liveness
@@ -471,7 +478,7 @@ class WorkerLoop:
         return ordered[at:] + ordered[:at]
 
     async def _sweep_tenant(self, ctx: OpContext, deadline: float) -> None:
-        """Every step of one tenant once, then the steps whose batch came back
+        """Every step and every chore of one tenant once, then the steps whose batch came back
         full, round after round, while the budget lasts. A deleted tenant for
         which nothing was left anywhere is marked purged, and the sweep leaves
         it out from then on."""
@@ -487,6 +494,14 @@ class WorkerLoop:
             settled = settled and purged == 0
             if purged is not None and purged >= self._options.purge_batch:
                 full.append((name, purge))
+        # The standing chores run once whenever the tenant does, before any
+        # second round of purges, so no budget spent on a backlog skips them.
+        for name, chore in self._chores.items():
+            try:
+                await chore(ctx)
+            except Exception:
+                settled = False
+                log.exception("sweep: %s failed for tenant %s", name, ctx.org_id)
         clock = asyncio.get_running_loop().time
         while full and clock() < deadline:
             again, full = full, []

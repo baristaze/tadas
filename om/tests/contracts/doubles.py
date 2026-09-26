@@ -18,6 +18,8 @@ from tadas.om.opcontext import (
     Role,
     build_context,
 )
+from tadas.om.orchestrations.impl.manager import OrchestrationsManagerImpl, OrchestrationsOptions
+from tadas.om.orchestrations.storage.impl.memory import OrchestrationsStorageMemoryImpl
 from tadas.om.outbox.impl.relay import OutboxRelayImpl
 from tadas.om.outbox.storage.impl.memory import OutboxStorageMemoryImpl
 from tadas.om.slack import SlackManagerInterface
@@ -78,6 +80,14 @@ def media_of(
     return MediaManagerImpl(
         MediaStorageMemoryImpl(outbox), infra.get_buckets(), members, relay, MediaOptions()
     )
+
+
+def orchestrations_of(
+    storage: OrchestrationsStorageMemoryImpl, members: Members, relay: OutboxRelayImpl
+) -> OrchestrationsManagerImpl:
+    """The orchestrations manager a tasks manager composes, over the records
+    the tasks storage lands its steps in."""
+    return OrchestrationsManagerImpl(storage, members, relay, OrchestrationsOptions())
 
 
 class NoSlack(SlackManagerInterface):

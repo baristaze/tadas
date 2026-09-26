@@ -15,6 +15,7 @@ from tadas.om.billing.rules import (
     limits_of,
     paid_plan,
     payment_failed,
+    plan_rose,
     seats_metered,
     should_mirror,
 )
@@ -38,14 +39,44 @@ from tadas.om.opcontext import (
     RequestContext,
     Role,
 )
+from tadas.om.orchestrations.types.orchestration import ParkReason
 from tadas.om.outbox import OutboxRelayInterface
 from tadas.om.outbox.types.row import OutboxRow, outbox_row
 from tadas.om.tenancy import TenancyManagerInterface
+from tadas.om.work.types.work_item import WakeParkedPayload, WorkKind, work_row_kind
 
 log = logging.getLogger(__name__)
 
 ACCOUNT_UPDATED = "billing.account.updated"
 ACCOUNT_CREATED = "billing.account.created"
+
+
+WAKE_KIND = work_row_kind(WorkKind.WAKE_PARKED)
+
+
+def lifts(before: BillingAccount | None, after: BillingAccount, now: datetime) -> bool:
+    """Whether an account write lifted the org's plan: the event that wakes
+    the org's records parked on a plan's bound (an import stopped at the
+    plan's active tasks)."""
+    return plan_rose(effective_plan(before, now), effective_plan(after, now))
+
+
+def wake_payload() -> dict[str, object]:
+    return WakeParkedPayload(reason=ParkReason.PLAN_LIMIT).model_dump(mode="json")
+
+
+def wake_rows(
+    ctx: ProvenanceScope,
+    org_id: UUID,
+    before: BillingAccount | None,
+    after: BillingAccount,
+    now: datetime,
+) -> tuple[OutboxRow, ...]:
+    """The work row an account write lands when it lifted the plan. It rides
+    the account's commit, so a plan change and its wake-up are one fact."""
+    if not lifts(before, after, now):
+        return ()
+    return (outbox_row(ctx, WAKE_KIND, org_id, wake_payload()),)
 
 
 class BillingOptions(Platform):
@@ -230,7 +261,11 @@ class BillingManagerImpl(BillingManagerInterface):
             subscription = await self._payments.read_subscription(delivery.subscription_id)
             if subscription is not None and self._follows(account, subscription):
                 updated = mirrored(account, subscription, ctx.user_id, now)
-        rows = self._rows(ctx, updated) if updated is not account else ()
+        rows = (
+            (*self._rows(ctx, updated), *wake_rows(ctx, ctx.org_id, account, updated, now))
+            if updated is not account
+            else ()
+        )
         applied = await self._storage.write_account(ctx.org_id, updated, rows, mark)
         if applied:
             for row in rows:
@@ -292,7 +327,10 @@ class BillingManagerImpl(BillingManagerInterface):
                 updated_by=ctx.user_id,
                 comped_plan=grant,
             )
-            rows = (outbox_row(ctx, ACCOUNT_CREATED, created.id, {}),)
+            rows = (
+                outbox_row(ctx, ACCOUNT_CREATED, created.id, {}),
+                *wake_rows(ctx, ctx.org_id, None, created, now),
+            )
             if await self._storage.create_account(ctx.org_id, created, rows):
                 for row in rows:
                     await self._relay.relay(ctx.org_id, row)
@@ -303,7 +341,7 @@ class BillingManagerImpl(BillingManagerInterface):
         updated = account.model_copy(
             update={"comped_plan": grant, "updated_at": now, "updated_by": ctx.user_id}
         )
-        await self._write(ctx, updated)
+        await self._write(ctx, updated, wake_rows(ctx, ctx.org_id, account, updated, now))
         return billing_of(updated, now)
 
     async def purge_deleted(self, ctx: OpContext) -> int:
@@ -353,8 +391,10 @@ class BillingManagerImpl(BillingManagerInterface):
     def _rows(ctx: ProvenanceScope, account: BillingAccount) -> tuple[OutboxRow, ...]:
         return (outbox_row(ctx, ACCOUNT_UPDATED, account.id, {}),)
 
-    async def _write(self, ctx: OpContext, account: BillingAccount) -> None:
-        rows = self._rows(ctx, account)
+    async def _write(
+        self, ctx: OpContext, account: BillingAccount, work: tuple[OutboxRow, ...] = ()
+    ) -> None:
+        rows = (*self._rows(ctx, account), *work)
         await self._storage.write_account(ctx.org_id, account, rows)
         for row in rows:
             await self._relay.relay(ctx.org_id, row)

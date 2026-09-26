@@ -29,6 +29,19 @@ Zustand, one realtime channel.
   without React. Where the store cannot take a form, the bytes go
   through the API instead. The settings page shows the org's storage
   used.
+- An import is `src/features/imports/`: the tasks page's Import action (a
+  button of its own beside the list switch; the quick-add form stays one
+  text box) opens a small dialog that picks a CSV file. The file goes up
+  the way an attachment does (`importFlow.ts`, its effects handed in), and
+  the import starts naming it. The rows are read in the worker; the page
+  follows the org's newest import by what the channel pushes
+  (`orchestrations.orchestration.updated`, whose entity keys
+  `queries/imports.ts`), with no polling: a progress line (created N of M,
+  skipped K), and when the import parks on the plan's active tasks, the
+  one upgrade dialog and Resume. An import that ended shows what it did
+  until dismissed. Under the done list, "Show archived" opens the done
+  tasks the daily cleanup archived (`ArchivedTasks.tsx`), each with
+  Restore.
 - The app's one retry is the transport client's, and no other layer has
   one: TanStack Query's is off in `src/app/queryClient.ts`, so a failing
   API sees these attempts and no multiple of them. Only a failure that
@@ -64,7 +77,9 @@ Zustand, one realtime channel.
 - `src/realtime/RealtimeProvider.tsx` owns the one socket; the loop
   itself (ticket, reconnect with backoff, the stream cursor and its
   replay) is `channel.ts`, without React, run in its test over a fake
-  socket and fake timers. The reconnect delay doubles to a cap and half
+  socket and fake timers. A replay refused as `stream_truncated` (the
+  stream is trimmed past the cursor) refreshes every query once and moves
+  the cursor to the head the refusal names. The reconnect delay doubles to a cap and half
   of each wait is jitter, because a socket drops for a shared reason: a
   bare curve would bring every tab back at the same instant. A socket
   counts as connected once the hello frame arrives, so a server that

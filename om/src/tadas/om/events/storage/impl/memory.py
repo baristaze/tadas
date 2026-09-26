@@ -10,8 +10,10 @@ class EventStorageMemoryImpl(MemoryStorageBase, EventStorageInterface):
     def __init__(self) -> None:
         super().__init__()
         self._events: MemoryTable[Event] = {}
-        # The twin of the cursor row: the last seq assigned, per tenant.
+        # The twin of the cursor row: the last seq assigned, per tenant, and
+        # the highest seq the trim removed.
         self._cursors: dict[UUID, int] = {}
+        self._floors: dict[UUID, int] = {}
 
     async def append_event(self, org_id: UUID, event: Event) -> Event:
         async with self._lock:
@@ -41,8 +43,32 @@ class EventStorageMemoryImpl(MemoryStorageBase, EventStorageInterface):
             for event_id in gone:
                 del self._events[event_id]
             if len(gone) < limit:
+                # The stream is empty now, so its counter and floor go too.
                 self._cursors.pop(org_id, None)
+                self._floors.pop(org_id, None)
             return len(gone)
+
+    async def trim(self, org_id: UUID, before: datetime, limit: int) -> int:
+        async with self._lock:
+            floor = self._floors.get(org_id, 0)
+            bottom = sorted(
+                (e for e in self._rows(self._events, org_id) if e.seq > floor),
+                key=lambda e: e.seq,
+            )[:limit]
+            run: list[Event] = []
+            for event in bottom:
+                if event.produced_at >= before:
+                    break
+                run.append(event)
+            if not run:
+                return 0
+            for event in run:
+                del self._events[event.id]
+            self._floors[org_id] = run[-1].seq
+            return len(run)
+
+    async def read_floor(self, org_id: UUID) -> int:
+        return self._floors.get(org_id, 0)
 
     async def count_since(self, since: datetime) -> int:
         return sum(1 for event in self._every(self._events) if event.produced_at >= since)

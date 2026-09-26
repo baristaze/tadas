@@ -2,7 +2,7 @@
 // saw, and how a replayed record becomes the envelope it would have been.
 // The socket is a hint; the stream in storage is the truth, so a gap is
 // closed by fetching after the cursor rather than by trusting the frame.
-import type { EventView } from "../api";
+import { ApiError, type EventView } from "../api";
 import type { EventEnvelope } from "./envelopes";
 
 // The last contiguous seq the client applied; null until the first push.
@@ -25,6 +25,14 @@ export function place(cursor: Cursor, seq: number): Placement {
 export function behind(cursor: Cursor, head: number): number | null {
   if (cursor === null || head <= cursor) return null;
   return cursor;
+}
+
+// The head to go on from when a replay was refused because the stream is
+// trimmed past the cursor; null for any other failure. No page can close that
+// gap, so the client reads afresh what it shows and resumes from the head.
+export function truncatedHead(error: unknown): number | null {
+  if (!(error instanceof ApiError) || error.code !== "stream_truncated") return null;
+  return error.stream?.head ?? null;
 }
 
 export function eventEnvelope(event: EventView): EventEnvelope {

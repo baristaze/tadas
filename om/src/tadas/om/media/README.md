@@ -14,7 +14,9 @@ are the first.
   it.
 - **Purpose**: why the file is there. A *task attachment* belongs to
   one task, which the file names. A *voice dictation* is a recording
-  that belongs to nothing yet.
+  that belongs to nothing yet. A *task import* is a CSV file of tasks
+  to import; it belongs to nothing, and the import that reads it names
+  it.
 - **Status**: *pending* while the upload is under way, *stored* once
   the file has arrived in the store.
 - **Storage used**: what the org keeps, counted from its files: how
@@ -52,7 +54,8 @@ are the first.
   of those, the name's extension must fit the type, and the name is a
   name, not a path. A task attachment (an image, a document, a sound, or a video) is at
   most 100 MB; a voice
-  dictation at most 10 MB. The numbers are illustrative.
+  dictation at most 10 MB; a task import, a `.csv` file of type
+  `text/csv`, at most 1 MB. The numbers are illustrative.
 - **The store holds the upload to its bounds.** The form names the type
   and the size, and the store refuses a file of another type or a
   larger one. The recorded size is the one the upload named, which is

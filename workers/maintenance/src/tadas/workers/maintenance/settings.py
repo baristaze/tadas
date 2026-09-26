@@ -60,6 +60,10 @@ class MaintenanceSettings(StorageSettings, InfraSettings, IntegrationsSettings):
     media_pending_expiry_hours: int = Field(default=24, gt=0)
     billing_delivery_retention_days: int = Field(default=30, gt=0)
     slack_retention_days: int = Field(default=30, gt=0)
+    # How many days a living org's events are kept; the sweep trims what is
+    # older, a batch per org per call. 0 keeps every event and never moves a
+    # floor (ADR 0040).
+    event_retention_days: int = Field(default=0, ge=0)
 
     # Where people open Tadas in this environment: a list answered in Slack
     # links to the task list there. The local stack's portal by default; a deployed
@@ -68,3 +72,6 @@ class MaintenanceSettings(StorageSettings, InfraSettings, IntegrationsSettings):
     # How long a received Slack delivery stays hidden from other consumers
     # while one handles it; one that is not deleted by then comes back.
     slack_inbound_visibility_seconds: int = Field(default=60, gt=0)
+    # A done task unchanged this many days is archived by the daily cleanup.
+    # Illustrative, like the plans' numbers.
+    tasks_archive_after_days: int = Field(default=90, gt=0)

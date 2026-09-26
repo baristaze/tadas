@@ -7,7 +7,7 @@ from pathlib import Path
 from uuid import UUID
 
 import pytest
-from contracts.doubles import Members, context, media_of, no_slack
+from contracts.doubles import Members, context, media_of, no_slack, orchestrations_of
 from contracts.factories import make_org
 from contracts.plans import ON_TEAM
 
@@ -21,6 +21,7 @@ from tadas.om.media.impl.manager import MediaManagerImpl, MediaOptions
 from tadas.om.media.storage.impl.memory import MediaStorageMemoryImpl
 from tadas.om.media.types.file import File, FilePurpose, FileStatus
 from tadas.om.opcontext import OpContext, Role
+from tadas.om.orchestrations.storage.impl.memory import OrchestrationsStorageMemoryImpl
 from tadas.om.outbox.impl.relay import OutboxRelayImpl
 from tadas.om.outbox.storage.impl.memory import OutboxStorageMemoryImpl
 from tadas.om.tasks.impl.manager import TasksManagerImpl, TasksOptions
@@ -72,6 +73,7 @@ def tasks(
         no_slack(),
         TasksOptions(),
         entitlements=ON_TEAM,
+        orchestrations=orchestrations_of(OrchestrationsStorageMemoryImpl(), members, relay),
     )
 
 
@@ -410,6 +412,7 @@ async def test_a_task_delete_stands_when_its_attachments_cannot_follow(
         no_slack(),
         TasksOptions(),
         entitlements=ON_TEAM,
+        orchestrations=orchestrations_of(OrchestrationsStorageMemoryImpl(), members, relay),
     )
     ctx = context(Role.MEMBER)
     task = await tasks.create_task(ctx, make_task(ctx))
@@ -460,6 +463,7 @@ async def test_the_task_purge_deletes_the_attachments_a_failed_detach_left_first
         no_slack(),
         TasksOptions(retention=timedelta(0)),
         entitlements=ON_TEAM,
+        orchestrations=orchestrations_of(OrchestrationsStorageMemoryImpl(), members, relay),
     )
     ctx = context(Role.MEMBER)
     task = await tasks.create_task(ctx, make_task(ctx))

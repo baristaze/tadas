@@ -323,11 +323,43 @@ context on keeps the stage the callee needs.
   its attachments after the task's own commit, in writes of their own,
   since no commit holds two namespaces' rows; a failure there is logged
   and counted (`tasks` / `detach_failed`) and never undoes the delete.
+  The import of tasks from a CSV file and the daily cleanup of old done
+  tasks are kinds of `orchestrations`; the tasks manager steps both
+  (`step_import`, `step_cleanup`) and its storage lands each step's
+  effect with the record's next cursor in one commit
+  (`create_tasks_in_step`, `update_archived_in_step`). An imported row's
+  task takes an id derived from the import and the row, and goes to the
+  bottom of the open list. A task the cleanup archived keeps its status
+  and gains `archived_at`: it leaves the done list, is listed apart
+  (`read_archived_tasks`), and is restored by a compare-and-set
+  (`restore_task`) or by a reopen.
+- `orchestrations`: long-running records, in the `core` role, `org` scope
+  (`Orchestration`: a kind, an input whose shape the kind fixes, a
+  status (`running`, `parked`, `succeeded`, `failed`), a cursor, a
+  total, the rows applied and skipped with the first twenty named, a
+  park reason, a fail reason, a version, and, for a record kept per
+  period, the period), advanced one step per work item of kind
+  `ORCHESTRATION` ([ADR 0039](adr/0039-long-running-work-is-a-record-a-guard-parks-and-a-bound-fails.md)).
+  A step's write is a `Step` another namespace's storage lands in its
+  own transaction beside its effect, a compare-and-set on the version
+  (`orchestrations.storage.impl.postgres.step_statement`, and the
+  memory twin's `StepLandingInterface`), with the record's hint
+  (`orchestrations.orchestration.updated`) and the next step's work row.
+  A guard parks the record in the step's commit (`plan_limit`, the one
+  reason); a plan that rises lands a `WAKE_PARKED` work row in the
+  billing account's commit, whose handler resumes the org's records
+  parked for it, staggered; a person resumes one too. A bound of the
+  input fails it. Any other error is the work queue's retry from the
+  cursor, and the record fails as `defect` on its item's last attempt.
+  The unique key `(org_id, kind, period)` is how a record kept per day
+  opens once: the sweep's chore `open_cleanup` tries every thirty
+  seconds, and only the day's first try inserts. Settled records are
+  purged after thirty days.
 - `media`: the files a tenant keeps, as references and never bytes, in
   the `core` role, `org` scope (`File`: the object key, the original
   name, the extension, the MIME type, the size in bytes, the uploader as
-  `created_by`, a `purpose` enum, `task_attachment` or
-  `voice_dictation`, the subject the purpose names, and a status,
+  `created_by`, a `purpose` enum, `task_attachment`, `voice_dictation`,
+  or `task_import`, the subject the purpose names, and a status,
   `pending` or `stored`). It is horizontal: another namespace composes
   its manager for its own files and media knows nothing of what the
   subject is. An upload is bounded before anything is signed
@@ -576,8 +608,14 @@ context on keeps the stage the callee needs.
   once and consumes no number. An id another tenant owns is refused
   before the number is spent, over both impls, as Postgres rolls the
   number back with the insert it refused, so a write this tenant cannot
-  make never moves its cursor. No update, and one delete: the sweep drops a
-  tenant's whole stream once the deleted tenant is past the retention. An
+  make never moves its cursor. No update, and two deletes. The trim takes
+  the oldest events of a living tenant past the event retention, a
+  bounded batch from the bottom, and moves the cursor row's `floor` to
+  the last of them in the same transaction, so the stream is whole
+  above the floor; `get_events` after a seq below the floor is refused as
+  `StreamTruncated` (410, naming the floor and the head). The sweep also
+  drops a tenant's whole stream once the deleted tenant is past the
+  retention ([ADR 0040](adr/0040-the-event-stream-has-a-floor.md)). An
   event about a user leaves out `email` and `display_name`. The entity events reach the stream through
   the event storage, from the outbox relay; the manager's `append_event` is for
   an audit entry (the work manager's dead letter), requires `WRITE`, and
@@ -1019,7 +1057,12 @@ alone, and neither key may touch what the other's work does not need
   (`TADAS_WORKER_SWEEP_BUDGET_SECONDS`, 20). Past the budget the pass
   takes no new tenant; the next pass starts at the tenant it stopped at,
   so every tenant is reached in turn and every step of a tenant runs
-  whenever the tenant does. The cross-tenant purges run on every pass.
+  whenever the tenant does. Beside the purges, the sweep runs one chore
+  per tenant: it opens the day's cleanup of old done tasks
+  (`open_cleanup`) for an org that has one to do. The chores run once
+  whenever the tenant does, before any second round of purges, so a
+  backlog never spends the budget they need. The cross-tenant purges run
+  on every pass.
   Each pass writes its duration on one line, which an alarm reads.
   Under a tenant whose org row is deleted longer ago than the retention
   it is every row that goes, its open and done tasks among them, since
@@ -1126,7 +1169,10 @@ alone, and neither key may touch what the other's work does not need
   replay pages until the last page, a failed fetch, or a page that moved
   the cursor nowhere (a seq between is not in storage yet), and the
   cursor never moves past a seq that was not applied, so the next push
-  or pong retries from where it stands. The first hello has no cursor
+  or pong retries from where it stands. A replay refused as
+  `stream_truncated` is a resync: every query is refreshed once, and
+  the cursor moves to the head the refusal names
+  ([ADR 0040](adr/0040-the-event-stream-has-a-floor.md)). The first hello has no cursor
   before it: what the page read before the socket subscribed may predate
   a change never pushed. So the client reads the last page of the stream
   and routes the records produced since the page began reading (the

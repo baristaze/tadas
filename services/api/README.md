@@ -50,6 +50,15 @@ change. A name the image does not host refuses the boot.
 - **Tasks.** Open and done lists a page at a time, one task, create,
   edit, move, delete. (`/v1/tasks`, `/v1/tasks/{task_id}`,
   `/v1/tasks/{task_id}/move`)
+- **The archive.** The done tasks the daily cleanup archived, a page at
+  a time, and restoring one to the done list, naming the version read.
+  (`/v1/tasks/archived`, `/v1/tasks/{task_id}/restore`)
+- **Imports.** Starting the upload of a CSV file to import (the bytes and
+  the confirm are the file routes'); starting its import, answered 202
+  while the worker reads it a hundred rows a step; the org's newest
+  imports; one import; resuming one parked on the plan.
+  (`/v1/tasks/imports/files`, `/v1/tasks/imports`,
+  `/v1/tasks/imports/{import_id}`, `/v1/tasks/imports/{import_id}/resume`)
 - **Attachments.** A task's files a page at a time, starting an
   upload of one, removing one. (`/v1/tasks/{task_id}/attachments`,
   `/v1/tasks/{task_id}/attachments/{file_id}`)

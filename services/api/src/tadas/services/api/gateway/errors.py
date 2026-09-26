@@ -12,11 +12,16 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from tadas.infra.exceptions import InfraException
-from tadas.om.exceptions import PlanLimitReached, PlatformException, SignInDelayed
+from tadas.om.exceptions import (
+    PlanLimitReached,
+    PlatformException,
+    SignInDelayed,
+    StreamTruncated,
+)
 from tadas.services.api.gateway.envelope import INTERNAL_ERROR, error_response
 from tadas.services.api.gateway.observability import request_id_of
 from tadas.services.api.gateway.ratelimit import RateLimited
-from tadas.services.api.types.common import PlanLimitDetail
+from tadas.services.api.types.common import PlanLimitDetail, StreamTruncatedDetail
 
 log = logging.getLogger(__name__)
 
@@ -32,8 +37,11 @@ def envelope(
     message: str,
     headers: dict[str, str] | None = None,
     plan_limit: PlanLimitDetail | None = None,
+    stream: StreamTruncatedDetail | None = None,
 ) -> JSONResponse:
-    return error_response(request_id_of(request.scope), status, code, message, headers, plan_limit)
+    return error_response(
+        request_id_of(request.scope), status, code, message, headers, plan_limit, stream
+    )
 
 
 def presented(
@@ -65,7 +73,11 @@ def presented(
         detail = PlanLimitDetail(
             lever=exc.lever, plan=exc.plan, limit=exc.limit, suggested_plan=exc.suggested_plan
         )
-    return envelope(request, exc.http_status, exc.code, exc.message, headers, detail)
+    stream = None
+    if isinstance(exc, StreamTruncated):
+        # The refusal names where the stream goes on from.
+        stream = StreamTruncatedDetail(floor=exc.floor, head=exc.head)
+    return envelope(request, exc.http_status, exc.code, exc.message, headers, detail, stream)
 
 
 def register_error_handlers(app: FastAPI) -> None:

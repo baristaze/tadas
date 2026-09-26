@@ -18,6 +18,8 @@ from tadas.om.idempotency import IdempotencyManagerInterface
 from tadas.om.idempotency.impl.manager import IdempotencyManagerImpl, IdempotencyOptions
 from tadas.om.media import MediaManagerInterface
 from tadas.om.media.impl.manager import MediaManagerImpl, MediaOptions
+from tadas.om.orchestrations import OrchestrationsManagerInterface
+from tadas.om.orchestrations.impl.manager import OrchestrationsManagerImpl, OrchestrationsOptions
 from tadas.om.outbox import OutboxRelayInterface
 from tadas.om.outbox.impl.relay import OutboxRelayImpl
 from tadas.om.slack import SlackManagerInterface
@@ -45,6 +47,7 @@ class Managers:
     outbox: OutboxRelayInterface
     billing: BillingManagerInterface
     billing_operator: BillingOperatorManagerInterface
+    orchestrations: OrchestrationsManagerInterface
 
 
 def build_managers(
@@ -61,6 +64,7 @@ def build_managers(
     billing_options: BillingOptions | None = None,
     slack_options: SlackOptions | None = None,
     work_options: WorkOptions | None = None,
+    orchestrations_options: OrchestrationsOptions | None = None,
 ) -> Managers:
     """`integrations` is the root of the hosted services the managers front:
     the identity provider, which the tenancy manager signs people in and
@@ -70,8 +74,9 @@ def build_managers(
     and every call that would reach one is refused as unavailable.
 
     The options after `integrations` are what the process that sweeps sets
-    on the managers it purges through: each one's retention and batch. None
-    keeps that manager's defaults."""
+    on the managers it purges through: each one's retention and batch, and
+    the tasks manager's age at which the daily cleanup archives a done
+    task. None keeps that manager's defaults."""
     # The relay every core-role manager hands its outbox rows to. It reaches
     # the work manager through the root below, because a row of kind
     # `work.<kind>` is enqueued there: the work manager needs the tenancy
@@ -130,6 +135,12 @@ def build_managers(
         infra.get_secrets(),
         slack_options or SlackOptions(),
     )
+    orchestrations = OrchestrationsManagerImpl(
+        storage.get_orchestrations_storage(),
+        tenancy,
+        outbox,
+        orchestrations_options or OrchestrationsOptions(),
+    )
     tasks = TasksManagerImpl(
         storage.get_tasks_storage(),
         tenancy,
@@ -138,6 +149,7 @@ def build_managers(
         slack,
         tasks_options or TasksOptions(),
         entitlements=billing,
+        orchestrations=orchestrations,
     )
     idempotency = IdempotencyManagerImpl(
         storage.get_idempotency_storage(), idempotency_options or IdempotencyOptions()
@@ -164,5 +176,6 @@ def build_managers(
         billing_operator=BillingOperatorManagerImpl(
             storage.get_billing_storage(), storage.get_tenancy_storage(), outbox
         ),
+        orchestrations=orchestrations,
     )
     return managers

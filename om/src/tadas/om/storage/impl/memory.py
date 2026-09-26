@@ -8,6 +8,8 @@ from tadas.om.idempotency.storage import IdempotencyStorageInterface
 from tadas.om.idempotency.storage.impl.memory import IdempotencyStorageMemoryImpl
 from tadas.om.media.storage import MediaStorageInterface
 from tadas.om.media.storage.impl.memory import MediaStorageMemoryImpl
+from tadas.om.orchestrations.storage import OrchestrationsStorageInterface
+from tadas.om.orchestrations.storage.impl.memory import OrchestrationsStorageMemoryImpl
 from tadas.om.outbox.storage import OutboxStorageInterface
 from tadas.om.outbox.storage.impl.memory import OutboxStorageMemoryImpl
 from tadas.om.slack.storage import SlackStorageInterface
@@ -30,7 +32,9 @@ class StorageMemoryImpl(StorageInterface):
         self._idempotency = IdempotencyStorageMemoryImpl()
         self._tenancy = TenancyStorageMemoryImpl(self._outbox, self._idempotency)
         self._work = WorkStorageMemoryImpl()
-        self._tasks = TasksStorageMemoryImpl(self._outbox)
+        # The records first: a step of one lands beside the tasks it changes.
+        self._orchestrations = OrchestrationsStorageMemoryImpl(self._outbox)
+        self._tasks = TasksStorageMemoryImpl(self._outbox, self._orchestrations)
         self._media = MediaStorageMemoryImpl(self._outbox)
         self._events = EventStorageMemoryImpl()
         self._billing = BillingStorageMemoryImpl(self._outbox)
@@ -62,6 +66,9 @@ class StorageMemoryImpl(StorageInterface):
 
     def get_slack_storage(self) -> SlackStorageInterface:
         return self._slack
+
+    def get_orchestrations_storage(self) -> OrchestrationsStorageInterface:
+        return self._orchestrations
 
     async def healthcheck(self) -> bool:
         return True

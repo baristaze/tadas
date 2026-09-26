@@ -2,8 +2,9 @@
 The outbox relay appends one event per entity write through the event
 storage; an audit producer (the work manager's dead letter) appends through
 this manager under its context, which stamps the provenance. A client
-replays the stream from the last sequence it saw. Append-only: no update,
-and no delete but the one every namespace makes of a tenant past its
+replays the stream from the last sequence it saw. Append-only: no update.
+Two deletes: the trim of a living tenant's oldest events, which moves the
+tenant's floor, and the one every namespace makes of a tenant past its
 retention."""
 
 from abc import ABC, abstractmethod
@@ -29,15 +30,18 @@ class EventsManagerInterface(ABC):
 
     @abstractmethod
     async def get_events(self, ctx: OpContext, after_seq: int, limit: int) -> list[Event]:
-        """The tenant's events after `after_seq`, oldest first."""
+        """The tenant's events after `after_seq`, oldest first. Refused with
+        `StreamTruncated`, which names the floor and the head, when `after_seq`
+        is below the floor: the events after it are no longer all there."""
         ...
 
     @abstractmethod
     async def purge_expired(self, ctx: OpContext) -> int:
-        """The sweep, for one tenant: when the tenant is deleted longer ago than
-        the retention, its whole stream goes, so it keeps its org row as the
-        record and no row of any other kind; otherwise nothing. Returns how
-        many events went."""
+        """The sweep, for one tenant. When the tenant is deleted longer ago than
+        its retention, its whole stream goes, so it keeps its org row as the
+        record and no row of any other kind. Otherwise, with an event retention
+        set, one bounded batch of the oldest events past it goes and the floor
+        moves up to them. Returns how many events went."""
         ...
 
     @abstractmethod
