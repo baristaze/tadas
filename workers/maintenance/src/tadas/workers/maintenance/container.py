@@ -1,5 +1,6 @@
 """The worker boots the same way a service does: settings, storage, infra,
-the integrations (the payment processor and the Slack app), and managers.
+the integrations (the identity provider, the payment processor, and the
+Slack app), and managers.
 The loop holds the container directly."""
 
 import logging
@@ -7,7 +8,14 @@ from datetime import timedelta
 
 from tadas.infra.impl.configured import InfraConfiguredImpl
 from tadas.infra.root import InfraInterface
-from tadas.integrations.impl.configured import absent_integrations, payments_for, slack_for
+from tadas.integrations.identity import IdentityProviderInterface
+from tadas.integrations.identity.twin import IdentityProviderTwinImpl
+from tadas.integrations.impl.configured import (
+    IntegrationsConfiguredImpl,
+    IntegrationsOverImpl,
+    payments_for,
+    slack_for,
+)
 from tadas.integrations.payments import PaymentsInterface
 from tadas.integrations.root import IntegrationsInterface
 from tadas.integrations.slack import SlackInterface
@@ -106,6 +114,10 @@ class WorkerContainer:
     def slack(self) -> SlackInterface:
         return self.integrations.get_slack()
 
+    @property
+    def identity_provider(self) -> IdentityProviderInterface:
+        return self.integrations.get_identity_provider()
+
     @classmethod
     def build(cls, settings: MaintenanceSettings) -> WorkerContainer:
         storage = StoragePostgresImpl(
@@ -114,11 +126,11 @@ class WorkerContainer:
             system_urls=settings.system_role_urls(),
         )
         infra = InfraConfiguredImpl(settings)
-        # The worker signs nobody in; it reads the payment processor and
-        # posts through the Slack app.
-        integrations = absent_integrations(
-            payments_for(settings, settings.environment),
-            slack_for(settings, settings.environment),
+        # The worker signs nobody in. It reads the payment processor, posts
+        # through the Slack app, and deletes a deleted account's person at the
+        # identity provider, so it holds all three, refused as the API's are.
+        integrations = IntegrationsConfiguredImpl(
+            settings, settings.environment, settings.is_cloud_environment
         )
         return cls(
             settings,
@@ -146,7 +158,8 @@ class WorkerContainer:
                 "slack_backend": "twin",
             }
         )
-        integrations = integrations or absent_integrations(
+        integrations = integrations or IntegrationsOverImpl(
+            IdentityProviderTwinImpl(),
             payments_for(settings, settings.environment),
             slack or slack_for(settings, settings.environment),
         )

@@ -452,10 +452,16 @@ module "maintenance" {
   metrics_port       = 9464
   policy_arns        = local.process_policies
 
-  secrets = local.process_secrets
+  # The worker deletes a deleted account's person at WorkOS, through the
+  # same Tadas App the API signs people in through, with the same key.
+  secrets = merge(local.process_secrets, {
+    TADAS_WORKOS_API_KEY = module.secrets.workos_api_key_secret_arn
+  })
 
   environment_variables = merge(local.process_environment, {
-    TADAS_SERVICE_NAME = "maintenance"
+    TADAS_SERVICE_NAME      = "maintenance"
+    TADAS_IDENTITY_PROVIDER = "workos"
+    TADAS_WORKOS_CLIENT_ID  = var.workos_client_id
   })
 
   # The serving process answers /healthz on its metrics port from its
