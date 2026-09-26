@@ -1,27 +1,32 @@
 """The realtime service hears every change on the bus and ends the sockets a
 revocation names: the one the session or the api key opened, every one of a
 user whose membership ended or whose role changed, or every one of a deleted
-org, and no other. It re-checks a socket's credential when asked."""
+org, and no other. It re-checks a socket's credential when asked, and answers
+a ping with the head it heard, reading it only when that is unknown or old."""
 
 from collections.abc import Callable
 from datetime import timedelta
 from pathlib import Path
 from uuid import UUID
 
+import pytest
 from api_support import OWNER, add_member, build_container, on_plan, seed_request
 
 from tadas.infra.topics import EntityChangedPayload, Topics
 from tadas.om.base import new_id, utcnow
 from tadas.om.billing.types.plan import Plan
-from tadas.om.opcontext import Role
+from tadas.om.events.types.event import Event
+from tadas.om.opcontext import OpContext, Role
 from tadas.om.tenancy.rules import hash_token
 from tadas.om.tenancy.types.socket_ticket import SocketPrincipal
 from tadas.services.api.container import AppContainer
+from tadas.services.api.services.impl.realtime import RealtimeServiceImpl
 from tadas.services.api.services.realtime import (
     CREDENTIAL_REVOKED,
     MEMBERSHIP_ENDED,
     RIGHTS_CHANGED,
 )
+from tadas.services.api.types.tasks import AddTaskRequest
 
 
 async def test_a_revocation_ends_the_sockets_it_names_and_no_other(tmp_path: Path) -> None:
@@ -228,3 +233,203 @@ async def test_the_recheck_is_not_a_use_of_the_session(tmp_path: Path) -> None:
     found = await storage.read_session_by_digest(hash_token(token))
     assert found is not None
     assert found[1].last_seen_at == seen
+
+
+class Clock:
+    def __init__(self) -> None:
+        self.now = 1000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+class Heads:
+    """A realtime service of its own over the container's managers and bus,
+    on a clock the test moves, with every read of the head counted."""
+
+    def __init__(self, container: AppContainer, max_age: float) -> None:
+        self.clock = Clock()
+        self.reads = 0
+        events = container.managers.events
+        read = events.get_head
+
+        async def counted(ctx: OpContext) -> int:
+            self.reads += 1
+            return await read(ctx)
+
+        self._patch = pytest.MonkeyPatch()
+        self._patch.setattr(events, "get_head", counted)
+        self.service = RealtimeServiceImpl(
+            container.managers.tenancy,
+            events,
+            container.infra.get_topics(),
+            timedelta(seconds=max_age),
+            self.clock,
+        )
+
+    def close(self) -> None:
+        self._patch.undo()
+
+
+async def owner_socket(container: AppContainer) -> tuple[OpContext, SocketPrincipal]:
+    tenancy = container.managers.tenancy
+    _, org = await tenancy.bootstrap(seed_request(), "Acme", "acme", OWNER["email"], OWNER["name"])
+    token = await session_of(container, org.id, OWNER["email"])
+    owner = await tenancy.authenticate(seed_request(), token)
+    return owner, await principal_of(container, token)
+
+
+async def add_task(container: AppContainer, owner: OpContext, title: str) -> None:
+    """A write the relay announces on the bus: its event gets the next seq."""
+    tasks = container.services.get_tasks_service()
+    await tasks.create_task(owner, AddTaskRequest(title=title), new_id())
+
+
+async def append_unheard(container: AppContainer, owner: OpContext) -> None:
+    """An event the bus never carried to this process: its subscription was
+    down, or the publish was lost. The head moves; nothing is heard."""
+    await container.managers.events.append_event(
+        owner,
+        Event(
+            id=new_id(),
+            org_id=owner.org_id,
+            kind="tasks.task.updated",
+            target_id=new_id(),
+            produced_at=utcnow(),
+            actor_id=owner.user_id,
+            request_id=new_id(),
+            app="portal",
+        ),
+    )
+
+
+async def test_a_process_that_just_started_reads_the_head(tmp_path: Path) -> None:
+    """Nothing heard yet for the tenant: the pong reads, and what it read
+    answers the next ping."""
+    container = build_container(tmp_path)
+    owner, principal = await owner_socket(container)
+    await add_task(container, owner, "before this process")
+    heads = Heads(container, max_age=60)
+    try:
+        heads.service.attach(principal, lambda reason: None)
+        assert await heads.service.pong_head(owner) == 1
+        assert heads.reads == 1
+        assert await heads.service.pong_head(owner) == 1
+        assert heads.reads == 1
+    finally:
+        heads.close()
+
+
+async def test_the_pong_answers_from_the_bus_without_a_read(tmp_path: Path) -> None:
+    """Each hint carries its seq; the process keeps the highest it heard for
+    a tenant it holds a socket for, and a ping answers with it."""
+    container = build_container(tmp_path)
+    owner, principal = await owner_socket(container)
+    heads = Heads(container, max_age=60)
+    try:
+        heads.service.attach(principal, lambda reason: None)
+        assert await heads.service.head(owner) == 0  # the hello's read
+        await add_task(container, owner, "one")
+        await add_task(container, owner, "two")
+        heads.clock.now += 59
+        assert await heads.service.pong_head(owner) == 2
+        assert heads.reads == 1
+    finally:
+        heads.close()
+
+
+async def test_a_hint_never_heard_is_hidden_no_longer_than_the_bound(tmp_path: Path) -> None:
+    """The process's subscription dropped, or a publish was lost: the head
+    moved and nothing was heard. Within the bound the pong answers the head
+    heard, one below the truth; past it, the pong reads and the client sees
+    the gap. A later hint shows it at once, since its seq is past the gap."""
+    container = build_container(tmp_path)
+    owner, principal = await owner_socket(container)
+    heads = Heads(container, max_age=60)
+    try:
+        heads.service.attach(principal, lambda reason: None)
+        await add_task(container, owner, "heard")
+        assert await heads.service.pong_head(owner) == 1
+        assert heads.reads == 0  # heard on the bus
+
+        await append_unheard(container, owner)
+        heads.clock.now += 30
+        assert await heads.service.pong_head(owner) == 1  # the bound, not yet past
+        heads.clock.now += 31
+        assert await heads.service.pong_head(owner) == 2  # read: the gap shows
+        assert heads.reads == 1
+
+        await append_unheard(container, owner)
+        await add_task(container, owner, "heard after a loss")
+        assert await heads.service.pong_head(owner) == 4
+        assert heads.reads == 1
+    finally:
+        heads.close()
+
+
+async def test_the_pong_never_answers_below_what_it_heard(tmp_path: Path) -> None:
+    """A hint that arrives late, below the head heard, changes nothing, and
+    neither does a read that returns less than a hint heard meanwhile."""
+    container = build_container(tmp_path)
+    owner, principal = await owner_socket(container)
+    heads = Heads(container, max_age=60)
+    try:
+        heads.service.attach(principal, lambda reason: None)
+        await add_task(container, owner, "one")
+        await add_task(container, owner, "two")
+        await container.infra.get_topics().publish(
+            Topics.ENTITY_CHANGED,
+            EntityChangedPayload(
+                idempotency_key=new_id(),
+                produced_at=utcnow(),
+                org_id=owner.org_id,
+                kind="tasks.task.updated",
+                target_id=new_id(),
+                seq=1,
+                actor_id=owner.user_id,
+            ),
+        )
+        assert await heads.service.pong_head(owner) == 2
+        assert heads.reads == 0
+    finally:
+        heads.close()
+
+
+async def test_a_bound_of_zero_reads_on_every_ping(tmp_path: Path) -> None:
+    container = build_container(tmp_path)
+    owner, principal = await owner_socket(container)
+    heads = Heads(container, max_age=0)
+    try:
+        heads.service.attach(principal, lambda reason: None)
+        await add_task(container, owner, "one")
+        assert await heads.service.pong_head(owner) == 1
+        assert await heads.service.pong_head(owner) == 1
+        assert heads.reads == 2
+    finally:
+        heads.close()
+
+
+async def test_the_head_is_kept_only_while_the_tenant_has_a_socket_here(tmp_path: Path) -> None:
+    """A tenant with no socket in this process costs it nothing: its hints
+    are not kept, and the head goes with the tenant's last socket. The next
+    socket reads afresh."""
+    container = build_container(tmp_path)
+    owner, principal = await owner_socket(container)
+    heads = Heads(container, max_age=60)
+    try:
+        await add_task(container, owner, "no socket here")
+        first = heads.service.attach(principal, lambda reason: None)
+        second = heads.service.attach(principal, lambda reason: None)
+        assert await heads.service.pong_head(owner) == 1
+        assert heads.reads == 1
+        first()
+        await add_task(container, owner, "one socket left")
+        assert await heads.service.pong_head(owner) == 2
+        assert heads.reads == 1
+        second()
+        await add_task(container, owner, "none left")
+        heads.service.attach(principal, lambda reason: None)
+        assert await heads.service.pong_head(owner) == 3
+        assert heads.reads == 2
+    finally:
+        heads.close()

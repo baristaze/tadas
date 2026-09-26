@@ -1,6 +1,9 @@
 import itertools
+import time
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Literal
 from uuid import UUID
 
@@ -49,24 +52,65 @@ class AttachedSocket:
     end: Callable[[str], None]
 
 
+@dataclass(frozen=True)
+class KnownHead:
+    """The highest `seq` this process knows for a tenant, and when it last
+    learned it: from a hint on the bus, or from a read."""
+
+    seq: int
+    confirmed_at: float  # the process's monotonic clock
+
+
 class RealtimeServiceImpl(RealtimeServiceInterface):
+    """`head_max_age` bounds how long a head this process heard may answer a
+    ping without a read; zero reads on every ping. `clock` is the monotonic
+    clock that age is measured on, injected by tests."""
+
     def __init__(
         self,
         tenancy: TenancyManagerInterface,
         events: EventsManagerInterface,
         topics: TopicsInterface,
+        head_max_age: timedelta = timedelta(seconds=60),
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._tenancy = tenancy
         self._events = events
         self._topics = topics
+        self._head_max_age = head_max_age.total_seconds()
+        self._clock = clock
         self._ids = itertools.count()
         self._sockets: dict[int, AttachedSocket] = {}
+        # The heads of the tenants this process holds a socket for, and no
+        # other: an entry goes when the tenant's last socket here detaches.
+        self._heads: dict[UUID, KnownHead] = {}
+        self._tenants: Counter[UUID] = Counter()
         # One subscription per process: every replica hears every revocation
-        # and ends the sockets it holds for it, as it does for every push.
+        # and ends the sockets it holds for it, as it does for every push, and
+        # keeps the head of every tenant it holds a socket for.
         self._topics.subscribe(Topics.ENTITY_CHANGED, "socket-revocations", self._on_change)
 
     async def head(self, ctx: OpContext) -> int:
-        return await self._events.get_head(ctx)
+        seq = await self._events.get_head(ctx)
+        self._learn(ctx.org_id, seq)
+        return seq
+
+    async def pong_head(self, ctx: OpContext) -> int:
+        known = self._heads.get(ctx.org_id)
+        if known is not None and self._clock() - known.confirmed_at < self._head_max_age:
+            return known.seq
+        return await self.head(ctx)
+
+    def _learn(self, org_id: UUID, seq: int) -> None:
+        """Keeps `seq` as the tenant's head when it is at least the one known,
+        and restarts its age. A `seq` below the one known (a hint that
+        arrived late, a read that started before a hint landed) changes
+        nothing: it proves nothing about what came after the head."""
+        if org_id not in self._tenants:
+            return
+        known = self._heads.get(org_id)
+        if known is None or seq >= known.seq:
+            self._heads[org_id] = KnownHead(seq=seq, confirmed_at=self._clock())
 
     async def recheck(self, principal: SocketPrincipal) -> str | None:
         ctx = principal.ctx
@@ -111,15 +155,22 @@ class RealtimeServiceImpl(RealtimeServiceInterface):
             membership_id=principal.membership_id,
             end=end,
         )
+        self._tenants[ctx.org_id] += 1
 
         def detach() -> None:
-            self._sockets.pop(socket_id, None)
+            if self._sockets.pop(socket_id, None) is None:
+                return
+            self._tenants[ctx.org_id] -= 1
+            if self._tenants[ctx.org_id] <= 0:
+                del self._tenants[ctx.org_id]
+                self._heads.pop(ctx.org_id, None)
 
         return detach
 
     async def _on_change(self, payload: TopicPayload) -> None:
         if not isinstance(payload, EntityChangedPayload):
             return
+        self._learn(payload.org_id, payload.seq)
         revocation = REVOCATIONS.get(payload.kind)
         if revocation is None:
             return

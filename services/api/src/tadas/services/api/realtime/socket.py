@@ -132,7 +132,7 @@ async def serve_commands(
                 buffer.offer(ErrorEnvelope(code="bad_command", message=str(error)[:200]))
                 continue
             if command.op == "ping":
-                buffer.offer(PongEnvelope(seq=await realtime.head(ctx)))
+                buffer.offer(PongEnvelope(seq=await realtime.pong_head(ctx)))
             elif topic is None:
                 buffer.offer(ErrorEnvelope(code="bad_command", message="topic is required"))
             elif command.op == "subscribe":

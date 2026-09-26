@@ -381,12 +381,13 @@ def socket_handlers(container: AppContainer) -> int:
 def test_a_command_that_fails_closes_the_socket_and_leaves_no_subscription(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Every client pings, and a ping reads the stream head: a database blip
-    during one ends the command loop with a backend error. The socket is
-    accepted, so there is no HTTP response left to answer with; it closes with
-    1011 and its subscription and drainer go with it. Before, the error
-    escaped the teardown and the handler stayed in the dispatcher forever."""
-    container = build_container(tmp_path)
+    """Every client pings, and a ping reads the stream head when the head it
+    heard is too old (here, always): a database blip during one ends the
+    command loop with a backend error. The socket is accepted, so there is
+    no HTTP response left to answer with; it closes with 1011 and its
+    subscription and drainer go with it, instead of the error escaping the
+    teardown and leaving the handler in the dispatcher."""
+    container = build_container(tmp_path, realtime_head_max_age_seconds=0)
     _, org = run(
         container.managers.tenancy.bootstrap(
             seed_request(), "Acme", "acme", OWNER["email"], OWNER["name"]

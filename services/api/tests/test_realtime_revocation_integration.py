@@ -2,9 +2,11 @@
 stack's Postgres and Valkey, one serving a socket, the other revoking the
 session behind it; the socket closes with 4401 on the wire. When the bus
 never carries the message, the serving process's own recheck closes it
-within its interval. A change of role closes the socket with 1012."""
+within its interval. A change of role closes the socket with 1012. The pong
+carries the head heard on the bus, and reads it once that is too old."""
 
 import asyncio
+import json
 import socket
 import time
 from collections.abc import AsyncIterator
@@ -29,6 +31,7 @@ from tadas.services.api.main import server_options
 from tadas.services.api.realtime.socket import CLOSE_RECONNECT
 from tadas.services.api.services.realtime import CREDENTIAL_REVOKED, RIGHTS_CHANGED
 from tadas.services.api.settings import ApiSettings
+from tadas.services.api.types.tasks import AddTaskRequest
 
 pytestmark = pytest.mark.integration
 
@@ -213,3 +216,75 @@ async def test_a_change_of_role_in_one_process_closes_the_socket_in_another(
         ticket = await ticket_for(address, member)
         async with websockets.connect(f"ws://{address}/v1/realtime?ticket={ticket}") as ws:
             assert '"type":"hello"' in str(await ws.recv())
+
+
+async def next_of(ws: websockets.ClientConnection, kind: str) -> dict[str, object]:
+    """The next frame of `kind`, skipping any other."""
+    while True:
+        frame = json.loads(await asyncio.wait_for(ws.recv(), timeout=10))
+        if frame["type"] == kind:
+            return frame
+
+
+async def test_the_pong_carries_the_head_heard_on_the_bus(tmp_path: Path) -> None:
+    """A writes a task; B hears its hint and answers the next ping with its
+    seq, and reads nothing for it: the hello's read is the only one."""
+    async with serving(tmp_path) as processes:
+        address, writer, server, org = (
+            processes.address,
+            processes.revoker,
+            processes.server,
+            processes.org,
+        )
+        reads: list[int] = []
+        events = server.managers.events
+        read = events.get_head
+
+        async def counted(ctx: OpContext) -> int:
+            reads.append(1)
+            return await read(ctx)
+
+        events.get_head = counted  # type: ignore[method-assign]
+        headers = await headers_of(address, processes.email, org)
+        ticket = await ticket_for(address, headers)
+        async with websockets.connect(f"ws://{address}/v1/realtime?ticket={ticket}") as ws:
+            hello = await next_of(ws, "hello")
+            await ws.send(json.dumps({"op": "subscribe", "topic": "entity_changed"}))
+            await next_of(ws, "subscribed")
+            tasks = writer.services.get_tasks_service()
+            await tasks.create_task(
+                await context_of(writer, headers), AddTaskRequest(title="heard"), new_id()
+            )
+            hint = await next_of(ws, "event")
+            await ws.send(json.dumps({"op": "ping"}))
+            pong = await next_of(ws, "pong")
+    seq = hint["payload"]["seq"]  # type: ignore[index]
+    assert seq == hello["seq"] + 1  # type: ignore[operator]
+    assert pong["seq"] == seq
+    assert reads == [1], "the pong read the head it had heard"
+
+
+async def test_a_hint_b_never_heard_shows_once_the_head_is_too_old(tmp_path: Path) -> None:
+    """A writes on a bus B does not hear, as when B's subscription is down:
+    B's pong answers the head it knows until that is older than the bound,
+    then reads it, and the client sees the gap."""
+    max_age = 1.0
+    async with serving(
+        tmp_path, revoker_bus="memory", realtime_head_max_age_seconds=max_age
+    ) as processes:
+        address, writer, org = processes.address, processes.revoker, processes.org
+        headers = await headers_of(address, processes.email, org)
+        ticket = await ticket_for(address, headers)
+        async with websockets.connect(f"ws://{address}/v1/realtime?ticket={ticket}") as ws:
+            hello = await next_of(ws, "hello")
+            tasks = writer.services.get_tasks_service()
+            await tasks.create_task(
+                await context_of(writer, headers), AddTaskRequest(title="unheard"), new_id()
+            )
+            await ws.send(json.dumps({"op": "ping"}))
+            within = await next_of(ws, "pong")
+            await asyncio.sleep(max_age + 0.2)
+            await ws.send(json.dumps({"op": "ping"}))
+            past = await next_of(ws, "pong")
+    assert within["seq"] == hello["seq"]
+    assert past["seq"] == hello["seq"] + 1  # type: ignore[operator]

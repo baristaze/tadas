@@ -1,7 +1,7 @@
 """The realtime service: mints the ticket that opens the channel, forwards
 the tenant's pushes on it as typed envelopes, ends the sockets a revocation
-or a change of rights names, and re-checks a socket's credential when
-asked. The gateway redeems the ticket; the
+or a change of rights names, re-checks a socket's credential when asked, and
+answers a ping with the tenant's head. The gateway redeems the ticket; the
 socket handler moves frames, asks for the recheck on its interval, and
 closes when told to."""
 
@@ -31,8 +31,19 @@ class RealtimeServiceInterface(ABC):
 
     @abstractmethod
     async def head(self, ctx: OpContext) -> int:
-        """The tenant's stream position when a socket opens; the hello carries it
-        so a client can replay from there before it has seen any push."""
+        """The tenant's stream position when a socket opens, read from the
+        database; the hello carries it so a client can replay from there
+        before it has seen any push."""
+        ...
+
+    @abstractmethod
+    async def pong_head(self, ctx: OpContext) -> int:
+        """The head a pong carries: the highest `seq` this process has heard
+        on the bus or read for the tenant, while it was confirmed within the
+        bound the settings name, and else a fresh read, as `head`. Never
+        above the truth, since a `seq` is published only once it committed.
+        Below it only when the bus lost a hint after the last one heard, and
+        then for no longer than the bound."""
         ...
 
     @abstractmethod
