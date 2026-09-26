@@ -161,7 +161,11 @@ export function useTasksVm() {
 
   const reopen = async (task: TaskView) => {
     // The server puts a reopened task on top of the open list.
-    placeTask(queryClient, { ...task, status: "open", position: Number.NEGATIVE_INFINITY }, { optimistic: true });
+    placeTask(
+      queryClient,
+      { ...task, status: "open", rank: null, position: Number.NEGATIVE_INFINITY },
+      { optimistic: true },
+    );
     try {
       place(
         await update.mutateAsync({
@@ -232,8 +236,7 @@ export function useTasksVm() {
         move: (id, afterId, version) => move.mutateAsync({ id, afterId, version }),
         showOrder: (order) => editOpen((data) => pagesWithOrder(data, order)),
         // The row keeps the place the drop gave it: the server put it right
-        // after the same task, and a renumber's new positions reach the
-        // other rows by their own pushes.
+        // after the same task, and wrote no other row.
         showMoved: (task) => placeTask(queryClient, task, { inPlace: true }),
         refetch: refresh,
         report: setError,

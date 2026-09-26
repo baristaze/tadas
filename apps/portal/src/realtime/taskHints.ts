@@ -8,7 +8,7 @@
 import type { TaskView } from "../api";
 
 /** How long a window stays open after its last hint. The pushes of one
- * write that touches many tasks (an import step, a renumber) arrive a few
+ * write that touches many tasks (an import step, a respace) arrive a few
  * milliseconds apart, and a person's own writes seconds apart. */
 export const HINT_WINDOW_MS = 100;
 
@@ -18,9 +18,8 @@ export const HINT_WINDOW_MAX_MS = 500;
 
 /** Past this many distinct tasks in one window, the lists are read once
  * instead of each task on its own. An import step lands up to a hundred
- * rows, and a move that closes a gap renumbers the whole open list (TAZ-81);
- * twenty single reads are already more than the two list reads a refresh
- * costs. */
+ * rows, and the sweep's respace up to two hundred and one; twenty single
+ * reads are already more than the two list reads a refresh costs. */
 export const HINT_BURST = 20;
 
 /** A hint that was answered by reading the lists, not the task. */
@@ -94,7 +93,7 @@ export function createTaskHints(effects: TaskHintEffects): TaskHints {
     const ids = [...batch.keys()];
     const answers = await Promise.allSettled(ids.map((id) => effects.readTask(id)));
     if (stopped) return;
-    // One window's answers are placed together, so a renumber heard as a
+    // One window's answers are placed together, so a respace heard as a
     // handful of hints lands as one order, not as each read returns.
     let unknown = false;
     answers.forEach((answer, index) => {
