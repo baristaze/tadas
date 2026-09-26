@@ -204,7 +204,12 @@ waits too. A dead letter is the next section. An outbox lag is a relay
 that keeps failing: each attempt of the sweep is a warning in the
 worker's log, `outbox relay of <row id> (<kind>) failed on attempt <n>:
 <error>`, and the error says whether the event store or the bus
-refused. After its tenth attempt the row is `failed for good`, an
+refused. `the bus dropped the publish` is the bus: Valkey refused the
+push, or the Valkey breaker is open. The event is already in the
+stream, and the row waits until the bus takes its push. Read the
+Outcomes widget for `outbox`/`publish_failed` beside
+`valkey_breaker`/`opened`, and fix Valkey; the next pass sends the
+backlog. After its tenth attempt the row is `failed for good`, an
 `outbox.row.failed` event in its org's diary, which `ops-root-cause`
 reads, and it no longer counts as pending.
 
