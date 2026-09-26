@@ -6,8 +6,9 @@ touches and the ADR that explains why it is shaped that way.
 
 - [operator.md](operator.md): how a person gets onto the operator
   plane: sign in, the grant, enrolling the second factor, the check
-  that the plane refuses a sign-in without a code, and the token an
-  agent then works from.
+  that the plane refuses a sign-in without a code, the token an agent
+  then works from, and ending one token, or all of an operator's,
+  before its hour.
 - [deploy.md](deploy.md): staging is `main`, production is `release`;
   granting an operator, the smoke test, cutting a release, approving
   its plan, the fast rollback and the revert, what a failed

@@ -90,20 +90,49 @@ and the code never leave it.
    curl -s -o /dev/null -w 'no code: %{http_code}\n' "$API/v1/admin/orgs" \
      -H "Authorization: Bearer $TOKEN"
    printf 'code: '; read -r CODE
+   VERIFIED=$(with_code "$TOKEN" "$CODE")
    curl -s -o /dev/null -w 'with code: %{http_code}\n' "$API/v1/admin/orgs" \
-     -H "Authorization: Bearer $(with_code "$TOKEN" "$CODE")"
-   unset TOKEN
+     -H "Authorization: Bearer $VERIFIED"
+   curl -s -o /dev/null -w 'signed out: %{http_code}\n' -X POST "$API/v1/auth/logout" \
+     -H "Authorization: Bearer $VERIFIED"
+   unset TOKEN VERIFIED CODE
    ```
 
-   A sign-in without a code answers `401` on the plane, and the same sign-in with one answers `200`. A tenant sign-in needs no code; the plane is what demands it.
+   A sign-in without a code answers `401` on the plane. The code ends that sign-in and answers a new one, which answers `403 operator_token_required`: a sign-in with its code mints one token, the next step, and reads nothing itself. The last line signs it out, since it minted nothing. A tenant sign-in needs no code; the plane is what demands it.
 
-3. **Write your token into the ops env file**, from the repository: `uv run tadas-ops token --env staging --identity operator`. It shows a code to confirm in your browser, asks for a code from your authenticator, writes `TADAS_OPERATOR_TOKEN` into `~/.config/tadas/ops/staging.env` (mode 600), and prints nothing else. A token lasts an hour; run it again when it runs out. Every ops skill works from that file, so no agent holds your sign-in or your code.
+3. **Write your token into the ops env file**, from the repository: `uv run tadas-ops token --env staging --identity operator`. It shows a code to confirm in your browser, asks for a code from your authenticator, writes `TADAS_OPERATOR_TOKEN` into `~/.config/tadas/ops/staging.env` (mode 600), and prints the token's id and nothing else of it. The mint ends the sign-in, so what is left is the token. A token lasts an hour; run it again when it runs out. Every ops skill works from that file, so no agent holds your sign-in or your code.
 
 ## When a token runs out
 
 A token lasts an hour. Run step 3 again; it asks you to confirm a
 sign-in and for a fresh code. Nothing else changes, and the skills pick
 up the new value from the file.
+
+## Ending a token before its hour
+
+A token that leaked, or one you no longer need, ends now, one at a time:
+
+```
+uv run tadas-ops token --env staging --list          # your live tokens: id, permission, made, ends
+uv run tadas-ops token --env staging --revoke <id>   # ends that one; its next request is 401
+```
+
+Both run under the file's own token, so if it has run out, write a
+fresh one first (step 3). A token ends itself as well as the others:
+revoke the id `token` printed, then write a fresh one. Without the
+tool, the same two calls, and the sign-out, which ends the token it is
+given:
+
+```
+curl -s "$API/v1/admin/me/tokens" -H "Authorization: Bearer $TADAS_OPERATOR_TOKEN"
+curl -s -X DELETE "$API/v1/admin/me/tokens/<id>" -H "Authorization: Bearer $TADAS_OPERATOR_TOKEN"
+curl -s -X POST "$API/v1/auth/logout" -H "Authorization: Bearer <the token to end>"
+```
+
+You end your own tokens only, the ones the grant job minted for you
+among them. Another operator's answer `404`: they end theirs, or the
+grant job ends all of them (below). The provisioner's and the smoke
+identity's tokens end by the sign-out above, or by the grant job.
 
 ## Deleting a team org
 
@@ -141,5 +170,8 @@ gh workflow run grant-operator.yml --ref main -f environment=staging \
   -f email=<email> -f permission=none -f disable=true
 ```
 
-The entry is disabled, the identity keeps its tenant account, and its
-operator tokens stop being admitted at their next use.
+The entry is disabled, the identity keeps its tenant account, and every
+operator token it holds and every sign-in with a code ends at once. A
+grant made later revives none of them. That is also how a leaked token
+of the provisioner or the smoke identity ends for good: disable the
+identity, grant it again, and mint its token again with `mint_token`.

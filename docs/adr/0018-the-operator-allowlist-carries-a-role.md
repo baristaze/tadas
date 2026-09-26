@@ -2,7 +2,10 @@
 
 **Status**: accepted (2026-09-20), amended (2026-09-22): only the
 grant job writes the allowlist, and an agent holds an operator token,
-not a password.
+not a password. Amended by [ADR 0068](0068-an-operator-credential-ends-by-itself.md)
+(2026-09-26): a sign-in with a second factor mints one token and does
+nothing else on the plane, and an operator lists and revokes their own
+tokens.
 
 ## Context
 
