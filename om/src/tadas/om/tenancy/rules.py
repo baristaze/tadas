@@ -1,8 +1,9 @@
 """Pure rules of the tenancy namespace: credential parsing, hashing, the
 role cap, the TOTP code, who a single sign-on admits, a person's time
-zone, where a list cursor cuts, and what an account's deletion asks. Values in, values out;
-no clock, no storage, no settings. Both storage impls call the cursor rules;
-the relational one spells them in SQL and names the rule it mirrors."""
+zone, where a list cursor cuts, and what an account's or an org's deletion
+asks. Values in, values out; no clock, no storage, no settings. Both
+storage impls call the cursor rules; the relational one spells them in SQL
+and names the rule it mirrors."""
 
 import base64
 import hashlib
@@ -271,6 +272,13 @@ def confirms_deletion(email: str, typed: str) -> bool:
     that a deletion is meant. Surrounding space and letter case are forgiven,
     since an address is read that way everywhere else; anything else is not."""
     return typed.strip().lower() == email.strip().lower()
+
+
+def confirms_org_deletion(name: str, typed: str) -> bool:
+    """Whether what the owner typed is the org's name: the one check that an
+    org's deletion is meant. Surrounding space is forgiven; letter case is
+    not, since the name is shown as it is spelled and copied from there."""
+    return typed.strip() == name.strip()
 
 
 def left_without_owner(org: Org, role: Role, owners: int) -> bool:

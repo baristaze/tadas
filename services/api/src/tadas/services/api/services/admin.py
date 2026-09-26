@@ -15,6 +15,7 @@ from tadas.services.api.types.admin import (
     IssuedTotpSecretView,
     MintOperatorTokenRequest,
     OperatorView,
+    OperatorWorkItemView,
     PlatformSizeView,
     TotpConfirmedView,
 )
@@ -94,3 +95,8 @@ class AdminServiceInterface(ABC):
     async def comp_plan(
         self, admin: OperatorContext, org_id: UUID, body: CompPlanRequest
     ) -> OperatorBillingView: ...
+
+    @abstractmethod
+    async def requeue_work(
+        self, admin: OperatorContext, org_id: UUID, item_id: UUID
+    ) -> OperatorWorkItemView: ...

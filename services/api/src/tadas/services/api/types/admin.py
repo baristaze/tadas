@@ -10,6 +10,7 @@ from pydantic import Field
 
 from tadas.om.opcontext import OperatorRole, Role
 from tadas.om.tenancy.rules import MAX_OPERATOR_TOKEN_TTL
+from tadas.om.work.types.work_item import WorkKind, WorkStatus
 from tadas.services.api.types.common import RequestBody, View
 
 
@@ -101,3 +102,19 @@ class IssuedOperatorTokenView(View):
     token: str | None
     expires_at: datetime
     permission: OperatorRole
+
+
+class OperatorWorkItemView(View):
+    """One background job as an operator reads it: what it does and for
+    which record, where it stands, and how many of its attempts are spent.
+    The payload and the claim stay the worker's."""
+
+    id: UUID
+    kind: WorkKind
+    target_id: UUID
+    status: WorkStatus
+    available_at: datetime
+    attempts: int
+    max_attempts: int
+    last_error: str | None
+    updated_at: datetime

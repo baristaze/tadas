@@ -36,7 +36,9 @@ gh workflow run grant-operator.yml --ref main -f environment=staging \
 
 `read` is enough to investigate. `write` also changes a tenant's rows,
 and the traffic generator's provisioner is the only identity that needs
-it day to day.
+it day to day. A person with `write` uses it for one named step, such
+as sending a failed work item back (`tadas-ops work requeue`), which
+mints a `write` token for that call alone.
 
 ## The steps in the terminal
 

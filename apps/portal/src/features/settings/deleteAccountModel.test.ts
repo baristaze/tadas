@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ApiError } from "../../api";
-import { confirms, GONE_LINE, listed, ownedAlone, refusalText } from "./deleteAccountModel";
+import { confirms, GONE_LINE, listed, ownedAlone, refusalText, strandedHere } from "./deleteAccountModel";
 
 const acme = { id: "o1", name: "Acme", slug: "acme" };
 const globex = { id: "o2", name: "Globex", slug: "globex" };
@@ -21,14 +21,22 @@ describe("delete account model", () => {
     expect(GONE_LINE).toBe("Gone now, and gone from backups within 7 days.");
   });
 
-  it("names every org the person is the last owner of, and what to do", () => {
+  it("names every org the person is the last owner of, and both ways out", () => {
     expect(refusalText(lastOwner(acme))).toBe(
-      "You are the last owner of Acme. Make someone else an owner of it first.",
+      "You are the last owner of Acme. Make someone else an owner, or delete the organization, first. " +
+        "Both are done in that organization's Settings.",
     );
     expect(refusalText(lastOwner(acme, globex))).toBe(
-      "You are the last owner of Acme and Globex. Make someone else an owner of each first.",
+      "You are the last owner of Acme and Globex. In each, make someone else an owner, or delete the organization, first. " +
+        "Both are done in that organization's Settings.",
     );
     expect(ownedAlone(lastOwner(acme))).toEqual([acme]);
+  });
+
+  it("links to this page's ways out only when the org it is in is one of them", () => {
+    expect(strandedHere([acme, globex], "o2")).toBe(true);
+    expect(strandedHere([acme], "o2")).toBe(false);
+    expect(strandedHere([acme], undefined)).toBe(false);
   });
 
   it("says any other refusal in the server's words", () => {

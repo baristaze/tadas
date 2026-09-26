@@ -195,7 +195,14 @@ Zustand, one realtime channel.
   browser's IANA zone differs from the one held there, sends it once with
   `PATCH /v1/me/identity`. It is quiet: a refusal is dropped and the page
   never waits on it.
-- Settings, for a member who manages members: an invitation by email and
+- Settings, for a member who manages members: each member's role, which
+  a small menu on the member's row changes (`RoleControl.tsx`). It holds
+  the roles the server's rules let the member give: never their own
+  role, never a member above their own role, never a role above it, so
+  an owner makes someone else an owner and an admin gives roles up to
+  admin (`settingsModel.grantableRoles`). It opens on a click, Enter,
+  Space, or the arrows, and closes on Escape or outside. A refusal is
+  said as a notice. An invitation by email and
   role (at most their own, never owner), which WorkOS sends, and the
   pending ones to send again or revoke. A team org's settings also open
   WorkOS's admin portal, where the org's admin connects their identity
@@ -205,11 +212,21 @@ Zustand, one realtime channel.
   account, the personal org with its tasks and files, and their place
   in every team org, "gone now, and gone from backups within 7 days".
   A refusal stays on the card: the last owner of a team org is told
-  which orgs (`last_owner` in the error envelope). Once deleted, the tab
+  which orgs (`last_owner` in the error envelope), and to make someone
+  else an owner or delete the organization. When the org the tab is in
+  is one of them, the card links to its members and to its deletion. Once deleted, the tab
   forgets its session and notes the deletion in its session storage,
   and the browser goes through WorkOS's logout, when the API names one,
   to `/signed-out`, which says "Your account is deleted." once
   (`src/features/settings/deleteAccount.ts`).
+- "Delete this organization", above "Delete my account", for an owner of
+  a team org only. The owner types the org's name to confirm, and the
+  card says what goes for everyone in it: its tasks and files, its
+  members and their keys, its plan, and its Slack app, kept 30 days and
+  then purged. The server answers with a session in the owner's personal
+  org, which the tab takes up, as a switch does, and opens the task list
+  there. With no session in the answer, the tab signs in again
+  (`src/features/settings/deleteOrg.ts`).
 - "Former member". A task names its maker and its assignee from the
   org's member list, read whole; an id the list does not hold is a
   person who left the org or deleted their account, and reads "Former
@@ -241,16 +258,21 @@ Zustand, one realtime channel.
 
 ```bash
 pnpm install
-pnpm --filter @tadas/portal dev     # http://localhost:5173, API at VITE_API_URL
+pnpm --filter @tadas/portal dev     # http://localhost:5173; /v1 forwards to the API on 127.0.0.1:8000
 pnpm --filter @tadas/portal test
 ```
 
+The page calls the API on its own origin, locally as in the cloud. The dev
+server forwards `/v1`, the realtime socket included, to the API on
+`127.0.0.1:8000`; `TADAS_PORTAL_API_TARGET` points it at another. So no
+request the page makes is cross-origin, and no browser sends a preflight.
+
 `make stack-up` from the repository root also serves a production build
 in a container at http://localhost:55173, from
-`deployment/docker/portal.Dockerfile`. The API address is compiled into
-that bundle (build argument `VITE_API_URL`, default
-`http://127.0.0.1:8000`), so a change to it needs a rebuild, which
-`make stack-up` does. After `make seed`, sign in at `/login/dev` as
+`deployment/docker/portal.Dockerfile`. Its nginx forwards `/v1` to the
+`api` container the same way. `VITE_API_URL` is compiled into that bundle
+and is empty, the page's own origin; a value there names another API and
+needs a rebuild, which `make stack-up` does. After `make seed`, sign in at `/login/dev` as
 `owner@example.test` (owner) or `bob@example.test` (member), by address
 alone; `/login` signs a person in through WorkOS, once the API holds the
 Tadas App application's API key. See the root README for every local URL.
@@ -258,10 +280,12 @@ Tadas App application's API key. See the root README for every local URL.
 ## Configuration
 
 `src/app/config.ts` loads `/config.json` before anything renders. In the
-cloud that file exists, written per environment by Terraform (`apiUrl` is the
-environment's API, e.g. `https://api.tadas.fyi`), so one build serves every
-environment. Locally there is none, and `VITE_API_URL`,
-`VITE_SENTRY_DSN`, and `VITE_SENTRY_ENVIRONMENT` apply instead. The DSN is
+cloud that file exists, written per environment by Terraform, so one build
+serves every environment. Its `apiUrl` is empty, which means the page's own
+origin: the portal's CloudFront distribution serves the API's `/v1/*` paths
+from the API's load balancer. Locally there is none, and `VITE_API_URL`
+(empty, the page's origin, by default), `VITE_SENTRY_DSN`, and
+`VITE_SENTRY_ENVIRONMENT` apply instead. The DSN is
 the product's one tracker project in every environment; the environment the
 page sends on each event is what separates them. The file may
 also name `requestTimeoutMs`, the deadline the transport client puts on every

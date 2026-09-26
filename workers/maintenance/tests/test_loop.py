@@ -18,7 +18,12 @@ from worker_support import (
 )
 
 from tadas.infra.cache import CacheInterface, CacheScope
-from tadas.infra.observability import caused_by_request_id_var, current_traceparent, request_id_var
+from tadas.infra.observability import (
+    OUTCOMES,
+    caused_by_request_id_var,
+    current_traceparent,
+    request_id_var,
+)
 from tadas.om.base import EMPTY_UUID, new_id, utcnow
 from tadas.om.events.impl.manager import EventsOptions
 from tadas.om.events.types.event import Event
@@ -29,8 +34,8 @@ from tadas.om.outbox.storage import OutboxStorageInterface
 from tadas.om.outbox.types.row import OutboxRow, outbox_row, snapshot
 from tadas.om.tasks.types.task import Task
 from tadas.om.work import WorkManagerInterface
-from tadas.om.work.impl.manager import WorkOptions
-from tadas.om.work.types.handler import WorkHandlerInterface
+from tadas.om.work.impl.manager import DEAD_LETTER_KIND, WorkOptions
+from tadas.om.work.types.handler import WorkHandlerInterface, WorkParked, WorkRefused
 from tadas.om.work.types.work_item import WorkItem, WorkKind, WorkStatus
 from tadas.workers.maintenance.container import WorkerContainer
 from tadas.workers.maintenance.loop import LoopOptions, WorkerLoop
@@ -54,6 +59,23 @@ class SlowHandler(WorkHandlerInterface):
             self.cancelled.append(item.id)
             raise
         self.finished.append(item.id)
+
+
+class RaisingHandler(WorkHandlerInterface):
+    """Raises the one exception it was built with on every run, and counts
+    the runs."""
+
+    def __init__(self, error: Exception) -> None:
+        self.error = error
+        self.runs = 0
+
+    async def handle(self, ctx: OpContext, item: WorkItem) -> None:
+        self.runs += 1
+        raise self.error
+
+
+def outcome(subsystem: str, name: str) -> float:
+    return OUTCOMES.labels(subsystem=subsystem, outcome=name)._value.get()
 
 
 class CorrelationHandler(WorkHandlerInterface):
@@ -106,6 +128,9 @@ class LeaseLosingWork(WorkManagerInterface):
 
     async def fail(self, ctx: OpContext, item: WorkItem, error: str) -> WorkItem:
         return await self._inner.fail(ctx, item, error)
+
+    async def fail_for_good(self, ctx: OpContext, item: WorkItem, error: str) -> WorkItem:
+        return await self._inner.fail_for_good(ctx, item, error)
 
     async def defer(self, ctx: OpContext, item: WorkItem, delay: timedelta) -> WorkItem:
         return await self._inner.defer(ctx, item, delay)
@@ -413,6 +438,61 @@ async def test_a_finished_item_wakes_the_claimer(tmp_path: Path) -> None:
     await until(lambda: len(handler.finished) == 3)
     loop.stop()
     await task
+
+
+async def run_once(tmp_path: Path, error: Exception) -> tuple[WorkerContainer, OpContext, WorkItem]:
+    """One item, run once by a loop whose handler raises `error`, and read
+    back once it has settled."""
+    container = build_container(tmp_path)
+    ctx = await sign_in(container)
+    item = await container.managers.work.enqueue(ctx, make_item(ctx))
+    handler = RaisingHandler(error)
+    loop, task = start_loop(container, handler, fast_options(capacity=1))
+    storage = container.storage.get_work_storage()
+
+    async def settled() -> WorkItem:
+        stored = await storage.read_item(ctx.org_id, item.id)
+        assert stored is not None
+        return stored
+
+    deadline = asyncio.get_running_loop().time() + 3.0
+    while handler.runs == 0 or (await settled()).status is WorkStatus.CLAIMED:
+        assert asyncio.get_running_loop().time() < deadline, "the item did not settle"
+        await asyncio.sleep(0.01)
+    loop.stop()
+    await task
+    assert handler.runs == 1
+    return container, ctx, await settled()
+
+
+async def test_a_refusal_fails_the_item_at_once_as_a_dead_letter(tmp_path: Path) -> None:
+    """No retry changes a refusal: the one attempt the claim spent is the
+    last, and the item is a dead letter with its audit event and its count."""
+    dead, refused = outcome("work", "dead_letter"), outcome("worker", "refused")
+    container, ctx, stored = await run_once(tmp_path, WorkRefused("the provider said no"))
+    assert stored.status is WorkStatus.FAILED
+    assert (stored.attempts, stored.max_attempts) == (1, 3)
+    assert stored.last_error == "refused: the provider said no"
+    events = await container.managers.events.get_events(ctx, after_seq=0, limit=10)
+    assert [(e.kind, e.target_id) for e in events] == [(DEAD_LETTER_KIND, stored.id)]
+    assert outcome("work", "dead_letter") == dead + 1
+    assert outcome("worker", "refused") == refused + 1
+
+
+async def test_a_park_hands_the_item_back_and_spends_no_attempt(tmp_path: Path) -> None:
+    container, ctx, stored = await run_once(tmp_path, WorkParked("not yet", timedelta(minutes=5)))
+    assert stored.status is WorkStatus.QUEUED and stored.attempts == 0
+    assert stored.last_error == "parked: not yet"
+    assert stored.available_at > utcnow() + timedelta(minutes=4)
+    assert await container.managers.events.get_events(ctx, after_seq=0, limit=10) == []
+
+
+async def test_any_other_error_requeues_the_item_with_a_delay(tmp_path: Path) -> None:
+    container, ctx, stored = await run_once(tmp_path, RuntimeError("boom"))
+    assert stored.status is WorkStatus.QUEUED and stored.attempts == 1
+    assert stored.last_error == "RuntimeError: boom"
+    assert stored.available_at > utcnow()
+    assert await container.managers.events.get_events(ctx, after_seq=0, limit=10) == []
 
 
 async def test_lease_is_renewed_while_an_item_runs(tmp_path: Path) -> None:

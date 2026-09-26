@@ -50,7 +50,7 @@ WorkOS team                                          the people who may open the
 | Environment | A world of its own: its own applications, users, and organizations. Staging and Production share nothing. | Everything below | WorkOS makes both |
 | The default application | The application WorkOS made with the environment, first in the Applications list. The environment's API Keys and Redirects pages are its. Invitations sent from the dashboard go to it. | Nothing | Nobody |
 | The Tadas App | The application Tadas signs in through. Its **client id** is in every sign-in URL. It is not a secret. | The client id is committed in `deployment/workos/environments.yaml`, in each Terraform root (`workos_client_id`), and in `.env.example` for local | A person makes it, once per environment |
-| The Tadas App's API keys tab | The application's own secret keys. Tadas's API uses one as the client secret of the sign-in's code exchange, and for every management call: organizations, invitations, the Admin Portal link. The worker holds the same key and deletes the user of a person who deleted their account. An invitation sent with it lands its person in the Tadas App. | One key per Tadas environment: in the secret store, or a laptop's shell | A person, once per Tadas environment |
+| The Tadas App's API keys tab | The application's own secret keys. Tadas's API uses one as the client secret of the sign-in's code exchange, and for every management call: organizations, invitations, the Admin Portal link. The worker holds the same key and deletes the user of a person who deleted their account, and the organization of a team org its owner deleted. An invitation sent with it lands its person in the Tadas App. | One key per Tadas environment: in the secret store, or a laptop's shell | A person, once per Tadas environment |
 | The Tadas App's Redirects tab | Where AuthKit may send a person back to, where it sends a person whose sign-in did not start at Tadas, and the links on AuthKit's pages and emails. | See [the Redirects tab](#the-redirects-tab-field-by-field) | The bootstrap adds the redirect URIs; a person sets the rest by hand |
 | Authentication methods | Which ways to sign in AuthKit offers. | Email, Google, GitHub | A person, once per environment |
 | Organizations | One WorkOS organization per Tadas team org, carrying the Tadas org's id as its `external_id`. Made the first time an owner or an admin invites someone or opens single sign-on. | Made by the API | Tadas |
@@ -251,6 +251,7 @@ email code. You land in Tadas, signed in.
 | The allowed sign-out return | Terraform, from the environment's root (`TADAS_SIGN_OUT_RETURN_URIS`) | Every deploy |
 | Organizations, invitations, Admin Portal links | The API | When an owner or an admin invites or opens single sign-on |
 | A deleted account's WorkOS user, deleted | The worker (`DELETE_ACCOUNT`) | When a person deletes their account |
+| A deleted team org's WorkOS organization, deleted, with its connections, domains, and invitations | The worker (`DELETE_ORG`) | When an owner deletes their team org in Settings |
 
 ### The bootstrap
 
@@ -342,6 +343,7 @@ Tadas already issued are Tadas's own and outlive any key.
 | A sign-in that did not start at Tadas lands on a WorkOS error page | The initiate login URI is missing or wrong | The Tadas App's Redirects tab |
 | A deleted account's work sits parked, its note `a provider is out of reach` | The worker's key is `off`, or WorkOS is down | `/tadas/<env>/maintenance`: the start line names the identity provider; the item goes on by itself once WorkOS answers |
 | A deleted account's work fails with `deleting the user` | WorkOS refused the Tadas App's key the deletion | WorkOS's request log for the key; the item fails for good after its attempts, and the person's personal org stays until it runs again by hand |
+| A deleted org's work sits parked, or fails with `deleting the organization` | As for an account: the key is `off` or WorkOS is down; or WorkOS refused the call | As for an account; the org stays live and empty until the item runs again |
 | An invited person lands somewhere other than Tadas | The invitation was sent from the WorkOS dashboard, which always uses the default application | Invite from Tadas's settings page |
 | An invitation or the Admin Portal link fails | WorkOS is down, or the key was revoked | `/tadas/<env>/api`, then WorkOS's status page |
 | A person signs in at WorkOS but Tadas refuses them | Their address is not verified at WorkOS, or single sign-on is not theirs to join (their domain is not verified by the org) | `/tadas/<env>/api`, by the request id the portal shows |

@@ -1,8 +1,10 @@
 """The operator plane over the live app: which permission each route asks
 for, the reads of one tenant and the trail they leave, the platform's size,
-and the two creates under the operator's idempotency record."""
+the two creates under the operator's idempotency record, and the requeue
+of a failed work item."""
 
 import logging
+from datetime import timedelta
 from typing import Any
 from uuid import UUID
 
@@ -10,7 +12,9 @@ import httpx
 import pytest
 from api_support import OWNER, enrol_operator, sign_in_as
 
-from tadas.om.opcontext import OperatorRole
+from tadas.om.base import new_id, utcnow
+from tadas.om.opcontext import AppContext, AppType, OperatorRole, RequestContext
+from tadas.om.work.types.work_item import WorkItem, WorkKind
 from tadas.services.api.container import AppContainer
 
 OPERATOR_LOG = "tadas.om.tenancy.impl.operator"
@@ -314,3 +318,65 @@ async def test_an_operator_reads_its_own_entry(
     assert mine.json()["operator_role"] == "read"
     assert UUID(mine.json()["identity_id"])
     assert (await client.get("/v1/admin/me", headers=writer)).json()["operator_role"] == "write"
+
+
+async def failed_item(container: AppContainer, org_id: str) -> UUID:
+    """One item of the org, failed for good by a worker's refusal."""
+    rctx = RequestContext(request_id=new_id(), app=AppContext(type=AppType.WORKER, version="t"))
+    [ctx] = [
+        c
+        for c in await container.managers.tenancy.service_contexts(rctx)
+        if str(c.org_id) == org_id
+    ]
+    now = utcnow()
+    item = WorkItem(
+        id=new_id(),
+        created_at=now,
+        updated_at=now,
+        created_by=ctx.user_id,
+        updated_by=ctx.user_id,
+        kind=WorkKind.NOOP,
+        target_id=new_id(),
+        idempotency_key=new_id(),
+        request_id=ctx.request_id,
+        available_at=now,
+    )
+    await container.managers.work.enqueue(ctx, item)
+    claimed = await container.managers.work.claim(
+        rctx, "default", [WorkKind.NOOP], "test", timedelta(seconds=30)
+    )
+    assert claimed is not None
+    await container.managers.work.fail_for_good(claimed[0], claimed[1], "refused: no")
+    return item.id
+
+
+async def test_a_write_operator_requeues_a_failed_item_once(
+    client: httpx.AsyncClient,
+    container: AppContainer,
+    reader: dict[str, str],
+    writer: dict[str, str],
+    org_id: str,
+) -> None:
+    item_id = await failed_item(container, org_id)
+    path = f"/v1/admin/orgs/{org_id}/work/{item_id}/requeue"
+    refused = await client.post(path, headers=reader)
+    assert refused.status_code == 403 and refused.json()["error"]["code"] == "not_authorized"
+
+    requeued = await client.post(path, headers=writer)
+    assert requeued.status_code == 200, requeued.text
+    body = requeued.json()
+    assert (body["id"], body["kind"], body["status"]) == (str(item_id), "NOOP", "queued")
+    assert (body["attempts"], body["max_attempts"], body["last_error"]) == (0, 3, None)
+
+    again = await client.post(path, headers=writer)
+    assert again.status_code == 409 and again.json()["error"]["code"] == "work_not_failed"
+    unknown = await client.post(f"/v1/admin/orgs/{org_id}/work/{new_id()}/requeue", headers=writer)
+    assert unknown.status_code == 404
+
+    # The diary names the dead letter, then the requeue and the operator who made it.
+    me = (await client.get("/v1/admin/me", headers=writer)).json()
+    events = (await client.get(f"/v1/admin/orgs/{org_id}/events", headers=reader)).json()
+    trail = [(e["kind"], e["target_id"]) for e in events if e["kind"].startswith("work.")]
+    assert trail == [("work.item.failed", str(item_id)), ("work.item.requeued", str(item_id))]
+    requeue = next(e for e in events if e["kind"] == "work.item.requeued")
+    assert requeue["actor_id"] == me["identity_id"]

@@ -35,6 +35,11 @@ run "writes_no_config_and_routes_nothing" {
     condition     = length(aws_cloudfront_distribution.this.default_cache_behavior[0].function_association) == 0
     error_message = "no function runs on a viewer request"
   }
+
+  assert {
+    condition     = length(aws_cloudfront_distribution.this.ordered_cache_behavior) == 0 && length(aws_cloudfront_distribution.this.origin) == 1
+    error_message = "the site serves its bucket alone: no API origin, no API behavior"
+  }
 }
 
 run "a_missing_path_gets_the_not_found_page" {

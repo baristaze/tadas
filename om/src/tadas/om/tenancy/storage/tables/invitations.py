@@ -10,7 +10,8 @@ from tadas.om.storage.tables.base import Base, IdentifiableMixin, TrackableMixin
 class Invitations(IdentifiableMixin, TrackableMixin, Base):
     __tablename__ = "invitations"
     # The tenant leads the pending-address index, which serves the tenant's
-    # list of pending invitations; the sweep's reads are of closed rows.
+    # list of pending invitations, and the expiry index, which serves the
+    # sweep's reads of one tenant's invitations.
     __org_id_index__ = False
     __table_args__ = (
         # The provider's id names one invitation of one org.
@@ -27,6 +28,8 @@ class Invitations(IdentifiableMixin, TrackableMixin, Base):
             unique=True,
             postgresql_where=text("state = 'pending'"),
         ),
+        # What the purges read: the tenant's invitations, by their expiry.
+        Index("ix_invitations_org_id_expires_at", "org_id", "expires_at"),
     )
     email: Mapped[str]
     role: Mapped[str]

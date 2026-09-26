@@ -5,8 +5,8 @@
 // to the identity provider's logout when the server named one, so the
 // provider's session in this browser ends as well. A refusal changes
 // nothing: the person is still signed in, and it is said.
-import type { AccountDeletedView } from "../../api";
-import { refusalText } from "./deleteAccountModel";
+import type { AccountDeletedView, OwnedOrg } from "../../api";
+import { ownedAlone, refusalText } from "./deleteAccountModel";
 
 export interface DeleteAccountEffects {
   /** The deletion, made with the token the session still holds. */
@@ -19,14 +19,16 @@ export interface DeleteAccountEffects {
   leave: (url: string | null) => void;
 }
 
-export type DeleteAccountOutcome = { deleted: true } | { deleted: false; refusal: string };
+export type DeleteAccountOutcome =
+  | { deleted: true }
+  | { deleted: false; refusal: string; stranded: OwnedOrg[] };
 
 export async function deleteAccount(effects: DeleteAccountEffects): Promise<DeleteAccountOutcome> {
   let providerLogout: string | null;
   try {
     providerLogout = (await effects.remove()).provider_logout_url ?? null;
   } catch (caught) {
-    return { deleted: false, refusal: refusalText(caught) };
+    return { deleted: false, refusal: refusalText(caught), stranded: ownedAlone(caught) };
   }
   effects.note();
   effects.forget();
