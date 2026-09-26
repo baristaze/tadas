@@ -27,6 +27,7 @@ from starlette.websockets import WebSocketDisconnect
 from tadas.om.billing.types.plan import Plan
 from tadas.om.idempotency.impl.manager import IdempotencyOptions
 from tadas.om.opcontext import OperatorRole, Role
+from tadas.om.work.types.work_item import WorkKind
 from tadas.services.api.app import create_app
 from tadas.services.api.container import AppContainer
 from tadas.services.api.settings import ApiSettings
@@ -425,11 +426,42 @@ async def test_operators_delete_an_org(
     admin, _ = await enrol_operator(client, container, "root@example.test", OperatorRole.WRITE)
 
     assert (await client.delete(f"/v1/admin/orgs/{org_id}", headers=owner)).status_code == 401
-    deleted = await client.delete(f"/v1/admin/orgs/{org_id}", headers=admin)
-    assert deleted.status_code == 200, deleted.text
-    assert deleted.json()["deleted_at"] is not None
-    assert (await client.delete(f"/v1/admin/orgs/{org_id}", headers=admin)).status_code == 404
+    closed = await client.delete(f"/v1/admin/orgs/{org_id}", headers=admin)
+    assert closed.status_code == 200, closed.text
+    # Closed at once, for everyone in it; deleted by the queue.
+    assert closed.json()["id"] == org_id and closed.json()["deleted_at"] is None
     assert (await client.get("/v1/me", headers=owner)).status_code == 401
+    again = await client.delete(f"/v1/admin/orgs/{org_id}", headers=admin)
+    assert again.status_code == 200 and again.json() == closed.json()
+    # One DELETE_ORG is queued, asked for by the operator.
+    operator_id = UUID((await client.get("/v1/admin/me", headers=admin)).json()["identity_id"])
+    claimed = await container.managers.work.claim(
+        seed_request(), "default", [WorkKind.DELETE_ORG], "test", timedelta(seconds=30)
+    )
+    assert claimed is not None
+    work, item = claimed
+    assert (item.target_id, item.created_by) == (UUID(org_id), operator_id)
+    assert (
+        await container.managers.work.claim(
+            seed_request(), "default", [WorkKind.DELETE_ORG], "test", timedelta(seconds=30)
+        )
+        is None
+    )
+    # Its last step deletes the org; a delete after it finds nothing.
+    await container.managers.tenancy.delete_closed_org(work)
+    assert (await client.delete(f"/v1/admin/orgs/{org_id}", headers=admin)).status_code == 404
+
+
+async def test_an_operator_never_deletes_a_personal_org(
+    client: httpx.AsyncClient, container: AppContainer
+) -> None:
+    admin, _ = await enrol_operator(client, container, "root@example.test", OperatorRole.WRITE)
+    login = await dev_login(client, OWNER["email"])
+    places = await client.get("/v1/auth/memberships", headers=bearer(login))
+    home = next(p["org"] for p in places.json()["items"] if p["org"]["kind"] == "personal")
+    refused = await client.delete(f"/v1/admin/orgs/{home['id']}", headers=admin)
+    assert refused.status_code == 409
+    assert refused.json()["error"]["code"] == "personal_org_fixed"
 
 
 def test_realtime_channel_delivers_tenant_events(tmp_path: Path) -> None:

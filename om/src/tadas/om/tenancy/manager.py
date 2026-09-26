@@ -525,8 +525,9 @@ class TenancyManagerInterface(ABC):
         invitation is revoked, and the org lets go of its organization at the
         identity provider. The same commit asks for the rest (`DELETE_ORG`):
         the provider's organization, the subscription and the customer at
-        the processor, and the Slack app go, then the org is deleted as an
-        operator deletes one, and the sweep purges it after the retention.
+        the processor, and the Slack app go, then the org is deleted, and
+        the sweep purges it after the retention. An operator's deletion
+        (`TenancyOperatorManagerInterface.delete_org`) takes the same path.
         The answer carries a session in the owner's personal org, which the
         tab takes up, as a switch does."""
         ...
@@ -534,8 +535,8 @@ class TenancyManagerInterface(ABC):
     @abstractmethod
     async def delete_closed_org(self, ctx: OpContext) -> Org | None:
         """Platform-internal, the last step of `DELETE_ORG`, on the service
-        role only (NotAuthorized otherwise): deletes the caller's team org as
-        an operator's deletion does, and announces it, so its sockets close.
+        role only (NotAuthorized otherwise): soft-deletes the caller's closed
+        team org, whoever closed it, and announces it, so its sockets close.
         The sweep purges it once the retention has passed. None, and nothing
         written, when it is deleted already; PersonalOrgFixed for a personal
         org."""

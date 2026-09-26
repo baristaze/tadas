@@ -120,7 +120,9 @@ change. A name the image does not host refuses the boot.
 - **The operator plane.** For an identity on the operator allowlist,
   across every org: create an org with its owner, add a member, read
   an org, its members, its tasks, and its events, list every org a
-  page at a time, delete a team org (a personal org is refused), read
+  page at a time, delete a team org as its owner does (closed for
+  everyone in it at once; the worker ends its providers and then
+  deletes it; a personal org is refused), read
   an org's plan and grant it one with no payment, send one of an org's
   failed work items back to the queue, and read the
   platform's size: the tenant count, the

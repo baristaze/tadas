@@ -83,11 +83,15 @@ context on keeps the stage the callee needs.
   would outlive it, so `create_api_key` refuses an api key credential the
   way `logout` refuses anything but a session. The operator plane (every org, delete an org; an owner deletes their own team org through the tenant's manager) is a second
   manager, `TenancyOperatorManagerInterface`, which takes `OperatorContext`
-  and nothing else. Deleting an org soft-deletes the row and lands
-  `tenancy.org.deleted` beside it, so every socket of the tenant closes;
-  a claim of its queued work fails the item in the same call, and once
-  the retention has passed the sweep purges every row of the tenant and
-  keeps the org row as the record. A socket ticket is a row; redeeming it is one conditional
+  and nothing else. Its `delete_org` takes an owner's path (below): one
+  `write_closed_org` commit ends every member and credential, so every
+  socket of the tenant closes, and asks for `work.DELETE_ORG`, every row
+  under the operator's identity; a closed org is answered as it stands
+  (`rules.closed_org`), and no member is added to it. The item's last
+  step soft-deletes the row and lands `tenancy.org.deleted` beside it; a
+  claim of the tenant's queued work fails the item in the same call from
+  then on, and once the retention has passed the sweep purges every row
+  of the tenant and keeps the org row as the record. A socket ticket is a row; redeeming it is one conditional
   update on its hash, and the cache only remembers a redeemed one so a
   replay is refused without a round trip. Every unique key the schema
   declares (an identity's email, an org's slug, one live user per identity
@@ -262,8 +266,9 @@ context on keeps the stage the callee needs.
   carrying the WorkOS organization's id. The same request writes a
   session in the owner's personal org, as a switch does, and answers
   with it. `delete_closed_org`, that item's last step, on the service
-  role only, writes what the operator's deletion writes, and the sweep
-  purges the tenant after the retention
+  role only, soft-deletes the org row and announces it, and the sweep
+  purges the tenant after the retention. An operator's `delete_org` on
+  the operator plane writes the same close and asks for the same item
   ([ADR 0042](adr/0042-an-owner-deletes-a-team-org-closed-at-once-and-its-providers-by-the-queue.md)).
 - `work`: the table-backed work queue in the `queue` role; a row's
   routing field is its `lane`, payload shapes are fixed per `WorkKind`

@@ -5,6 +5,7 @@ seeding commands."""
 
 import logging
 from pathlib import Path
+from typing import Any
 from uuid import UUID
 
 import pytest
@@ -17,7 +18,14 @@ from tadas.integrations.identity.absent import IdentityProviderAbsentImpl
 from tadas.om.base import EMPTY_UUID, new_id, utcnow
 from tadas.om.events.storage.impl.memory import EventStorageMemoryImpl
 from tadas.om.events.types.event import Event
-from tadas.om.exceptions import Conflict, NotAuthorized, NotFound, ValidationFailed
+from tadas.om.exceptions import (
+    Conflict,
+    NotAuthenticated,
+    NotAuthorized,
+    NotFound,
+    PersonalOrgFixed,
+    ValidationFailed,
+)
 from tadas.om.idempotency.storage.impl.memory import IdempotencyStorageMemoryImpl
 from tadas.om.idempotency.types.attempt import Attempt
 from tadas.om.opcontext import (
@@ -42,6 +50,7 @@ from tadas.om.tenancy.storage.impl.memory import TenancyStorageMemoryImpl
 from tadas.om.tenancy.types.membership import Membership
 from tadas.om.tenancy.types.org import Org
 from tadas.om.tenancy.types.user import User
+from tadas.om.work.types.work_item import WorkKind, work_row_kind
 
 APP = AppContext(type=AppType.CLI, version="cli@test")
 OPERATOR_LOG = "tadas.om.tenancy.impl.operator"
@@ -54,6 +63,18 @@ def request() -> RequestContext:
     return RequestContext(request_id=new_id(), app=APP)
 
 
+class RecordingRelay(OutboxRelayImpl):
+    """The real relay, with every row it was handed kept for the assertions."""
+
+    def __init__(self, *args: Any) -> None:
+        super().__init__(*args)
+        self.rows: list[OutboxRow] = []
+
+    async def relay(self, org_id: UUID, row: OutboxRow) -> bool:
+        self.rows.append(row)
+        return await super().relay(org_id, row)
+
+
 class Plane:
     """Both entry points over one storage: the tenant manager the seeding
     commands call, and the operator manager the routes call."""
@@ -64,7 +85,8 @@ class Plane:
         self.events = EventStorageMemoryImpl()
         self.storage = TenancyStorageMemoryImpl(self.outbox, IdempotencyStorageMemoryImpl())
         self.tasks = TasksStorageMemoryImpl(self.outbox)
-        relay = OutboxRelayImpl(self.outbox, self.events, infra.get_topics())
+        relay = RecordingRelay(self.outbox, self.events, infra.get_topics())
+        self.relay = relay
         self.clock = SteppingClock()
         self.manager = TenancyManagerImpl(
             self.storage,
@@ -84,6 +106,15 @@ class Plane:
             self.clock,
             billing=GrantedEverywhere(),
         )
+
+    async def worker_deletes(self, org_id: UUID, admin: OperatorContext) -> Org:
+        """The last step of the `DELETE_ORG` an operator's deletion asked for,
+        as the worker runs it: under the operator's name, once the providers
+        are done."""
+        work = await self.manager.service_context(request(), org_id, admin.identity_id)
+        deleted = await self.manager.delete_closed_org(work)
+        assert deleted is not None
+        return deleted
 
     async def admit(self, role: OperatorRole, email: str) -> OperatorContext:
         """An operator with the given role, seeded into an org of their own and
@@ -232,6 +263,74 @@ async def test_the_creates_refuse_what_the_commands_refuse_and_a_little_more(
     assert (
         await plane.storage.read_identity_by_email_digest(email_digest("bob@example.test")) is None
     )
+
+
+async def test_an_operator_deletes_a_team_org_as_its_owner_does(
+    plane: Plane, writer: OperatorContext
+) -> None:
+    """One commit closes the org for everyone in it and asks for `DELETE_ORG`,
+    every row under the operator's identity; the org waits, live and empty,
+    for the queue, which deletes it under the operator's name (ADR 0042)."""
+    org = await plane.operator.create_org(writer, "Acme", "acme", "ann@example.test", "Ann")
+    bob = await plane.operator.add_member(writer, org.id, "bob@example.test", "Bob", Role.MEMBER)
+    # The org's organization at the identity provider, as an invitation makes it.
+    await plane.storage.write_org(org.id, org.model_copy(update={"provider_org_id": "org_acme"}))
+    login = await plane.manager.dev_sign_in(request(), "bob@example.test")
+    issued = await plane.manager.exchange_login(
+        await plane.manager.authenticate_login(request(), login.token), org.id
+    )
+    session = await plane.manager.authenticate(request(), issued.token)
+    plane.relay.rows.clear()
+
+    closed = await plane.operator.delete_org(writer, org.id)
+
+    # Nobody is in it, and no credential reaches it, from the answer on.
+    assert await plane.storage.count_members(org.id) == 0
+    with pytest.raises(NotAuthenticated):
+        await plane.manager.authenticate(request(), issued.token)
+    login = await plane.manager.dev_sign_in(request(), "bob@example.test")
+    assert org.id not in {m.org.id for m in login.memberships}
+    # The org is live, let go of its provider organization, until the queue runs.
+    stored = await plane.storage.read_org(org.id)
+    assert stored == closed
+    assert closed.deleted_at is None and closed.provider_org_id is None
+    assert closed.updated_by == writer.identity_id
+    # Every row names the operator, who has no user in the tenant.
+    assert {row.actor_id for row in plane.relay.rows} == {writer.identity_id}
+    kinds = {(row.kind, row.target_id) for row in plane.relay.rows}
+    assert ("tenancy.user.deleted", bob.id) in kinds
+    assert ("tenancy.session.revoked", session.security.credential_id) in kinds
+    work = [r for r in plane.relay.rows if r.kind == work_row_kind(WorkKind.DELETE_ORG)]
+    assert len(work) == 1
+    assert (work[0].org_id, work[0].target_id) == (org.id, org.id)
+    assert work[0].payload == {"provider_org_id": "org_acme"}
+    # A repeat before the queue has run answers the org and asks for nothing.
+    plane.relay.rows.clear()
+    assert await plane.operator.delete_org(writer, org.id) == closed
+    assert plane.relay.rows == []
+    # Nobody joins a closed org.
+    with pytest.raises(NotFound):
+        await plane.operator.add_member(writer, org.id, "cat@example.test", "Cat", Role.MEMBER)
+
+    deleted = await plane.worker_deletes(org.id, writer)
+    assert deleted.deleted_by == writer.identity_id
+    with pytest.raises(NotFound):
+        await plane.operator.delete_org(writer, org.id)
+
+
+async def test_an_operator_never_deletes_a_personal_org_and_a_reader_never_deletes(
+    plane: Plane, writer: OperatorContext, reader: OperatorContext
+) -> None:
+    """A personal org goes only with its person's account (ADR 0041)."""
+    org = await plane.operator.create_org(writer, "Acme", "acme", "ann@example.test", "Ann")
+    login = await plane.manager.dev_sign_in(request(), "ann@example.test")
+    home = next(m.org for m in login.memberships if m.org.personal)
+    with pytest.raises(PersonalOrgFixed):
+        await plane.operator.delete_org(writer, home.id)
+    with pytest.raises(NotAuthorized):
+        await plane.operator.delete_org(reader, org.id)
+    assert await plane.storage.count_members(org.id) == 1
+    assert await plane.storage.count_members(home.id) == 1
 
 
 async def test_a_rerun_of_a_create_returns_the_row_as_stored(
@@ -401,6 +500,9 @@ async def test_the_size_counts_the_living_and_the_last_day(
     assert (size.tasks_last_24h, size.events_last_24h) == (2, 3)
     assert before - size.since < utcnow() - size.since  # the window ends at the read
     await plane.operator.delete_org(writer, org.id)
+    # A closed org counts until the queue has deleted it.
+    assert (await plane.operator.size(reader)).tenants == 7
+    await plane.worker_deletes(org.id, writer)
     assert (await plane.operator.size(reader)).tenants == 6
 
 

@@ -105,6 +105,35 @@ A token lasts an hour. Run step 3 again; it asks you to confirm a
 sign-in and for a fresh code. Nothing else changes, and the skills pick
 up the new value from the file.
 
+## Deleting a team org
+
+A `write` operator deletes a team org the way its owner does
+([ADR 0042](../adr/0042-an-owner-deletes-a-team-org-closed-at-once-and-its-providers-by-the-queue.md)):
+
+```
+curl -s -X DELETE "$API/v1/admin/orgs/<org id>" \
+  -H "Authorization: Bearer $TADAS_OPERATOR_TOKEN" | python3 -m json.tool
+```
+
+The answer is the org, and nobody reaches it from then on: every
+member, session, API key, and pending invitation in it is gone, and a
+sign-in through its single sign-on finds nothing. Its `deleted_at` is
+still `null`. The worker's `DELETE_ORG` item comes next. It deletes the
+org's WorkOS organization, cancels its Stripe subscription and deletes
+the customer, removes its Slack app, and then deletes the org, under
+your identity. The org's rows stay for thirty days, then the sweep
+purges them.
+
+Until the item has run, the org is listed live and empty. Asking again
+answers the same org and queues nothing more. A provider that is down
+parks the item, and it goes on by itself once the provider answers. A
+provider that refuses the call fails it for good: [the operate
+runbook](operate.md#a-work-item-that-failed-for-good) says how to find
+it and send it back once the cause is fixed.
+
+A personal org is refused (`409 personal_org_fixed`). It goes only
+with its person's account.
+
 ## Taking an operator off the plane
 
 ```

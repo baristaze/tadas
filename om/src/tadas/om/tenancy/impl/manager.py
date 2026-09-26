@@ -1767,7 +1767,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
     async def delete_closed_org(self, ctx: OpContext) -> Org | None:
         ctx.require(Permission.MANAGE_MEMBERS)
         if ctx.security.role is not Role.SERVICE:
-            raise NotAuthorized("an org its owner deleted is ended by the platform")
+            raise NotAuthorized("a closed org is ended by the platform")
         org = await self._storage.read_org(ctx.org_id)
         if org is None:
             raise NotFound(f"org {ctx.org_id} not found")
@@ -1776,8 +1776,8 @@ class TenancyManagerImpl(TenancyManagerInterface):
         if org.deleted_at is not None:
             return None
         now = utcnow()
-        # The operator's deletion, as it writes it: the row stays as the
-        # record, and the sweep purges the tenant once the retention passed.
+        # The row stays as the record, and the sweep purges the tenant once
+        # the retention has passed.
         deleted = org.model_copy(
             update={
                 "deleted_at": now,

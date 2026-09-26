@@ -289,6 +289,15 @@ def left_without_owner(org: Org, role: Role, owners: int) -> bool:
     return not org.personal and role is Role.OWNER and owners <= 1
 
 
+def closed_org(org: Org, members: int) -> bool:
+    """Whether a live team org is closed: deleted by its owner or an
+    operator, with nobody left in it, and waiting for the queue to end its
+    providers and delete it. A team org never loses its last owner any other
+    way (`left_without_owner`), so a live one with no live member is one
+    that closed."""
+    return org.deleted_at is None and not org.personal and members == 0
+
+
 def past_retention(org: Org, before: datetime) -> bool:
     """A tenant whose rows go: deleted before `before`, the retention's
     start. A deleted personal org keeps no retention: it is deleted only with

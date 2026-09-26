@@ -60,13 +60,22 @@ reason: a claim refuses an item of a deleted org. The close is the
 promise, and it is kept at once.
 
 **The org's data goes the operator's way.** The worker's last step
-writes what an operator's deletion writes: `deleted_at`, the org row
-kept as the record under its own name, and `tenancy.org.deleted`
-announced. The sweep purges the tenant after the thirty-day retention,
-as it purges an org an operator deleted. There is no second deletion
-mechanism. A team org is not a person, so the retention that protects
+writes `deleted_at`, keeps the org row as the record under its own
+name, and announces `tenancy.org.deleted`. The sweep purges the tenant after the thirty-day retention.
+There is no second deletion mechanism. A team org is not a person, so the retention that protects
 against a mistake is kept; a personal org is still purged at once
 (ADR 0041), since its person asked to be gone.
+
+**An operator's deletion takes the same path.** `DELETE
+/v1/admin/orgs/{org_id}` writes the same close and asks for the same
+`DELETE_ORG`, so an org deleted on the operator plane stops billing,
+leaves its Slack workspace, and lets go of its WorkOS organization. The
+operator's identity is the actor of every row, and the worker deletes
+the org under that name. The route keeps its write permission and its
+answer, the org: its `deleted_at` stays unset until the worker has
+deleted it. A repeat before then answers the org as it stands and asks
+for nothing more. A personal org is refused (`409
+personal_org_fixed`): it goes only with its person's account.
 
 **The owner lands in their personal org.** The same request makes a
 session in the owner's personal org, as a switch makes one, carrying
@@ -94,15 +103,17 @@ An owner can leave Tadas without an operator: hand the org on, or
 delete it, then delete the account.
 
 The org's rows stay for thirty days after the worker deletes it. An
-operator can read them in that time; nobody can restore them, as with an
-operator's deletion.
+operator can read them in that time; nobody can restore them.
 
 While a provider is down, or refuses the key, the org waits, empty, and
 its subscription keeps billing until the provider answers. A provider
 that refuses the call itself fails the item at once, as with an
 account, and an operator requeues it (`tadas-ops work requeue`).
 
-An operator's deletion still leaves the providers alone.
+An operator's deletion ends the providers too. Until the worker has
+run, the operator plane lists the org live and empty, and counts it
+among the tenants. Nobody joins it meanwhile: an operator's add of a
+member to it is refused as not found.
 
 The worker deletes the WorkOS organization with the Tadas App's own
 key, the one that already makes the API's organization calls and
