@@ -263,7 +263,9 @@ async def size_command(
 ) -> int:
     """The platform's size as the first responder reads it before an
     escalation: the tenants and users the traffic generator created for its
-    runs are left out, since they are the team's own traffic."""
+    runs are left out, since they are the team's own traffic. The size is the
+    maintenance worker's latest count, so how long ago it counted is printed
+    beside it; the runs' tenants are read now."""
     env = load_environment(args.env)
     if not env.operator_token:
         print(
@@ -291,6 +293,8 @@ async def size_command(
     values["users"] = max(size.users - run_users, 0)
     for key, value in values.items():
         print(f"{key:<24} {value}")
+    age = max(int((datetime.now(UTC) - size.counted_at).total_seconds()), 0)
+    print(f"{'counted':<24} {age // 60} min {age % 60} s ago, by the maintenance worker's sweep")
     print(
         f"{'traffic run tenants':<24} {run_orgs} left out ({run_users} users); "
         "their tasks and events stay in the day's counts"

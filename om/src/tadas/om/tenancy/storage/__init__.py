@@ -18,6 +18,7 @@ from tadas.om.tenancy.types.membership import Membership
 from tadas.om.tenancy.types.org import Org
 from tadas.om.tenancy.types.session import Session
 from tadas.om.tenancy.types.sign_in_delay import SignInDelay
+from tadas.om.tenancy.types.size import PlatformSize
 from tadas.om.tenancy.types.socket_ticket import SocketTicket
 from tadas.om.tenancy.types.user import User
 
@@ -138,14 +139,27 @@ class TenancyStorageInterface(ABC):
     @abstractmethod
     async def count_orgs(self) -> int:
         """Global: how many orgs are live (not soft-deleted), the tenant count
-        the operator plane's size reads."""
+        of the sweep's tally of the platform's size."""
         ...
 
     @abstractmethod
     async def count_orgs_and_users(self) -> tuple[int, int]:
         """Global, one statement: the live orgs, as `count_orgs` counts them,
-        and the live users across every tenant, the two counts the operator
-        plane's size reads; a person in two orgs counts twice."""
+        and the live users across every tenant, the two counts of the sweep's
+        tally of the platform's size; a person in two orgs counts twice."""
+        ...
+
+    @abstractmethod
+    async def write_platform_size(self, size: PlatformSize) -> None:
+        """Global: the sweep's count of the platform's size becomes the one
+        tally row, in the `admin` role. A count older than the row's never
+        replaces it, so two workers counting at once leave the newer."""
+        ...
+
+    @abstractmethod
+    async def read_platform_size(self) -> PlatformSize | None:
+        """Global: the platform's size as the sweep last counted it, the one
+        row read by its key; None until the first count."""
         ...
 
     @abstractmethod

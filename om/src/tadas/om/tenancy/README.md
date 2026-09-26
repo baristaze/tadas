@@ -156,8 +156,10 @@ of the seven kinds of thing [Tadas is made of](../../../../README.md).
 - **Operate across orgs.** An operator, admitted from the allowlist,
   can create an org with its owner, add a member (bound by the org's
   seats like any other door), read an org, its
-  members, its tasks, and its events, read the platform's size, list
-  every org, and delete a team org. An operator's deletion is an
+  members, its tasks, and its events, read the platform's size (the
+  maintenance worker counts it every five minutes and the read answers
+  its latest count, with when it counted), list every org, and delete a
+  team org. An operator's deletion is an
   owner's: the org closes for everyone in it at once, and the providers
   go before the org does (below). An operator never deletes a personal
   org: it goes only with its person.
