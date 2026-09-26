@@ -19,9 +19,11 @@ import logging
 from collections.abc import Awaitable, Callable, Mapping
 from typing import ClassVar
 
+from tadas.infra.observability import OUTCOMES
 from tadas.om.exceptions import NotFound, PreconditionFailed
 from tadas.om.opcontext import OpContext, Permission
 from tadas.om.orchestrations import OrchestrationsManagerInterface
+from tadas.om.orchestrations.rules import outcome
 from tadas.om.orchestrations.types.orchestration import (
     FailReason,
     Orchestration,
@@ -95,6 +97,10 @@ class OrchestrationHandlerImpl(WorkHandlerInterface):
             after.total if after.total is not None else "?",
             after.status.value,
         )
+        if after.status is not OrchestrationStatus.RUNNING:
+            # A park or an end the step wrote itself; a failure the manager
+            # wrote counts itself there.
+            OUTCOMES.labels(subsystem="orchestrations", outcome=outcome(after)).inc()
 
 
 class WakeParkedHandlerImpl(WorkHandlerInterface):

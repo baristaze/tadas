@@ -103,3 +103,9 @@ def stagger(position: int, step: timedelta) -> timedelta:
     """The delay before the record at `position` in one wake's resumes takes
     its next step, so the records an event wakes do not all start at once."""
     return step * max(0, position)
+
+
+def outcome(record: Orchestration) -> str:
+    """The label an operator reads a record's transition by: its kind and
+    where it stands now, `task_cleanup_succeeded`, `task_import_parked`."""
+    return f"{record.kind.value}_{record.status.value}"

@@ -15,7 +15,7 @@ from tadas.om.exceptions import (
 )
 from tadas.om.opcontext import OpContext, Permission
 from tadas.om.orchestrations.manager import OrchestrationsManagerInterface
-from tadas.om.orchestrations.rules import failed, is_settled, resumed, stagger
+from tadas.om.orchestrations.rules import failed, is_settled, outcome, resumed, stagger
 from tadas.om.orchestrations.steps import step_rows
 from tadas.om.orchestrations.storage import OrchestrationsStorageInterface
 from tadas.om.orchestrations.types.orchestration import (
@@ -92,6 +92,7 @@ class OrchestrationsManagerImpl(OrchestrationsManagerInterface):
             return existing
         await self._relay_all(ctx, rows)
         log.info("started %s %s in org %s", created.kind.value, created.id, ctx.org_id)
+        OUTCOMES.labels(subsystem="orchestrations", outcome=outcome(created)).inc()
         return created
 
     async def get(self, ctx: OpContext, record_id: UUID) -> Orchestration:
@@ -134,8 +135,18 @@ class OrchestrationsManagerImpl(OrchestrationsManagerInterface):
         ctx.require(Permission.WRITE)
         ended = failed(record, self._clock(), ctx.user_id, reason, detail[:500] if detail else None)
         await self._write(ctx, ended, record.version)
-        log.warning("%s %s failed: %s", record.kind.value, record.id, reason.value)
-        OUTCOMES.labels(subsystem="orchestrations", outcome="failed").inc()
+        # A bound of the input is the person's to fix; a defect is ours.
+        level = logging.ERROR if reason is FailReason.DEFECT else logging.WARNING
+        log.log(
+            level,
+            "%s %s in org %s failed: %s %s",
+            record.kind.value,
+            record.id,
+            ctx.org_id,
+            reason.value,
+            detail or "",
+        )
+        OUTCOMES.labels(subsystem="orchestrations", outcome=outcome(ended)).inc()
         return ended
 
     async def purge_deleted(self, ctx: OpContext) -> int:
@@ -170,7 +181,7 @@ class OrchestrationsManagerImpl(OrchestrationsManagerInterface):
     ) -> Orchestration:
         running = resumed(record, now, ctx.user_id)
         await self._write(ctx, running, record.version, not_before)
-        OUTCOMES.labels(subsystem="orchestrations", outcome="resumed").inc()
+        OUTCOMES.labels(subsystem="orchestrations", outcome=f"{record.kind.value}_resumed").inc()
         return running
 
     async def _write(
