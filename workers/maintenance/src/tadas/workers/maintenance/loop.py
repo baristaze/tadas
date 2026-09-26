@@ -4,10 +4,12 @@ request that caused the work, raises a span linked to that request's trace,
 renews its lease and cancels itself when the lease is lost or renewal keeps
 failing, beat liveness in memory and publish it to the cache as best
 effort, sweep on a timer (the expired leases and the outbox relay across
-tenants, then the tenant-shaped work per tenant, then every namespace's
-purge of its rows past their retention across tenants, then the purges of
-done outbox rows and settled work items, within a time budget, then the
-three gauges of the queue and the outbox), and drain first on stop."""
+tenants, then the chores of the tenants one read across tenants finds with
+a chore due, then the purge of a tenant past its retention per tenant, then
+every namespace's purge of its rows past their retention across tenants,
+then the purges of done outbox rows and settled work items, within a time
+budget, then the three gauges of the queue and the outbox), and drain first
+on stop."""
 
 import asyncio
 import contextlib
@@ -65,6 +67,12 @@ ChoreStep = Callable[[OpContext], Awaitable[object]]
 """A standing chore per tenant that is not a purge: opening the next period
 of a record kept per period (`TasksManagerInterface.open_cleanup`)."""
 
+ChoreTenants = Callable[[UUID | None, int], Awaitable[list[UUID]]]
+"""The one read a pass, across tenants in the system scope, of the tenants
+with a chore due: at most `limit` of them, in id order, after `after` when
+one is given (`TasksManagerInterface.tenants_with_chores`). The chores run for
+those tenants alone."""
+
 
 class LoopOptions(Platform):
     worker_id: str
@@ -87,6 +95,9 @@ class LoopOptions(Platform):
     # loop reads to know a full one. A purge that returns this many or more is
     # called again while the budget lasts; one that returns fewer is drained.
     purge_batch: int = 1000
+    # Tenants with a chore due one pass reads at most. The next pass reads on
+    # from the last one this pass ran, so a backlog of them is a page a pass.
+    chore_batch: int = 1000
     # A pass takes no new tenant past this, and the next pass resumes at the
     # tenant it stopped at, so a pass stays shorter than the interval.
     sweep_budget: timedelta = timedelta(seconds=20)
@@ -105,6 +116,7 @@ class WorkerLoop:
         purges: Mapping[str, PurgeStep],
         handlers: Mapping[WorkKind, WorkHandlerInterface],
         chores: Mapping[str, ChoreStep] | None = None,
+        chore_tenants: ChoreTenants | None = None,
         across: Mapping[str, AcrossStep] | None = None,
         across_batches: Mapping[str, int] | None = None,
         topics: TopicsInterface,
@@ -115,6 +127,9 @@ class WorkerLoop:
         self._outbox = outbox
         self._purges = purges
         self._chores = dict(chores or {})
+        if self._chores and chore_tenants is None:
+            raise ValueError("chores run for the tenants a read finds them due in; name the read")
+        self._chore_tenants = chore_tenants
         self._across = dict(across or {})
         # A purge across tenants whose batch is not the loop's `purge_batch`,
         # by name: what it returns is held against its own batch.
@@ -134,6 +149,9 @@ class WorkerLoop:
         # Where the next pass starts: the tenant the last one stopped at, or
         # None when it reached the end.
         self._resume_at: UUID | None = None
+        # Where the next pass reads the tenants with a chore due from: after
+        # the last one this pass ran, or None to read from the first.
+        self._chores_after: UUID | None = None
 
     @property
     def kinds(self) -> list[WorkKind]:
@@ -430,28 +448,30 @@ class WorkerLoop:
     async def _sweep_once(self) -> None:
         """First the cross-tenant steps that bound recovery: the expired
         leases go back to the queue, and the outbox rows a crash or an outage
-        left are relayed. Then one service context per tenant, the system
-        scope first and deleted tenants included, and the tenant-shaped work
-        under each: the purge of a tenant past its retention, and the
-        standing chores. Then each namespace's purge of its rows past their
-        retention, once across every tenant, and the cross-tenant purges of
-        the outbox and the queue. Every step is idempotent and wrapped, so a
-        failing tenant or step never stops the rest.
+        left are relayed. Then the standing chores, in the tenants that one
+        read across tenants finds with a chore due, each under its service
+        context. Then one service context per tenant, the system scope first
+        and deleted tenants included, and under each the purge of a tenant
+        past its retention. Then each namespace's purge of its rows past
+        their retention, once across every tenant, and the cross-tenant
+        purges of the outbox and the queue. Every step is idempotent and
+        wrapped, so a failing tenant or step never stops the rest.
 
         The pass has a budget. The requeue and the relay run on every pass,
         each again while its batch comes back full and the budget lasts, so
         a crashed worker's item waits one pass at most and a backlog drains
-        at the pace the budget allows. The pass takes no new tenant once the
-        budget is spent, but always takes one, and the next pass starts at
-        the tenant this one stopped at, so every tenant is reached in turn
-        however many there are. A tenant it takes runs every step at least
-        once; a step whose batch came back full runs again, in turn with the
-        others, while the budget lasts. The purges across tenants run on
-        every pass, each at least once and again while its batch comes back
-        full and the budget lasts, so a tenant with nothing to purge costs a
-        pass nothing but its chores. So do the three reads of the queue and
-        the outbox that end it, whatever the budget, since the alarms read
-        them."""
+        at the pace the budget allows. The chores take a page of the tenants
+        with one due a pass (`_run_chores`). The ring of tenants takes no new
+        tenant once the budget is spent, but always takes one, and the next
+        pass starts at the tenant this one stopped at, so every tenant is
+        reached in turn however many there are. A tenant it takes runs every
+        purge at least once; a purge whose batch came back full runs again,
+        in turn with the others, while the budget lasts. The purges across
+        tenants run on every pass, each at least once and again while its
+        batch comes back full and the budget lasts. A living tenant with no
+        chore due costs a pass no read at all. The three reads of the queue
+        and the outbox end every pass, whatever the budget, since the alarms
+        read them."""
         clock = asyncio.get_running_loop().time
         started = clock()
         deadline = started + self._options.sweep_budget.total_seconds()
@@ -480,6 +500,7 @@ class WorkerLoop:
         except Exception:
             log.exception("sweep: maintenance_contexts failed")
             contexts = []
+        chored = await self._run_chores(contexts, deadline)
         ring = self._from_resume_point(contexts)
         swept = 0
         self._resume_at = None
@@ -515,16 +536,18 @@ class WorkerLoop:
         # One line per pass, its numbers as fields: the alarms module's log
         # filters read the duration and the three gauges off it.
         log.info(
-            "sweep: pass took %.3fs over %d of %d tenants%s",
+            "sweep: pass took %.3fs over %d of %d tenants, chores in %d%s",
             seconds,
             swept,
             len(ring),
+            chored,
             "" if self._resume_at is None else f"; the next resumes at {self._resume_at}",
             extra={
                 "sweep": {
                     "duration_ms": round(seconds * 1000),
                     "tenants": swept,
                     "of": len(ring),
+                    "chores": chored,
                     "finished": self._resume_at is None,
                     **gauges,
                 }
@@ -573,12 +596,49 @@ class WorkerLoop:
         at = next((i for i, ctx in enumerate(ordered) if ctx.org_id >= self._resume_at), 0)
         return ordered[at:] + ordered[:at]
 
+    async def _run_chores(self, contexts: list[OpContext], deadline: float) -> int:
+        """The standing chores of the tenants with one due, in id order, a page
+        a pass: one read across tenants names them, and each runs every chore
+        once, under the service context the pass listed for it. A tenant with
+        no chore due is never visited. No new tenant is taken once the budget
+        is spent, but always one, so no backlog elsewhere stops the chores.
+        The next pass reads on from the last tenant this one ran; a page that
+        came back short and ran whole sends it back to the first. A tenant
+        the read names with no context in the pass (purged, or made since the
+        list was read) waits for the next pass. Returns how many tenants ran."""
+        if self._chore_tenants is None:
+            return 0
+        batch = self._options.chore_batch
+        try:
+            due = await self._chore_tenants(self._chores_after, batch)
+        except Exception:
+            log.exception("sweep: the read of the tenants with a chore due failed")
+            return 0
+        listed = {ctx.org_id: ctx for ctx in contexts}
+        clock = asyncio.get_running_loop().time
+        self._chores_after = due[-1] if len(due) >= batch else None
+        ran = 0
+        for at, org_id in enumerate(due):
+            if ran and clock() >= deadline:
+                self._chores_after = due[at - 1]
+                break
+            ctx = listed.get(org_id)
+            if ctx is None:
+                continue
+            for name, chore in self._chores.items():
+                try:
+                    await chore(ctx)
+                except Exception:
+                    log.exception("sweep: %s failed for tenant %s", name, org_id)
+            ran += 1
+        return ran
+
     async def _sweep_tenant(self, ctx: OpContext, deadline: float) -> None:
-        """Every step and every chore of one tenant once, then the steps whose
-        batch came back full, round after round, while the budget lasts. A
-        deleted tenant past its retention for which nothing was left is marked
-        purged, and the sweep leaves it out from then on; its rows that have
-        a retention of their own go across tenants, visited or not."""
+        """Every purge of one tenant once, then the purges whose batch came back
+        full, round after round, while the budget lasts. A deleted tenant past
+        its retention for which nothing was left is marked purged, and the
+        sweep leaves it out from then on; its rows that have a retention of
+        their own go across tenants, visited or not."""
         settled = True
         full: list[tuple[str, PurgeStep]] = []
         for name, purge in self._purges.items():
@@ -586,14 +646,6 @@ class WorkerLoop:
             settled = settled and purged == 0
             if purged is not None and purged >= self._options.purge_batch:
                 full.append((name, purge))
-        # The standing chores run once whenever the tenant does, before any
-        # second round of purges, so no budget spent on a backlog skips them.
-        for name, chore in self._chores.items():
-            try:
-                await chore(ctx)
-            except Exception:
-                settled = False
-                log.exception("sweep: %s failed for tenant %s", name, ctx.org_id)
         clock = asyncio.get_running_loop().time
         while full and clock() < deadline:
             again, full = full, []
