@@ -92,7 +92,7 @@ Zustand, one realtime channel.
   when it changed, and a push the socket missed comes back in the replay
   that follows. A query no push names, such as the person's identity,
   is fresh for ten seconds and read again on focus. While the socket is
-  connecting, degraded, or closed, every query is.
+  connecting, degraded, paused, or closed, every query is.
 - Client state lives in Zustand (`src/store/`): the session token, the
   connection status, the transient notices a failed write leaves
   (`notices.ts`, rendered by `src/app/Notices.tsx` over the kit's
@@ -117,7 +117,16 @@ Zustand, one realtime channel.
   of each wait is jitter, because a socket drops for a shared reason: a
   bare curve would bring every tab back at the same instant. A socket
   counts as connected once the hello frame arrives, so a server that
-  accepts and closes at once still backs off. The first hello's catch-up
+  accepts and closes at once still backs off. A tab hidden five minutes
+  (`HIDDEN_PAUSE_MS` in `timeouts.ts`) closes its socket and says paused:
+  an open socket costs the server more than a reconnect by then. A pause
+  is no failure, so it schedules no reconnect, counts no failed cycle,
+  polls nothing, and shows no banner. The page turning visible, a
+  `pageshow` (a restore from the back/forward cache too), a `focus`, or
+  `online` resumes it with a fresh ticket, and the open replays from the
+  cursor; many at once make one connect (`pageVisibility.ts` listens, the
+  channel decides). A session that ended meanwhile is refused its ticket
+  with a 401, which signs out. The first hello's catch-up
   reads the stream's last page and routes what was produced since the
   page began reading; it refreshes every query only when that page cannot
   tell, so a page load reads each query once. Envelopes (`envelopes.ts`)

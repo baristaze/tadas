@@ -1,5 +1,6 @@
 // The socket's whole life without React: ticket, connect, subscribe, ping,
-// reconnect with backoff, the degraded polling mode, and the stream cursor.
+// reconnect with backoff, the degraded polling mode, the pause of a hidden
+// tab, and the stream cursor.
 // Everything it reaches for is handed in, so the loop runs in a test over a
 // fake socket and fake timers. The provider owns one of these per session.
 import type { EventView } from "../api";
@@ -15,7 +16,7 @@ import {
   truncatedHead,
   type Cursor,
 } from "./stream";
-import { backoffDelay, DEGRADED_POLL_INTERVAL_MS, PING_INTERVAL_MS, STABLE_OPEN_MS } from "./timeouts";
+import { backoffDelay, DEGRADED_POLL_INTERVAL_MS, HIDDEN_PAUSE_MS, PING_INTERVAL_MS, STABLE_OPEN_MS } from "./timeouts";
 
 const TOPICS = ["entity_changed"];
 
@@ -58,6 +59,12 @@ export const CLOSE_UNAUTHENTICATED = 4401;
 
 export interface Channel {
   stop(): void;
+  /** The tab was hidden: the socket closes if it stays hidden HIDDEN_PAUSE_MS. */
+  hide(): void;
+  /** The tab is back: a pending pause is called off, and a paused socket
+   * reconnects and catches up from the cursor. Safe to call any number of
+   * times; only a paused channel connects. */
+  show(): void;
   /** The last contiguous seq applied; for tests and the degraded banner. */
   cursor(): Cursor;
 }
@@ -71,8 +78,13 @@ export function openChannel(deps: ChannelDeps): Channel {
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let stableTimer: ReturnType<typeof setTimeout> | null = null;
+  let pauseTimer: ReturnType<typeof setTimeout> | null = null;
   let attempt = 0;
   let stopped = false;
+  let paused = false;
+  // Moves on every pause, so a ticket request or a socket from before it
+  // opens nothing after it.
+  let generation = 0;
   let cursor: Cursor = null;
   const now = deps.now ?? (() => performance.now());
   // When the page began reading, near enough: the provider opens the channel
@@ -256,16 +268,18 @@ export function openChannel(deps: ChannelDeps): Channel {
 
   // The first connect says so; a reconnect keeps the status its drop set.
   const connect = async () => {
-    if (stopped) return;
+    if (stopped || paused) return;
+    const began = generation;
     if (attempt === 0) connection.setStatus("connecting");
     let ticket: string;
     try {
       ticket = await deps.requestTicket();
     } catch {
+      if (stopped || began !== generation) return;
       scheduleReconnect();
       return;
     }
-    if (stopped) return;
+    if (stopped || began !== generation) return;
     const opened = deps.openSocket(ticket);
     socket = opened;
     opened.onopen = () => {
@@ -315,18 +329,58 @@ export function openChannel(deps: ChannelDeps): Channel {
     opened.onerror = () => opened.close();
   };
 
+  const clearPauseTimer = () => {
+    if (pauseTimer) clearTimeout(pauseTimer);
+    pauseTimer = null;
+  };
+
+  // Everything the socket runs on stops: the socket, its ping, a pending
+  // reconnect, the degraded polling. The socket is let go before it is
+  // closed, so its close is not read as a drop.
+  const quiesce = () => {
+    if (pingTimer) clearInterval(pingTimer);
+    pingTimer = null;
+    if (reconnectTimer) clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+    clearStableTimer();
+    stopPolling();
+    const closing = socket;
+    socket = null;
+    closing?.close();
+  };
+
+  // A pause is not a failure: no reconnect is scheduled, no failed cycle is
+  // counted, and the cursor stays where it is for the return to replay from.
+  const pause = () => {
+    pauseTimer = null;
+    if (stopped || paused) return;
+    paused = true;
+    generation += 1;
+    attempt = 0;
+    quiesce();
+    connection.pause();
+  };
+
   void connect();
 
   return {
     stop: () => {
       if (stopped) return;
       stopped = true;
-      if (pingTimer) clearInterval(pingTimer);
-      if (reconnectTimer) clearTimeout(reconnectTimer);
-      clearStableTimer();
-      stopPolling();
-      socket?.close();
+      clearPauseTimer();
+      quiesce();
       connection.close();
+    },
+    hide: () => {
+      if (stopped || paused || pauseTimer) return;
+      pauseTimer = setTimeout(pause, HIDDEN_PAUSE_MS);
+    },
+    show: () => {
+      clearPauseTimer();
+      if (stopped || !paused) return;
+      paused = false;
+      // A first connect, with a fresh ticket; its open replays from the cursor.
+      void connect();
     },
     cursor: () => cursor,
   };

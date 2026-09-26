@@ -46,7 +46,7 @@ describe("the shared query cache", () => {
   });
 
   it("reads every query as before while the socket is not open", () => {
-    for (const status of ["connecting", "degraded", "closed"] as const) {
+    for (const status of ["connecting", "degraded", "paused", "closed"] as const) {
       withSocket(status);
       expect(decided(keys.tasks.open("team")), status).toEqual({ staleTime: STALE_MS, onFocus: true });
       expect(decided(keys.me), status).toEqual({ staleTime: STALE_MS, onFocus: true });
