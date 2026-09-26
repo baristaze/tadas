@@ -5,8 +5,10 @@ workspace to one org; an uninstall takes the token away; the token renews
 before it expires, one renewal at a time; and a Slack user is matched to a
 member by the address their profile holds."""
 
+from collections import Counter
 from datetime import timedelta
 from pathlib import Path
+from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
@@ -234,6 +236,55 @@ async def test_a_token_that_no_longer_renews_breaks_the_install(world: World) ->
     broken = await slack.get_installation(owner)
     assert broken is not None and broken.status is SlackInstallationStatus.BROKEN
     assert broken.broken_reason == "invalid_refresh_token"
+
+
+def counted_secrets(world: World, monkeypatch: pytest.MonkeyPatch) -> Counter[str]:
+    """How many times the org's secrets were asked, by call."""
+    secrets = world.infra.get_secrets()
+    calls: Counter[str] = Counter()
+    for name in ("get", "has"):
+        real = getattr(secrets, name)
+
+        async def call(*args: Any, _real: Any = real, _name: str = name) -> Any:
+            calls[_name] += 1
+            return await _real(*args)
+
+        monkeypatch.setattr(secrets, name, call)
+    return calls
+
+
+async def test_a_bot_token_is_one_read_of_the_orgs_secrets(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    owner = await world.org("acme")
+    await world.install(owner)
+    calls = counted_secrets(world, monkeypatch)
+    assert await world.managers.slack.bot_token(owner)
+    assert calls == {"get": 1}
+
+
+async def test_a_token_gone_from_the_secrets_breaks_the_install(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    owner = await world.org("acme")
+    slack = world.managers.slack
+    await world.install(owner)
+    installation = await slack.get_installation(owner)
+    assert installation is not None
+    await world.infra.get_secrets().delete(owner.org_id, installation.credential_ref)
+    calls = counted_secrets(world, monkeypatch)
+    with pytest.raises(SlackTokenRevoked, match="token_missing"):
+        await slack.bot_token(owner)
+    assert calls == {"get": 1}
+    broken = await slack.get_installation(owner)
+    assert broken is not None and broken.status is SlackInstallationStatus.BROKEN
+    assert broken.broken_reason == "token_missing"
+    # An uninstall with no token leaves Slack alone and still removes the row.
+    calls.clear()
+    assert await slack.uninstall(owner) is not None
+    assert calls == {"get": 1}
+    assert world.twin.uninstalled == []
+    assert await slack.get_installation(owner) is None
 
 
 async def test_a_slack_user_is_matched_to_a_member_by_address(world: World) -> None:
