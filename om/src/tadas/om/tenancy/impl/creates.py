@@ -24,7 +24,6 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from tadas.infra.observability import current_traceparent
 from tadas.om.base import new_id, utcnow
 from tadas.om.exceptions import Conflict, MembershipLimitReached, ValidationFailed
 from tadas.om.opcontext import OperatorRole, RequestScope, Role
@@ -34,6 +33,7 @@ from tadas.om.tenancy.rules import (
     SLUG_SUFFIX_LENGTH,
     check_email,
     email_digest,
+    fold_email,
     is_platform_email,
     personal_org_name,
     slug_from_name,
@@ -142,7 +142,8 @@ def new_identity(
     """A person nobody has seen before: the provenance names the identity
     itself, since no one else acted. A first sign-in through the identity
     provider names the issuer and the subject; the seeding and the operator
-    plane name neither, and the person's first sign-in links them."""
+    plane name neither, and the person's first sign-in links them. The
+    address is kept folded, as every address is."""
     identity_id = new_id()
     return Identity(
         id=identity_id,
@@ -150,7 +151,7 @@ def new_identity(
         updated_at=now,
         created_by=identity_id,
         updated_by=identity_id,
-        email=email,
+        email=fold_email(email),
         issuer=issuer,
         subject=subject,
     )
@@ -317,7 +318,7 @@ async def add_member_to(
         created_by=actor_id,
         updated_by=actor_id,
         identity_id=identity.id,
-        email=email,
+        email=identity.email,
         display_name=display_name,
     )
     membership = Membership(
@@ -341,7 +342,7 @@ async def add_member_to(
         payload=user_payload(user),
         actor_id=actor_id,
         request_id=request.request_id,
-        traceparent=current_traceparent(),
+        traceparent=request.traceparent,
         app=request.app.type.value,
     )
     rows = (row, *riders)

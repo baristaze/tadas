@@ -3,8 +3,9 @@ revision of every role downgrades and upgrades again, the logins are safe to
 make twice, a migration behind a held lock gives up within its bound, a data
 migration passes the fence it runs under, the personal org backfill gives
 every person one, the due date backfill gives every task with a due time its
-date, and a task's rank and position follow each other for the builds before
-this one."""
+date, a task's rank and position follow each other for the builds before this
+one, and the address fold folds every address and stops on two that fold to
+one."""
 
 import asyncio
 import time
@@ -16,6 +17,7 @@ import pytest
 from contracts.event_storage import make_event
 from contracts.factories import (
     make_identity,
+    make_invitation,
     make_membership,
     make_org,
     make_personal_org,
@@ -23,10 +25,12 @@ from contracts.factories import (
 )
 from contracts.task_storage import bump, make_task
 from sqlalchemy import Connection, text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from tadas.om.base import new_id
 from tadas.om.events.storage.impl.postgres import EventStoragePostgresImpl
+from tadas.om.exceptions import UniqueKeyTaken
 from tadas.om.opcontext import Role
 from tadas.om.storage.impl.pg_base import LoginSessions, set_scope
 from tadas.om.storage.migrate import (
@@ -44,9 +48,10 @@ from tadas.om.storage.roles import DatabaseRole
 from tadas.om.storage.settings import MigrationSettings
 from tadas.om.tasks.storage.impl.postgres import TasksStoragePostgresImpl
 from tadas.om.tasks.types.task import Task
-from tadas.om.tenancy.rules import MAX_SLUG_LENGTH, SLUG_PATTERN
+from tadas.om.tenancy.rules import MAX_SLUG_LENGTH, SLUG_PATTERN, email_digest
 from tadas.om.tenancy.storage.impl.postgres import TenancyStoragePostgresImpl
 from tadas.om.tenancy.types.identity import Identity
+from tadas.om.tenancy.types.invitation import InvitationState
 from tadas.om.tenancy.types.issued import OrgMembership
 
 pytestmark = pytest.mark.integration
@@ -535,3 +540,94 @@ async def test_the_position_is_the_ranks_float_on_every_row_either_release_write
     ]
     await upgrade(DatabaseRole.CORE, core)
     assert await check(DatabaseRole.CORE, core) == []
+
+
+# The address fold.
+
+
+BEFORE_ADDRESS_FOLD = "202610200000"
+"""The revision before the one that folds every stored address."""
+
+
+def fences(connection: Connection) -> list[bool]:
+    return list(
+        connection.exec_driver_sql(
+            "SELECT relforcerowsecurity FROM pg_class WHERE oid IN"
+            " ('core.users'::regclass, 'core.invitations'::regclass)"
+        ).scalars()
+    )
+
+
+async def test_the_address_fold_stops_on_two_that_fold_to_one_and_then_folds_every_address(
+    pg_sessions: LoginSessions, migrated: dict[DatabaseRole, str]
+) -> None:
+    """Rows the release before wrote, as typed, in two tenants. Two
+    identities that fold to one stop the migration, which names both and
+    changes nothing; so do two pending invitations of one org. Once a person
+    settled each, every identity, user, and invitation is folded, in both
+    tenants; any spelling finds the identity, a second spelling meets the
+    unique index, and the fence is back."""
+    core = migrated[DatabaseRole.CORE]
+    storage = TenancyStoragePostgresImpl(pg_sessions)
+    tail = new_id().hex[:8]
+    await downgrade(DatabaseRole.CORE, core, BEFORE_ADDRESS_FOLD)
+
+    dee = make_identity(f"Dee-{tail}@Example.test")
+    twin = make_identity(f"dee-{tail}@example.TEST")
+    for identity in (dee, twin):
+        await storage.write_identity(identity)
+    acme, globex = make_org("Acme"), make_org("Globex")
+    users = []
+    for org in (acme, globex):
+        user = make_user(dee.id, dee.email)
+        await storage.create_org_with_owner(
+            org.id, org, user, make_membership(user.id, Role.OWNER), None
+        )
+        users.append((org, user))
+    asked = make_invitation(f"Bob-{tail}@Example.test")
+    again = make_invitation(f"BOB-{tail}@example.test")
+    elsewhere = make_invitation(f"Cat-{tail}@Example.test")
+    await storage.write_invitation(acme.id, asked)
+    await storage.write_invitation(acme.id, again)
+    await storage.write_invitation(globex.id, elsewhere)
+
+    with pytest.raises(DBAPIError, match="identities whose addresses fold to one") as stopped:
+        await upgrade(DatabaseRole.CORE, core)
+    assert str(dee.id) in str(stopped.value) and str(twin.id) in str(stopped.value)
+    assert (await storage.read_identity(dee.id)) == dee, "nothing changed"
+
+    # A person settles it: the second address was another person's after all.
+    await storage.write_identity(twin.model_copy(update={"email": f"deb-{tail}@example.test"}))
+    with pytest.raises(DBAPIError, match="pending invitations of one org") as stopped:
+        await upgrade(DatabaseRole.CORE, core)
+    assert str(asked.id) in str(stopped.value) and str(again.id) in str(stopped.value)
+
+    await storage.write_invitation(
+        acme.id, again.model_copy(update={"state": InvitationState.REVOKED})
+    )
+    await upgrade(DatabaseRole.CORE, core)
+
+    folded = await storage.read_identity(dee.id)
+    assert folded is not None and folded.email == f"dee-{tail}@example.test"
+    for org, user in users:
+        stored = await storage.read_user(org.id, user.id)
+        assert stored is not None and stored.email == f"dee-{tail}@example.test"
+    for org, invitation, address in (
+        (acme, asked, f"bob-{tail}@example.test"),
+        (acme, again, f"bob-{tail}@example.test"),
+        (globex, elsewhere, f"cat-{tail}@example.test"),
+    ):
+        stored_invitation = await storage.read_invitation(org.id, invitation.id)
+        assert stored_invitation is not None and stored_invitation.email == address
+    for spelled in (f"DEE-{tail}@EXAMPLE.TEST", f"dee-{tail}@example.test"):
+        assert await storage.read_identity_by_email_digest(email_digest(spelled)) == folded
+    with pytest.raises(UniqueKeyTaken):
+        await storage.write_identity(make_identity(f"Dee-{tail}@example.test"))
+
+    assert await check(DatabaseRole.CORE, core) == []
+    engine = create_async_engine(core)
+    try:
+        async with engine.connect() as connection:
+            assert await connection.run_sync(fences) == [True, True]
+    finally:
+        await engine.dispose()

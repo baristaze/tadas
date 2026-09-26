@@ -9,7 +9,6 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from tadas.infra.observability import current_traceparent
 from tadas.om.base import Created, FrozenMapping, Identifiable, new_id, utcnow
 from tadas.om.opcontext import ProvenanceScope
 
@@ -43,10 +42,9 @@ def outbox_row(
     ctx: ProvenanceScope, kind: str, target_id: UUID, payload: Mapping[str, Any]
 ) -> OutboxRow:
     """The row a manager writes beside its core row, under the caller's provenance:
-    the tenant, the actor, the request, and the app are all the row reads from
-    the context. The request's trace context comes from the tracer rather than
-    from the context, which carries the trace id and not the header the far
-    side links to; with no tracer configured it is empty."""
+    the tenant, the actor, the request, its trace context, and the app are all
+    the row reads from the context. With no tracer configured where the stage
+    was minted, the trace context is empty."""
     return OutboxRow(
         id=new_id(),
         created_at=utcnow(),
@@ -56,7 +54,7 @@ def outbox_row(
         payload=payload,
         actor_id=ctx.user_id,
         request_id=ctx.request_id,
-        traceparent=current_traceparent(),
+        traceparent=ctx.traceparent,
         app=ctx.app.type.value,
     )
 

@@ -147,7 +147,13 @@ migrate: ## Make the database logins, then apply every role's migration chain to
 # The admin owns the second org and joins the first as an admin: one person
 # with two memberships, each under a different role. The first org is a
 # team of three, so the seed grants it Team; the second stays on Free.
-seed: ## Create two local orgs with an owner, a member, and an admin of both to sign in as; a no-op once they exist
+# Then the two local operators, the platform's own identities of
+# tadas.ops.environments.LOCAL_OPERATORS: a read operator and the
+# provisioner, which writes. Their tokens go into the owner-only
+# ~/.config/tadas/ops/local.env beside the local stack's addresses, when that
+# file is absent; `uv run tadas-ops token --env local --identity
+# operator|provisioner` mints a fresh one into it, since each lasts an hour.
+seed: ## Create two local orgs with an owner, a member, and an admin of both to sign in as, and the two local operators; a no-op once they exist
 	uv run --package tadas-api tadas-api bootstrap --if-absent --plan team \
 		--org "$(SEED_ORG)" --slug "$(SEED_SLUG)" --name "$(SEED_NAME)" \
 		--email "$(SEED_EMAIL)"
@@ -158,21 +164,31 @@ seed: ## Create two local orgs with an owner, a member, and an admin of both to 
 		--email "$(SEED_ADMIN_EMAIL)"
 	uv run --package tadas-api tadas-api add-member --slug "$(SEED_SLUG)" --role admin \
 		--name "$(SEED_ADMIN_NAME)" --email "$(SEED_ADMIN_EMAIL)"
+	uv run --package tadas-api tadas-api grant-operator --permission read \
+		--email operator@platform.tadas.invalid
+	uv run --package tadas-api tadas-api grant-operator --permission write \
+		--email provisioner@platform.tadas.invalid
+	@if [ -e "$$HOME/.config/tadas/ops/local.env" ]; then \
+		echo "~/.config/tadas/ops/local.env is there already; \`uv run tadas-ops token --env local --identity operator|provisioner\` writes a fresh token into it"; \
+	else \
+		uv run --package tadas-ops tadas-ops token --env local --identity operator && \
+		uv run --package tadas-ops tadas-ops token --env local --identity provisioner; \
+	fi
 
 # Needs `make up` (the seeded owner and member, the API on 8000, the portal on
 # 55173). Empties the task list, then records docs/media/realtime-demo.gif:
 # Bob's window on the left, the owner's on the right.
 demo-gif: ## Record the README's realtime demo GIF against the running stack
-	uv run --with pillow python scripts/record_demo.py docs/media/realtime-demo.gif
+	uv run python scripts/record_demo.py docs/media/realtime-demo.gif
 
 # The same story in the dark theme, for the company site on a dark system.
 demo-gif-dark: ## Record the dark variant of the realtime demo GIF the company site shows
-	uv run --with pillow python scripts/record_demo.py docs/media/realtime-demo-dark.gif --theme dark
+	uv run python scripts/record_demo.py docs/media/realtime-demo-dark.gif --theme dark
 
 # Needs `make up` too. Bob in command mode on the left, the owner on
 # `tadas listen` on the right; records docs/media/cli-demo.gif.
 demo-cli-gif: ## Record the README's CLI demo GIF (command mode beside listen) against the running stack
-	uv run --with pillow python scripts/record_cli_demo.py docs/media/cli-demo.gif
+	uv run python scripts/record_cli_demo.py docs/media/cli-demo.gif
 
 # The ORM-versus-schema check needs a migrated database, which the fast gate
 # cannot reach, so `check` does not run it; CI's integration job runs it
@@ -194,7 +210,7 @@ lint: ## Ruff lint
 format-check: ## Ruff format, check only
 	uv run ruff format --check .
 
-typecheck: ## Pyright over every distribution
+typecheck: ## Pyright over every distribution and the scripts
 	uv run pyright
 
 arch-check: ## The guideline's static checks, configured in pyproject.toml

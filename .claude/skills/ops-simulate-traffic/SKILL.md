@@ -29,8 +29,9 @@ of `.env` instead and needs no provisioner, so it is for `local` only
 and refused against a cloud environment, which has no seeded people.
 `local` drives the API at `http://127.0.0.1:8000`, started by
 `scripts/dev.sh` or `make up`, and needs no cloud; its file is
-`~/.config/tadas/ops/local.env` when there is one, and without a
-provisioner token in it a local run takes `--orgs 0`. `stress` is the
+`~/.config/tadas/ops/local.env`, which `make seed` writes with the local
+provisioner's token, and without a provisioner token in it a local run
+takes `--orgs 0`. `stress` is the
 top profile; a run at it with a target is `stress-test-run`, not this
 skill.
 

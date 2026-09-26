@@ -265,6 +265,12 @@ of the seven kinds of thing [Tadas is made of](../../../../README.md).
   The exchange takes no idempotency key: the login is the key, and a
   replayed answer could not carry the session's token
   ([ADR 0037](../../../../../docs/adr/0037-a-sign-in-is-exchanged-once.md)).
+- **An address is one address in any case.** Tadas keeps an address in
+  lower case and looks it up that way, so `Dee@example.test` and
+  `dee@example.test` are one person, one pending invitation in an org,
+  and one run of wrong codes, however the provider, Slack, the seeding,
+  or an operator spells it
+  ([ADR 0072](../../../../../docs/adr/0072-an-address-is-one-address-in-any-case.md)).
 - **A verified address or nothing.** The identity provider's sign-in
   counts only with an address it verified; that is what links a person
   Tadas already knows to the provider's name for them.

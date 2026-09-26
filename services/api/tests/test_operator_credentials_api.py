@@ -304,6 +304,36 @@ async def test_the_grant_command_grants_disables_and_mints_into_the_secret_store
     assert token_secret_name("production", "smoke") == "tadas-production-smoke-token"
 
 
+async def test_the_local_read_operators_token_is_printed_on_a_local_database_only(
+    container: AppContainer, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`make seed` grants the local read operator and mints its token here: a
+    `read` token whatever the entry holds, printed on a local database. A
+    cloud has no such token: an operator's there is their own, minted after a
+    sign-in with a code."""
+    tenancy = container.managers.tenancy
+    settings = container.settings
+    operator = "operator@platform.tadas.invalid"
+    await api_main.granted(container, settings, grant_args(email=operator, permission="write"))
+    capsys.readouterr()
+    assert (
+        await api_main.granted(
+            container, settings, grant_args(email=operator, mint_token="operator")
+        )
+        == 0
+    )
+    printed = capsys.readouterr().out.strip()
+    assert printed.startswith("opr_")
+    admin = await tenancy.admit_operator(await tenancy.authenticate_login(seed_request(), printed))
+    assert {p.value for p in admin.permissions} == {"read"}
+    cloud = settings.model_copy(update={"environment": "staging"})
+    assert (
+        await api_main.granted(container, cloud, grant_args(email=operator, mint_token="operator"))
+        == 2
+    )
+    assert "opr_" not in capsys.readouterr().out
+
+
 def test_the_grant_command_names_its_identity_and_one_action() -> None:
     for argv in (
         ["grant-operator", "--permission", "read"],

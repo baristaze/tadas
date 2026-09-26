@@ -10,7 +10,6 @@ from pydantic import Field
 
 from tadas.infra.cache import CacheInterface
 from tadas.infra.exceptions import InfraException
-from tadas.infra.observability import current_traceparent
 from tadas.integrations.exceptions import (
     DevicePending,
     DeviceSlowDown,
@@ -97,6 +96,7 @@ from tadas.om.tenancy.rules import (
     confirms_org_deletion,
     credential_kind_of,
     email_digest,
+    fold_email,
     hash_token,
     is_platform_email,
     left_without_owner,
@@ -848,6 +848,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
             request_id=rctx.request_id,
             app=rctx.app,
             trace_id=rctx.trace_id,
+            traceparent=rctx.traceparent,
             caused_by_request_id=rctx.caused_by_request_id,
             deadline=rctx.deadline,
             identity_id=identity.id,
@@ -1021,6 +1022,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
             request_id=ictx.request_id,
             app=ictx.app,
             trace_id=ictx.trace_id,
+            traceparent=ictx.traceparent,
             caused_by_request_id=ictx.caused_by_request_id,
             deadline=ictx.deadline,
             identity_id=ictx.identity_id,
@@ -1082,7 +1084,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
             payload={} if operator_role is None else {"operator_role": operator_role.value},
             actor_id=EMPTY_UUID,
             request_id=rctx.request_id,
-            traceparent=current_traceparent(),
+            traceparent=rctx.traceparent,
             app=rctx.app.type.value,
         )
         if operator_role is None:
@@ -1211,14 +1213,9 @@ class TenancyManagerImpl(TenancyManagerInterface):
     async def member_context(
         self, rctx: RequestContext, org_id: UUID, email: str
     ) -> OpContext | None:
-        # The address as the provider or Slack gave it, then lowercased: an
-        # identity is kept under the address its sign-in proved, and Slack's
-        # profile may spell the same address with capitals.
-        identity = None
-        for spelled in dict.fromkeys((email.strip(), email.strip().lower())):
-            identity = await self._storage.read_identity_by_email_digest(email_digest(spelled))
-            if identity is not None:
-                break
+        # Slack's profile may spell the address with capitals; the digest is
+        # of the folded address, so any spelling finds the person.
+        identity = await self._storage.read_identity_by_email_digest(email_digest(email.strip()))
         if identity is None:
             return None
         try:
@@ -1365,7 +1362,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
             raise ValidationFailed("service is not a membership role")
         if not role_at_most(role, ctx.security.role):
             raise NotAuthorized(f"cannot invite as {role.value}, above {ctx.security.role.value}")
-        email = email.strip()
+        email = fold_email(email.strip())
         if is_platform_email(email):
             raise ValidationFailed("that address belongs to the platform")
         try:
@@ -1728,7 +1725,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
                 payload={"user_id": str(actor)},
                 actor_id=actor,
                 request_id=ctx.request_id,
-                traceparent=current_traceparent(),
+                traceparent=ctx.traceparent,
                 app=ctx.app.type.value,
             )
 
@@ -2031,7 +2028,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
             payload=self._session_payload(ended),
             actor_id=ended.user_id,
             request_id=rctx.request_id,
-            traceparent=current_traceparent(),
+            traceparent=rctx.traceparent,
             app=rctx.app.type.value,
         )
 
