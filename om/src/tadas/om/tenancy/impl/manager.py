@@ -1043,13 +1043,17 @@ class TenancyManagerImpl(TenancyManagerInterface):
         org_id: UUID,
         credential_kind: CredentialKind,
         credential_id: UUID,
+        *,
+        record_use: bool = True,
     ) -> SocketPrincipal:
         if credential_kind is CredentialKind.SESSION_TOKEN:
             session = await self._storage.read_session(org_id, credential_id)
             if session is None:
                 raise InvalidCredential("the session behind the ticket is gone")
             self._check_session(session, CredentialKind.SESSION_TOKEN)
-            org, user, membership = await self._principal(org_id, session.user_id, session)
+            org, user, membership = await self._principal(
+                org_id, session.user_id, session if record_use else None
+            )
             role = membership.role
             expires_at = session.expires_at
         elif credential_kind is CredentialKind.API_KEY:
@@ -1072,7 +1076,12 @@ class TenancyManagerImpl(TenancyManagerInterface):
             teams=membership.teams,
             credential_id=credential_id,
         )
-        return SocketPrincipal(ctx=ctx, expires_at=expires_at)
+        return SocketPrincipal(
+            ctx=ctx,
+            expires_at=expires_at,
+            credential_kind=credential_kind,
+            membership_id=membership.id,
+        )
 
     async def redeem_ticket(self, rctx: RequestContext, ticket: str) -> SocketPrincipal:
         if credential_kind_of(ticket) is not CredentialKind.SOCKET_TICKET:

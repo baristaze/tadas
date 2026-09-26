@@ -118,7 +118,9 @@ of the seven kinds of thing [Tadas is made of](../../../../README.md).
   member's role, or remove a member. Nobody changes their own role, so
   an org's last owner stays one until they make someone else an owner.
   An owner can make another member an owner; an admin gives roles up
-  to admin. Settings has the control on each member. Removing ends the
+  to admin. Settings has the control on each member. A role change is
+  announced, and the member's open screens reconnect under the new role.
+  Removing ends the
   membership, hides the user from every list, and revokes their
   sessions and API keys, all in one step, and announces each
   revocation so their sockets close. A failure lands none of it.
@@ -128,6 +130,9 @@ of the seven kinds of thing [Tadas is made of](../../../../README.md).
   keys is refused the first one, and a key it already has is kept and
   refused while it is on that plan ([billing](../billing/README.md)).
 - **Open the live channel.** Issue a socket ticket; redeem it once.
+  An open channel asks again, every few minutes, whether the session or
+  the key behind it still holds, and closes when it does not. Asking
+  is not a use: an open channel never keeps an idle session alive.
 - **Seed an environment.** Create an org with its first owner, or add
   a person to an org. Both are the platform's own operations, run by
   `make seed` on a local environment; a deployed one is joined by

@@ -1092,7 +1092,7 @@ alone, and neither key may touch what the other's work does not need
   "sign in again" (a close before the accept would reach the wire as an
   HTTP 403 handshake failure, indistinguishable from any other refusal).
   An admitted socket holds the context its ticket produced for the life
-  of the connection, and that life is bounded twice. A revocation
+  of the connection, and that life is bounded three times. A revocation
   reaches it: revoking a session (`revoke_session`, `logout`) lands an
   outbox row `tenancy.session.revoked` beside the session, as removing
   a member lands `tenancy.user.deleted` and revoking a key
@@ -1101,13 +1101,29 @@ alone, and neither key may touch what the other's work does not need
   closes the sockets it names with 4401 (the one the session or the key
   opened, every one of the removed user, every one of a deleted org),
   in whichever process they
-  live. The expiry is the bound that covers a frame the bus dropped:
-  the redemption yields the context beside the session's or the api
-  key's expiry (`SocketPrincipal`), and the handler closes the socket
-  with 4401 at that instant whatever the client does. Either way the
-  clients sign in again, as they do for a refused ticket. A role change
-  is not a revocation: the socket carries hints, and the next request
-  sees the new role.
+  live. The bus is at most once, so the socket does not rest on it: the
+  handler re-checks the credential every
+  `TADAS_REALTIME_RECHECK_SECONDS` (five minutes by default), through
+  the same `resume` the redemption ran, and closes with 4401 when it is
+  refused. The first check waits a phase drawn at random within one
+  interval, so sockets opened together do not check together. The
+  recheck asks and does not use: it never records a use of the session,
+  so an open socket never keeps an idle session alive, and a tab left
+  open is signed out at the idle lifetime like a tab left closed. A
+  recheck that cannot be made (the database out of reach) closes the
+  socket with 1011, and the client reconnects. The expiry is the last
+  bound: the redemption yields the context beside the session's or the
+  api key's expiry (`SocketPrincipal`), and the handler closes the
+  socket with 4401 at that instant whatever the client does. Each time
+  the clients sign in again, as they do for a refused ticket. A role
+  change is not a revocation, and the socket still holds rights it no
+  longer has, so it closes too, with 1012 and the reason
+  `rights_changed`: `tenancy.membership.updated` names the membership
+  (the `SocketPrincipal` carries its id), and the recheck compares the
+  role and teams it finds with the ones the socket holds, for a message
+  the bus lost. Both clients read any close but 4401 as "reconnect", so
+  the new ticket carries the new role and nobody signs in again
+  ([ADR 0058](adr/0058-a-socket-asks-again-and-its-pong-answers-from-the-bus.md)).
   The login route takes the request stage alone.
   Per socket the process keeps one send buffer of two bounded lanes
   (`realtime/send_buffer.py`) and a drainer. A frame that says where the
@@ -1122,6 +1138,22 @@ alone, and neither key may touch what the other's work does not need
   a fault of the process rather than a burst, so its drop is logged as
   an error. The revocation close and the transport keepalive are not
   buffered at all.
+  The hello reads the tenant's head. A pong answers from the bus: every
+  hint carries its seq, and the realtime service keeps the highest seq
+  it heard or read for each tenant it holds a socket for, dropped with
+  the tenant's last socket there. A ping within
+  `TADAS_REALTIME_HEAD_MAX_AGE_SECONDS` (60 by default) of the last hint
+  or read answers with it and reads nothing; past that, it reads, as a
+  process that just started does. The head it answers is never above
+  the truth, since a seq is published only once it committed, and never
+  below what the client got from this process, since the socket's hints
+  and the head come off the same subscription: a hint the send buffer
+  dropped shows at the next pong, as before. It is below the truth only
+  when the bus lost a hint after the last one heard (a failed publish, a
+  subscription down), and then until the next hint, whose seq is past
+  the gap, or the bound, whichever comes first. The bound is how long a
+  lost hint can hide from a quiet socket, and zero reads on every ping
+  ([ADR 0058](adr/0058-a-socket-asks-again-and-its-pong-answers-from-the-bus.md)).
   A peer that drops mid-stream ends the drainer with a disconnect; the
   teardown treats that as the normal end of a socket, not an error.
   Two pings keep a socket alive, one per direction, both pinned with the

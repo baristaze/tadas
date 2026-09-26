@@ -255,6 +255,38 @@ refused. After its tenth attempt the row is `failed for good`, an
 `outbox.row.failed` event in its org's diary, which `ops-root-cause`
 reads, and it no longer counts as pending.
 
+## Open sockets: the recheck and the head
+
+Two settings of the API decide what an open socket costs the database
+and how long it can be wrong. Both are in `.env.example` and left at
+their defaults in every environment.
+
+- `TADAS_REALTIME_RECHECK_SECONDS` (300). Each socket asks again, once
+  per interval, whether the session or the key behind it still holds:
+  two transactions, six round trips, 72 an hour per socket. It is the
+  longest a revoked credential keeps its socket when the bus lost the
+  revocation. Lower it for a tighter bound, and pay per socket.
+- `TADAS_REALTIME_HEAD_MAX_AGE_SECONDS` (60). A ping answers with the
+  head the process heard on the bus, and reads it only when nothing was
+  heard or read for the tenant within this bound. It is the longest a
+  hint the bus lost can hide from a quiet socket. Zero reads on every
+  ping, three round trips each.
+
+A socket the recheck closed says so in the API's log, `socket of user
+<id> closed on its recheck: <reason>`: `not_authenticated` when the
+credential is refused, `rights_changed` when the role changed. Each is
+a session that went idle under an open tab, or a change the bus did
+not carry. A burst of them is the second kind: read it beside the
+Outcomes widget's `topics`/`publish_failed` and `topics`/`listener_failed`.
+
+```bash
+now=$(date +%s); query=$(aws logs start-query --log-group-name /tadas/staging/api \
+  --start-time "$((now - 3600))" --end-time "$now" \
+  --query-string 'fields @timestamp, @message | filter @message like "closed on its recheck" | stats count() by bin(5m)' \
+  --query queryId --output text)
+sleep 2; aws logs get-query-results --query-id "$query" --query 'results[]' --output json
+```
+
 ## A work item that failed for good
 
 A background job fails for good when its attempts run out, or at once

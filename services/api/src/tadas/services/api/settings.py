@@ -148,6 +148,15 @@ class ApiSettings(StorageSettings, InfraSettings, IntegrationsSettings):
     # them; a lane that fills is a fault of the process, not a burst.
     realtime_send_buffer_size: int = Field(default=256, gt=0)
     realtime_control_buffer_size: int = Field(default=16, gt=0)
+    # How often an open socket asks again whether the credential behind it
+    # still holds, in seconds. The bus closes a revoked socket at once; this
+    # is the bound when the bus lost the message, and it costs each socket
+    # one recheck per interval.
+    realtime_recheck_seconds: float = Field(default=300.0, gt=0)
+    # How long the tenant's head this process heard on the bus answers a
+    # ping without a read, in seconds. It is the longest a hint the bus lost
+    # stays hidden from a quiet socket. Zero reads the head on every ping.
+    realtime_head_max_age_seconds: float = Field(default=60.0, ge=0)
     # The readiness probe's own deadline, shorter than its prober's timeout
     # (the deploy's check after a rollout gives up at 10 seconds), so a hung
     # database or an exhausted pool makes the probe answer "not ready"

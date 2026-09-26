@@ -25,7 +25,15 @@ class SocketPrincipal(Platform):
     key behind the ticket. A socket is a request that stays open; it holds
     this context for the life of the connection and closes at `expires_at`
     whatever the client does, so a revocation the bus never delivered is
-    still bounded."""
+    still bounded. The socket re-checks the credential on an interval of
+    its own as well, so that bound is minutes and not the expiry.
+
+    `credential_kind` is the kind of the credential behind the ticket, a
+    session token or an api key; the context's own kind is the ticket's.
+    `membership_id` is the membership the context was built from: a change
+    to it names the membership, not the user."""
 
     ctx: OpContext
     expires_at: datetime
+    credential_kind: CredentialKind
+    membership_id: UUID

@@ -220,10 +220,15 @@ change. A name the image does not host refuses the boot.
   portal's CDN edge it is one hop further in, and only a request that
   carries the edge's secret (`TADAS_EDGE_SECRET`, in `X-Tadas-Edge`)
   gets that hop; the header never reaches a route.
-- **A socket is bounded twice.** It closes at the expiry of the
-  credential behind its ticket whatever the client does, and it
-  closes at once when that credential is revoked. Both close with
-  code 4401, which every client reads as "sign in again".
+- **A socket's trust is bounded.** It closes at once when the
+  credential behind its ticket is revoked, and at its expiry whatever
+  the client does. The revocation rides a bus that may lose it, so the
+  socket also re-checks the credential every
+  `TADAS_REALTIME_RECHECK_SECONDS` and closes when it is refused. Each
+  of these closes with code 4401, which every client reads as "sign in
+  again". A change of the member's role closes the socket with 1012,
+  which every client reads as "reconnect", and the new socket carries
+  the new role.
 - **The socket ticket is never logged.** Access logging is the
   gateway's own, by route template, with no query string.
 

@@ -213,6 +213,7 @@ class AppContainer:
             settings.cors_origins,
             settings.slack_redirect_uri,
             settings.portal_url,
+            timedelta(seconds=settings.realtime_head_max_age_seconds),
         )
         return cls(
             settings,

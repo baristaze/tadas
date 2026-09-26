@@ -1,6 +1,8 @@
 """Composes one service impl per hosted namespace over the managers and
 hands back the network-layer root the container holds."""
 
+from datetime import timedelta
+
 from tadas.infra.root import InfraInterface
 from tadas.integrations.root import IntegrationsInterface
 from tadas.om.root import Managers
@@ -84,6 +86,7 @@ def build_services(
     portal_origins: list[str],
     slack_redirect_uri: str,
     portal_url: str,
+    head_max_age: timedelta,
 ) -> ServicesInterface:
     """In-process impls only: the remote impl of each interface is the typed
     Python client, which arrives with the first Python consumer (ADR 0004)."""
@@ -95,7 +98,9 @@ def build_services(
         ),
         events=EventsServiceImpl(managers.events),
         media=MediaServiceImpl(managers.media),
-        realtime=RealtimeServiceImpl(managers.tenancy, managers.events, infra.get_topics()),
+        realtime=RealtimeServiceImpl(
+            managers.tenancy, managers.events, infra.get_topics(), head_max_age
+        ),
         billing=BillingServiceImpl(
             managers.billing, managers.tenancy, managers.tasks, managers.media, portal_origins
         ),
