@@ -1148,11 +1148,18 @@ alone, and neither key may touch what the other's work does not need
   its session storage, and `/auth/callback`, which refuses a state the
   tab did not keep and hands the code to the API; the local sign-in at
   `/login/dev` when the runtime config says so; the
-  picker when a person has several orgs, the personal one first, an org
-  chip in the chrome that switches the tab's one session (the old
+  picker when a person has several orgs, the personal one first, one bar
+  over every signed-in page with no tabs: on the left an org
+  chip whose name goes home and whose caret switches the tab's one session (the old
   tenant's cache dropped, the socket reopened) and opens the new team
-  org at `/orgs/new`, which creates it and switches into it, the
-  tasks screen at `/` (My and Team's tasks, open in
+  org at `/orgs/new`, which creates it and switches into it; on the
+  right a gear to Settings and the account menu (the email and the org,
+  Settings, the theme, and Sign out, which revokes the server
+  session and empties the query cache with the token, then sends the
+  browser to WorkOS's logout when the API answers one, which comes back
+  to `/signed-out`); the
+  tasks screen at `/` (its heading the list: My tasks | Team in a team
+  org, My tasks alone in a personal org; open in
   manual order and done newest first, both paged by the server's cursor
   with Show more, inline edit, drag to reorder, and in a task's open
   view its attachments: dropped or picked, posted straight to the store
@@ -1166,11 +1173,8 @@ alone, and neither key may touch what the other's work does not need
   reaches the store, with a deadline of its own and no credential of
   ours), settings at `/settings`
   (members, invitations with resend and revoke, single sign-on for a
-  team org, the org's storage used, api keys with Show more, sign-out,
-  which revokes the server
-  session and empties the query cache with the token, then sends the
-  browser to WorkOS's logout when the API answers one, which comes back
-  to `/signed-out`), and one realtime
+  team org, the org's storage used, api keys with Show more, and
+  "← Tasks" above the title), and one realtime
   channel that
   invalidates queries by the entity name inside a push's `kind`, or by
   the query that carries the entity (a membership, through `me`),

@@ -86,7 +86,7 @@ invited.
 
 | Command | Answers, to the person who typed it alone |
 |---------|--------------------------------------------|
-| `/tadas` | Your ten newest open tasks: assigned to you, or unassigned and made by you, as My Tasks in Tadas. When there are more, a count and a link to Tadas |
+| `/tadas` | Your ten newest open tasks: assigned to you, or unassigned and made by you, as My tasks in Tadas. When there are more, a count and a link to Tadas |
 | `/tadas team` | The org's ten newest open tasks, anyone's or nobody's, with the same count and link |
 | `/tadas add <title>` | Adds a task, made by you |
 | `/tadas connect` | Makes this channel the one Tadas posts to. An owner or an admin types it, after `/invite @tadas` |

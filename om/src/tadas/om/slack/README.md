@@ -33,7 +33,7 @@ what Tadas posted there. This is one of the kinds of thing
 - **Post.** A reminder, a task created, and a task completed are each
   posted in the bound channel.
 - **Ask in Slack.** `/tadas` shows the person who typed it, and nobody
-  else, their ten newest open tasks: the ones My Tasks shows in Tadas,
+  else, their ten newest open tasks: the ones My tasks shows in Tadas,
   assigned to them, or unassigned and made by them.
   `/tadas team` shows the org's ten newest open tasks. Each task shows
   its due date when it has one. When there are more, each says how many
