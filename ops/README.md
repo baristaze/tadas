@@ -248,7 +248,7 @@ investigate profile and read the preamble like the operational skills.
 
 | Skill | Needs | Answers |
 |-------|-------|---------|
-| `audit-retention` | Investigator (staging), none (local) | Which tables and stores grow without bound, what trims each, and whether that purge holds up when the table is large. |
+| `audit-retention` | Investigator | Which tables and stores grow without bound, what trims each, and whether that purge holds up when the table is large. |
 | `audit-query-indexes` | none (local) | Do the indexes fit the queries: every statement mapped to its index and measured on a seeded database, the hot paths, and what breaks first under load. |
 | `audit-database-calls` | none (local) | How many round trips and transactions each endpoint and worker flow makes, at its least and its most, and why; what an open socket costs an hour, and what one change costs across every open tab. |
 | `audit-credential-lifetimes` | none (local) | How long each credential keeps working after it is revoked, on each channel it travels, what each check costs, and which trust rests on a push alone. |

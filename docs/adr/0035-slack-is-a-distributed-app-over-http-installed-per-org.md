@@ -3,6 +3,8 @@
 **Status**: accepted (2026-09-23). The contract half is done
 (2026-09-25): the code-linked channel's two tables are dropped, and
 `<prefix>slack_bot_token` is gone from every environment.
+Amended (2026-09-26): the bot asks for `channels:read` and `groups:read`
+too, for `member_joined_channel` alone; see the note at the end.
 
 ## Context
 
@@ -127,3 +129,35 @@ A laptop has no public URL, and Tadas adds no tunnel. Locally Slack is the
 twin: "Add to Slack" installs into the twin's workspace at once, and
 Slack's calls in are signed requests with the twin's secret, which the
 tests make too. The real Slack is tried on staging.
+
+## Amended: the bot invited back mends its channel
+
+A channel that refuses a post for good (`not_in_channel`, and
+`channel_not_found` for a private channel the bot is not in) marks the
+installation broken, and posting stops. Most often someone removed
+`@tadas` from the channel, and fixes it with `/invite @tadas`. Slack
+tells an app about that invite with its `member_joined_channel` event,
+whose member is the bot. The event comes from a public channel only to
+an app that holds `channels:read`, and from a private one only with
+`groups:read`.
+
+So the bot asks for both scopes and the manifests subscribe to the
+event. The worker takes the event off the `slack` queue like any other.
+When the member is the installation's bot and the channel is the bound
+one, an installation that channel broke is well again, announced, and
+posts resume. Any other join changes nothing. A token Slack refused is
+not mended by a join: it still takes a new install.
+
+The rule behind it is push over polling. The other way to learn that the
+channel works again is to keep posting into it and see; Slack pushes
+the answer instead.
+
+The two scopes also open `conversations.list` and `conversations.info`
+to the bot. Tadas calls neither, and reads no message. The binding does
+not change: the channel is still bound by `/tadas connect` typed in it,
+and the bot still posts only where it was invited.
+
+A workspace that installed Tadas before the change holds the old
+scopes, and Slack sends it no join. Its owner or admin clicks **Add to
+Slack again**. Until then, `/tadas connect` in the channel mends the
+installation, as before.

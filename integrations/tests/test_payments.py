@@ -3,7 +3,8 @@ delivery passes, the ids a delivery names, the twin's refusal outside a
 local environment, the boot's refusal of a key that is not a restricted key
 of the environment's mode, the processes
 reading the runtime key alone, the boot's check of what the key may read,
-the real client's reading of a subscription, the timeout and the retries
+the real client's reading of a subscription and of the portal
+configuration a session names, the timeout and the retries
 every call it makes is sent with, the request's deadline a call a request
 makes is cut at, and its translation of a failure by whose problem it is:
 the key's, the request's, or the processor's."""
@@ -58,6 +59,13 @@ def event(event_type: str, obj: dict[str, object], event_id: str = "evt_1") -> b
 
 def settings(**fields: object) -> IntegrationsSettings:
     return IntegrationsSettings.model_validate({"_env_file": None, **fields})
+
+
+def answered[T: stripe.StripeObject](kind: type[T], values: dict[str, Any]) -> T:
+    """An answer built the way the SDK builds one from the processor's JSON:
+    an object of its kind, the nested ones too. None of them is a dict, so a
+    fake that answers one catches a read that works only on a dict."""
+    return kind.construct_from(values, "rk_test_x")
 
 
 # The signature.
@@ -314,7 +322,7 @@ class _Lister:
         self.params.append(params)
         if self._name in self._refused:
             raise self._error("refused")
-        return {"data": []}
+        return answered(stripe.ListObject, {"object": "list", "data": []})
 
 
 class _ProcessorOf:
@@ -571,23 +579,104 @@ class _Sessions:
 
     async def create_async(self, params: dict[str, Any]) -> object:
         self.params.append(params)
-        return type("Session", (), {"url": "https://billing.stripe.com/p/session"})()
+        return answered(
+            stripe.billing_portal.Session,
+            {
+                "id": f"bps_{len(self.params)}",
+                "object": "billing_portal.session",
+                "customer": params["customer"],
+                "url": "https://billing.stripe.com/p/session",
+            },
+        )
 
 
 class _Configurations:
+    def __init__(self, configurations: list[dict[str, Any]]) -> None:
+        self._configurations = configurations
+        self.params: list[dict[str, Any]] = []
+
     async def list_async(self, params: dict[str, Any]) -> object:
-        return type("Page", (), {"data": []})()
+        self.params.append(params)
+        return answered(
+            stripe.ListObject,
+            {
+                "object": "list",
+                "url": "/v1/billing_portal/configurations",
+                "has_more": False,
+                "data": self._configurations,
+            },
+        )
+
+
+def configuration(
+    configuration_id: str, metadata: dict[str, str] | None, *, is_default: bool = False
+) -> dict[str, Any]:
+    """A portal configuration as the processor answers one. Its metadata is
+    nullable: null, an empty object, or keys."""
+    return {
+        "id": configuration_id,
+        "object": "billing_portal.configuration",
+        "active": True,
+        "is_default": is_default,
+        "livemode": False,
+        "metadata": metadata,
+    }
 
 
 class _PortalOf:
-    """The SDK client's `v1` as far as a portal session reads it."""
+    """The SDK client's `v1` as far as a portal session reads it: the
+    account's active configurations, and the sessions made."""
 
-    def __init__(self) -> None:
+    def __init__(self, configurations: list[dict[str, Any]] | None = None) -> None:
         self.sessions = _Sessions()
+        self.configurations = _Configurations(configurations or [])
         self.billing_portal = type(
-            "Portal", (), {"sessions": self.sessions, "configurations": _Configurations()}
+            "Portal", (), {"sessions": self.sessions, "configurations": self.configurations}
         )()
         self.v1 = self
+
+
+MANAGED_PORTAL = {
+    "tadas_managed": "true",
+    "tadas_desired_key": "portal",
+    "tadas_desired_hash": "0f3c",
+}
+"""The metadata the bootstrap writes on the configuration it manages."""
+
+
+async def test_a_portal_session_names_the_configuration_the_bootstrap_manages() -> None:
+    """The list answers SDK objects, whose metadata is not a dict either.
+    Among the account's default, one with empty metadata, and the
+    bootstrap's, every session names the bootstrap's, and the list is read
+    once per process."""
+    payments = await _checked(set())
+    portal = _PortalOf(
+        [
+            configuration("bpc_default", None, is_default=True),
+            configuration("bpc_bare", {}),
+            configuration("bpc_managed", MANAGED_PORTAL),
+        ]
+    )
+    payments._client = portal  # type: ignore[assignment]
+    await payments.create_portal_session("cus_1", "http://portal.test/settings/billing")
+    await payments.create_portal_session(
+        "cus_1", "http://portal.test/settings/billing", update_payment_method=True
+    )
+    assert [p["configuration"] for p in portal.sessions.params] == ["bpc_managed"] * 2
+    assert portal.configurations.params == [{"active": True, "limit": 100}]
+
+
+async def test_a_portal_session_before_the_bootstrap_runs_opens_the_accounts_default() -> None:
+    """No configuration carries the bootstrap's key: the session names none,
+    and the processor opens the account's default."""
+    payments = await _checked(set())
+    portal = _PortalOf(
+        [configuration("bpc_default", None, is_default=True), configuration("bpc_bare", {})]
+    )
+    payments._client = portal  # type: ignore[assignment]
+    url = await payments.create_portal_session("cus_1", "http://portal.test/settings/billing")
+    assert url == "https://billing.stripe.com/p/session"
+    assert "configuration" not in portal.sessions.params[0]
 
 
 async def test_a_portal_session_for_a_failed_payment_opens_the_payment_method_flow() -> None:
@@ -626,19 +715,31 @@ class _Ends:
             async def retrieve_async(self, subscription_id: str) -> object:
                 if ends._status is None:
                     raise stripe.InvalidRequestError("gone", None, code="resource_missing")
-                raw = {"id": subscription_id, "customer": "cus_1", "status": ends._status}
-                return type("S", (), {"to_dict": lambda self: raw})()
+                return answered(
+                    stripe.Subscription,
+                    {
+                        "id": subscription_id,
+                        "object": "subscription",
+                        "customer": "cus_1",
+                        "status": ends._status,
+                    },
+                )
 
             async def cancel_async(self, subscription_id: str) -> object:
                 ends.calls.append(("cancel", subscription_id))
-                return object()
+                return answered(
+                    stripe.Subscription,
+                    {"id": subscription_id, "object": "subscription", "status": "canceled"},
+                )
 
         class Customers:
             async def delete_async(self, customer_id: str) -> object:
                 ends.calls.append(("delete", customer_id))
                 if ends._missing:
                     raise stripe.InvalidRequestError("gone", None, code="resource_missing")
-                return object()
+                return answered(
+                    stripe.Customer, {"id": customer_id, "object": "customer", "deleted": True}
+                )
 
         self.subscriptions = Subscriptions()
         self.customers = Customers()
@@ -821,13 +922,16 @@ class _Seats:
         self._raw: dict[str, Any] = {
             "id": "sub_1",
             "customer": "cus_1",
+            "object": "subscription",
             "status": "active",
-            "items": {"data": [{"id": "si_1", "quantity": 1}]},
+            "items": {
+                "object": "list",
+                "data": [{"id": "si_1", "object": "subscription_item", "quantity": 1}],
+            },
         }
 
         def answer() -> object:
-            raw = seats._raw
-            return type("S", (), {"to_dict": lambda self: raw})()
+            return answered(stripe.Subscription, seats._raw)
 
         class Subscriptions:
             async def retrieve_async(self, subscription_id: str) -> object:

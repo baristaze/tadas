@@ -163,6 +163,19 @@ async def test_an_event_is_queued_on_its_id_and_a_retry_keeps_it(
     assert (one.retry_num, two.retry_num) == (0, 1)
 
 
+async def test_the_bot_invited_to_a_channel_is_queued_for_the_worker(
+    client: httpx.AsyncClient, container: AppContainer
+) -> None:
+    twin = twin_of(container)
+    joined = twin.invite_bot("T0ACME", "C0TEAM")
+    answer = await post_signed(client, twin, "/webhooks/slack/events", json.dumps(joined).encode())
+    assert answer.status_code == 200 and answer.json() == {}
+    [delivery] = await queued(container)
+    assert delivery.kind == "event" and delivery.key == delivery_key(joined["event_id"])
+    assert delivery.payload["event"]["type"] == "member_joined_channel"
+    assert delivery.payload["event"]["user"] == "UBOTT0ACME"
+
+
 async def test_without_the_apps_credentials_slack_is_turned_away(tmp_path: Path) -> None:
     container = build_container(tmp_path, slack_backend="slack")
     app = create_app(container)
