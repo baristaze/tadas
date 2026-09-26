@@ -116,11 +116,13 @@ them, but every one of them belongs to an org like everything else.
 
 An **event** is a line in the org's diary: which thing changed, how,
 by whom, and when. The lines are numbered one, two, three, with no
-gaps, and a line is never edited; the diary goes only with its org, once
-a deleted org's retention has passed. A line about a person records that
+gaps, and a line is never edited. The oldest lines go after a
+retention, and the diary starts after the last one gone; the whole
+diary goes with its org, once a deleted org's retention has passed. A line about a person records that
 something happened to them, never their email or name. The live channel pushes
 each new line to every open screen. A screen that was away reads the
-diary from the last number it saw and catches up.
+diary from the last number it saw and catches up. A screen away for
+longer than the diary reaches back reads everything afresh instead.
 
 An **outbox row** is a note Tadas writes beside a change, in the same
 stroke as the change itself, saying "tell everyone about this". From

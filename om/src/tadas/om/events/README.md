@@ -14,6 +14,8 @@ is one of the seven kinds of thing [Tadas is made of](../../../../README.md).
   records about itself, such as a job that failed for good.
 - **Head**: the sequence number of the last event, zero before the
   first. A screen that opens the live channel starts here.
+- **Floor**: the number of the last event the trim removed, zero before
+  the first trim. Every event above it, up to the head, is kept.
 
 ## What can happen
 
@@ -21,8 +23,15 @@ is one of the seven kinds of thing [Tadas is made of](../../../../README.md).
   audit entry is appended by the part of the platform that has
   something to record, as itself.
 - **Read after a number.** Everything after a sequence number, oldest
-  first, so a screen that was away catches up.
+  first, so a screen that was away catches up. A number below the floor
+  is refused as gone, with the floor and the head: the events after it
+  are not all kept.
 - **Read the head.**
+- **Trim the oldest events.** With an event retention set, the sweep
+  deletes, a batch at a time, the events at the bottom of an org's
+  stream that are older than it, and moves the floor to the last of
+  them. It stops at the first younger event. The retention is off by
+  default, which keeps every event.
 - **Drop an expired tenant's stream.** Once a deleted org is past the
   retention, the sweep drops its events and its cursor, as every
   namespace drops that tenant's rows.
@@ -50,3 +59,9 @@ row erases them.
 - **A push is a hint; the diary is the truth.** A screen keeps the last
   contiguous number it applied. A push that arrives ahead of it is not
   a skip: it is a replay of the diary from that number.
+- **The floor moves with the trim.** The trim takes the cursor's lock,
+  deletes, and moves the floor in one transaction. So a reader never
+  sees events gone above a floor that says they are kept.
+- **A screen behind the floor reads afresh.** Its number is below the
+  floor, so no replay can close the gap. It reads what it shows again,
+  and goes on from the head the refusal named.
