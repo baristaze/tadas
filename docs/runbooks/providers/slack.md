@@ -67,11 +67,15 @@ Slack app  (one per Tadas environment)             api.slack.com/apps/<app id>
 | `app_mentions:read` | Receiving `app_mention`, so `@tadas` answers with the usage |
 | `users:read` | `users.info`: who typed the command |
 | `users:read.email` | The email on that person's profile, which is how Tadas matches them to a member of the org |
+| `channels:read` | Receiving `member_joined_channel` from a public channel, so Tadas hears that `@tadas` was invited back to the channel it posts to |
+| `groups:read` | The same, from a private channel |
 
 Nothing else. The app never asks for `incoming-webhook`,
-`channels:read`, `channels:history`, or `chat:write.public`: the channel
-is bound by typing a command in it, and the bot posts only where it was
-invited.
+`channels:history`, or `chat:write.public`: the channel is bound by
+typing a command in it, the bot posts only where it was invited, and it
+reads no message. The two `:read` scopes also allow `conversations.list`
+and `conversations.info`; Tadas calls neither, and takes the scopes for
+the event alone.
 
 ### The events, and what each does
 
@@ -81,6 +85,7 @@ invited.
 | `app_home_opened` | Publishes the Home tab: the commands and how to bind a channel |
 | `app_uninstalled` | Deletes the org's installation and its token |
 | `tokens_revoked` | The same, when Slack names the bot's token |
+| `member_joined_channel` | When the member is `@tadas` and the channel is the one it posts to, mends an installation that channel broke: posting resumes, with no `/tadas connect`. Any other join is ignored |
 
 ### The commands
 
@@ -241,8 +246,9 @@ it, and the old workspace-level install from before is not used.
 **Verified**. **Slash Commands** shows `/tadas` with
 `https://api.staging.tadas.fyi/webhooks/slack/commands`. **OAuth &
 Permissions** shows the redirect URL
-`https://api.staging.tadas.fyi/webhooks/slack/oauth` and the five bot
-scopes. **Socket Mode** is off.
+`https://api.staging.tadas.fyi/webhooks/slack/oauth` and the seven bot
+scopes. **Event Subscriptions** lists the five bot events. **Socket
+Mode** is off.
 
 ### 5. Let any workspace install it
 
@@ -262,7 +268,7 @@ separate submission, and Tadas does not make it.
    an owner or an admin of an org, and open **Settings**. The **Slack**
    card says "Not installed."
 2. Click **Add to Slack**. Slack's page asks to install "Tadas (staging)"
-   in a workspace, with the five permissions. Pick the workspace and click
+   in a workspace, with the seven permissions. Pick the workspace and click
    **Allow**.
 3. Slack sends the browser back to the settings page, which says "Tadas
    is in Slack." The card says "Installed in <workspace>. No channel gets
@@ -372,7 +378,9 @@ to approve the new scopes; its channel stays.
 | `/tadas` says Tadas is not installed for this Slack workspace | No org installed the app in that workspace, or it was removed | Install from Tadas's settings |
 | `/tadas` says you are not a member | Your Slack profile's email is not an address a member of the org signed in with | Ask an owner or an admin to invite that address, then sign in once |
 | `/tadas connect` says `@tadas` is not in the channel | The bot was never invited there | `/invite @tadas`, then `/tadas connect` again |
-| The card says posting fails, and names the channel | Slack refused the channel for good: archived, deleted, or the bot was removed | `/tadas connect` in a working channel |
+| The card says `@tadas` is not in the channel, or that it was removed from it | Someone removed the bot from the channel Tadas posts to | `/invite @tadas` in that channel. Slack sends `member_joined_channel`, and the card is well again within seconds |
+| `/invite @tadas` does not mend the card | The workspace approved Tadas before it asked for `channels:read` and `groups:read`, so Slack does not send the join; or the manifest lacks the event | **Add to Slack again** approves the two scopes. `/tadas connect` in the channel mends it meanwhile. The App Manifest page for the event |
+| The card says the channel was archived, or deleted | Slack refused the channel for good | `/tadas connect` in a working channel |
 | The card says Slack no longer accepts the install's token | A renewal was refused: the app was removed from the workspace, or the token revoked | **Add to Slack again** |
 | Reminders do not arrive, and nothing fails | No channel is bound, or the installation is broken; the worker drops the post and says why | `/tadas/<env>/maintenance`: `slack post <id> dropped: …` |
 | Posts are late | Slack rate limited the bot. The worker parks the post for as long as Slack asked and tries again | `/tadas/<env>/maintenance`, and the worker's outcome counter |

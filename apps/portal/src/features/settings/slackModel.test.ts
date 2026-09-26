@@ -54,15 +54,16 @@ describe("slack model", () => {
     expect(slackSummary(status(installation({ status: "broken", broken_reason: "not_in_channel" })))).toEqual({
       state: "broken",
       line: "Installed in Acme, but posting there fails.",
-      fix: "@tadas is not in the channel: type /invite @tadas in it, then /tadas connect.",
+      fix: "@tadas is not in the channel: type /invite @tadas in it, and posting resumes.",
       installLabel: "Add to Slack again",
     });
   });
 
   it("puts each refusal in plain words", () => {
     expect(brokenReasonText("channel_not_found")).toBe(
-      "The channel was deleted or archived: type /tadas connect in another.",
+      "The channel was deleted, or @tadas was removed from it: type /invite @tadas in it, and posting resumes; or type /tadas connect in another.",
     );
+    expect(brokenReasonText("is_archived")).toBe("The channel was archived: type /tadas connect in another.");
     expect(brokenReasonText("invalid_refresh_token")).toBe(
       "Slack no longer accepts the install's token: add Tadas to Slack again.",
     );

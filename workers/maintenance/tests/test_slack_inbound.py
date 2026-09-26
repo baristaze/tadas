@@ -1,8 +1,9 @@
 """What Slack sends, after the API checked and acknowledged it: the command
 parser; the workspace names the org and the Slack profile's address names
 the person; `/tadas` alone, `/tadas team`, `/tadas add`, `/tadas connect`,
-and the help; the mention, once; the App Home; the uninstall; the tenant
-fence of the workspace; and the queue consumer's delete-or-retry."""
+and the help; the mention, once; the App Home; the uninstall; the bot
+invited back to its channel; the tenant fence of the workspace; and the
+queue consumer's delete-or-retry."""
 
 import asyncio
 from datetime import date, timedelta
@@ -14,6 +15,7 @@ from slack_support import (
     PORTAL,
     TEAM,
     build,
+    claim,
     command,
     connect,
     event,
@@ -23,16 +25,20 @@ from slack_support import (
     member_of,
     on_team,
     owner_of,
+    queued,
 )
 
 from tadas.infra.queues import Queues
 from tadas.infra.queues.memory import QueueMemoryImpl
 from tadas.integrations.slack import SlackFailed, error_for
-from tadas.integrations.slack.twin import SlackTwinImpl
-from tadas.om.base import derived_id
+from tadas.integrations.slack.requests import inbound_event
+from tadas.integrations.slack.twin import SlackTwinImpl, bot_user_of
+from tadas.om.base import derived_id, utcnow
 from tadas.om.opcontext import OpContext
+from tadas.om.slack.types.installation import SlackInstallationStatus
 from tadas.om.tasks.types.filter import TaskFilter
 from tadas.om.tasks.types.task import Task, TaskScope, TaskStatus
+from tadas.om.work.types.work_item import WorkKind
 from tadas.workers.maintenance.container import WorkerContainer
 from tadas.workers.maintenance.slack_inbound import (
     CONNECTED,
@@ -46,6 +52,7 @@ from tadas.workers.maintenance.slack_inbound import (
     home_view,
     parse_command,
 )
+from tadas.workers.maintenance.slack_posts import SlackPostHandlerImpl
 
 BOB_SLACK = "U0BOB"
 
@@ -369,6 +376,61 @@ async def test_a_user_token_revoked_leaves_the_installation(tmp_path: Path) -> N
         event({"type": "tokens_revoked", "tokens": {"oauth": ["U0ANN"], "bot": []}})
     )
     assert await container.managers.slack.get_installation(ann) is not None
+
+
+async def post_what_is_queued(container: WorkerContainer, twin: SlackTwinImpl) -> None:
+    """Runs every Slack post the org's writes queued, as the worker's loop does."""
+    posting = SlackPostHandlerImpl(container.managers.tasks, container.managers.slack, twin)
+    while (claimed := await claim(container, WorkKind.SLACK_POST)) is not None:
+        await posting.handle(*claimed)
+        await container.managers.work.complete(*claimed)
+
+
+async def status_of(container: WorkerContainer, ctx: OpContext) -> tuple[str, str | None]:
+    installation = await container.managers.slack.get_installation(ctx)
+    assert installation is not None
+    return installation.status, installation.broken_reason
+
+
+async def test_the_bot_invited_back_mends_the_install_and_posts_resume(tmp_path: Path) -> None:
+    container, twin = build(tmp_path)
+    ann = await owner_of(container, "acme")
+    await connect(container, twin, ann, "C0TEAM")
+    tasks = container.managers.tasks
+    twin.remove_bot(TEAM, "C0TEAM")  # someone removed @tadas from the channel
+    await tasks.create_task(ann, make_task(ann, "While it was out"))
+    await post_what_is_queued(container, twin)
+    assert await status_of(container, ann) == (SlackInstallationStatus.BROKEN, "not_in_channel")
+    before = len(await queued(container, ann, WorkKind.SLACK_POST))
+    await tasks.create_task(ann, make_task(ann, "Still out"))
+    assert len(await queued(container, ann, WorkKind.SLACK_POST)) == before, "posting stopped"
+    joined = inbound_event(twin.invite_bot(TEAM, "C0TEAM"), utcnow(), 0)
+    handler = inbound(container, twin)
+    await handler.handle(joined)
+    await handler.handle(joined)  # Slack's retry of the same event
+    assert await status_of(container, ann) == (SlackInstallationStatus.OK, None)
+    await tasks.create_task(ann, make_task(ann, "Back again"))
+    await post_what_is_queued(container, twin)
+    assert twin.posts[-1].channel_id == "C0TEAM"
+    assert twin.posts[-1].text == ":memo: New task: *Back again*", "no relink, no new install"
+
+
+@pytest.mark.parametrize(
+    ("who", "channel"),
+    [("U0SOMEONE", "C0TEAM"), (bot_user_of(TEAM), "C0ELSEWHERE")],
+    ids=["a person joins the channel", "the bot joins another channel"],
+)
+async def test_only_the_bot_joining_its_own_channel_mends_it(
+    tmp_path: Path, who: str, channel: str
+) -> None:
+    container, twin = build(tmp_path)
+    ann = await owner_of(container, "acme")
+    await connect(container, twin, ann, "C0TEAM")
+    await container.managers.slack.mark_broken(ann, "not_in_channel")
+    await inbound(container, twin).handle(
+        event({"type": "member_joined_channel", "user": who, "channel": channel, "team": TEAM})
+    )
+    assert await status_of(container, ann) == (SlackInstallationStatus.BROKEN, "not_in_channel")
 
 
 async def test_an_event_for_a_workspace_no_org_holds_does_nothing(tmp_path: Path) -> None:

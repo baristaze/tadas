@@ -85,7 +85,18 @@ class SlackManagerInterface(ABC):
     async def mark_broken(self, ctx: OpContext, reason: str) -> SlackInstallation | None:
         """Slack refused a post for good (the channel is gone, archived, or the
         app is not in it): the installation says so, announced, until a
-        channel is bound again. None when the org has no installation."""
+        channel is bound again or the bot joins this one. None when the org
+        has no installation."""
+        ...
+
+    @abstractmethod
+    async def bot_joined(self, ctx: OpContext, channel_id: str) -> SlackInstallation | None:
+        """Slack says the app's bot joined `channel_id` (`member_joined_channel`
+        with the bot as its member): someone invited it. When that is the bound
+        channel and Slack's refusal of the channel broke the installation, the
+        installation is well again, announced, and posts resume: the bot is in
+        the channel, and a channel it can join is neither gone nor archived.
+        A token Slack refused stays broken. None when nothing changed."""
         ...
 
     @abstractmethod
