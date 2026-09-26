@@ -212,10 +212,11 @@ class TasksManagerInterface(ABC):
     @abstractmethod
     async def open_cleanup(self, ctx: OpContext) -> Orchestration | None:
         """The sweep, for one tenant: opens today's cleanup record when the org
-        has a done task unchanged for the archive age and today's record is
-        not open yet; the org, the kind, and the day are its unique key, so
-        every sweep after the first one of the day opens nothing. None when
-        there is nothing to archive."""
+        has a done task unchanged since the day began, less the archive age
+        (`tasks.rules.archive_cutoff`), and today's record is not open yet;
+        the org, the kind, and the day are its unique key, so every sweep
+        after the first one of the day opens nothing. None when there is
+        nothing to archive."""
         ...
 
     @abstractmethod

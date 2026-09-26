@@ -50,6 +50,7 @@ from tadas.om.tasks.rules import (
     ImportedTask,
     ImportFileRefused,
     Place,
+    archive_cutoff,
     bulk_ranks,
     bulk_skip,
     cleanup_part,
@@ -671,7 +672,7 @@ class TasksManagerImpl(TasksManagerInterface):
     async def open_cleanup(self, ctx: OpContext) -> Orchestration | None:
         ctx.require(Permission.WRITE)
         now = utcnow()
-        before = now - self._options.archive_after
+        before = archive_cutoff(now, self._options.archive_after)
         if not await self._storage.read_archivable(ctx.org_id, before, 1):
             return None
         period = cleanup_period(now)
