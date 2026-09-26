@@ -26,10 +26,9 @@ class Tasks(IdentifiableMixin, TrackableMixin, SoftDeletableMixin, Base):
         # release before names it in every insert and reads it as a number,
         # so a trigger keeps it the rank's float on every row this release
         # writes (migration 202610200000). No statement of this release names
-        # it, and the release after this one drops it, its index, and these
-        # lines (ADR 0038, ADR 0050).
+        # it, and the release after this one drops it and this line (ADR
+        # 0038, ADR 0050).
         Column("position", Double(), nullable=False),
-        Index("ix_tasks_org_id_status_position", "org_id", "status", "position"),
         Index("ix_tasks_org_id_status_id", "org_id", "status", "id"),
         # The done list and the archive, one index per shelf, so the cleanup's
         # read of the archivable tasks never walks the archive. The predicates

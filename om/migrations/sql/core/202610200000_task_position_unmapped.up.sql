@@ -6,12 +6,12 @@
 --
 -- A row this release inserts names no position; one it moves changes the
 -- rank and leaves the position as it was. The trigger gives either the float
--- of its rank, which the release before reads, and which keeps the trigger
--- of 202610120000 (it fills the rank from a position that changed alone)
--- from ever seeing a stale position. A row the release before writes names
--- both, the position as the rank's float, and this trigger leaves it alone.
--- Both triggers, their functions, and the column go in the release after
--- this one.
+-- of its rank. That is what the release before reads, and it keeps the
+-- trigger of 202610120000 (which fills the rank from a position that changed
+-- alone) from ever meeting a stale position. A row the release before
+-- writes names both, the position as the rank's float, and this trigger
+-- leaves it alone. Both triggers, their functions, and the column go in the
+-- release after this one.
 CREATE FUNCTION core.tasks_position_from_rank() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     IF NEW.position IS NULL
@@ -25,3 +25,7 @@ $$;
 
 CREATE TRIGGER tasks_position_from_rank BEFORE INSERT OR UPDATE ON core.tasks
 FOR EACH ROW EXECUTE FUNCTION core.tasks_position_from_rank();
+
+-- No statement of this release or of the release before reads the
+-- position's index; every write kept it for nothing.
+DROP INDEX core.ix_tasks_org_id_status_position;

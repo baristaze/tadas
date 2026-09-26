@@ -106,7 +106,7 @@ reason = "expand scaffolding for the release before, which cannot write the rank
 # column goes.
 [[tool.arch-check.exception]]
 rule = "STO-05"
-path = "om/migrations/sql/core/202610200000_task_position_from_rank.up.sql"
+path = "om/migrations/sql/core/202610200000_task_position_unmapped.up.sql"
 adr = "docs/adr/0050-a-move-writes-one-row.md"
 reason = "contract scaffolding for the release before, which reads the position this release no longer writes; it goes with the column"
 
