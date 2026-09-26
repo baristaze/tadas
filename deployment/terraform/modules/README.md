@@ -75,7 +75,8 @@ than desired, because a worker holds leases. The API passes
 one one-off task on the migrate task's new definition (`pre_rollout.sh`,
 from the machine that applies, with its credentials), and the service
 depends on it, so a step that fails ends the apply with the old tasks
-still serving. It runs when the release brings the database something it
+still serving. A task that exits 75, a migration that gave up waiting
+for a lock, runs again, three runs in all (ADR 0071). It runs when the release brings the database something it
 lacks: the fingerprint of the files `deployment/migration-inputs.json`
 names (the migrations, and the runner and logins code the command
 imports), the database's resource id, the password version, or the

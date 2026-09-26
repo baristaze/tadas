@@ -461,8 +461,13 @@ that has no such promise, which is why the fast rollback stops at one.
 ## A failed migration stops the rollout
 
 The migration is a one-off task on the new API task definition that
-runs before either service rolls; the service depends on it. When the
-task exits non-zero, the apply fails at `terraform_data.pre_rollout`,
+runs before either service rolls; the service depends on it. A migration
+waits 5 seconds at most for a lock
+(`TADAS_DATABASE_MIGRATION_LOCK_TIMEOUT_SECONDS`). One that gives up
+applies nothing of its role and exits 75, and the task runs again, three
+runs in all (ADR 0071); the apply log says `asked to run again`. When the
+task exits non-zero otherwise, or a third time, the apply fails at
+`terraform_data.pre_rollout`,
 the API and the worker keep their current tasks, and nothing else in
 the plan that comes after the services was applied. The failed run is
 tainted in the state, so every later plan runs it again. Read the task's log

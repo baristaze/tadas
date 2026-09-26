@@ -49,7 +49,8 @@ the one this repository makes.
   build are the ones staging already made.
 - The database migration runs inside the apply, before the service
   rolls. A failed migration fails the apply with the old tasks still
-  serving. A migration is compatible with the release before it, so
+  serving. A migration waits a few seconds at most for a lock, and one
+  that gave up waiting runs again, three runs in all. A migration is compatible with the release before it, so
   the old tasks serve the new schema meanwhile.
 - Each environment has a credential of its own, and production has
   two: one that reads, for the plan, and one that writes, for the
