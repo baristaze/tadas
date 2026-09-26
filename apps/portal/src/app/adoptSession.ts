@@ -3,7 +3,9 @@
 // signing up, and switching orgs all land here, so no cache of the old tenant
 // is ever shown under the new one, and no moment passes with no token held:
 // a signed-in page never sees the tab signed out on its way to the new
-// session. The realtime provider reopens its socket on the token change.
+// session. The signed-in shell is keyed by the org (routes.tsx), so the new
+// org mounts it afresh: every screen reads again under the new session, and
+// the realtime provider opens a new socket.
 import type { IssuedSessionView } from "../api";
 import { useSessionStore } from "../store/session";
 import { queryClient } from "./queryClient";
