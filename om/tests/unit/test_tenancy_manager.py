@@ -221,6 +221,22 @@ async def token_operator(manager: TenancyManagerImpl, email: str) -> OperatorCon
     return await manager.admit_operator(await manager.authenticate_login(request(), issued.token))
 
 
+async def operator_deletes(
+    manager: TenancyManagerImpl,
+    operator: TenancyOperatorManagerImpl,
+    admin: OperatorContext,
+    org_id: UUID,
+) -> Org:
+    """An operator's deletion carried to its end: the close the request
+    writes, then the last step of the `DELETE_ORG` it asked for, which the
+    worker runs under the operator's name once the providers are done."""
+    await operator.delete_org(admin, org_id)
+    work = await manager.service_context(request(), org_id, admin.identity_id)
+    deleted = await manager.delete_closed_org(work)
+    assert deleted is not None
+    return deleted
+
+
 async def sign_in(manager: TenancyManagerImpl, email: str, org_id: UUID) -> OpContext:
     login = await manager.dev_sign_in(request(), email)
     issued = await manager.exchange_login(
@@ -325,7 +341,7 @@ async def test_a_deleted_org_frees_its_slug(
         operator_role=OperatorRole.WRITE,
     )
     admin = await token_operator(manager, "root@example.test")
-    await operator.delete_org(admin, org.id)
+    await operator_deletes(manager, operator, admin, org.id)
     _, again = await manager.bootstrap(request(), "Acme", "acme", "bob@example.test", "Bob")
     assert again.id != org.id and again.slug == "acme"
     with pytest.raises(Conflict):
@@ -1212,7 +1228,7 @@ async def test_the_grant_job_puts_an_identity_on_the_allowlist_and_audits_it(
         await manager.grant_operator_token(request(), "ann@example.test")
 
 
-async def test_operators_soft_delete_an_org_and_its_principals_stop_resolving(
+async def test_an_operator_closes_an_org_at_once_and_the_queue_deletes_it(
     manager: TenancyManagerImpl, operator: TenancyOperatorManagerImpl, infra: InfraLocalImpl
 ) -> None:
     published: list[TopicPayload] = []
@@ -1236,21 +1252,30 @@ async def test_operators_soft_delete_an_org_and_its_principals_stop_resolving(
     )
     admin = await token_operator(manager, "root@example.test")
 
-    deleted = await operator.delete_org(admin, org.id)
-    assert deleted.deleted_at is not None and deleted.deleted_by == admin.identity_id
-    assert deleted.updated_at == deleted.deleted_at
-    with pytest.raises(InvalidCredential):
+    closed = await operator.delete_org(admin, org.id)
+    # Closed, not yet deleted: the org waits, live and empty, for the queue.
+    assert closed.deleted_at is None and closed.updated_by == admin.identity_id
+    with pytest.raises(CredentialExpired):
         await manager.authenticate(request(), issued.token)
     # Ann keeps her personal org, the one place no deletion reaches.
     left = (await manager.dev_sign_in(request(), "ann@example.test")).memberships
     assert [m.org.kind for m in left] == [OrgKind.PERSONAL]
-    # The deletion is announced into the tenant's stream, so every socket of
+    # A repeat, before the queue has run, answers the org as it stands.
+    assert await operator.delete_org(admin, org.id) == closed
+
+    deleted = await operator_deletes(manager, operator, admin, org.id)
+    assert deleted.deleted_at is not None and deleted.deleted_by == admin.identity_id
+    assert deleted.updated_at == deleted.deleted_at
+    # Every change is announced into the tenant's stream, so every socket of
     # the tenant closes, in whichever process holds it; the operator's identity
     # is the actor, since an operator has no user in the tenant.
     frames = [p for p in published if isinstance(p, EntityChangedPayload)]
     assert [(f.kind, f.target_id, f.org_id, f.actor_id) for f in frames if "org" in f.kind] == [
         ("tenancy.org.deleted", org.id, org.id, admin.identity_id)
     ]
+    assert {(f.kind, f.actor_id) for f in frames if f.kind == "tenancy.user.deleted"} == {
+        ("tenancy.user.deleted", admin.identity_id)
+    }
     # The sweep still visits the deleted tenant: its rows are the sweep's to purge.
     assert org.id in [c.org_id for c in await manager.service_contexts(request())]
     with pytest.raises(NotFound):
@@ -1278,7 +1303,7 @@ async def test_a_deleted_orgs_rows_are_purged_once_the_retention_has_passed(
         operator_role=OperatorRole.WRITE,
     )
     admin = await token_operator(manager, "root@example.test")
-    await operator.delete_org(admin, org.id)
+    await operator_deletes(manager, operator, admin, org.id)
     sweep = next(c for c in await manager.service_contexts(request()) if c.org_id == org.id)
     assert sweep.role is Role.SERVICE and sweep.user_id == EMPTY_UUID
     # Within the retention nothing of the tenant is deleted in its own right, so
@@ -1371,7 +1396,7 @@ async def test_a_claim_for_a_departed_members_item_still_runs_under_their_name(
         operator_role=OperatorRole.WRITE,
     )
     admin = await token_operator(manager, "root@example.test")
-    await operator.delete_org(admin, org.id)
+    await operator_deletes(manager, operator, admin, org.id)
     with pytest.raises(InvalidCredential):
         await manager.service_context(request(), org.id, ann.id)
 
@@ -2045,9 +2070,9 @@ async def test_an_operator_never_deletes_a_personal_org(
         await operator.delete_org(admin, dee.org_id)
     org = await storage.read_org(dee.org_id)
     assert org is not None and org.deleted_at is None
-    # A team org is deleted as ever.
+    # A team org is deleted, through the queue as its owner's is.
     team_org = await manager.create_org(dee, "Bakery", None)
-    deleted = await operator.delete_org(admin, team_org.org.id)
+    deleted = await operator_deletes(manager, operator, admin, team_org.org.id)
     assert deleted.deleted_at is not None
 
 

@@ -27,6 +27,7 @@ from tadas.om.tasks.types.task import Task, TaskScope, TaskStatus
 CROSS_TENANT_CASES: frozenset[str] = frozenset(
     {
         "update_archived_in_step",
+        "count_done_tasks",
         "count_open_tasks",
         "create_task",
         "create_tasks_in_step",
@@ -42,8 +43,10 @@ CROSS_TENANT_CASES: frozenset[str] = frozenset(
         "read_open_tasks",
         "read_recent_open_tasks",
         "read_task",
+        "read_tasks",
         "update_task",
         "update_tasks",
+        "update_tasks_if_current",
     }
 )
 """Every method of `TasksStorageInterface` that takes a tenant has a case in
@@ -501,6 +504,101 @@ class TaskStorageContract:
         assert await storage.read_open_places(org_b, exclude=None, after=None, limit=10) == [
             (0.5, mine.id)
         ]
+
+    async def test_the_done_count_is_the_done_list_of_one_tenant(
+        self, storage: TasksStorageInterface
+    ) -> None:
+        """The done count counts what the done list shows: not an open task, not
+        an archived one, not a deleted one, not another tenant's, and under
+        `mine` not a task that is someone else's."""
+        org_a, org_b = new_id(), new_id()
+        author = new_id()
+        for i in range(2):
+            await seed(
+                storage, org_a, make_task(f"done{i}", created_by=author, status=TaskStatus.DONE)
+            )
+        await seed(storage, org_a, make_task("theirs", status=TaskStatus.DONE))
+        await seed(storage, org_a, make_task("open", created_by=author))
+        shelved = make_task("archived", created_by=author, status=TaskStatus.DONE)
+        await seed(storage, org_a, shelved)
+        await bump(storage, org_a, shelved, archived_at=utcnow())
+        gone = make_task("deleted", created_by=author, status=TaskStatus.DONE)
+        await seed(storage, org_a, gone)
+        await bump(storage, org_a, gone, deleted_at=utcnow(), deleted_by=author)
+        assert await storage.count_done_tasks(org_a, team()) == 3
+        assert await storage.count_done_tasks(org_a, mine(author)) == 2
+        assert await storage.count_done_tasks(org_b, team()) == 0
+        assert await storage.count_done_tasks(org_b, mine(author)) == 0
+
+    async def test_read_tasks_answers_the_tenants_tasks_by_id(
+        self, storage: TasksStorageInterface
+    ) -> None:
+        """A deleted task is read, so the bulk change can say why it skipped
+        it; an id of another tenant, or of nothing, is absent."""
+        org_a, org_b = new_id(), new_id()
+        kept, theirs = make_task("kept"), make_task("theirs")
+        gone = make_task("gone")
+        await seed(storage, org_a, kept)
+        await seed(storage, org_a, gone)
+        await seed(storage, org_b, theirs)
+        deleted = await bump(storage, org_a, gone, deleted_at=utcnow(), deleted_by=new_id())
+        found = await storage.read_tasks(org_a, [kept.id, gone.id, theirs.id, new_id()])
+        assert found == {kept.id: kept, gone.id: deleted}
+        assert await storage.read_tasks(org_b, [kept.id, gone.id]) == {}
+        assert await storage.read_tasks(org_a, []) == {}
+
+    async def test_updates_if_current_land_each_on_its_own_version(
+        self, storage: TasksStorageInterface
+    ) -> None:
+        """A batch of a bulk change: every task against its own version, in one
+        commit, and a stale one is left alone without refusing the others,
+        where `update_tasks` would land none."""
+        org = new_id()
+        first, second, third = make_task("first"), make_task("second"), make_task("third")
+        for task in (first, second, third):
+            await seed(storage, org, task)
+        moved = await bump(storage, org, second, title="moved")  # now at version 2
+
+        def done(task: Task) -> Task:
+            return task.model_copy(update={"status": TaskStatus.DONE, "version": task.version + 1})
+
+        landed = await storage.update_tasks_if_current(
+            org,
+            [
+                (done(task), task.version, (make_row(org, task, "updated"),))
+                for task in (first, second, third)
+            ],
+        )
+        assert landed == (True, False, True)
+        assert await storage.read_task(org, first.id) == done(first)
+        assert await storage.read_task(org, second.id) == moved
+        assert await storage.read_task(org, third.id) == done(third)
+        assert await storage.update_tasks_if_current(org, []) == ()
+
+    async def test_updates_if_current_under_another_tenant_land_nothing_of_theirs(
+        self, storage: TasksStorageInterface
+    ) -> None:
+        """The tenant fence of the bulk write: another tenant's task, at the
+        version named, is left alone, and the tenant's own task beside it
+        still lands."""
+        org_a, org_b = new_id(), new_id()
+        mine_task, theirs = make_task("mine"), make_task("theirs")
+        await seed(storage, org_b, mine_task)
+        await seed(storage, org_a, theirs)
+
+        def done(task: Task) -> Task:
+            return task.model_copy(update={"status": TaskStatus.DONE, "version": task.version + 1})
+
+        landed = await storage.update_tasks_if_current(
+            org_b,
+            [
+                (done(theirs), theirs.version, (make_row(org_b, theirs, "updated"),)),
+                (done(mine_task), mine_task.version, (make_row(org_b, mine_task, "updated"),)),
+            ],
+        )
+        assert landed == (False, True)
+        assert await storage.read_task(org_a, theirs.id) == theirs
+        assert await storage.read_task(org_b, mine_task.id) == done(mine_task)
 
     async def test_update_is_a_compare_and_set_on_the_version(
         self, storage: TasksStorageInterface

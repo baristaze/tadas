@@ -7,7 +7,7 @@ typed view."""
 import asyncio
 import random
 import ssl
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import date
 from typing import Any, Literal, cast
 from uuid import UUID, uuid4
@@ -16,6 +16,8 @@ import httpx
 import truststore
 
 from tadas.client.types import (
+    BulkAction,
+    BulkTasksView,
     DeviceSignInView,
     EventView,
     FilePageView,
@@ -42,6 +44,7 @@ from tadas.client.types import (
     SignInStartView,
     SsoLinkView,
     StorageUsageView,
+    TaskCountView,
     TaskPageView,
     TaskScope,
     TaskStatus,
@@ -558,6 +561,42 @@ class ApiClient:
         if cursor:
             params["cursor"] = cursor
         return TaskPageView.model_validate(await self.request("GET", "/v1/tasks", params=params))
+
+    async def count_tasks(
+        self, status: TaskStatus = TaskStatus.open, scope: TaskScope = TaskScope.team
+    ) -> TaskCountView:
+        """How many tasks one list shows, the done one without the archive."""
+        params = {"status": status.value, "scope": scope.value}
+        return TaskCountView.model_validate(
+            await self.request("GET", "/v1/tasks/count", params=params)
+        )
+
+    async def change_tasks(
+        self,
+        action: BulkAction,
+        *,
+        ids: Sequence[UUID] | None = None,
+        scope: TaskScope | None = None,
+        status: TaskStatus | None = None,
+        idempotency_key: str | None = None,
+    ) -> BulkTasksView:
+        """Completes or reopens many tasks in one call: the ones named in `ids`,
+        or with `scope` and `status` every task of that list, as the server
+        reads it. Always under an idempotency key, so a retry answers what the
+        first call did. The answer names what changed, which the other action
+        over those ids undoes."""
+        body: dict[str, Any] = {"action": action.value}
+        if ids is not None:
+            body["ids"] = [str(task_id) for task_id in ids]
+        if scope is not None or status is not None:
+            body["all"] = {
+                "scope": (scope or TaskScope.team).value,
+                "status": (status or TaskStatus.open).value,
+            }
+        changed = await self.request(
+            "POST", "/v1/tasks/bulk", json=body, idempotency_key=idempotency_key or str(uuid4())
+        )
+        return BulkTasksView.model_validate(changed)
 
     async def task(self, task_id: UUID) -> TaskView:
         return TaskView.model_validate(await self.request("GET", f"/v1/tasks/{task_id}"))

@@ -1,4 +1,4 @@
-"""A team org its owner deleted, in the worker: its organization gone at the
+"""A team org its owner or an operator deleted, in the worker: its organization gone at the
 identity provider, its subscription canceled and its customer deleted, its
 Slack app removed, and the org deleted as an operator deletes one, which the
 sweep purges only after the retention; and a provider that is down parking
@@ -19,7 +19,7 @@ from tadas.integrations.identity.absent import IdentityProviderAbsentImpl
 from tadas.integrations.identity.twin import IdentityProviderTwinImpl
 from tadas.integrations.payments.twin import PaymentsTwinImpl
 from tadas.om.billing.types.plan import Plan
-from tadas.om.opcontext import OpContext, Role
+from tadas.om.opcontext import OpContext, OperatorRole, Role
 from tadas.om.tenancy.impl.manager import TenancyManagerImpl, TenancyOptions
 from tadas.om.work.types.handler import WorkParked, WorkRefused
 from tadas.om.work.types.work_item import WorkItem, WorkKind
@@ -152,3 +152,37 @@ async def test_a_refusal_of_the_call_fails_the_org_and_one_that_may_pass_parks(
     # Either way nothing moved on: the org waits, for the provider or a person.
     org = await container.storage.get_tenancy_storage().read_org(owner.org_id)
     assert org is not None and org.deleted_at is None
+
+
+async def test_an_org_an_operator_deleted_takes_the_same_work(tmp_path: Path) -> None:
+    """The operator's deletion asks for the same `DELETE_ORG`, and the same
+    handler ends the providers and deletes the org, under the operator's name."""
+    container, slack = build(tmp_path)
+    tenancy = container.managers.tenancy
+    owner = await signed_in_owner(container)
+    await tenancy.invite_member(owner, "bob@example.test", Role.MEMBER)
+    provider_org_id = (await tenancy.get_org(owner)).provider_org_id
+    payload = await checkout(container, owner, Plan.PRO, 1)
+    assert await consumer_of(container).handle(await queued(container, payload)) == "applied"
+    account = (await container.managers.billing.get_billing(owner)).account
+    assert account is not None and account.customer_id and account.subscription_id
+    await install(container, slack, owner)
+    await tenancy.bootstrap(
+        request(), "Ops", "ops", "root@example.test", "Root", operator_role=OperatorRole.WRITE
+    )
+    token = await tenancy.grant_operator_token(request(), "root@example.test")
+    admin = await tenancy.admit_operator(await tenancy.authenticate_login(request(), token.token))
+
+    await container.managers.tenancy_operator.delete_org(admin, owner.org_id)
+    ctx, item = await claim(container)
+    assert item.created_by == admin.identity_id
+    await build_loop(container)._handlers[item.kind].handle(ctx, item)
+
+    assert identity_of(container).deleted_organizations == [provider_org_id]
+    payments = cast(PaymentsTwinImpl, container.payments)
+    assert account.customer_id not in payments.customers
+    assert payments.subscriptions[account.subscription_id]["status"] == "canceled"
+    assert slack.uninstalled, "the app left the workspace"
+    org = await container.storage.get_tenancy_storage().read_org(owner.org_id)
+    assert org is not None and org.deleted_at is not None
+    assert org.deleted_by == admin.identity_id

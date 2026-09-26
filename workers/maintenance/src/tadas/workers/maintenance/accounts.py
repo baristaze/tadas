@@ -25,11 +25,11 @@ an assignee. It runs on the service role, whatever role the person held:
 the unassignment is what an account's deletion does, not a write the
 person asks for (ADR 0041).
 
-`DELETE_ORG` runs in a team org its owner deleted. Its members and their
-credentials went in the request, so nobody is in it. It deletes the org's
-organization at the identity provider, ends the subscription and deletes the
-customer at the payment processor, removes the Slack app, and deletes the org
-last, as an operator's deletion does: the sweep purges it after the
+`DELETE_ORG` runs in a team org its owner or an operator deleted. Its
+members and their credentials went in the request, so nobody is in it. It
+deletes the org's organization at the identity provider, ends the
+subscription and deletes the customer at the payment processor, removes the
+Slack app, and deletes the org last: the sweep purges it after the
 retention. Every step, and every wait and failure, is the account's
 (ADR 0042)."""
 
@@ -117,7 +117,7 @@ class DeleteOrgHandlerImpl(WorkHandlerInterface):
         )
         await end_providers(ctx, identity_step, self._billing, self._slack)
         await self._tenancy.delete_closed_org(ctx)
-        log.info("the team org %s its owner deleted is deleted", ctx.org_id)
+        log.info("the closed team org %s is deleted", ctx.org_id)
 
 
 async def end_providers(

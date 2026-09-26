@@ -22,7 +22,7 @@ from tadas.client.client import (
     retry_wait_seconds,
 )
 from tadas.client.realtime import Channel
-from tadas.client.types import OrgKind, Role, TaskStatus
+from tadas.client.types import BulkAction, OrgKind, Role, TaskScope, TaskStatus
 
 TASK = {
     "id": "0199a4c0-0000-7000-8000-000000000001",
@@ -135,6 +135,43 @@ async def test_every_write_carries_the_version_it_was_given() -> None:
     assert topped.read() == b'{"after_id":null,"expected_version":5}'
     assert deleted.method == "DELETE" and deleted.headers["if-match"] == '"6"'
     assert "version" not in deleted.url.params
+
+
+BULK = {
+    "action": "complete",
+    "changed": [TASK["id"]],
+    "changed_count": 1,
+    "skipped": [],
+    "skipped_count": 0,
+    "plan_limit": None,
+}
+
+
+async def test_a_bulk_change_names_ids_or_a_list_under_a_key() -> None:
+    recorder = Recorder({"/v1/tasks/bulk": httpx.Response(200, json=BULK)})
+    async with client_over(recorder) as client:
+        named = await client.change_tasks(BulkAction.complete, ids=[UUID(TASK["id"])])
+        await client.change_tasks(
+            BulkAction.reopen, scope=TaskScope.mine, status=TaskStatus.done, idempotency_key="k"
+        )
+    by_ids, whole = recorder.requests
+    assert json.loads(by_ids.read()) == {"action": "complete", "ids": [TASK["id"]]}
+    UUID(by_ids.headers["idempotency-key"])
+    assert json.loads(whole.read()) == {
+        "action": "reopen",
+        "all": {"scope": "mine", "status": "done"},
+    }
+    assert whole.headers["idempotency-key"] == "k"
+    assert named.changed == [UUID(TASK["id"])] and named.changed_count == 1
+
+
+async def test_a_count_asks_for_one_list() -> None:
+    counted = {"status": "done", "scope": "team", "count": 4}
+    recorder = Recorder({"/v1/tasks/count": httpx.Response(200, json=counted)})
+    async with client_over(recorder) as client:
+        answer = await client.count_tasks(TaskStatus.done)
+    assert answer.count == 4
+    assert dict(recorder.requests[0].url.params) == {"status": "done", "scope": "team"}
 
 
 async def test_the_sign_in_flow_uses_the_credential_it_is_given() -> None:

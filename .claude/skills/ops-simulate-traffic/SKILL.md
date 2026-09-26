@@ -114,7 +114,9 @@ dispatch is due.
    not read otherwise.
 5. Check that the run removed its tenants: the generator deletes
    each through `DELETE /v1/admin/orgs/{org_id}` when it ends, and
-   names any it could not remove, which the report lists. Against
+   names any it could not remove, which the report lists. A removed
+   org is closed at once; the worker deletes it once its `DELETE_ORG`
+   item has run, so the org list shows it live and empty until then. Against
    `production`, name the dispatch that disables the provisioner
    again.
 6. Write the report.

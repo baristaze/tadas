@@ -41,6 +41,21 @@ class TasksStorageInterface(ABC):
         ...
 
     @abstractmethod
+    async def count_done_tasks(self, org_id: UUID, criterion: TaskFilter) -> int:
+        """How many done tasks the filter shows and the cleanup has not
+        archived: the done list's length, as `count_open_tasks` is the open
+        list's."""
+        ...
+
+    @abstractmethod
+    async def read_tasks(self, org_id: UUID, task_ids: Sequence[UUID]) -> dict[UUID, Task]:
+        """The tenant's tasks among `task_ids`, deleted ones too, by id; an id
+        that is not the tenant's is absent. The ids are the bound, which the
+        caller picks: a bulk change reads one batch at a time before it
+        decides."""
+        ...
+
+    @abstractmethod
     async def read_done_tasks(
         self, org_id: UUID, criterion: TaskFilter, before: TaskCursor | None, limit: int
     ) -> list[Task]:
@@ -143,6 +158,18 @@ class TasksStorageInterface(ABC):
         outbox rows, each against its own expected version, in one commit, or
         none does and `PreconditionFailed` is raised. The renumbering of an open
         list is this write: a list renumbered halfway is out of order."""
+        ...
+
+    @abstractmethod
+    async def update_tasks_if_current(
+        self, org_id: UUID, updates: Sequence[tuple[Task, int, tuple[OutboxRow, ...]]]
+    ) -> tuple[bool, ...]:
+        """One batch of a bulk change, one commit: each task lands with its
+        outbox rows when the stored row is still at its expected version and is
+        the tenant's, and is left alone otherwise, without refusing the rest.
+        Answers, per update and in order, whether it landed. `update_tasks` is
+        the all-or-nothing twin a renumber needs; a bulk change is many edits,
+        each fenced on its own."""
         ...
 
     @abstractmethod

@@ -1,6 +1,7 @@
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import datetime, timedelta
+from typing import Any
 from uuid import UUID
 
 from pydantic import Field
@@ -37,12 +38,14 @@ from tadas.om.tenancy.impl.creates import (
     MAX_ORGS_PER_IDENTITY,
     add_member_to,
     create_org_with_owner,
+    user_payload,
 )
 from tadas.om.tenancy.impl.manager import issue_operator_token
 from tadas.om.tenancy.impl.totp import TotpSealer, new_totp_secret
 from tadas.om.tenancy.operator import TenancyOperatorManagerInterface
 from tadas.om.tenancy.rules import (
     MAX_OPERATOR_TOKEN_TTL,
+    closed_org,
     matching_totp_step,
     otpauth_uri,
 )
@@ -241,7 +244,8 @@ class TenancyOperatorManagerImpl(TenancyOperatorManagerInterface):
     ) -> User:
         admin.require(OperatorPermission.WRITE)
         org = await self._org(org_id)
-        if org.deleted_at is not None:
+        # A closed org is gone to its members already: nobody joins it.
+        if org.deleted_at is not None or closed_org(org, await self._storage.count_members(org_id)):
             raise NotFound(f"org {org_id} not found")
         if role in (Role.OWNER, Role.SERVICE):
             raise ValidationFailed(f"{role.value} is not a role a member is added with")
@@ -308,35 +312,67 @@ class TenancyOperatorManagerImpl(TenancyOperatorManagerInterface):
             raise NotFound(f"org {org_id} not found")
         if org.personal:
             raise PersonalOrgFixed("a personal org is not deleted; it is its person's place")
+        if closed_org(org, await self._storage.count_members(org_id)):
+            # Closed already, by its owner or by an operator, and its work is
+            # queued: the org as it stands, and nothing asked for twice.
+            return org
         now = utcnow()
-        deleted = org.model_copy(
-            update={
-                "deleted_at": now,
-                "deleted_by": admin.identity_id,
-                "updated_at": now,
-                "updated_by": admin.identity_id,
-            }
+        # An owner's deletion, as it writes it (ADR 0042): the org stays live,
+        # with nobody in it, until the queue has ended its providers, and its
+        # provider organization leaves the row now, so no sign-in through it
+        # finds the org meanwhile. An operator has no user in the tenant, so
+        # the actor every row records is the operator's identity, and the
+        # worker deletes the org under that name.
+        closed = org.model_copy(
+            update={"provider_org_id": None, "updated_at": now, "updated_by": admin.identity_id}
         )
-        # Announced like any change, into the tenant's own stream: the sockets
-        # of the tenant, in whichever process holds them, close on the row the
-        # relay publishes. An operator has no user in the tenant, so the actor
-        # the row records is the operator's identity.
-        row = OutboxRow(
+        work = self._row(
+            admin,
+            org_id,
+            work_row_kind(WorkKind.DELETE_ORG),
+            org_id,
+            {"provider_org_id": org.provider_org_id},
+        )
+
+        def member_row(member: User) -> OutboxRow:
+            return self._row(admin, org_id, "tenancy.user.deleted", member.id, user_payload(member))
+
+        def revocation(kind: str, credential_id: UUID, holder: UUID) -> OutboxRow:
+            return self._row(admin, org_id, kind, credential_id, {"user_id": str(holder)})
+
+        ended = await self._storage.write_closed_org(
+            org_id, closed, (work,), member_row, revocation
+        )
+        # Each member's removal, so a socket closes because its person left,
+        # then each revocation. Every row is durable already: whatever a crash
+        # leaves unrelayed, the sweep relays.
+        for landed in (work, *ended):
+            await self._relay.relay(org_id, landed)
+        log.info("operator %s deleted org %s", admin.identity_id, org_id)
+        return closed
+
+    @staticmethod
+    def _row(
+        admin: OperatorContext,
+        org_id: UUID,
+        kind: str,
+        target_id: UUID,
+        payload: Mapping[str, Any],
+    ) -> OutboxRow:
+        """A row an operator's write lands in the tenant's own stream. An
+        operator has no user in the tenant, so the actor is their identity."""
+        return OutboxRow(
             id=new_id(),
-            created_at=now,
+            created_at=utcnow(),
             org_id=org_id,
-            kind="tenancy.org.deleted",
-            target_id=org_id,
-            payload={},
+            kind=kind,
+            target_id=target_id,
+            payload=payload,
             actor_id=admin.identity_id,
             request_id=admin.request_id,
             app=admin.app.type.value,
             traceparent=current_traceparent(),
         )
-        await self._storage.write_org(org_id, deleted, (row,))
-        await self._relay.relay(org_id, row)
-        log.info("operator %s deleted org %s", admin.identity_id, org_id)
-        return deleted
 
     async def _seat_for_one_more(
         self, admin: OperatorContext, org_id: UUID
@@ -347,20 +383,7 @@ class TenancyOperatorManagerImpl(TenancyOperatorManagerInterface):
         refuse_past(plan, Lever.MEMBERS, await self._storage.count_members(org_id))
         if not seats_metered(plan):
             return ()
-        return (
-            OutboxRow(
-                id=new_id(),
-                created_at=utcnow(),
-                org_id=org_id,
-                kind=work_row_kind(WorkKind.SYNC_SEATS),
-                target_id=org_id,
-                payload={},
-                actor_id=admin.identity_id,
-                request_id=admin.request_id,
-                app=admin.app.type.value,
-                traceparent=current_traceparent(),
-            ),
-        )
+        return (self._row(admin, org_id, work_row_kind(WorkKind.SYNC_SEATS), org_id, {}),)
 
     async def _org(self, org_id: UUID) -> Org:
         """The org named, deleted or not: an operator reads a deleted tenant's

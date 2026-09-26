@@ -582,6 +582,11 @@ select.tadas-field {
   background: var(--tadas-surface-subtle);
 }
 
+/* A choice that changes many things at once. */
+.tadas-menu-item[data-tone="danger"] {
+  color: var(--tadas-danger-text);
+}
+
 /* A choice being taken up: the others wait. */
 .tadas-menu-item:disabled {
   cursor: progress;
@@ -763,6 +768,213 @@ li:hover .tadas-handle,
 
 @media (prefers-reduced-motion: reduce) {
   .tadas-progress-bar {
+    transition: none;
+  }
+}
+
+/* A card that folds: the title is the button, the caret turns with it. */
+.tadas-fold-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: -4px 0 8px;
+}
+
+.tadas-card[data-folded] .tadas-fold-head {
+  margin-bottom: -4px;
+}
+
+.tadas-fold-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+}
+
+.tadas-fold-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 4px 8px 4px 4px;
+  margin-left: -4px;
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+
+.tadas-fold-toggle:hover {
+  background: var(--tadas-surface-subtle);
+}
+
+.tadas-fold-caret {
+  display: inline-flex;
+  color: var(--tadas-muted);
+  transition: transform 160ms ease;
+}
+
+.tadas-fold-toggle[aria-expanded="false"] .tadas-fold-caret {
+  transform: rotate(-90deg);
+}
+
+.tadas-fold-actions {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+/* The task rows as a list one can select in: a selected row carries the
+   accent's tint and a bar at its edge, never a second box. */
+.tadas-task-row {
+  border-radius: 6px;
+  transition: background-color 120ms ease;
+}
+
+.tadas-task-row[aria-selected="true"] {
+  background: var(--tadas-accent-soft);
+  box-shadow: inset 3px 0 0 var(--tadas-accent);
+}
+
+.tadas-task-row:focus-visible {
+  outline: 2px solid var(--tadas-focus);
+  outline-offset: -2px;
+}
+
+/* A list with a selection takes no text selection from a Shift-click. */
+.tadas-selecting {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* The bar for what is selected, at the foot of the window. */
+.tadas-action-bar {
+  position: fixed;
+  left: 50%;
+  bottom: max(16px, env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  z-index: 35;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: max-content;
+  max-width: calc(100vw - 32px);
+  padding: 8px 8px 8px 16px;
+  background: var(--tadas-surface);
+  color: var(--tadas-text);
+  border: 1px solid var(--tadas-border-strong);
+  border-radius: 12px;
+  box-shadow: var(--tadas-shadow-lg);
+  animation: tadas-rise-in 160ms ease-out both;
+}
+
+.tadas-action-bar-count {
+  font-weight: 600;
+  white-space: nowrap;
+  margin-right: 8px;
+}
+
+/* Room under the page for the bar, so it never covers the last row. */
+.tadas-action-bar-room {
+  height: 64px;
+}
+
+/* A short word that a change was made: the tooltip's colours, so it reads
+   as neither a warning nor a card. */
+.tadas-toast {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--tadas-tooltip-bg);
+  color: var(--tadas-tooltip-text);
+  border-radius: 10px;
+  padding: 8px 8px 8px 14px;
+  font-size: 14px;
+  line-height: 20px;
+  box-shadow: var(--tadas-shadow-lg);
+  animation: tadas-fade-in 200ms ease-out both;
+}
+
+.tadas-toast-body {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.tadas-toast-action,
+.tadas-toast-close {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.tadas-toast-action {
+  font-weight: 650;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  padding: 4px 8px;
+}
+
+.tadas-toast-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  opacity: 0.8;
+}
+
+.tadas-toast-action:hover,
+.tadas-toast-close:hover {
+  background: color-mix(in srgb, var(--tadas-tooltip-text) 14%, transparent);
+  opacity: 1;
+}
+
+.tadas-toast-action:focus-visible,
+.tadas-toast-close:focus-visible {
+  outline: 2px solid var(--tadas-tooltip-text);
+  outline-offset: 1px;
+}
+
+/* A question before a change of many things. */
+.tadas-confirm {
+  width: min(420px, 100%);
+}
+
+.tadas-confirm-body {
+  color: var(--tadas-muted);
+  margin-bottom: 16px;
+}
+
+.tadas-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+@keyframes tadas-rise-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 8px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tadas-action-bar,
+  .tadas-toast {
+    animation: none;
+  }
+
+  .tadas-fold-caret {
     transition: none;
   }
 }

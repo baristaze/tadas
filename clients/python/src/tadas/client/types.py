@@ -5,6 +5,8 @@ renames a generated class is absorbed here."""
 from tadas.client.schema import (
     ApiKeyPageView,
     ApiKeyView,
+    BulkAction,
+    BulkTasksView,
     DeviceSignInView,
     EventView,
     FilePageView,
@@ -39,6 +41,7 @@ from tadas.client.schema import (
     SignInStartView,
     SsoLinkView,
     StorageUsageView,
+    TaskCountView,
     TaskPageView,
     TaskScope,
     TaskStatus,
@@ -51,6 +54,8 @@ from tadas.client.schema import (
 __all__ = [
     "ApiKeyPageView",
     "ApiKeyView",
+    "BulkAction",
+    "BulkTasksView",
     "DeviceSignInView",
     "EventView",
     "FilePageView",
@@ -85,6 +90,7 @@ __all__ = [
     "SignedOutView",
     "SsoLinkView",
     "StorageUsageView",
+    "TaskCountView",
     "TaskPageView",
     "TaskScope",
     "TaskStatus",

@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TaskView } from "../../api";
-import { TaskItem } from "./TaskItem";
+import { LONG_PRESS_MS, TaskItem } from "./TaskItem";
 import { taskRow } from "./tasksModel";
 
 // The attachments panel reads its own queries; this case is about the draft.
@@ -90,7 +90,7 @@ it("leads with the drag handle, keeps one line, and names the creator without a 
       onToggle: vi.fn(), onEdit, onCancelEdit: vi.fn(), onDelete: vi.fn(), onSave: vi.fn(),
     }));
   });
-  const line = container.querySelector("li > div") as HTMLElement;
+  const line = container.querySelector("li > div > div") as HTMLElement;
   const [handle, box, title] = [...line.children] as HTMLElement[];
   expect(handle!.getAttribute("aria-label")).toBe("Drag to reorder Migrate DB");
   expect(box!.getAttribute("type")).toBe("checkbox");
@@ -145,7 +145,7 @@ it("shows the due date on the row and sends a set, changed, or cleared one from 
     }));
   });
   await render(task, false);
-  const badge = () => [...container.querySelectorAll("li > div span[title]")].find((pill) => pill.getAttribute("title")!.startsWith("Due "));
+  const badge = () => [...container.querySelectorAll("li > div > div span[title]")].find((pill) => pill.getAttribute("title")!.startsWith("Due "));
   expect(badge()!.textContent).toBe("due Today");
   expect(badge()!.textContent).not.toMatch(/\d{2}:\d{2}/);
   await render({ ...task, reminded_at: new Date().toISOString() }, false);
@@ -199,4 +199,105 @@ it("sets a due date on a task that had none", async () => {
     container.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
   });
   expect(onSave.mock.lastCall![0]).toMatchObject({ dueOn: "2026-09-30", version: 2 });
+});
+
+describe("a row one selects in", () => {
+  const task: TaskView = {
+    id: "t9", title: "Pick me", notes: "", status: "open", assignee_id: null,
+    position: 0, version: 1, created_by: "u1", deleted_at: null, due_on: null, reminded_at: null,
+    created_at: "2026-09-20T10:00:00Z", updated_at: "2026-09-20T10:00:00Z",
+  };
+  const onToggle = vi.fn();
+  const select = {
+    selected: false, active: false, entry: true,
+    onPick: vi.fn(), onStep: vi.fn(), onFocus: vi.fn(),
+  };
+  const render = (over: Partial<typeof select> = {}) => act(async () => {
+    root.render(createElement(TaskItem, {
+      task, row: taskRow(task, new Map(), "u1"), leaving: false,
+      listMountedAt: Date.now(), canWrite: true, editing: false, saving: false,
+      assigneeOptions: [], select: { ...select, ...over },
+      onToggle, onEdit: vi.fn(), onCancelEdit: vi.fn(), onDelete: vi.fn(), onSave: vi.fn(),
+    }));
+  });
+  const row = () => container.querySelector("li") as HTMLLIElement;
+  const click = (target: Element, init: MouseEventInit = {}) =>
+    act(async () => { target.dispatchEvent(new MouseEvent("click", { bubbles: true, ...init })); });
+  const key = (init: KeyboardEventInit) =>
+    act(async () => { row().dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, ...init })); });
+
+  beforeEach(() => {
+    onToggle.mockClear();
+    select.onPick.mockClear();
+    select.onStep.mockClear();
+  });
+
+  it("is a row of a grid that says whether it is picked, and keeps one box", async () => {
+    await render({ selected: true });
+    expect(row().getAttribute("role")).toBe("row");
+    expect(row().getAttribute("aria-selected")).toBe("true");
+    expect(row().tabIndex).toBe(0);
+    expect(row().querySelector("[role=gridcell]")).not.toBeNull();
+    expect(row().querySelectorAll("input[type=checkbox]")).toHaveLength(1);
+    await render({ selected: false, entry: false });
+    expect(row().getAttribute("aria-selected")).toBe("false");
+    expect(row().tabIndex).toBe(-1);
+  });
+
+  it("picks with ⌘ or Ctrl, reaches with Shift, and leaves a plain click alone until a selection is open", async () => {
+    await render();
+    const title = row().querySelector(".tadas-task-title")!;
+    await click(title, { metaKey: true });
+    await click(title, { ctrlKey: true });
+    await click(title, { shiftKey: true });
+    await click(title);
+    expect(select.onPick.mock.calls).toEqual([["toggle"], ["toggle"], ["range"]]);
+    await render({ active: true });
+    await click(row().querySelector(".tadas-task-title")!);
+    expect(select.onPick).toHaveBeenLastCalledWith("toggle");
+  });
+
+  it("keeps the box's meaning: ⌘-clicking the box ticks it and picks nothing", async () => {
+    await render({ active: true });
+    const box = row().querySelector("input[type=checkbox]") as HTMLInputElement;
+    await act(async () => box.click());
+    await click(row().querySelector("button")!, { metaKey: true });
+    expect(onToggle).toHaveBeenCalledOnce();
+    expect(select.onPick).not.toHaveBeenCalled();
+  });
+
+  it("picks with Space and moves with the arrows, Shift reaching", async () => {
+    await render();
+    await key({ key: " " });
+    await key({ key: " ", shiftKey: true });
+    await key({ key: "ArrowDown" });
+    await key({ key: "ArrowUp", shiftKey: true });
+    expect(select.onPick.mock.calls).toEqual([["toggle"], ["range"]]);
+    expect(select.onStep.mock.calls).toEqual([[1, false], [-1, true]]);
+  });
+
+  it("picks on a long press of a finger, and the tap that ends it picks nothing more", async () => {
+    vi.useFakeTimers();
+    try {
+      await render();
+      const press = (type: string, x = 10) =>
+        act(async () => {
+          const event = new MouseEvent(type, { bubbles: true, clientX: x, clientY: 10 });
+          Object.defineProperty(event, "pointerType", { value: "touch" });
+          row().dispatchEvent(event);
+        });
+      await press("pointerdown");
+      await act(async () => vi.advanceTimersByTime(LONG_PRESS_MS));
+      await press("pointerup");
+      await click(row().querySelector(".tadas-task-title")!);
+      expect(select.onPick.mock.calls).toEqual([["toggle"]]);
+      // A finger that moves is a scroll.
+      await press("pointerdown");
+      await press("pointermove", 60);
+      await act(async () => vi.advanceTimersByTime(LONG_PRESS_MS));
+      expect(select.onPick).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

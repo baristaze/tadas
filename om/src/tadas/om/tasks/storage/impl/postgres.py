@@ -110,6 +110,23 @@ class TasksStoragePostgresImpl(PgStorageBase, TasksStorageInterface):
         async with self._session_for(stmt, org_id=org_id) as session:
             return (await session.execute(stmt)).scalar_one()
 
+    async def count_done_tasks(self, org_id: UUID, criterion: TaskFilter) -> int:
+        stmt = (
+            select(func.count())
+            .select_from(Tasks)
+            .where(_live(org_id, TaskStatus.DONE), Tasks.archived_at.is_(None), _visible(criterion))
+        )
+        async with self._session_for(stmt, org_id=org_id) as session:
+            return (await session.execute(stmt)).scalar_one()
+
+    async def read_tasks(self, org_id: UUID, task_ids: Sequence[UUID]) -> dict[UUID, Task]:
+        if not task_ids:
+            return {}
+        stmt = select(Tasks).where(Tasks.org_id == org_id, Tasks.id.in_(list(task_ids)))
+        async with self._session_for(stmt, org_id=org_id) as session:
+            result = await session.execute(stmt)
+            return {row.id: to_model(row, Task) for row in result.scalars()}
+
     async def read_done_tasks(
         self, org_id: UUID, criterion: TaskFilter, before: TaskCursor | None, limit: int
     ) -> list[Task]:
@@ -323,6 +340,35 @@ class TasksStoragePostgresImpl(PgStorageBase, TasksStorageInterface):
                 for outbox_row in outbox_rows:
                     session.add(to_row(outbox_row, OutboxRows, org_id=org_id))
             await session.commit()
+
+    async def update_tasks_if_current(
+        self, org_id: UUID, updates: Sequence[tuple[Task, int, tuple[OutboxRow, ...]]]
+    ) -> tuple[bool, ...]:
+        # The same compare-and-set as `update_tasks`, one statement a task, in
+        # one transaction; a statement that hits no row is a task that moved,
+        # left alone while the others land. Only the rows of the tasks that
+        # landed join the commit.
+        async with self._session_for(Tasks, org_id=org_id) as session:
+            landed: list[bool] = []
+            for task, expected_version, outbox_rows in updates:
+                values = {k: v for k, v in to_values(task, Tasks).items() if k != "id"}
+                stmt = (
+                    update(Tasks)
+                    .where(
+                        Tasks.id == task.id,
+                        Tasks.org_id == org_id,
+                        Tasks.version == expected_version,
+                    )
+                    .values(**values)
+                    .returning(Tasks.id)
+                )
+                hit = (await session.execute(stmt)).scalar_one_or_none() is not None
+                landed.append(hit)
+                if hit:
+                    for outbox_row in outbox_rows:
+                        session.add(to_row(outbox_row, OutboxRows, org_id=org_id))
+            await session.commit()
+            return tuple(landed)
 
     async def _why_not(
         self, org_id: UUID, task_id: UUID, expected_version: int

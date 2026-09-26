@@ -8,21 +8,26 @@ from tadas.om.media.types.file import File, FilePurpose
 from tadas.om.opcontext import OpContext
 from tadas.om.orchestrations.types.orchestration import Orchestration, TaskImportInput
 from tadas.om.tasks import TasksManagerInterface
+from tadas.om.tasks.types.bulk import BulkOutcome
 from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor, TaskFilter
 from tadas.om.tasks.types.page import TaskPage
 from tadas.om.tasks.types.task import Task, TaskScope, TaskStatus
 from tadas.services.api.services.impl.media import file_view
 from tadas.services.api.services.tasks import TasksServiceInterface
-from tadas.services.api.types.common import clamp_limit
+from tadas.services.api.types.common import PlanLimitDetail, clamp_limit
 from tadas.services.api.types.media import AddFileRequest, FilePageView, FileView
 from tadas.services.api.types.tasks import (
     AddTaskRequest,
+    BulkTasksRequest,
+    BulkTasksView,
     ImportPageView,
     ImportView,
     MoveTaskRequest,
     RestoreTaskRequest,
     RowErrorView,
+    SkippedTaskView,
     StartImportRequest,
+    TaskCountView,
     TaskPageView,
     TaskView,
     UpdateTaskRequest,
@@ -86,6 +91,19 @@ def import_view(record: Orchestration) -> ImportView:
     )
 
 
+def bulk_view(outcome: BulkOutcome) -> BulkTasksView:
+    """A bulk change on the wire; the plan's bound as a refusal carries it."""
+    bound = outcome.plan_bound
+    return BulkTasksView(
+        action=outcome.action,
+        changed=list(outcome.changed),
+        changed_count=outcome.changed_count,
+        skipped=[SkippedTaskView(id=s.id, reason=s.reason) for s in outcome.skipped],
+        skipped_count=outcome.skipped_count,
+        plan_limit=None if bound is None else PlanLimitDetail.model_validate(bound),
+    )
+
+
 def expected_version(named: int | None) -> int:
     """The version a write compares with: the one the request names, in
     `If-Match` or `expected_version`. A request that names none would
@@ -137,6 +155,23 @@ class TasksServiceImpl(TasksServiceInterface):
             items=[TaskView.model_validate(t) for t in page.items],
             next_cursor=encode_cursor(TaskStatus.DONE, page.items[-1]) if page.has_more else None,
         )
+
+    async def count_tasks(
+        self, ctx: OpContext, status: TaskStatus, scope: TaskScope
+    ) -> TaskCountView:
+        criterion = TaskFilter(scope=scope, user_id=ctx.user_id)
+        count = await self._tasks.count_tasks(ctx, criterion, status)
+        return TaskCountView(status=status, scope=scope, count=count)
+
+    async def change_tasks(self, ctx: OpContext, body: BulkTasksRequest) -> BulkTasksView:
+        if (body.ids is None) == (body.all is None):
+            raise ValidationFailed("a bulk change names its tasks in ids or in all, not both")
+        if body.ids is not None:
+            return bulk_view(await self._tasks.change_tasks(ctx, body.action, body.ids))
+        assert body.all is not None
+        criterion = TaskFilter(scope=body.all.scope, user_id=ctx.user_id)
+        outcome = await self._tasks.change_list(ctx, body.action, criterion, body.all.status)
+        return bulk_view(outcome)
 
     async def get_task(self, ctx: OpContext, task_id: UUID) -> TaskView:
         return TaskView.model_validate(await self._tasks.get_task(ctx, task_id))

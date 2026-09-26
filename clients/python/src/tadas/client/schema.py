@@ -55,6 +55,19 @@ class AddTaskRequest(BaseModel):
     title: Annotated[str, Field(max_length=500, title='Title')]
 
 
+class BulkAction(StrEnum):
+    """
+    What a bulk change does to each task: the status a single edit would
+    write.
+    """
+    complete = 'complete'
+    reopen = 'reopen'
+
+
+class Ids(RootModel[list[UUID]]):
+    root: Annotated[list[UUID], Field(max_length=1000, title='Ids')]
+
+
 class ConfirmTotpRequest(BaseModel):
     """
     The first code from the authenticator, which confirms the secret.
@@ -624,6 +637,27 @@ class SignedOutView(BaseModel):
     revoked_at: Annotated[AwareDatetime | None, Field(title='Revoked At')]
 
 
+class SkipReason(StrEnum):
+    """
+    Why a bulk change left one task alone. Every reason is a fact about the
+    task as the change found it, never a failure of the change.
+    """
+    not_found = 'not_found'
+    already_done = 'already_done'
+    already_open = 'already_open'
+    changed = 'changed'
+    plan_limit = 'plan_limit'
+
+
+class SkippedTaskView(BaseModel):
+    """
+    A task the bulk change left alone, and why: `not_found`,
+    `already_done`, `already_open`, `changed`, or `plan_limit`.
+    """
+    id: Annotated[UUID, Field(title='Id')]
+    reason: SkipReason
+
+
 class SlackEventAnswerView(BaseModel):
     """
     Slack's check of the events URL gets its `challenge` back; every other
@@ -952,6 +986,58 @@ class BillingView(BaseModel):
     storage_bytes: Annotated[int, Field(title='Storage Bytes')]
 
 
+class BulkListRequest(BaseModel):
+    """
+    A whole list, by the scope and the status it shows.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    scope: TaskScope
+    status: TaskStatus
+
+
+class BulkTasksRequest(BaseModel):
+    """
+    A change to many tasks in one call: `complete` or `reopen`, over the
+    tasks named in `ids` (at most 1000) or over every task of one list in
+    `all`, never both. `all` reads the list on the server, not the page a
+    client loaded: `complete` goes with the open list and `reopen` with the
+    done list. Each task is an edit of its own, under the rules a single edit
+    applies and fenced on the version the call read: a task that is not the
+    org's, already in the status asked for, or changed between the read and
+    the write is skipped and named, never a refusal of the rest. A reopen
+    puts each task on top of the open list, the last one named on top, up to
+    the plan's bound on active tasks. The call runs under an
+    `Idempotency-Key`, and a retry of it answers what the first one did.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    action: BulkAction
+    all: BulkListRequest | None = None
+    ids: Annotated[Ids | None, Field(title='Ids')] = None
+
+
+class BulkTasksView(BaseModel):
+    """
+    What a bulk change did. `changed` lists the tasks it wrote, in the order
+    it wrote them, and `skipped` the ones it left alone; each lists at most
+    1000, and the counts beside them are whole. To undo a change, send the
+    other action with `changed` as `ids`. `plan_limit` is set when a reopen
+    met the plan's bound on active tasks: the tasks past it are skipped as
+    `plan_limit`, and it carries what a `plan_limit_reached` refusal does, so
+    a client offers the plan that lifts it. Every changed task is announced
+    on the realtime channel as `tasks.task.updated`, as a single edit is.
+    """
+    action: BulkAction
+    changed: Annotated[list[UUID], Field(title='Changed')]
+    changed_count: Annotated[int, Field(title='Changed Count')]
+    plan_limit: PlanLimitDetail | None = None
+    skipped: Annotated[list[SkippedTaskView], Field(title='Skipped')]
+    skipped_count: Annotated[int, Field(title='Skipped Count')]
+
+
 class CompPlanRequest(BaseModel):
     """
     The plan an operator grants without a payment; null, or free, takes
@@ -1176,6 +1262,16 @@ class OrgPageView(BaseModel):
     """
     items: Annotated[list[OrgView], Field(title='Items')]
     next_cursor: Annotated[str | None, Field(title='Next Cursor')]
+
+
+class TaskCountView(BaseModel):
+    """
+    How many tasks one list shows: the open list, or the done list without
+    the archived tasks, in the scope asked for.
+    """
+    count: Annotated[int, Field(title='Count')]
+    scope: TaskScope
+    status: TaskStatus
 
 
 class TaskPageView(BaseModel):
