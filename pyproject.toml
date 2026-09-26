@@ -144,6 +144,7 @@ tenantless = [
     "TenancyStorageInterface.read_orgs",
     "TenancyStorageInterface.read_session_by_digest",
     "TenancyStorageInterface.read_session_by_id",
+    "TenancyStorageInterface.read_session_with_identity_by_digest",
     "TenancyStorageInterface.read_sign_in_delay",
     "TenancyStorageInterface.read_users_by_identity",
     "TenancyStorageInterface.record_failed_sign_in",

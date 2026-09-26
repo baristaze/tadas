@@ -3,6 +3,7 @@ from collections import Counter
 from collections.abc import Callable, Sequence
 from datetime import timedelta
 from pathlib import Path
+from typing import Any
 from uuid import UUID
 
 import pytest
@@ -22,6 +23,7 @@ from tadas.infra.impl.local import InfraLocalImpl
 from tadas.infra.topics import EntityChangedPayload, TopicPayload, Topics
 from tadas.integrations.identity.absent import IdentityProviderAbsentImpl
 from tadas.om.base import EMPTY_UUID, new_id, utcnow
+from tadas.om.billing.types.billing import Entitlements
 from tadas.om.events.storage.impl.memory import EventStorageMemoryImpl
 from tadas.om.exceptions import (
     Conflict,
@@ -1190,6 +1192,73 @@ async def test_an_operator_token_carries_one_permission_and_reaches_the_plane_on
     )
     with pytest.raises(CredentialExpired):
         await manager.authenticate_login(request(), short.token)
+
+
+def counted_reads(storage: TenancyStorageMemoryImpl, monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Every read the manager asks of the storage from here on, by name: each
+    is one statement in one transaction on Postgres. A read the memory impl
+    makes of itself inside one is not the manager's, and is not counted."""
+    reads: list[str] = []
+    depth = [0]
+    for name in dir(storage):
+        if not name.startswith("read_"):
+            continue
+        method = getattr(storage, name)
+
+        async def counted(*args: object, _name: str = name, _method: Any = method) -> object:
+            if depth[0] == 0:
+                reads.append(_name)
+            depth[0] += 1
+            try:
+                return await _method(*args)
+            finally:
+                depth[0] -= 1
+
+        monkeypatch.setattr(storage, name, counted)
+    return reads
+
+
+async def test_each_credential_is_checked_in_the_fewest_reads(
+    manager: TenancyManagerImpl,
+    operator: TenancyOperatorManagerImpl,
+    storage: TenancyStorageMemoryImpl,
+    clock: SteppingClock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A session reads its digest and its principal. An api key reads its
+    digest and its principal with the org's account beside it, and the plan
+    is decided from that account, not from a read of its own. The operator
+    gate reads the credential with its identity, once, and nothing more."""
+    org = await manager.bootstrap(request(), "Acme", "acme", "ann@example.test", "Ann")
+    assert org is not None
+    owner = await sign_in(manager, "ann@example.test", org[1].id)
+    session = await manager.exchange_login(
+        await manager.authenticate_login(
+            request(), (await manager.dev_sign_in(request(), "ann@example.test")).token
+        ),
+        org[1].id,
+    )
+    key = await manager.create_api_key(owner, "ci", Role.MEMBER)
+    await seed_operator(manager, "root@example.test")
+    _, secret = await enrolled_operator(manager, operator, clock, "root@example.test")
+    login = await second_factor(manager, "root@example.test", clock.code(secret))
+    admin = await manager.admit_operator(await manager.authenticate_login(request(), login.token))
+    token = await operator.issue_operator_token(admin, OperatorRole.READ)
+
+    async def asked_twice(ctx: OpContext) -> Entitlements:
+        raise AssertionError("the key's plan is read with its principal")
+
+    monkeypatch.setattr(ON_TEAM, "get_entitlements", asked_twice)
+    reads = counted_reads(storage, monkeypatch)
+    await manager.authenticate(request(), session.token)
+    assert reads == ["read_session_by_digest", "read_principal"]
+    reads.clear()
+    await manager.authenticate(request(), key.key)
+    assert reads == ["read_api_key_by_digest", "read_key_principal"]
+    for credential in (login.token, token.token):
+        reads.clear()
+        await manager.admit_operator(await manager.authenticate_login(request(), credential))
+        assert reads == ["read_session_with_identity_by_digest"]
 
 
 async def test_the_grant_job_puts_an_identity_on_the_allowlist_and_audits_it(

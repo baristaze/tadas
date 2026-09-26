@@ -241,7 +241,11 @@ context on keeps the stage the callee needs.
   adds that raced) is refused the same way, never cut short. The plan
   bounds the rest: `create_api_key` is refused on a plan without keys,
   and an api key of such an org authenticates to the same 402 rather
-  than a 401, kept and never revoked; the operator plane's add asks
+  than a 401, kept and never revoked. A key's use reads the org's
+  billing account in the statement that reads its principal
+  (`read_key_principal`: the same role, the same tenant scope), and
+  billing's `entitlements_of` decides the plan from that row, so the
+  key path is two transactions. The operator plane's add asks
   `refuse_past` for a seat through `add_member_to`'s admission hook,
   which also answers the `work.SYNC_SEATS` row a per-seat plan's add
   rides, and `remove_member` lands that row beside its own. The seed's
@@ -1078,7 +1082,11 @@ alone, and neither key may touch what the other's work does not need
   `authenticate_login` over it (the sign-in credential or a live session,
   on the tenant choice, the switch, `GET /v1/auth/memberships`, and the
   operator gate), `OperatorCtx` is `admit_operator` over the identity,
-  which admits the sign-in credential alone, and the socket builds the request stage from its scope,
+  which admits the sign-in credential alone. `authenticate_login` reads
+  the credential and the identity it proves in one system statement,
+  and puts the identity's allowlist entry and its enrolment on the
+  stage, so `admit_operator` decides without a read of its own. The
+  socket builds the request stage from its scope,
   accepts the handshake, and then redeems its ticket: a refusal is a
   close with code 4401 on the open socket, which both clients read as
   "sign in again" (a close before the accept would reach the wire as an

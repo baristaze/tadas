@@ -10,6 +10,7 @@ from abc import ABC, abstractmethod
 from uuid import UUID
 
 from tadas.integrations.payments.types import ProviderDelivery
+from tadas.om.billing.types.account import BillingAccount
 from tadas.om.billing.types.billing import Billing, CheckoutStart, Entitlements
 from tadas.om.billing.types.plan import Plan
 from tadas.om.opcontext import OpContext, OperatorContext, RequestContext
@@ -22,6 +23,14 @@ class EntitlementsInterface(ABC):
 
     @abstractmethod
     async def get_entitlements(self, ctx: OpContext) -> Entitlements: ...
+
+    @abstractmethod
+    def entitlements_of(self, ctx: OpContext, account: BillingAccount | None) -> Entitlements:
+        """What `get_entitlements` answers, from the org's account as a read
+        of the caller's own found it. An api key's use reads the account in
+        the statement that reads its principal, so the key path reads the
+        database once for both; the plan is still decided here."""
+        ...
 
 
 class BillingManagerInterface(EntitlementsInterface):
