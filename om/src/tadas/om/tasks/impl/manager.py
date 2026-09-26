@@ -845,6 +845,10 @@ class TasksManagerImpl(TasksManagerInterface):
         await self._relay_all(ctx, [row for _, _, rows in updates for row in rows])
         return len(updates)
 
+    async def tenants_with_chores(self, after: UUID | None, limit: int) -> list[UUID]:
+        cut = archive_cutoff(utcnow(), self._options.archive_after)
+        return await self._storage.read_tenants_with_chores(cut, after, limit)
+
     async def purge_across_tenants(self, rctx: RequestContext) -> int:
         before = utcnow() - self._options.retention
         purgeable = await self._storage.read_deleted(before, self._options.purge_batch)

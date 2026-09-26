@@ -264,6 +264,16 @@ class TasksManagerInterface(ABC):
         ...
 
     @abstractmethod
+    async def tenants_with_chores(self, after: UUID | None, limit: int) -> list[UUID]:
+        """Platform-internal: the sweep's one read a pass, across tenants, of
+        the tenants whose tasks have a chore due: a done task today's cleanup
+        archives (`open_cleanup`), or an open task whose rank grew long
+        (`respace_ranks`). At most `limit` of them, in id order, after `after`
+        when one is given; the sweep runs the chores in those tenants alone.
+        Takes no context, because it reads for no tenant and no principal."""
+        ...
+
+    @abstractmethod
     async def purge_across_tenants(self, rctx: RequestContext) -> int:
         """Platform-internal: the sweep, across tenants, once a pass: hard-deletes
         a batch of tasks soft-deleted longer ago than the retention period,

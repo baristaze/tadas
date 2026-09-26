@@ -62,9 +62,11 @@ class Tasks(IdentifiableMixin, TrackableMixin, SoftDeletableMixin, Base):
             "status",
             postgresql_where=text("assignee_id IS NULL AND deleted_at IS NULL"),
         ),
-        # The sweep's respace finds a tenant's rank that grew too long. Only
-        # such ranks are in it, so the read that finds none reads nothing.
-        # The bound is a literal, the one tasks.rules.RANK_SCALE_BOUND names.
+        # The sweep's respace finds a tenant's rank that grew too long, and
+        # its read of the tenants with a chore due finds the tenants that have
+        # one. Only such ranks are in it, so the read that finds none reads
+        # nothing. The bound is a literal, the one tasks.rules.RANK_SCALE_BOUND
+        # names.
         Index(
             "ix_tasks_org_id_rank_long",
             "org_id",
@@ -74,6 +76,18 @@ class Tasks(IdentifiableMixin, TrackableMixin, SoftDeletableMixin, Base):
         # The sweep reads the deleted ones by their delete, across tenants;
         # only they are in it.
         Index("ix_tasks_deleted_at", "deleted_at", postgresql_where=text("deleted_at IS NOT NULL")),
+        # The sweep's read of the tenants with a chore due, across tenants:
+        # the done shelf of every tenant by its last change, so the day's
+        # cleanup cut is a range of it and only the archivable tasks are read.
+        # The status is a literal, the one the read names, so a generic plan
+        # proves the predicate; a write that leaves a task open, archived, or
+        # deleted writes it no entry.
+        Index(
+            "ix_tasks_updated_at_org_id_done_unarchived",
+            "updated_at",
+            "org_id",
+            postgresql_where=text("status = 'done' AND archived_at IS NULL AND deleted_at IS NULL"),
+        ),
     )
     title: Mapped[str]
     notes: Mapped[str]

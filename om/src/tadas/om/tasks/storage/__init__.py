@@ -142,6 +142,20 @@ class TasksStorageInterface(ABC):
         ...
 
     @abstractmethod
+    async def read_tenants_with_chores(
+        self, archivable_before: datetime, after: UUID | None, limit: int
+    ) -> list[UUID]:
+        """Cross-tenant, for the sweep, in the system scope: the tenants with a
+        chore due, each once, in id order, strictly after `after` when one is
+        given, at most `limit` of them. A tenant has a chore due when it has a
+        task the cleanup archives before `archivable_before`
+        (tasks.rules.is_archivable), or an open task whose rank grew past
+        `tasks.rules.RANK_SCALE_BOUND` (tasks.rules.needs_respace). One read a
+        pass, however many tenants there are, so a tenant with no chore due
+        costs the sweep nothing."""
+        ...
+
+    @abstractmethod
     async def purge_deleted(self, before: datetime, task_ids: list[UUID]) -> int:
         """Cross-tenant, for the sweep, in the system scope: the one hard
         delete removes those of `task_ids` still soft-deleted before

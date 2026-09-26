@@ -1,10 +1,11 @@
 """The daily cleanup of old done tasks, over the memory roots: the day's
-record opened once, the steps that archive a batch each in one conditional
-write, the task reopened mid-run left alone, the task done 89 days ago kept,
-a step that errors retried from its cursor, and the archived task read and
-restored."""
+record opened once, the day's cut that holds all day so the org has no chore
+due once its record ran, the steps that archive a batch each in one
+conditional write, the task reopened mid-run left alone, the task done 89
+days ago kept, a step that errors retried from its cursor, and the archived
+task read and restored."""
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, time, timedelta
 from pathlib import Path
 from uuid import UUID
 
@@ -53,6 +54,10 @@ class World:
 
     async def done(self, ctx: OpContext, title: str, days_ago: float) -> Task:
         """A task marked done `days_ago` days ago and not changed since."""
+        return await self.done_at(ctx, title, utcnow() - timedelta(days=days_ago))
+
+    async def done_at(self, ctx: OpContext, title: str, at: datetime) -> Task:
+        """A task marked done at `at` and not changed since."""
         now = utcnow()
         task = await self.managers.tasks.create_task(
             ctx,
@@ -68,7 +73,7 @@ class World:
         aged = task.model_copy(
             update={
                 "status": TaskStatus.DONE,
-                "updated_at": now - timedelta(days=days_ago),
+                "updated_at": at,
                 "version": task.version + 1,
             }
         )
@@ -130,6 +135,32 @@ async def test_the_days_record_opens_once_and_only_with_something_to_archive(
     assert first.period == utcnow().date().isoformat()
     page = await world.managers.orchestrations.get_recent(ctx, OrchestrationKind.TASK_CLEANUP, 10)
     assert [r.id for r in page.items] == [first.id]
+
+
+async def test_once_the_days_cleanup_ran_the_org_has_no_chore_due_until_the_next_day(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The day's cleanup takes what was past the archive age when the day
+    began. A task that crosses the age during the day waits for the next
+    day's record, so once today's has run, the sweep's read across tenants
+    finds nothing due in the org until the day turns. An org whose done
+    tasks are young is never found."""
+    clock = {"now": datetime.combine(utcnow().date(), time(13), tzinfo=UTC)}
+    monkeypatch.setattr("tadas.om.tasks.impl.manager.utcnow", lambda: clock["now"])
+    noon = clock["now"]
+    tasks = world.managers.tasks
+    ctx, young = await world.org(), await world.org()
+    await world.done_at(ctx, "old", noon - timedelta(days=200))
+    await world.done_at(ctx, "crossed this morning", noon - timedelta(days=90, hours=5))
+    await world.done_at(young, "young", noon - timedelta(days=10))
+    assert await tasks.tenants_with_chores(None, 10) == [ctx.org_id]
+    record = await tasks.open_cleanup(ctx)
+    assert record is not None
+    await world.run(ctx, record)
+    assert await world.archived_titles(ctx) == ["old"]
+    assert await tasks.tenants_with_chores(None, 10) == []
+    clock["now"] = noon + timedelta(days=1)
+    assert await tasks.tenants_with_chores(None, 10) == [ctx.org_id]
 
 
 async def test_the_cleanup_steps_a_batch_at_a_time(tmp_path: Path) -> None:
