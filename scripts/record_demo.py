@@ -355,6 +355,16 @@ async def open_window(
         "!!document.querySelector('[aria-label=\"live updates: open\"]')"
         " && [...document.querySelectorAll('h2')].some((h) => h.textContent.startsWith('Open'))"
     )
+    # Done starts folded; the story ends with a task landing there, so the
+    # window unfolds it before the recording starts, the way a person would.
+    await window.js(
+        """(() => {
+          const done = [...document.querySelectorAll(".tadas-fold-toggle")]
+            .find((b) => b.textContent === "Done");
+          if (done && done.getAttribute("aria-expanded") === "false") done.click();
+          return true;
+        })()"""
+    )
     await asyncio.sleep(1.0)
     return window
 

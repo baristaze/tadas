@@ -373,6 +373,123 @@
         "title": "BillingView",
         "type": "object"
       },
+      "BulkAction": {
+        "description": "What a bulk change does to each task: the status a single edit would\nwrite.",
+        "enum": [
+          "complete",
+          "reopen"
+        ],
+        "title": "BulkAction",
+        "type": "string"
+      },
+      "BulkListRequest": {
+        "additionalProperties": false,
+        "description": "A whole list, by the scope and the status it shows.",
+        "properties": {
+          "scope": {
+            "$ref": "#/components/schemas/TaskScope"
+          },
+          "status": {
+            "$ref": "#/components/schemas/TaskStatus"
+          }
+        },
+        "required": [
+          "scope",
+          "status"
+        ],
+        "title": "BulkListRequest",
+        "type": "object"
+      },
+      "BulkTasksRequest": {
+        "additionalProperties": false,
+        "description": "A change to many tasks in one call: `complete` or `reopen`, over the\ntasks named in `ids` (at most 1000) or over every task of one list in\n`all`, never both. `all` reads the list on the server, not the page a\nclient loaded: `complete` goes with the open list and `reopen` with the\ndone list. Each task is an edit of its own, under the rules a single edit\napplies and fenced on the version the call read: a task that is not the\norg's, already in the status asked for, or changed between the read and\nthe write is skipped and named, never a refusal of the rest. A reopen\nputs each task on top of the open list, the last one named on top, up to\nthe plan's bound on active tasks. The call runs under an\n`Idempotency-Key`, and a retry of it answers what the first one did.",
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/BulkAction"
+          },
+          "all": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BulkListRequest"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "maxItems": 1000,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ids"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "title": "BulkTasksRequest",
+        "type": "object"
+      },
+      "BulkTasksView": {
+        "description": "What a bulk change did. `changed` lists the tasks it wrote, in the order\nit wrote them, and `skipped` the ones it left alone; each lists at most\n1000, and the counts beside them are whole. To undo a change, send the\nother action with `changed` as `ids`. `plan_limit` is set when a reopen\nmet the plan's bound on active tasks: the tasks past it are skipped as\n`plan_limit`, and it carries what a `plan_limit_reached` refusal does, so\na client offers the plan that lifts it. Every changed task is announced\non the realtime channel as `tasks.task.updated`, as a single edit is.",
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/BulkAction"
+          },
+          "changed": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Changed",
+            "type": "array"
+          },
+          "changed_count": {
+            "title": "Changed Count",
+            "type": "integer"
+          },
+          "plan_limit": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PlanLimitDetail"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "skipped": {
+            "items": {
+              "$ref": "#/components/schemas/SkippedTaskView"
+            },
+            "title": "Skipped",
+            "type": "array"
+          },
+          "skipped_count": {
+            "title": "Skipped Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "action",
+          "changed",
+          "changed_count",
+          "skipped",
+          "skipped_count"
+        ],
+        "title": "BulkTasksView",
+        "type": "object"
+      },
       "CompPlanRequest": {
         "additionalProperties": false,
         "description": "The plan an operator grants without a payment; null, or free, takes\nthe grant back.",
@@ -2518,6 +2635,37 @@
         "title": "SignedOutView",
         "type": "object"
       },
+      "SkipReason": {
+        "description": "Why a bulk change left one task alone. Every reason is a fact about the\ntask as the change found it, never a failure of the change.",
+        "enum": [
+          "not_found",
+          "already_done",
+          "already_open",
+          "changed",
+          "plan_limit"
+        ],
+        "title": "SkipReason",
+        "type": "string"
+      },
+      "SkippedTaskView": {
+        "description": "A task the bulk change left alone, and why: `not_found`,\n`already_done`, `already_open`, `changed`, or `plan_limit`.",
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "reason": {
+            "$ref": "#/components/schemas/SkipReason"
+          }
+        },
+        "required": [
+          "id",
+          "reason"
+        ],
+        "title": "SkippedTaskView",
+        "type": "object"
+      },
       "SlackEventAnswerView": {
         "description": "Slack's check of the events URL gets its `challenge` back; every other\nevent is acknowledged with nothing.",
         "properties": {
@@ -2804,6 +2952,28 @@
         ],
         "title": "SubscriptionStatus",
         "type": "string"
+      },
+      "TaskCountView": {
+        "description": "How many tasks one list shows: the open list, or the done list without\nthe archived tasks, in the scope asked for.",
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/TaskScope"
+          },
+          "status": {
+            "$ref": "#/components/schemas/TaskStatus"
+          }
+        },
+        "required": [
+          "status",
+          "scope",
+          "count"
+        ],
+        "title": "TaskCountView",
+        "type": "object"
       },
       "TaskPageView": {
         "description": "One page of a task list. `next_cursor` fetches the next page of the same\nlist, open or done, and is null on the last page. The page size is\nclamped, and a list the clamp cut still says a page follows.",
@@ -9532,6 +9702,215 @@
           }
         },
         "summary": "List Archived Tasks",
+        "tags": [
+          "tasks"
+        ]
+      }
+    },
+    "/v1/tasks/bulk": {
+      "post": {
+        "operationId": "change_tasks_v1_tasks_bulk_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app-version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Version"
+            }
+          },
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 255,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BulkTasksRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkTasksView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Change Tasks",
+        "tags": [
+          "tasks"
+        ]
+      }
+    },
+    "/v1/tasks/count": {
+      "get": {
+        "description": "How many tasks one list shows: the number a \"Mark all\" asks about.",
+        "operationId": "count_tasks_v1_tasks_count_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/TaskStatus",
+              "default": "open"
+            }
+          },
+          {
+            "in": "query",
+            "name": "scope",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/TaskScope",
+              "default": "team"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app-version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Version"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskCountView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Count Tasks",
         "tags": [
           "tasks"
         ]

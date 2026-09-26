@@ -1,6 +1,8 @@
-"""Task routes: the open, done, and archived lists, get, create, a partial
-update, move, restore, delete, and a task's attachments. Each function is one call into the tasks
-service; the creating ones run under the idempotency record. An attachment's
+"""Task routes: the open, done, and archived lists, a list's count, get,
+create, a partial update, move, restore, delete, the change of many tasks at
+once, and a task's attachments. Each function is one call into the tasks
+service; the creating ones, and the bulk change, run under the idempotency
+record. An attachment's
 bytes, its confirm, and its download are the media routes', by the file's
 id."""
 
@@ -17,8 +19,11 @@ from tadas.services.api.types.common import LIMIT_DEFAULT
 from tadas.services.api.types.media import AddFileRequest, FilePageView, FileView
 from tadas.services.api.types.tasks import (
     AddTaskRequest,
+    BulkTasksRequest,
+    BulkTasksView,
     MoveTaskRequest,
     RestoreTaskRequest,
+    TaskCountView,
     TaskPageView,
     TaskView,
     UpdateTaskRequest,
@@ -50,6 +55,27 @@ async def list_archived_tasks(
     """The done tasks the daily cleanup archived, newest first. An archived
     task leaves the done list; it is still read by its id and restored."""
     return await tasks.get_archived_tasks(ctx, scope, cursor, limit)
+
+
+@router.get("/count", response_model=TaskCountView)
+async def count_tasks(
+    ctx: Ctx,
+    tasks: TasksService,
+    status: TaskStatus = TaskStatus.OPEN,
+    scope: TaskScope = TaskScope.TEAM,
+) -> TaskCountView:
+    """How many tasks one list shows: the number a "Mark all" asks about."""
+    return await tasks.count_tasks(ctx, status, scope)
+
+
+@router.post("/bulk", response_model=BulkTasksView)
+async def change_tasks(
+    ctx: Ctx, tasks: TasksService, body: BulkTasksRequest, idem: Idem
+) -> Response:
+    # A write of many rows is recorded like a create: a retry of "Mark all"
+    # answers what the first call did, and never reaches tasks that joined
+    # the list since.
+    return await idem.run(200, lambda _attempt: tasks.change_tasks(ctx, body))
 
 
 @router.get("/{task_id}", response_model=TaskView)

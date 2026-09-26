@@ -44,7 +44,7 @@ describe("preferences store", () => {
     const { usePreferencesStore } = await import("./preferences");
     expect(usePreferencesStore.getState().taskScope).toBe("mine");
     usePreferencesStore.getState().setTaskScope("team");
-    expect(JSON.parse(local.getItem(KEY) as string).state).toEqual({ taskScope: "team", theme: "system" });
+    expect(JSON.parse(local.getItem(KEY) as string).state).toEqual({ taskScope: "team", theme: "system", folded: {} });
   });
 
   it("follows the system until a theme is picked, and keeps the pick", async () => {
@@ -90,5 +90,31 @@ describe("preferences store", () => {
     };
     expect(adoptLegacyScope(throwing)).toBeNull();
     expect(adoptLegacyScope(undefined)).toBeNull();
+  });
+
+  it("folds Done and not Open at first, and keeps each fold per org", async () => {
+    const { isFolded, usePreferencesStore } = await import("./preferences");
+    const folded = () => usePreferencesStore.getState().folded;
+    expect(isFolded(folded(), "org-a", "open")).toBe(false);
+    expect(isFolded(folded(), "org-a", "done")).toBe(true);
+    expect(isFolded(folded(), null, "done")).toBe(true);
+    usePreferencesStore.getState().setFolded("org-a", "done", false);
+    usePreferencesStore.getState().setFolded("org-a", "open", true);
+    expect(isFolded(folded(), "org-a", "done")).toBe(false);
+    expect(isFolded(folded(), "org-a", "open")).toBe(true);
+    expect(isFolded(folded(), "org-b", "done")).toBe(true);
+    expect(JSON.parse(local.getItem(KEY) as string).state.folded).toEqual({
+      "org-a": { done: false, open: true },
+    });
+  });
+
+  it("reads the folds back on the next visit, and drops folds it cannot read", async () => {
+    local.setItem(KEY, JSON.stringify({ state: { taskScope: "team", folded: { "org-a": { done: false } } }, version: 0 }));
+    const first = await import("./preferences");
+    expect(first.isFolded(first.usePreferencesStore.getState().folded, "org-a", "done")).toBe(false);
+    vi.resetModules();
+    local.setItem(KEY, JSON.stringify({ state: { folded: "nonsense" }, version: 0 }));
+    const second = await import("./preferences");
+    expect(second.usePreferencesStore.getState().folded).toEqual({});
   });
 });

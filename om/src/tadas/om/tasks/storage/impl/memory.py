@@ -60,6 +60,17 @@ class TasksStorageMemoryImpl(MemoryStorageBase, TasksStorageInterface):
     async def count_open_tasks(self, org_id: UUID, criterion: TaskFilter) -> int:
         return sum(1 for t in self._live(org_id, TaskStatus.OPEN) if is_visible(t, criterion))
 
+    async def count_done_tasks(self, org_id: UUID, criterion: TaskFilter) -> int:
+        return sum(
+            1
+            for t in self._live(org_id, TaskStatus.DONE)
+            if t.archived_at is None and is_visible(t, criterion)
+        )
+
+    async def read_tasks(self, org_id: UUID, task_ids: Sequence[UUID]) -> dict[UUID, Task]:
+        found = {task_id: self._get(self._tasks, org_id, task_id) for task_id in task_ids}
+        return {task_id: task for task_id, task in found.items() if task is not None}
+
     async def read_done_tasks(
         self, org_id: UUID, criterion: TaskFilter, before: TaskCursor | None, limit: int
     ) -> list[Task]:
@@ -219,6 +230,25 @@ class TasksStorageMemoryImpl(MemoryStorageBase, TasksStorageInterface):
                     )
             for task, _, outbox_rows in updates:
                 self._put(self._tasks, org_id, task, outbox_rows)
+
+    async def update_tasks_if_current(
+        self, org_id: UUID, updates: Sequence[tuple[Task, int, tuple[OutboxRow, ...]]]
+    ) -> tuple[bool, ...]:
+        # Each check and its write together, one batch under the lock, as the
+        # conditional statements share one transaction in Postgres.
+        async with self._lock:
+            landed: list[bool] = []
+            for task, expected_version, outbox_rows in updates:
+                found = self._tasks.get(task.id)
+                hit = (
+                    found is not None
+                    and found[0] == org_id
+                    and found[1].version == expected_version
+                )
+                landed.append(hit)
+                if hit:
+                    self._put(self._tasks, org_id, task, outbox_rows)
+            return tuple(landed)
 
     async def mark_reminded(
         self,

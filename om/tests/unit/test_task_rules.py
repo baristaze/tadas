@@ -5,9 +5,11 @@ from uuid import UUID
 import pytest
 from contracts.task_storage import make_task
 
-from tadas.om.base import new_id
+from tadas.om.base import new_id, utcnow
 from tadas.om.tasks.rules import (
     Place,
+    bulk_positions,
+    bulk_skip,
     earliest_reminder_time,
     follows,
     is_after,
@@ -20,8 +22,9 @@ from tadas.om.tasks.rules import (
     renumbered,
     top_position,
 )
+from tadas.om.tasks.types.bulk import BulkAction, SkipReason
 from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor, TaskFilter
-from tadas.om.tasks.types.task import TaskScope
+from tadas.om.tasks.types.task import TaskScope, TaskStatus
 
 
 def mine(user_id: UUID) -> TaskFilter:
@@ -166,3 +169,20 @@ def test_the_reminder_keeps_the_assignees_morning_or_the_creators() -> None:
     creator, assignee = new_id(), new_id()
     assert reminder_person(make_task(created_by=creator)) == creator
     assert reminder_person(make_task(created_by=creator, assignee_id=assignee)) == assignee
+
+
+def test_a_bulk_change_takes_a_task_only_from_the_status_it_starts_from() -> None:
+    open_task, done = make_task(), make_task(status=TaskStatus.DONE)
+    gone = make_task().model_copy(update={"deleted_at": utcnow()})
+    assert bulk_skip(open_task, BulkAction.COMPLETE) is None
+    assert bulk_skip(done, BulkAction.REOPEN) is None
+    assert bulk_skip(done, BulkAction.COMPLETE) is SkipReason.ALREADY_DONE
+    assert bulk_skip(open_task, BulkAction.REOPEN) is SkipReason.ALREADY_OPEN
+    assert bulk_skip(gone, BulkAction.COMPLETE) is SkipReason.NOT_FOUND
+    assert bulk_skip(None, BulkAction.REOPEN) is SkipReason.NOT_FOUND
+
+
+def test_a_bulk_reopen_stacks_each_task_above_the_one_before() -> None:
+    assert bulk_positions(-1.0, 3) == [-1.0, -2.0, -3.0]
+    assert bulk_positions(top_position([]), 2) == [0.0, -1.0]
+    assert bulk_positions(4.0, 0) == []
