@@ -67,6 +67,22 @@ async def test_increment_counts_within_a_window(infra: InfraConfiguredImpl) -> N
     assert count == 2
 
 
+async def test_a_counter_reads_back_as_its_count(infra: InfraConfiguredImpl) -> None:
+    """The contract a generation stands on, the same in memory: `get` of a
+    counted key answers the count in decimal ASCII, and a count dropped by
+    `invalidate` starts again at one."""
+    cache = infra.get_cache(CacheScope.BILLING_ACCOUNT)
+    org = new_id()
+    assert await cache.get(org, "generation") is None
+    await cache.increment(org, "generation", timedelta(days=1))
+    await cache.increment(org, "generation", timedelta(days=1))
+    assert await cache.get(org, "generation") == b"2"
+    assert await cache.get(new_id(), "generation") is None
+    await cache.invalidate(org, "generation")
+    assert await cache.get(org, "generation") is None
+    assert (await cache.increment(org, "generation", timedelta(days=1)))[0] == 1
+
+
 async def test_increment_always_leaves_a_window_on_the_counter() -> None:
     """A counter that lost its TTL (a crash between the count and the expiry
     under the old three-command increment) is given one by the next call, so

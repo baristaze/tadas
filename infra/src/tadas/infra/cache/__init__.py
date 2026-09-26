@@ -10,6 +10,7 @@ from tadas.infra.base import SYSTEM_SCOPE
 
 
 class CacheScope(StrEnum):
+    BILLING_ACCOUNT = "billing_account"
     NETWORK_RESPONSE = "network_response"
     RATE_LIMIT = "rate_limit"
     REALTIME_TICKET = "realtime_ticket"
@@ -35,7 +36,10 @@ class CacheInterface(ABC):
 
     @abstractmethod
     async def increment(self, org_id: UUID, key: str, ttl: timedelta) -> tuple[int, timedelta]:
-        """The one atomic primitive: the new count and the time left on the window."""
+        """The one atomic primitive: the new count and the time left on the
+        window. The window starts with the first count and is not moved by
+        the next. Until it ends, `get` of the same key answers the count, in
+        decimal ASCII: that is how a generation is read."""
         ...
 
     @abstractmethod
