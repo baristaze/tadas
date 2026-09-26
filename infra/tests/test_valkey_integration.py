@@ -13,7 +13,9 @@ from tadas.infra.cache.valkey import CacheValkeyImpl
 from tadas.infra.impl.configured import InfraConfiguredImpl
 from tadas.infra.impl.settings import InfraSettings
 from tadas.infra.impl.valkey import ValkeyConnection
+from tadas.infra.observability import OUTCOMES
 from tadas.infra.topics import TopicPayload, Topics, WorkAvailablePayload
+from tadas.infra.topics.valkey import TopicsValkeyImpl
 
 pytestmark = pytest.mark.integration
 
@@ -116,6 +118,23 @@ async def test_a_publish_reaches_a_subscriber(infra: InfraConfiguredImpl) -> Non
         assert got == sent
         return
     pytest.fail("no message arrived")
+
+
+async def test_a_publish_says_whether_the_bus_took_it(infra: InfraConfiguredImpl) -> None:
+    """A bus that cannot be reached drops the publish, counts it, and says so,
+    and the bus that answers takes it. Nothing is raised either way."""
+    sent = WorkAvailablePayload(
+        idempotency_key=new_id(), produced_at=utcnow(), org_id=new_id(), lane="l", kind="NOOP"
+    )
+    assert await infra.get_topics().publish(Topics.WORK_AVAILABLE, sent) is True
+    down = ValkeyConnection("valkey://127.0.0.1:1", timedelta(milliseconds=200))
+    failed = OUTCOMES.labels(subsystem="topics", outcome="publish_failed")
+    counted = failed._value.get()
+    try:
+        assert await TopicsValkeyImpl(down).publish(Topics.WORK_AVAILABLE, sent) is False
+    finally:
+        await down.close()
+    assert failed._value.get() == counted + 1
 
 
 async def test_a_cache_read_works_without_start() -> None:

@@ -32,7 +32,7 @@ class TopicsValkeyImpl(TopicsInterface):
         self._listener: asyncio.Task[None] | None = None
         self._failures = 0
 
-    async def publish(self, topic: Topics, payload: TopicPayload) -> None:
+    async def publish(self, topic: Topics, payload: TopicPayload) -> bool:
         check_payload(topic, payload)
         client = await self._connection.client()
         if client is None:
@@ -40,12 +40,14 @@ class TopicsValkeyImpl(TopicsInterface):
         try:
             await client.publish(payload.model_dump_json(), self._prefix + topic.value)
         except GlideError:
-            # A topic is best effort: the durable part of the operation has landed
-            # and a missed wake-up degrades to polling latency, never to lost work.
+            # A topic is best effort: the durable part of the operation has
+            # landed, and the answer tells the producer the message is lost.
             log.warning(
                 "publish of %s %s failed; the bus dropped it", topic.value, payload.idempotency_key
             )
             OUTCOMES.labels(subsystem="topics", outcome="publish_failed").inc()
+            return False
+        return True
 
     def subscribe(self, topic: Topics, consumer: str, handler: TopicHandler) -> Callable[[], None]:
         return self._subscribers.add(topic, consumer, handler)

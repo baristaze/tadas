@@ -108,6 +108,14 @@ path = "apps/site/package.json"
 adr = "docs/adr/0030-the-company-site-is-html-and-css-not-react.md"
 reason = "a static page with no script and no state; the portal and every app that calls the platform stay React on Vite"
 
+# A publish says whether the bus took the message, so the outbox relay
+# keeps a row whose message was dropped.
+[[tool.arch-check.exception]]
+rule = "ASY-09"
+path = "infra/src/tadas/infra/topics/__init__.py"
+adr = "docs/adr/0062-a-dropped-publish-leaves-its-outbox-row-pending.md"
+reason = "publish answers whether the bus took the message, a yes or no and never a broker's id, so a producer that must not lose one keeps it"
+
 # The storage methods that take no tenant, the same list
 # om/tests/unit/test_storage_exceptions.py holds.
 [tool.arch-check.options.CTX-12]
