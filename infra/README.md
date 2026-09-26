@@ -41,7 +41,11 @@ boot.
   call that spends its whole timeout is a failure, a run of them opens
   the breaker, and while it is open a read is a miss, a write is
   dropped, a counter answers no count, and a publish is dropped. It
-  answers the way a Valkey that is down answers, at once. Its four
+  answers the way a Valkey that is down answers, at once.
+- **A publish says whether it landed.** A topic is best effort, so a
+  publish never raises for the bus. It answers False when the bus
+  refused it or the breaker is open, and a producer that must not lose
+  the message keeps it and sends it again. The outbox relay does. Its four
   outcomes are counted (`opened`, `refused`, `probed`, `closed`), and
   they are what say why the cache and topic counters went quiet.
 - **Payloads that only grow.** A topic payload gains only optional,

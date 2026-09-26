@@ -7,11 +7,12 @@ because one breaker stands for one dependency and there is one Valkey behind
 both.
 
 An open breaker answers the way the dependency's own failure answers. A topic
-is best effort, so that answer is not an exception: the publish is dropped, the
-durable part of the operation has already landed, and a missed wake-up degrades
-to polling latency and never to lost work. That is what the Valkey impl does
-with a publish the bus refuses, and it is what this does without paying for the
-refusal.
+is best effort, so that answer is not an exception: the publish is dropped and
+`publish` returns False, the same answer the Valkey impl gives for a publish the
+bus refuses, without paying for the refusal. An open breaker is never a publish
+that landed. A caller that only wakes someone ignores the answer, since a missed
+wake-up degrades to polling latency; the outbox relay keeps the row and sends it
+again.
 
 The payload is checked before the breaker is consulted. A publish of the wrong
 payload type raises `PayloadMismatch` whether the breaker is open or closed:
@@ -44,12 +45,12 @@ class TopicsBreakerImpl(TopicsInterface):
         self._inner = inner
         self._breaker = breaker
 
-    async def publish(self, topic: Topics, payload: TopicPayload) -> None:
+    async def publish(self, topic: Topics, payload: TopicPayload) -> bool:
         check_payload(topic, payload)
         if not self._breaker.allows():
-            return None
+            return False
         with self._breaker.measured():
-            await self._inner.publish(topic, payload)
+            return await self._inner.publish(topic, payload)
 
     def subscribe(self, topic: Topics, consumer: str, handler: TopicHandler) -> Callable[[], None]:
         return self._inner.subscribe(topic, consumer, handler)

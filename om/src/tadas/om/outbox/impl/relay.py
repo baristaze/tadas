@@ -21,6 +21,9 @@ log = logging.getLogger(__name__)
 DEAD_LETTER_KIND = "outbox.row.failed"
 """The audit event a row whose attempts are spent leaves in the tenant's stream."""
 
+UNPUBLISHED = "the bus dropped the publish"
+"""The error a row keeps when its event is in the stream and its message was dropped."""
+
 
 class OutboxOptions(Platform):
     grace: timedelta = timedelta(seconds=10)
@@ -118,7 +121,7 @@ class OutboxRelayImpl(OutboxRelayInterface):
         if not rows:
             return True
         try:
-            await self._deliver_all(org_id, rows)
+            unpublished = await self._deliver_all(org_id, rows)
         except Exception:
             # The rows are durable; the sweep relays what is left. The request
             # that wrote them has already succeeded and is not failed for a bus
@@ -131,8 +134,8 @@ class OutboxRelayImpl(OutboxRelayInterface):
             )
             OUTCOMES.labels(subsystem="outbox", outcome="relay_failed").inc()
             return False
-        OUTCOMES.labels(subsystem="outbox", outcome="relayed").inc(len(rows))
-        return True
+        OUTCOMES.labels(subsystem="outbox", outcome="relayed").inc(len(rows) - len(unpublished))
+        return not unpublished
 
     async def relay_pending(self, limit: int) -> int:
         now = utcnow()
@@ -158,21 +161,35 @@ class OutboxRelayImpl(OutboxRelayInterface):
         is idempotent on the row's id."""
         if len(rows) > 1:
             try:
-                await self._deliver_all(org_id, rows)
+                unpublished = await self._deliver_all(org_id, rows)
             except Exception:
                 log.warning("outbox relay of %d rows of %s failed; one by one", len(rows), org_id)
             else:
-                OUTCOMES.labels(subsystem="outbox", outcome="relayed").inc(len(rows))
-                return len(rows)
+                return await self._settled(org_id, rows, unpublished, now)
         relayed = 0
         for row in rows:
             try:
-                await self._deliver_all(org_id, (row,))
+                unpublished = await self._deliver_all(org_id, (row,))
             except Exception as error:
                 await self._failed(org_id, row, f"{type(error).__name__}: {error}"[:500], now)
                 continue
-            OUTCOMES.labels(subsystem="outbox", outcome="relayed").inc()
-            relayed += 1
+            relayed += await self._settled(org_id, (row,), unpublished, now)
+        return relayed
+
+    async def _settled(
+        self,
+        org_id: UUID,
+        rows: Sequence[OutboxRow],
+        unpublished: Sequence[OutboxRow],
+        now: datetime,
+    ) -> int:
+        """A delivery that came back: the rows it published are done, and each
+        one whose message the bus dropped spends its attempt as any failure
+        does. Returns how many were relayed."""
+        for row in unpublished:
+            await self._failed(org_id, row, UNPUBLISHED, now)
+        relayed = len(rows) - len(unpublished)
+        OUTCOMES.labels(subsystem="outbox", outcome="relayed").inc(relayed)
         return relayed
 
     async def oldest_pending_age(self) -> timedelta:
@@ -185,31 +202,55 @@ class OutboxRelayImpl(OutboxRelayInterface):
             OUTCOMES.labels(subsystem="outbox", outcome="purged").inc(purged)
         return purged
 
-    async def _deliver_all(self, org_id: UUID, rows: Sequence[OutboxRow]) -> None:
+    async def _deliver_all(self, org_id: UUID, rows: Sequence[OutboxRow]) -> list[OutboxRow]:
         """Each row's kind is its destination: an entity change becomes an event
         and an ENTITY_CHANGED publish, and a row of kind `work.<kind>`, the one
         a write that also starts work landed beside its entity's row, becomes a
         row in the queue and a WORK_AVAILABLE publish. The entity changes are
-        appended in one call, the work rows enqueued one by one, and then
-        every row is marked done in one statement. Raises on any step, and
-        every step is safe to run again: an event is idempotent on its row's
-        id and so is the enqueue, which presents that id as the item's key.
-        A row is marked done only once all of them are delivered, so a
-        failure leaves the whole batch for the sweep, never half of it
-        marked."""
+        appended in one call and published one by one, the work rows enqueued
+        one by one, and then every row delivered is marked done in one
+        statement.
+
+        An entity change is delivered once the bus took its message. One the
+        bus dropped (a refusal, or an open breaker) is not marked: it is
+        returned, counted as `publish_failed`, and stays pending for the
+        sweep, since its event is in the stream but no one was told. A work
+        row is delivered once it is enqueued: the queue is its truth and its
+        wake-up is a hint the workers' poll stands in for.
+
+        Raises on any other step, and every step is safe to run again: an
+        event is idempotent on its row's id and so is the enqueue, which
+        presents that id as the item's key. A raise leaves the whole batch
+        for the sweep, never half of it marked."""
         changes = [row for row in rows if not asks_for_work(row.kind)]
+        unpublished: list[OutboxRow] = []
         if changes:
             # An event's id is its row's id: the append is idempotent on it, so
             # a second relay of the same rows gets the same events back, same seqs.
             appended = await self._events.append_events(
                 org_id, [self._event_of(row) for row in changes]
             )
+            by_id = {row.id: row for row in changes}
             for event in appended:
-                await self._publish(org_id, event)
+                if not await self._publish(org_id, event):
+                    unpublished.append(by_id[event.id])
         for row in rows:
             if asks_for_work(row.kind):
                 await self._enqueue(org_id, row)
-        await self._storage.mark_done(org_id, [row.id for row in rows])
+        if unpublished:
+            log.warning(
+                "the bus dropped %d of %d outbox rows of %s (first %s, %s); they stay pending",
+                len(unpublished),
+                len(rows),
+                org_id,
+                unpublished[0].id,
+                unpublished[0].kind,
+            )
+            OUTCOMES.labels(subsystem="outbox", outcome="publish_failed").inc(len(unpublished))
+        left = {row.id for row in unpublished}
+        if delivered := [row.id for row in rows if row.id not in left]:
+            await self._storage.mark_done(org_id, delivered)
+        return unpublished
 
     @staticmethod
     def _event_of(row: OutboxRow) -> Event:
@@ -280,8 +321,8 @@ class OutboxRelayImpl(OutboxRelayInterface):
         except Exception:
             log.exception("the dead letter audit event for %s could not be appended", row.id)
 
-    async def _publish(self, org_id: UUID, appended: Event) -> None:
-        await self._topics.publish(
+    async def _publish(self, org_id: UUID, appended: Event) -> bool:
+        return await self._topics.publish(
             Topics.ENTITY_CHANGED,
             EntityChangedPayload(
                 idempotency_key=appended.id,

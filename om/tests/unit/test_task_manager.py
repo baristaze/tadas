@@ -546,8 +546,8 @@ async def test_a_failed_relay_leaves_the_row_for_the_sweep(
     # The request succeeds on the core write; the push is the row's job, and a
     # bus that is down at that moment is caught by the sweep's relay_pending.
     class DownTopics(TopicsMemoryImpl):
-        async def publish(self, topic: Topics, payload: TopicPayload) -> None:
-            raise RuntimeError("bus down")
+        async def publish(self, topic: Topics, payload: TopicPayload) -> bool:
+            return False  # the bus dropped it
 
     outbox = OutboxStorageMemoryImpl()
     relay = OutboxRelayImpl(outbox, events_storage, DownTopics())

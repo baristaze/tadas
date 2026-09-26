@@ -1,6 +1,9 @@
 # ADR 0058: A socket asks again, and its pong answers from the bus
 
-**Status**: accepted (2026-09-26).
+**Status**: accepted (2026-09-26). The session lifetimes it names are
+14 days idle and 30 days absolute since
+[ADR 0063](0063-sessions-last-weeks.md); the recheck and its bound do
+not change.
 
 ## Context
 

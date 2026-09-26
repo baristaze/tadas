@@ -30,8 +30,10 @@ of the seven kinds of thing [Tadas is made of](../../../../README.md).
   yet, the one a sign-in produces; exchanging it for an org gives a
   session in that org, and ends the login. A live session also proves
   who the person is, so it can list their orgs and be exchanged for a
-  session in another one. A session ends at its absolute lifetime or after it sits idle,
-  whichever comes first. Only the hash of the token is kept.
+  session in another one. A session ends at its absolute lifetime, 30
+  days, or after it sits idle for 14, whichever comes first. Only a
+  request of the person's moves the idle clock. Only the hash of the
+  token is kept.
 - **Second factor**: an operator's TOTP secret, sealed under a key the
   process holds, enrolled once it is confirmed by a first code.
 - **Operator token**: an agent's credential for the operator plane.
@@ -206,7 +208,7 @@ of the seven kinds of thing [Tadas is made of](../../../../README.md).
   sessions, closed or expired invitations, and old runs of wrong
   second-factor codes are deleted for good
   after the retention, thirty days by default; a revoked session goes
-  once it has expired too, within its twelve hours. A socket ticket,
+  once it has expired too, within its thirty days. A socket ticket,
   which lives a minute, is deleted a day after it expired. A deleted
   personal org keeps no retention: its rows go at the next sweep. The
   events of this namespace carry ids and never a value, so a person's

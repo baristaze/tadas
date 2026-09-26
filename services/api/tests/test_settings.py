@@ -7,10 +7,12 @@ default is listed here with the reason, so a new field needs a decision."""
 
 import re
 import subprocess
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
 
+from tadas.om.tenancy.impl.manager import TenancyOptions
 from tadas.services.api.settings import ApiSettings
 
 PREFIX = ApiSettings.model_config.get("env_prefix", "")
@@ -178,3 +180,24 @@ def test_every_task_of_the_api_image_boots_the_api_sign_in_settings() -> None:
         name for name, block in api_image.items() if "local.api_sign_in_environment" not in block
     )
     assert not missing, f"tasks of the API image without the sign-in settings: {missing}"
+
+
+def test_a_session_lasts_thirty_days_and_fourteen_idle() -> None:
+    """The session lifetimes are the same everywhere they are written: the
+    setting's default, `.env.example`, and the tenancy manager's own default
+    (ADR 0063)."""
+    absolute, idle = timedelta(days=30), timedelta(days=14)
+    fields = ApiSettings.model_fields
+    assert timedelta(seconds=fields["session_lifetime_seconds"].default) == absolute
+    assert timedelta(seconds=fields["session_idle_lifetime_seconds"].default) == idle
+    documented = dict(
+        re.findall(
+            r"^([A-Z][A-Z0-9_]*)=(.*)$",
+            (repository_root() / ".env.example").read_text(),
+            flags=re.MULTILINE,
+        )
+    )
+    assert timedelta(seconds=int(documented[f"{PREFIX}SESSION_LIFETIME_SECONDS"])) == absolute
+    assert timedelta(seconds=int(documented[f"{PREFIX}SESSION_IDLE_LIFETIME_SECONDS"])) == idle
+    options = TenancyOptions()
+    assert (options.session_ttl, options.session_idle_ttl) == (absolute, idle)

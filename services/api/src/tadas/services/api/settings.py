@@ -90,10 +90,11 @@ class ApiSettings(StorageSettings, InfraSettings, IntegrationsSettings):
     # How long a sign-in lasts before it must be exchanged for a session, and
     # how long a session lasts: from its exchange, whatever it is used for
     # (the absolute lifetime), and from its last use (the idle one). A
-    # session ends at whichever passes first.
+    # session ends at whichever passes first: 30 days from its exchange, or 14
+    # days without a request (ADR 0063).
     login_lifetime_seconds: int = Field(default=600, gt=0)
-    session_lifetime_seconds: int = Field(default=43200, gt=0)
-    session_idle_lifetime_seconds: int = Field(default=14400, gt=0)
+    session_lifetime_seconds: int = Field(default=2592000, gt=0)
+    session_idle_lifetime_seconds: int = Field(default=1209600, gt=0)
     # The longest an operator token lives, and what a mint that names no
     # lifetime gets. An hour at most, whoever mints it.
     operator_token_max_lifetime_seconds: int = Field(default=3600, gt=0, le=3600)

@@ -28,6 +28,12 @@ sign-out URIs cannot be probed either: WorkOS's logout answers the same for
 a return it lists and one it does not until a real session ends. No webhook
 is reconciled: the sign-in and the invitations need none.
 
+The Sessions tab has no API either. It bounds the AuthKit session a sign-in
+leaves in the browser, which lets the next sign-in there through with no
+prompt. The command prints the two lifetimes Tadas gives its own sessions,
+as the values to set there, so a new tab asks for a sign-in when a Tadas
+session would have ended (ADR 0063).
+
 The API key comes from the variable the desired state names for the
 environment, and never appears in anything this prints."""
 
@@ -35,6 +41,7 @@ import argparse
 import os
 import sys
 from dataclasses import dataclass
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -57,6 +64,10 @@ LEFT_TO_AUTHKIT = (
     ("user invitation URL", "not set: AuthKit's page takes it, then the login initiation URI"),
     ("password reset URL", "not set: no password sign-in is on"),
 )
+# A Tadas session's lifetimes, `TADAS_SESSION_LIFETIME_SECONDS` and
+# `TADAS_SESSION_IDLE_LIFETIME_SECONDS`: the Sessions tab's two bounds match them.
+SESSION_LIFETIME = timedelta(days=30)
+SESSION_IDLE_LIFETIME = timedelta(days=14)
 
 
 @dataclass(frozen=True)
@@ -284,6 +295,14 @@ async def reconcile(desired: Desired, workos: WorkOS, *, apply: bool) -> Outcome
     )
     for field, why in LEFT_TO_AUTHKIT:
         say(f"{field}: {why}")
+    say(
+        f"maximum session length: {SESSION_LIFETIME.days} days, a Tadas session's absolute "
+        f"lifetime (check it on {tab(desired, 'Sessions')}; no API reads or writes it)"
+    )
+    say(
+        f"inactivity timeout: {SESSION_IDLE_LIFETIME.days} days, a Tadas session's idle "
+        "lifetime (check it on the same tab)"
+    )
     say("webhooks: none" if not desired.webhooks else f"webhooks: {', '.join(desired.webhooks)}")
     say(summary(outcome))
     return outcome

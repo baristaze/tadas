@@ -5,7 +5,9 @@ are dropped is superseded (2026-09-25) by
 [ADR 0038](0038-a-dead-column-leaves-the-mapping-before-the-table.md):
 they leave the mapping first, and the release after drops them. The
 drop is done (2026-09-25): migration 202609290000 takes both out of the
-table.
+table. The session lifetimes are amended (2026-09-26) by
+[ADR 0063](0063-sessions-last-weeks.md): 14 days idle and 30 days
+absolute, longer than the guideline's defaults.
 
 ## Context
 
