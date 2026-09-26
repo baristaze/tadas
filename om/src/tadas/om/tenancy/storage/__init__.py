@@ -7,6 +7,7 @@ from collections.abc import Callable
 from datetime import datetime
 from uuid import UUID
 
+from tadas.om.billing.types.account import BillingAccount
 from tadas.om.opcontext import Role
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.tenancy.types.api_key import ApiKey
@@ -350,6 +351,18 @@ class TenancyStorageInterface(ABC):
         same transaction records that use on the user's session, for its idle
         lifetime, and commits it; a revoked session is left as it is. The
         caller decides when a use is worth recording."""
+        ...
+
+    @abstractmethod
+    async def read_key_principal(
+        self, org_id: UUID, user_id: UUID
+    ) -> tuple[Org | None, User | None, Membership | None, BillingAccount | None]:
+        """What `read_principal` reads, and beside it the org's billing
+        account, from one statement in one transaction: an api key's use
+        asks the plan whether keys are on it, every time, so the account is
+        read with the principal instead of in a transaction of its own. The
+        account is None when the org has none, or when the org is not
+        found. Nothing is written."""
         ...
 
     @abstractmethod

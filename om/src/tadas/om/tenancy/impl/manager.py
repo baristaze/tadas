@@ -893,7 +893,13 @@ class TenancyManagerImpl(TenancyManagerInterface):
                 raise InvalidCredential("unknown api key")
             org_id, api_key = found
             self._check_api_key(api_key)
-            org, user, membership = await self._principal(org_id, api_key.user_id)
+            (
+                found_org,
+                found_user,
+                found_membership,
+                account,
+            ) = await self._storage.read_key_principal(org_id, api_key.user_id)
+            org, user, membership = self._live_principal(found_org, found_user, found_membership)
             ctx = build_context(
                 rctx,
                 user_id=user.id,
@@ -906,8 +912,9 @@ class TenancyManagerImpl(TenancyManagerInterface):
             )
             # A key of an org whose plan has none is kept and refused, never
             # revoked: it says why, and it works again the day the org is on
-            # a plan with keys.
-            await self._refuse_without_keys(ctx)
+            # a plan with keys. The plan comes from the account read with
+            # the principal, as current as a read of its own.
+            refuse_past(self._entitlements.entitlements_of(ctx, account).plan, Lever.API_KEYS, 0)
             return ctx
         raise InvalidCredential("this route accepts a session token or an api key")
 
@@ -2142,7 +2149,14 @@ class TenancyManagerImpl(TenancyManagerInterface):
             last = session.last_seen_at
             if last is None or last + self._options.session_seen_every <= now:
                 seen = (session.id, now)
-        org, user, membership = await self._storage.read_principal(org_id, user_id, seen)
+        return self._live_principal(*await self._storage.read_principal(org_id, user_id, seen))
+
+    @staticmethod
+    def _live_principal(
+        org: Org | None, user: User | None, membership: Membership | None
+    ) -> tuple[Org, User, Membership]:
+        """The principal a read found, when all three are live, or
+        InvalidCredential."""
         if org is None or org.deleted_at is not None:
             raise InvalidCredential("the org is gone")
         if user is None or user.deleted_at is not None:

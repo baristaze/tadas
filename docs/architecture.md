@@ -241,7 +241,11 @@ context on keeps the stage the callee needs.
   adds that raced) is refused the same way, never cut short. The plan
   bounds the rest: `create_api_key` is refused on a plan without keys,
   and an api key of such an org authenticates to the same 402 rather
-  than a 401, kept and never revoked; the operator plane's add asks
+  than a 401, kept and never revoked. A key's use reads the org's
+  billing account in the statement that reads its principal
+  (`read_key_principal`: the same role, the same tenant scope), and
+  billing's `entitlements_of` decides the plan from that row, so the
+  key path is two transactions. The operator plane's add asks
   `refuse_past` for a seat through `add_member_to`'s admission hook,
   which also answers the `work.SYNC_SEATS` row a per-seat plan's add
   rides, and `remove_member` lands that row beside its own. The seed's

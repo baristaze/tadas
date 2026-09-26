@@ -147,8 +147,11 @@ class BillingManagerImpl(BillingManagerInterface):
         self._clock = clock
 
     async def get_entitlements(self, ctx: OpContext) -> Entitlements:
+        return self.entitlements_of(ctx, await self._storage.read_account(ctx.org_id))
+
+    def entitlements_of(self, ctx: OpContext, account: BillingAccount | None) -> Entitlements:
         ctx.require(Permission.READ)
-        plan = effective_plan(await self._storage.read_account(ctx.org_id), self._clock())
+        plan = effective_plan(account, self._clock())
         return Entitlements(plan=plan, limits=limits_of(plan))
 
     async def get_billing(self, ctx: OpContext) -> Billing:

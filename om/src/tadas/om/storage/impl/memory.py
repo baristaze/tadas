@@ -30,14 +30,16 @@ class StorageMemoryImpl(StorageInterface):
         # how each impl gets what its Postgres twin reads in its own statement.
         self._outbox = OutboxStorageMemoryImpl()
         self._idempotency = IdempotencyStorageMemoryImpl()
-        self._tenancy = TenancyStorageMemoryImpl(self._outbox, self._idempotency)
+        # The billing accounts before tenancy: an api key's principal is read
+        # with its org's account, which the Postgres impl joins.
+        self._billing = BillingStorageMemoryImpl(self._outbox)
+        self._tenancy = TenancyStorageMemoryImpl(self._outbox, self._idempotency, self._billing)
         self._work = WorkStorageMemoryImpl()
         # The records first: a step of one lands beside the tasks it changes.
         self._orchestrations = OrchestrationsStorageMemoryImpl(self._outbox)
         self._tasks = TasksStorageMemoryImpl(self._outbox, self._orchestrations)
         self._media = MediaStorageMemoryImpl(self._outbox)
         self._events = EventStorageMemoryImpl()
-        self._billing = BillingStorageMemoryImpl(self._outbox)
         self._slack = SlackStorageMemoryImpl(self._outbox)
 
     def get_tenancy_storage(self) -> TenancyStorageInterface:
