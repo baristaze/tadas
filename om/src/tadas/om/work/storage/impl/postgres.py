@@ -119,23 +119,31 @@ class WorkStoragePostgresImpl(PgStorageBase, WorkStorageInterface):
             return claimed
 
     async def requeue_stale(
-        self, org_id: UUID, now: datetime, stagger: timedelta, limit: int
-    ) -> list[WorkItem]:
+        self, now: datetime, stagger: timedelta, limit: int
+    ) -> list[tuple[UUID, WorkItem]]:
         stale_filter = (
-            WorkItems.org_id == org_id,
             WorkItems.status == WorkStatus.CLAIMED.value,
             WorkItems.lease_expires_at < now,
         )
-        stale = (
-            select(
-                WorkItems.id.label("id"),
-                (func.row_number().over(order_by=WorkItems.id) - 1).label("position"),
-            )
+        # The batch is chosen and locked once, as `claim_pending` does it: an
+        # item a worker is renewing or settling right now is skipped, and it
+        # is the next pass's if its lease is still expired then.
+        batch = (
+            select(WorkItems.id, WorkItems.org_id)
             .where(*stale_filter)
             .order_by(WorkItems.id)
             .limit(limit)
-            .subquery("stale")
+            .with_for_update(skip_locked=True)
+            .cte("batch")
+            .prefix_with("MATERIALIZED")
         )
+        # The position of each item among its own tenant's in the batch.
+        stale = select(
+            batch.c.id,
+            (func.row_number().over(partition_by=batch.c.org_id, order_by=batch.c.id) - 1).label(
+                "position"
+            ),
+        ).subquery("stale")
         exhausted = WorkItems.attempts >= WorkItems.max_attempts  # rules.is_exhausted, in SQL
         staggered = (
             literal(now, DateTime(timezone=True)) + literal(stagger, Interval()) * stale.c.position
@@ -155,9 +163,12 @@ class WorkStoragePostgresImpl(PgStorageBase, WorkStorageInterface):
             )
             .returning(WorkItems)
         )
-        async with self._session_for(stmt, org_id=org_id) as session:
+        # Every tenant's expired leases, so the system scope, spelled here.
+        async with self._session_for(stmt, org_id=EMPTY_UUID) as session:
             rows = (await session.execute(stmt)).scalars().all()
-            changed = sorted((to_model(row, WorkItem) for row in rows), key=lambda item: item.id)
+            changed = sorted(
+                ((row.org_id, to_model(row, WorkItem)) for row in rows), key=lambda pair: pair[1].id
+            )
             await session.commit()
             return changed
 

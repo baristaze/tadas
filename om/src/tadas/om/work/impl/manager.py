@@ -252,16 +252,19 @@ class WorkManagerImpl(WorkManagerInterface):
             ctx, item, {"lease_expires_at": now + lease, "updated_at": now}
         )
 
-    async def requeue_stale(self, ctx: OpContext, limit: int) -> int:
-        ctx.require(Permission.WRITE)
+    async def requeue_stale(self, rctx: RequestContext, limit: int) -> int:
         requeued = await self._storage.requeue_stale(
-            ctx.org_id, utcnow(), self._options.stale_stagger, max(1, limit)
+            utcnow(), self._options.stale_stagger, max(1, limit)
         )
         if requeued:
-            log.info("requeued %d stale work items in org %s", len(requeued), ctx.org_id)
-        for item in requeued:
+            log.info(
+                "requeued %d stale work items in %d orgs",
+                len(requeued),
+                len({org_id for org_id, _ in requeued}),
+            )
+        for org_id, item in requeued:
             if item.status is WorkStatus.FAILED:
-                await self._dead_letter(ctx, item)
+                await self._dead_letter_in(rctx, org_id, item)
         return len(requeued)
 
     async def purge_items(self) -> int:
@@ -374,6 +377,25 @@ class WorkManagerImpl(WorkManagerInterface):
             org_id,
             reason,
         )
+
+    async def _dead_letter_in(self, rctx: RequestContext, org_id: UUID, item: WorkItem) -> None:
+        """A dead letter the sweep made across tenants: under the service
+        context of the item's tenant, the system user its actor, as the
+        sweep's context per tenant is. A tenant that is gone keeps no audit
+        event, as `_fail_orphan` says, so it gets the log line and the
+        counter alone."""
+        try:
+            ctx = await self._tenancy.service_context(rctx, org_id, EMPTY_UUID)
+        except InvalidCredential:
+            OUTCOMES.labels(subsystem="work", outcome="dead_letter").inc()
+            log.error(
+                "work item %s (%s) failed for good: %s",
+                item.id,
+                item.kind.value,
+                item.last_error,
+            )
+            return
+        await self._dead_letter(ctx, item)
 
     async def _dead_letter(self, ctx: OpContext, item: WorkItem) -> None:
         """A failed item is a dead letter: an audit event names it in the tenant's

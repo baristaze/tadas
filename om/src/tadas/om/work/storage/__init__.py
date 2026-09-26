@@ -1,5 +1,6 @@
-"""Storage of the work queue. The claim is the one named atomic method and
-the one cross-tenant read; every other operation takes org_id first. The
+"""Storage of the work queue. The claim is the one named atomic method. The
+claim, the requeue of expired leases, and the purge reach across tenants in
+the system scope; every other operation takes org_id first. The
 claim mints a token, and the writes that move a claimed item are conditional
 on that token still being on the row, so a lost lease can never be written
 over, not even by the worker that held the item before and holds it again."""
@@ -70,16 +71,20 @@ class WorkStorageInterface(ABC):
 
     @abstractmethod
     async def requeue_stale(
-        self, org_id: UUID, now: datetime, stagger: timedelta, limit: int
-    ) -> list[WorkItem]:
-        """One conditional statement: the claimed items of the tenant whose lease
-        expired before `now`, the first `limit` of them by id, go back to the
-        queue, staggered by their position, or fail when their attempts are
-        spent, the claim token cleared either way so the holder it had is
-        refused; returns the items it changed, by id. The caller picks the
-        bound: the sweep passes its batch size and takes the rest next tick.
-        The requeue is the platform's write, like the claim, so it signs
-        `updated_by` with EMPTY_UUID and takes no principal."""
+        self, now: datetime, stagger: timedelta, limit: int
+    ) -> list[tuple[UUID, WorkItem]]:
+        """Cross-tenant, for the sweep, in the system scope: one conditional
+        statement. The claimed items whose lease expired before `now`, the
+        first `limit` of them by id across every tenant, skipping items another
+        transaction holds, go back to the queue, or fail when their attempts
+        are spent. The claim token is cleared either way, so the holder it had
+        is refused. Each tenant's items are staggered by their position among
+        that tenant's items in the batch, so one tenant's items come back
+        spread out as they did when the sweep ran per tenant. Returns each
+        item it changed with its tenant, by id. The caller picks the bound:
+        the sweep passes its batch size and calls again while a batch comes
+        back full. The requeue is the platform's write, like the claim, so it
+        signs `updated_by` with EMPTY_UUID and takes no principal."""
         ...
 
     @abstractmethod
