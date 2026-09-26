@@ -149,7 +149,8 @@ variables of the environment's GitHub environments, and the deploy
 workflows pass them in. The environment root finds each zone by its
 name. Terraform does the rest for those two: a DNS-validated certificate
 per name (the portal's in us-east-1, where CloudFront reads them), the
-alias records, and the API's CORS origin, which is always the app's name.
+alias records, and the API's CORS origin, which is always the app's name
+(the portal itself calls the API same-origin; see below).
 
 The company site's name cannot be delegated. In production it is the
 domain's apex, the apex of Cloudflare's own zone, where an NS record
@@ -178,8 +179,9 @@ Both are static files behind CloudFront, so both are the `static_site`
 module, called twice by `environment`: one module, two parameter sets,
 and the same bucket, origin access control, security headers, and
 distribution for each. What differs is a handful of inputs. The portal
-passes `api_url` and `sentry_dsn` (its Content-Security-Policy lets the
-page reach the API and the error reporter), `runtime_config` (written as
+passes `api_domain_name` and `api_edge_secret` (its distribution serves
+the API's paths), `sentry_dsn` (its Content-Security-Policy lets the page
+reach the error reporter), `runtime_config` (written as
 `/config.json`), and `client_routes = true`. The site passes none of
 those: it reaches its own origin alone, has no config, and passes
 `not_found_page = "/404.html"`, which a missing path gets with a 404.
@@ -188,9 +190,36 @@ The portal is static files: a private S3 bucket that only its CloudFront
 distribution can read (origin access control), served at `app_domain_name`.
 Client routes such as `/settings` get `index.html` from a CloudFront
 Function; hashed assets are cached for a year; `index.html` and `config.json`
-revalidate on every load. The API is not behind this distribution: the portal
-calls `https://<api_domain_name>` cross-origin, and its realtime WebSocket
-connects there directly.
+revalidate on every load.
+
+The API's paths are behind this distribution too. `/v1/*` goes to the
+load balancer at `https://<api_domain_name>`, uncached (the managed
+CachingDisabled policy), with every method and every viewer header,
+cookie, and query string but Host (the managed AllViewerExceptHostHeader
+policy), HTTPS only, and no compression. The realtime socket is a request
+under `/v1` and upgrades through the same behavior. So the portal calls
+the API on its own origin, `/config.json` names an empty `apiUrl`, and no
+browser sends a CORS preflight. The Content-Security-Policy's `connect-src`
+is `'self'` and `wss://<app_domain_name>`, beside the object store and the
+error reporter. `api_domain_name` still serves everything on its own name:
+the Stripe and Slack deliveries, the command line, and the operators.
+
+The origin's read timeout is the load balancer's idle timeout (60 seconds)
+and its keep-alive timeout five seconds less, both read from
+`deployment/realtime-timeouts.json`. CloudFront closes a socket that has
+carried no byte from the origin for ten minutes, a fixed quota; the
+server's protocol ping every 20 seconds is such a byte, and the load
+balancer's 60 seconds is the tighter bound the pings are held to.
+
+The distribution adds `X-Tadas-Edge` to every request it sends the API,
+with the value of the `edge_secret` the secrets module generates (in the
+state, since the distribution's configuration holds it in the clear). The
+API reads the same value as `TADAS_EDGE_SECRET` and, beside it, takes the
+address CloudFront appended to `X-Forwarded-For` as the client, so the
+login rate limit counts per viewer and not per edge. Raising the secrets
+module's `edge_secret_version` writes a new value to both in one apply.
+The load balancer's security group is unchanged: it accepts what it
+accepted, from anywhere on 443.
 
 The build carries no environment. Terraform writes `/config.json` per
 environment (`apiUrl`, `sentryDsn`, `environment`). `deploy-staging.yml`

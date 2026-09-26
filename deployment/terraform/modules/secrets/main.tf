@@ -1,8 +1,8 @@
 # Three kinds of secret live under one environment. The platform's own
-# credentials (the four database URLs, the TOTP encryption key, the Sentry
-# DSN, the Slack app's two secrets, the payment processor's two, the WorkOS
-# application key) are declared here and injected into tasks by the
-# execution role.
+# credentials (the four database URLs, the TOTP encryption key, the edge
+# secret, the Sentry DSN, the Slack app's two secrets, the payment
+# processor's two, the WorkOS application key) are declared here and
+# injected into tasks by the execution role.
 # Application-managed secrets, the ones SecretsInterface reads at runtime,
 # live under "<prefix>app/", which is the value of TADAS_SECRETS_NAME_PREFIX,
 # so a process can never reach its own bootstrap credentials through the
@@ -112,6 +112,36 @@ resource "aws_secretsmanager_secret_version" "totp_encryption_key" {
   secret_id                = aws_secretsmanager_secret.totp_encryption_key.id
   secret_string_wo         = replace(replace(base64encode(ephemeral.random_password.totp_encryption_key.result), "+", "-"), "/", "_")
   secret_string_wo_version = 1
+}
+
+# The value the portal's CloudFront distribution adds to every request it
+# sends the API, as the X-Tadas-Edge header. It lets the API trust one more
+# hop of X-Forwarded-For: CloudFront appends the viewer's address, the load
+# balancer appends CloudFront's, and only a request that carries this value
+# came through this distribution and not through anyone else's. It is not
+# ephemeral: the distribution's configuration holds it in the clear, so the
+# state holds it too. Raising edge_secret_version writes a new one to both in
+# one apply. Until the API's tasks roll, a request through the portal is
+# counted by the edge's address: fairness lost for a minute, no door opened.
+resource "random_password" "edge" {
+  length  = 48
+  special = false
+
+  keepers = {
+    version = var.edge_secret_version
+  }
+}
+
+resource "aws_secretsmanager_secret" "edge_secret" {
+  name                    = "${var.prefix}edge_secret"
+  recovery_window_in_days = local.recovery_window_in_days
+  tags                    = local.tags
+}
+
+resource "aws_secretsmanager_secret_version" "edge_secret" {
+  secret_id                = aws_secretsmanager_secret.edge_secret.id
+  secret_string_wo         = random_password.edge.result
+  secret_string_wo_version = var.edge_secret_version
 }
 
 # The Sentry-compatible DSN errors report to (sentry.io or a hosted GlitchTip).
