@@ -5,7 +5,7 @@ once per key, and every read and write is fenced by the tenant. The cases
 named in `CROSS_TENANT_CASES` present another tenant's identifier and assert
 that nothing is found and nothing changes."""
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 from uuid import UUID
 
 import pytest
@@ -27,7 +27,6 @@ CROSS_TENANT_CASES: frozenset[str] = frozenset(
         "claim_refresh",
         "create_install_state",
         "create_post",
-        "purge",
         "purge_tenant",
         "read_installation",
         "read_post",
@@ -73,6 +72,21 @@ def make_state(state: str, *, lifetime: timedelta = timedelta(minutes=10)) -> Sl
 
 def make_post(key: UUID) -> SlackPost:
     return SlackPost(id=new_id(), created_at=utcnow(), key=key, channel_id="C1", ts="1.2")
+
+
+def posted_at(post: SlackPost, at: datetime) -> SlackPost:
+    return post.model_copy(update={"created_at": at})
+
+
+async def drained(storage: SlackStorageInterface) -> datetime:
+    """The moment a purge case stands at: a century back, so no other case's
+    row is past its cut, with whatever an earlier run of these cases left
+    behind it purged first. The purge reaches across tenants, so a case owns
+    the rows behind its cut."""
+    then = utcnow() - timedelta(days=36500)
+    while await storage.purge(then + timedelta(hours=1), 1000):
+        pass
+    return then
 
 
 class SlackStorageContract:
@@ -199,18 +213,21 @@ class SlackStorageContract:
     async def test_the_purge_takes_what_is_past_the_retention(
         self, storage: SlackStorageInterface
     ) -> None:
+        """The purge runs across tenants: every tenant's rows past the cut go
+        in one call, and a tenant's purge takes its rows and no other's."""
         org, other = new_id(), new_id()
+        then = await drained(storage)
         installation = make_installation()
-        now = utcnow()
         await storage.write_installation(
-            org, installation.model_copy(update={"deleted_at": now, "deleted_by": new_id()}), ()
+            org, installation.model_copy(update={"deleted_at": then, "deleted_by": new_id()}), ()
         )
-        await storage.create_install_state(org, make_state(new_state()))
-        await storage.create_post(org, make_post(new_id()))
-        await storage.create_post(other, make_post(new_id()))
-        assert await storage.purge(org, now - timedelta(days=1), 10) == 0
-        assert await storage.purge(other, now + timedelta(hours=1), 10) == 1
-        assert await storage.purge(org, now + timedelta(hours=1), 10) == 3
+        await storage.create_install_state(
+            org, make_state(new_state(), lifetime=then - utcnow() + timedelta(minutes=10))
+        )
+        await storage.create_post(org, posted_at(make_post(new_id()), then))
+        await storage.create_post(other, posted_at(make_post(new_id()), then))
+        assert await storage.purge(then - timedelta(days=1), 10) == 0
+        assert await storage.purge(then + timedelta(hours=1), 10) == 4, "every tenant's"
         await storage.write_installation(org, make_installation(), ())
         await storage.create_post(other, make_post(new_id()))
         assert await storage.purge_tenant(org, 10) == 1
@@ -221,12 +238,13 @@ class SlackStorageContract:
         self, storage: SlackStorageInterface
     ) -> None:
         org = new_id()
+        then = await drained(storage)
         for _ in range(3):
-            await storage.create_post(org, make_post(new_id()))
-        later = utcnow() + timedelta(hours=1)
-        assert await storage.purge(org, later, 2) == 2
-        assert await storage.purge(org, later, 2) == 1
-        assert await storage.purge(org, later, 2) == 0
+            await storage.create_post(org, posted_at(make_post(new_id()), then))
+        later = then + timedelta(hours=1)
+        assert await storage.purge(later, 2) == 2
+        assert await storage.purge(later, 2) == 1
+        assert await storage.purge(later, 2) == 0
         for _ in range(3):
             await storage.create_post(org, make_post(new_id()))
         assert await storage.purge_tenant(org, 2) == 2

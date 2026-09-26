@@ -69,7 +69,16 @@ class OrchestrationsManagerInterface(ABC):
         ...
 
     @abstractmethod
-    async def purge_deleted(self, ctx: OpContext) -> int:
-        """The sweep, for one tenant: the records settled past the retention;
-        under a tenant past its own retention, every record."""
+    async def purge_across_tenants(self) -> int:
+        """Platform-internal: the sweep, across tenants, once a pass: the
+        records settled past the retention, a batch at most, whatever their
+        tenant; returns how many. It takes no context, because it runs for
+        no tenant and no principal."""
+        ...
+
+    @abstractmethod
+    async def purge_tenant(self, ctx: OpContext) -> int:
+        """The sweep, for one tenant past its own retention: every record, a
+        batch at most a call. Any other tenant returns 0 and reads nothing:
+        its settled records go across tenants."""
         ...

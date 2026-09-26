@@ -1956,23 +1956,40 @@ class TenancyManagerImpl(TenancyManagerInterface):
         await self._write_api_key(ctx, revoked, "deleted")
         return revoked
 
-    async def purge_deleted(self, ctx: OpContext) -> int:
-        ctx.require(Permission.MANAGE_MEMBERS)
+    async def purge_across_tenants(self) -> int:
         batch = self._options.purge_batch
-        if await self.tenant_expired(ctx):
-            # The tenant itself is past the retention: every row of it goes.
-            return await self._storage.purge_tenant(ctx.org_id, batch)
         now = utcnow()
         purged = await self._storage.purge_deleted(
-            ctx.org_id, now - self._options.retention, now - self._options.ticket_retention, batch
+            now - self._options.retention, now - self._options.ticket_retention, batch
         )
-        if ctx.org_id == EMPTY_UUID:
-            # The system scope also holds the sign-in delays, keyed on emails
-            # nobody may hold: a run that ended long ago goes with the logins.
-            purged += await self._storage.purge_sign_in_delays(
-                now - self._options.sign_in_delay_retention, batch
-            )
+        # The system scope also holds the sign-in delays, keyed on emails
+        # nobody may hold: a run that ended long ago goes with the logins.
+        purged += await self._storage.purge_sign_in_delays(
+            now - self._options.sign_in_delay_retention, batch
+        )
         return purged
+
+    async def purge_tenant(self, ctx: OpContext) -> int:
+        ctx.require(Permission.MANAGE_MEMBERS)
+        if not await self.tenant_expired(ctx):
+            return 0
+        # The tenant itself is past the retention: every row of it goes.
+        return await self._storage.purge_tenant(ctx.org_id, self._options.purge_batch)
+
+    async def sweep_context(self, rctx: RequestContext, org_id: UUID) -> OpContext | None:
+        swept = self._pass
+        if swept is None or rctx.request_id != swept[0] or org_id not in swept[1]:
+            org = await self._storage.read_org(org_id)
+            if org is None or org.purged_at is not None:
+                return None
+        return build_context(
+            rctx,
+            user_id=EMPTY_UUID,
+            org_id=org_id,
+            role=Role.SERVICE,
+            permissions=permissions_of(Role.SERVICE),
+            credential_kind=CredentialKind.INTERNAL,
+        )
 
     async def tenant_expired(self, ctx: OpContext) -> bool:
         ctx.require(Permission.READ)

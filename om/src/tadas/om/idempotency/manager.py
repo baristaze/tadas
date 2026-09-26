@@ -74,11 +74,13 @@ class IdempotencyManagerInterface(ABC):
         ...
 
     @abstractmethod
-    async def purge(self, ctx: OpContext) -> int:
-        """The sweep, for one tenant: deletes finished and released records past
-        the retention and held pending ones past ten times the pending lease, a
-        marker no retry came back for; returns how many. A key purged is a key
-        free again."""
+    async def purge_across_tenants(self) -> int:
+        """Platform-internal: the sweep, across tenants, once a pass: deletes
+        finished and released records past the retention and held pending
+        ones past ten times the pending lease, a marker no retry came back
+        for, a batch at most; returns how many. A key purged is a key free
+        again. It takes no context, because it runs for no tenant and no
+        principal."""
         ...
 
     @abstractmethod

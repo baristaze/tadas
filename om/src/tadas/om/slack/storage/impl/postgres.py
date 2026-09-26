@@ -139,32 +139,26 @@ class SlackStoragePostgresImpl(PgStorageBase, SlackStorageInterface):
                 ) from error
             return True
 
-    async def purge(self, org_id: UUID, before: datetime, limit: int) -> int:
+    async def purge(self, before: datetime, limit: int) -> int:
         purged = 0
         statements = (
-            delete_batch(
-                SlackInstallations,
-                SlackInstallations.org_id == org_id,
-                SlackInstallations.deleted_at < before,
-                limit=limit,
-            ),
+            delete_batch(SlackInstallations, SlackInstallations.deleted_at < before, limit=limit),
             delete_batch(
                 SlackInstallStates,
-                SlackInstallStates.org_id == org_id,
                 or_(
                     SlackInstallStates.expires_at < before,
                     SlackInstallStates.redeemed_at < before,
                 ),
                 limit=limit,
             ),
-            delete_batch(
-                SlackPosts, SlackPosts.org_id == org_id, SlackPosts.created_at < before, limit=limit
-            ),
+            delete_batch(SlackPosts, SlackPosts.created_at < before, limit=limit),
         )
-        for stmt in statements:
-            async with self._session_for(stmt, org_id=org_id) as session:
+        # Every tenant's rows past the retention, so the system scope, spelled
+        # here; the three tables are one role's, so one transaction.
+        async with self._session_for(SlackPosts, org_id=EMPTY_UUID) as session:
+            for stmt in statements:
                 purged += deleted(await session.execute(stmt))
-                await session.commit()
+            await session.commit()
         return purged
 
     async def purge_tenant(self, org_id: UUID, limit: int) -> int:

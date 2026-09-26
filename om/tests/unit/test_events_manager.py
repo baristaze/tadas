@@ -145,10 +145,10 @@ async def test_the_sweep_drops_a_stream_only_once_its_tenant_has_expired(
     ann = context(Role.OWNER)
     await manager.append_event(ann, make_event(ann.org_id))
     await manager.append_event(ann, make_event(ann.org_id, "tasks.task.updated"))
-    assert await manager.purge_expired(ann) == 0
+    assert await manager.purge_tenant(ann) == 0
     assert len(await manager.get_events(ann, 0, 2)) == 2
     retention.expired = True
-    assert await manager.purge_expired(ann) == 2
+    assert await manager.purge_tenant(ann) == 2
     assert await manager.get_events(ann, 0, 2) == []
     assert await manager.get_head(ann) == 0
 
@@ -170,7 +170,7 @@ async def test_with_no_retention_the_sweep_keeps_every_event(retention: Retentio
     manager = keeping(retention, None)
     ctx = context(Role.OWNER)
     await append_aged(manager, ctx, 400, 200)
-    assert await manager.purge_expired(ctx) == 0
+    assert await manager.purge_across_tenants() == 0
     assert [e.seq for e in await manager.get_events(ctx, 0, 10)] == [1, 2]
 
 
@@ -178,15 +178,18 @@ async def test_the_sweep_trims_one_batch_of_what_is_past_the_retention(
     retention: Retention,
 ) -> None:
     manager = keeping(retention, 90, batch=2)
-    ctx = context(Role.OWNER)
+    ctx, other = context(Role.OWNER), context(Role.OWNER)
     await append_aged(manager, ctx, 100, 100, 100, 1)
-    assert await manager.purge_expired(ctx) == 2, "one batch a pass"
-    assert await manager.purge_expired(ctx) == 1
-    assert await manager.purge_expired(ctx) == 0, "the young event stays"
+    await append_aged(manager, other, 1)
+    assert await manager.purge_tenant(ctx) == 0, "a living tenant keeps its stream"
+    assert await manager.purge_across_tenants() == 2, "one batch a call"
+    assert await manager.purge_across_tenants() == 1
+    assert await manager.purge_across_tenants() == 0, "the young events stay"
     assert [e.seq for e in await manager.get_events(ctx, 3, 10)] == [4]
+    assert [e.seq for e in await manager.get_events(other, 0, 10)] == [1]
     # A tenant past its own retention loses the rest, floor and all.
     retention.expired = True
-    assert await manager.purge_expired(ctx) == 1
+    assert await manager.purge_tenant(ctx) == 1
     assert await manager.get_head(ctx) == 0
     assert await manager.get_events(ctx, 0, 10) == []
 
@@ -195,7 +198,7 @@ async def test_a_read_below_the_floor_is_refused_with_the_head(retention: Retent
     manager = keeping(retention, 90)
     ctx = context(Role.OWNER)
     await append_aged(manager, ctx, 100, 100, 1, 1)
-    assert await manager.purge_expired(ctx) == 2
+    assert await manager.purge_across_tenants() == 2
     for below in (0, 1, -5):
         with pytest.raises(StreamTruncated) as refused:
             await manager.get_events(ctx, below, 10)

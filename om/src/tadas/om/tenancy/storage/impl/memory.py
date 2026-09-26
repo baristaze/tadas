@@ -796,38 +796,39 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
                 "uq_invitations_pending_email",
             )
 
-    async def purge_deleted(
-        self, org_id: UUID, before: datetime, tickets_before: datetime, limit: int
-    ) -> int:
+    async def purge_deleted(self, before: datetime, tickets_before: datetime, limit: int) -> int:
         gone_users = [
-            u.id
-            for u in self._rows(self._users, org_id)
+            (org_id, u.id)
+            for org_id, u in self._rows_across_tenants(self._users)
             if u.deleted_at is not None and u.deleted_at < before
         ][:limit]
         gone_memberships = [
             m.id
-            for m in self._rows(self._memberships, org_id)
-            if m.user_id in gone_users or (m.deleted_at is not None and m.deleted_at < before)
+            for org_id, m in self._rows_across_tenants(self._memberships)
+            if (org_id, m.user_id) in gone_users
+            or (m.deleted_at is not None and m.deleted_at < before)
         ][:limit]
         gone_keys = [
             k.id
-            for k in self._rows(self._api_keys, org_id)
+            for _, k in self._rows_across_tenants(self._api_keys)
             if (k.deleted_at is not None and k.deleted_at < before) or k.expires_at < before
         ][:limit]
-        gone_sessions = [s.id for s in self._rows(self._sessions, org_id) if s.expires_at < before][
-            :limit
-        ]
+        gone_sessions = [
+            s.id for _, s in self._rows_across_tenants(self._sessions) if s.expires_at < before
+        ][:limit]
         gone_tickets = [
-            t.id for t in self._rows(self._socket_tickets, org_id) if t.expires_at < tickets_before
+            t.id
+            for _, t in self._rows_across_tenants(self._socket_tickets)
+            if t.expires_at < tickets_before
         ][:limit]
         gone_invitations = [
             i.id
-            for i in self._rows(self._invitations, org_id)
+            for _, i in self._rows_across_tenants(self._invitations)
             if (i.state is not InvitationState.PENDING and i.updated_at < before)
             or i.expires_at < before
         ][:limit]
         for table, ids in (
-            (self._users, gone_users),
+            (self._users, [user_id for _, user_id in gone_users]),
             (self._memberships, gone_memberships),
             (self._api_keys, gone_keys),
             (self._sessions, gone_sessions),

@@ -22,7 +22,6 @@ from tadas.om.outbox.types.row import OutboxRow
 CROSS_TENANT_CASES: frozenset[str] = frozenset(
     {
         "create_orchestration",
-        "purge_settled",
         "purge_tenant",
         "read_orchestration",
         "read_parked",
@@ -75,6 +74,17 @@ async def seed(
     storage: OrchestrationsStorageInterface, org_id: UUID, record: Orchestration
 ) -> None:
     assert await storage.create_orchestration(org_id, record, (make_row(org_id, record),))
+
+
+async def drained(storage: OrchestrationsStorageInterface) -> timedelta:
+    """How far back a purge case stands: a century, so no other case's record
+    is past its cut, with whatever an earlier run of these cases left behind
+    it purged first. The purge reaches across tenants, so a case owns the
+    records behind its cut."""
+    back = timedelta(days=36500)
+    while await storage.purge_settled(utcnow() - back - timedelta(days=30), 1000):
+        pass
+    return back
 
 
 class OrchestrationStorageContract:
@@ -183,26 +193,29 @@ class OrchestrationStorageContract:
     async def test_purge_settled_takes_only_settled_records_past_the_cut(
         self, storage: OrchestrationsStorageInterface
     ) -> None:
+        """The purge runs across tenants: every tenant's settled records past
+        the cut go, a batch at a time, and no parked or younger one."""
         org, other = new_id(), new_id()
-        old_done = make_record(status=OrchestrationStatus.SUCCEEDED, updated_ago=timedelta(days=40))
-        old_failed = make_record(status=OrchestrationStatus.FAILED, updated_ago=timedelta(days=40))
+        back = await drained(storage)
+        old = back + timedelta(days=40)
+        old_done = make_record(status=OrchestrationStatus.SUCCEEDED, updated_ago=old)
+        old_failed = make_record(status=OrchestrationStatus.FAILED, updated_ago=old)
         old_parked = make_record(
-            status=OrchestrationStatus.PARKED,
-            park_reason=ParkReason.PLAN_LIMIT,
-            updated_ago=timedelta(days=40),
+            status=OrchestrationStatus.PARKED, park_reason=ParkReason.PLAN_LIMIT, updated_ago=old
         )
         fresh = make_record(status=OrchestrationStatus.SUCCEEDED)
-        theirs = make_record(status=OrchestrationStatus.SUCCEEDED, updated_ago=timedelta(days=40))
+        theirs = make_record(status=OrchestrationStatus.SUCCEEDED, updated_ago=old)
         for record in (old_done, old_failed, old_parked, fresh):
             await seed(storage, org, record)
         await seed(storage, other, theirs)
-        cut = utcnow() - timedelta(days=30)
-        assert await storage.purge_settled(org, cut, 1) == 1, "a batch at most"
-        assert await storage.purge_settled(org, cut, 1) == 1
-        assert await storage.purge_settled(org, cut, 1) == 0
+        cut = utcnow() - back - timedelta(days=30)
+        assert await storage.purge_settled(cut, 2) == 2, "a batch at most"
+        assert await storage.purge_settled(cut, 2) == 1
+        assert await storage.purge_settled(cut, 2) == 0
+        assert await storage.read_orchestration(org, old_done.id) is None
+        assert await storage.read_orchestration(other, theirs.id) is None, "every tenant's"
         assert await storage.read_orchestration(org, old_parked.id) is not None
         assert await storage.read_orchestration(org, fresh.id) is not None
-        assert await storage.read_orchestration(other, theirs.id) is not None
 
     async def test_purge_tenant_takes_every_record_of_the_tenant(
         self, storage: OrchestrationsStorageInterface

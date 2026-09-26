@@ -184,6 +184,9 @@ async def test_the_sweep_removes_the_object_then_the_row(
     assert await buckets.exists(ctx.org_id, Buckets.USER_FILE_UPLOADS, created.key)
     assert (await media.get_usage(ctx)).total_count == 0, "a delete stops counting at once"
     past, _ = manager(pg_sessions, buckets, MediaOptions(retention=timedelta(0)))
-    assert await past.purge_deleted(ctx) == 1
+    # The purge reaches across tenants, so other cases' deleted files go too,
+    # a batch at a time.
+    while await past.purge_across_tenants():
+        pass
     assert not await buckets.exists(ctx.org_id, Buckets.USER_FILE_UPLOADS, created.key)
     assert await storage.read_file(ctx.org_id, created.id) is None

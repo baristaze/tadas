@@ -5,6 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 
+from tadas.om.base import EMPTY_UUID
 from tadas.om.billing.storage import BillingStorageInterface
 from tadas.om.billing.storage.tables.billing_accounts import BillingAccounts
 from tadas.om.billing.storage.tables.billing_deliveries import BillingDeliveries
@@ -91,14 +92,10 @@ class BillingStoragePostgresImpl(PgStorageBase, BillingStorageInterface):
             row = (await session.execute(stmt)).scalar_one_or_none()
             return None if row is None else to_model(row, BillingDelivery)
 
-    async def purge_deliveries(self, org_id: UUID, before: datetime, limit: int) -> int:
-        stmt = delete_batch(
-            BillingDeliveries,
-            BillingDeliveries.org_id == org_id,
-            BillingDeliveries.created_at < before,
-            limit=limit,
-        )
-        async with self._session_for(stmt, org_id=org_id) as session:
+    async def purge_deliveries(self, before: datetime, limit: int) -> int:
+        stmt = delete_batch(BillingDeliveries, BillingDeliveries.created_at < before, limit=limit)
+        # Every tenant's marks past the retention, so the system scope, spelled here.
+        async with self._session_for(stmt, org_id=EMPTY_UUID) as session:
             purged = deleted(await session.execute(stmt))
             await session.commit()
             return purged

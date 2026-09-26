@@ -1,5 +1,7 @@
+from collections import Counter
 from collections.abc import Sequence
 from datetime import datetime
+from itertools import takewhile
 from uuid import UUID
 
 from tadas.om.events.storage import EventStorageInterface
@@ -62,24 +64,31 @@ class EventStorageMemoryImpl(MemoryStorageBase, EventStorageInterface):
                 self._floors.pop(org_id, None)
             return len(gone)
 
-    async def trim(self, org_id: UUID, before: datetime, limit: int) -> int:
+    async def trim(self, before: datetime, limit: int) -> int:
         async with self._lock:
-            floor = self._floors.get(org_id, 0)
-            bottom = sorted(
-                (e for e in self._rows(self._events, org_id) if e.seq > floor),
-                key=lambda e: e.seq,
+            old = sorted(
+                (
+                    (e.produced_at, e.id, org_id)
+                    for org_id, e in self._rows_across_tenants(self._events)
+                    if e.produced_at < before and org_id in self._cursors
+                ),
             )[:limit]
-            run: list[Event] = []
-            for event in bottom:
-                if event.produced_at >= before:
-                    break
-                run.append(event)
-            if not run:
-                return 0
-            for event in run:
-                del self._events[event.id]
-            self._floors[org_id] = run[-1].seq
-            return len(run)
+            shares = Counter(org_id for _, _, org_id in old)
+            trimmed = 0
+            for org_id, share in shares.items():
+                floor = self._floors.get(org_id, 0)
+                bottom = sorted(
+                    (e for e in self._rows(self._events, org_id) if floor < e.seq <= floor + share),
+                    key=lambda e: e.seq,
+                )
+                run = list(takewhile(lambda e: e.produced_at < before, bottom))
+                if not run:
+                    continue
+                for event in run:
+                    del self._events[event.id]
+                self._floors[org_id] = run[-1].seq
+                trimmed += len(run)
+            return trimmed
 
     async def read_floor(self, org_id: UUID) -> int:
         return self._floors.get(org_id, 0)

@@ -5,7 +5,7 @@ from typing import Any
 from uuid import UUID
 
 import pytest
-from contracts.doubles import Members, context, media_of, no_slack, orchestrations_of
+from contracts.doubles import Members, context, media_of, no_slack, orchestrations_of, request
 from contracts.factories import make_org
 from contracts.outbox_storage import claim_all
 from contracts.plans import ON_TEAM
@@ -665,7 +665,8 @@ async def test_the_sweep_purges_only_deleted_tasks_while_the_tenant_lives(
     ctx = context(Role.MEMBER, org, members)
     live = await manager.create_task(ctx, make_task(ctx, "still open"))
     dropped = await delete(manager, ctx, (await manager.create_task(ctx, make_task(ctx, "go"))).id)
-    assert await manager.purge_deleted(ctx) == 0, "the retention has not passed"
+    assert await manager.purge_across_tenants(request()) == 0, "the retention has not passed"
+    assert await manager.purge_tenant(ctx) == 0, "a living tenant keeps its tasks"
     past = TasksManagerImpl(
         manager._storage,  # type: ignore[attr-defined]
         members,
@@ -676,7 +677,7 @@ async def test_the_sweep_purges_only_deleted_tasks_while_the_tenant_lives(
         entitlements=ON_TEAM,
         orchestrations=manager._orchestrations,  # type: ignore[attr-defined]
     )
-    assert await past.purge_deleted(ctx) == 1
+    assert await past.purge_across_tenants(request()) == 1
     assert (await manager.get_task(ctx, live.id)).id == live.id
     with pytest.raises(NotFound):
         await manager.get_task(ctx, dropped.id)
@@ -699,14 +700,14 @@ async def test_a_deleted_tenants_tasks_all_go_once_the_retention_has_passed(
     elsewhere = context(Role.MEMBER, make_org(), members)
     kept = await manager.create_task(elsewhere, make_task(elsewhere, "another tenant"))
 
-    assert await manager.purge_deleted(ctx) == 0, "no task is deleted in its own right"
+    assert await manager.purge_tenant(ctx) == 0, "the tenant has not expired"
     members.expired = True
-    assert await manager.purge_deleted(ctx) == 2, "the open task and the done one"
+    assert await manager.purge_tenant(ctx) == 2, "the open task and the done one"
     for task_id in (still_open.id, done.id):
         with pytest.raises(NotFound):
             await manager.get_task(ctx, task_id)
     assert (await manager.get_task(elsewhere, kept.id)).id == kept.id
-    assert await manager.purge_deleted(ctx) == 0, "idempotent"
+    assert await manager.purge_tenant(ctx) == 0, "idempotent"
 
 
 async def test_a_placement_reads_one_place_however_long_the_open_list(

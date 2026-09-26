@@ -1,4 +1,5 @@
-"""Storage of the tasks swimlane. Every operation takes org_id first; deleted
+"""Storage of the tasks swimlane. Every operation takes org_id first but the
+sweep's read and purge of deleted tasks, which reach across tenants; deleted
 tasks never appear in a list. The filter and the cursor arrive as the value
 objects the manager received, unchanged."""
 
@@ -107,17 +108,21 @@ class TasksStorageInterface(ABC):
         ...
 
     @abstractmethod
-    async def read_deleted(self, org_id: UUID, before: datetime, limit: int) -> list[UUID]:
-        """The ids of at most `limit` of the tenant's tasks soft-deleted before
-        `before`: what the purge takes next, read first so the attachments of
-        each go before it does."""
+    async def read_deleted(self, before: datetime, limit: int) -> list[tuple[UUID, UUID]]:
+        """Cross-tenant, for the sweep, in the system scope: at most `limit`
+        tasks soft-deleted before `before`, the longest deleted first, across
+        every tenant, each as its tenant and its id: what the purge takes
+        next, read first so the attachments of each go before it does. One
+        read a pass, however many tenants there are, so a tenant with nothing
+        deleted costs nothing."""
         ...
 
     @abstractmethod
-    async def purge_deleted(self, org_id: UUID, before: datetime, task_ids: list[UUID]) -> int:
-        """The one hard delete: removes those of `task_ids` that are the
-        tenant's and were soft-deleted before `before`, skipping a row another
-        transaction holds; returns how many."""
+    async def purge_deleted(self, before: datetime, task_ids: list[UUID]) -> int:
+        """Cross-tenant, for the sweep, in the system scope: the one hard
+        delete removes those of `task_ids` still soft-deleted before
+        `before`, whatever their tenant, skipping a row another transaction
+        holds; returns how many. The ids are the ones `read_deleted` gave."""
         ...
 
     @abstractmethod

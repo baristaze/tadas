@@ -7,7 +7,7 @@ from pathlib import Path
 from uuid import UUID
 
 import pytest
-from contracts.doubles import Members, context, media_of, no_slack, orchestrations_of
+from contracts.doubles import Members, context, media_of, no_slack, orchestrations_of, request
 from contracts.factories import make_org
 from contracts.plans import ON_TEAM
 
@@ -299,7 +299,8 @@ async def test_the_sweep_erases_the_object_and_the_row_past_the_retention(
     await media.issue_upload(ctx, abandoned.id)
     await media.put_content(ctx, abandoned.id, PDF)  # uploaded, never confirmed
     await media.delete_file(ctx, gone.id)
-    assert await media.purge_deleted(ctx) == 0, "neither window has passed"
+    assert await media.purge_across_tenants() == 0, "neither window has passed"
+    assert await media.purge_tenant(ctx) == 0, "a living tenant keeps its files"
     past = MediaManagerImpl(
         storage,
         buckets,
@@ -307,7 +308,7 @@ async def test_the_sweep_erases_the_object_and_the_row_past_the_retention(
         relay,
         MediaOptions(retention=timedelta(0), pending_expiry=timedelta(0)),
     )
-    assert await past.purge_deleted(ctx) == 2
+    assert await past.purge_across_tenants() == 2
     bucket = Buckets.USER_FILE_UPLOADS
     assert not await buckets.exists(ctx.org_id, bucket, gone.key)
     assert not await buckets.exists(ctx.org_id, bucket, abandoned.key)
@@ -322,7 +323,7 @@ async def test_a_tenant_past_its_retention_loses_every_file(
     ctx = context(Role.MEMBER)
     kept = await uploaded(media, ctx, a_file(ctx, subject_id=new_id()))
     members.expired = True
-    assert await media.purge_deleted(ctx) == 1
+    assert await media.purge_tenant(ctx) == 1
     assert not await infra.get_buckets().exists(ctx.org_id, Buckets.USER_FILE_UPLOADS, kept.key)
 
 
@@ -449,9 +450,9 @@ async def test_the_task_purge_deletes_the_attachments_a_failed_detach_left_first
             return deleted
 
     class Recorded(TasksStorageMemoryImpl):
-        async def purge_deleted(self, org_id: UUID, before: datetime, task_ids: list[UUID]) -> int:
+        async def purge_deleted(self, before: datetime, task_ids: list[UUID]) -> int:
             order.append("task")
-            return await super().purge_deleted(org_id, before, task_ids)
+            return await super().purge_deleted(before, task_ids)
 
     flaky = Flaky(files, infra.get_buckets(), members, relay, MediaOptions())
     storage = Recorded(outbox)
@@ -472,13 +473,15 @@ async def test_the_task_purge_deletes_the_attachments_a_failed_detach_left_first
     left = await files.read_file(ctx.org_id, attached.id)
     assert left is not None and left.deleted_at is None, "the detach failed"
 
-    assert await tasks.purge_deleted(ctx) == 0, "the files would not go, so the task stays"
+    assert await tasks.purge_across_tenants(request()) == 0, (
+        "the files would not go, so the task stays"
+    )
     assert await storage.read_task(ctx.org_id, task.id) is not None
     still = await files.read_file(ctx.org_id, attached.id)
     assert still is not None and still.deleted_at is None
 
     flaky.down = False
-    assert await tasks.purge_deleted(ctx) == 1
+    assert await tasks.purge_across_tenants(request()) == 1
     assert order[-2:] == ["files", "task"], "the files first, then the task"
     assert await storage.read_task(ctx.org_id, task.id) is None
     gone = await files.read_file(ctx.org_id, attached.id)
@@ -488,7 +491,7 @@ async def test_the_task_purge_deletes_the_attachments_a_failed_detach_left_first
     erase = MediaManagerImpl(
         files, infra.get_buckets(), members, relay, MediaOptions(retention=timedelta(0))
     )
-    assert await erase.purge_deleted(ctx) == 1
+    assert await erase.purge_across_tenants() == 1
     bucket = Buckets.USER_FILE_UPLOADS
     assert not await infra.get_buckets().exists(ctx.org_id, bucket, attached.key)
     assert await files.read_file(ctx.org_id, attached.id) is None

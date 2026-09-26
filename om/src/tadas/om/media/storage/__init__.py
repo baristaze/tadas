@@ -39,10 +39,13 @@ class MediaStorageInterface(ABC):
 
     @abstractmethod
     async def read_purgeable(
-        self, org_id: UUID, deleted_before: datetime, pending_before: datetime, limit: int
-    ) -> list[File]:
-        """The rows `media.rules.is_purgeable` names, by id, at most `limit`:
-        deleted before one cut, or pending since before the other."""
+        self, deleted_before: datetime, pending_before: datetime, limit: int
+    ) -> list[tuple[UUID, File]]:
+        """Cross-tenant, for the sweep, in the system scope: the rows
+        `media.rules.is_purgeable` names, at most `limit`, whatever their
+        tenant, each with its tenant: deleted before one cut, or pending since
+        before the other. One read a pass for every tenant, so a tenant with
+        nothing to purge costs nothing."""
         ...
 
     @abstractmethod
@@ -71,4 +74,12 @@ class MediaStorageInterface(ABC):
     async def purge_files(self, org_id: UUID, file_ids: Sequence[UUID]) -> int:
         """The one hard delete: removes the tenant's rows of these ids; returns
         how many went. The sweep calls it after the objects are gone."""
+        ...
+
+    @abstractmethod
+    async def purge_files_across_tenants(self, file_ids: Sequence[UUID]) -> int:
+        """Cross-tenant, for the sweep, in the system scope: `purge_files` for
+        the rows `read_purgeable` gave, whatever their tenant, in one
+        statement; returns how many went. The sweep calls it after the
+        objects are gone."""
         ...

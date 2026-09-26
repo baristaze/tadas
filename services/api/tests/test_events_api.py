@@ -3,7 +3,6 @@ stream position and again on /v1/events after the last seq a client saw."""
 
 from datetime import timedelta
 from pathlib import Path
-from uuid import UUID
 
 import httpx
 from api_support import OWNER, build_container, run, seed_request
@@ -54,9 +53,8 @@ async def test_a_read_below_the_floor_is_gone_and_names_the_head(
     the floor cannot be caught up, and is told where the stream goes on from."""
     for title in ("one", "two", "three"):
         await client.post("/v1/tasks", headers=owner, json={"title": title})
-    org = UUID((await client.get("/v1/me", headers=owner)).json()["org"]["id"])
     events = container.storage.get_event_storage()
-    assert await events.trim(org, utcnow() + timedelta(seconds=1), 2) == 2
+    assert await events.trim(utcnow() + timedelta(seconds=1), 2) == 2
 
     for below in (0, 1):
         gone = await client.get("/v1/events", headers=owner, params={"after_seq": below})

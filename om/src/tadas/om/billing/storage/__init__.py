@@ -45,9 +45,11 @@ class BillingStorageInterface(ABC):
         ...
 
     @abstractmethod
-    async def purge_deliveries(self, org_id: UUID, before: datetime, limit: int) -> int:
-        """Removes at most `limit` of the org's marks older than `before`, past
-        any retry the processor still makes; returns how many."""
+    async def purge_deliveries(self, before: datetime, limit: int) -> int:
+        """Cross-tenant, for the sweep, in the system scope, once a pass for
+        every tenant: removes at most `limit` marks older than `before`, past
+        any retry the processor still makes, whatever their tenant, skipping
+        rows another transaction holds; returns how many."""
         ...
 
     @abstractmethod

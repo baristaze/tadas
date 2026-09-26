@@ -517,17 +517,18 @@ class TenancyStorageInterface(ABC):
         ...
 
     @abstractmethod
-    async def purge_deleted(
-        self, org_id: UUID, before: datetime, tickets_before: datetime, limit: int
-    ) -> int:
-        """The one hard delete: removes the tenant's users soft-deleted before `before`
-        with their memberships (and any membership ended before `before`), its
-        api keys revoked or expired before `before`, its sessions expired
-        before `before` (a revoked one expires within the session's lifetime
-        and goes then), its socket tickets expired before `tickets_before`,
-        and its invitations accepted, revoked, or expired before `before`; at
-        most `limit` rows of each kind, skipping rows another transaction
-        holds; returns how many rows went."""
+    async def purge_deleted(self, before: datetime, tickets_before: datetime, limit: int) -> int:
+        """Cross-tenant, for the sweep, in the system scope: the one hard
+        delete, one transaction a pass for every tenant and the system scope
+        at once. It removes the users soft-deleted before `before` with their
+        memberships (and any membership ended before `before`), the api keys
+        revoked or expired before `before`, the sessions expired before
+        `before` (a revoked one expires within the session's lifetime and
+        goes then; the sign-in sessions of the system scope among them), the
+        socket tickets expired before `tickets_before`, and the invitations
+        accepted, revoked, or expired before `before`; at most `limit` rows
+        of each kind, whatever their tenant, skipping rows another
+        transaction holds; returns how many rows went."""
         ...
 
     @abstractmethod

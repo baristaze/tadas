@@ -7,7 +7,7 @@ from uuid import UUID
 
 from tadas.om.media.types.file import File
 from tadas.om.media.types.page import FilePage
-from tadas.om.opcontext import OpContext
+from tadas.om.opcontext import OpContext, RequestContext
 from tadas.om.orchestrations.types.orchestration import Orchestration, OrchestrationPage
 from tadas.om.tasks.types.bulk import BulkAction, BulkOutcome
 from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor, TaskFilter
@@ -250,9 +250,22 @@ class TasksManagerInterface(ABC):
         ...
 
     @abstractmethod
-    async def purge_deleted(self, ctx: OpContext) -> int:
-        """The sweep, for one tenant: hard-deletes tasks soft-deleted longer ago than
-        the retention period; returns how many. Under a tenant deleted longer
-        ago than the retention every task goes, open and done ones too, since
-        the tenant keeps nothing but its org row. The one hard delete."""
+    async def purge_across_tenants(self, rctx: RequestContext) -> int:
+        """Platform-internal: the sweep, across tenants, once a pass: hard-deletes
+        a batch of tasks soft-deleted longer ago than the retention period,
+        whatever their tenant; returns how many. The attachments of each go
+        first, under the service context of its tenant minted from `rctx`
+        (the tenant-shaped part, paid only by a tenant that has such a task);
+        a task whose files will not go stays for the next pass. A count of a
+        whole batch says there may be more. The one hard delete of a task
+        that lives on."""
+        ...
+
+    @abstractmethod
+    async def purge_tenant(self, ctx: OpContext) -> int:
+        """The sweep, for one tenant deleted longer ago than the retention: every
+        task goes, open and done ones too, since the tenant keeps nothing but
+        its org row; at most a batch a call; returns how many. Any other
+        tenant returns 0 and reads nothing: its deleted tasks go across
+        tenants."""
         ...

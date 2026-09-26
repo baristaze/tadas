@@ -271,27 +271,24 @@ class TasksStoragePostgresImpl(PgStorageBase, TasksStorageInterface):
         async with self._session_for(stmt, org_id=EMPTY_UUID) as session:
             return (await session.execute(stmt)).scalar_one()
 
-    async def read_deleted(self, org_id: UUID, before: datetime, limit: int) -> list[UUID]:
+    async def read_deleted(self, before: datetime, limit: int) -> list[tuple[UUID, UUID]]:
         stmt = (
-            select(Tasks.id)
-            .where(Tasks.org_id == org_id, Tasks.deleted_at < before)
+            select(Tasks.org_id, Tasks.id)
+            .where(Tasks.deleted_at < before)
             .order_by(Tasks.deleted_at)
             .limit(limit)
         )
-        async with self._session_for(stmt, org_id=org_id) as session:
-            return list((await session.execute(stmt)).scalars().all())
+        # Every tenant's deleted tasks, so the system scope, spelled here.
+        async with self._session_for(stmt, org_id=EMPTY_UUID) as session:
+            return [(org_id, task_id) for org_id, task_id in await session.execute(stmt)]
 
-    async def purge_deleted(self, org_id: UUID, before: datetime, task_ids: list[UUID]) -> int:
+    async def purge_deleted(self, before: datetime, task_ids: list[UUID]) -> int:
         if not task_ids:
             return 0
         stmt = delete_batch(
-            Tasks,
-            Tasks.org_id == org_id,
-            Tasks.id.in_(task_ids),
-            Tasks.deleted_at < before,
-            limit=len(task_ids),
+            Tasks, Tasks.id.in_(task_ids), Tasks.deleted_at < before, limit=len(task_ids)
         )
-        async with self._session_for(stmt, org_id=org_id) as session:
+        async with self._session_for(stmt, org_id=EMPTY_UUID) as session:
             purged = deleted(await session.execute(stmt))
             await session.commit()
             return purged

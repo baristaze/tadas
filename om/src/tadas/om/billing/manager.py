@@ -116,9 +116,18 @@ class BillingManagerInterface(EntitlementsInterface):
         ...
 
     @abstractmethod
-    async def purge_deleted(self, ctx: OpContext) -> int:
-        """The sweep, for one tenant: the marks of deliveries past the
-        retention; under a tenant past its own retention, its account too."""
+    async def purge_across_tenants(self) -> int:
+        """Platform-internal: the sweep, across tenants, once a pass: the marks
+        of deliveries past the retention, a batch at most, whatever their
+        tenant; returns how many. It takes no context, because it runs for
+        no tenant and no principal."""
+        ...
+
+    @abstractmethod
+    async def purge_tenant(self, ctx: OpContext) -> int:
+        """The sweep, for one tenant past its own retention: its account and
+        its marks, a batch of each at most a call. Any other tenant returns 0
+        and reads nothing: its marks go across tenants."""
         ...
 
 

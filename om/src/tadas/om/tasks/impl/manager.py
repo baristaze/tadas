@@ -19,7 +19,7 @@ from tadas.om.media import MediaManagerInterface
 from tadas.om.media.rules import BOUNDS
 from tadas.om.media.types.file import File, FilePurpose, FileStatus
 from tadas.om.media.types.page import FilePage
-from tadas.om.opcontext import OpContext, Permission
+from tadas.om.opcontext import OpContext, Permission, RequestContext
 from tadas.om.orchestrations import OrchestrationsManagerInterface
 from tadas.om.orchestrations.rules import advanced
 from tadas.om.orchestrations.steps import step_rows
@@ -801,23 +801,29 @@ class TasksManagerImpl(TasksManagerInterface):
             await self._relay.relay(ctx.org_id, row)
         return reminded
 
-    async def purge_deleted(self, ctx: OpContext) -> int:
-        ctx.require(Permission.WRITE)
-        batch = self._options.purge_batch
-        if await self._tenancy.tenant_expired(ctx):
-            # The tenant itself is past the retention, so it keeps nothing but
-            # its org row. An open or a done task carries no `deleted_at`, so
-            # the purge below would leave every one of them behind forever.
-            # Its files go by the media sweep, which takes every file of it.
-            return await self._storage.purge_tenant(ctx.org_id, batch)
+    async def purge_across_tenants(self, rctx: RequestContext) -> int:
         before = utcnow() - self._options.retention
-        purgeable = await self._storage.read_deleted(ctx.org_id, before, batch)
-        # The attachments go before their task, through the media manager,
-        # whose sweep erases each object before its row. The delete detached
-        # them already unless that failed; asking again is what retries it,
-        # and a task whose files still will not go stays for the next pass.
+        purgeable = await self._storage.read_deleted(before, self._options.purge_batch)
+        by_tenant: dict[UUID, list[UUID]] = {}
+        for org_id, task_id in purgeable:
+            by_tenant.setdefault(org_id, []).append(task_id)
         detached: list[UUID] = []
-        for task_id in purgeable:
+        for org_id, task_ids in by_tenant.items():
+            detached.extend(await self._detach(rctx, org_id, task_ids))
+        return await self._storage.purge_deleted(before, detached)
+
+    async def _detach(self, rctx: RequestContext, org_id: UUID, task_ids: list[UUID]) -> list[UUID]:
+        """The attachments of a tenant's deleted tasks go before their tasks,
+        through the media manager, whose sweep erases each object before its
+        row. The delete detached them already unless that failed; asking again
+        is what retries it, and a task whose files still will not go stays for
+        the next pass. A tenant the sweep no longer visits (marked purged) has
+        had every file taken with it, so its tasks go as they are."""
+        ctx = await self._tenancy.sweep_context(rctx, org_id)
+        if ctx is None:
+            return task_ids
+        detached: list[UUID] = []
+        for task_id in task_ids:
             try:
                 await self._media.delete_subject_files(ctx, FilePurpose.TASK_ATTACHMENT, task_id)
             except Exception:
@@ -825,7 +831,18 @@ class TasksManagerImpl(TasksManagerInterface):
                 OUTCOMES.labels(subsystem="tasks", outcome="detach_failed").inc()
                 continue
             detached.append(task_id)
-        return await self._storage.purge_deleted(ctx.org_id, before, detached)
+        return detached
+
+    async def purge_tenant(self, ctx: OpContext) -> int:
+        ctx.require(Permission.WRITE)
+        if not await self._tenancy.tenant_expired(ctx):
+            return 0
+        # The tenant itself is past the retention, so it keeps nothing but
+        # its org row. An open or a done task carries no `deleted_at`, so
+        # the purge across tenants would leave every one of them behind
+        # forever. Its files go by the media sweep, which takes every file
+        # of it.
+        return await self._storage.purge_tenant(ctx.org_id, self._options.purge_batch)
 
     async def _room_for_one_more(self, ctx: OpContext) -> None:
         """The plan's bound on active tasks, asked before one more is open. It

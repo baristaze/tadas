@@ -3,7 +3,7 @@ tenant fence's evidence: each one presents another tenant's identifier and
 asserts that nothing is found and nothing changes. The negative control that
 says what they catch is in `docs/runbooks/tenant-isolation.md`."""
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from uuid import UUID
 
 import pytest
@@ -24,6 +24,17 @@ from tadas.om.tasks.storage import TasksStorageInterface
 from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor, TaskFilter
 from tadas.om.tasks.types.task import Task, TaskScope, TaskStatus
 
+
+async def drained(storage: TasksStorageInterface) -> datetime:
+    """A cut no other case's task is deleted before, with whatever an earlier
+    run of these cases left behind it purged first: the read and the purge
+    reach across tenants, so a case owns the rows behind its cut."""
+    cut = utcnow() - timedelta(days=36500)
+    while left := await storage.read_deleted(cut, 1000):
+        await storage.purge_deleted(cut, [task_id for _, task_id in left])
+    return cut
+
+
 CROSS_TENANT_CASES: frozenset[str] = frozenset(
     {
         "update_archived_in_step",
@@ -32,11 +43,9 @@ CROSS_TENANT_CASES: frozenset[str] = frozenset(
         "create_task",
         "create_tasks_in_step",
         "mark_reminded",
-        "purge_deleted",
         "purge_tenant",
         "read_archivable",
         "read_archived_tasks",
-        "read_deleted",
         "read_done_tasks",
         "read_last_place",
         "read_open_places",
@@ -749,9 +758,11 @@ class TaskStorageContract:
     async def test_purge_removes_only_tasks_deleted_before_the_cut(
         self, storage: TasksStorageInterface
     ) -> None:
+        """The read and the purge reach across tenants: every tenant's tasks
+        deleted before the cut, the longest deleted first, and none after."""
         org, elsewhere = new_id(), new_id()
+        cut = await drained(storage)
         old, recent, live = make_task("old"), make_task("recent"), make_task("live")
-        cut = utcnow()
         await seed(
             storage,
             org,
@@ -761,38 +772,38 @@ class TaskStorageContract:
         await seed(storage, org, live)
         other = make_task("other")
         await seed(
-            storage, elsewhere, other.model_copy(update={"deleted_at": cut - timedelta(days=1)})
+            storage, elsewhere, other.model_copy(update={"deleted_at": cut - timedelta(days=2)})
         )
-        assert await storage.read_deleted(org, cut, 10) == [old.id]
-        assert await storage.read_deleted(elsewhere, cut, 10) == [other.id]
-        assert await storage.purge_deleted(elsewhere, cut, [old.id]) == 0, "per tenant"
-        assert await storage.purge_deleted(org, cut, [old.id, recent.id, live.id]) == 1
+        assert await storage.read_deleted(cut, 10) == [(elsewhere, other.id), (org, old.id)]
+        assert await storage.purge_deleted(cut, [old.id, recent.id, live.id]) == 1
         assert await storage.read_task(org, old.id) is None
         assert await storage.read_task(org, recent.id) is not None
         assert await storage.read_task(org, live.id) == live
-        assert await storage.read_task(elsewhere, other.id) is not None, "per tenant"
-        assert await storage.purge_deleted(org, cut, [old.id]) == 0, "idempotent"
-        assert await storage.read_deleted(org, cut, 10) == []
+        assert await storage.read_task(elsewhere, other.id) is not None, "only the ids named"
+        assert await storage.purge_deleted(cut, [old.id]) == 0, "idempotent"
+        assert await storage.read_deleted(cut, 10) == [(elsewhere, other.id)]
+        assert await storage.purge_deleted(cut, [other.id]) == 1, "whatever its tenant"
+        assert await storage.read_deleted(cut, 10) == []
 
     async def test_a_backlog_past_a_batch_goes_a_batch_at_a_time(
         self, storage: TasksStorageInterface
     ) -> None:
         org = new_id()
-        cut = utcnow()
+        cut = await drained(storage)
         for i in range(5):
             gone = make_task(f"gone {i}").model_copy(
                 update={"deleted_at": cut - timedelta(days=1, minutes=5 - i), "deleted_by": org}
             )
             await seed(storage, org, gone)
-        first = await storage.read_deleted(org, cut, 2)
+        first = [task_id for _, task_id in await storage.read_deleted(cut, 2)]
         assert len(first) == 2, "the oldest deletes first, a batch at most"
-        assert await storage.purge_deleted(org, cut, first) == 2
-        second = await storage.read_deleted(org, cut, 2)
+        assert await storage.purge_deleted(cut, first) == 2
+        second = [task_id for _, task_id in await storage.read_deleted(cut, 2)]
         assert not set(first) & set(second)
-        assert await storage.purge_deleted(org, cut, second) == 2
-        last = await storage.read_deleted(org, cut, 2)
-        assert await storage.purge_deleted(org, cut, last) == 1, "a short batch: drained"
-        assert await storage.read_deleted(org, cut, 2) == []
+        assert await storage.purge_deleted(cut, second) == 2
+        last = [task_id for _, task_id in await storage.read_deleted(cut, 2)]
+        assert await storage.purge_deleted(cut, last) == 1, "a short batch: drained"
+        assert await storage.read_deleted(cut, 2) == []
         live = make_task("live")
         await seed(storage, org, live)
         assert await storage.purge_tenant(org, 2) == 1

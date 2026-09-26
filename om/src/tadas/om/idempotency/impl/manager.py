@@ -121,11 +121,9 @@ class IdempotencyManagerImpl(IdempotencyManagerInterface):
             return stored
         return pending
 
-    async def purge(self, ctx: OpContext) -> int:
-        ctx.require(Permission.WRITE)
+    async def purge_across_tenants(self) -> int:
         now = utcnow()
         return await self._storage.purge_records(
-            ctx.org_id,
             now - self._options.retention,
             lease_bound(now - self._options.pending_ttl * self._options.abandoned_after),
             self._options.purge_batch,

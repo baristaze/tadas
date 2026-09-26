@@ -99,9 +99,19 @@ class MediaManagerInterface(ABC):
         ...
 
     @abstractmethod
-    async def purge_deleted(self, ctx: OpContext) -> int:
-        """The sweep, for one tenant, one batch at a time: removes the objects
-        of files deleted past the retention and of uploads abandoned past the
-        pending window, then their rows; under a tenant past its retention,
-        every file. Returns how many rows went."""
+    async def purge_across_tenants(self) -> int:
+        """Platform-internal: the sweep, across tenants, once a pass, one batch
+        at a time: removes the objects of files deleted past the retention
+        and of uploads abandoned past the pending window, whatever their
+        tenant, then their rows. Returns how many rows went. It takes no
+        context, because it runs for no tenant and no principal: an object is
+        found by its tenant and its key."""
+        ...
+
+    @abstractmethod
+    async def purge_tenant(self, ctx: OpContext) -> int:
+        """The sweep, for one tenant past its retention, one batch at a time:
+        every file's object, live or not, then its row. Returns how many rows
+        went. Any other tenant returns 0 and reads nothing: its files past
+        their cut go across tenants."""
         ...

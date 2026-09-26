@@ -316,7 +316,7 @@ async def test_purge_takes_finished_records_past_the_retention_and_abandoned_mar
     )
     await storage.write_record(ctx.org_id, dropped)
     await storage.write_record(ctx.org_id, held_open)
-    assert await manager.purge(ctx) == 3
+    assert await manager.purge_across_tenants() == 3
     assert await storage.read_record(ctx.org_id, ctx.user_id, "stale") is None
     assert await storage.read_record(ctx.org_id, ctx.user_id, "forgotten") is None
     assert await storage.read_record(ctx.org_id, ctx.user_id, "dropped") is None
@@ -325,8 +325,6 @@ async def test_purge_takes_finished_records_past_the_retention_and_abandoned_mar
     assert await storage.read_record(ctx.org_id, ctx.user_id, "held-open") == held_open
     # A purged key is free again: the next begin runs the request anew.
     assert (await manager.begin(ctx, "stale", "d", new_id())).pending
-    with pytest.raises(NotAuthorized):
-        await manager.purge(context(Role.VIEWER, ctx.org_id))
 
 
 async def test_the_operator_marker_runs_the_same_moves_in_the_system_scope(

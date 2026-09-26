@@ -63,11 +63,11 @@ class OrchestrationsStorageMemoryImpl(
             self._check(org_id, record.id, expected_version)
             self._put(self._records, org_id, record, outbox_rows)
 
-    async def purge_settled(self, org_id: UUID, before: datetime, limit: int) -> int:
+    async def purge_settled(self, before: datetime, limit: int) -> int:
         async with self._lock:
             gone = [
                 r.id
-                for r in self._rows(self._records, org_id)
+                for _, r in self._rows_across_tenants(self._records)
                 if is_settled(r) and r.updated_at < before
             ][:limit]
             for record_id in gone:

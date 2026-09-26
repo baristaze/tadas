@@ -4,8 +4,8 @@ and the idempotency, invitations, and Slack purges each read the index made
 for them.
 
 The plans are read off the statements the storage impls send, captured as
-they go to the driver, and explained as the runtime login under the scope the
-statement ran in, with row-level security in force. Each is explained twice:
+they go to the driver, and explained under the scope the statement ran in, by
+the login that scope runs on, with row-level security in force. Each is explained twice:
 with the values it was sent with, and as the generic plan a prepared statement
 reaches after five runs, in which every value is a parameter. A partial index
 whose predicate names a bound value serves the first and never the second.
@@ -27,7 +27,7 @@ from contracts.idempotency_storage import attempt_minted_at, make_record
 from sqlalchemy import event, text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
-from tadas.om.base import new_id, utcnow
+from tadas.om.base import EMPTY_UUID, new_id, utcnow
 from tadas.om.idempotency.storage.impl.postgres import IdempotencyStoragePostgresImpl
 from tadas.om.slack.storage.impl.postgres import SlackStoragePostgresImpl
 from tadas.om.storage.impl.pg_base import LoginSessions, set_scope
@@ -108,8 +108,9 @@ async def plans(
     sessions, engines = watched
     sql, parameters = next(s for s in await sent(engines, call) if naming in s[0])
     found: list[str] = []
+    logins = sessions.system if org_id == EMPTY_UUID else sessions
     for generic in (False, True):
-        async with sessions[DatabaseRole.CORE]() as session:
+        async with logins[DatabaseRole.CORE]() as session:
             await set_scope(session, org_id, None, None)
             await session.execute(text("SET LOCAL enable_seqscan = off"))
             connection = await session.connection()
@@ -271,11 +272,11 @@ async def test_the_pending_markers_serve_the_purge_and_the_re_mint_fence(
     abandoned = attempt_minted_at(utcnow() - timedelta(minutes=30))
     custom, generic = await plans(
         watched,
-        org,
-        lambda: markers.purge_records(org, utcnow() - timedelta(days=1), abandoned, 1000),
+        EMPTY_UUID,
+        lambda: markers.purge_records(utcnow() - timedelta(days=1), abandoned, 1000),
         "core.idempotency_records",
     )
-    both = ("ix_idempotency_records_org_id_created_at", "ix_idempotency_records_org_id_attempt_id")
+    both = ("ix_idempotency_records_created_at", "ix_idempotency_records_attempt_id")
     assert served(custom, *both), custom
     assert served(generic, *both), generic
 
@@ -294,40 +295,46 @@ async def test_the_pending_markers_serve_the_purge_and_the_re_mint_fence(
         lambda: tenancy.issue_api_key(org, again, (), attempt),
         "UPDATE core.api_keys",
     )
-    assert served(custom, "ix_idempotency_records_org_id_attempt_id"), custom
-    assert served(generic, "ix_idempotency_records_org_id_attempt_id"), generic
+    assert served(custom, "ix_idempotency_records_attempt_id"), custom
+    assert served(generic, "ix_idempotency_records_attempt_id"), generic
 
 
-async def test_the_invitations_and_slack_purges_read_one_tenant(watched: Watched) -> None:
-    """Each reads the tenant's rows through an index that leads with org_id,
-    not the whole table: the retention purges and the tenant purge alike."""
+async def test_the_invitations_and_slack_purges_read_their_indexes(watched: Watched) -> None:
+    """The retention purges read across tenants through an index that leads
+    with the retention column, and the purge of a tenant reads that tenant's
+    rows through one that leads with org_id: neither reads the whole table."""
     sessions = watched[0]
     org = new_id()
-    now = utcnow()
+    # A cut no row of this database is behind, so the capture deletes nothing.
+    cut = utcnow() - timedelta(days=36500)
     tenancy = TenancyStoragePostgresImpl(sessions)
     slack = SlackStoragePostgresImpl(sessions)
-    for call, naming, index in (
+    for scope, call, naming, index in (
         (
-            lambda: tenancy.purge_deleted(org, now, now, 1000),
+            EMPTY_UUID,
+            lambda: tenancy.purge_deleted(cut, cut, 1000),
             "core.invitations",
-            "ix_invitations_org_id_expires_at",
+            ("ix_invitations_updated_at", "ix_invitations_expires_at"),
         ),
         (
+            org,
             lambda: tenancy.purge_tenant(org, 1000),
             "core.invitations",
-            "ix_invitations_org_id_expires_at",
+            ("ix_invitations_org_id_expires_at",),
         ),
         (
-            lambda: slack.purge(org, now, 1000),
+            EMPTY_UUID,
+            lambda: slack.purge(cut, 1000),
             "core.slack_installations",
-            "ix_slack_installations_org_id_deleted_at",
+            ("ix_slack_installations_deleted_at",),
         ),
         (
+            org,
             lambda: slack.purge_tenant(org, 1000),
             "core.slack_installations",
-            "ix_slack_installations_org_id_deleted_at",
+            ("ix_slack_installations_org_id_deleted_at",),
         ),
     ):
-        custom, generic = await plans(watched, org, call, naming)
-        assert served(custom, index), custom
-        assert served(generic, index), generic
+        custom, generic = await plans(watched, scope, call, naming)
+        assert served(custom, *index), custom
+        assert served(generic, *index), generic

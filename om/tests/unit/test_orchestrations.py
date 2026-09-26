@@ -245,7 +245,8 @@ async def test_the_sweep_purges_settled_records_past_the_retention(world: World)
     )
     await storage.write_orchestration(ctx.org_id, aged, ended.version, ())
     live = await orchestrations.start(ctx, a_record())
-    assert await orchestrations.purge_deleted(ctx) == 1
+    assert await orchestrations.purge_tenant(ctx) == 0, "a living tenant keeps its records"
+    assert await orchestrations.purge_across_tenants() == 1
     with pytest.raises(NotFound):
         await orchestrations.get(ctx, old.id)
     assert (await orchestrations.get(ctx, live.id)).id == live.id

@@ -5,7 +5,7 @@ from uuid import UUID
 
 from contracts.factories import make_org, make_user
 from tadas.infra.impl.local import InfraLocalImpl
-from tadas.om.base import new_id
+from tadas.om.base import EMPTY_UUID, new_id
 from tadas.om.exceptions import NotFound
 from tadas.om.media.impl.manager import MediaManagerImpl, MediaOptions
 from tadas.om.media.storage.impl.memory import MediaStorageMemoryImpl
@@ -33,11 +33,12 @@ APP = AppContext(type=AppType.PORTAL, version="portal@test")
 
 
 class Members(TenancyManagerInterface):
-    """Just enough tenancy for the assignee check and for the sweep's question:
-    the users of one org, and whether the tenant is past its retention. A
-    partial double: only `get_user` and `tenant_expired` are reached, and any
-    other method fails loudly as unimplemented, so the abstract set is cleared
-    below."""
+    """Just enough tenancy for the assignee check and for the sweep's
+    questions: the users of one org, whether the tenant is past its
+    retention, and the context the sweep works a tenant's rows under. A
+    partial double: only `get_user`, `tenant_expired`, and `sweep_context` are
+    reached, and any other method fails loudly as unimplemented, so the
+    abstract set is cleared below."""
 
     def __init__(self) -> None:
         self.users: dict[UUID, User] = {}
@@ -52,8 +53,23 @@ class Members(TenancyManagerInterface):
     async def tenant_expired(self, ctx: OpContext) -> bool:
         return self.expired
 
+    async def sweep_context(self, rctx: RequestContext, org_id: UUID) -> OpContext | None:
+        return build_context(
+            rctx,
+            user_id=EMPTY_UUID,
+            org_id=org_id,
+            role=Role.SERVICE,
+            permissions=permissions_of(Role.SERVICE),
+            credential_kind=CredentialKind.INTERNAL,
+        )
+
 
 Members.__abstractmethods__ = frozenset()
+
+
+def request() -> RequestContext:
+    """The request stage a case mints at its edge, as the sweep mints one a pass."""
+    return RequestContext(request_id=new_id(), app=APP)
 
 
 def context(role: Role, org: Org | None = None, members: Members | None = None) -> OpContext:

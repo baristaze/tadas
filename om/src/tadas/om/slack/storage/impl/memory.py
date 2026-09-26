@@ -113,23 +113,25 @@ class SlackStorageMemoryImpl(MemoryStorageBase, SlackStorageInterface):
                 raise UniqueKeyTaken("pk_slack_posts is taken")
             return True
 
-    async def purge(self, org_id: UUID, before: datetime, limit: int) -> int:
+    async def purge(self, before: datetime, limit: int) -> int:
         async with self._lock:
             gone = [
                 i.id
-                for i in self._rows(self._installations, org_id)
+                for _, i in self._rows_across_tenants(self._installations)
                 if i.deleted_at is not None and i.deleted_at < before
             ][:limit]
             for key in gone:
                 del self._installations[key]
             states = [
                 s.id
-                for s in self._rows(self._states, org_id)
+                for _, s in self._rows_across_tenants(self._states)
                 if s.expires_at < before or (s.redeemed_at is not None and s.redeemed_at < before)
             ][:limit]
             for key in states:
                 del self._states[key]
-            posts = [p.id for p in self._rows(self._posts, org_id) if p.created_at < before][:limit]
+            posts = [
+                p.id for _, p in self._rows_across_tenants(self._posts) if p.created_at < before
+            ][:limit]
             for key in posts:
                 del self._posts[key]
             return len(gone) + len(states) + len(posts)

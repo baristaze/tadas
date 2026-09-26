@@ -42,11 +42,11 @@ class MediaStorageMemoryImpl(MemoryStorageBase, MediaStorageInterface):
         return [f for f in self._rows(self._files, org_id) if after is None or f.id > after][:limit]
 
     async def read_purgeable(
-        self, org_id: UUID, deleted_before: datetime, pending_before: datetime, limit: int
-    ) -> list[File]:
+        self, deleted_before: datetime, pending_before: datetime, limit: int
+    ) -> list[tuple[UUID, File]]:
         return [
-            f
-            for f in self._rows(self._files, org_id)
+            (org_id, f)
+            for org_id, f in self._rows_across_tenants(self._files)
             if is_purgeable(f, deleted_before, pending_before)
         ][:limit]
 
@@ -70,6 +70,13 @@ class MediaStorageMemoryImpl(MemoryStorageBase, MediaStorageInterface):
             gone = [
                 i for i in dict.fromkeys(file_ids) if self._get(self._files, org_id, i) is not None
             ]
+            for file_id in gone:
+                del self._files[file_id]
+            return len(gone)
+
+    async def purge_files_across_tenants(self, file_ids: Sequence[UUID]) -> int:
+        async with self._lock:
+            gone = [i for i in dict.fromkeys(file_ids) if i in self._files]
             for file_id in gone:
                 del self._files[file_id]
             return len(gone)
