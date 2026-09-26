@@ -32,7 +32,7 @@ class ApiSettings(StorageSettings, InfraSettings, IntegrationsSettings):
     cors_origins: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
     # The proxies whose X-Forwarded-For names the client, as addresses or
     # CIDR blocks; never "*", which trusts every peer and so lets any caller
-    # choose its own address for the login rate limit. Empty, the peer is the
+    # choose its own address for the rate limits. Empty, the peer is the
     # client and the header is ignored; the cloud passes the VPC block the
     # load balancer lives in.
     trusted_proxies: list[str] = []
@@ -63,6 +63,23 @@ class ApiSettings(StorageSettings, InfraSettings, IntegrationsSettings):
     # delay below, which no crowd dilutes.
     login_rate_limit: int = 2000
     login_rate_window_seconds: int = 60
+    # Each session and each api key has a budget of its own, reads (GET,
+    # HEAD) apart from writes, over one window. The subject is the
+    # credential, so a crowd behind one address never shares it, and it is
+    # sized for the busiest honest client: a tab that loads a page, follows
+    # its hints, and refetches on focus, or a traffic run's stress profile at
+    # its fastest. An integration that polls once a second spends 60 of it.
+    credential_rate_limit_reads: int = Field(default=3000, gt=0)
+    credential_rate_limit_writes: int = Field(default=1200, gt=0)
+    credential_rate_window_seconds: int = Field(default=60, gt=0)
+    # Each address has a budget of failed authentications: a bearer the API
+    # looked up and refused, because it is unknown, expired, or revoked. Once
+    # it is spent, a request from that address is refused before its
+    # credential is looked up, until the window ends. One address is a crowd
+    # here too, and a crowd back from a weekend sends a burst of expired
+    # sessions, one per open call of each tab, so it is sized for that.
+    failed_authentication_limit: int = Field(default=1000, gt=0)
+    failed_authentication_window_seconds: int = Field(default=60, gt=0)
     # Past the per-address limit, which rides the cache and fails open: a run
     # of wrong second-factor codes for one email makes the next one wait,
     # counted in the database. The first `sign_in_free_failures` cost
@@ -146,8 +163,8 @@ class ApiSettings(StorageSettings, InfraSettings, IntegrationsSettings):
     # the pools carry no overflow. Reads are the many and writes the few, so
     # that is how the bound is split. A burst still waits briefly on a
     # checkout, which has a bound of its own, and only a flood is refused; it
-    # is not the login rate limit, which is fairness between subjects and
-    # fails open.
+    # is not the rate limits above, which are fairness between subjects and
+    # fail open.
     admission_limit_reads: int = Field(default=400, gt=0)
     admission_limit_writes: int = Field(default=200, gt=0)
     admission_retry_after_seconds: int = 1

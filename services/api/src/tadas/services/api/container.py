@@ -27,7 +27,7 @@ from tadas.om.root import Managers, TenancyOperatorOptions, TenancyOptions, buil
 from tadas.om.storage.impl.memory import StorageMemoryImpl
 from tadas.om.storage.impl.postgres import StoragePostgresImpl
 from tadas.om.storage.root import StorageInterface
-from tadas.services.api.gateway.ratelimit import RateLimit, RateLimitOptions
+from tadas.services.api.gateway.ratelimit import RateLimit, RateLimitOptions, RefusedAddresses
 from tadas.services.api.services import ServicesInterface
 from tadas.services.api.services.impl.root import build_services
 from tadas.services.api.settings import ApiSettings
@@ -97,6 +97,18 @@ def rate_limit_options(settings: ApiSettings) -> RateLimitOptions:
             limit=settings.login_rate_limit,
             window=timedelta(seconds=settings.login_rate_window_seconds),
         ),
+        reads=RateLimit(
+            limit=settings.credential_rate_limit_reads,
+            window=timedelta(seconds=settings.credential_rate_window_seconds),
+        ),
+        writes=RateLimit(
+            limit=settings.credential_rate_limit_writes,
+            window=timedelta(seconds=settings.credential_rate_window_seconds),
+        ),
+        failed_authentications=RateLimit(
+            limit=settings.failed_authentication_limit,
+            window=timedelta(seconds=settings.failed_authentication_window_seconds),
+        ),
     )
 
 
@@ -134,6 +146,9 @@ class AppContainer:
         self.managers = managers
         self.services = services
         self.rate_limits = rate_limits
+        # What the shared count said of each address that spent its budget of
+        # failed authentications, until that window ends (ADR 0059).
+        self.refused_addresses = RefusedAddresses()
 
     @property
     def payments(self) -> PaymentsInterface:
