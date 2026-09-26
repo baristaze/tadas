@@ -91,15 +91,6 @@ path = "om/src/tadas/om/work/storage/tables/work_items.py"
 adr = "docs/adr/0026-what-0-31-0-leaves-as-a-choice.md"
 reason = "the unique index is (org_id, idempotency_key), led by the tenant as the lens asks"
 
-# One living Slack installation per org is a partial unique index on
-# org_id alone; the purge's (org_id, deleted_at) index reads the rows it
-# leaves out.
-[[tool.arch-check.exception]]
-rule = "STO-14"
-path = "om/src/tadas/om/slack/storage/tables/slack.py"
-adr = "docs/adr/0043-a-unique-rule-on-org-id-alone-sits-beside-the-purge-index.md"
-reason = "the org_id index is the partial unique rule of one living installation per org, not a lookup the compound index makes useless"
-
 # The release before writes a task's position and cannot write its rank; a
 # trigger gives such a row the rank its position names, for one release.
 [[tool.arch-check.exception]]

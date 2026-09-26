@@ -1,6 +1,12 @@
 # ADR 0043: A unique rule on org_id alone sits beside the purge's index
 
-**Status**: accepted (2026-10-03).
+**Status**: superseded (2026-09-26). Guideline v0.35.0 fixes STO-14:
+it no longer flags a unique index on `org_id` beside a compound index
+that `org_id` leads, because a unique index is a rule, one row per
+tenant, and not a second lookup. Both indexes stay, as this record
+decided. The exception for STO-14 leaves `pyproject.toml`, and
+`arch-check` passes without it. The record stays for the interval it
+covers.
 
 ## Context
 
