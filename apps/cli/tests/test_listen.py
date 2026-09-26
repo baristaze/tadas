@@ -1,7 +1,8 @@
 """The listener over the in-process API and a scripted channel: each change
 is fetched and told as one line, deletes are told from memory, `--mine`
-filters, connection states reach stderr, and a read that fails every attempt
-skips the change without ending the stream."""
+filters, connection states reach stderr, a read that fails every attempt
+skips the change without ending the stream, and a stream trimmed past the
+listener is said on stderr and read afresh."""
 
 import asyncio
 import io
@@ -63,6 +64,7 @@ def test_every_change_becomes_one_line(stack: Stack) -> None:
         client: ApiClient,
         on_state: Callable[[State], None],
         on_first_open: Callable[[], Awaitable[None]],
+        on_resync: Callable[[], Awaitable[None]],
     ) -> AsyncIterator[EntityChanged]:
         """Bob and the owner act while the owner listens; the changes are the
         pushes the socket would carry, read back from the event stream."""
@@ -131,6 +133,7 @@ def test_a_deleted_task_seen_before_the_listener_started_still_has_a_title(stack
         client: ApiClient,
         on_state: Callable[[State], None],
         on_first_open: Callable[[], Awaitable[None]],
+        on_resync: Callable[[], Awaitable[None]],
     ) -> AsyncIterator[EntityChanged]:
         await on_first_open()
         async with stack.client(owner) as as_owner:
@@ -161,6 +164,42 @@ def test_a_deleted_task_seen_before_the_listener_started_still_has_a_title(stack
     ]
 
 
+def test_a_stream_trimmed_past_the_listener_is_said_and_every_task_read_again(
+    stack: Stack,
+) -> None:
+    """What happened in the trimmed stretch is not told, and stderr says so.
+    The tasks are read again there, so a task made in that stretch and
+    deleted after it still has its title."""
+    owner = stack.session_token(OWNER["email"])
+    out, err = io.StringIO(), io.StringIO()
+
+    async def scripted(
+        client: ApiClient,
+        on_state: Callable[[State], None],
+        on_first_open: Callable[[], Awaitable[None]],
+        on_resync: Callable[[], Awaitable[None]],
+    ) -> AsyncIterator[EntityChanged]:
+        await on_first_open()
+        async with stack.client(owner) as as_owner:
+            unseen = await as_owner.create_task("Made while trimmed")
+            await on_resync()
+            await as_owner.delete_task(unseen.id, unseen.version)
+            deleted = (await as_owner.events_after(0))[-1]
+        yield EntityChanged.of_event(deleted)
+
+    async def drive() -> None:
+        async with stack.client(owner) as client:
+            await listen(
+                client, mine=False, out=out, err=err, channel=scripted, clock=lambda: CLOCK
+            )
+
+    asyncio.run(drive())
+    assert out.getvalue().splitlines()[1:] == ["09:30:00  Ann deleted a task: Made while trimmed"]
+    assert err.getvalue().splitlines() == [
+        "some changes are gone from the stream; reading every task again"
+    ]
+
+
 def test_a_read_that_fails_every_attempt_skips_the_change_and_keeps_listening(
     stack: Stack,
 ) -> None:
@@ -187,6 +226,7 @@ def test_a_read_that_fails_every_attempt_skips_the_change_and_keeps_listening(
         client: ApiClient,
         on_state: Callable[[State], None],
         on_first_open: Callable[[], Awaitable[None]],
+        on_resync: Callable[[], Awaitable[None]],
     ) -> AsyncIterator[EntityChanged]:
         await on_first_open()
         async with stack.client(bob) as as_bob, stack.client(owner) as as_owner:
@@ -244,6 +284,7 @@ def test_a_read_refused_with_401_ends_the_listener(stack: Stack) -> None:
         client: ApiClient,
         on_state: Callable[[State], None],
         on_first_open: Callable[[], Awaitable[None]],
+        on_resync: Callable[[], Awaitable[None]],
     ) -> AsyncIterator[EntityChanged]:
         await on_first_open()
         async with stack.client(owner) as as_owner:
@@ -285,6 +326,7 @@ def test_a_read_that_answers_404_keeps_the_title_for_the_delete_that_follows(
         client: ApiClient,
         on_state: Callable[[State], None],
         on_first_open: Callable[[], Awaitable[None]],
+        on_resync: Callable[[], Awaitable[None]],
     ) -> AsyncIterator[EntityChanged]:
         await on_first_open()
         async with stack.client(bob) as as_bob, stack.client(owner) as as_owner:

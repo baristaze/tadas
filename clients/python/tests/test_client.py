@@ -735,6 +735,20 @@ def test_a_retry_waits_at_least_what_the_server_asked_up_to_the_cap() -> None:
     assert retry_wait_seconds(0.2, 60.0) == MAX_BACKOFF_SECONDS
 
 
+async def test_a_truncated_stream_names_its_head_on_the_error() -> None:
+    def respond(request: httpx.Request) -> httpx.Response:
+        error = {"code": "stream_truncated", "message": "gone", "request_id": "r"}
+        return httpx.Response(410, json={"error": {**error, "stream": {"floor": 3, "head": 9}}})
+
+    async with ApiClient(
+        "http://test", app="cli", app_version="cli@test", transport=httpx.MockTransport(respond)
+    ) as client:
+        with pytest.raises(ApiError) as refused:
+            await client.events_after(1)
+    assert (refused.value.status, refused.value.code) == (410, "stream_truncated")
+    assert refused.value.stream_head == 9
+
+
 async def test_the_retry_after_rides_on_the_error() -> None:
     def respond(request: httpx.Request) -> httpx.Response:
         body = {"error": {"code": "unavailable", "message": "busy", "request_id": "r"}}

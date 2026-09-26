@@ -121,10 +121,15 @@ class BusySocket:
 
 
 def transport(
-    events: list[dict[str, Any]], ticket_failures: list[Exception | int] | None = None
+    events: list[dict[str, Any]],
+    ticket_failures: list[Exception | int] | None = None,
+    floor: int = 0,
+    asked: list[int] | None = None,
 ) -> httpx.MockTransport:
     """`ticket_failures` are consumed one per ticket request before tickets succeed:
-    an exception to raise, or a status to answer with."""
+    an exception to raise, or a status to answer with. A read of the stream
+    after a seq below `floor` is refused as the API refuses it, naming the
+    last event's seq as the head; `asked` records every `after_seq` read."""
     failures = list(ticket_failures or [])
 
     def handle(request: httpx.Request) -> httpx.Response:
@@ -137,6 +142,13 @@ def transport(
             return httpx.Response(201, json={"ticket": "tkt_1", "expires_in_seconds": 30})
         if request.url.path == "/v1/events":
             after = int(request.url.params["after_seq"])
+            if asked is not None:
+                asked.append(after)
+            if after < floor:
+                head = max((e["seq"] for e in events), default=floor)
+                gone = {"code": "stream_truncated", "message": "gone", "request_id": None}
+                stream = {"floor": floor, "head": head}
+                return httpx.Response(410, json={"error": {**gone, "stream": stream}})
             return httpx.Response(200, json=[e for e in events if e["seq"] > after])
         raise AssertionError(request.url)
 
@@ -154,14 +166,17 @@ def record(seq: int) -> dict[str, Any]:
 
 
 def client_over(
-    events: list[dict[str, Any]], ticket_failures: list[Exception | int] | None = None
+    events: list[dict[str, Any]],
+    ticket_failures: list[Exception | int] | None = None,
+    floor: int = 0,
+    asked: list[int] | None = None,
 ) -> ApiClient:
     return ApiClient(
         "http://test",
         app="cli",
         app_version="cli@test",
         token="ses_1",
-        transport=transport(events, ticket_failures),
+        transport=transport(events, ticket_failures, floor, asked),
     )
 
 
@@ -362,6 +377,53 @@ async def test_a_hello_starts_the_backoff_over(monkeypatch: pytest.MonkeyPatch) 
     channel = Channel(client_over([]), on_state=states.append, connect=connect_to(sockets, []))
     assert await asyncio.wait_for(collect(channel, 1), 5) == [2]
     assert states == ["connecting", "open", "reconnecting", "open", "reconnecting", "open"]
+
+
+async def test_a_trimmed_stream_is_read_afresh_once_and_goes_on_from_the_head() -> None:
+    """The cursor stands at 1 and the trim took everything up to 3. The push
+    of 5 is a gap no page can close: the replay is refused with the head, the
+    consumer reads its state afresh, and the cursor moves to 5. The next push
+    and pong read nothing below the floor again."""
+    socket = FakeSocket([HELLO, SUBSCRIBED, push(1), push(5), push(6), pong(6), push(7)])
+    asked: list[int] = []
+    resyncs: list[int | None] = []
+
+    async def read_state() -> None:
+        resyncs.append(channel.cursor)
+
+    channel = Channel(
+        client_over([record(4), record(5)], floor=3, asked=asked),
+        connect=connect_to([socket], []),
+        on_resync=read_state,
+    )
+    assert await collect(channel, 3) == [1, 6, 7]
+    assert resyncs == [1], "once, before the cursor moves"
+    assert asked == [1], "one refused read, and no other"
+    assert channel.cursor == 7
+
+
+async def test_a_resync_whose_read_fails_leaves_the_cursor_to_resync_again(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(realtime, "BACKOFF_SECONDS", (0.0,))
+    first = FakeSocket([HELLO, SUBSCRIBED, push(1), push(5)])
+    second = FakeSocket([hello_at(5), SUBSCRIBED, push(6)])
+    asked: list[int] = []
+    calls: list[int] = []
+
+    async def read_state() -> None:
+        calls.append(len(calls))
+        if len(calls) == 1:
+            raise httpx.ConnectError("refused")
+
+    channel = Channel(
+        client_over([record(4), record(5)], floor=3, asked=asked),
+        connect=connect_to([first, second], []),
+        on_resync=read_state,
+    )
+    assert await collect(channel, 2) == [1, 6]
+    assert calls == [0, 1]
+    assert asked == [1, 1], "the reconnect replays from the cursor the failed resync left"
 
 
 def test_the_reconnect_delay_grows_and_carries_jitter() -> None:

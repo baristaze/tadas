@@ -87,7 +87,10 @@ uv run tadas listen                           # the team's tasks, reminders amon
   the push says who and what, the record says the rest. A deleted task is
   told from what the listener remembers. A gap in the stream is replayed
   from `/v1/events`, a dropped socket reconnects with a jittered backoff
-  and replays the same way, so nothing is skipped. A task read that fails
+  and replays the same way, so nothing is skipped. When the stream no
+  longer reaches back to where the listener stood, stderr says some
+  changes are gone, and the listener reads every task again and goes on
+  from the stream's head. A task read that fails
   at the wire or with a 5xx on every attempt is told on stderr and that
   change is skipped; the task's next change shows its state. Only a dead
   credential ends the listener.
