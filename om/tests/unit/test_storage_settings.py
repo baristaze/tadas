@@ -1,7 +1,10 @@
 """The local-database guard: a development command refuses a role URL whose
-host is not local, and the migration runner refuses before it connects."""
+host is not local, and the migration runner refuses before it connects. The
+migration runner's connection carries its lock bound, and a run that waited
+past it asks to be run again."""
 
 import pytest
+from sqlalchemy.exc import DBAPIError
 
 from tadas.om.storage import migrate
 from tadas.om.storage.roles import DatabaseRole
@@ -102,3 +105,41 @@ def test_ensure_logins_needs_the_master() -> None:
 def test_a_remote_master_is_refused_with_local() -> None:
     with pytest.raises(SystemExit, match="refusing to touch the master"):
         logins(database_master_url=REMOTE).refuse_remote()
+
+
+def test_the_migration_connection_carries_the_lock_bound_in_milliseconds() -> None:
+    """A server setting in the startup packet, as a pool's statement deadline
+    is: every statement the runner sends waits that long for a lock at most.
+    No statement deadline rides with it."""
+    bound = logins(database_migration_lock_timeout_seconds="2.5")
+    seconds = bound.database_migration_lock_timeout_seconds
+    assert migrate.lock_bound(seconds) == {"server_settings": {"lock_timeout": "2500"}}
+    assert logins().database_migration_lock_timeout_seconds == 5.0
+
+
+def test_a_zero_lock_bound_is_refused() -> None:
+    """Zero is no bound at all to Postgres, which is what the setting exists
+    to prevent."""
+    with pytest.raises(ValueError):
+        logins(database_migration_lock_timeout_seconds="0")
+
+
+class _Driver(Exception):
+    def __init__(self, sqlstate: str) -> None:
+        super().__init__(sqlstate)
+        self.sqlstate = sqlstate
+
+
+def _raised(sqlstate: str) -> DBAPIError:
+    """What SQLAlchemy raises over asyncpg: its error, over the adapter's,
+    over the driver's, which carries the SQLSTATE."""
+    adapted = Exception("adapted")
+    adapted.__cause__ = _Driver(sqlstate)
+    return DBAPIError("ALTER TABLE core.tasks ...", None, adapted)
+
+
+def test_only_a_lock_wait_past_its_bound_asks_to_run_again() -> None:
+    assert migrate.lock_not_granted(_raised("55P03"))
+    assert not migrate.lock_not_granted(_raised("57014"))  # a statement deadline
+    assert not migrate.lock_not_granted(_raised("40P01"))  # a deadlock
+    assert migrate.RUN_AGAIN == 75

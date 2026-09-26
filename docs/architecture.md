@@ -834,7 +834,12 @@ rather than merely enabled is the two-run negative control in
 [the tenant isolation runbook](runbooks/tenant-isolation.md). Migrations are hand-written SQL under
 `om/migrations/sql/<role>/` with Alembic wrappers, one chain per role.
 `admin` holds one table, `platform_sizes`, the operator plane's tally of
-the platform's size, which only the sweep writes. Each role's
+the platform's size, which only the sweep writes. The migrate command
+opens one connection per role, and every statement on it waits for a
+lock `TADAS_DATABASE_MIGRATION_LOCK_TIMEOUT_SECONDS` (5) at most, so a
+migration behind a long transaction does not hold the table's reads and
+writes in the lock queue behind it for longer; a run that gives up
+applies nothing of the role it was on and exits 75 (ADR 0071). Each role's
 pool carries bounds of its own: a size, how long a checkout waits before
 it fails, and the deadline every statement on it runs under. Each is a
 setting with a per-role override that defaults to the shared value, the
@@ -1722,7 +1727,8 @@ alone, and neither key may touch what the other's work does not need
   `service` module runs the API's `pre_rollout` commands in one one-off
   task before the service rolls, whenever the release changes a file
   `deployment/migration-inputs.json` names (the migrations and the code
-  that runs them), the database, or its passwords; the
+  that runs them), the database, or its passwords. A migration that gave
+  up waiting for a lock runs again, three runs in all (ADR 0071). The
   worker rolls after it, and every service waits for steady state, so a
   failed migration or a rolled-back rollout fails the apply with the old
   tasks still serving; a migration is compatible with the release before

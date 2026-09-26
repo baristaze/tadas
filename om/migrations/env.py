@@ -1,12 +1,11 @@
 """Alembic environment: one chain and one version table per role. The role
-comes from `config.attributes["role"]`, set by `tadas.om.storage.migrate`;
-running without one is refused so a role is never migrated by accident."""
-
-import asyncio
+and the connection come from `config.attributes`, set by
+`tadas.om.storage.migrate`; running without either is refused, so a role is
+never migrated by accident, and every migration runs on the one connection
+the runner opens, under its lock bound (ADR 0071)."""
 
 from alembic import context
 from sqlalchemy import Connection
-from sqlalchemy.ext.asyncio import create_async_engine
 
 from tadas.om.storage.migrate import VERSION_TABLE
 from tadas.om.storage.roles import DatabaseRole
@@ -36,20 +35,12 @@ def run_migrations(connection: Connection) -> None:
         context.run_migrations()
 
 
-async def run_with_new_engine() -> None:
-    engine = create_async_engine(config.get_main_option("sqlalchemy.url") or "")
-    try:
-        async with engine.begin() as connection:
-            await connection.run_sync(run_migrations)
-    finally:
-        await engine.dispose()
-
-
 if context.is_offline_mode():
     raise SystemExit("offline mode is not supported; migrations run against a database")
 
-connection = config.attributes.get("connection")
-if connection is not None:
-    run_migrations(connection)
-else:
-    asyncio.run(run_with_new_engine())
+connection: Connection | None = config.attributes.get("connection")
+if connection is None:
+    raise SystemExit(
+        "refusing to migrate without the runner's connection; run through tadas.om.storage.migrate"
+    )
+run_migrations(connection)
