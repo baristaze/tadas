@@ -337,13 +337,18 @@ class TenancyStorageInterface(ABC):
 
     @abstractmethod
     async def read_principal(
-        self, org_id: UUID, user_id: UUID
+        self, org_id: UUID, user_id: UUID, seen: tuple[UUID, datetime] | None = None
     ) -> tuple[Org | None, User | None, Membership | None]:
         """The three rows a credential stands for, read together: the org, the
         user in it, and the user's live membership, each None when missing.
         Every authenticated request reads them, so they come back from one
-        transaction and not three. Deleted rows are returned as stored; the
-        caller decides what a deleted one means."""
+        statement in one transaction. Deleted rows are returned as stored; the
+        caller decides what a deleted one means.
+
+        `seen` is a session id and the time it was presented. When given, the
+        same transaction records that use on the user's session, for its idle
+        lifetime, and commits it; a revoked session is left as it is. The
+        caller decides when a use is worth recording."""
         ...
 
     @abstractmethod
@@ -368,12 +373,6 @@ class TenancyStorageInterface(ABC):
         """Cross-tenant lookup: the gateway holds a token, not a tenant; the
         tenant travels back. A login credential and an operator token are
         rows of the system scope; a session token is its tenant's."""
-        ...
-
-    @abstractmethod
-    async def touch_session(self, org_id: UUID, session_id: UUID, seen_at: datetime) -> None:
-        """Records that the session was presented at `seen_at`, for its idle
-        lifetime; a revoked session is left as it is."""
         ...
 
     @abstractmethod

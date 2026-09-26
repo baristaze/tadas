@@ -748,8 +748,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
         if kind is CredentialKind.SESSION_TOKEN:
             # A session proves its user's identity only while it proves the
             # tenant too: the org, the user, and the membership are live.
-            await self._principal(org_id, proof.user_id)
-            await self._seen(org_id, proof)
+            await self._principal(org_id, proof.user_id, proof)
         identity = await self._storage.read_identity(proof.identity_id)
         if identity is None:
             raise InvalidCredential("the identity is gone")
@@ -877,8 +876,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
                 raise InvalidCredential("unknown session token")
             org_id, session = found
             self._check_session(session, CredentialKind.SESSION_TOKEN)
-            org, user, membership = await self._principal(org_id, session.user_id)
-            await self._seen(org_id, session)
+            org, user, membership = await self._principal(org_id, session.user_id, session)
             return build_context(
                 rctx,
                 user_id=user.id,
@@ -1038,8 +1036,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
             if session is None:
                 raise InvalidCredential("the session behind the ticket is gone")
             self._check_session(session, CredentialKind.SESSION_TOKEN)
-            org, user, membership = await self._principal(org_id, session.user_id)
-            await self._seen(org_id, session)
+            org, user, membership = await self._principal(org_id, session.user_id, session)
             role = membership.role
             expires_at = session.expires_at
         elif credential_kind is CredentialKind.API_KEY:
@@ -1172,6 +1169,15 @@ class TenancyManagerImpl(TenancyManagerInterface):
         if org is None or org.deleted_at is not None:
             raise NotFound(f"org {ctx.org_id} not found")
         return org
+
+    async def get_me(self, ctx: OpContext) -> OrgMembership:
+        ctx.require(Permission.READ)
+        org, user, membership = await self._storage.read_principal(ctx.org_id, ctx.user_id)
+        if org is None or org.deleted_at is not None:
+            raise NotFound(f"org {ctx.org_id} not found")
+        if user is None or user.deleted_at is not None or membership is None:
+            raise NotFound(f"user {ctx.user_id} not found")
+        return OrgMembership(org=org, user=user, role=membership.role)
 
     async def create_org(
         self, ctx: OpContext, name: str, slug: str | None, attempt: Attempt | None = None
@@ -1426,18 +1432,18 @@ class TenancyManagerImpl(TenancyManagerInterface):
         await self._relay.relay(ctx.org_id, row)
         return closed
 
-    async def update_user(self, ctx: OpContext, user: User) -> User:
+    async def rename_user(self, ctx: OpContext, user_id: UUID, display_name: str) -> User:
         ctx.require(Permission.READ)
-        if user.id != ctx.user_id:
+        if user_id != ctx.user_id:
             ctx.require(Permission.MANAGE_MEMBERS)
-        existing = await self._live_user(ctx, user.id)
-        if not user.display_name.strip():
+        existing = await self._live_user(ctx, user_id)
+        if not display_name.strip():
             raise ValidationFailed("display name is required")
         # model_copy does not validate; the copy carries caller input, so it does.
         updated = User.model_validate(
             {
                 **existing.model_dump(),
-                "display_name": user.display_name,
+                "display_name": display_name,
                 "updated_at": utcnow(),
                 "updated_by": ctx.user_id,
             }
@@ -2081,14 +2087,6 @@ class TenancyManagerImpl(TenancyManagerInterface):
         if seen is not None and seen + self._options.session_idle_ttl <= now:
             raise CredentialExpired("session idle")
 
-    async def _seen(self, org_id: UUID, session: Session) -> None:
-        """Records a tenant session's use, at most once a `session_seen_every`,
-        for its idle lifetime."""
-        now = utcnow()
-        seen = session.last_seen_at
-        if seen is None or seen + self._options.session_seen_every <= now:
-            await self._storage.touch_session(org_id, session.id, now)
-
     @staticmethod
     def _refuse_operator_token(ictx: IdentityContext) -> None:
         """An operator token reaches the operator plane and nothing else: it
@@ -2130,8 +2128,20 @@ class TenancyManagerImpl(TenancyManagerInterface):
         if user.identity_id == org.personal_identity_id:
             raise PersonalOrgFixed(f"a personal org {rule}")
 
-    async def _principal(self, org_id: UUID, user_id: UUID) -> tuple[Org, User, Membership]:
-        org, user, membership = await self._storage.read_principal(org_id, user_id)
+    async def _principal(
+        self, org_id: UUID, user_id: UUID, session: Session | None = None
+    ) -> tuple[Org, User, Membership]:
+        """The org, the user, and the live membership a credential stands
+        for, or InvalidCredential. A tenant session presented is recorded as
+        used, at most once a `session_seen_every`, for its idle lifetime, in
+        the same transaction as the read."""
+        seen = None
+        if session is not None:
+            now = utcnow()
+            last = session.last_seen_at
+            if last is None or last + self._options.session_seen_every <= now:
+                seen = (session.id, now)
+        org, user, membership = await self._storage.read_principal(org_id, user_id, seen)
         if org is None or org.deleted_at is not None:
             raise InvalidCredential("the org is gone")
         if user is None or user.deleted_at is not None:

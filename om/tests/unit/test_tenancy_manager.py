@@ -833,20 +833,16 @@ async def test_users_update_their_own_display_name(
     viewer = await sign_in(manager, "cid@example.test", org.id)
 
     # The context carries the user's id; the entity is loaded by the manager.
-    me = await manager.get_user(viewer, viewer.user_id)
-    renamed = await manager.update_user(viewer, me.model_copy(update={"display_name": "Cid R."}))
+    renamed = await manager.rename_user(viewer, viewer.user_id, "Cid R.")
     assert renamed.display_name == "Cid R." and renamed.updated_at > renamed.created_at
     assert renamed.updated_by == viewer.user_id
     assert await manager.get_user(viewer, viewer.user_id) == renamed
 
     with pytest.raises(NotAuthorized):
-        owner_user = await manager.get_user(owner, owner.user_id)
-        await manager.update_user(viewer, owner_user.model_copy(update={"display_name": "Nope"}))
+        await manager.rename_user(viewer, owner.user_id, "Nope")
     with pytest.raises(ValidationFailed):
-        await manager.update_user(viewer, me.model_copy(update={"display_name": "  "}))
-    by_owner = await manager.update_user(
-        owner, renamed.model_copy(update={"display_name": "Cid", "email": "ignored@example.test"})
-    )
+        await manager.rename_user(viewer, viewer.user_id, "  ")
+    by_owner = await manager.rename_user(owner, viewer.user_id, "Cid")
     assert by_owner.display_name == "Cid" and by_owner.email == "cid@example.test"
 
 
