@@ -674,7 +674,10 @@ context on keeps the stage the callee needs.
   the realtime service learns a socket's authority ended and nothing
   replays it for the server. A work row is delivered once enqueued:
   the queue is its truth and the workers poll, so its wake-up is a hint
-  ([ADR 0062](adr/0062-a-dropped-publish-leaves-its-outbox-row-pending.md)).
+  ([ADR 0062](adr/0062-a-dropped-publish-leaves-its-outbox-row-pending.md);
+  a deviation from STO-20 that
+  [ADR 0067](adr/0067-what-0-36-0-asks-and-what-stays-a-choice.md)
+  records).
   The relay reaches the work manager through a provider the business
   root binds, because the work manager needs the tenancy manager, which
   needs the relay; the graph the root hands back is still whole.

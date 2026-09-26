@@ -216,7 +216,8 @@ class OutboxRelayImpl(OutboxRelayInterface):
         returned, counted as `publish_failed`, and stays pending for the
         sweep, since its event is in the stream but no one was told. A work
         row is delivered once it is enqueued: the queue is its truth and its
-        wake-up is a hint the workers' poll stands in for.
+        wake-up is a hint the workers' poll stands in for (ADR 0067, a
+        deviation from STO-20).
 
         Raises on any other step, and every step is safe to run again: an
         event is idempotent on its row's id and so is the enqueue, which
