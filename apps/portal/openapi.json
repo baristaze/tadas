@@ -520,6 +520,23 @@
         "title": "DeleteAccountRequest",
         "type": "object"
       },
+      "DeleteOrgRequest": {
+        "additionalProperties": false,
+        "description": "The org's name as its owner typed it, which is how they say they mean\nit.",
+        "properties": {
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "DeleteOrgRequest",
+        "type": "object"
+      },
       "DeliveryReceivedView": {
         "description": "The delivery checked out and is queued; the processor stops retrying.",
         "properties": {
@@ -1805,6 +1822,31 @@
         ],
         "title": "OrchestrationStatus",
         "type": "string"
+      },
+      "OrgDeletedView": {
+        "description": "The org is gone for everyone in it: `deleted_at` is when. `session` is\nthe owner's new session in their personal org, which replaces the one\nthat asked, as a switch's does; null when none could be made, and the\nowner signs in again.",
+        "properties": {
+          "deleted_at": {
+            "format": "date-time",
+            "title": "Deleted At",
+            "type": "string"
+          },
+          "session": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IssuedSessionView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "deleted_at"
+        ],
+        "title": "OrgDeletedView",
+        "type": "object"
       },
       "OrgKind": {
         "description": "What an org is for. Every person has exactly one personal org, made\nwith them; every other org is a team org, made on purpose.",
@@ -8225,6 +8267,117 @@
           }
         },
         "summary": "Current Org",
+        "tags": [
+          "tenancy"
+        ]
+      }
+    },
+    "/v1/orgs/current/deletion": {
+      "post": {
+        "operationId": "delete_org_v1_orgs_current_deletion_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app-version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Version"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeleteOrgRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrgDeletedView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "not_authorized: an owner's session only"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "personal_org_fixed"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Org",
         "tags": [
           "tenancy"
         ]
