@@ -2,7 +2,7 @@
 // to the task list. Its caret opens a menu: the other places to switch to,
 // when there are any, and a new team org.
 import { Link } from "react-router-dom";
-import { Caret, Menu, MenuItem, MenuSeparator, MenuText, Pill } from "../design/kit";
+import { Caret, Menu, MenuItem, MenuSeparator, MenuText, Pill, PlusIcon, UserIcon, UsersIcon } from "../design/kit";
 import { tokens } from "../design/tokens";
 import { placeNote } from "./orgChipModel";
 import { useOrgChipVm } from "./useOrgChipVm";
@@ -37,13 +37,17 @@ export function OrgChip() {
       >
         {vm.canSwitch ? <MenuText>Switch to</MenuText> : null}
         {vm.others.map((membership) => (
-          <MenuItem key={membership.org.id} onSelect={() => void vm.pick(membership)}>
+          <MenuItem
+            key={membership.org.id}
+            onSelect={() => void vm.pick(membership)}
+            icon={membership.org.kind === "personal" ? <UserIcon /> : <UsersIcon />}
+          >
             <span>{membership.org.name}</span>
             <span style={{ color: tokens.color.muted, fontSize: tokens.font.size.sm }}>{placeNote(membership)}</span>
           </MenuItem>
         ))}
         {vm.canSwitch ? <MenuSeparator /> : null}
-        <MenuItem onSelect={vm.newOrg}>
+        <MenuItem onSelect={vm.newOrg} icon={<PlusIcon />}>
           <span>New organization…</span>
         </MenuItem>
       </Menu>
