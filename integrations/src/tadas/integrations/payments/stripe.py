@@ -10,7 +10,12 @@ At `start` the client reads once with each permission of the runtime key
 (one item of each resource), so a key of another account, or one that
 lacks a resource, is named in the start line and the log before the
 first checkout finds it. A read proves the resource is not None; it
-cannot prove Write without writing."""
+cannot prove Write without writing.
+
+An answer of the SDK is a `StripeObject`, and so is every object nested
+in it. A `StripeObject` is not a dict: `.get` and `.keys` raise on it. So
+a field is read by its name (`session.url`), and anything read as a
+mapping is read off `.to_dict()`."""
 
 import asyncio
 import logging
@@ -242,7 +247,8 @@ class PaymentsStripeImpl(PaymentsInterface):
                     {"active": True, "limit": 100}
                 )
             for configuration in found.data:
-                if (configuration.metadata or {}).get("tadas_desired_key") == PORTAL_DESIRED_KEY:
+                metadata = configuration.to_dict().get("metadata") or {}
+                if metadata.get("tadas_desired_key") == PORTAL_DESIRED_KEY:
                     self._portal_configuration = str(configuration.id)
                     break
         return self._portal_configuration
