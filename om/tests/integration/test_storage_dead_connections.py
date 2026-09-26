@@ -1,8 +1,8 @@
 """A connection the server closed while it sat in the pool fails no call.
 
 The pool sends no ping before a checkout. A dead connection shows itself on
-the transaction's first statement, the scope, which writes nothing, and the
-funnel then begins the transaction again on a fresh connection. These cases
+the message that begins the transaction and sets its scope, which writes
+nothing, and the funnel then drops it and begins again on the next one. These cases
 close pooled connections from the server side, the way a restart or a
 terminated backend does, and then run calls through the funnel. The last one
 holds the other half of the rule: once the caller's own statements have run,
@@ -86,7 +86,7 @@ async def test_a_call_on_a_connection_the_server_closed_is_served(
     with caplog.at_level(logging.WARNING, logger="tadas.om.storage.impl.pg_base"):
         after = await backend_pid(funnel, org_id)
     assert after != before
-    assert "beginning again on a fresh one" in caplog.text
+    assert "beginning again on another" in caplog.text
 
 
 async def test_calls_on_a_pool_whose_every_connection_was_closed_are_served(
@@ -101,6 +101,20 @@ async def test_calls_on_a_pool_whose_every_connection_was_closed_are_served(
 
     served = await asyncio.gather(*(backend_pid(funnel, org_id) for _ in range(2)))
     assert not set(served) & held
+
+
+async def test_one_call_over_a_pool_whose_every_connection_was_closed_is_served(
+    funnel: PgStorageBase, migration_settings: MigrationSettings, org_id: UUID
+) -> None:
+    """One call alone meets every closed connection in turn. Each is dropped
+    at the message that begins, and the call is served on a new one."""
+    held = set(await asyncio.gather(*(backend_pid(funnel, org_id, hold=0.1) for _ in range(2))))
+    assert len(held) == 2
+
+    await terminate(migration_settings, held)
+
+    assert await backend_pid(funnel, org_id) not in held
+    assert await backend_pid(funnel, org_id) not in held
 
 
 async def test_a_connection_that_dies_after_the_callers_first_statement_fails_the_call(
