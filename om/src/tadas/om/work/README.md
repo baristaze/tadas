@@ -46,8 +46,10 @@ seven kinds of thing [Tadas is made of](../../../../README.md).
   back for the time it named, with the reason as its note, and spends
   no attempt: a guard parks, only a real limit fails.
 - **Sweep.** Items whose lease has expired go back to the queue, or
-  fail when their attempts are spent. Done and failed items are erased
-  after the retention, thirty days by default, every org's in one step.
+  fail when their attempts are spent, every org's in one step at the
+  start of each sweep, so a crashed worker's item waits one sweep at
+  most. Done and failed items are erased after the retention, thirty
+  days by default, every org's in one step.
 
 ## The rules
 
@@ -61,8 +63,8 @@ seven kinds of thing [Tadas is made of](../../../../README.md).
   sweep runs, a late worker's transition still lands.
 - **Attempts.** A claim spends one; a hand-back refunds it. An item
   has three by default. The delay before a retry doubles per attempt,
-  up to a cap. Requeued items are staggered so a recovered dependency
-  is not met by all of them at once.
+  up to a cap. An org's requeued items are staggered so a recovered
+  dependency is not met by all of them at once.
 - **A dead letter is named.** An item that fails for good is counted
   and recorded as an event in the org's diary.
 - **Enqueueing twice leaves one item.** An enqueue that runs again

@@ -1052,10 +1052,19 @@ alone, and neither key may touch what the other's work does not need
   cache as best effort (each publish bounded by its interval; a cache
   that stalls or raises leaves the worker unpublished and still
   claiming, since the queue and its leases live in Postgres), and the
-  maintenance sweep (requeue stale leases under one service context per
-  tenant, a batch of `requeue_batch` (100) per tenant per sweep bounded
-  in the statement and the rest on the next sweep, the system scope
-  first and deleted tenants included, then
+  maintenance sweep (first requeue the expired leases of every tenant
+  in the system scope, `requeue_stale`, a batch of `requeue_batch` (100)
+  chosen with `FOR UPDATE SKIP LOCKED` on
+  `ix_work_items_status_lease_expires_at`, each tenant's items staggered
+  by their position among its own, and again while a batch comes back
+  full, so a crashed worker's item waits one pass; a dead letter it makes
+  is named in its tenant's stream under that tenant's service context,
+  and one whose tenant is gone is logged and counted as the claim's
+  orphan is; then claim and relay the pending outbox rows, a batch of
+  `outbox_batch` (100) at a time and again while a batch comes back
+  whole, one attempt each with a growing delay; then, under one service
+  context per tenant, the system scope first and deleted tenants
+  included,
   purge the tenant's soft-deleted tasks (their attachments first,
   through the media manager, so a detach that failed at the delete is
   retried here and a task whose files still will not go waits for the
@@ -1064,9 +1073,8 @@ alone, and neither key may touch what the other's work does not need
   members with their ended memberships, revoked api keys, expired
   sessions and socket tickets, and closed invitations past their
   retention (the one hard delete), its finished idempotency records and
-  abandoned markers, then claim and relay the
-  pending outbox rows, one attempt each with a growing delay, and purge
-  the done and failed ones after eight days, which outlives the
+  abandoned markers, then purge
+  the done and failed outbox rows after eight days, which outlives the
   seven-day database backup retention, so a role restored to an earlier
   point than its siblings is reconciled by relaying the outbox again,
   and purge every tenant's done or failed work items past their retention,
@@ -1087,8 +1095,10 @@ alone, and neither key may touch what the other's work does not need
   per tenant: it opens the day's cleanup of old done tasks
   (`open_cleanup`) for an org that has one to do. The chores run once
   whenever the tenant does, before any second round of purges, so a
-  backlog never spends the budget they need. The cross-tenant purges run
-  on every pass.
+  backlog never spends the budget they need. The requeue, the relay,
+  and the cross-tenant purges run on every pass, each again while its
+  batch comes back full and the budget lasts; the pass always takes one
+  tenant, even past the budget.
   Each pass writes its duration on one line, which an alarm reads.
   Under a tenant whose org row is deleted longer ago than the retention
   it is every row that goes, its open and done tasks among them, since
