@@ -95,24 +95,26 @@ class WorkOperatorManagerImpl(WorkOperatorManagerInterface):
         stream in `core`, so this follows the write, as the dead letter's
         event does: a crash between the two loses the entry, never the
         requeue."""
-        event = await self._events.append_event(
+        (event,) = await self._events.append_events(
             org_id,
-            Event(
-                id=new_id(),
-                org_id=org_id,
-                kind=REQUEUED_KIND,
-                target_id=failed.id,
-                payload={
-                    "kind": failed.kind.value,
-                    "work_target_id": str(failed.target_id),
-                    "attempts": failed.attempts,
-                    "last_error": failed.last_error,
-                },
-                produced_at=utcnow(),
-                actor_id=admin.identity_id,
-                request_id=admin.request_id,
-                app=admin.app.type.value,
-            ),
+            [
+                Event(
+                    id=new_id(),
+                    org_id=org_id,
+                    kind=REQUEUED_KIND,
+                    target_id=failed.id,
+                    payload={
+                        "kind": failed.kind.value,
+                        "work_target_id": str(failed.target_id),
+                        "attempts": failed.attempts,
+                        "last_error": failed.last_error,
+                    },
+                    produced_at=utcnow(),
+                    actor_id=admin.identity_id,
+                    request_id=admin.request_id,
+                    app=admin.app.type.value,
+                ),
+            ],
         )
         await self._topics.publish(
             Topics.ENTITY_CHANGED,

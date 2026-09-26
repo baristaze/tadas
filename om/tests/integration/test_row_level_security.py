@@ -212,7 +212,7 @@ async def test_every_table_holds_the_policy_its_scope_declares(
         assert policies == [], f"{table_name} is system-scoped and carries {policies}"
         return
     if scope.by_login:
-        # One policy per login (ADR 0042): the runtime login's on the tenant
+        # One policy per login (ADR 0044): the runtime login's on the tenant
         # alone, the system login's on the system scope alone, and no other
         # login admitted by either.
         assert [(p.policyname, p.cmd, p.roles) for p in policies] == [
@@ -336,7 +336,7 @@ async def _work_orgs(session: AsyncSession, org_id: UUID | None) -> set[UUID]:
 async def test_the_queue_fence_admits_each_login_to_its_half_alone(
     pg_sessions: Sessions, migration_engine: AsyncEngine
 ) -> None:
-    """The work items are fenced by login (ADR 0042). The runtime login sees
+    """The work items are fenced by login (ADR 0044). The runtime login sees
     the tenant it names and nothing under the system scope; the system login
     sees every tenant under the system scope and nothing under a tenant or
     under no setting; a login neither policy names sees nothing at all."""

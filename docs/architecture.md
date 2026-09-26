@@ -700,7 +700,7 @@ policy is `FOR ALL`, `USING` and `WITH CHECK` the same expression, with
 is the one table fenced by login, with two such policies, the tenant
 alone for the runtime login and the system scope alone for the system
 login, so the worker's claim plans on real row counts
-([ADR 0042](adr/0042-the-queue-is-fenced-by-one-policy-per-login.md)). The
+([ADR 0044](adr/0044-the-queue-is-fenced-by-one-policy-per-login.md)). The
 application's login is never a superuser and never carries `BYPASSRLS`,
 either of which walks past every policy. A transaction that names no
 tenant reads nothing and is refused every write: fail closed, with the

@@ -1,4 +1,4 @@
-# ADR 0042: The queue is fenced by one policy per login
+# ADR 0044: The queue is fenced by one policy per login
 
 **Status**: accepted (2026-09-25). A deviation from the shape The
 Second Fence gives a policy; STO-28 holds.

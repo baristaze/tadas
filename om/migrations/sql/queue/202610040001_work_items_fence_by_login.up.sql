@@ -1,4 +1,4 @@
--- The queue's fence, as one policy per login (ADR 0042). The two halves of
+-- The queue's fence, as one policy per login (ADR 0044). The two halves of
 -- the one policy become two policies, each bound to the login it admits:
 --
 -- - tenant_fence, TO tadas_runtime: the rows of the tenant the transaction

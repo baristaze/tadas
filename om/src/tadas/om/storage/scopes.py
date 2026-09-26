@@ -23,7 +23,7 @@ table fenced by login, the runtime login's half of the pair."""
 
 SYSTEM_POLICY_NAME = "system_fence"
 """On a table fenced by login, the system login's half: every row, when the
-transaction names the system scope (ADR 0042)."""
+transaction names the system scope (ADR 0044)."""
 
 
 class ScopeKind(StrEnum):
@@ -56,7 +56,7 @@ class TableScope:
     the system-scope clause beside the tenant comparison: `tenant_fence` to
     the runtime login, on the tenant alone, and `system_fence` to the system
     login, on the system scope alone. Taken where a statement of the system
-    scope must plan on the table's real row counts (ADR 0042)."""
+    scope must plan on the table's real row counts (ADR 0044)."""
 
     def __post_init__(self) -> None:
         if self.kind is ScopeKind.BOTH and (self.person_column is None) == (
