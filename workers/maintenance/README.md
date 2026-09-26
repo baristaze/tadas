@@ -74,7 +74,11 @@ second lane is a second replica told its lane.
     first, then the row, a batch of a hundred per org per sweep),
     removed members with their ended memberships, revoked keys, dead
     sessions, spent tickets, finished idempotency records, the payment
-    processor's delivery marks, and settled work items. Under an org deleted longer ago than the retention,
+    processor's delivery marks, and settled work items. With
+    `TADAS_EVENT_RETENTION_DAYS` set, the oldest events of a living org
+    go too, a batch of up to a thousand per org per sweep, and its
+    floor moves with them in the same transaction; 0, the default, keeps
+    every event (ADR 0039). Under an org deleted longer ago than the retention,
     every row goes, its event stream included, and the org row stays as
     the record. Each namespace
     purges its own rows and asks tenancy the one question, whether the

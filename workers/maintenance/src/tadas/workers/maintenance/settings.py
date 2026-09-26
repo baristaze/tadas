@@ -35,6 +35,10 @@ class MaintenanceSettings(StorageSettings, InfraSettings, IntegrationsSettings):
     worker_heartbeat_seconds: int = Field(default=10, gt=0)
     worker_sweep_seconds: int = Field(default=30, gt=0)
     worker_poll_seconds: int = Field(default=5, gt=0)
+    # How many days a living org's events are kept; the sweep trims what is
+    # older, a bounded batch per org per pass. 0 keeps every event and never
+    # moves a floor (ADR 0039).
+    event_retention_days: int = Field(default=0, ge=0)
 
     # Where people open Tadas in this environment: a list answered in Slack
     # links to the task list there. The local stack's portal by default; a deployed

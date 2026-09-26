@@ -3,6 +3,7 @@ the integrations (the payment processor and the Slack app), and managers.
 The loop holds the container directly."""
 
 import logging
+from datetime import timedelta
 
 from tadas.infra.impl.configured import InfraConfiguredImpl
 from tadas.infra.root import InfraInterface
@@ -10,12 +11,18 @@ from tadas.integrations.impl.configured import absent_integrations, payments_for
 from tadas.integrations.payments import PaymentsInterface
 from tadas.integrations.root import IntegrationsInterface
 from tadas.integrations.slack import SlackInterface
-from tadas.om.root import Managers, build_managers
+from tadas.om.root import EventsOptions, Managers, build_managers
 from tadas.om.storage.impl.postgres import StoragePostgresImpl
 from tadas.om.storage.root import StorageInterface
 from tadas.workers.maintenance.settings import MaintenanceSettings
 
 log = logging.getLogger(__name__)
+
+
+def events_options(settings: MaintenanceSettings) -> EventsOptions:
+    """The sweep's trim of each living org's stream: off at 0 days."""
+    days = settings.event_retention_days
+    return EventsOptions(retention=timedelta(days=days) if days else None)
 
 
 class WorkerContainer:
@@ -59,7 +66,9 @@ class WorkerContainer:
             settings,
             storage,
             infra,
-            build_managers(storage, infra, integrations=integrations),
+            build_managers(
+                storage, infra, integrations=integrations, events_options=events_options(settings)
+            ),
             integrations,
         )
 
@@ -89,7 +98,9 @@ class WorkerContainer:
             settings,
             storage,
             infra,
-            build_managers(storage, infra, integrations=integrations),
+            build_managers(
+                storage, infra, integrations=integrations, events_options=events_options(settings)
+            ),
             integrations,
         )
 

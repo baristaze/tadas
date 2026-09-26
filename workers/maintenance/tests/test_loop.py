@@ -1,7 +1,7 @@
 import asyncio
 import re
 from collections.abc import Callable, Sequence
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from uuid import UUID
 
@@ -20,6 +20,8 @@ from worker_support import (
 from tadas.infra.cache import CacheInterface, CacheScope
 from tadas.infra.observability import caused_by_request_id_var, current_traceparent, request_id_var
 from tadas.om.base import EMPTY_UUID, new_id, utcnow
+from tadas.om.events.impl.manager import EventsOptions
+from tadas.om.events.types.event import Event
 from tadas.om.exceptions import LeaseLost
 from tadas.om.idempotency.impl.manager import IdempotencyOptions
 from tadas.om.opcontext import OpContext, RequestContext
@@ -292,6 +294,7 @@ def start_loop(
             "tasks": container.managers.tasks.purge_deleted,
             "tenancy": container.managers.tenancy.purge_deleted,
             "idempotency": container.managers.idempotency.purge,
+            "events": container.managers.events.purge_expired,
         },
         handlers={WorkKind.NOOP: handler},
         topics=container.infra.get_topics(),
@@ -823,6 +826,55 @@ async def test_sweep_purges_settled_work_items_and_finished_idempotency_records(
     assert await container.storage.get_work_storage().read_item(ctx.org_id, item.id) is None
     idempotency = container.storage.get_idempotency_storage()
     assert await idempotency.read_record(ctx.org_id, ctx.user_id, "k") is None
+
+
+async def test_the_sweep_trims_a_living_stream_a_bounded_batch_a_pass(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Each pass trims one batch from the bottom of each org's stream and
+    moves its floor; once nothing is past the retention, a pass trims
+    nothing and the floor stays where it is."""
+    container = build_container(tmp_path)
+    ctx = await sign_in(container)
+    storage = container.storage.get_event_storage()
+    aged = utcnow() - timedelta(days=100)
+    for _ in range(5):
+        await storage.append_event(ctx.org_id, aged_event(ctx, aged))
+    options = EventsOptions(retention=timedelta(days=90), trim_batch=2)
+    monkeypatch.setattr(container.managers.events, "_options", options)
+    trims: list[int] = []
+    trim = storage.trim
+
+    async def counted(org_id: UUID, before: datetime, limit: int) -> int:
+        trimmed = await trim(org_id, before, limit)
+        if org_id == ctx.org_id:
+            trims.append(trimmed)
+        return trimmed
+
+    monkeypatch.setattr(storage, "trim", counted)
+    loop, task = start_loop(container, RecordingHandler(), fast_options())
+    await until(lambda: len(trims) >= 5)
+    loop.stop()
+    await task
+    assert trims[:3] == [2, 2, 1], "a batch a pass, from the bottom"
+    assert set(trims[3:]) == {0}, "nothing left past the retention: the pass is a no-op"
+    assert await storage.read_floor(ctx.org_id) == 5
+    head = await storage.read_head(ctx.org_id)
+    kept = await storage.read_after(ctx.org_id, 5, 100)
+    assert [e.seq for e in kept] == list(range(6, head + 1)), "whole above the floor"
+
+
+def aged_event(ctx: OpContext, produced_at: datetime) -> Event:
+    return Event(
+        id=new_id(),
+        org_id=ctx.org_id,
+        kind="tasks.task.created",
+        target_id=new_id(),
+        produced_at=produced_at,
+        actor_id=ctx.user_id,
+        request_id=ctx.request_id,
+        app="portal",
+    )
 
 
 async def test_stop_during_a_claim_still_returns_the_item(tmp_path: Path) -> None:

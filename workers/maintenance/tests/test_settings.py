@@ -7,11 +7,13 @@ default is listed here with the reason, so a new field needs a decision."""
 
 import re
 import subprocess
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
+from tadas.workers.maintenance.container import events_options
 from tadas.workers.maintenance.settings import MaintenanceSettings
 
 PREFIX = MaintenanceSettings.model_config.get("env_prefix", "")
@@ -69,6 +71,7 @@ LOCAL_DEFAULT_SERVES_THE_CLOUD = {
     "worker_poll_seconds": "the local default is the tuning",
     "slack_timeout_seconds": "the local default is the tuning",
     "slack_inbound_visibility_seconds": "the local default is the tuning",
+    "event_retention_days": "one retention everywhere, set in code (ADR 0039)",
 }
 
 
@@ -161,3 +164,13 @@ def test_a_count_or_a_duration_of_zero_is_refused(field: str) -> None:
         MaintenanceSettings.model_validate({**base, field: 0})
     with pytest.raises(ValidationError):
         MaintenanceSettings.model_validate({**base, field: -1})
+
+
+def test_the_event_retention_is_off_until_it_is_set() -> None:
+    """0 keeps every event: the sweep never moves a floor (ADR 0039)."""
+    base = {"_env_file": None, "environment": "test"}
+    assert events_options(MaintenanceSettings.model_validate(base)).retention is None
+    kept = MaintenanceSettings.model_validate({**base, "event_retention_days": 90})
+    assert events_options(kept).retention == timedelta(days=90)
+    with pytest.raises(ValidationError):
+        MaintenanceSettings.model_validate({**base, "event_retention_days": -1})
