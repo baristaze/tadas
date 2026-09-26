@@ -390,6 +390,16 @@ class TenancyStorageInterface(ABC):
         ...
 
     @abstractmethod
+    async def read_session_with_identity_by_digest(
+        self, token_hash: str
+    ) -> tuple[UUID, Session, Identity | None] | None:
+        """Cross-tenant lookup, as `read_session_by_digest`, with the identity
+        the credential proves beside it, from one statement under the system
+        scope: the identity stage reads both on every use. The identity is
+        None when it is gone."""
+        ...
+
+    @abstractmethod
     async def read_session_by_id(self, session_id: UUID) -> tuple[UUID, Session] | None:
         """Cross-tenant lookup: the identity stage holds the id of the session it
         was proven by, not its tenant; the tenant travels back."""

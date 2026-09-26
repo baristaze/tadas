@@ -1067,7 +1067,11 @@ alone, and neither key may touch what the other's work does not need
   `authenticate_login` over it (the sign-in credential or a live session,
   on the tenant choice, the switch, `GET /v1/auth/memberships`, and the
   operator gate), `OperatorCtx` is `admit_operator` over the identity,
-  which admits the sign-in credential alone, and the socket builds the request stage from its scope,
+  which admits the sign-in credential alone. `authenticate_login` reads
+  the credential and the identity it proves in one system statement,
+  and puts the identity's allowlist entry and its enrolment on the
+  stage, so `admit_operator` decides without a read of its own. The
+  socket builds the request stage from its scope,
   accepts the handshake, and then redeems its ticket: a refusal is a
   close with code 4401 on the open socket, which both clients read as
   "sign in again" (a close before the accept would reach the wire as an

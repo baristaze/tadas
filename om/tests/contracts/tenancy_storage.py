@@ -1624,6 +1624,38 @@ class TenancyStorageContract:
         assert await storage.read_session(org.id, session.id) == session
         assert await storage.read_session_by_digest("missing") is None
 
+    async def test_a_credential_is_read_with_the_identity_it_proves(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        """The digest lookup and the identity behind the credential in one
+        read, whether the credential is the system scope's or a tenant's; a
+        credential whose identity is gone reads with none."""
+        identity = make_identity()
+        await storage.write_identity(identity)
+        sign_in = make_sign_in(identity.id, uuid4().hex)
+        await storage.write_session(EMPTY_UUID, sign_in)
+        org = make_org()
+        session = make_session(identity.id, new_id(), uuid4().hex)
+        await storage.write_session(org.id, session)
+        orphan = make_sign_in(new_id(), uuid4().hex)
+        await storage.write_session(EMPTY_UUID, orphan)
+        assert await storage.read_session_with_identity_by_digest(sign_in.token_hash) == (
+            EMPTY_UUID,
+            sign_in,
+            identity,
+        )
+        assert await storage.read_session_with_identity_by_digest(session.token_hash) == (
+            org.id,
+            session,
+            identity,
+        )
+        assert await storage.read_session_with_identity_by_digest(orphan.token_hash) == (
+            EMPTY_UUID,
+            orphan,
+            None,
+        )
+        assert await storage.read_session_with_identity_by_digest("missing") is None
+
     async def test_sessions_of_a_user_are_the_live_ones_newest_first(
         self, storage: TenancyStorageInterface
     ) -> None:

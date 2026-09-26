@@ -61,6 +61,7 @@ STORAGE_EXCEPTIONS: frozenset[tuple[str, str]] = frozenset(
         ("TenancyStorageInterface", "delete_person"),
         ("TenancyStorageInterface", "read_session_by_id"),
         ("TenancyStorageInterface", "read_session_by_digest"),
+        ("TenancyStorageInterface", "read_session_with_identity_by_digest"),
         ("TenancyStorageInterface", "read_api_key_by_digest"),
         ("TenancyStorageInterface", "redeem_socket_ticket"),
         ("WorkStorageInterface", "claim_next"),

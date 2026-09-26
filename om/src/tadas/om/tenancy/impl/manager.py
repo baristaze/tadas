@@ -740,16 +740,18 @@ class TenancyManagerImpl(TenancyManagerInterface):
             raise InvalidCredential(
                 "expected the sign-in credential, a session token, or an operator token"
             )
-        found = await self._storage.read_session_by_digest(hash_token(credential))
+        # The credential and the identity it proves in one read: the operator
+        # gate takes what it needs of the identity from the stage, so an
+        # operator's call reads the identity once.
+        found = await self._storage.read_session_with_identity_by_digest(hash_token(credential))
         if found is None:
             raise InvalidCredential(f"unknown {kind.value} credential")
-        org_id, proof = found
+        org_id, proof, identity = found
         self._check_session(proof, kind)
         if kind is CredentialKind.SESSION_TOKEN:
             # A session proves its user's identity only while it proves the
             # tenant too: the org, the user, and the membership are live.
             await self._principal(org_id, proof.user_id, proof)
-        identity = await self._storage.read_identity(proof.identity_id)
         if identity is None:
             raise InvalidCredential("the identity is gone")
         return IdentityContext(
@@ -763,6 +765,8 @@ class TenancyManagerImpl(TenancyManagerInterface):
             credential_id=proof.id,
             second_factor=proof.second_factor_at is not None,
             operator_role=proof.operator_role,
+            operator_entry=identity.operator_role,
+            second_factor_enrolled=identity.totp_enrolled,
         )
 
     async def exchange_login(self, ictx: IdentityContext, org_id: UUID) -> IssuedSession:
@@ -923,8 +927,10 @@ class TenancyManagerImpl(TenancyManagerInterface):
             raise InvalidCredential(
                 "the operator plane takes the sign-in credential or an operator token"
             )
-        identity = await self._storage.read_identity(ictx.identity_id)
-        if identity is None or identity.operator_role is None:
+        # The allowlist entry and the enrolment as the stage read them, with
+        # the credential, in this request: no second read of the identity.
+        entry = ictx.operator_entry
+        if entry is None:
             raise NotAnOperator("this identity is not an operator")
         if ictx.credential_kind is CredentialKind.OPERATOR_TOKEN:
             # The one exception to "a sign-in alone never admits": a second
@@ -932,28 +938,28 @@ class TenancyManagerImpl(TenancyManagerInterface):
             # one permission, and never more than the entry grants today.
             if ictx.operator_role is None:
                 raise InvalidCredential("an operator token names its permission")
-            granted = operator_permissions_of(ictx.operator_role) & operator_permissions_of(
-                identity.operator_role
-            )
-        elif not identity.totp_enrolled:
+            granted = operator_permissions_of(ictx.operator_role) & operator_permissions_of(entry)
+        elif not ictx.second_factor_enrolled:
             # Allowlisted, with no second factor yet: the two calls that
             # enrol one, and nothing else.
             granted = frozenset({OperatorPermission.ENROL})
         elif not ictx.second_factor:
             raise SecondFactorRequired("sign in with the code from your authenticator")
         else:
-            granted = operator_permissions_of(identity.operator_role)
+            granted = operator_permissions_of(entry)
         return OperatorContext(
             request_id=ictx.request_id,
             app=ictx.app,
             trace_id=ictx.trace_id,
             caused_by_request_id=ictx.caused_by_request_id,
-            identity_id=identity.id,
-            email=identity.email,
+            identity_id=ictx.identity_id,
+            email=ictx.email,
             credential_kind=ictx.credential_kind,
             credential_id=ictx.credential_id,
             second_factor=ictx.second_factor,
             operator_role=ictx.operator_role,
+            operator_entry=entry,
+            second_factor_enrolled=ictx.second_factor_enrolled,
             permissions=granted,
         )
 

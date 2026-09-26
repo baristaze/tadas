@@ -779,6 +779,25 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
             row = (await session.execute(stmt)).scalar_one_or_none()
             return None if row is None else (row.org_id, to_model(row, Session))
 
+    async def read_session_with_identity_by_digest(
+        self, token_hash: str
+    ) -> tuple[UUID, Session, Identity | None] | None:
+        stmt = (
+            select(Sessions, Identities)
+            .outerjoin(Identities, Identities.id == Sessions.identity_id)
+            .where(Sessions.token_hash == token_hash)
+        )
+        async with self._session_for(stmt, org_id=EMPTY_UUID) as session:
+            found = (await session.execute(stmt)).one_or_none()
+            if found is None:
+                return None
+            row, identity = found
+            return (
+                row.org_id,
+                to_model(row, Session),
+                None if identity is None else to_model(identity, Identity),
+            )
+
     async def read_session_by_id(self, session_id: UUID) -> tuple[UUID, Session] | None:
         stmt = select(Sessions).where(Sessions.id == session_id)
         async with self._session_for(stmt, org_id=EMPTY_UUID) as session:

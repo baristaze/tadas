@@ -631,6 +631,18 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
             None,
         )
 
+    async def read_session_with_identity_by_digest(
+        self, token_hash: str
+    ) -> tuple[UUID, Session, Identity | None] | None:
+        return next(
+            (
+                (org_id, session, self._identities.get(session.identity_id))
+                for org_id, session in self._sessions.values()
+                if session.token_hash == token_hash
+            ),
+            None,
+        )
+
     async def read_session_by_id(self, session_id: UUID) -> tuple[UUID, Session] | None:
         return self._sessions.get(session_id)
 
