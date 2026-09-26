@@ -158,7 +158,8 @@ the names of what was written and never a value.
      `API_DOMAIN_NAME`, `APP_DOMAIN_NAME`, `SITE_DOMAIN_NAME`, and
      `ALARM_EMAIL`. No secret:
      the OIDC trust replaces keys. For staging, the ruleset on `main`:
-     a pull request whose checks passed.
+     a pull request whose checks passed on a branch up to date with
+     `main`.
    - The first deploy, through the pipeline: the script pushes
      nothing and applies no environment root itself. For staging it
      dispatches `deploy-staging.yml`. For production it prints the

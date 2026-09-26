@@ -243,6 +243,18 @@ def test_the_stress_workflow_knows_one_environment_and_runs_on_a_dispatch() -> N
     assert disable["if"] == "always()" and "--disable" in disable["run"]
 
 
+def test_a_pull_request_merges_on_checks_run_against_the_current_main() -> None:
+    """Two changes can each be green alone and conflict together. The main
+    ruleset's checks are strict, so a branch merges only up to date with
+    main, and ci.yml runs on merge_group too, for a merge queue."""
+    create = CREATE.read_text()
+    assert "strict_required_status_checks_policy: true," in create
+    assert "strict_required_status_checks_policy: false" not in create
+    workflow = yaml.safe_load((ROOT / ".github" / "workflows" / "ci.yml").read_text())
+    triggers = workflow[True]  # `on:` is YAML's true
+    assert {"pull_request", "merge_group"} <= set(triggers)
+
+
 @pytest.mark.parametrize("environment", ["staging", "production"])
 def test_the_environment_roots_default_to_the_region_the_environments_name(
     environment: str,
