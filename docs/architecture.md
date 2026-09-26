@@ -151,7 +151,12 @@ context on keeps the stage the callee needs.
   (`read_identity_by_issuer_subject`, a system-scope lookup, unique
   `(issuer, subject)` where the subject is set), else by the email
   digest and linked, else made with its personal org; an unverified
-  address is `EmailNotVerified` (401). `sign_in_url` builds the
+  address is `EmailNotVerified` (401). An address is kept and looked up
+  folded (`rules.fold_email`, all of it in lower case), and the
+  database computes `identities.email_digest` from the folded address,
+  so every spelling finds one identity and a second spelling meets the
+  unique index
+  ([ADR 0072](adr/0072-an-address-is-one-address-in-any-case.md)). `sign_in_url` builds the
   provider's URL for a redirect the environment names as its own
   (`TenancyOptions.sign_in_redirect_uris`, a deployed environment's one
   https callback, refused otherwise) and the caller's `state`. The
