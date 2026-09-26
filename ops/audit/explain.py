@@ -27,6 +27,20 @@ order as SQL literals. It is prepared, and executed under
 size, and each index with its size and how many scans used it since the
 counters were last zeroed, so an index nothing read is visible after a run.
 `reset` zeroes them: run it after the seed, whose own reads count too.
+
+`index` creates or drops one candidate index, as the superuser, so a fix
+is measured on the same data before it is proposed:
+
+    uv run python ops/audit/explain.py index audit_<run> \
+        "CREATE INDEX ix_try ON core.tasks (org_id, assignee_id)"
+
+It takes a `CREATE INDEX` or a `DROP INDEX` and nothing else; the index
+lives on the audit database only, which the run drops.
+
+`rows` prints what one `SELECT` returns, as the superuser, so a statement
+file can name the ids the seed made (the busiest member, a small tenant):
+
+    uv run python ops/audit/explain.py rows audit_<run> "SELECT id FROM core.orgs LIMIT 3"
 """
 
 import argparse
@@ -191,6 +205,51 @@ async def reset(name: str) -> None:
     print(f"{name}: index scan counters zeroed")
 
 
+INDEX_DDL = re.compile(r"^\s*(CREATE\s+(UNIQUE\s+)?INDEX|DROP\s+INDEX)\s", re.IGNORECASE)
+
+
+def index_statement(sql: str) -> str:
+    """One CREATE INDEX or DROP INDEX, and nothing chained after it."""
+    statement = sql.strip().rstrip(";")
+    if not INDEX_DDL.match(statement) or ";" in statement:
+        raise SystemExit("index takes one CREATE INDEX or DROP INDEX statement")
+    return statement
+
+
+async def index(name: str, sql: str) -> None:
+    statement = index_statement(sql)
+    engine = create_async_engine(superuser_on(check_name(name)))
+    try:
+        async with engine.begin() as connection:
+            await connection.exec_driver_sql(statement)
+            await connection.exec_driver_sql("ANALYZE")
+    finally:
+        await engine.dispose()
+    print(f"{name}: {statement}")
+
+
+READ = re.compile(r"^\s*(SELECT|WITH)\s", re.IGNORECASE)
+
+
+async def rows(name: str, sql: str) -> None:
+    statement = sql.strip().rstrip(";")
+    if not READ.match(statement) or ";" in statement:
+        raise SystemExit("rows takes one SELECT")
+    engine = create_async_engine(superuser_on(check_name(name)))
+    try:
+        async with engine.connect() as connection:
+            transaction = await connection.begin()
+            try:
+                await connection.exec_driver_sql("SET TRANSACTION READ ONLY")
+                found = (await connection.exec_driver_sql(statement)).all()
+            finally:
+                await transaction.rollback()
+    finally:
+        await engine.dispose()
+    for row in found:
+        print(" | ".join(str(value) for value in row))
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="explain", description=(__doc__ or "").split("\n\n")[0])
     sub = parser.add_subparsers(dest="command", required=True)
@@ -203,11 +262,21 @@ def main(argv: list[str] | None = None) -> int:
     i.add_argument("name")
     r = sub.add_parser("reset", help="zero the scan counters, after the seed")
     r.add_argument("name")
+    x = sub.add_parser("index", help="create or drop one candidate index")
+    x.add_argument("name")
+    x.add_argument("sql")
+    q = sub.add_parser("rows", help="what one SELECT returns, to name the seeded ids")
+    q.add_argument("name")
+    q.add_argument("sql")
     args = parser.parse_args(argv)
     if args.command == "plans":
         asyncio.run(plans(args.name, args.file))
     elif args.command == "inventory":
         asyncio.run(inventory(args.name))
+    elif args.command == "index":
+        asyncio.run(index(args.name, args.sql))
+    elif args.command == "rows":
+        asyncio.run(rows(args.name, args.sql))
     else:
         asyncio.run(reset(args.name))
     return 0

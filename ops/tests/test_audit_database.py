@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 from auditdb import create, drop, exists
-from explain import inventory, plans
+from explain import inventory, plans, rows
 from seed import FIXED, seed
 
 pytestmark = pytest.mark.integration
@@ -48,10 +48,12 @@ async def test_a_run_makes_seeds_reads_and_drops_its_own_database(
     )
     await plans(database, statements)
     await inventory(database)
+    await rows(database, f"SELECT slug FROM core.orgs WHERE id = '{HEAVY}'")
     printed = capsys.readouterr().out
     assert "#### open list, team (runtime" in printed
     assert "#### the tenant fence holds (system" in printed
     assert "| core.tasks |" in printed and "| activity.events |" in printed
+    assert printed.rstrip().endswith("heavy")
 
     results = tmp_path / "calls.json"
     ran = await asyncio.to_thread(

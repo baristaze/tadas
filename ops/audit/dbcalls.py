@@ -109,7 +109,7 @@ class Window:
         lines = []
         for txn in self.txns:
             kinds = [t.kind for t in txn.trips if t.kind != "PREPARE"]
-            statements = [t.sql[:90] for t in txn.trips if t.kind in ("EXEC", "EXECMANY")][1:]
+            statements = [t.sql[:200] for t in txn.trips if t.kind in ("EXEC", "EXECMANY")][1:]
             lines.append(
                 f"T{txn.n} {txn.role}/{txn.scope} {txn.method}: {len(kinds)} trips | "
                 + " ; ".join(statements)
@@ -367,6 +367,7 @@ async def world(name: str) -> AsyncIterator[World]:
         w.integrations,
     )
     w.loop = build_loop(w.worker)
+    logging.getLogger().setLevel(logging.WARNING)
     app = create_app(w.container)
     async with app.router.lifespan_context(app):
         # The app's start sets its own log level; a run prints its flows only.
@@ -396,19 +397,20 @@ def load_flows(path: Path) -> list[Flow]:
 
 
 def selected(flows: list[Flow], only: set[str] | None) -> Iterator[Flow]:
-    """The flows to run: every one, or those named, and `seed` always, first."""
+    """The built-in flows to run: every one, or those named, and `seed`
+    always, first. A `--flows` file's flows all run, after these."""
     for flow in flows:
         if only is None or flow.__name__ in only or flow.__name__ == "seed":
             yield flow
 
 
 async def run(name: str, extra: list[Path], only: set[str] | None, out: Path) -> int:
-    flows = load_flows(Path(__file__).with_name("dbcalls_flows.py"))
+    flows = list(selected(load_flows(Path(__file__).with_name("dbcalls_flows.py")), only))
     for path in extra:
         flows += load_flows(path)
     failed = 0
     async with world(name) as w:
-        for flow in selected(flows, only):
+        for flow in flows:
             try:
                 await flow(w)
                 print(f"{flow.__name__}: done", flush=True)
@@ -455,7 +457,9 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("name")
     r.add_argument("--out", type=Path, required=True)
     r.add_argument("--flows", type=Path, action="append", default=[], help="a file of more FLOWS")
-    r.add_argument("--only", help="comma-separated flow names; seed always runs")
+    r.add_argument(
+        "--only", help="comma-separated built-in flows; seed always runs, --flows files in full"
+    )
     s = sub.add_parser("summary", help="one line per call from a results file")
     s.add_argument("results", type=Path)
     args = parser.parse_args(argv)

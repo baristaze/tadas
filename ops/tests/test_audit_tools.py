@@ -7,7 +7,7 @@ import pytest
 from auditdb import check_name, on_database
 from dbcalls import Row, Trip, Txn, Window, selected, summary
 from deploy_timeline import events, steps, when
-from explain import SYSTEM, explain_sql, parse
+from explain import SYSTEM, explain_sql, index_statement, parse
 from seed import FIXED, Counts, statements
 
 HEAVY = FIXED["heavy_org"]
@@ -122,6 +122,20 @@ def test_a_plain_statement_is_one_explain_and_a_generic_one_is_prepared_first() 
 def test_a_statement_without_its_headers_is_refused(source: str) -> None:
     with pytest.raises(SystemExit):
         parse(source)
+
+
+def test_a_candidate_index_is_one_create_or_drop_and_nothing_else() -> None:
+    assert index_statement("CREATE INDEX ix_try ON core.tasks (org_id);") == (
+        "CREATE INDEX ix_try ON core.tasks (org_id)"
+    )
+    assert index_statement("drop index core.ix_try") == "drop index core.ix_try"
+    for refused in (
+        "DROP TABLE core.tasks",
+        "CREATE INDEX a ON t (x); DROP TABLE t",
+        "DELETE FROM t",
+    ):
+        with pytest.raises(SystemExit):
+            index_statement(refused)
 
 
 # ---------------------------------------------------------------- the counter
