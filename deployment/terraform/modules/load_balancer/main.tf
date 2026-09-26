@@ -29,10 +29,11 @@ resource "aws_lb_target_group" "api" {
 
   # How long a deregistered target keeps its open connections before ECS
   # stops its task. The load balancer stops sending it new requests within a
-  # few seconds, and a request already on it ends well inside 15: the
-  # database's statement timeout (10 seconds) bounds its longest wait. After
-  # the delay the process gets SIGTERM and still finishes what it holds,
-  # inside the task's 30-second stop timeout. A realtime socket still open
+  # few seconds, and a request already on it ends within its deadline, 20
+  # seconds (TADAS_REQUEST_DEADLINE_SECONDS), which its calls to providers
+  # share; the database's statement timeout (10 seconds) bounds each wait on
+  # storage. After the delay the process gets SIGTERM and still finishes what
+  # it holds, inside the task's 30-second stop timeout. A realtime socket still open
   # on the old task closes when the delay ends, and the client reconnects to
   # the new one. The pings and the idle timeout in realtime-timeouts.json
   # keep a living socket open; they ask nothing of a draining one, so they

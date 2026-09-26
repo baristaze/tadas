@@ -980,6 +980,11 @@ backoff that grows with consecutive failures.
   of timing out), `TADAS_VALKEY_TIMEOUT_SECONDS` every Valkey
   request, and `TADAS_OTEL_TIMEOUT_SECONDS` every trace export. The
   Sentry SDK bounds its own transport.
+- A request's calls share its deadline as well: the queue's send, a
+  secret's read, write, and delete, and an object's put, get, and head
+  take the request's `deadline`, and the AWS impl cuts the call there,
+  its retries included, as `BackendUnreachable` (ADR 0069). A worker's
+  calls carry none.
 - A presigned URL names the host a browser reaches the store at, and a
   signature over a GET covers it, so the S3 impl signs with a second
   client aimed at `TADAS_S3_PRESIGN_ENDPOINT_URL` when that differs from
@@ -1104,6 +1109,17 @@ alone, and neither key may touch what the other's work does not need
   the collector must still be able to read by how much, and a socket
   holds no slot, a bound a long-lived connection can fill being no bound
   on requests.
+  A request admitted gets its deadline there: the instant
+  `TADAS_REQUEST_DEADLINE_SECONDS` (20) after it took its slot, which
+  rides the scope to `request_context` and from there
+  `RequestContext.deadline`, carried by every stage a transition refines
+  it into. A manager hands it to every call a request can make to a
+  provider or to AWS, and the client cuts the call there
+  (`tadas.infra.deadline.bounded`), with the refusal a provider that does
+  not answer already gets. The count bounds how many requests hold a
+  slot; the deadline bounds how long a provider that hangs keeps one,
+  under the 30 seconds the portal and the command line wait
+  ([ADR 0069](adr/0069-a-request-has-a-deadline-its-provider-calls-share.md)).
   `/healthz` answers from the process alone and `/readyz` asks storage
   whether it can serve a request right now, under
   `TADAS_READINESS_TIMEOUT_SECONDS`, shorter than the interval it is

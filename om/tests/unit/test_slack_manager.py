@@ -245,9 +245,9 @@ def counted_secrets(world: World, monkeypatch: pytest.MonkeyPatch) -> Counter[st
     for name in ("get", "has"):
         real = getattr(secrets, name)
 
-        async def call(*args: Any, _real: Any = real, _name: str = name) -> Any:
+        async def call(*args: Any, _real: Any = real, _name: str = name, **kw: Any) -> Any:
             calls[_name] += 1
-            return await _real(*args)
+            return await _real(*args, **kw)
 
         monkeypatch.setattr(secrets, name, call)
     return calls

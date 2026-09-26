@@ -3,6 +3,7 @@ not configured: it reaches Slack for nothing, accepts nothing from Slack,
 and says why. So a missing secret is a `503` and a log line, never a queue of
 retries."""
 
+from datetime import datetime
 from typing import Any
 
 from tadas.integrations.slack import (
@@ -17,16 +18,18 @@ class SlackOffImpl(SlackInterface):
     def authorize_url(self, state: str, redirect_uri: str) -> str:
         raise SlackNotConfigured()
 
-    async def exchange_code(self, code: str, redirect_uri: str) -> SlackGrant:
+    async def exchange_code(
+        self, code: str, redirect_uri: str, *, deadline: datetime | None = None
+    ) -> SlackGrant:
         raise SlackNotConfigured()
 
     async def refresh(self, refresh_token: str) -> SlackTokens:
         raise SlackNotConfigured()
 
-    async def uninstall(self, token: str) -> None:
+    async def uninstall(self, token: str, *, deadline: datetime | None = None) -> None:
         raise SlackNotConfigured()
 
-    async def revoke(self, token: str) -> None:
+    async def revoke(self, token: str, *, deadline: datetime | None = None) -> None:
         raise SlackNotConfigured()
 
     def verify_request(self, body: bytes, timestamp: str | None, signature: str | None) -> None:

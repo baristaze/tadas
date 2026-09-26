@@ -367,6 +367,7 @@ to approve the new scopes; its channel stays.
 | The settings page says the install link expired or was already used | The state works once and for ten minutes | Click **Add to Slack** again |
 | It says the workspace is installed for another Tadas org | One workspace belongs to one org | That org clicks **Remove from Slack**, or pick another workspace |
 | It says Slack refused the install | The code exchange failed: a wrong client secret, or a redirect URL the app does not list | `/tadas/<env>/api`: `slack install failed at Slack: <code>`. Step 3; the manifest's redirect URL |
+| It says Slack refused the install, after about 20 seconds | Slack or Secrets Manager did not answer by the request's deadline (`TADAS_REQUEST_DEADLINE_SECONDS`, ADR 0069) | `/tadas/<env>/api`: `slack install failed at Slack: deadline`, or `slack install could not keep its token: ... the request's deadline passed`. Slack's status page, or the account's Secrets Manager; then **Add to Slack** again |
 | An install fails with `AccessDeniedException` on `CreateSecret` in the log | The account's task boundary lacks the tenant-secret writes | Step 2 |
 | `/tadas` says Tadas is not installed for this Slack workspace | No org installed the app in that workspace, or it was removed | Install from Tadas's settings |
 | `/tadas` says you are not a member | Your Slack profile's email is not an address a member of the org signed in with | Ask an owner or an admin to invite that address, then sign in once |

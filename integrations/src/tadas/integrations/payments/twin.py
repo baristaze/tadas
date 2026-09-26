@@ -75,7 +75,9 @@ class PaymentsTwinImpl(PaymentsInterface):
         self._counter += 1
         return f"{prefix}_twin_{self._counter:06d}"
 
-    async def create_customer(self, org_id: UUID, name: str) -> str:
+    async def create_customer(
+        self, org_id: UUID, name: str, *, deadline: datetime | None = None
+    ) -> str:
         existing = self._customer_by_org.get(org_id)
         if existing is not None:
             return existing
@@ -93,6 +95,7 @@ class PaymentsTwinImpl(PaymentsInterface):
         quantity: int,
         success_url: str,
         cancel_url: str,
+        deadline: datetime | None = None,
     ) -> str:
         if customer_id not in self.customers:
             raise PaymentsRefused("create checkout session", "resource_missing")
@@ -109,7 +112,12 @@ class PaymentsTwinImpl(PaymentsInterface):
         return f"https://checkout.twin.invalid/c/{session_id}"
 
     async def create_portal_session(
-        self, customer_id: str, return_url: str, update_payment_method: bool = False
+        self,
+        customer_id: str,
+        return_url: str,
+        update_payment_method: bool = False,
+        *,
+        deadline: datetime | None = None,
     ) -> str:
         if customer_id not in self.customers:
             raise PaymentsRefused("create billing portal session", "resource_missing")
@@ -129,7 +137,7 @@ class PaymentsTwinImpl(PaymentsInterface):
         return UUID(found["metadata"][ORG_METADATA_KEY])
 
     async def set_cancel_at_period_end(
-        self, subscription_id: str, cancel: bool
+        self, subscription_id: str, cancel: bool, *, deadline: datetime | None = None
     ) -> ProviderSubscription:
         found = self._subscription(subscription_id)
         found["cancel_at_period_end"] = cancel

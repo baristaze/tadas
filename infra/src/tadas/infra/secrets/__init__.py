@@ -10,6 +10,7 @@ tenant's secret, or to one of the platform's. The platform's own credentials
 reach the process at start."""
 
 from abc import ABC, abstractmethod
+from datetime import datetime
 from uuid import UUID
 
 from tadas.infra.exceptions import InvalidSecretName, SecretNotFound, SecretsFileNotPrivate
@@ -32,8 +33,11 @@ def scoped_name(org_id: UUID, name: str) -> str:
 
 
 class SecretsInterface(ABC):
+    """A call a request makes carries the request's deadline, and ends by
+    then, unreachable (`tadas.infra.deadline`); a worker's carries none."""
+
     @abstractmethod
-    async def get(self, org_id: UUID, name: str) -> str:
+    async def get(self, org_id: UUID, name: str, *, deadline: datetime | None = None) -> str:
         """Raises SecretNotFound."""
         ...
 
@@ -41,10 +45,14 @@ class SecretsInterface(ABC):
     async def has(self, org_id: UUID, name: str) -> bool: ...
 
     @abstractmethod
-    async def put(self, org_id: UUID, name: str, value: str) -> None: ...
+    async def put(
+        self, org_id: UUID, name: str, value: str, *, deadline: datetime | None = None
+    ) -> None: ...
 
     @abstractmethod
-    async def delete(self, org_id: UUID, name: str) -> None: ...
+    async def delete(
+        self, org_id: UUID, name: str, *, deadline: datetime | None = None
+    ) -> None: ...
 
     @abstractmethod
     def describe(self) -> str: ...

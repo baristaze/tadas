@@ -2,7 +2,7 @@
 wait. At-least-once, no deduplication; the consumer is idempotent."""
 
 from abc import ABC, abstractmethod
-from datetime import timedelta
+from datetime import datetime, timedelta
 from enum import StrEnum
 
 from tadas.infra.base import InfraModel
@@ -28,12 +28,15 @@ class QueueDepth(InfraModel):
 
 class QueuesInterface(ABC):
     @abstractmethod
-    async def send(self, queue: Queues, body: bytes) -> None:
+    async def send(self, queue: Queues, body: bytes, *, deadline: datetime | None = None) -> None:
         """Returns nothing, for the reason `publish` does: the observable id is
         the producer-set idempotency key the body carries, and a broker-assigned
         id carries no durable meaning across retries and replays. The `receipt`
         on a `QueueMessage` is not that id; it is the handle of one delivery,
-        which `delete` and `change_visibility` take."""
+        which `delete` and `change_visibility` take.
+
+        A request sends with its deadline: the send ends by then, unreachable
+        (`tadas.infra.deadline`)."""
         ...
 
     @abstractmethod

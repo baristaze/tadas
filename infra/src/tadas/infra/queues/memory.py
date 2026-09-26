@@ -31,7 +31,7 @@ class QueueMemoryImpl(QueuesInterface):
         self._messages: dict[Queues, list[_Message]] = {q: [] for q in Queues}
         self._dead: dict[Queues, list[_Message]] = {q: [] for q in Queues}
 
-    async def send(self, queue: Queues, body: bytes) -> None:
+    async def send(self, queue: Queues, body: bytes, *, deadline: datetime | None = None) -> None:
         self._messages[queue].append(_Message(id=str(new_id()), body=body))
         OUTCOMES.labels(subsystem="queue", outcome="sent").inc()
 

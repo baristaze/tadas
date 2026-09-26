@@ -1,6 +1,6 @@
 import asyncio
 import time
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from uuid import UUID
 
@@ -48,7 +48,14 @@ class BucketsLocalImpl(BucketsInterface):
             raise UploadRefused(f"upload of {key!r} is {len(data)} bytes, over {max_bytes}")
 
     async def put(
-        self, org_id: UUID, bucket: Buckets, key: str, data: bytes, content_type: str
+        self,
+        org_id: UUID,
+        bucket: Buckets,
+        key: str,
+        data: bytes,
+        content_type: str,
+        *,
+        deadline: datetime | None = None,
     ) -> None:
         path = self._path(org_id, bucket, key)
         self._hold_to_bounds(bucket, object_key(org_id, key), data, content_type)
@@ -60,13 +67,17 @@ class BucketsLocalImpl(BucketsInterface):
 
         await asyncio.to_thread(write)
 
-    async def get(self, org_id: UUID, bucket: Buckets, key: str) -> bytes:
+    async def get(
+        self, org_id: UUID, bucket: Buckets, key: str, *, deadline: datetime | None = None
+    ) -> bytes:
         path = self._path(org_id, bucket, key)
         if not await asyncio.to_thread(path.is_file):
             raise BlobNotFound(f"{bucket.value}/{key}")
         return await asyncio.to_thread(path.read_bytes)
 
-    async def exists(self, org_id: UUID, bucket: Buckets, key: str) -> bool:
+    async def exists(
+        self, org_id: UUID, bucket: Buckets, key: str, *, deadline: datetime | None = None
+    ) -> bool:
         return await asyncio.to_thread(self._path(org_id, bucket, key).is_file)
 
     async def list(

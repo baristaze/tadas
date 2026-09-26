@@ -1,10 +1,13 @@
 """The WorkOS client over a fake transport: the requests it sends, and every
-answer translated into the integration's own shapes and exceptions."""
+answer translated into the integration's own shapes and exceptions, and a
+call a request makes kept to the request's deadline."""
 
+import asyncio
 import base64
 import json
-from collections.abc import Callable
-from datetime import timedelta
+import time
+from collections.abc import Awaitable, Callable
+from datetime import datetime, timedelta
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
@@ -12,6 +15,8 @@ import httpx
 import pytest
 from workos import AsyncWorkOSClient
 
+from tadas.infra.base import utcnow
+from tadas.infra.deadline import PASSED
 from tadas.integrations.exceptions import (
     DeviceDenied,
     DeviceExpired,
@@ -392,6 +397,158 @@ async def test_a_call_that_times_out_is_tried_again_each_time_under_the_timeout(
     with pytest.raises(ProviderUnavailable):
         await made.start_device()
     assert [r.extensions["timeout"] for r in recorder.requests] == [sent_with(10)] * 4
+
+
+# A call a request makes, under the request's deadline.
+
+
+class Sent:
+    """Every request the client sends, answered by `answer`, which may take
+    its time: an async handler is how the fake transport waits."""
+
+    def __init__(self, answer: Callable[[httpx.Request, int], Awaitable[httpx.Response]]) -> None:
+        self.requests: list[httpx.Request] = []
+        self._answer = answer
+
+    async def __call__(self, request: httpx.Request) -> httpx.Response:
+        self.requests.append(request)
+        return await self._answer(request, len(self.requests))
+
+
+def under(sent: Sent, *, timeout: float = 10, max_retries: int = 3) -> IdentityProviderWorkOSImpl:
+    """The client as the process builds it: the SDK's own retries on."""
+    return IdentityProviderWorkOSImpl(
+        client_id=CLIENT_ID,
+        api_key=API_KEY,
+        timeout=timedelta(seconds=timeout),
+        max_retries=max_retries,
+        transport=httpx.MockTransport(sent),
+    )
+
+
+def after(seconds: float) -> datetime:
+    return utcnow() + timedelta(seconds=seconds)
+
+
+async def test_a_workos_that_hangs_ends_at_the_deadline_not_after_its_retries() -> None:
+    """At a ten second timeout and three retries a WorkOS that hangs holds a
+    call about fifty seconds. Under a request's deadline the attempt goes out
+    with what is left, and the call ends at the deadline, unavailable."""
+
+    async def hang(request: httpx.Request, n: int) -> httpx.Response:
+        await asyncio.sleep(3600)
+        raise AssertionError("never answered")
+
+    sent = Sent(hang)
+    made = under(sent)
+    began = time.monotonic()
+    with pytest.raises(ProviderUnavailable) as raised:
+        await asyncio.wait_for(made.start_device(deadline=after(0.3)), 5)
+    waited = time.monotonic() - began
+    assert raised.value.message == f"starting a device sign-in: {PASSED}"
+    assert 0.25 <= waited < 1.0, waited
+    [request] = sent.requests
+    assert 0 < request.extensions["timeout"]["read"] <= 0.3
+
+
+async def test_each_attempt_is_sent_with_what_is_left(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The SDK keeps its retries; each goes out with the smaller of the
+    timeout and the time left, which shrinks as the attempts go."""
+
+    def no_wait(attempt: int, retry_after: str | None = None) -> float:
+        return 0.0
+
+    monkeypatch.setattr(AsyncWorkOSClient, "_calculate_retry_delay", staticmethod(no_wait))
+
+    async def slow_timeout(request: httpx.Request, n: int) -> httpx.Response:
+        await asyncio.sleep(0.05)
+        raise httpx.ReadTimeout("no answer", request=request)
+
+    sent = Sent(slow_timeout)
+    with pytest.raises(ProviderUnavailable):
+        await under(sent).start_device(deadline=after(2))
+    reads = [r.extensions["timeout"]["read"] for r in sent.requests]
+    assert len(reads) == 4 and all(0 < read <= 2 for read in reads), reads
+    assert reads == sorted(reads, reverse=True), reads
+
+
+@pytest.mark.parametrize("status", [429, 503])
+async def test_a_retry_after_longer_than_what_is_left_is_not_slept(status: int) -> None:
+    """The SDK sleeps as long as a `Retry-After` asks, with no cap of its own.
+    One that asks for longer than the request has left ends the call at
+    once: the request answers now instead of holding its slot for nothing."""
+
+    async def later(request: httpx.Request, n: int) -> httpx.Response:
+        return httpx.Response(status, headers={"Retry-After": "30"}, json={"message": "later"})
+
+    sent = Sent(later)
+    began = time.monotonic()
+    with pytest.raises(ProviderUnavailable) as raised:
+        await asyncio.wait_for(under(sent).start_device(deadline=after(5)), 10)
+    assert time.monotonic() - began < 0.5
+    assert len(sent.requests) == 1
+    assert raised.value.message == (
+        f"starting a device sign-in: WorkOS answered {status} and asked to be called "
+        "again in 30 s, past the request's deadline"
+    )
+
+
+async def test_a_retry_after_that_fits_is_slept_and_the_call_goes_through() -> None:
+    async def once_later(request: httpx.Request, n: int) -> httpx.Response:
+        if n == 1:
+            return httpx.Response(429, headers={"Retry-After": "0.2"}, json={"message": "later"})
+        return httpx.Response(200, json=DEVICE)
+
+    sent = Sent(once_later)
+    began = time.monotonic()
+    started = await under(sent).start_device(deadline=after(5))
+    assert started.device_code == "dc"
+    assert time.monotonic() - began >= 0.2
+    assert len(sent.requests) == 2
+
+
+async def test_the_pages_of_one_listing_share_the_deadline() -> None:
+    """A listing reads page after page, each a request of its own; they share
+    what is left, and the one the deadline catches ends the call."""
+
+    async def paging(request: httpx.Request, n: int) -> httpx.Response:
+        await asyncio.sleep(0.15)
+        return httpx.Response(
+            200,
+            json={
+                "object": "list",
+                "data": [invitation(f"inv_{n}", "accepted", "someone_else")],
+                "list_metadata": {"before": None, "after": f"inv_{n}"},
+            },
+        )
+
+    sent = Sent(paging)
+    with pytest.raises(ProviderUnavailable) as raised:
+        await under(sent).find_pending_invitation(
+            email="bob@acme.example", organization_id="org_1", deadline=after(0.4)
+        )
+    assert raised.value.message == f"listing the invitations: {PASSED}"
+    assert len(sent.requests) == 3
+
+
+async def test_a_call_with_no_deadline_keeps_the_timeout_and_the_retries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A worker's call carries no deadline: four attempts of the timeout, as
+    before."""
+
+    def no_wait(attempt: int, retry_after: str | None = None) -> float:
+        return 0.0
+
+    monkeypatch.setattr(AsyncWorkOSClient, "_calculate_retry_delay", staticmethod(no_wait))
+
+    async def timeout(request: httpx.Request, n: int) -> httpx.Response:
+        raise httpx.ReadTimeout("no answer", request=request)
+
+    sent = Sent(timeout)
+    with pytest.raises(ProviderUnavailable):
+        await under(sent).delete_user("user_1")
+    assert [r.extensions["timeout"] for r in sent.requests] == [sent_with(10)] * 4
 
 
 async def test_an_unprocessable_invitation_is_a_conflict() -> None:

@@ -9,11 +9,17 @@ it cannot start and dying with every caller still waiting.
 The bound is two bounds, one lane for reads and one for writes, so that a
 storm in one lane cannot take every slot from the other: a client back from
 an outage replays its backlog with reads, and the commands behind it are
-still admitted."""
+still admitted.
+
+A request admitted also gets its deadline: the instant, counted from when it
+takes its slot, that every call it makes outside the process shares (ADR
+0069). The count bounds how many requests hold a slot; the deadline bounds how
+long a provider that hangs keeps one."""
 
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 
+from tadas.infra.base import utcnow
 from tadas.infra.observability import OUTCOMES
 from tadas.om.exceptions import Unavailable
 from tadas.services.api.gateway.envelope import error_response
@@ -32,6 +38,17 @@ be able to say that it is saturated, and the collector must still be able to
 read the counter that says by how much. None of them does tenant work,
 liveness does no I/O at all, and readiness carries a deadline of its own. The
 paths are matched as they arrive, because routing has not run this far out."""
+
+DEADLINE_KEY = "deadline"
+"""Where the admitted request's deadline rides in the scope's state, beside
+its request id, until the gateway mints the request stage from both."""
+
+
+def deadline_of(scope: Scope) -> datetime | None:
+    """The deadline admission gave the request; None for what admission lets
+    through uncounted: a socket, and the operational routes."""
+    return scope.get("state", {}).get(DEADLINE_KEY)
+
 
 READ_METHODS = frozenset({"GET", "HEAD"})
 """The read lane's methods. Everything else is a write, the method a caller
@@ -60,6 +77,7 @@ class Lane:
 class AdmissionMiddleware:
     """Counts the HTTP requests in flight, reads apart from writes, and
     refuses past either bound with the unavailable shape and a `Retry-After`.
+    A request it admits carries its deadline from there on.
     A count is a plain integer: one event loop owns it, and it is read and
     written with no await in between, so nothing interleaves. A socket is not
     counted: it is held open for as long as its subscriber wants it, and a
@@ -67,12 +85,18 @@ class AdmissionMiddleware:
     a bound on requests."""
 
     def __init__(
-        self, app: ASGIApp, limit_reads: int, limit_writes: int, retry_after: timedelta
+        self,
+        app: ASGIApp,
+        limit_reads: int,
+        limit_writes: int,
+        retry_after: timedelta,
+        deadline: timedelta,
     ) -> None:
         self.app = app
         self.reads = Lane("reads", limit_reads)
         self.writes = Lane("writes", limit_writes)
         self.retry_after = str(max(1, int(retry_after.total_seconds())))
+        self.deadline = deadline
 
     def lane_of(self, scope: Scope) -> Lane:
         return self.reads if scope["method"] in READ_METHODS else self.writes
@@ -87,6 +111,7 @@ class AdmissionMiddleware:
             await self.refuse(lane, scope, receive, send)
             return
         OUTCOMES.labels(subsystem=lane.subsystem, outcome="admitted").inc()
+        scope.setdefault("state", {})[DEADLINE_KEY] = utcnow() + self.deadline
         lane.in_flight += 1
         try:
             await self.app(scope, receive, send)

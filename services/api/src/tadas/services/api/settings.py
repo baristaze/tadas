@@ -184,6 +184,16 @@ class ApiSettings(StorageSettings, InfraSettings, IntegrationsSettings):
     admission_limit_reads: int = Field(default=400, gt=0)
     admission_limit_writes: int = Field(default=200, gt=0)
     admission_retry_after_seconds: int = 1
+    # The deadline of an admitted request, from the moment it takes its slot:
+    # every call it makes to a provider or to AWS shares it, and a call still
+    # waiting when it passes ends there, so a provider that hangs costs a
+    # request this at most instead of its timeouts times its retries (ADR
+    # 0069). It sits inside every bound on how long an answer can still reach
+    # someone: the portal and the command line give up on a call at 30
+    # seconds, a draining task has 45 (15 of deregistration, 30 to stop), and
+    # the load balancer 60. The 10 seconds left under the clients' 30 carry
+    # the refusal back and the database work around the calls. Seconds.
+    request_deadline_seconds: float = Field(default=20.0, gt=0)
 
     @model_validator(mode="after")
     def local_doors_stay_local(self) -> ApiSettings:

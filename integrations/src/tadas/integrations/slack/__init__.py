@@ -16,7 +16,12 @@ caller never knows which it holds.
 The errors are the decision a caller needs, not Slack's whole vocabulary: a
 rate limit says when to come back, an unusable channel says the channel is
 broken until a person fixes it, a revoked token says the install is gone,
-and anything else is a failure worth a retry."""
+and anything else is a failure worth a retry.
+
+A call a request makes (the install's exchange, an uninstall, a revoke)
+carries the request's `deadline`, which every call it makes shares (ADR
+0069), and ends by then, `SlackFailed`, as when Slack does not answer. The
+rest are a worker's, bounded by the item's lease."""
 
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta
@@ -145,7 +150,9 @@ class SlackInterface(ABC):
         ...
 
     @abstractmethod
-    async def exchange_code(self, code: str, redirect_uri: str) -> SlackGrant:
+    async def exchange_code(
+        self, code: str, redirect_uri: str, *, deadline: datetime | None = None
+    ) -> SlackGrant:
         """Finishes an install: the code Slack sent to the redirect, traded
         with the app's client id and secret (`oauth.v2.access`)."""
         ...
@@ -157,13 +164,13 @@ class SlackInterface(ABC):
         ...
 
     @abstractmethod
-    async def uninstall(self, token: str) -> None:
+    async def uninstall(self, token: str, *, deadline: datetime | None = None) -> None:
         """Removes the app from the workspace the token belongs to
         (`apps.uninstall`); a token already revoked is already uninstalled."""
         ...
 
     @abstractmethod
-    async def revoke(self, token: str) -> None:
+    async def revoke(self, token: str, *, deadline: datetime | None = None) -> None:
         """Revokes one token (`auth.revoke`) and leaves the app installed: for
         a token an install handed over that the platform will not keep."""
         ...

@@ -38,18 +38,29 @@ The SDK takes whole seconds, so the setting is rounded up, never to zero.
 The SDK's retries stay: they retry a timeout, a failed connection, a 429,
 and a server error with backoff, so a WorkOS that hangs costs four attempts
 of the timeout. Every SDK error is translated here; none crosses the
-boundary."""
+boundary.
+
+A call a request makes carries the request's deadline (ADR 0069), and goes
+through an SDK client whose transport keeps to it: each attempt is sent with
+the smaller of the timeout and what is left, and a 429 or a server error
+whose `Retry-After` asks for longer than what is left ends the call at once,
+instead of the SDK sleeping through the rest of the request. The call itself
+is cut at the deadline, attempt, backoff, or sleep, and is then
+`ProviderUnavailable`, as a WorkOS that does not answer is."""
 
 import base64
 import binascii
 import json
 import logging
 import math
-from datetime import timedelta
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from datetime import datetime, timedelta
 from typing import Any, Literal, NoReturn
 
 import httpx
 from workos import AsyncWorkOSClient
+from workos._base_client import RETRY_STATUS_CODES
 from workos._errors import (
     APIError,
     AuthenticationError,
@@ -61,7 +72,9 @@ from workos._errors import (
     UnprocessableEntityError,
     WorkOSError,
 )
+from workos._http import AsyncHTTPBackend, AsyncHttpxBackend, HTTPResponse
 
+from tadas.infra.deadline import DeadlineReached, bounded, seconds_left
 from tadas.integrations.exceptions import (
     DeviceDenied,
     DeviceExpired,
@@ -97,6 +110,51 @@ DEVICE_ERRORS: dict[str, type[Exception]] = {
     "access_denied": DeviceDenied,
     "expired_token": DeviceExpired,
 }
+
+
+class DeadlineBackend:
+    """The SDK's transport for the calls of one request: the process's HTTP
+    client under the request's deadline. The SDK keeps its retries and its
+    backoff; this keeps each attempt inside the deadline. An attempt goes
+    out with the smaller of the SDK's timeout and what is left, and none goes
+    out with nothing left. An answer the SDK would sleep on, a 429 or a
+    server error with a `Retry-After`, ends the call when the wait asked for
+    does not fit in what is left, read the way the SDK reads it. The client
+    it borrows is the impl's, which closes it."""
+
+    def __init__(self, backend: AsyncHTTPBackend, deadline: datetime) -> None:
+        self._backend = backend
+        self._deadline = deadline
+
+    def _left(self) -> float:
+        return seconds_left(self._deadline) or 0.0
+
+    async def request(
+        self,
+        method: str,
+        url: str,
+        *,
+        headers: dict[str, str],
+        content: bytes | None,
+        timeout: float,  # noqa: ASYNC109 - the SDK's own signature
+    ) -> HTTPResponse:
+        left = self._left()
+        if left <= 0:
+            raise DeadlineReached("no time is left for another attempt")
+        response = await self._backend.request(
+            method, url, headers=headers, content=content, timeout=min(timeout, left)
+        )
+        if response.status_code in RETRY_STATUS_CODES:
+            asked = AsyncWorkOSClient._parse_retry_after(response.headers.get("Retry-After"))
+            if asked is not None and asked >= self._left():
+                raise DeadlineReached(
+                    f"WorkOS answered {response.status_code} and asked to be called again "
+                    f"in {asked:g} s, past the request's deadline"
+                )
+        return response
+
+    async def close(self) -> None:
+        return None
 
 
 def whole_seconds(timeout: timedelta) -> int:
@@ -205,20 +263,43 @@ class IdentityProviderWorkOSImpl(IdentityProviderInterface):
             # key; this impl never lets it choose a credential of its own.
             raise ValueError("WorkOS needs its client id and its API key")
         self._client_id = client_id
+        self._api_key = api_key
         self._base_url = base_url.rstrip("/")
-        seconds = whole_seconds(timeout)
-        self._http = httpx.AsyncClient(timeout=seconds, transport=transport)
-        # One client, one credential: the application's key is the exchange's
-        # client secret and the management calls' bearer alike. The request
-        # timeout is the one each call is sent with; the client's is the same.
-        self._workos = AsyncWorkOSClient(
-            api_key=api_key,
-            client_id=client_id,
+        self._seconds = whole_seconds(timeout)
+        self._max_retries = max_retries
+        self._http = httpx.AsyncClient(timeout=self._seconds, transport=transport)
+        self._backend = AsyncHttpxBackend(self._http)
+        self._workos = self._sdk(self._http)
+
+    def _sdk(self, http: httpx.AsyncClient | AsyncHTTPBackend) -> AsyncWorkOSClient:
+        """One client, one credential: the application's key is the exchange's
+        client secret and the management calls' bearer alike. The request
+        timeout is the one each call is sent with; the HTTP client's is the
+        same."""
+        return AsyncWorkOSClient(
+            api_key=self._api_key,
+            client_id=self._client_id,
             base_url=self._base_url,
-            request_timeout=seconds,
-            max_retries=max_retries,
-            http_client=self._http,
+            request_timeout=self._seconds,
+            max_retries=self._max_retries,
+            http_client=http,
         )
+
+    @asynccontextmanager
+    async def _within(
+        self, deadline: datetime | None, doing: str
+    ) -> AsyncIterator[AsyncWorkOSClient]:
+        """The SDK client one call goes through. With no deadline, the
+        process's own. Under a request's deadline, one over the process's
+        HTTP client whose every attempt keeps to it (`DeadlineBackend`), and
+        the call is cut at the deadline: `ProviderUnavailable`, naming what
+        was being done."""
+        if deadline is None:
+            yield self._workos
+            return
+        workos = self._sdk(DeadlineBackend(self._backend, deadline))
+        async with bounded(deadline, lambda reason: ProviderUnavailable(f"{doing}: {reason}")):
+            yield workos
 
     @property
     def issuer(self) -> str:
@@ -250,14 +331,21 @@ class IdentityProviderWorkOSImpl(IdentityProviderInterface):
         )
 
     async def authenticate_code(
-        self, code: str, *, code_verifier: str | None, invitation_token: str | None = None
+        self,
+        code: str,
+        *,
+        code_verifier: str | None,
+        invitation_token: str | None = None,
+        deadline: datetime | None = None,
     ) -> ProvidedSignIn:
+        doing = "exchanging the sign-in code"
         try:
-            response = await self._workos.user_management.authenticate_with_code(
-                code=code, code_verifier=code_verifier, invitation_token=invitation_token
-            )
+            async with self._within(deadline, doing) as workos:
+                response = await workos.user_management.authenticate_with_code(
+                    code=code, code_verifier=code_verifier, invitation_token=invitation_token
+                )
         except (WorkOSError, httpx.HTTPError) as error:
-            _translate(error, "exchanging the sign-in code")
+            _translate(error, doing)
         return _sign_in(response, session_id=session_of(response.access_token))
 
     def logout_url(self, *, session_id: str, return_to: str | None) -> str:
@@ -265,11 +353,13 @@ class IdentityProviderWorkOSImpl(IdentityProviderInterface):
             session_id=session_id, return_to=return_to
         )
 
-    async def start_device(self) -> DeviceAuthorization:
+    async def start_device(self, *, deadline: datetime | None = None) -> DeviceAuthorization:
+        doing = "starting a device sign-in"
         try:
-            started = await self._workos.user_management.create_device(client_id=self._client_id)
+            async with self._within(deadline, doing) as workos:
+                started = await workos.user_management.create_device(client_id=self._client_id)
         except (WorkOSError, httpx.HTTPError) as error:
-            _translate(error, "starting a device sign-in")
+            _translate(error, doing)
         return DeviceAuthorization(
             device_code=started.device_code,
             user_code=started.user_code,
@@ -279,115 +369,163 @@ class IdentityProviderWorkOSImpl(IdentityProviderInterface):
             interval=int(started.interval or 5),
         )
 
-    async def authenticate_device(self, device_code: str) -> ProvidedSignIn:
+    async def authenticate_device(
+        self, device_code: str, *, deadline: datetime | None = None
+    ) -> ProvidedSignIn:
+        doing = "asking for the device sign-in"
         try:
-            response = await self._workos.user_management.authenticate_with_device_code(
-                device_code=device_code
-            )
+            async with self._within(deadline, doing) as workos:
+                response = await workos.user_management.authenticate_with_device_code(
+                    device_code=device_code
+                )
         except (WorkOSError, httpx.HTTPError) as error:
-            _translate(error, "asking for the device sign-in")
+            _translate(error, doing)
         return _sign_in(response)
 
-    async def ensure_organization(self, *, external_id: str, name: str) -> ProvidedOrganization:
-        organizations = self._workos.organizations
+    async def ensure_organization(
+        self, *, external_id: str, name: str, deadline: datetime | None = None
+    ) -> ProvidedOrganization:
+        doing = "reading the organization"
         try:
-            return _organization(
-                await organizations.get_organization_by_external_id(external_id=external_id)
-            )
+            async with self._within(deadline, doing) as workos:
+                found = await workos.organizations.get_organization_by_external_id(
+                    external_id=external_id
+                )
+            return _organization(found)
         except NotFoundError:
             pass
         except (WorkOSError, httpx.HTTPError) as error:
-            _translate(error, "reading the organization")
+            _translate(error, doing)
+        doing = "creating the organization"
         try:
-            created = await organizations.create_organization(name=name, external_id=external_id)
+            async with self._within(deadline, doing) as workos:
+                created = await workos.organizations.create_organization(
+                    name=name, external_id=external_id
+                )
         except (WorkOSError, httpx.HTTPError) as error:
-            _translate(error, "creating the organization")
+            _translate(error, doing)
         return _organization(created)
 
-    async def get_organization(self, organization_id: str) -> ProvidedOrganization:
+    async def get_organization(
+        self, organization_id: str, *, deadline: datetime | None = None
+    ) -> ProvidedOrganization:
+        doing = "reading the organization"
         try:
-            org = await self._workos.organizations.get_organization(id=organization_id)
+            async with self._within(deadline, doing) as workos:
+                org = await workos.organizations.get_organization(id=organization_id)
         except (WorkOSError, httpx.HTTPError) as error:
-            _translate(error, "reading the organization")
+            _translate(error, doing)
         return _organization(org)
 
     async def send_invitation(
-        self, *, email: str, organization_id: str, expires_in_days: int
+        self,
+        *,
+        email: str,
+        organization_id: str,
+        expires_in_days: int,
+        deadline: datetime | None = None,
     ) -> ProvidedInvitation:
+        doing = "sending the invitation"
         try:
-            sent = await self._workos.user_management.send_invitation(
-                email=email, organization_id=organization_id, expires_in_days=expires_in_days
-            )
+            async with self._within(deadline, doing) as workos:
+                sent = await workos.user_management.send_invitation(
+                    email=email, organization_id=organization_id, expires_in_days=expires_in_days
+                )
         except (WorkOSError, httpx.HTTPError) as error:
-            _translate(error, "sending the invitation")
+            _translate(error, doing)
         return _invitation(sent)
 
     async def find_pending_invitation(
-        self, *, email: str, organization_id: str
+        self, *, email: str, organization_id: str, deadline: datetime | None = None
     ) -> ProvidedInvitation | None:
+        doing = "listing the invitations"
         try:
-            page = await self._workos.user_management.list_invitations(
-                organization_id=organization_id, email=email, limit=100
-            )
-            async for invitation in page.auto_paging_iter():
-                if _value(invitation.state) == InvitationState.PENDING.value:
-                    return _invitation(invitation)
+            async with self._within(deadline, doing) as workos:
+                page = await workos.user_management.list_invitations(
+                    organization_id=organization_id, email=email, limit=100
+                )
+                async for invitation in page.auto_paging_iter():
+                    if _value(invitation.state) == InvitationState.PENDING.value:
+                        return _invitation(invitation)
         except (WorkOSError, httpx.HTTPError) as error:
-            _translate(error, "listing the invitations")
+            _translate(error, doing)
         return None
 
-    async def resend_invitation(self, invitation_id: str) -> ProvidedInvitation:
+    async def resend_invitation(
+        self, invitation_id: str, *, deadline: datetime | None = None
+    ) -> ProvidedInvitation:
+        doing = "resending the invitation"
         try:
-            resent = await self._workos.user_management.resend_invitation(id=invitation_id)
+            async with self._within(deadline, doing) as workos:
+                resent = await workos.user_management.resend_invitation(id=invitation_id)
         except (WorkOSError, httpx.HTTPError) as error:
-            _translate(error, "resending the invitation")
+            _translate(error, doing)
         return _invitation(resent)
 
-    async def revoke_invitation(self, invitation_id: str) -> ProvidedInvitation:
+    async def revoke_invitation(
+        self, invitation_id: str, *, deadline: datetime | None = None
+    ) -> ProvidedInvitation:
+        doing = "revoking the invitation"
         try:
-            revoked = await self._workos.user_management.revoke_invitation(id=invitation_id)
+            async with self._within(deadline, doing) as workos:
+                revoked = await workos.user_management.revoke_invitation(id=invitation_id)
         except (WorkOSError, httpx.HTTPError) as error:
-            _translate(error, "revoking the invitation")
+            _translate(error, doing)
         return _invitation(revoked)
 
     async def accepted_invitation(
-        self, *, organization_id: str, user_id: str, email: str
+        self,
+        *,
+        organization_id: str,
+        user_id: str,
+        email: str,
+        deadline: datetime | None = None,
     ) -> ProvidedInvitation | None:
         """The invitations sent to the person's address first: one page, and
         the invitation almost always. The organization's others are read
         only when none of those is the one, since an invitation to a
-        company's domain may be accepted with another address of it."""
-        by_address = await self._accepted_among(organization_id, user_id, email)
+        company's domain may be accepted with another address of it. Both
+        reads share the deadline."""
+        by_address = await self._accepted_among(organization_id, user_id, email, deadline)
         if by_address is not None:
             return by_address
-        return await self._accepted_among(organization_id, user_id, None)
+        return await self._accepted_among(organization_id, user_id, None, deadline)
 
     async def _accepted_among(
-        self, organization_id: str, user_id: str, email: str | None
+        self, organization_id: str, user_id: str, email: str | None, deadline: datetime | None
     ) -> ProvidedInvitation | None:
+        doing = "listing the invitations"
         try:
-            page = await self._workos.user_management.list_invitations(
-                organization_id=organization_id, email=email, limit=100
-            )
-            async for invitation in page.auto_paging_iter():
-                if (
-                    invitation.accepted_user_id == user_id
-                    and _value(invitation.state) == InvitationState.ACCEPTED.value
-                ):
-                    return _invitation(invitation)
+            async with self._within(deadline, doing) as workos:
+                page = await workos.user_management.list_invitations(
+                    organization_id=organization_id, email=email, limit=100
+                )
+                async for invitation in page.auto_paging_iter():
+                    if (
+                        invitation.accepted_user_id == user_id
+                        and _value(invitation.state) == InvitationState.ACCEPTED.value
+                    ):
+                        return _invitation(invitation)
         except (WorkOSError, httpx.HTTPError) as error:
-            _translate(error, "listing the invitations")
+            _translate(error, doing)
         return None
 
     async def portal_link(
-        self, *, organization_id: str, intent: PortalIntent, return_url: str
+        self,
+        *,
+        organization_id: str,
+        intent: PortalIntent,
+        return_url: str,
+        deadline: datetime | None = None,
     ) -> str:
+        doing = "making the admin portal link"
         try:
-            link = await self._workos.admin_portal.generate_link(
-                organization=organization_id, intent=intent, return_url=return_url
-            )
+            async with self._within(deadline, doing) as workos:
+                link = await workos.admin_portal.generate_link(
+                    organization=organization_id, intent=intent, return_url=return_url
+                )
         except (WorkOSError, httpx.HTTPError) as error:
-            _translate(error, "making the admin portal link")
+            _translate(error, doing)
         return link.link
 
     async def delete_user(self, user_id: str) -> None:

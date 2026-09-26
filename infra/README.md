@@ -32,6 +32,12 @@ boot.
   timeout from settings: one for AWS, one for Valkey, one for the
   trace export. A test scans every source root and fails on a client
   built without one.
+- **A request's deadline on the calls a request makes.** A queue's
+  send, a secret's get, put, and delete, and an object's put, get, and
+  exists take the request's `deadline`; the AWS impl cuts the call
+  there, botocore's retries included, and it is unreachable (503). A
+  worker's calls carry none. `tadas.infra.deadline` is the one helper
+  every client keeps to it with (ADR 0069).
 - **One exception family.** Every driver error is translated into an
   infra exception with a status and a code, the same shape the
   platform's own exceptions have, so the gateway presents both alike.

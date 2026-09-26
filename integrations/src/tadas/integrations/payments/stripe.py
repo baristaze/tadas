@@ -22,6 +22,7 @@ from uuid import UUID
 
 import stripe
 
+from tadas.infra.deadline import bounded, unreachable
 from tadas.infra.exceptions import BackendFailed, BackendUnreachable
 from tadas.integrations.exceptions import (
     PaymentsKeyRefused,
@@ -165,8 +166,10 @@ class PaymentsStripeImpl(PaymentsInterface):
             raise RuntimeError("the payments client is used before start()")
         return self._client.v1
 
-    async def create_customer(self, org_id: UUID, name: str) -> str:
-        async with translated("create customer"):
+    async def create_customer(
+        self, org_id: UUID, name: str, *, deadline: datetime | None = None
+    ) -> str:
+        async with translated("create customer", deadline):
             customer = await self._v1().customers.create_async(
                 {"name": name, "metadata": {ORG_METADATA_KEY: str(org_id)}},
                 {"idempotency_key": f"tadas-customer-{org_id}"},
@@ -182,14 +185,15 @@ class PaymentsStripeImpl(PaymentsInterface):
         quantity: int,
         success_url: str,
         cancel_url: str,
+        deadline: datetime | None = None,
     ) -> str:
         v1 = self._v1()
-        async with translated("find price"):
+        async with translated("find price", deadline):
             prices = await v1.prices.list_async({"lookup_keys": [lookup_key], "active": True})
         if not prices.data:
             raise PaymentsRefused("create checkout session", f"no active price {lookup_key}")
         org = {ORG_METADATA_KEY: str(org_id)}
-        async with translated("create checkout session"):
+        async with translated("create checkout session", deadline):
             session = await v1.checkout.sessions.create_async(
                 {
                     "mode": "subscription",
@@ -205,7 +209,12 @@ class PaymentsStripeImpl(PaymentsInterface):
         return str(session.url)
 
     async def create_portal_session(
-        self, customer_id: str, return_url: str, update_payment_method: bool = False
+        self,
+        customer_id: str,
+        return_url: str,
+        update_payment_method: bool = False,
+        *,
+        deadline: datetime | None = None,
     ) -> str:
         v1 = self._v1()
         params: dict[str, Any] = {"customer": customer_id, "return_url": return_url}
@@ -217,18 +226,18 @@ class PaymentsStripeImpl(PaymentsInterface):
                 "type": "payment_method_update",
                 "after_completion": {"type": "redirect", "redirect": {"return_url": return_url}},
             }
-        configuration = await self._managed_portal_configuration(v1)
+        configuration = await self._managed_portal_configuration(v1, deadline)
         if configuration is not None:
             params["configuration"] = configuration
-        async with translated("create billing portal session"):
+        async with translated("create billing portal session", deadline):
             session = await v1.billing_portal.sessions.create_async(params)
         return str(session.url)
 
-    async def _managed_portal_configuration(self, v1: Any) -> str | None:
+    async def _managed_portal_configuration(self, v1: Any, deadline: datetime | None) -> str | None:
         """The configuration the bootstrap manages, found once; the account's
         default when the bootstrap has not run."""
         if self._portal_configuration is None:
-            async with translated("list billing portal configurations"):
+            async with translated("list billing portal configurations", deadline):
                 found = await v1.billing_portal.configurations.list_async(
                     {"active": True, "limit": 100}
                 )
@@ -258,9 +267,9 @@ class PaymentsStripeImpl(PaymentsInterface):
             return None
 
     async def set_cancel_at_period_end(
-        self, subscription_id: str, cancel: bool
+        self, subscription_id: str, cancel: bool, *, deadline: datetime | None = None
     ) -> ProviderSubscription:
-        async with translated("update subscription"):
+        async with translated("update subscription", deadline):
             subscription = await self._v1().subscriptions.update_async(
                 subscription_id, {"cancel_at_period_end": cancel}
             )
@@ -351,8 +360,9 @@ async def ended(operation: str, call: Callable[[], Awaitable[object]]) -> None:
 
 
 @asynccontextmanager
-async def translated(operation: str) -> AsyncIterator[None]:
-    """The SDK's errors as the integrations family, by whose problem it is.
+async def translated(operation: str, deadline: datetime | None = None) -> AsyncIterator[None]:
+    """The SDK's errors as the integrations family, by whose problem it is,
+    and the call bounded by the request's deadline when it carries one.
 
     - A refusal of the runtime key itself (401 revoked, 403 without the
       permission) is the process's: `PaymentsKeyRefused`, unavailable
@@ -364,11 +374,16 @@ async def translated(operation: str) -> AsyncIterator[None]:
       request gets the same answer.
     - An unreachable processor is `BackendUnreachable`, and anything else,
       a 5xx among it, is a failure of the backend.
+    - A call still waiting at the request's deadline, on an attempt or on the
+      wait before the next, is cut there, and is `BackendUnreachable` too: to
+      the caller the processor did not answer in time. The SDK takes no
+      timeout per call, so the cut is what bounds the attempt in flight.
 
     Each names the processor's error code. No payload and no key reaches
     the message."""
     try:
-        yield
+        async with bounded(deadline, unreachable("stripe", operation)):
+            yield
     except stripe.APIConnectionError as error:
         raise BackendUnreachable("stripe", operation, type(error).__name__) from None
     except (stripe.PermissionError, stripe.AuthenticationError) as error:

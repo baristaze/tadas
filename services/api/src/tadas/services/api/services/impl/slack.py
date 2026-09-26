@@ -1,6 +1,7 @@
 import logging
 from urllib.parse import urlencode
 
+from tadas.infra.exceptions import InfraException, InfraUnavailable
 from tadas.infra.observability import OUTCOMES
 from tadas.infra.queues import Queues, QueuesInterface
 from tadas.integrations.slack import SlackError, SlackInterface
@@ -84,15 +85,27 @@ class SlackServiceImpl(SlackServiceInterface):
         except SlackError as failed:
             log.warning("slack install failed at Slack: %s", failed.slack_code)
             return "failed"
+        except InfraException as unanswered:
+            # Translated by its code: the token's store did not answer by the
+            # request's deadline, and the person reads that the install
+            # failed, and installs again.
+            if unanswered.code != InfraUnavailable.code:
+                raise
+            log.warning("slack install could not keep its token: %s", unanswered.message)
+            return "failed"
         return "installed"
 
-    async def receive_command(self, request: SlackRequest) -> None:
+    async def receive_command(self, rctx: RequestContext, request: SlackRequest) -> None:
         self._client.verify_request(request.payload, request.timestamp, request.signature)
         delivery = inbound_command(command_of(request.payload), utcnow(), request.retry_num)
-        await self._queues.send(Queues.SLACK, delivery.model_dump_json().encode())
+        await self._queues.send(
+            Queues.SLACK, delivery.model_dump_json().encode(), deadline=rctx.deadline
+        )
         OUTCOMES.labels(subsystem="slack_inbound", outcome="queued").inc()
 
-    async def receive_event(self, request: SlackRequest) -> SlackEventAnswerView:
+    async def receive_event(
+        self, rctx: RequestContext, request: SlackRequest
+    ) -> SlackEventAnswerView:
         self._client.verify_request(request.payload, request.timestamp, request.signature)
         payload = event_of(request.payload)
         if payload["type"] == "url_verification":
@@ -101,6 +114,8 @@ class SlackServiceImpl(SlackServiceInterface):
             log.info("slack call of type %s acknowledged and ignored", payload["type"])
             return SlackEventAnswerView()
         delivery = inbound_event(payload, utcnow(), request.retry_num)
-        await self._queues.send(Queues.SLACK, delivery.model_dump_json().encode())
+        await self._queues.send(
+            Queues.SLACK, delivery.model_dump_json().encode(), deadline=rctx.deadline
+        )
         OUTCOMES.labels(subsystem="slack_inbound", outcome="queued").inc()
         return SlackEventAnswerView()

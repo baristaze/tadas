@@ -6071,6 +6071,8 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
                 "X-Slack-Request-Timestamp"?: string | null;
                 "X-Slack-Signature"?: string | null;
                 "X-Slack-Retry-Num"?: string | null;
@@ -6102,6 +6104,8 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
                 "X-Slack-Request-Timestamp"?: string | null;
                 "X-Slack-Signature"?: string | null;
                 "X-Slack-Retry-Num"?: string | null;
@@ -6169,6 +6173,8 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
                 "Stripe-Signature"?: string | null;
             };
             path?: never;

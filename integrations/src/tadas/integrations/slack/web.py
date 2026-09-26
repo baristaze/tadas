@@ -12,11 +12,16 @@ one every call rides. The SDK's own timeout, in whole seconds, bounds only a
 session the SDK opens itself, when it is handed none or a closed one; it is
 rounded up and never zero, since aiohttp takes zero as no timeout at all.
 The SDK tries a call again once when its connection drops, never when it
-times out, so a Slack that hangs costs one timeout."""
+times out, so a Slack that hangs costs one timeout.
+
+A call a request makes carries the request's deadline (ADR 0069), and is cut
+there, the SDK's retry of a dropped connection included: `SlackFailed`, as a
+call that times out is. The session's timeout is the process's, so the cut
+is what bounds the attempt in flight."""
 
 import logging
 import math
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 from urllib.parse import urlencode
 
@@ -27,6 +32,7 @@ from slack_sdk.web.async_client import AsyncWebClient
 from slack_sdk.webhook.async_client import AsyncWebhookClient
 
 from tadas.infra.base import utcnow
+from tadas.infra.deadline import bounded
 from tadas.integrations.slack import (
     BOT_SCOPES,
     SlackError,
@@ -84,10 +90,13 @@ class SlackWebImpl(SlackInterface):
         )
         return f"{AUTHORIZE_URL}?{query}"
 
-    async def exchange_code(self, code: str, redirect_uri: str) -> SlackGrant:
+    async def exchange_code(
+        self, code: str, redirect_uri: str, *, deadline: datetime | None = None
+    ) -> SlackGrant:
         answer = await self._call(
             None,
             "oauth.v2.access",
+            deadline=deadline,
             client_id=self._client_id,
             client_secret=self._client_secret,
             code=code,
@@ -115,20 +124,21 @@ class SlackWebImpl(SlackInterface):
         )
         return tokens_of(answer)
 
-    async def uninstall(self, token: str) -> None:
+    async def uninstall(self, token: str, *, deadline: datetime | None = None) -> None:
         try:
             await self._call(
                 token,
                 "apps.uninstall",
+                deadline=deadline,
                 client_id=self._client_id,
                 client_secret=self._client_secret,
             )
         except SlackTokenRevoked:
             return
 
-    async def revoke(self, token: str) -> None:
+    async def revoke(self, token: str, *, deadline: datetime | None = None) -> None:
         try:
-            await self._call(token, "auth.revoke")
+            await self._call(token, "auth.revoke", deadline=deadline)
         except SlackTokenRevoked:
             return
 
@@ -167,17 +177,25 @@ class SlackWebImpl(SlackInterface):
             raise SlackFailed(f"http_{answer.status_code}", answer.body)
 
     async def _call(
-        self, token: str | None, method: str, *, json: bool = False, **params: Any
+        self,
+        token: str | None,
+        method: str,
+        *,
+        json: bool = False,
+        deadline: datetime | None = None,
+        **params: Any,
     ) -> Any:
         """One Web API call, its refusals translated into the errors a caller
         decides on; no token or secret appears in what is raised or logged.
         A client used before start() is a programming error, raised as one and
-        never as a failure a retry could fix."""
+        never as a failure a retry could fix. Under a request's deadline, the
+        call is cut there."""
         web = self._web(token)
         try:
-            if json:
-                return await web.api_call(method, json=params)
-            return await web.api_call(method, data=params)
+            async with bounded(deadline, lambda reason: SlackFailed("deadline", reason)):
+                if json:
+                    return await web.api_call(method, json=params)
+                return await web.api_call(method, data=params)
         except SlackApiError as error:
             response = error.response
             code = str(response.get("error") or f"http_{response.status_code}")

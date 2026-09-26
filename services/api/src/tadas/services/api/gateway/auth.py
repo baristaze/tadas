@@ -13,6 +13,7 @@ from tadas.infra.observability import current_trace_id
 from tadas.om.exceptions import NotAuthenticated, NotFound, PlatformException, ValidationFailed
 from tadas.om.opcontext import AppContext, AppType, IdentityContext, OpContext, RequestContext
 from tadas.om.tenancy.types.socket_ticket import SocketPrincipal
+from tadas.services.api.gateway.admission import deadline_of
 from tadas.services.api.gateway.observability import request_id_of
 from tadas.services.api.gateway.ratelimit import failures_counted, spend_credential
 from tadas.services.api.gateway.resolve import container_of
@@ -51,8 +52,10 @@ def request_context(
     x_app_version: Annotated[str | None, Header()] = None,
 ) -> RequestContext:
     """The weakest stage, minted once at the edge: the request id the
-    middleware stamped on the scope, the calling app from its headers, and the
-    trace id of the current span. A websocket scope reaches it the same way.
+    middleware stamped on the scope, the calling app from its headers, the
+    trace id of the current span, and the deadline admission gave the request
+    (ADR 0069). A websocket scope reaches it the same way, with no deadline:
+    its session bounds it.
 
     It names no causing request. A request that arrived at the edge was caused
     by nothing this system knows of, and the field is a handoff's, filled by
@@ -62,6 +65,7 @@ def request_context(
         request_id=request_id_of(connection.scope),
         app=app_context_of(x_app, x_app_version),
         trace_id=current_trace_id(),
+        deadline=deadline_of(connection.scope),
     )
 
 
