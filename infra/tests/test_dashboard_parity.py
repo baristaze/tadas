@@ -25,6 +25,7 @@ QUEUE_PANELS = {
     "Work queue oldest ready item age": "work_oldest_ready_seconds",
     "Work items failed in the last fifteen minutes": "work_failed_recently",
     "Outbox oldest pending row age": "outbox_oldest_pending_seconds",
+    "Outbox rows failed in the last fifteen minutes": "outbox_failed_recently",
 }
 """The last row of both dashboards, the Postgres queue's, by title, and the
 field of the sweep's line each one draws; its metric is `tadas_<field>`."""
@@ -49,17 +50,17 @@ def _cloud_titles() -> list[str]:
 def test_the_cloud_dashboard_carries_every_local_panel_by_title() -> None:
     local = _grafana_titles()
     cloud = _cloud_titles()
-    assert len(local) == 8, (
+    assert len(local) == 5 + len(QUEUE_PANELS), (
         "the local dashboard is the five panels an operator asks first and the queue's row"
     )
     first = [CLOUD_TITLE_FOR.get(title, title) for title in local[:5]]
     assert cloud[:5] == first, "the first cloud widgets are the local panels, in order"
     assert local[5:] == list(QUEUE_PANELS), "the local dashboard ends on the queue's row"
-    assert cloud[-3:] == list(QUEUE_PANELS), "and so does the cloud's"
+    assert cloud[-len(QUEUE_PANELS) :] == list(QUEUE_PANELS), "and so does the cloud's"
 
 
 def test_the_cloud_dashboard_adds_the_backing_services_and_the_alarmed_reads() -> None:
-    extra = _cloud_titles()[5:-3]
+    extra = _cloud_titles()[5 : -len(QUEUE_PANELS)]
     assert extra == [
         "Database CPU and connections",
         "Cache CPU",
@@ -150,7 +151,7 @@ def test_the_sweep_widget_draws_the_metric_the_sweep_alarm_watches() -> None:
 
 
 def test_the_queue_row_draws_what_the_postgres_queue_alarms_watch() -> None:
-    """The worker writes each of the three as a field of its sweep line and
+    """The worker writes each of the four as a field of its sweep line and
     as a gauge of the metric's name. The alarms module's filters turn each
     field into `tadas_<field>` in the cloud, from the worker's log group, and
     one alarm reads each; the cloud widget draws the same metric, and the

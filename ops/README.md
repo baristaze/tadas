@@ -61,7 +61,9 @@ cloud.
   mints a `read` token through `POST /v1/admin/me/tokens`, which ends
   the second, and writes the token into the file without printing it.
   It prints the token's id, which is no secret. On the local stack,
-  `--dev-email <address>` signs in by the local sign-in instead. `--identity provisioner` copies the token the
+  `--dev-email <address>` signs a person in by the local sign-in;
+  without it, the token is the local read operator's (below).
+  `--identity provisioner` copies the token the
   `grant-operator.yml` workflow wrote into the secret
   `tadas-<env>-provisioner-token`, under the person's own sign-in
   (`--profile`; staging's sign-in profile by default, and in production
@@ -69,6 +71,16 @@ cloud.
   sign-in reads no secret). Never under an investigate profile: that
   role is denied every secret value, so no agent fills this line. A
   command whose token was refused names this one.
+- `make seed` puts two local operators on the local allowlist, the
+  platform's own identities `operator@platform.tadas.invalid` (`read`)
+  and `provisioner@platform.tadas.invalid` (`write`), and writes their
+  tokens into `~/.config/tadas/ops/local.env` when that file is absent,
+  owner-only in a folder only its owner opens, beside the local stack's
+  API, GlitchTip, Prometheus, and Jaeger. So every skill runs against
+  the local stack with nothing set by hand. A token lasts an hour:
+  `uv run tadas-ops token --env local --identity operator|provisioner`
+  mints a fresh one into the file through `tadas-api grant-operator
+  --mint-token`, which prints a token only against a local database.
 - `tadas-ops token --env <env> --list` lists the person's own live
   operator tokens under the file's token: the id, the permission, and
   when each was made and ends. `--revoke <id>` ends one of them now,
@@ -124,14 +136,15 @@ queue and the outbox: the oldest ready item's age, the items failed in
 the last fifteen minutes, and the oldest pending row's age. A test holds
 the shared titles equal between the two definitions.
 
-**The alarms.** Sixteen per environment, to one topic, `tadas-<env>-alarms`,
+**The alarms.** Seventeen per environment, to one topic, `tadas-<env>-alarms`,
 with an email subscription: the load balancer's 5xx ratio, unhealthy
 targets, database CPU, database free storage, running tasks below
 desired for the API and the worker, the load balancer's p95 latency,
 the p95 of `GET /v1/billing` on its own, a sweep pass longer than its
 interval, for each inbound queue (`webhooks`, `slack`) a backlog and a
 message in its dead-letter queue, and for the work queue and the outbox
-in Postgres a backlog, a work item failed for good, and the relay's lag.
+in Postgres a backlog, a work item failed for good, the relay's lag, and
+an outbox row failed for good.
 The numbers are the team's; the shape is not.
 
 **Cost.** A budget per account with alerts at 50, 80, and 100 percent
@@ -149,8 +162,8 @@ person's sign-in.
 | `traffic --env <e> --profile light\|regular\|heavy\|stress [--duration S] [--orgs N] [--report path]` | Drives realistic sessions at the edge and reports requests by route and status, p50, p95, p99, and the error ratio, the working requests and the sign-ins totalled apart. It signs each person in once at the start and out once at the end, and every session that person drives reuses the token; a sign-in the login rate limit refuses waits the window out and asks again, twice at most, and a run that signs nobody in exits 1 and names the limit. The people of an org share its tasks, so a write can meet a task another session changed: a 412 makes the session read the task afresh and write once more, and a task found gone (404) is dropped. The report counts these as conflicts, apart from errors and failed sessions. Its tenants are made under the provisioner's token, named `ops-<run id>-<n>`, and removed when the run ends, a failure included; the report names any it could not remove. Each person a run makes comes with a personal org, which is never deleted, so those stay behind with the people. `--orgs 0` drives the seeded people. Its people sign in by the local sign-in, which only the local stack serves, so a deployed environment refuses the run before it provisions anything. |
 | `stress --scenario ops/stress/<name>.yaml [--duration S]` | The same generator at a profile with a duration, a ramp, and a target the working requests' p95 is held to; reads the signals back after the run. `--duration` shortens the run and moves no target. `.github/workflows/stress.yml` keeps the wiring for a run against staging, which staging refuses while its people have no sign-in without a browser. |
 | `signals check --env <e> --request-id <id>` | Reads the log lines, the metric, the trace, and the error event for one request id. |
-| `size --env <e>` | The platform's size: orgs, users, and the tasks of the last twenty-four hours, with the traffic generator's own tenants left out. |
-| `token --env <e> --identity operator\|provisioner [--dev-email a]` | Writes an operator token into the env file, never printing it; prints the id of an operator's. |
+| `size --env <e>` | The platform's size: orgs, users, and the tasks and events of twenty-four hours, with the traffic generator's own tenants left out. It is the maintenance worker's latest count, made every five minutes, and the command prints how long ago it counted. |
+| `token --env <e> --identity operator\|provisioner [--dev-email a]` | Writes an operator token into the env file, never printing it; prints the id of an operator's. On `local` with no `--dev-email` it is the local operator's that `make seed` made, minted by `tadas-api grant-operator`, and a missing `local.env` is made owner-only with the local stack's addresses. |
 | `token --env <e> --list` / `--revoke <id>` | Lists your own live operator tokens, or ends one by its id, under the env file's operator token. Exits 1 for an id that is none of your live tokens. |
 | `work requeue --env <e> --org <org id> <item id> [--dev-email a]` | Sends one failed work item back to the queue, available now, with its attempts reset; the org's diary names who did. It is a write, so it is a person's step: it signs the person in with the second factor, as `token` does, mints a `write` token for this one call, keeps it nowhere, and signs it out once the call is made. A mint the plane refuses signs the sign-in out too. An item that is not failed is refused, and the command exits 1 with the reason. [The operate runbook](../docs/runbooks/operate.md) says how to find one. |
 | `workos-bootstrap --environment staging\|production [--apply]` | Proves the key is the Tadas App application's, then reconciles that application with `deployment/workos/environments.yaml`; see below. [The runbook](../docs/runbooks/providers/workos.md) has the dashboard steps around it. |

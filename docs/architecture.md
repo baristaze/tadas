@@ -38,8 +38,10 @@ field and forbids extra ones.
 
 The context model is two orthogonal ideas. The stages are four frozen
 types ordered by evidence: `RequestContext` (a request exists: its id,
-the calling app, the trace id, and the request that caused it where a
-handoff named one, empty at the edge), `IdentityContext` (a person is verified
+the calling app, the trace id and the trace context as the `traceparent`
+header, read off the tracer once where the stage is minted, and the
+request that caused it where a handoff named one, empty at the edge),
+`IdentityContext` (a person is verified
 by their own sign-in; no tenant, on purpose), `OpContext` (a membership
 is established: the user, the org, the role and its permissions, the
 credential), and `OperatorContext` (an identity on the operator allowlist;
@@ -83,7 +85,12 @@ context on keeps the stage the callee needs.
   would outlive it, so `create_api_key` refuses an api key credential, and
   an api key has no sign-out: it never proves an identity. The operator plane (every org, delete an org; an owner deletes their own team org through the tenant's manager) is a second
   manager, `TenancyOperatorManagerInterface`, which takes `OperatorContext`
-  and nothing else. Its `delete_org` takes an owner's path (below): one
+  and nothing else, but the sweep's `tally_size`, which takes no context.
+  Its `size` reads the platform's size as the maintenance worker last
+  counted it, one row of `admin.platform_sizes` with the moment of the
+  count, and counts nothing: no request scans the roles the application
+  writes to (STO-21, [ADR 0074](adr/0074-the-platforms-size-is-a-tally-the-sweep-keeps.md)).
+  Before the first count it is `NotFound`. Its `delete_org` takes an owner's path (below): one
   `write_closed_org` commit ends every member and credential, so every
   socket of the tenant closes, and asks for `work.DELETE_ORG`, every row
   under the operator's identity; a closed org is answered as it stands
@@ -146,7 +153,12 @@ context on keeps the stage the callee needs.
   (`read_identity_by_issuer_subject`, a system-scope lookup, unique
   `(issuer, subject)` where the subject is set), else by the email
   digest and linked, else made with its personal org; an unverified
-  address is `EmailNotVerified` (401). `sign_in_url` builds the
+  address is `EmailNotVerified` (401). An address is kept and looked up
+  folded (`rules.fold_email`, all of it in lower case), and the
+  database computes `identities.email_digest` from the folded address,
+  so every spelling finds one identity and a second spelling meets the
+  unique index
+  ([ADR 0072](adr/0072-an-address-is-one-address-in-any-case.md)). `sign_in_url` builds the
   provider's URL for a redirect the environment names as its own
   (`TenancyOptions.sign_in_redirect_uris`, a deployed environment's one
   https callback, refused otherwise) and the caller's `state`. The
@@ -359,11 +371,12 @@ context on keeps the stage the callee needs.
   in the tenant), and its run (between the nearest ranks of
   at most 12 digits, 100 places each way at most) is respaced in one
   compare-and-set over its rows (`update_tasks`, `respace_ranks`), each
-  announced. The float `position` is written beside the rank for the
-  release before, and a trigger gives a row that release writes the
-  rank its position names; both go with the contract. A task carries a
-  `version` because it is edited from two windows and two terminals at
-  once ([ADR 0009](adr/0009-tasks-carry-a-version.md)): the manager's
+  announced. The float `position` is out of the mapping. The release
+  before still reads it, so a trigger gives every row this release
+  writes its rank's float, and another gives a row a build before the
+  rank writes the rank its position names; both go with the column. A
+  task carries a `version` because it is edited from two windows and two
+  terminals at once ([ADR 0009](adr/0009-tasks-carry-a-version.md)): the manager's
   copy increments it on update, move, and soft delete, and the storage
   write is a compare-and-set, `WHERE version = :expected` in one
   statement in Postgres and the same check and write under the lock in
@@ -373,7 +386,7 @@ context on keeps the stage the callee needs.
   update reads: `If-Match` on a `PATCH` and a `DELETE`, `expected_version`
   on the move, and a write that names none is `ValidationFailed`. The
   copy on update keeps `PROVENANCE_FIELDS` and the task's
-  `MANAGER_OWNED_FIELDS` (its rank, its position, and its version) as stored.
+  `MANAGER_OWNED_FIELDS` (its rank and its version) as stored.
   The update never inserts; the create primitive is the only way in. So
   a snapshot that missed a write is refused, never merged over it, and
   an edit that raced a delete finds the task gone and cannot bring it
@@ -650,8 +663,9 @@ context on keeps the stage the callee needs.
   hands the storage the `OutboxRow`s that announce it (`org_id`, `kind`,
   `target_id`, a `payload` of ids only (a task's names the version its
   change wrote, which the push carries: ADR 0061), the actor, the
-  request, and that request's `traceparent`, read off the tracer, since
-  the context carries the trace id and a span links to the header) as one tuple, and the storage base inserts them all in one
+  request, and that request's `traceparent`, read off the stage, which
+  carries the header a later span links to) as one tuple, and the
+  storage base inserts them all in one
   commit (`_insert(..., outbox_rows)` for a create, which
   reports an existing id and changes nothing then; `_upsert(...,
   outbox_rows)` for an update; `core` role). An entity change is one
@@ -818,8 +832,9 @@ call site and held to the enumerated exceptions by
 `om/tests/unit/test_session_scope.py`. What proves the policy is live
 rather than merely enabled is the two-run negative control in
 [the tenant isolation runbook](runbooks/tenant-isolation.md). Migrations are hand-written SQL under
-`om/migrations/sql/<role>/` with Alembic wrappers; `core`, `activity`,
-and `queue` have chains today, and `admin` has no table yet. Each role's
+`om/migrations/sql/<role>/` with Alembic wrappers, one chain per role.
+`admin` holds one table, `platform_sizes`, the operator plane's tally of
+the platform's size, which only the sweep writes. Each role's
 pool carries bounds of its own: a size, how long a checkout waits before
 it fails, and the deadline every statement on it runs under. Each is a
 setting with a per-role override that defaults to the shared value, the
@@ -1355,16 +1370,29 @@ alone, and neither key may touch what the other's work does not need
   purges across tenants run on every pass, each again while its batch comes back full
   and the budget lasts; the pass always takes one tenant, even past the
   budget.
-  Each pass ends with three reads across tenants, one statement each,
+  Once every five minutes (`TADAS_WORKER_TALLY_SECONDS`, 300), and on a
+  worker's first pass, the pass counts the platform's size across
+  tenants, whatever the budget (`tally_size`: the live orgs and users in
+  one statement, then the tasks created and the events produced in the
+  day before the count), and writes it as the one row of
+  `admin.platform_sizes`, which a count older than the row's does not
+  replace. Each worker counts on its own clock, and a count that fails
+  is tried again on the next pass. At 5,000 tenants a count is 12 round
+  trips and about 20 ms
+  ([ADR 0074](adr/0074-the-platforms-size-is-a-tally-the-sweep-keeps.md)).
+  Each pass ends with four reads across tenants, one statement each,
   whatever the budget: the age of the queued item ready longest on any
   lane (`oldest_ready_age`, the first entry of the partial index
   `ix_work_items_available_at_queued`), the items failed in the last
   fifteen minutes and still failed (`failed_within`, a range of
-  `ix_work_items_status_updated_at`), and the age of the oldest outbox
+  `ix_work_items_status_updated_at`), the age of the oldest outbox
   row neither done nor failed (`oldest_pending_age`, the head of
-  `ix_outbox_rows_done_at_id`). Each pass writes its duration and these
-  three on one line, which the alarms read; a read that failed leaves
-  its field off, so its alarm sees no data rather than a zero.
+  `ix_outbox_rows_done_at_id`), and the outbox rows failed for good in
+  the last fifteen minutes (the relay's `failed_within`, a range of the
+  partial `ix_outbox_rows_failed_at`), which the lag no longer sees.
+  Each pass writes its duration and these four on one line, which the
+  alarms read; a read that failed leaves its field off, so its alarm
+  sees no data rather than a zero.
   Under a tenant whose org row is deleted longer ago than the retention
   it is every row that goes, its open and done tasks among them, since
   an open task carries no `deleted_at` of its own and the purge that
@@ -1419,7 +1447,11 @@ alone, and neither key may touch what the other's work does not need
   span links to the trace context the item carried instead of becoming its
   child, because a durable queue holds an item well past the end of the
   request that filled it; an item that carries none starts a trace of its
-  own, which is what a process with no tracer configured does anyway.
+  own, which is what a process with no tracer configured does anyway. The
+  run's span starts at the claim, so the stage minted for the claim
+  carries the run's own trace context, and a row the run lands hands it on;
+  a claim that finds nothing never ends its span, so nothing is exported
+  for it.
 - `apps/portal` (`@tadas/portal`): React, Vite, TanStack Query,
   Zustand; sign-in at `/login`, which starts WorkOS AuthKit at once (it
   is the initiate-login address) with a random `state` the tab keeps in
@@ -1846,30 +1878,33 @@ page; this section says what exists.
   open ticket a verdict against `main`. None of the tools is imported by
   a process; `ops/tests/test_audit_database.py` runs them end to end.
   The first responder is an agent: `ops-investigate` and
-  `ops-watch` read the platform's size (`tadas-ops size`) before they
-  escalate an alarm, and a platform of one tenant and one user is the
-  developer at work.
+  `ops-watch` read the platform's size (`tadas-ops size`, the worker's
+  latest count and how long ago it counted) before they escalate an
+  alarm, and a platform of one tenant and one user is the developer at
+  work.
 - **Dashboards and alarms.** `modules/dashboard` declares the CloudWatch
   dashboard `tadas-<env>` from a template whose first five panels and
   last three carry the titles of the local Grafana dashboard
   (`deployment/local/grafana/dashboards/tadas-overview.json`), and
   `infra/tests/test_dashboard_parity.py` holds the titles equal.
   `modules/alarms` declares the SNS topic `tadas-<env>-alarms`, the
-  email subscription from `alarm_email`, and sixteen alarms: the load
+  email subscription from `alarm_email`, and seventeen alarms: the load
   balancer's 5xx ratio, its unhealthy targets, its p95, the p95 of
   `GET /v1/billing` on its own, the database's CPU and free storage,
   each of the two inbound queues (`webhooks`, `slack`) backing up and a
   message landing in its dead-letter queue, a sweep pass longer than 30
   seconds, the work queue's item ready longest waiting past ten minutes,
   a work item failed for good in the last fifteen, the outbox's oldest
-  pending row past five minutes, and each of the two services running
+  pending row past five minutes, an outbox row failed for good in the
+  last fifteen, and each of the two services running
   below its desired count. The sweep's alarm reads the worker's line per
   pass: a log metric filter writes its `sweep.duration_ms` to
   `tadas_sweep_duration_ms`. The work queue and the outbox are tables,
-  so the same line carries their three numbers, which the pass reads
+  so the same line carries their four numbers, which the pass reads
   across tenants, and a filter per field writes
-  `tadas_work_oldest_ready_seconds`, `tadas_work_failed_recently`, and
-  `tadas_outbox_oldest_pending_seconds`; the worker exports each as a
+  `tadas_work_oldest_ready_seconds`, `tadas_work_failed_recently`,
+  `tadas_outbox_oldest_pending_seconds`, and
+  `tadas_outbox_failed_recently`; the worker exports each as a
   Prometheus gauge of the same name too, which Grafana draws. A read's own
   p95 comes from the API's access lines: each carries its route and its
   time as JSON fields, and a log metric filter writes them to

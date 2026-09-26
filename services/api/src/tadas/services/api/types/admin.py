@@ -48,14 +48,16 @@ class OperatorView(View):
 class PlatformSizeView(View):
     """How big the platform is, what the first responder to an alarm reads
     before it escalates: live tenants and users, and the tasks created and
-    events produced in the last twenty-four hours, a window that starts at
-    `since` and ends at the read."""
+    events produced in the twenty-four hours from `since` to `counted_at`.
+    The maintenance worker counts it every few minutes, and this is its
+    latest count: `counted_at` says how old the answer is."""
 
     tenants: int
     users: int
     tasks_last_24h: int
     events_last_24h: int
     since: datetime
+    counted_at: datetime
 
 
 class IssuedTotpSecretView(View):

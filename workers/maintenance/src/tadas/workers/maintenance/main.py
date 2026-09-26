@@ -60,6 +60,7 @@ def loop_options(settings: MaintenanceSettings, lane: str | None = None) -> Loop
         outbox_retention=timedelta(days=settings.outbox_retention_days),
         purge_batch=settings.worker_purge_batch,
         sweep_budget=timedelta(seconds=settings.worker_sweep_budget_seconds),
+        tally_interval=timedelta(seconds=settings.worker_tally_seconds),
     )
 
 
@@ -118,6 +119,9 @@ def build_loop(container: WorkerContainer, lane: str | None = None) -> WorkerLoo
         # those with an archivable task or a long rank, so a tenant with
         # neither costs the pass nothing.
         chore_tenants=container.managers.tasks.tenants_with_chores,
+        # The platform's size, counted across tenants once an interval and
+        # kept as the tally the operator plane reads instead of counting.
+        tally=container.managers.tenancy_operator.tally_size,
         handlers={
             WorkKind.NOOP: NoopHandlerImpl(),
             WorkKind.SYNC_SEATS: SyncSeatsHandlerImpl(

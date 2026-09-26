@@ -93,7 +93,6 @@ class FakeApi:
             "status": "open",
             "assignee_id": None,
             "rank": str(len(self.tasks)),
-            "position": float(len(self.tasks)),
             "created_at": NOW,
             "updated_at": NOW,
             "created_by": str(OWNER_ID),

@@ -73,7 +73,7 @@ record and its org; reading that one org's rows is `ops-root-cause`.
 
 ## The alarms
 
-Sixteen per environment (one per service, two per inbound queue), to the topic `tadas-<environment>-alarms`, from
+Seventeen per environment (one per service, two per inbound queue), to the topic `tadas-<environment>-alarms`, from
 `deployment/terraform/modules/alarms`. Their thresholds are the
 module's inputs with defaults, and they are illustrative: a busier
 platform moves them.
@@ -92,6 +92,7 @@ platform moves them.
 | `tadas-<env>-work-backlog` | the work item ready longest waited more than ten minutes for a worker: none is claiming | 3 |
 | `tadas-<env>-work-dead-letter` | a work item failed for good in the last fifteen minutes | 1 |
 | `tadas-<env>-outbox-lag` | the oldest outbox row not yet relayed landed more than five minutes ago: the relay is stuck | 3 |
+| `tadas-<env>-outbox-dead-letter` | an outbox row failed for good in the last fifteen minutes: its relay ran out of attempts | 1 |
 | `tadas-<env>-api-tasks-below-desired`, `-maintenance-tasks-below-desired` | a service runs fewer tasks than it wants; six periods, which a routine worker deploy would otherwise trip | 6 |
 
 A period is one minute. A queue that goes idle stops reporting, so a
@@ -100,15 +101,18 @@ stays in `ALARM` until a person takes the message off `-dead`, not
 until the queue goes quiet. The command at the end of the next block
 counts what a dead-letter queue holds.
 
-The last three read what no AWS service publishes, because the work
-queue and the outbox are Postgres tables. Each sweep pass reads three
-numbers across every tenant and writes them as fields of its one line
-in `/tadas/<environment>/maintenance`, and a metric filter per field
-writes them to the `Tadas` namespace. They keep their state through
-missing data too: a worker that is not running writes no line, which
-the maintenance tasks alarm reports. The work dead-letter alarm turns
-`OK` fifteen minutes after the last failure, or once the item is
-requeued; the item stays failed until a person sends it back (below).
+The four work and outbox alarms read what no AWS service publishes,
+because the work queue and the outbox are Postgres tables. Each sweep
+pass reads four numbers across every tenant and writes them as fields
+of its one line in `/tadas/<environment>/maintenance`, and a metric
+filter per field writes them to the `Tadas` namespace. They keep their
+state through missing data too: a worker that is not running writes no
+line, which the maintenance tasks alarm reports. The work dead-letter
+alarm turns `OK` fifteen minutes after the last failure, or once the
+item is requeued; the item stays failed until a person sends it back
+(below). The outbox dead-letter alarm turns `OK` fifteen minutes after
+the last row failed; nothing relays a failed row again, and the purge
+takes it with the done rows after eight days.
 
 ```bash
 aws cloudwatch describe-alarms --alarm-name-prefix tadas-staging- \
@@ -229,13 +233,13 @@ transaction each. Admission still bounds the process.
 
 ## The work queue and the outbox
 
-The three numbers behind their alarms, pass by pass, from the worker's
+The four numbers behind their alarms, pass by pass, from the worker's
 own lines:
 
 ```bash
 now=$(date +%s); query=$(aws logs start-query --log-group-name /tadas/staging/maintenance \
   --start-time "$((now - 3600))" --end-time "$now" \
-  --query-string 'fields @timestamp, sweep.work_oldest_ready_seconds, sweep.work_failed_recently, sweep.outbox_oldest_pending_seconds | filter ispresent(sweep.duration_ms) | sort @timestamp desc | limit 20' \
+  --query-string 'fields @timestamp, sweep.work_oldest_ready_seconds, sweep.work_failed_recently, sweep.outbox_oldest_pending_seconds, sweep.outbox_failed_recently | filter ispresent(sweep.duration_ms) | sort @timestamp desc | limit 20' \
   --query queryId --output text)
 sleep 2; aws logs get-query-results --query-id "$query" --query 'results[]' --output json
 
@@ -258,7 +262,13 @@ Outcomes widget for `outbox`/`publish_failed` beside
 `valkey_breaker`/`opened`, and fix Valkey; the next pass sends the
 backlog. After its tenth attempt the row is `failed for good`, an
 `outbox.row.failed` event in its org's diary, which `ops-root-cause`
-reads, and it no longer counts as pending.
+reads. It no longer counts as pending, so the lag lets it go, and
+`tadas-<env>-outbox-dead-letter` fires on it instead. The event names
+the row's kind and its target. An entity change whose event store kept
+refusing is missing from the org's stream, though its row in `core` is
+written. One whose push alone was dropped is in the stream, and a
+client reads it on its next catch-up. A `work.<kind>` row is work that
+was never queued.
 
 ## Open sockets: the recheck and the head
 

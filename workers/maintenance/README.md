@@ -159,6 +159,14 @@ second lane is a second replica told its lane.
     retention is counted on (ADR 0045).
   - **Purge** the outbox rows done or failed past eight days, which
     outlives the database backup retention.
+  - **Count the platform's size**, once every five minutes and on the
+    worker's first sweep, whatever the budget: the live orgs and users,
+    and the tasks created and the events produced in the day before the
+    count. The count is kept as one row in the `admin` role, which the
+    operator plane's size reads, so no request counts across tenants
+    (ADR 0074). A count older than the row's does not replace it, and a
+    count that fails is tried again on the next sweep. At 5,000 orgs it
+    takes about 20 ms.
 
   Every purge statement deletes a batch at most, a thousand rows by
   default, chosen with `FOR UPDATE SKIP LOCKED`, so no statement grows
@@ -169,20 +177,23 @@ second lane is a second replica told its lane.
   org, but always one, and the next sweep starts at the org it stopped
   at, so every org is reached in turn.
 
-  Each pass ends with three reads across every tenant, one statement
+  Each pass ends with four reads across every tenant, one statement
   each, whatever the budget: how long the work item ready longest has
   waited, on any lane; how many items failed in the last fifteen
-  minutes and are still failed; and how long ago the oldest outbox row
-  neither relayed nor failed landed. It then logs one line with its
-  duration and the three, as the fields `sweep.duration_ms`,
-  `sweep.work_oldest_ready_seconds`, `sweep.work_failed_recently`, and
-  `sweep.outbox_oldest_pending_seconds`, which the cloud's alarms read.
-  The three are gauges of the same names on `/metrics` too, which
+  minutes and are still failed; how long ago the oldest outbox row
+  neither relayed nor failed landed; and how many outbox rows failed for
+  good in the last fifteen minutes, which the lag no longer sees. It
+  then logs one line with its duration and the four, as the fields
+  `sweep.duration_ms`, `sweep.work_oldest_ready_seconds`,
+  `sweep.work_failed_recently`, `sweep.outbox_oldest_pending_seconds`,
+  and `sweep.outbox_failed_recently`, which the cloud's alarms read.
+  The four are gauges of the same names on `/metrics` too, which
   Grafana draws. A read that fails leaves its field off the line and its
   gauge as it was, so an alarm sees no data rather than a zero.
 
   The knobs, all in `.env.example`: `TADAS_WORKER_PURGE_BATCH`,
-  `TADAS_WORKER_SWEEP_BUDGET_SECONDS`, and one retention per kind of
+  `TADAS_WORKER_SWEEP_BUDGET_SECONDS`, `TADAS_WORKER_TALLY_SECONDS`
+  (how often the size is counted), and one retention per kind of
   row, `TADAS_<KIND>_RETENTION_DAYS` or `_HOURS`. Each defaults to what
   it has always been but the socket tickets', a day: a ticket lives a
   minute.

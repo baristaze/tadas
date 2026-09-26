@@ -5,8 +5,9 @@ full, each namespace's purge past its retention once a pass across tenants,
 a living tenant that costs the purges nothing, the chores run in the tenants
 one read across tenants finds with a chore due and in no other, a page of
 them a pass, a deleted tenant marked purged once nothing of it is left and
-left out after, the tenant's expiry read once per pass, and the pass's
-duration and the three gauges of the queue and the outbox on its own line."""
+left out after, the tenant's expiry read once per pass, the count of the
+platform's size once an interval, and the pass's duration and the four
+gauges of the queue and the outbox on its own line."""
 
 import json
 import logging
@@ -18,15 +19,19 @@ from uuid import UUID
 
 import pytest
 from prometheus_client import REGISTRY
-from worker_support import build_container, fast_options, request
+from worker_support import build_container, fast_options, request, sign_in
 
 from tadas.infra.cache import CacheScope
-from tadas.infra.observability import WORK_OLDEST_READY_SECONDS, JsonFormatter
+from tadas.infra.observability import (
+    OUTBOX_FAILED_RECENTLY,
+    WORK_OLDEST_READY_SECONDS,
+    JsonFormatter,
+)
 from tadas.om.base import EMPTY_UUID, new_id, utcnow
 from tadas.om.opcontext import CredentialKind, OpContext, RequestContext, Role, build_context
 from tadas.om.orchestrations.types.orchestration import OrchestrationKind
 from tadas.om.outbox import OutboxRelayInterface
-from tadas.om.tasks.rules import RANK_SCALE_BOUND, placed
+from tadas.om.tasks.rules import RANK_SCALE_BOUND
 from tadas.om.tasks.types.filter import TaskFilter
 from tadas.om.tasks.types.task import Task, TaskScope, TaskStatus
 from tadas.om.tenancy.types.org import Org
@@ -38,6 +43,7 @@ from tadas.workers.maintenance.loop import (
     ChoreTenants,
     LoopOptions,
     PurgeStep,
+    TallyStep,
     WorkerLoop,
 )
 from tadas.workers.maintenance.main import build_loop
@@ -105,9 +111,17 @@ class Outbox(OutboxRelayInterface):
         self.relays = 0
         self.relayed = list(relayed)
         self.oldest_pending = timedelta(0)
+        self.failed: int | Exception = 0
+        self.windows: list[timedelta] = []
 
     async def oldest_pending_age(self) -> timedelta:
         return self.oldest_pending
+
+    async def failed_within(self, window: timedelta) -> int:
+        self.windows.append(window)
+        if isinstance(self.failed, Exception):
+            raise self.failed
+        return self.failed
 
     async def relay_pending(self, limit: int) -> int:
         self.relays += 1
@@ -150,6 +164,7 @@ def sweeping(
     chores: dict[str, PurgeStep] | None = None,
     across: dict[str, AcrossStep] | None = None,
     chore_tenants: ChoreTenants | None = None,
+    tally: TallyStep | None = None,
 ) -> WorkerLoop:
     return WorkerLoop(
         work=work,
@@ -158,6 +173,7 @@ def sweeping(
         chores=chores,
         chore_tenants=chore_tenants,
         across=across,
+        tally=tally,
         handlers={},
         topics=container.infra.get_topics(),
         liveness=container.infra.get_cache(CacheScope.WORKER_LIVENESS),
@@ -368,16 +384,17 @@ def pass_line(caplog: pytest.LogCaptureFixture) -> dict[str, object]:
 async def test_a_pass_reads_the_queue_and_the_outbox_onto_its_line_and_its_gauges(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """The three numbers the queue and outbox alarms read, in whole seconds
+    """The four numbers the queue and outbox alarms read, in whole seconds
     and counts, as fields of the pass's line (the cloud's metric filters) and
-    as gauges (what Grafana draws). The dead letters are counted over the
-    loop's window, fifteen minutes by default."""
+    as gauges (what Grafana draws). The dead letters of the queue and of the
+    outbox are counted over the loop's window, fifteen minutes by default."""
     container = build_container(tmp_path)
     work = listed(service_contexts(1))
     work.oldest_ready = timedelta(minutes=11, seconds=0.6)
     work.failed = 2
     outbox = quiet_outbox()
     outbox.oldest_pending = timedelta(minutes=6)
+    outbox.failed = 3
     loop = sweeping(container, work, {}, fast_options(), outbox)
     with caplog.at_level(logging.INFO, logger="tadas.workers.maintenance.loop"):
         await loop._sweep_once()  # pyright: ignore[reportPrivateUsage]
@@ -385,31 +402,111 @@ async def test_a_pass_reads_the_queue_and_the_outbox_onto_its_line_and_its_gauge
     assert line["work_oldest_ready_seconds"] == 660
     assert line["work_failed_recently"] == 2
     assert line["outbox_oldest_pending_seconds"] == 360
-    assert work.windows == [timedelta(minutes=15)]
+    assert line["outbox_failed_recently"] == 3
+    assert work.windows == outbox.windows == [timedelta(minutes=15)]
     assert REGISTRY.get_sample_value("tadas_work_oldest_ready_seconds") == 660
     assert REGISTRY.get_sample_value("tadas_work_failed_recently") == 2
     assert REGISTRY.get_sample_value("tadas_outbox_oldest_pending_seconds") == 360
+    assert REGISTRY.get_sample_value("tadas_outbox_failed_recently") == 3
 
 
 async def test_a_gauge_that_cannot_be_read_is_left_off_the_line_and_as_it_was(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     """No field is no data point, which keeps the alarm's state; a zero
-    would clear an alarm on a queue nobody could read. The other two are
-    read and written as ever."""
+    would clear an alarm on a queue nobody could read. The others are read
+    and written as ever."""
     container = build_container(tmp_path)
     work = listed(service_contexts(1))
     work.oldest_ready = RuntimeError("the database is down")
     work.failed = 1
+    outbox = quiet_outbox()
+    outbox.failed = RuntimeError("the database is down")
     WORK_OLDEST_READY_SECONDS.set(900)
-    loop = sweeping(container, work, {}, fast_options())
+    OUTBOX_FAILED_RECENTLY.set(4)
+    loop = sweeping(container, work, {}, fast_options(), outbox)
     with caplog.at_level(logging.INFO, logger="tadas.workers.maintenance.loop"):
         await loop._sweep_once()  # pyright: ignore[reportPrivateUsage]
     line = pass_line(caplog)
     assert "work_oldest_ready_seconds" not in line
+    assert "outbox_failed_recently" not in line
     assert line["work_failed_recently"] == 1
     assert line["outbox_oldest_pending_seconds"] == 0
     assert REGISTRY.get_sample_value("tadas_work_oldest_ready_seconds") == 900
+    assert REGISTRY.get_sample_value("tadas_outbox_failed_recently") == 4
+
+
+class Tally:
+    """The count of the platform's size: how many times it ran, and the
+    failures it raises first, one a call."""
+
+    def __init__(self, failures: int = 0) -> None:
+        self.calls = 0
+        self.failures = failures
+
+    async def __call__(self) -> object:
+        self.calls += 1
+        if self.failures:
+            self.failures -= 1
+            raise RuntimeError("the database is down")
+        return None
+
+
+async def test_the_platforms_size_is_counted_on_the_first_pass_then_once_an_interval(
+    tmp_path: Path,
+) -> None:
+    """The first pass counts, whatever its budget, and the passes within the
+    interval after it do not; with no interval, every pass counts."""
+    container = build_container(tmp_path)
+    hourly, every = Tally(), Tally()
+    for tally, interval in ((hourly, timedelta(hours=1)), (every, timedelta(0))):
+        loop = sweeping(
+            container,
+            listed(service_contexts(1)),
+            {},
+            fast_options(sweep_budget=timedelta(0), tally_interval=interval),
+            tally=tally,
+        )
+        for _ in range(3):
+            await loop._sweep_once()  # pyright: ignore[reportPrivateUsage]
+    assert (hourly.calls, every.calls) == (1, 3)
+
+
+async def test_a_failed_count_is_tried_again_on_the_next_pass_and_stops_no_other_step(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    container = build_container(tmp_path)
+    tally = Tally(failures=1)
+    loop = sweeping(
+        container,
+        listed(service_contexts(1)),
+        {},
+        fast_options(tally_interval=timedelta(hours=1)),
+        tally=tally,
+    )
+    with caplog.at_level(logging.INFO, logger="tadas.workers.maintenance.loop"):
+        await loop._sweep_once()  # pyright: ignore[reportPrivateUsage]
+    assert pass_line(caplog)["work_failed_recently"] == 0, "the gauges are read after it"
+    await loop._sweep_once()  # pyright: ignore[reportPrivateUsage]
+    await loop._sweep_once()  # pyright: ignore[reportPrivateUsage]
+    assert tally.calls == 2
+
+
+async def test_the_worker_keeps_the_tally_the_operator_plane_reads(tmp_path: Path) -> None:
+    """The loop the worker runs counts the platform's size into the tally
+    row, and the next pass within the interval leaves it as it was."""
+    container = build_container(tmp_path)
+    await sign_in(container)
+    storage = container.storage.get_tenancy_storage()
+    assert await storage.read_platform_size() is None
+    loop = build_loop(container)
+    await loop._sweep_once()  # pyright: ignore[reportPrivateUsage]
+    tally = await storage.read_platform_size()
+    assert tally is not None
+    # The org and its owner's personal org, and the owner in each.
+    assert (tally.tenants, tally.users) == (2, 2)
+    await loop._sweep_once()  # pyright: ignore[reportPrivateUsage]
+    assert await storage.read_platform_size() == tally
 
 
 class Due:
@@ -909,7 +1006,7 @@ async def test_a_tenant_with_no_chore_due_costs_the_pass_no_read_of_its_tasks(
     stretched = Decimal("0." + "0" * RANK_SCALE_BOUND + "1")
     await storage.update_task(
         long.org_id,
-        spaced.model_copy(update={**placed(stretched), "version": spaced.version + 1}),
+        spaced.model_copy(update={"rank": stretched, "version": spaced.version + 1}),
         spaced.version,
         (),
     )

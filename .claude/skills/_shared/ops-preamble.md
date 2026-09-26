@@ -76,9 +76,12 @@ repository. It holds:
   environment: one project takes every environment's errors, and a
   read of it filters on `environment:<env>`.
 
-`local.env`, when there is one, points at the compose stack and adds
-the twins, `TADAS_PROMETHEUS_URL` and `TADAS_JAEGER_URL`, on the ports
-`.env` names.
+`local.env` points at the compose stack and adds the twins,
+`TADAS_PROMETHEUS_URL` and `TADAS_JAEGER_URL`, on the ports `.env`
+names. `make seed` writes it when it is absent, with the tokens of the
+two local operators it makes. A local token that expired is the
+person's to refresh, like any other: `uv run tadas-ops token --env
+local --identity operator|provisioner`.
 
 The file holds no password and no TOTP secret: an agent never signs in
 with a password.

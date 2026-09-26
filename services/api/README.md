@@ -136,7 +136,9 @@ change. A name the image does not host refuses the boot.
   an org's plan and grant it one with no payment, send one of an org's
   failed work items back to the queue, and read the
   platform's size: the tenant count, the
-  user count, and the tasks of the last twenty-four hours.
+  user count, and the tasks and events of twenty-four hours, as the
+  maintenance worker last counted them, with the moment it did (`404`
+  before its first count; the route counts nothing).
   (`/v1/admin/orgs`, `/v1/admin/orgs/{org_id}`,
   `/v1/admin/orgs/{org_id}/members`, `/v1/admin/orgs/{org_id}/tasks`,
   `/v1/admin/orgs/{org_id}/events`, `/v1/admin/orgs/{org_id}/billing`,
@@ -259,7 +261,7 @@ container the server does.
 | `serve` | Runs the process. |
 | `migrate` | Applies every role's migration chain (`--all`) or one role's. Idempotent per revision. `migrate ensure-logins` makes the database logins, as the master. |
 | `bootstrap` | Seeds a fresh local environment with one org and its owner; `--operator` puts the owner on the operator allowlist with write, and `--plan` grants the org a plan with no payment. Local only, like every seed. |
-| `grant-operator` | The grant job: `--email <e> --permission read\|write` puts an identity on the operator allowlist, `--email <e> --disable` takes it off, and `--email <e> --mint-token provisioner\|smoke [--expires-in N]` mints that identity's operator token into the secret store as `tadas-<env>-<holder>-token`, never printed in the cloud. An operator signs up first; the platform's own identities (`@platform.tadas.invalid`) are made by their first grant. |
+| `grant-operator` | The grant job: `--email <e> --permission read\|write` puts an identity on the operator allowlist, `--email <e> --disable` takes it off, and `--email <e> --mint-token provisioner\|smoke [--expires-in N]` mints that identity's operator token into the secret store as `tadas-<env>-<holder>-token`, never printed in the cloud. On a local database it prints the token instead, and `--mint-token operator` mints the local read operator's `read` token, which `make seed` writes into `~/.config/tadas/ops/local.env`; a cloud refuses it. An operator signs up first; the platform's own identities (`@platform.tadas.invalid`) are made by their first grant. |
 | `add-member` | Seeds a person into an existing org; a no-op for a member. |
 | `openapi` | Emits the OpenAPI document the clients are generated from. |
 

@@ -18,6 +18,7 @@ from tadas.om.tenancy.types.membership import Membership
 from tadas.om.tenancy.types.org import Org
 from tadas.om.tenancy.types.session import Session
 from tadas.om.tenancy.types.sign_in_delay import SignInDelay
+from tadas.om.tenancy.types.size import PlatformSize
 from tadas.om.tenancy.types.socket_ticket import SocketTicket
 from tadas.om.tenancy.types.user import User
 
@@ -138,14 +139,27 @@ class TenancyStorageInterface(ABC):
     @abstractmethod
     async def count_orgs(self) -> int:
         """Global: how many orgs are live (not soft-deleted), the tenant count
-        the operator plane's size reads."""
+        of the sweep's tally of the platform's size."""
         ...
 
     @abstractmethod
     async def count_orgs_and_users(self) -> tuple[int, int]:
         """Global, one statement: the live orgs, as `count_orgs` counts them,
-        and the live users across every tenant, the two counts the operator
-        plane's size reads; a person in two orgs counts twice."""
+        and the live users across every tenant, the two counts of the sweep's
+        tally of the platform's size; a person in two orgs counts twice."""
+        ...
+
+    @abstractmethod
+    async def write_platform_size(self, size: PlatformSize) -> None:
+        """Global: the sweep's count of the platform's size becomes the one
+        tally row, in the `admin` role. A count older than the row's never
+        replaces it, so two workers counting at once leave the newer."""
+        ...
+
+    @abstractmethod
+    async def read_platform_size(self) -> PlatformSize | None:
+        """Global: the platform's size as the sweep last counted it, the one
+        row read by its key; None until the first count."""
         ...
 
     @abstractmethod
@@ -272,8 +286,8 @@ class TenancyStorageInterface(ABC):
         memberships, api keys, and socket tickets, every session it holds
         (the tenants' sessions, its sign-ins, and its operator tokens), the
         sign-in delay keyed on the digest of `email`, and every invitation
-        that holds `email` or names one of those users as the one who
-        accepted it. The outbox rows land in the same commit, each under the
+        that holds `email`, folded, or names one of those users as the one
+        who accepted it. The outbox rows land in the same commit, each under the
         tenant it names. A session or an api key that was still live when it
         went lands the row `revocation_row(org_id, kind, id)` builds,
         `tenancy.session.revoked` or `tenancy.api_key.deleted`, so a socket
@@ -432,11 +446,20 @@ class TenancyStorageInterface(ABC):
         ...
 
     @abstractmethod
+    async def create_session(self, org_id: UUID, session: Session) -> bool:
+        """The create of a credential kept as a session row: a sign-in, an
+        operator token, or a session with no sign-in to end. False when the
+        id is already written, which changes nothing. A token hash another
+        row holds is UniqueKeyTaken, and nothing lands."""
+        ...
+
+    @abstractmethod
     async def write_session(
         self, org_id: UUID, session: Session, outbox_rows: tuple[OutboxRow, ...] = ()
     ) -> None:
-        """A revocation is a session write with a handoff: the row announcing
-        it lands beside the session, so the socket it opened hears of it."""
+        """The update by copy. A revocation is a session write with a handoff:
+        the row announcing it lands beside the session, so the socket it
+        opened hears of it."""
         ...
 
     @abstractmethod
@@ -548,7 +571,8 @@ class TenancyStorageInterface(ABC):
 
     @abstractmethod
     async def read_pending_invitation(self, org_id: UUID, email: str) -> Invitation | None:
-        """The tenant's pending invitation for the address, expired or not."""
+        """The tenant's pending invitation for the address, in any spelling
+        (`rules.fold_email`), expired or not."""
         ...
 
     @abstractmethod
@@ -594,7 +618,11 @@ class TenancyStorageInterface(ABC):
         ...
 
     @abstractmethod
-    async def write_socket_ticket(self, org_id: UUID, ticket: SocketTicket) -> None: ...
+    async def create_socket_ticket(self, org_id: UUID, ticket: SocketTicket) -> bool:
+        """The create, and the only write of a ticket besides its redemption.
+        False when the id is already written, which changes nothing. A ticket
+        hash another row holds is UniqueKeyTaken, and nothing lands."""
+        ...
 
     @abstractmethod
     async def redeem_socket_ticket(

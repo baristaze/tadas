@@ -8,8 +8,8 @@ tenants, then the chores of the tenants one read across tenants finds with
 a chore due, then the purge of a tenant past its retention per tenant, then
 every namespace's purge of its rows past their retention across tenants,
 then the purges of done outbox rows and settled work items, within a time
-budget, then the three gauges of the queue and the outbox), and drain first
-on stop."""
+budget, then the tally of the platform's size when it is due, then the four
+gauges of the queue and the outbox), and drain first on stop."""
 
 import asyncio
 import contextlib
@@ -19,10 +19,11 @@ from datetime import timedelta
 from uuid import UUID
 
 from opentelemetry import trace
-from opentelemetry.trace import SpanKind
+from opentelemetry.trace import Span, SpanKind
 
 from tadas.infra.cache import CacheInterface
 from tadas.infra.observability import (
+    OUTBOX_FAILED_RECENTLY,
     OUTBOX_OLDEST_PENDING_SECONDS,
     OUTCOMES,
     SWEEP_SECONDS,
@@ -31,6 +32,7 @@ from tadas.infra.observability import (
     caused_by_request_id_var,
     links_to,
     request_id_var,
+    traceparent_of,
 )
 from tadas.infra.topics import TopicPayload, Topics, TopicsInterface, WorkAvailablePayload
 from tadas.om.base import EMPTY_UUID, Platform, new_id
@@ -67,6 +69,11 @@ ChoreStep = Callable[[OpContext], Awaitable[object]]
 """A standing chore per tenant that is not a purge: opening the next period
 of a record kept per period (`TasksManagerInterface.open_cleanup`)."""
 
+TallyStep = Callable[[], Awaitable[object]]
+"""The count of the platform's size across every tenant, kept as the tally the
+operator plane reads (`TenancyOperatorManagerInterface.tally_size`); it runs
+once every `LoopOptions.tally_interval`, not every pass."""
+
 ChoreTenants = Callable[[UUID | None, int], Awaitable[list[UUID]]]
 """The one read a pass, across tenants in the system scope, of the tenants
 with a chore due: at most `limit` of them, in id order, after `after` when
@@ -101,10 +108,15 @@ class LoopOptions(Platform):
     # A pass takes no new tenant past this, and the next pass resumes at the
     # tenant it stopped at, so a pass stays shorter than the interval.
     sweep_budget: timedelta = timedelta(seconds=20)
-    # The dead-letter gauge counts the items that failed this long ago or
-    # less, so one failure reads as one for this long and then goes. The
-    # alarm on it says the same window (the alarms module).
+    # The two dead-letter gauges, the queue's and the outbox's, count what
+    # failed for good this long ago or less, so one failure reads as one for
+    # this long and then goes. The alarms on them say the same window (the
+    # alarms module).
     failed_window: timedelta = timedelta(minutes=15)
+    # The platform's size is counted this often, not every pass: its counts
+    # cover a day, and a tally five minutes old answers what the operator
+    # plane asks of it (ADR 0074). Each worker counts on its own clock.
+    tally_interval: timedelta = timedelta(minutes=5)
 
 
 class WorkerLoop:
@@ -119,6 +131,7 @@ class WorkerLoop:
         chore_tenants: ChoreTenants | None = None,
         across: Mapping[str, AcrossStep] | None = None,
         across_batches: Mapping[str, int] | None = None,
+        tally: TallyStep | None = None,
         topics: TopicsInterface,
         liveness: CacheInterface,
         options: LoopOptions,
@@ -134,6 +147,7 @@ class WorkerLoop:
         # A purge across tenants whose batch is not the loop's `purge_batch`,
         # by name: what it returns is held against its own batch.
         self._across_batches = dict(across_batches or {})
+        self._tally_step = tally
         self._handlers = handlers
         self._topics = topics
         self._liveness = liveness
@@ -152,6 +166,9 @@ class WorkerLoop:
         # Where the next pass reads the tenants with a chore due from: after
         # the last one this pass ran, or None to read from the first.
         self._chores_after: UUID | None = None
+        # When this worker last counted the platform's size, on the event
+        # loop's clock; None until it has, so its first pass counts.
+        self._tallied_at: float | None = None
 
     @property
     def kinds(self) -> list[WorkKind]:
@@ -219,15 +236,22 @@ class WorkerLoop:
                     self._wake.wait(), timeout=self._options.poll_interval.total_seconds()
                 )
 
-    def _request(self) -> RequestContext:
-        """The request stage the worker mints at its edge: one per claim and one per
-        sweep pass, the way the gateway mints one per request."""
-        return RequestContext(request_id=new_id(), app=self._app)
+    def _request(self, traceparent: str | None = None) -> RequestContext:
+        """The request stage the worker mints at its edge: one per claim, with the
+        trace context of the run's span, and one per sweep pass, which raises
+        none, the way the gateway mints one per request."""
+        return RequestContext(request_id=new_id(), app=self._app, traceparent=traceparent)
 
     async def _try_claim(self) -> bool:
+        # The run's span starts here, at the run's edge, as a request's starts
+        # at the gateway: the stage minted for the claim carries its trace
+        # context, and every row the run lands takes it from the stage. It is
+        # named, linked, and made current once an item is in hand. A claim
+        # that finds nothing never ends it, so nothing is exported for it.
+        span = tracer.start_span("work", kind=SpanKind.CONSUMER)
         try:
             claimed = await self._work.claim(
-                self._request(),
+                self._request(traceparent_of(span)),
                 self._options.lane,
                 self.kinds,
                 self._options.worker_id,
@@ -240,7 +264,16 @@ class WorkerLoop:
         if claimed is None:
             return False
         ctx, item = claimed
-        task = asyncio.create_task(self._run_item(ctx, item), name=f"work-{item.id}")
+        # Linked to the trace of the request that filled the queue, and not a
+        # child of it: the item waited in a durable queue, which holds it well
+        # past the end of that request, so the causal edge joins two traces
+        # instead of stretching one over both. An item with no trace context
+        # on it starts a trace here.
+        span.update_name(f"work {item.kind.value}")
+        for link in links_to(item.traceparent):
+            span.add_link(link.context, link.attributes)
+        span.set_attributes(self._span_attributes(ctx, item))
+        task = asyncio.create_task(self._run_item(ctx, item, span), name=f"work-{item.id}")
         self._running[task] = (ctx, item)
         task.add_done_callback(self._on_item_done)
         return True
@@ -255,7 +288,7 @@ class WorkerLoop:
 
     # Running one item.
 
-    async def _run_item(self, ctx: OpContext, item: WorkItem) -> None:
+    async def _run_item(self, ctx: OpContext, item: WorkItem, span: Span) -> None:
         # The claim refined the request stage minted for it; every log line of
         # the run carries its request id, the way the API's middleware does,
         # and the request that caused the work beside it.
@@ -264,17 +297,9 @@ class WorkerLoop:
             str(ctx.caused_by_request_id) if ctx.caused_by_request_id is not None else None
         )
         try:
-            # The run's span, linked to the trace of the request that filled
-            # the queue and not a child of it: the item waited in a durable
-            # queue, which holds it well past the end of that request, so the
-            # causal edge joins two traces instead of stretching one over
-            # both. An item with no trace context on it starts a trace here.
-            with tracer.start_as_current_span(
-                f"work {item.kind.value}",
-                kind=SpanKind.CONSUMER,
-                links=links_to(item.traceparent),
-                attributes=self._span_attributes(ctx, item),
-            ):
+            # The run's span, started at the claim: current for the run, and
+            # ended with it.
+            with trace.use_span(span, end_on_exit=True):
                 await self._handle(ctx, item)
         finally:
             caused_by_request_id_var.reset(cause)
@@ -469,9 +494,11 @@ class WorkerLoop:
         in turn with the others, while the budget lasts. The purges across
         tenants run on every pass, each at least once and again while its
         batch comes back full and the budget lasts. A living tenant with no
-        chore due costs a pass no read at all. The three reads of the queue
-        and the outbox end every pass, whatever the budget, since the alarms
-        read them."""
+        chore due costs a pass no read at all. The count of the platform's
+        size runs once an interval, whatever the budget, as the gauges do:
+        it is three counts and a write, and the operator plane reads it. The
+        four reads of the queue and the outbox end every pass, whatever the
+        budget, since the alarms read them."""
         clock = asyncio.get_running_loop().time
         started = clock()
         deadline = started + self._options.sweep_budget.total_seconds()
@@ -529,12 +556,13 @@ class WorkerLoop:
                 log.info("sweep: purged %d settled work items", purged)
         except Exception:
             log.exception("sweep: work item purge failed")
+        await self._tally()
         gauges = await self._gauges()
         self.sweeps += 1
         seconds = clock() - started
         SWEEP_SECONDS.observe(seconds)
         # One line per pass, its numbers as fields: the alarms module's log
-        # filters read the duration and the three gauges off it.
+        # filters read the duration and the four gauges off it.
         log.info(
             "sweep: pass took %.3fs over %d of %d tenants, chores in %d%s",
             seconds,
@@ -554,11 +582,33 @@ class WorkerLoop:
             },
         )
 
+    async def _tally(self) -> None:
+        """The count of the platform's size, when the interval has passed
+        since this worker last made one. One that fails is logged and tried
+        again on the next pass; the tally the operator plane reads stays as
+        it was, and says how old it is."""
+        if self._tally_step is None:
+            return
+        clock = asyncio.get_running_loop().time
+        due = self._options.tally_interval.total_seconds()
+        if self._tallied_at is not None and clock() - self._tallied_at < due:
+            return
+        started = clock()
+        try:
+            await self._tally_step()
+        except Exception:
+            log.exception("sweep: the tally of the platform's size failed")
+            return
+        self._tallied_at = clock()
+        log.info("sweep: counted the platform's size in %.3fs", self._tallied_at - started)
+
     async def _gauges(self) -> dict[str, int]:
-        """The three numbers the queue and outbox alarms read, one read each
+        """The four numbers the queue and outbox alarms read, one read each
         across every tenant: how long the item ready longest has waited, how
-        many items failed within the window, and how long ago the oldest
-        pending outbox row landed. A read that fails leaves its field off the
+        many items failed within the window, how long ago the oldest pending
+        outbox row landed, and how many outbox rows failed for good within
+        the window. A dead letter is no longer pending, so the lag cannot see
+        it; the last count does. A read that fails leaves its field off the
         line and its gauge as it was, so the alarm sees no data, which keeps
         its state, and never a zero that would clear it."""
         found: dict[str, int] = {}
@@ -566,6 +616,7 @@ class WorkerLoop:
             ("work_oldest_ready_seconds", WORK_OLDEST_READY_SECONDS, self._oldest_ready),
             ("work_failed_recently", WORK_FAILED_RECENTLY, self._failed_recently),
             ("outbox_oldest_pending_seconds", OUTBOX_OLDEST_PENDING_SECONDS, self._oldest_pending),
+            ("outbox_failed_recently", OUTBOX_FAILED_RECENTLY, self._outbox_failed_recently),
         )
         for name, gauge, read in reads:
             try:
@@ -585,6 +636,9 @@ class WorkerLoop:
 
     async def _oldest_pending(self) -> int:
         return int((await self._outbox.oldest_pending_age()).total_seconds())
+
+    async def _outbox_failed_recently(self) -> int:
+        return await self._outbox.failed_within(self._options.failed_window)
 
     def _from_resume_point(self, contexts: list[OpContext]) -> list[OpContext]:
         """The pass's tenants in id order, the system scope first, turned to

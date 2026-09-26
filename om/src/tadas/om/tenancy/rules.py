@@ -48,12 +48,23 @@ def hash_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
+def fold_email(email: str) -> str:
+    """An address as Tadas keeps it and asks for it: all of it in lower case,
+    by Unicode's full mapping, so `Dee@Example.test` and `dee@example.test`
+    are one address and one person (ADR 0072). Every address is folded
+    before it is written and before it is looked up. The database folds the
+    same way, `lower(email COLLATE pg_unicode_fast)`, in the digest it
+    computes and in the migration that folded the stored addresses."""
+    return email.lower()
+
+
 def email_digest(email: str) -> str:
     """What a sign-in looks an identity up by, and what the sign-in delay is
-    keyed on: the SHA-256 of the address as it was given, in hex. The
-    database computes the same digest of the stored address in a generated
-    column, so the two never disagree."""
-    return hashlib.sha256(email.encode()).hexdigest()
+    keyed on: the SHA-256 of the folded address, in hex, so every spelling of
+    an address has one digest. The database computes the same digest of the
+    stored address in a generated column, folding it too, so the two never
+    disagree, whoever wrote the row."""
+    return hashlib.sha256(fold_email(email).encode()).hexdigest()
 
 
 def check_email(email: str) -> None:
@@ -99,7 +110,7 @@ resolves, so no mailbox stands behind it either."""
 
 
 def is_platform_email(email: str) -> bool:
-    return email.lower().endswith("@" + PLATFORM_EMAIL_DOMAIN)
+    return fold_email(email).endswith("@" + PLATFORM_EMAIL_DOMAIN)
 
 
 TOTP_STEP = timedelta(seconds=30)
@@ -171,9 +182,9 @@ def pkce_challenge(verifier: str) -> str:
 
 
 def email_domain(email: str) -> str:
-    """The part of an address after its `@`, in lower case: what an org's
-    verified domain is compared with."""
-    return email.rpartition("@")[2].lower()
+    """The part of an address after its `@`, folded: what an org's verified
+    domain is compared with."""
+    return fold_email(email.rpartition("@")[2])
 
 
 def sso_joins(email: str, verified_domains: tuple[str, ...]) -> bool:
@@ -269,9 +280,10 @@ def sign_in_delay(
 
 def confirms_deletion(email: str, typed: str) -> bool:
     """Whether what the person typed is the account's email: the one check
-    that a deletion is meant. Surrounding space and letter case are forgiven,
-    since an address is read that way everywhere else; anything else is not."""
-    return typed.strip().lower() == email.strip().lower()
+    that a deletion is meant. Surrounding space is forgiven, and letter case
+    is folded, since an address is read that way everywhere else; anything
+    else is not."""
+    return fold_email(typed.strip()) == fold_email(email.strip())
 
 
 def confirms_org_deletion(name: str, typed: str) -> bool:

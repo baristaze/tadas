@@ -380,9 +380,9 @@ The laptop uses the sandbox, like staging.
    ```
 
    `.env.example` leaves `TADAS_STRIPE_RUNTIME_KEY` and
-   `TADAS_STRIPE_WEBHOOK_SECRET` commented out on purpose. The Makefile
-   includes that file, and a line there with an empty value would
-   override what the shell exported.
+   `TADAS_STRIPE_WEBHOOK_SECRET` commented out: a key is never
+   committed. What the shell exports wins over `.env` and
+   `.env.example` alike.
 
 2. Stripe cannot reach a laptop, so `local` has no endpoint. Forward
    the deliveries with the Stripe CLI instead. It prints a signing

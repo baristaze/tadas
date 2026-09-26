@@ -132,6 +132,12 @@ class RequestContext(Platform):
     request_id: UUID
     app: AppContext
     trace_id: str | None = None
+    # The trace context of this request as the W3C `traceparent` header, the
+    # form a handoff carries on: an id names a trace, and only the header
+    # carries what a later span links to. Read off the tracer once, where the
+    # stage is minted; every row a write lands takes it from here. None where
+    # no tracer is configured or no span is open.
+    traceparent: str | None = None
     # Ambient state one hop back: empty on a request that arrived at the edge,
     # and on a stage minted for a handoff the request that caused the work,
     # read off the work item. Two fields, never one written over the other: a
@@ -233,6 +239,9 @@ class RequestScope(Protocol):
     @property
     def app(self) -> AppContext: ...
 
+    @property
+    def traceparent(self) -> str | None: ...
+
 
 class TenantScope(Protocol):
     @property
@@ -278,6 +287,7 @@ def build_context(
         request_id=rctx.request_id,
         app=rctx.app,
         trace_id=rctx.trace_id,
+        traceparent=rctx.traceparent,
         caused_by_request_id=rctx.caused_by_request_id,
         deadline=rctx.deadline,
         security=SecurityContext(

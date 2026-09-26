@@ -267,6 +267,36 @@ class OutboxStorageContract:
         assert await outbox.purge_done(utcnow() + timedelta(seconds=1), 1000) >= 1
         assert pending_row.id in {r.id for r in await claim_all(outbox)}
 
+    async def test_the_dead_letters_are_counted_across_tenants_by_when_they_failed(
+        self, tasks: TasksStorageInterface, outbox: OutboxStorageInterface
+    ) -> None:
+        """The dead-letter gauge's read: the rows failed for good after a
+        moment, in any tenant; a row that failed an attempt and waits for its
+        next is not counted, nor is a done one."""
+        org, other = new_id(), new_id()
+        rows: dict[str, OutboxRow] = {}
+        for name, owner in (
+            ("an hour ago", org),
+            ("a minute ago", other),
+            ("retrying", org),
+            ("done", other),
+        ):
+            task = make_task()
+            rows[name] = make_row(owner, task.id)
+            await tasks.create_task(owner, task, (rows[name],))
+        now = utcnow()
+        await outbox.record_failure(
+            org, rows["an hour ago"].id, "for good", now - timedelta(hours=1)
+        )
+        await outbox.record_failure(
+            other, rows["a minute ago"].id, "for good", now - timedelta(minutes=1)
+        )
+        await outbox.record_failure(org, rows["retrying"].id, "bus down", None)
+        await outbox.mark_done(other, [rows["done"].id])
+        assert await outbox.count_failed_since(now - timedelta(minutes=15)) == 1
+        assert await outbox.count_failed_since(now - timedelta(hours=2)) == 2
+        assert await outbox.count_failed_since(now) == 0
+
     async def test_the_oldest_pending_row_is_read_across_tenants(
         self, tasks: TasksStorageInterface, outbox: OutboxStorageInterface
     ) -> None:

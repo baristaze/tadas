@@ -46,7 +46,7 @@ const taskOf = (id: string, status: "open" | "done" = "open"): TaskView => ({
   notes: "",
   status,
   assignee_id: null,
-  rank: "0", position: 0,
+  rank: "0",
   version: 1,
   created_by: "u1",
   deleted_at: null,

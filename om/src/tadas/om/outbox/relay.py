@@ -105,6 +105,13 @@ class OutboxRelayInterface(ABC):
         ...
 
     @abstractmethod
+    async def failed_within(self, window: timedelta) -> int:
+        """Platform-internal, for the sweep's dead-letter gauge: how many rows
+        failed for good in the last `window`, across tenants. A dead letter is
+        no longer pending, so the relay gauge no longer sees it; this does."""
+        ...
+
+    @abstractmethod
     async def purge_done(self, retention: timedelta, limit: int) -> int:
         """Platform-internal, for the sweep: deletes rows done or failed longer
         ago than `retention`, at most `limit` of each; returns how many. The

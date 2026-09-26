@@ -123,7 +123,23 @@ make setup        # Python and TypeScript dependencies
 cp .env.example .env
 make infra-up     # Postgres, Valkey, ElasticMQ, MinIO on host ports 55432, 56379, 59324, 59000
 make migrate      # every role's migration chain
-make seed         # orgs "acme" and "fabrikam" with the three people of the table above (the SEED_* knobs in .env)
+make seed         # orgs "acme" and "fabrikam" with the three people of the table above (the SEED_* knobs in .env), and the two local operators, whose tokens go into ~/.config/tadas/ops/local.env when it is absent
+```
+
+`.env` and `.env.example` are defaults. A variable exported in the shell
+wins over both: for every make target, for `scripts/dev.sh`, and for the
+processes themselves. A variable on the make command line wins over the
+shell. So a second checkout runs its migrations in a database of its own
+by exporting the four database URLs at it, and the database `.env` names
+is left alone:
+
+```bash
+docker exec tadas-postgres-1 psql -U postgres -c 'CREATE DATABASE mine OWNER tadas'
+export TADAS_DATABASE_URL=postgresql+asyncpg://tadas_runtime:tadas_runtime@127.0.0.1:55432/mine
+export TADAS_DATABASE_SYSTEM_URL=postgresql+asyncpg://tadas_system:tadas_system@127.0.0.1:55432/mine
+export TADAS_DATABASE_MIGRATION_URL=postgresql+asyncpg://tadas_migration:tadas_migration@127.0.0.1:55432/mine
+export TADAS_DATABASE_MASTER_URL=postgresql+asyncpg://tadas:tadas@127.0.0.1:55432/mine
+make migrate migrate-check seed test-integration
 ```
 
 ## Run

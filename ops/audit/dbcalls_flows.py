@@ -552,7 +552,7 @@ async def sweep(w: Any) -> None:
         "sweep", "requeue_stale (nothing stale)", lambda: m.work.requeue_stale(rctx, 100)
     )
     await w.measure("sweep", "maintenance_contexts", lambda: m.work.maintenance_contexts(rctx))
-    await w.measure("sweep", "gauges (the three reads)", lambda: w.loop._gauges())
+    await w.measure("sweep", "gauges (the four reads)", lambda: w.loop._gauges())
     # A pass at two tenant counts, so its cost per tenant is measured, not guessed.
     tenancy, s = w.container.managers.tenancy, w.state["s"]
     for more in (0, 20):

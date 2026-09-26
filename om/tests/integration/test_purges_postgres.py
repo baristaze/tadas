@@ -392,7 +392,7 @@ async def test_a_session_purge_skips_a_row_another_transaction_holds(
     dead = [make_session(new_id(), user, uuid4().hex, ttl=gone) for _ in range(2)]
     for session in dead:
         await storage.write_session(org, session)
-    await storage.write_socket_ticket(org, make_socket_ticket(user, uuid4().hex, ttl=gone))
+    await storage.create_socket_ticket(org, make_socket_ticket(user, uuid4().hex, ttl=gone))
     async with pg_sessions[DatabaseRole.CORE]() as holder:
         await set_scope(holder, org, None, None)
         await holder.execute(

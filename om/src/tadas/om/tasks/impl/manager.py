@@ -60,7 +60,6 @@ from tadas.om.tasks.rules import (
     import_row_part,
     imported,
     parse_import,
-    placed,
     rank_after,
     reminder_person,
     reminder_time,
@@ -82,6 +81,7 @@ from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor, TaskFilter
 from tadas.om.tasks.types.page import TaskPage
 from tadas.om.tasks.types.task import DueReminder, Task, TaskScope, TaskStatus
 from tadas.om.tenancy import TenancyManagerInterface
+from tadas.om.tenancy.rules import fold_email
 from tadas.om.work.types.work_item import (
     SlackPostEvent,
     SlackPostPayload,
@@ -237,7 +237,7 @@ class TasksManagerImpl(TasksManagerInterface):
                 "deleted_at": None,
                 "deleted_by": None,
                 "status": TaskStatus.OPEN,
-                **placed(rank),
+                "rank": rank,
                 "version": 1,
                 "reminded_at": None,
             }
@@ -279,7 +279,7 @@ class TasksManagerImpl(TasksManagerInterface):
             "version": expected_version + 1,
         }
         if current.status == TaskStatus.DONE and task.status == TaskStatus.OPEN:
-            changes.update(placed(await self._rank_for_one_more(ctx, exclude=task.id)))
+            changes["rank"] = await self._rank_for_one_more(ctx, exclude=task.id)
             changes["archived_at"] = None  # an open task is never archived
         rescheduled = task.due_on != current.due_on
         if rescheduled:
@@ -320,7 +320,7 @@ class TasksManagerImpl(TasksManagerInterface):
         # task is written and no other task's version moves.
         moved = task.model_copy(
             update={
-                **placed(rank),
+                "rank": rank,
                 "updated_at": utcnow(),
                 "updated_by": ctx.user_id,
                 "version": expected_version + 1,
@@ -423,7 +423,7 @@ class TasksManagerImpl(TasksManagerInterface):
                     update={
                         **changes,
                         "status": TaskStatus.OPEN,
-                        **placed(ranks[index]),
+                        "rank": ranks[index],
                         "archived_at": None,
                         "version": task.version + 1,
                     }
@@ -633,7 +633,6 @@ class TasksManagerImpl(TasksManagerInterface):
                 assignee_id=row.assignee_id,
                 due_on=row.due_on,
                 rank=rank,
-                position=float(rank),  # the mirror `placed` writes
             )
             rows = (
                 versioned_row(ctx, "tasks.task.created", task.id, task.version),
@@ -643,14 +642,14 @@ class TasksManagerImpl(TasksManagerInterface):
         return tasks
 
     async def _members(self, ctx: OpContext) -> dict[str, UUID]:
-        """The org's members by address, lower-cased: whom a row may assign."""
+        """The org's members by address, folded: whom a row may assign."""
         members: dict[str, UUID] = {}
         after: UUID | None = None
         while True:
             page = await self._tenancy.get_users(ctx, after, self._options.max_limit)
             for user in page.items:
                 if user.deleted_at is None:
-                    members[user.email.lower()] = user.id
+                    members[fold_email(user.email)] = user.id
             if not page.has_more or not page.items:
                 return members
             after = page.items[-1].id
@@ -830,7 +829,7 @@ class TasksManagerImpl(TasksManagerInterface):
                 return 0  # the run moved since it was read; the next pass reads it again
             written = task.model_copy(
                 update={
-                    **placed(new_rank),
+                    "rank": new_rank,
                     "updated_at": now,
                     "updated_by": ctx.user_id,
                     "version": task.version + 1,

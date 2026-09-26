@@ -56,9 +56,14 @@ STORAGE_EXCEPTIONS: frozenset[tuple[str, str]] = frozenset(
         ("TenancyStorageInterface", "read_org_by_slug"),
         ("TenancyStorageInterface", "read_orgs"),
         ("TenancyStorageInterface", "count_orgs"),
+        # The sweep's tally of the platform's size: three counts across every
+        # tenant, and the one global row they are kept in, which the operator
+        # plane reads instead of counting in a request.
         ("TenancyStorageInterface", "count_orgs_and_users"),
         ("TasksStorageInterface", "count_created_since"),
         ("EventStorageInterface", "count_since"),
+        ("TenancyStorageInterface", "write_platform_size"),
+        ("TenancyStorageInterface", "read_platform_size"),
         ("TenancyStorageInterface", "read_users_by_identity"),
         ("TenancyStorageInterface", "read_memberships_by_identity"),
         ("TenancyStorageInterface", "delete_person"),
@@ -101,6 +106,8 @@ STORAGE_EXCEPTIONS: frozenset[tuple[str, str]] = frozenset(
         ("OutboxStorageInterface", "claim_pending"),
         ("OutboxStorageInterface", "purge_done"),
         ("OutboxStorageInterface", "oldest_pending_at"),
+        # The outbox's dead-letter gauge, read across tenants like the lag's.
+        ("OutboxStorageInterface", "count_failed_since"),
         ("SlackStorageInterface", "read_installation_by_team"),
         ("SlackStorageInterface", "redeem_install_state"),
     }
@@ -131,6 +138,7 @@ MANAGER_EXCEPTIONS: frozenset[tuple[str, str]] = frozenset(
         ("OutboxRelayInterface", "relay_pending"),
         ("OutboxRelayInterface", "purge_done"),
         ("OutboxRelayInterface", "oldest_pending_age"),
+        ("OutboxRelayInterface", "failed_within"),
         # And the release of the hold the API's edge keeps around a request,
         # by the request id the rows name, before any stage is established.
         ("OutboxRelayInterface", "release"),
@@ -154,6 +162,9 @@ MANAGER_EXCEPTIONS: frozenset[tuple[str, str]] = frozenset(
         # The sweep's gauges of the queue, read across tenants like the purge.
         ("WorkManagerInterface", "oldest_ready_age"),
         ("WorkManagerInterface", "failed_within"),
+        # And the sweep's tally of the platform's size, counted across tenants
+        # for the operator plane's read: it counts for no tenant.
+        ("TenancyOperatorManagerInterface", "tally_size"),
     }
 )
 

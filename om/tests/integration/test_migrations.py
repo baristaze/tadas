@@ -1,8 +1,10 @@
 """Every role's migrated schema agrees with the ORM metadata, the latest
 revision of every role downgrades and upgrades again, the logins are safe to
 make twice, a data migration passes the fence it runs under, the personal
-org backfill gives every person one, and the due date backfill gives every
-task with a due time its date."""
+org backfill gives every person one, the due date backfill gives every task
+with a due time its date, a task's rank and position follow each other for
+the builds before this one, and the address fold folds every address and
+stops on two that fold to one."""
 
 from datetime import UTC, date, datetime
 from decimal import Decimal
@@ -12,17 +14,20 @@ import pytest
 from contracts.event_storage import make_event
 from contracts.factories import (
     make_identity,
+    make_invitation,
     make_membership,
     make_org,
     make_personal_org,
     make_user,
 )
-from contracts.task_storage import make_task
+from contracts.task_storage import bump, make_task
 from sqlalchemy import Connection, text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from tadas.om.base import new_id
 from tadas.om.events.storage.impl.postgres import EventStoragePostgresImpl
+from tadas.om.exceptions import UniqueKeyTaken
 from tadas.om.opcontext import Role
 from tadas.om.storage.impl.pg_base import LoginSessions, set_scope
 from tadas.om.storage.migrate import backfill, check, downgrade, ensure_logins_at, head, upgrade
@@ -30,9 +35,10 @@ from tadas.om.storage.roles import DatabaseRole
 from tadas.om.storage.settings import MigrationSettings
 from tadas.om.tasks.storage.impl.postgres import TasksStoragePostgresImpl
 from tadas.om.tasks.types.task import Task
-from tadas.om.tenancy.rules import MAX_SLUG_LENGTH, SLUG_PATTERN
+from tadas.om.tenancy.rules import MAX_SLUG_LENGTH, SLUG_PATTERN, email_digest
 from tadas.om.tenancy.storage.impl.postgres import TenancyStoragePostgresImpl
 from tadas.om.tenancy.types.identity import Identity
+from tadas.om.tenancy.types.invitation import InvitationState
 from tadas.om.tenancy.types.issued import OrgMembership
 
 pytestmark = pytest.mark.integration
@@ -316,7 +322,7 @@ async def test_the_due_date_backfill_takes_the_utc_date_in_every_tenant(
         await engine.dispose()
 
 
-# The rank, filled from the position and kept for the release before.
+# The rank, filled from the position and kept for the build before it.
 
 
 BEFORE_RANK = "202610030000"
@@ -327,11 +333,9 @@ POSITIONS = (0.1, 1e-05, -2.5, 3.0000000000000004, 12345678.9, 0.300000000000000
 decimal of fifteen digits tells from its neighbour."""
 
 
-async def as_the_release_before(
-    sessions: LoginSessions, org: UUID, sql: str, **values: object
-) -> None:
-    """A statement the release before sends, under the runtime login and the
-    tenant's scope: it names the position and never the rank."""
+async def as_a_build_before(sessions: LoginSessions, org: UUID, sql: str, **values: object) -> None:
+    """A statement a build before this one sends, under the runtime login and
+    the tenant's scope."""
     async with sessions[DatabaseRole.CORE]() as session:
         await set_scope(session, org, None, None)
         await session.execute(text(sql), {"org": org, **values})
@@ -346,8 +350,7 @@ async def test_the_rank_is_the_position_digit_for_digit_and_follows_the_release_
     ann, zoe = new_id(), new_id()
     tasks = [make_task(f"p{index}", rank=position) for index, position in enumerate(POSITIONS)]
     for index, task in enumerate(tasks):
-        placed = task.model_copy(update={"position": POSITIONS[index]})
-        assert await storage.create_task(ann if index % 2 else zoe, placed, ())
+        assert await storage.create_task(ann if index % 2 else zoe, task, ())
 
     # The fill: every existing row, every tenant, its rank the float's text.
     await downgrade(DatabaseRole.CORE, core, BEFORE_RANK)
@@ -357,10 +360,10 @@ async def test_the_rank_is_the_position_digit_for_digit_and_follows_the_release_
         (position, Decimal(repr(position))) for position in POSITIONS
     ]
 
-    # The release before creates a task: no rank, and the trigger gives it
-    # the one its position names, which this release reads it at.
+    # The build before the rank creates a task: no rank, and the trigger
+    # gives it the one its position names, which this release reads it at.
     created = new_id()
-    await as_the_release_before(
+    await as_a_build_before(
         pg_sessions,
         ann,
         "INSERT INTO core.tasks (id, org_id, created_at, updated_at, created_by, updated_by,"
@@ -371,14 +374,14 @@ async def test_the_rank_is_the_position_digit_for_digit_and_follows_the_release_
     stored = await storage.read_task(ann, created)
     assert stored is not None and stored.rank == Decimal("-7.25")
 
-    # The release before moves it by the position alone, and edits a title.
-    await as_the_release_before(
+    # That build moves it by the position alone, and edits a title.
+    await as_a_build_before(
         pg_sessions,
         ann,
         "UPDATE core.tasks SET position = 0.15, version = 2 WHERE id = :id",
         id=created,
     )
-    await as_the_release_before(
+    await as_a_build_before(
         pg_sessions, ann, "UPDATE core.tasks SET title = 'renamed' WHERE id = :id", id=created
     )
     stored = await storage.read_task(ann, created)
@@ -388,19 +391,195 @@ async def test_the_rank_is_the_position_digit_for_digit_and_follows_the_release_
         [Decimal("0.15"), *(Decimal(repr(p)) for i, p in enumerate(POSITIONS) if i % 2)]
     )
 
-    # This release writes the rank itself; the position beside it is the
-    # rank's float, and the trigger leaves the rank as written.
+    # This release writes the rank alone; the position takes the rank's
+    # float, and the rank stays as written.
     exact = Decimal("0.1500000000000000000000001")
-    moved = stored.model_copy(
-        update={"rank": exact, "position": float(exact), "version": stored.version + 1}
-    )
+    moved = stored.model_copy(update={"rank": exact, "version": stored.version + 1})
     await storage.update_task(ann, moved, stored.version, ())
     stored = await storage.read_task(ann, created)
-    assert stored is not None and stored.rank == exact and stored.position == 0.15
+    assert stored is not None and stored.rank == exact
+    rows = await on_core(core, f"SELECT position FROM core.tasks WHERE id = '{created}'")
+    assert rows == [(0.15,)]
 
-    # Downgraded, the release before reads the position this release kept.
+    # Downgraded to before the rank, that build reads the position this
+    # release kept.
     await downgrade(DatabaseRole.CORE, core, BEFORE_RANK)
     rows = await on_core(core, f"SELECT position FROM core.tasks WHERE id = '{created}'")
     assert rows == [(0.15,)]
     await upgrade(DatabaseRole.CORE, core)
     assert await check(DatabaseRole.CORE, core) == []
+
+
+# The position, kept the rank's float for the release before, which reads it.
+
+
+BEFORE_POSITION_TRIGGER = "202610170000"
+"""The revision before the one that keeps the position from the rank."""
+
+LONG = Decimal("0.1500000000000000000000001")
+"""A rank whose float, 0.15, holds only its first digits."""
+
+
+async def places(core: str) -> dict[str, tuple[object, ...]]:
+    """Each task's rank and position, by title, as the database holds them."""
+    rows = await on_core(core, "SELECT title, rank, position FROM core.tasks")
+    return {str(title): (rank, position) for title, rank, position in rows}
+
+
+async def test_the_position_is_the_ranks_float_on_every_row_either_release_writes(
+    pg_sessions: LoginSessions, migrated: dict[DatabaseRole, str]
+) -> None:
+    """This release names no position. The release before names the rank
+    and the position, its float, in every write, and reads the position as a
+    number. Each writes over the other's rows, and each reads every row at
+    the rank the other wrote."""
+    core = migrated[DatabaseRole.CORE]
+    storage = TasksStoragePostgresImpl(pg_sessions)
+    org = new_id()
+
+    # This release creates a task and moves it. It writes the rank alone,
+    # and the position takes the rank's float each time.
+    mine = make_task("mine", rank="-2.5")
+    assert await storage.create_task(org, mine, ())
+    assert (await places(core))["mine"] == (Decimal("-2.5"), -2.5)
+    mine = await bump(storage, org, mine, rank=LONG)
+    assert (await places(core))["mine"] == (LONG, 0.15)
+
+    # The release before creates a task and moves it: both stay as written.
+    theirs = new_id()
+    await as_a_build_before(
+        pg_sessions,
+        org,
+        "INSERT INTO core.tasks (id, org_id, created_at, updated_at, created_by, updated_by,"
+        " title, notes, status, rank, position, version)"
+        " VALUES (:id, :org, now(), now(), :id, :id, 'theirs', '', 'open', -3, -3.0, 1)",
+        id=theirs,
+    )
+    await as_a_build_before(
+        pg_sessions,
+        org,
+        "UPDATE core.tasks SET rank = :rank, position = :position, version = 2 WHERE id = :id",
+        id=theirs,
+        rank=LONG + Decimal("1e-25"),
+        position=float(LONG),
+    )
+    assert (await places(core))["theirs"] == (LONG + Decimal("1e-25"), 0.15)
+
+    # The release before moves this release's task to the place it holds: it
+    # names the same rank and that rank's float, which the row holds, so the
+    # rank keeps every digit. Then it edits the title, naming both as read.
+    for sql in (
+        "UPDATE core.tasks SET rank = :rank, position = :position, version = 3 WHERE id = :id",
+        "UPDATE core.tasks SET title = 'mine, edited', rank = :rank, position = :position,"
+        " version = 4 WHERE id = :id",
+    ):
+        await as_a_build_before(pg_sessions, org, sql, id=mine.id, rank=LONG, position=float(LONG))
+    assert (await places(core))["mine, edited"] == (LONG, 0.15)
+
+    # This release reads both at their ranks: every digit counts, though the
+    # two floats tie.
+    assert await storage.read_open_places(org, None, None, limit=10) == [
+        (LONG, mine.id),
+        (LONG + Decimal("1e-25"), theirs),
+    ]
+
+    # Downgraded, the release before reads the position as this release left
+    # it, and writes it itself.
+    await downgrade(DatabaseRole.CORE, core, BEFORE_POSITION_TRIGGER)
+    assert sorted((await places(core)).values()) == [
+        (LONG, 0.15),
+        (LONG + Decimal("1e-25"), 0.15),
+    ]
+    await upgrade(DatabaseRole.CORE, core)
+    assert await check(DatabaseRole.CORE, core) == []
+
+
+# The address fold.
+
+
+BEFORE_ADDRESS_FOLD = "202610200000"
+"""The revision before the one that folds every stored address."""
+
+
+def fences(connection: Connection) -> list[bool]:
+    return list(
+        connection.exec_driver_sql(
+            "SELECT relforcerowsecurity FROM pg_class WHERE oid IN"
+            " ('core.users'::regclass, 'core.invitations'::regclass)"
+        ).scalars()
+    )
+
+
+async def test_the_address_fold_stops_on_two_that_fold_to_one_and_then_folds_every_address(
+    pg_sessions: LoginSessions, migrated: dict[DatabaseRole, str]
+) -> None:
+    """Rows the release before wrote, as typed, in two tenants. Two
+    identities that fold to one stop the migration, which names both and
+    changes nothing; so do two pending invitations of one org. Once a person
+    settled each, every identity, user, and invitation is folded, in both
+    tenants; any spelling finds the identity, a second spelling meets the
+    unique index, and the fence is back."""
+    core = migrated[DatabaseRole.CORE]
+    storage = TenancyStoragePostgresImpl(pg_sessions)
+    tail = new_id().hex[:8]
+    await downgrade(DatabaseRole.CORE, core, BEFORE_ADDRESS_FOLD)
+
+    dee = make_identity(f"Dee-{tail}@Example.test")
+    twin = make_identity(f"dee-{tail}@example.TEST")
+    for identity in (dee, twin):
+        await storage.write_identity(identity)
+    acme, globex = make_org("Acme"), make_org("Globex")
+    users = []
+    for org in (acme, globex):
+        user = make_user(dee.id, dee.email)
+        await storage.create_org_with_owner(
+            org.id, org, user, make_membership(user.id, Role.OWNER), None
+        )
+        users.append((org, user))
+    asked = make_invitation(f"Bob-{tail}@Example.test")
+    again = make_invitation(f"BOB-{tail}@example.test")
+    elsewhere = make_invitation(f"Cat-{tail}@Example.test")
+    await storage.write_invitation(acme.id, asked)
+    await storage.write_invitation(acme.id, again)
+    await storage.write_invitation(globex.id, elsewhere)
+
+    with pytest.raises(DBAPIError, match="identities whose addresses fold to one") as stopped:
+        await upgrade(DatabaseRole.CORE, core)
+    assert str(dee.id) in str(stopped.value) and str(twin.id) in str(stopped.value)
+    assert (await storage.read_identity(dee.id)) == dee, "nothing changed"
+
+    # A person settles it: the second address was another person's after all.
+    await storage.write_identity(twin.model_copy(update={"email": f"deb-{tail}@example.test"}))
+    with pytest.raises(DBAPIError, match="pending invitations of one org") as stopped:
+        await upgrade(DatabaseRole.CORE, core)
+    assert str(asked.id) in str(stopped.value) and str(again.id) in str(stopped.value)
+
+    await storage.write_invitation(
+        acme.id, again.model_copy(update={"state": InvitationState.REVOKED})
+    )
+    await upgrade(DatabaseRole.CORE, core)
+
+    folded = await storage.read_identity(dee.id)
+    assert folded is not None and folded.email == f"dee-{tail}@example.test"
+    for org, user in users:
+        stored = await storage.read_user(org.id, user.id)
+        assert stored is not None and stored.email == f"dee-{tail}@example.test"
+    for org, invitation, address in (
+        (acme, asked, f"bob-{tail}@example.test"),
+        (acme, again, f"bob-{tail}@example.test"),
+        (globex, elsewhere, f"cat-{tail}@example.test"),
+    ):
+        stored_invitation = await storage.read_invitation(org.id, invitation.id)
+        assert stored_invitation is not None and stored_invitation.email == address
+    for spelled in (f"DEE-{tail}@EXAMPLE.TEST", f"dee-{tail}@example.test"):
+        assert await storage.read_identity_by_email_digest(email_digest(spelled)) == folded
+    with pytest.raises(UniqueKeyTaken):
+        await storage.write_identity(make_identity(f"Dee-{tail}@example.test"))
+
+    assert await check(DatabaseRole.CORE, core) == []
+    engine = create_async_engine(core)
+    try:
+        async with engine.connect() as connection:
+            assert await connection.run_sync(fences) == [True, True]
+    finally:
+        await engine.dispose()

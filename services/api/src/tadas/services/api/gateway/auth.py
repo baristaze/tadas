@@ -9,7 +9,7 @@ from typing import Annotated
 from fastapi import Depends, Header, Query, Request, WebSocket, WebSocketException
 from starlette.requests import HTTPConnection
 
-from tadas.infra.observability import current_trace_id
+from tadas.infra.observability import current_trace_id, current_traceparent
 from tadas.om.exceptions import NotAuthenticated, NotFound, PlatformException, ValidationFailed
 from tadas.om.opcontext import AppContext, AppType, IdentityContext, OpContext, RequestContext
 from tadas.om.tenancy.types.socket_ticket import SocketPrincipal
@@ -53,7 +53,8 @@ def request_context(
 ) -> RequestContext:
     """The weakest stage, minted once at the edge: the request id the
     middleware stamped on the scope, the calling app from its headers, the
-    trace id of the current span, and the deadline admission gave the request
+    trace id of the current span and its trace context, the one place the
+    tracer is read for it, and the deadline admission gave the request
     (ADR 0069). A websocket scope reaches it the same way, with no deadline:
     its session bounds it.
 
@@ -65,6 +66,7 @@ def request_context(
         request_id=request_id_of(connection.scope),
         app=app_context_of(x_app, x_app_version),
         trace_id=current_trace_id(),
+        traceparent=current_traceparent(),
         deadline=deadline_of(connection.scope),
     )
 

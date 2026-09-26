@@ -41,6 +41,7 @@ from tadas.om.tenancy.types.api_key import ApiKey
 from tadas.om.tenancy.types.identity import Identity
 from tadas.om.tenancy.types.invitation import InvitationState
 from tadas.om.tenancy.types.session import Session
+from tadas.om.tenancy.types.size import PlatformSize
 from tadas.om.tenancy.types.user import User
 
 
@@ -65,6 +66,8 @@ CROSS_TENANT_CASES: frozenset[str] = frozenset(
         "write_closed_org",
         "count_members",
         "create_member",
+        "create_session",
+        "create_socket_ticket",
         "exchange_sign_in",
         "create_org_with_owner",
         "issue_api_key",
@@ -92,7 +95,6 @@ CROSS_TENANT_CASES: frozenset[str] = frozenset(
         "write_membership",
         "write_org",
         "write_session",
-        "write_socket_ticket",
         "write_user",
     }
 )
@@ -244,6 +246,35 @@ class TenancyStorageContract:
         )
         assert await storage.count_orgs_and_users() == (1, 2)
 
+    async def test_the_tally_keeps_the_newest_count_of_the_platforms_size(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        """One row, read back as written; a newer count replaces it and an
+        older one, from a worker that counted first and wrote last, does not."""
+        assert await storage.read_platform_size() is None
+        at = utcnow()
+        first = PlatformSize(
+            tenants=3,
+            users=5,
+            tasks_last_24h=7,
+            events_last_24h=11,
+            since=at - timedelta(hours=24),
+            counted_at=at,
+        )
+        await storage.write_platform_size(first)
+        assert await storage.read_platform_size() == first
+        later = first.model_copy(
+            update={
+                "tenants": 4,
+                "counted_at": at + timedelta(minutes=5),
+                "since": at + timedelta(minutes=5) - timedelta(hours=24),
+            }
+        )
+        await storage.write_platform_size(later)
+        assert await storage.read_platform_size() == later
+        await storage.write_platform_size(first)
+        assert await storage.read_platform_size() == later
+
     async def test_an_org_write_lands_its_outbox_row_beside_it(
         self, storage: TenancyStorageInterface
     ) -> None:
@@ -294,7 +325,7 @@ class TenancyStorageContract:
             )
             await storage.write_api_key(tenant.id, make_api_key(user.id, uuid4().hex))
             await storage.write_session(tenant.id, make_session(new_id(), user.id, uuid4().hex))
-            await storage.write_socket_ticket(tenant.id, make_socket_ticket(user.id, uuid4().hex))
+            await storage.create_socket_ticket(tenant.id, make_socket_ticket(user.id, uuid4().hex))
         assert await storage.purge_tenant(org.id, 10) == 5
         assert await storage.read_users(org.id, None, limit=10) == []
         assert await storage.read_memberships(org.id, limit=10) == []
@@ -320,7 +351,7 @@ class TenancyStorageContract:
                 org.id,
                 make_session(new_id(), user.id, uuid4().hex, ttl=before(cut, timedelta(days=1))),
             )
-            await storage.write_socket_ticket(
+            await storage.create_socket_ticket(
                 org.id,
                 make_socket_ticket(user.id, uuid4().hex, ttl=before(cut, timedelta(days=1))),
             )
@@ -473,13 +504,16 @@ class TenancyStorageContract:
     ) -> None:
         """A session list is personal to a user inside a tenant, so both keys
         are in the query: the same user id under another tenant lists nothing,
-        and a revocation written from there lands nothing."""
+        and a create or a revocation written from there lands nothing."""
         org_a, org_b = make_org("A"), make_org("B")
         user_id = new_id()
         session = make_session(new_id(), user_id, uuid4().hex)
-        await storage.write_session(org_a.id, session)
+        assert await storage.create_session(org_a.id, session)
         assert await storage.read_sessions(org_b.id, user_id, utcnow(), limit=10) == []
         assert await storage.read_session(org_b.id, session.id) is None
+        assert not await storage.create_session(
+            org_b.id, session.model_copy(update={"token_hash": uuid4().hex})
+        )
         with pytest.raises(TenantMismatch):
             await storage.write_session(
                 org_b.id, session.model_copy(update={"revoked_at": utcnow()})
@@ -533,11 +567,14 @@ class TenancyStorageContract:
     async def test_a_socket_ticket_is_never_written_under_another_tenant(
         self, storage: TenancyStorageInterface
     ) -> None:
+        """Another tenant's create of the same id is the id already written:
+        it reports, and nothing lands there."""
         org, other = make_org("A"), make_org("B")
         ticket = make_socket_ticket(new_id(), uuid4().hex)
-        await storage.write_socket_ticket(org.id, ticket)
-        with pytest.raises(TenantMismatch):
-            await storage.write_socket_ticket(other.id, ticket)
+        assert await storage.create_socket_ticket(org.id, ticket)
+        elsewhere = ticket.model_copy(update={"ticket_hash": uuid4().hex})
+        assert not await storage.create_socket_ticket(other.id, elsewhere)
+        assert await storage.redeem_socket_ticket(elsewhere.ticket_hash, utcnow()) is None
         # The redemption still names the tenant that wrote it.
         assert await storage.redeem_socket_ticket(ticket.ticket_hash, utcnow()) == (org.id, ANY)
 
@@ -768,7 +805,9 @@ class TenancyStorageContract:
         org, other_org = make_org(), make_org("Other")
         token_hash = uuid4().hex
         session = make_session(new_id(), new_id(), token_hash)
-        await storage.write_session(org.id, session)
+        assert await storage.create_session(org.id, session)
+        with pytest.raises(UniqueKeyTaken):
+            await storage.create_session(other_org.id, make_session(new_id(), new_id(), token_hash))
         with pytest.raises(UniqueKeyTaken):
             await storage.write_session(other_org.id, make_session(new_id(), new_id(), token_hash))
         assert await storage.read_session_by_digest(token_hash) == (org.id, session)
@@ -797,13 +836,43 @@ class TenancyStorageContract:
         org, other_org = make_org(), make_org("Other")
         ticket_hash = uuid4().hex
         ticket = make_socket_ticket(new_id(), ticket_hash)
-        await storage.write_socket_ticket(org.id, ticket)
+        await storage.create_socket_ticket(org.id, ticket)
         with pytest.raises(UniqueKeyTaken):
-            await storage.write_socket_ticket(
+            await storage.create_socket_ticket(
                 other_org.id, make_socket_ticket(new_id(), ticket_hash)
             )
         redeemed_at = utcnow()
         assert await storage.redeem_socket_ticket(ticket_hash, redeemed_at) == (
+            org.id,
+            ticket.model_copy(update={"redeemed_at": redeemed_at}),
+        )
+
+    async def test_a_session_is_created_once(self, storage: TenancyStorageInterface) -> None:
+        """The create is the insert that reports: a second create of the id
+        says so, and the row keeps the first credential's digest, expiry, and
+        holder."""
+        org = make_org()
+        session = make_session(new_id(), new_id(), uuid4().hex)
+        assert await storage.create_session(org.id, session)
+        again = make_session(new_id(), new_id(), uuid4().hex).model_copy(
+            update={"id": session.id, "expires_at": session.expires_at + timedelta(days=1)}
+        )
+        assert not await storage.create_session(org.id, again)
+        assert await storage.read_session(org.id, session.id) == session
+        assert await storage.read_session_by_digest(again.token_hash) is None
+        assert await storage.read_session_by_digest(session.token_hash) == (org.id, session)
+
+    async def test_a_socket_ticket_is_created_once(self, storage: TenancyStorageInterface) -> None:
+        """The create is the insert that reports: a second create of the id
+        says so, and only the first ticket redeems."""
+        org = make_org()
+        ticket = make_socket_ticket(new_id(), uuid4().hex)
+        assert await storage.create_socket_ticket(org.id, ticket)
+        again = make_socket_ticket(new_id(), uuid4().hex).model_copy(update={"id": ticket.id})
+        assert not await storage.create_socket_ticket(org.id, again)
+        assert await storage.redeem_socket_ticket(again.ticket_hash, utcnow()) is None
+        redeemed_at = utcnow()
+        assert await storage.redeem_socket_ticket(ticket.ticket_hash, redeemed_at) == (
             org.id,
             ticket.model_copy(update={"redeemed_at": redeemed_at}),
         )
@@ -1207,7 +1276,7 @@ class TenancyStorageContract:
         cid_key = make_api_key(cid.id, uuid4().hex)
         cid_ticket = make_socket_ticket(cid.id, uuid4().hex)
         await storage.write_api_key(team.id, cid_key)
-        await storage.write_socket_ticket(team.id, cid_ticket)
+        await storage.create_socket_ticket(team.id, cid_ticket)
         # An invitation to the person's address, one they accepted, and one
         # to somebody else.
         sent = make_invitation(identity.email)
@@ -1223,7 +1292,7 @@ class TenancyStorageContract:
         await storage.write_session(EMPTY_UUID, sign_in)
         await storage.write_session(team.id, cid_session)
         await storage.write_api_key(personal.id, key)
-        await storage.write_socket_ticket(team.id, ticket)
+        await storage.create_socket_ticket(team.id, ticket)
         await storage.record_failed_sign_in(email_digest(identity.email), utcnow())
         await storage.record_failed_sign_in(email_digest(stays.email), utcnow())
 
@@ -2007,7 +2076,7 @@ class TenancyStorageContract:
         # what each impl's run of this proves.
         org = make_org()
         ticket = make_socket_ticket(new_id(), uuid4().hex)
-        await storage.write_socket_ticket(org.id, ticket)
+        await storage.create_socket_ticket(org.id, ticket)
         redeemed_at = utcnow()
         run = await race(
             *(storage.redeem_socket_ticket(ticket.ticket_hash, redeemed_at) for _ in range(5))
@@ -2046,13 +2115,30 @@ class TenancyStorageContract:
     async def test_the_email_digest_finds_the_identity_the_rule_names(
         self, storage: TenancyStorageInterface
     ) -> None:
-        """The database computes the digest of the stored address and the rule
-        computes it of the given one; the two agree, non-ASCII included."""
+        """The database computes the digest of the stored address, folded, and
+        the rule computes it of the given one, folded; the two agree in any
+        spelling, non-ASCII included."""
         email = f"zo\u00eb-{uuid4().hex[:8]}@example.test"
         identity = make_identity(email)
         await storage.write_identity(identity)
         assert await storage.read_identity_by_email_digest(email_digest(email)) == identity
-        assert await storage.read_identity_by_email_digest(email_digest(email.upper())) is None
+        assert await storage.read_identity_by_email_digest(email_digest(email.upper())) == identity
+        other = email.replace("zo", "zoe", 1)
+        assert await storage.read_identity_by_email_digest(email_digest(other)) is None
+
+    async def test_one_identity_holds_an_address_in_any_case(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        """The unique index is on the folded digest, so a writer that keeps a
+        second spelling of an address, one that does not fold among them,
+        meets it, and nothing lands."""
+        email = f"dee-{uuid4().hex[:8]}@example.test"
+        identity = make_identity(email)
+        await storage.write_identity(identity)
+        second = make_identity(email.upper())
+        with pytest.raises(UniqueKeyTaken):
+            await storage.write_identity(second)
+        assert await storage.read_identity(second.id) is None
 
     async def test_an_identity_write_lands_its_audit_row_under_the_system_scope(
         self, storage: TenancyStorageInterface, outbox: OutboxStorageInterface
@@ -2200,9 +2286,9 @@ class TenancyStorageContract:
         recent_ticket = make_socket_ticket(
             kept.id, uuid4().hex, ttl=before(cut, timedelta(hours=1))
         )
-        await storage.write_socket_ticket(org.id, recent_ticket)
+        await storage.create_socket_ticket(org.id, recent_ticket)
         for ticket in (*spent_tickets, *fresh_tickets):
-            await storage.write_socket_ticket(org.id, ticket)
+            await storage.create_socket_ticket(org.id, ticket)
         # The user, its membership, two keys, two sessions, two tickets.
         assert await storage.purge_deleted(cut, cut - timedelta(hours=2), 10) == 8
         for session in dead_sessions:

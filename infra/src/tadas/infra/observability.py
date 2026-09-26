@@ -16,7 +16,7 @@ from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExport
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from opentelemetry.trace import Link
+from opentelemetry.trace import Link, Span
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, generate_latest
 from sentry_sdk.scrubber import DEFAULT_DENYLIST, EventScrubber
@@ -63,7 +63,7 @@ SWEEP_SECONDS = Histogram(
     buckets=(0.1, 0.5, 1, 2.5, 5, 10, 20, 30, 60, 120),
 )
 # The sweep's reads of the work queue and the outbox, one each per pass, as
-# the pass read them. The same three numbers are fields of the pass's log
+# the pass read them. The same four numbers are fields of the pass's log
 # line, which the alarms read in the cloud; these are what Grafana draws.
 WORK_OLDEST_READY_SECONDS = Gauge(
     "tadas_work_oldest_ready_seconds",
@@ -76,6 +76,10 @@ WORK_FAILED_RECENTLY = Gauge(
 OUTBOX_OLDEST_PENDING_SECONDS = Gauge(
     "tadas_outbox_oldest_pending_seconds",
     "How long ago the oldest outbox row that is neither relayed nor failed landed",
+)
+OUTBOX_FAILED_RECENTLY = Gauge(
+    "tadas_outbox_failed_recently",
+    "Outbox rows that failed for good in the last fifteen minutes",
 )
 
 
@@ -236,8 +240,14 @@ def current_traceparent() -> str | None:
     handoff carries: an id names a trace, and only the header carries what a
     later span links to. Empty when no tracer is configured or no span is
     open, and the far side then starts a trace of its own."""
+    return traceparent_of(trace.get_current_span())
+
+
+def traceparent_of(span: Span) -> str | None:
+    """The W3C `traceparent` of `span`, whether it is in progress or not yet:
+    for a stage minted as its span starts. Empty for the no-op tracer's span."""
     carrier: dict[str, str] = {}
-    _propagator.inject(carrier)
+    _propagator.inject(carrier, context=trace.set_span_in_context(span))
     return carrier.get(TRACEPARENT)
 
 

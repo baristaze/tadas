@@ -12,7 +12,7 @@ from tadas.om.outbox.storage import OutboxLandingInterface
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.storage.impl.memory_base import HasId, MemoryStorageBase, MemoryTable
 from tadas.om.tenancy.rules import email_digest as digest_of
-from tadas.om.tenancy.rules import is_after_in_id_order, is_after_newest_first
+from tadas.om.tenancy.rules import fold_email, is_after_in_id_order, is_after_newest_first
 from tadas.om.tenancy.storage import TenancyStorageInterface
 from tadas.om.tenancy.types.api_key import ApiKey
 from tadas.om.tenancy.types.identity import Identity
@@ -22,6 +22,7 @@ from tadas.om.tenancy.types.membership import Membership
 from tadas.om.tenancy.types.org import Org
 from tadas.om.tenancy.types.session import Session
 from tadas.om.tenancy.types.sign_in_delay import SignInDelay
+from tadas.om.tenancy.types.size import PlatformSize
 from tadas.om.tenancy.types.socket_ticket import SocketTicket
 from tadas.om.tenancy.types.user import User
 
@@ -48,6 +49,7 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
         self._api_keys: MemoryTable[ApiKey] = {}
         self._socket_tickets: MemoryTable[SocketTicket] = {}
         self._invitations: MemoryTable[Invitation] = {}
+        self._platform_size: PlatformSize | None = None
 
     @staticmethod
     def _require_free[E: HasId](
@@ -183,7 +185,7 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
         self._require_free(
             self._identities.values(),
             identity,
-            lambda other: other.email == identity.email,
+            lambda other: digest_of(other.email) == digest_of(identity.email),
             "uq_identities_email_digest",
         )
         # uq_identities_issuer_subject: one identity per subject of an issuer.
@@ -210,6 +212,13 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
     async def count_orgs_and_users(self) -> tuple[int, int]:
         users = sum(1 for user in self._every(self._users) if user.deleted_at is None)
         return await self.count_orgs(), users
+
+    async def write_platform_size(self, size: PlatformSize) -> None:
+        if self._platform_size is None or self._platform_size.counted_at < size.counted_at:
+            self._platform_size = size
+
+    async def read_platform_size(self) -> PlatformSize | None:
+        return self._platform_size
 
     async def read_orgs(self, limit: int, after_id: UUID | None = None) -> list[Org]:
         orgs = [org for _, org in self._rows_across_tenants(self._orgs)]
@@ -492,7 +501,7 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
                     if theirs(org_id, row.user_id):
                         del table[row_id]
             for invitation_id, (org_id, invitation) in list(self._invitations.items()):
-                if invitation.email in {email, email.lower()} or theirs(
+                if invitation.email == fold_email(email) or theirs(
                     org_id, invitation.accepted_user_id
                 ):
                     del self._invitations[invitation_id]
@@ -692,6 +701,16 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
     async def read_session_by_id(self, session_id: UUID) -> tuple[UUID, Session] | None:
         return self._sessions.get(session_id)
 
+    async def create_session(self, org_id: UUID, session: Session) -> bool:
+        async with self._lock:
+            self._require_free(
+                self._every(self._sessions),
+                session,
+                lambda other: other.token_hash == session.token_hash,
+                "uq_sessions_token_hash",
+            )
+            return self._insert(self._sessions, org_id, session)
+
     async def write_session(
         self, org_id: UUID, session: Session, outbox_rows: tuple[OutboxRow, ...] = ()
     ) -> None:
@@ -843,7 +862,7 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
             (
                 i
                 for i in self._rows(self._invitations, org_id)
-                if i.email == email and i.state is InvitationState.PENDING
+                if i.email == fold_email(email) and i.state is InvitationState.PENDING
             ),
             None,
         )
@@ -952,14 +971,15 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
             del table[row_id]
         return len(gone)
 
-    async def write_socket_ticket(self, org_id: UUID, ticket: SocketTicket) -> None:
-        self._require_free(
-            self._every(self._socket_tickets),
-            ticket,
-            lambda other: other.ticket_hash == ticket.ticket_hash,
-            "uq_socket_tickets_ticket_hash",
-        )
-        self._put(self._socket_tickets, org_id, ticket)
+    async def create_socket_ticket(self, org_id: UUID, ticket: SocketTicket) -> bool:
+        async with self._lock:
+            self._require_free(
+                self._every(self._socket_tickets),
+                ticket,
+                lambda other: other.ticket_hash == ticket.ticket_hash,
+                "uq_socket_tickets_ticket_hash",
+            )
+            return self._insert(self._socket_tickets, org_id, ticket)
 
     async def redeem_socket_ticket(
         self, ticket_hash: str, redeemed_at: datetime
