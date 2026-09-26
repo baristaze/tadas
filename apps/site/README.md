@@ -27,6 +27,11 @@ writes each environment's links into the HTML.
   `docs/media/realtime-demo-dark.gif` instead, through the `<picture>`'s
   dark source, so the demo matches the page. `make demo-gif` records the
   light one again, and `make demo-gif-dark` the dark one.
+- `public/` holds the mark, `favicon.svg`, and two drawings of it:
+  `favicon-32.png` for a browser that takes no SVG icon and
+  `apple-touch-icon.png` for a home screen, which
+  `scripts/favicons.sh apps/site/public` draws again from the SVG. The
+  portal shows the same three.
 - `src/links.ts` decides the links: the app's sign-in and sign-up and the
   repository. The names come from `deployment/cloud/environments.json`,
   the one place every deployed name lives. `vite.config.ts` writes them
