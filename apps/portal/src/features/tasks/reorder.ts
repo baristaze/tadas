@@ -1,7 +1,8 @@
 // The drag reorder as one flow with its effects handed in, so the stale case
 // runs in a test without React: the list shows the new order at once, the
-// move names the version of the task as held, and a refusal (someone else
-// changed the list first) is said and the list reloaded from the server.
+// move names the version of the task as held, the server's answer takes the
+// optimistic row's place, and a refusal (someone else changed the list first)
+// is said and the list reloaded from the server.
 import { ApiError, type TaskView } from "../../api";
 import { placement, type DropSide } from "./tasksModel";
 
@@ -14,7 +15,7 @@ export interface ReorderEffects {
   showOrder: (order: TaskView[]) => void;
   /** Puts the row the server wrote in place of the optimistic one. */
   showMoved: (moved: TaskView) => void;
-  /** Reloads the list from the server, whatever the answer was. */
+  /** Reloads the list from the server, after a refusal. */
   refetch: () => void;
   /** Says what went wrong in one line. */
   report: (message: string) => void;
@@ -41,16 +42,15 @@ export async function reorder(
   effects.showOrder(result.order);
   try {
     // The row the server wrote replaces the optimistic one: it carries the
-    // version the move bumped, and without it a second drag before the
-    // refetch lands sends the version as read and is told, wrongly, that
-    // someone else changed the list (`complete`, `reopen` and `add` do the
-    // same with what their writes answer).
+    // version the move bumped, and without it a second drag sends the
+    // version as read and is told, wrongly, that someone else changed the
+    // list (`complete`, `reopen` and `add` do the same with what their
+    // writes answer). No list is read again.
     effects.showMoved(await effects.move(movedId, result.afterId, moved.version));
     return "moved";
   } catch (cause) {
     effects.report(isStale(cause) ? STALE_MESSAGE : describe(cause));
-    return "refused";
-  } finally {
     effects.refetch();
+    return "refused";
   }
 }
