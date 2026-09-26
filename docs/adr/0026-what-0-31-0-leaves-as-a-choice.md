@@ -3,7 +3,9 @@
 **Status**: accepted (2026-09-22). When the two dead identity columns
 are dropped is superseded (2026-09-25) by
 [ADR 0038](0038-a-dead-column-leaves-the-mapping-before-the-table.md):
-they leave the mapping first, and the release after drops them.
+they leave the mapping first, and the release after drops them. The
+drop is done (2026-09-25): migration 202609290000 takes both out of the
+table.
 
 ## Context
 

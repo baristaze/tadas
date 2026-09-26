@@ -255,8 +255,10 @@ async def test_the_due_date_backfill_takes_the_utc_date_in_every_tenant(
 ) -> None:
     """Tasks of two tenants, as the release before wrote them: a due time and
     no due date. The backfill gives each the UTC date of its due time and
-    leaves a task without one alone. The downgrade gives the release before a
-    due time on each due date, and the fence is back after both."""
+    leaves a task without one alone. The due time leaves the table later
+    (202609290000), so the downgrade brings it back empty and then gives the
+    release before a due time on each due date, and the fence is back after
+    both."""
     core = migrated[DatabaseRole.CORE]
     storage = TasksStoragePostgresImpl(pg_sessions)
     ann_org, zoe_org = new_id(), new_id()
@@ -284,20 +286,19 @@ async def test_the_due_date_backfill_takes_the_utc_date_in_every_tenant(
     assert await due(other, zoe_org) == date(2030, 10, 2), "the other tenant's too"
     assert await due(plain, ann_org) is None
 
-    # The old column is out of the mapping: an update leaves it as it was.
+    # A due date moved at the head is the one the downgrade reads.
     moved = late.model_copy(update={"due_on": date(2030, 12, 24), "version": late.version + 1})
     await storage.update_task(ann_org, moved, late.version, ())
-    [(kept,)] = await on_core(core, f"SELECT remind_at FROM core.tasks WHERE id = '{late.id}'")
-    assert kept == datetime(2030, 10, 1, 4, 30, tzinfo=UTC)
 
-    # A downgrade restores a due time wherever the old column disagrees.
+    # A downgrade restores a due time on every due date: nine in the morning
+    # of it, UTC, since the old column comes back empty.
     await downgrade(DatabaseRole.CORE, core, BEFORE_DUE_DATE_BACKFILL)
     rows = await on_core(core, "SELECT title, remind_at FROM core.tasks")
     restored = {title: at for title, at in rows}
     assert restored == {
         "late in Lima": datetime(2030, 12, 24, 9, tzinfo=UTC),
         "no due time": None,
-        "another tenant's": datetime(2030, 10, 2, 8, tzinfo=UTC),
+        "another tenant's": datetime(2030, 10, 2, 9, tzinfo=UTC),
     }
 
     await upgrade(DatabaseRole.CORE, core)

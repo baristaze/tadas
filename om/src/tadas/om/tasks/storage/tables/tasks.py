@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from uuid import UUID
 
-from sqlalchemy import Column, DateTime, Index
+from sqlalchemy import Index
 from sqlalchemy.orm import Mapped, mapped_column
 
 from tadas.om.storage.tables.base import (
@@ -22,15 +22,7 @@ class Tasks(IdentifiableMixin, TrackableMixin, SoftDeletableMixin, Base):
         Index("ix_tasks_org_id_status_position", "org_id", "status", "position"),
         Index("ix_tasks_org_id_status_id", "org_id", "status", "id"),
         Index("ix_tasks_org_id_status_updated_at_id", "org_id", "status", "updated_at", "id"),
-        # The due time a task carried before a due date replaced it: dead, in
-        # the table and out of the mapping. The release before this one names
-        # it in every insert and update, and a migration runs before the
-        # services roll, so a drop here would fail its writes mid-rollout. Out
-        # of the mapping, no statement of this release names it, and the
-        # release after this one drops it with these lines.
-        Column("remind_at", DateTime(timezone=True), nullable=True),
     )
-    __mapper_args__ = {"exclude_properties": ["remind_at"]}
     title: Mapped[str]
     notes: Mapped[str]
     status: Mapped[str]

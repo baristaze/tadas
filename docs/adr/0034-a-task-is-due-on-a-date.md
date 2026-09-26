@@ -4,7 +4,8 @@
 (2026-09-25) by
 [ADR 0038](0038-a-dead-column-leaves-the-mapping-before-the-table.md):
 `remind_at` is off the wire and out of the mapping, nothing writes it,
-and the release after drops the column.
+and the release after drops the column. The drop is done (2026-09-25):
+migration 202609290000 takes it out of the table.
 
 ## Context
 
