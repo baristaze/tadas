@@ -24,6 +24,7 @@ from tadas.infra.observability import (
     current_traceparent,
     request_id_var,
 )
+from tadas.infra.topics import TopicPayload, Topics
 from tadas.om.base import EMPTY_UUID, new_id, utcnow
 from tadas.om.events.impl.manager import EventsOptions
 from tadas.om.events.types.event import Event
@@ -259,6 +260,32 @@ class EnqueueDuringClaimWork(LeaseLosingWork):
         claimed = await self._inner.claim(rctx, lane, kinds, worker_id, lease)
         if claimed is None and self._pending:
             await self._inner.enqueue(self._ctx, self._pending.pop())
+        return claimed
+
+
+class EmptyClaimCountingWork(LeaseLosingWork):
+    """Decorates the real manager: renewals go through, and every claim that
+    found the lane empty is counted, so a test knows the loop has gone back
+    to waiting."""
+
+    def __init__(self, inner: WorkManagerInterface) -> None:
+        super().__init__(inner)
+        self.empty_claims = 0
+
+    async def extend_lease(self, ctx: OpContext, item: WorkItem, lease: timedelta) -> WorkItem:
+        return await self._inner.extend_lease(ctx, item, lease)
+
+    async def claim(
+        self,
+        rctx: RequestContext,
+        lane: str,
+        kinds: Sequence[WorkKind],
+        worker_id: str,
+        lease: timedelta,
+    ) -> tuple[OpContext, WorkItem] | None:
+        claimed = await self._inner.claim(rctx, lane, kinds, worker_id, lease)
+        if claimed is None:
+            self.empty_claims += 1
         return claimed
 
 
@@ -1020,5 +1047,35 @@ async def test_an_announcement_during_a_claim_is_not_lost(tmp_path: Path) -> Non
         container, handler, fast_options(poll_interval=timedelta(hours=1)), work=work
     )
     await until(lambda: handler.started == [item.id], within=2.0)
+    loop.stop()
+    await asyncio.wait_for(task, 3.0)
+
+
+async def test_an_item_whose_wake_up_the_bus_dropped_is_claimed_on_the_poll(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The wake-up is a hint. The loop has found the lane empty and waits, and
+    the bus drops the announcement of the next item: nothing wakes the loop,
+    and its poll claims the item. That is why a work row is done once its
+    item is queued."""
+    container = build_container(tmp_path)
+    ctx = await sign_in(container)
+    handler = SlowHandler(hold=0.0)
+    work = EmptyClaimCountingWork(container.managers.work)
+    loop, task = start_loop(
+        container, handler, fast_options(poll_interval=timedelta(seconds=0.2)), work=work
+    )
+    await until(lambda: work.empty_claims >= 1)
+    dropped: list[Topics] = []
+
+    async def drop(topic: Topics, payload: TopicPayload) -> bool:
+        dropped.append(topic)
+        return False
+
+    monkeypatch.setattr(container.infra.get_topics(), "publish", drop)
+    item = make_item(ctx)
+    await container.managers.work.enqueue(ctx, item)
+    assert Topics.WORK_AVAILABLE in dropped, "the enqueue announced the item and the bus dropped it"
+    await until(lambda: handler.started == [item.id], within=3.0)
     loop.stop()
     await asyncio.wait_for(task, 3.0)
