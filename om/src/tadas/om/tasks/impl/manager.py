@@ -51,6 +51,7 @@ stays one row however long the open list grows."""
 class TasksOptions(Platform):
     max_limit: int = 200
     retention: timedelta = timedelta(days=30)  # a deleted task is purged after this
+    purge_batch: int = 1000  # deleted tasks one purge takes at most
 
 
 class TasksManagerImpl(TasksManagerInterface):
@@ -309,12 +310,29 @@ class TasksManagerImpl(TasksManagerInterface):
 
     async def purge_deleted(self, ctx: OpContext) -> int:
         ctx.require(Permission.WRITE)
+        batch = self._options.purge_batch
         if await self._tenancy.tenant_expired(ctx):
             # The tenant itself is past the retention, so it keeps nothing but
             # its org row. An open or a done task carries no `deleted_at`, so
             # the purge below would leave every one of them behind forever.
-            return await self._storage.purge_tenant(ctx.org_id)
-        return await self._storage.purge_deleted(ctx.org_id, utcnow() - self._options.retention)
+            # Its files go by the media sweep, which takes every file of it.
+            return await self._storage.purge_tenant(ctx.org_id, batch)
+        before = utcnow() - self._options.retention
+        purgeable = await self._storage.read_deleted(ctx.org_id, before, batch)
+        # The attachments go before their task, through the media manager,
+        # whose sweep erases each object before its row. The delete detached
+        # them already unless that failed; asking again is what retries it,
+        # and a task whose files still will not go stays for the next pass.
+        detached: list[UUID] = []
+        for task_id in purgeable:
+            try:
+                await self._media.delete_subject_files(ctx, FilePurpose.TASK_ATTACHMENT, task_id)
+            except Exception:
+                log.exception("the attachments of task %s are kept for the next purge", task_id)
+                OUTCOMES.labels(subsystem="tasks", outcome="detach_failed").inc()
+                continue
+            detached.append(task_id)
+        return await self._storage.purge_deleted(ctx.org_id, before, detached)
 
     async def _room_for_one_more(self, ctx: OpContext) -> None:
         """The plan's bound on active tasks, asked before one more is open. It

@@ -70,17 +70,25 @@ class TasksStorageInterface(ABC):
         ...
 
     @abstractmethod
-    async def purge_deleted(self, org_id: UUID, before: datetime) -> int:
-        """The one hard delete: removes the tenant's tasks soft-deleted before
-        `before`; returns how many."""
+    async def read_deleted(self, org_id: UUID, before: datetime, limit: int) -> list[UUID]:
+        """The ids of at most `limit` of the tenant's tasks soft-deleted before
+        `before`: what the purge takes next, read first so the attachments of
+        each go before it does."""
         ...
 
     @abstractmethod
-    async def purge_tenant(self, org_id: UUID) -> int:
+    async def purge_deleted(self, org_id: UUID, before: datetime, task_ids: list[UUID]) -> int:
+        """The one hard delete: removes those of `task_ids` that are the
+        tenant's and were soft-deleted before `before`, skipping a row another
+        transaction holds; returns how many."""
+        ...
+
+    @abstractmethod
+    async def purge_tenant(self, org_id: UUID, limit: int) -> int:
         """The hard delete of a deleted tenant's tasks once the retention has
         passed: every task of the tenant, whatever its state, since an open or
         a done task is never soft-deleted and `purge_deleted` would leave it
-        behind forever; returns how many rows went."""
+        behind forever; at most `limit` per call; returns how many rows went."""
         ...
 
     @abstractmethod

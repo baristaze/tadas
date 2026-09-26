@@ -2,7 +2,7 @@
 attachments composed on top of it."""
 
 import re
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from uuid import UUID
 
@@ -417,3 +417,74 @@ async def test_a_task_delete_stands_when_its_attachments_cannot_follow(
     assert deleted.deleted_at is not None
     with pytest.raises(NotFound):
         await tasks.get_task(ctx, task.id)
+
+
+async def test_the_task_purge_deletes_the_attachments_a_failed_detach_left_first(
+    outbox: OutboxStorageMemoryImpl,
+    members: Members,
+    relay: OutboxRelayImpl,
+    infra: InfraLocalImpl,
+) -> None:
+    """A delete whose detach failed leaves the task's files live. The purge
+    asks the media manager to delete them before it takes the task; while
+    that still fails, the task and its files both stay for the next pass,
+    and once it works the files are deleted first and the task goes after.
+    The media sweep then erases each object and its row."""
+    files = MediaStorageMemoryImpl(outbox)
+    order: list[str] = []
+
+    class Flaky(MediaManagerImpl):
+        down = True
+
+        async def delete_subject_files(
+            self, ctx: OpContext, purpose: FilePurpose, subject_id: UUID
+        ) -> int:
+            if self.down:
+                raise RuntimeError("storage down")
+            deleted = await super().delete_subject_files(ctx, purpose, subject_id)
+            order.append("files")
+            return deleted
+
+    class Recorded(TasksStorageMemoryImpl):
+        async def purge_deleted(self, org_id: UUID, before: datetime, task_ids: list[UUID]) -> int:
+            order.append("task")
+            return await super().purge_deleted(org_id, before, task_ids)
+
+    flaky = Flaky(files, infra.get_buckets(), members, relay, MediaOptions())
+    storage = Recorded(outbox)
+    tasks = TasksManagerImpl(
+        storage,
+        members,
+        flaky,
+        relay,
+        no_slack(),
+        TasksOptions(retention=timedelta(0)),
+        entitlements=ON_TEAM,
+    )
+    ctx = context(Role.MEMBER)
+    task = await tasks.create_task(ctx, make_task(ctx))
+    attached = await uploaded(flaky, ctx, a_file(ctx, subject_id=task.id))
+    await tasks.delete_task(ctx, task.id, task.version)
+    left = await files.read_file(ctx.org_id, attached.id)
+    assert left is not None and left.deleted_at is None, "the detach failed"
+
+    assert await tasks.purge_deleted(ctx) == 0, "the files would not go, so the task stays"
+    assert await storage.read_task(ctx.org_id, task.id) is not None
+    still = await files.read_file(ctx.org_id, attached.id)
+    assert still is not None and still.deleted_at is None
+
+    flaky.down = False
+    assert await tasks.purge_deleted(ctx) == 1
+    assert order[-2:] == ["files", "task"], "the files first, then the task"
+    assert await storage.read_task(ctx.org_id, task.id) is None
+    gone = await files.read_file(ctx.org_id, attached.id)
+    assert gone is not None and gone.deleted_at is not None
+    assert (await flaky.get_usage(ctx)).total_count == 0
+
+    erase = MediaManagerImpl(
+        files, infra.get_buckets(), members, relay, MediaOptions(retention=timedelta(0))
+    )
+    assert await erase.purge_deleted(ctx) == 1
+    bucket = Buckets.USER_FILE_UPLOADS
+    assert not await infra.get_buckets().exists(ctx.org_id, bucket, attached.key)
+    assert await files.read_file(ctx.org_id, attached.id) is None

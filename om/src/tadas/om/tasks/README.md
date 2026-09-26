@@ -39,7 +39,9 @@ seven kinds of thing [Tadas is made of](../../../../README.md).
 - **Remind.** At nine in the morning of the due date, the task is marked
   reminded and every open screen of the org hears of it; so does the
   org's Slack channel, when the org has one.
-- **Sweep.** Deleted tasks are erased for good after the retention.
+- **Sweep.** Deleted tasks are erased for good after the retention,
+  thirty days by default. A task's files are deleted before it is, so
+  a file its delete could not reach is deleted then.
 
 ## The rules
 
