@@ -1,6 +1,7 @@
 """The tasks swimlane: the to-do items a team creates, works, and closes."""
 
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from datetime import date
 from uuid import UUID
 
@@ -8,9 +9,10 @@ from tadas.om.media.types.file import File
 from tadas.om.media.types.page import FilePage
 from tadas.om.opcontext import OpContext
 from tadas.om.orchestrations.types.orchestration import Orchestration, OrchestrationPage
+from tadas.om.tasks.types.bulk import BulkAction, BulkOutcome
 from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor, TaskFilter
 from tadas.om.tasks.types.page import TaskPage
-from tadas.om.tasks.types.task import DueReminder, Task
+from tadas.om.tasks.types.task import DueReminder, Task, TaskStatus
 
 
 class TasksManagerInterface(ABC):
@@ -38,6 +40,14 @@ class TasksManagerInterface(ABC):
     async def count_open_tasks(self, ctx: OpContext, criterion: TaskFilter) -> int:
         """How many open tasks the filter shows, the number beside a page of
         `get_open_tasks`; the filter's user is the caller, as there."""
+        ...
+
+    @abstractmethod
+    async def count_tasks(self, ctx: OpContext, criterion: TaskFilter, status: TaskStatus) -> int:
+        """How many tasks the list of `status` shows under the filter: the open
+        list, or the done list without the archived tasks. The number a
+        "Mark all" asks about before it runs; the filter's user is the caller,
+        as on `get_open_tasks`."""
         ...
 
     @abstractmethod
@@ -85,6 +95,35 @@ class TasksManagerInterface(ABC):
         """Places an open task right after `after_id` in the open list, or at
         the top when it is None. `expected_version` is the one the caller
         read, as on `update_task`."""
+        ...
+
+    @abstractmethod
+    async def change_tasks(
+        self, ctx: OpContext, action: BulkAction, task_ids: Sequence[UUID]
+    ) -> BulkOutcome:
+        """Completes or reopens the named tasks, at most `BULK_MAX_IDS` of them
+        (more is `ValidationFailed`), a batch at a time (`BULK_BATCH`), one
+        commit a batch. Each task is an edit of its own under the rules a
+        single edit applies (`tasks.rules.bulk_skip`) and fenced on the
+        version this change read: a task that is not the org's, is deleted,
+        is already in the status asked for, or moved between the read and the
+        write is skipped and counted, never a refusal of the rest. A reopen
+        puts each task on top of the open list, the last one named on top,
+        and reopens only as many as the plan's bound on active tasks still
+        allows; the rest are skipped for it and the answer names the bound.
+        Each changed task is announced as a single edit announces it; nothing
+        is posted to Slack."""
+        ...
+
+    @abstractmethod
+    async def change_list(
+        self, ctx: OpContext, action: BulkAction, criterion: TaskFilter, status: TaskStatus
+    ) -> BulkOutcome:
+        """The same change over a whole list rather than named tasks: every
+        task the list of `status` shows under the filter, read a batch at a
+        time from its top, as `change_tasks` applies it. Completing is for the
+        open list and reopening for the done list; the other pairs are
+        `ValidationFailed`. The filter's user is the caller."""
         ...
 
     @abstractmethod

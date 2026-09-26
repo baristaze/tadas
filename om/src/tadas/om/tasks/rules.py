@@ -1,7 +1,8 @@
 """Pure rules of the tasks namespace: which tasks a filter shows, where a
 cursor cuts, the arithmetic of the open list's manual order, when a due
-date's reminder goes out, what an import file and its rows may be, and which
-done tasks the cleanup archives. Values in,
+date's reminder goes out, what an import file and its rows may be, which
+done tasks the cleanup archives, and which tasks a bulk change leaves alone.
+Values in,
 values out; no clock, no storage, no settings. The manager and both storage
 impls call these; the relational impl spells the visibility, cursor, and
 follows rules in SQL where one statement must decide, and names the rule it
@@ -16,6 +17,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from tadas.om.base import Platform
 from tadas.om.exceptions import ValidationFailed
+from tadas.om.tasks.types.bulk import BulkAction, SkipReason
 from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor, TaskFilter
 from tadas.om.tasks.types.task import Task, TaskScope, TaskStatus
 
@@ -158,6 +160,43 @@ IMPORT_BATCH = 100
 
 CLEANUP_BATCH = 500
 """The tasks one cleanup step archives, in one conditional write."""
+
+BULK_BATCH = 100
+"""The tasks one commit of a bulk change writes: a section of thousands is
+many short transactions, never one long one."""
+
+BULK_MAX_IDS = 1000
+"""The most tasks a bulk change names by id. It is also the report's cap
+(`BULK_REPORT_CAP`), so every change a report names in full can be undone by
+naming its tasks back."""
+
+BULK_REPORT_CAP = BULK_MAX_IDS
+"""The most ids a bulk change's answer lists, of the tasks it changed and of
+the ones it skipped; the counts beside the lists are whole."""
+
+
+def bulk_positions(top: float, count: int) -> list[float]:
+    """The places of `count` tasks a bulk reopen puts on top of the open list,
+    given the place above the current top (`top_position`): each one above
+    the one before, as if they were reopened one at a time in the order
+    given, so the last one given is the top."""
+    return [top - index for index in range(count)]
+
+
+def bulk_skip(task: Task | None, action: BulkAction) -> SkipReason | None:
+    """Why a bulk change leaves this task alone, or None when it changes it.
+    The rules a single edit applies: a task that is gone is not found, and
+    each action changes only a task in the status it starts from. A task
+    in the other status was changed by someone first, and the change it asked
+    for is already true."""
+    if task is None or task.deleted_at is not None:
+        return SkipReason.NOT_FOUND
+    if action is BulkAction.COMPLETE and task.status is not TaskStatus.OPEN:
+        return SkipReason.ALREADY_DONE
+    if action is BulkAction.REOPEN and task.status is not TaskStatus.DONE:
+        return SkipReason.ALREADY_OPEN
+    return None
+
 
 MAX_TITLE_LENGTH = 500
 

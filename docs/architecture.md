@@ -354,6 +354,19 @@ context on keeps the stage the callee needs.
   and gains `archived_at`: it leaves the done list, is listed apart
   (`read_archived_tasks`), and is restored by a compare-and-set
   (`restore_task`) or by a reopen.
+  A bulk change (`change_tasks` by ids, at most `BULK_MAX_IDS`, and
+  `change_list` over a whole open or done list in a scope) completes or
+  reopens many tasks a batch at a time (`BULK_BATCH`), one commit a
+  batch: `read_tasks` or a page of the list, the rules a single edit
+  applies (`tasks.rules.bulk_skip`), then `update_tasks_if_current`, the
+  compare-and-set of `update_tasks` with each row fenced on its own and
+  a stale one left alone rather than refusing the batch. A reopen reads
+  the plan's room once, as a step of an import does, and names the
+  bound (`PlanBound`) for the tasks past it. The answer (`BulkOutcome`)
+  lists the tasks it changed and skipped up to `BULK_REPORT_CAP` and
+  counts all of them; the portal's Undo is the other action over the
+  changed ids. Each changed task lands one `tasks.task.updated` row, as
+  a single edit does; no Slack row.
 - `orchestrations`: long-running records, in the `core` role, `org` scope
   (`Orchestration`: a kind, an input whose shape the kind fixes, a
   status (`running`, `parked`, `succeeded`, `failed`), a cursor, a

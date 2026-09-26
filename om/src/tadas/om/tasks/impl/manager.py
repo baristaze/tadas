@@ -6,9 +6,15 @@ from uuid import UUID
 from tadas.infra.observability import OUTCOMES
 from tadas.om.base import PROVENANCE_FIELDS, Platform, derived_id, utcnow
 from tadas.om.billing.manager import EntitlementsInterface
-from tadas.om.billing.rules import refuse_past
-from tadas.om.billing.types.plan import Lever
-from tadas.om.exceptions import NotFound, PreconditionFailed, TenantMismatch, ValidationFailed
+from tadas.om.billing.rules import limits_of, refuse_past
+from tadas.om.billing.types.plan import Lever, Plan
+from tadas.om.exceptions import (
+    NotFound,
+    PlanLimitReached,
+    PreconditionFailed,
+    TenantMismatch,
+    ValidationFailed,
+)
 from tadas.om.media import MediaManagerInterface
 from tadas.om.media.rules import BOUNDS
 from tadas.om.media.types.file import File, FilePurpose, FileStatus
@@ -34,10 +40,15 @@ from tadas.om.slack import SlackManagerInterface
 from tadas.om.slack.types.installation import SlackInstallationStatus
 from tadas.om.tasks.manager import TasksManagerInterface
 from tadas.om.tasks.rules import (
+    BULK_BATCH,
+    BULK_MAX_IDS,
+    BULK_REPORT_CAP,
     CLEANUP_BATCH,
     IMPORT_BATCH,
     ImportedTask,
     ImportFileRefused,
+    bulk_positions,
+    bulk_skip,
     cleanup_part,
     cleanup_period,
     earliest_reminder_time,
@@ -54,6 +65,13 @@ from tadas.om.tasks.rules import (
     top_position,
 )
 from tadas.om.tasks.storage import TasksStorageInterface
+from tadas.om.tasks.types.bulk import (
+    BulkAction,
+    BulkOutcome,
+    PlanBound,
+    SkippedTask,
+    SkipReason,
+)
 from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor, TaskFilter
 from tadas.om.tasks.types.page import TaskPage
 from tadas.om.tasks.types.task import DueReminder, Task, TaskScope, TaskStatus
@@ -82,6 +100,42 @@ class TasksOptions(Platform):
     # A done task unchanged this long is archived by the daily cleanup. The
     # worker's setting; 90 days is illustrative, like the plans' numbers.
     archive_after: timedelta = timedelta(days=90)
+
+
+class _BulkChange:
+    """One bulk change as it runs: what it did so far, capped for the answer
+    and counted whole, and the room the plan leaves for a reopen. A value the
+    manager's loop fills, never shared between two changes."""
+
+    def __init__(self, action: BulkAction, room: int | None, plan: Plan | None) -> None:
+        self.action = action
+        self.room = room  # None: no bound, or a change that opens nothing
+        self.plan = plan
+        self.changed: list[UUID] = []
+        self.changed_count = 0
+        self.skipped: list[SkippedTask] = []
+        self.skipped_count = 0
+        self.plan_bound: PlanBound | None = None
+
+    def change(self, task_id: UUID) -> None:
+        self.changed_count += 1
+        if len(self.changed) < BULK_REPORT_CAP:
+            self.changed.append(task_id)
+
+    def skip(self, task_id: UUID, reason: SkipReason) -> None:
+        self.skipped_count += 1
+        if len(self.skipped) < BULK_REPORT_CAP:
+            self.skipped.append(SkippedTask(id=task_id, reason=reason))
+
+    def outcome(self) -> BulkOutcome:
+        return BulkOutcome(
+            action=self.action,
+            changed=tuple(self.changed),
+            changed_count=self.changed_count,
+            skipped=tuple(self.skipped),
+            skipped_count=self.skipped_count,
+            plan_bound=self.plan_bound,
+        )
 
 
 class TasksManagerImpl(TasksManagerInterface):
@@ -128,6 +182,13 @@ class TasksManagerImpl(TasksManagerInterface):
         ctx.require(Permission.READ)
         self._own(ctx, criterion)
         return await self._storage.count_open_tasks(ctx.org_id, criterion)
+
+    async def count_tasks(self, ctx: OpContext, criterion: TaskFilter, status: TaskStatus) -> int:
+        ctx.require(Permission.READ)
+        self._own(ctx, criterion)
+        if status is TaskStatus.OPEN:
+            return await self._storage.count_open_tasks(ctx.org_id, criterion)
+        return await self._storage.count_done_tasks(ctx.org_id, criterion)
 
     async def get_done_tasks(
         self, ctx: OpContext, criterion: TaskFilter, before: TaskCursor | None, limit: int
@@ -266,6 +327,144 @@ class TasksManagerImpl(TasksManagerInterface):
         )
         await self._write(ctx, moved, expected_version, "updated")
         return moved
+
+    async def change_tasks(
+        self, ctx: OpContext, action: BulkAction, task_ids: Sequence[UUID]
+    ) -> BulkOutcome:
+        ctx.require(Permission.WRITE)
+        named = list(dict.fromkeys(task_ids))  # a task named twice is changed once
+        if len(named) > BULK_MAX_IDS:
+            raise ValidationFailed(f"a bulk change names at most {BULK_MAX_IDS} tasks")
+        bulk = await self._bulk_change(ctx, action)
+        for start in range(0, len(named), BULK_BATCH):
+            batch = named[start : start + BULK_BATCH]
+            found = await self._storage.read_tasks(ctx.org_id, batch)
+            pairs = [(task_id, found.get(task_id)) for task_id in batch]
+            await self._change_batch(ctx, bulk, pairs)
+        return self._finished(ctx, bulk)
+
+    async def change_list(
+        self, ctx: OpContext, action: BulkAction, criterion: TaskFilter, status: TaskStatus
+    ) -> BulkOutcome:
+        ctx.require(Permission.WRITE)
+        self._own(ctx, criterion)
+        starts_from = TaskStatus.OPEN if action is BulkAction.COMPLETE else TaskStatus.DONE
+        if status is not starts_from:
+            raise ValidationFailed(f"{action.value} applies to the {starts_from.value} list")
+        bulk = await self._bulk_change(ctx, action)
+        # Each page is read strictly past the last task of the one before, so
+        # a task the change left alone is never read twice, and one it
+        # changed has left the list already.
+        after: OpenTaskCursor | None = None
+        before: TaskCursor | None = None
+        while True:
+            if status is TaskStatus.OPEN:
+                page = await self._storage.read_open_tasks(ctx.org_id, criterion, after, BULK_BATCH)
+            else:
+                page = await self._storage.read_done_tasks(
+                    ctx.org_id, criterion, before, BULK_BATCH
+                )
+            if not page:
+                break
+            await self._change_batch(ctx, bulk, [(task.id, task) for task in page])
+            if len(page) < BULK_BATCH:
+                break
+            after = OpenTaskCursor(position=page[-1].position, id=page[-1].id)
+            before = TaskCursor(updated_at=page[-1].updated_at, id=page[-1].id)
+        return self._finished(ctx, bulk)
+
+    async def _bulk_change(self, ctx: OpContext, action: BulkAction) -> _BulkChange:
+        """A bulk change about to run: for a reopen, the room the plan leaves,
+        read once, as the import reads it once a step."""
+        if action is not BulkAction.REOPEN:
+            return _BulkChange(action, None, None)
+        entitlements = await self._entitlements.get_entitlements(ctx)
+        return _BulkChange(action, await self._room(ctx), entitlements.plan)
+
+    async def _change_batch(
+        self, ctx: OpContext, bulk: _BulkChange, batch: Sequence[tuple[UUID, Task | None]]
+    ) -> None:
+        """One batch of a bulk change: decides each task by the rules a single
+        edit applies, then writes the ones it changes in one commit, each
+        fenced on the version read here."""
+        chosen: list[Task] = []
+        for task_id, task in batch:
+            reason = bulk_skip(task, bulk.action)
+            if reason is None and bulk.room is not None and bulk.room <= 0:
+                reason = SkipReason.PLAN_LIMIT
+                bulk.plan_bound = bulk.plan_bound or self._plan_bound(bulk)
+            if reason is not None:
+                bulk.skip(task_id, reason)
+                continue
+            assert task is not None, "bulk_skip names a missing task"
+            if bulk.room is not None:
+                bulk.room -= 1
+            chosen.append(task)
+        if not chosen:
+            return
+        now = utcnow()
+        changes: dict[str, object] = {"updated_at": now, "updated_by": ctx.user_id}
+        positions: list[float] = []
+        if bulk.action is BulkAction.REOPEN:
+            top = await self._storage.read_open_places(
+                ctx.org_id, exclude=None, after=None, limit=NEIGHBOURS
+            )
+            positions = bulk_positions(top_position(top), len(chosen))
+        updates: list[tuple[Task, int, tuple[OutboxRow, ...]]] = []
+        for index, task in enumerate(chosen):
+            if bulk.action is BulkAction.COMPLETE:
+                changed = task.model_copy(
+                    update={**changes, "status": TaskStatus.DONE, "version": task.version + 1}
+                )
+            else:
+                # A reopened task is never archived, and goes on top.
+                changed = task.model_copy(
+                    update={
+                        **changes,
+                        "status": TaskStatus.OPEN,
+                        "position": positions[index],
+                        "archived_at": None,
+                        "version": task.version + 1,
+                    }
+                )
+            rows = (outbox_row(ctx, "tasks.task.updated", task.id, {}),)
+            updates.append((changed, task.version, rows))
+        landed = await self._storage.update_tasks_if_current(ctx.org_id, updates)
+        for (changed, _, rows), hit in zip(updates, landed, strict=True):
+            if hit:
+                bulk.change(changed.id)
+                await self._relay_all(ctx, rows)
+            else:
+                bulk.skip(changed.id, SkipReason.CHANGED)
+                if bulk.room is not None:
+                    bulk.room += 1  # the room it held goes to the next batch
+
+    def _plan_bound(self, bulk: _BulkChange) -> PlanBound:
+        """The bound a reopen met, as the refusal of one more reopen names it."""
+        assert bulk.plan is not None, "a change with room has a plan"
+        try:
+            # The bound is met, so the org holds it: one more is past it.
+            bound = limits_of(bulk.plan).active_tasks or 0
+            refuse_past(bulk.plan, Lever.ACTIVE_TASKS, bound, 1)
+        except PlanLimitReached as refused:
+            return PlanBound(
+                lever=refused.lever,
+                plan=refused.plan,
+                limit=refused.limit,
+                suggested_plan=refused.suggested_plan,
+            )
+        raise AssertionError("a plan with room left has a bound")
+
+    @staticmethod
+    def _finished(ctx: OpContext, bulk: _BulkChange) -> BulkOutcome:
+        log.info(
+            "bulk %s in org %s: %d changed, %d skipped",
+            bulk.action.value,
+            ctx.org_id,
+            bulk.changed_count,
+            bulk.skipped_count,
+        )
+        return bulk.outcome()
 
     async def delete_task(self, ctx: OpContext, task_id: UUID, expected_version: int) -> Task:
         ctx.require(Permission.WRITE)

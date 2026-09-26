@@ -20,6 +20,9 @@ seven kinds of thing [Tadas is made of](../../../../README.md).
   as an [orchestration](../orchestrations/README.md).
 - **Archived task**: a done task the daily cleanup put away, because
   nobody changed it for the archive age (ninety days by default).
+- **Bulk change**: one action, complete or reopen, over many tasks at
+  once, and its answer: the tasks it changed and the ones it left alone,
+  each with the reason.
 
 ## What can happen
 
@@ -28,11 +31,20 @@ seven kinds of thing [Tadas is made of](../../../../README.md).
   first, a page at a time.
 - **List the done tasks**, newest first, a page at a time.
 - **Count the open tasks** a filter shows, without reading them: what a
-  short list, like Slack's, says about the rest.
+  short list, like Slack's, says about the rest. The done tasks are
+  counted the same way, without the archived ones: the number "Mark all"
+  asks about.
 - **Read one task.**
 - **Edit**: the title, the notes, the assignee, the status. A task
   reopened from done goes back to the top of the open list.
 - **Move** an open task right after another one, or to the top.
+- **Complete or reopen many tasks at once**: the ones named, at most a
+  thousand, or every task of the open or the done list in a scope. The
+  change runs a hundred tasks a commit, so a list of thousands is many
+  short writes, never one long one. It answers with the tasks it
+  changed, in the order it changed them, and the ones it left alone. It
+  names up to a thousand of each and counts all of them. Undoing it is
+  the other action over the tasks it changed.
 - **Delete.** The task is hidden, not erased. Its attachments are
   removed with it.
 - **Attach a file**, list a task's files, and remove one. The upload
@@ -69,6 +81,20 @@ seven kinds of thing [Tadas is made of](../../../../README.md).
   that names the plan that lifts the bound; a done or deleted task
   makes room again. Nothing is ever deleted for a bound
   ([billing](../billing/README.md)).
+- **A bulk change is many edits.** Each task is changed under the
+  rules a single edit applies, and each one on the version the change
+  read, a moment before it writes. A task that is not the org's, is
+  deleted, is already done (or already open), or changed between that
+  read and the write is left alone and named, with the reason; the
+  rest still change. The change names no versions of its own: what it
+  asks is about the status, and a title edited meanwhile does not make
+  "done" wrong. A reopen puts each task on top of the open list, as if
+  they were reopened one at a time in the order given, so the last one
+  given is on top. It stops at the plan: it reopens as many as the bound
+  on active tasks allows and names the bound for the rest, the way an
+  import parks at it. Each changed task is announced like a single
+  edit. Nothing is posted to Slack: forty tasks done at once are not
+  forty messages.
 - **Every write names the version it read.** A task carries a version
   number, and every edit, move, and delete says which version the
   caller saw. If the stored task has moved on, the write is refused
