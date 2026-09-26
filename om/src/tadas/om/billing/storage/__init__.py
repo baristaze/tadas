@@ -45,13 +45,14 @@ class BillingStorageInterface(ABC):
         ...
 
     @abstractmethod
-    async def purge_deliveries(self, org_id: UUID, before: datetime) -> int:
-        """Removes the org's marks older than `before`, past any retry the
-        processor still makes; returns how many."""
+    async def purge_deliveries(self, org_id: UUID, before: datetime, limit: int) -> int:
+        """Removes at most `limit` of the org's marks older than `before`, past
+        any retry the processor still makes; returns how many."""
         ...
 
     @abstractmethod
-    async def purge_tenant(self, org_id: UUID) -> int:
+    async def purge_tenant(self, org_id: UUID, limit: int) -> int:
         """The hard delete of a deleted tenant's account and marks once the
-        retention has passed; returns how many rows went."""
+        retention has passed, at most `limit` of each per call; returns how
+        many rows went."""
         ...

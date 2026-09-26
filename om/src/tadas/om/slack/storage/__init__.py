@@ -88,13 +88,15 @@ class SlackStorageInterface(ABC):
         ...
 
     @abstractmethod
-    async def purge(self, org_id: UUID, before: datetime) -> int:
+    async def purge(self, org_id: UUID, before: datetime, limit: int) -> int:
         """The sweep's hard delete for one tenant: installations deleted,
-        states expired or redeemed, and posts recorded before `before`;
+        states expired or redeemed, and posts recorded before `before`, at
+        most `limit` of each, skipping rows another transaction holds;
         returns how many rows went."""
         ...
 
     @abstractmethod
-    async def purge_tenant(self, org_id: UUID) -> int:
-        """Every row of a deleted tenant once its retention has passed."""
+    async def purge_tenant(self, org_id: UUID, limit: int) -> int:
+        """Every row of a deleted tenant once its retention has passed, at
+        most `limit` of each kind per call."""
         ...

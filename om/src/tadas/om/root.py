@@ -53,13 +53,25 @@ def build_managers(
     tenancy_options: TenancyOptions | None = None,
     operator_options: TenancyOperatorOptions | None = None,
     integrations: IntegrationsInterface | None = None,
+    *,
+    tasks_options: TasksOptions | None = None,
+    media_options: MediaOptions | None = None,
+    idempotency_options: IdempotencyOptions | None = None,
+    events_options: EventsOptions | None = None,
+    billing_options: BillingOptions | None = None,
+    slack_options: SlackOptions | None = None,
+    work_options: WorkOptions | None = None,
 ) -> Managers:
     """`integrations` is the root of the hosted services the managers front:
     the identity provider, which the tenancy manager signs people in and
     invites them through, the payment processor, which the billing manager
     mirrors, and the Slack app, which the slack manager installs and posts
     through. None is a process that signs nobody in and holds none of them,
-    and every call that would reach one is refused as unavailable."""
+    and every call that would reach one is refused as unavailable.
+
+    The options after `integrations` are what the process that sweeps sets
+    on the managers it purges through: each one's retention and batch. None
+    keeps that manager's defaults."""
     # The relay every core-role manager hands its outbox rows to. It reaches
     # the work manager through the root below, because a row of kind
     # `work.<kind>` is enqueued there: the work manager needs the tenancy
@@ -79,7 +91,7 @@ def build_managers(
         absent_payments() if integrations is None else integrations.get_payments(),
         outbox,
         lambda: managers.tenancy,
-        BillingOptions(),
+        billing_options or BillingOptions(),
     )
     tenancy = TenancyManagerImpl(
         storage.get_tenancy_storage(),
@@ -93,20 +105,22 @@ def build_managers(
             else integrations.get_identity_provider()
         ),
     )
-    events = EventsManagerImpl(storage.get_event_storage(), tenancy, EventsOptions())
+    events = EventsManagerImpl(
+        storage.get_event_storage(), tenancy, events_options or EventsOptions()
+    )
     work = WorkManagerImpl(
         storage.get_work_storage(),
         tenancy,
         events,
         infra.get_topics(),
-        WorkOptions(),
+        work_options or WorkOptions(),
     )
     media = MediaManagerImpl(
         storage.get_media_storage(),
         infra.get_buckets(),
         tenancy,
         outbox,
-        MediaOptions(),
+        media_options or MediaOptions(),
     )
     slack = SlackManagerImpl(
         storage.get_slack_storage(),
@@ -114,7 +128,7 @@ def build_managers(
         outbox,
         SlackOffImpl() if integrations is None else integrations.get_slack(),
         infra.get_secrets(),
-        SlackOptions(),
+        slack_options or SlackOptions(),
     )
     tasks = TasksManagerImpl(
         storage.get_tasks_storage(),
@@ -122,10 +136,12 @@ def build_managers(
         media,
         outbox,
         slack,
-        TasksOptions(),
+        tasks_options or TasksOptions(),
         entitlements=billing,
     )
-    idempotency = IdempotencyManagerImpl(storage.get_idempotency_storage(), IdempotencyOptions())
+    idempotency = IdempotencyManagerImpl(
+        storage.get_idempotency_storage(), idempotency_options or IdempotencyOptions()
+    )
     tenancy_operator = TenancyOperatorManagerImpl(
         storage.get_tenancy_storage(),
         storage.get_tasks_storage(),

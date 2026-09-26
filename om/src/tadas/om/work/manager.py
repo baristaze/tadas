@@ -99,8 +99,8 @@ class WorkManagerInterface(ABC):
     @abstractmethod
     async def purge_items(self) -> int:
         """Platform-internal: the sweep, across tenants, like the outbox's
-        purge: deletes items done or failed past the retention; returns how
-        many. The one hard delete of the namespace. It takes no context,
+        purge: deletes items done or failed past the retention, a batch at a
+        time; returns how many. The one hard delete of the namespace. It takes no context,
         because it runs for no tenant and no principal."""
         ...
 
@@ -109,4 +109,10 @@ class WorkManagerInterface(ABC):
         """Platform-internal: the tenancy manager's service contexts (the system
         scope first, then every tenant), for the sweep, each refining the request
         stage the worker minted for this pass."""
+        ...
+
+    @abstractmethod
+    async def mark_purged(self, ctx: OpContext) -> bool:
+        """Platform-internal: the tenancy manager's `mark_purged`, for the sweep,
+        once a pass found nothing left of the tenant to trim."""
         ...

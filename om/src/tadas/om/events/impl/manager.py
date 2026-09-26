@@ -8,6 +8,7 @@ from tadas.om.tenancy import TenancyManagerInterface
 
 class EventsOptions(Platform):
     max_limit: int = 500
+    purge_batch: int = 1000  # events of an expired tenant one purge deletes at most
 
 
 class EventsManagerImpl(EventsManagerInterface):
@@ -41,7 +42,7 @@ class EventsManagerImpl(EventsManagerInterface):
     async def purge_expired(self, ctx: OpContext) -> int:
         ctx.require(Permission.WRITE)
         if await self._tenancy.tenant_expired(ctx):
-            return await self._storage.purge_tenant(ctx.org_id)
+            return await self._storage.purge_tenant(ctx.org_id, self._options.purge_batch)
         return 0
 
     async def get_head(self, ctx: OpContext) -> int:

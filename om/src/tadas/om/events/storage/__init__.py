@@ -32,11 +32,12 @@ class EventStorageInterface(ABC):
         ...
 
     @abstractmethod
-    async def purge_tenant(self, org_id: UUID) -> int:
+    async def purge_tenant(self, org_id: UUID, limit: int) -> int:
         """The hard delete of a deleted tenant's stream once its retention has
         passed: every event and the cursor row, as every namespace drops a
-        tenant past it; returns how many events went. The one delete this
-        append-only stream has."""
+        tenant past it, at most `limit` events per call and the cursor row
+        with the last of them; returns how many events went. The one delete
+        this append-only stream has."""
         ...
 
     @abstractmethod

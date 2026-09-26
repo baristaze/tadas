@@ -52,6 +52,9 @@ class BillingOptions(Platform):
     retention: timedelta = timedelta(days=30)
     """A delivery's mark is kept this long: past every retry the processor
     makes of one event, which stops after three days."""
+    purge_batch: int = 1000
+    """Marks one purge statement deletes at most; the sweep calls again for
+    the rest."""
 
 
 def billing_of(account: BillingAccount | None, now: datetime) -> Billing:
@@ -305,10 +308,11 @@ class BillingManagerImpl(BillingManagerInterface):
 
     async def purge_deleted(self, ctx: OpContext) -> int:
         ctx.require(Permission.WRITE)
+        batch = self._options.purge_batch
         if await self._tenancy().tenant_expired(ctx):
-            return await self._storage.purge_tenant(ctx.org_id)
+            return await self._storage.purge_tenant(ctx.org_id, batch)
         return await self._storage.purge_deliveries(
-            ctx.org_id, self._clock() - self._options.retention
+            ctx.org_id, self._clock() - self._options.retention, batch
         )
 
     async def _with_customer(

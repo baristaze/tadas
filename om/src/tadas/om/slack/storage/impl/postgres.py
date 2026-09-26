@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import delete, or_, select, update
+from sqlalchemy import or_, select, update
 from sqlalchemy.exc import IntegrityError
 
 from tadas.om.base import EMPTY_UUID
@@ -14,7 +14,7 @@ from tadas.om.slack.storage.tables.slack import (
     SlackPosts,
 )
 from tadas.om.slack.types.installation import SlackInstallation, SlackInstallState, SlackPost
-from tadas.om.storage.impl.pg_base import PgStorageBase, violated_constraint
+from tadas.om.storage.impl.pg_base import PgStorageBase, delete_batch, deleted, violated_constraint
 from tadas.om.storage.utils.translation import to_model, to_row
 
 
@@ -139,32 +139,39 @@ class SlackStoragePostgresImpl(PgStorageBase, SlackStorageInterface):
                 ) from error
             return True
 
-    async def purge(self, org_id: UUID, before: datetime) -> int:
+    async def purge(self, org_id: UUID, before: datetime, limit: int) -> int:
         purged = 0
         statements = (
-            delete(SlackInstallations).where(
-                SlackInstallations.org_id == org_id, SlackInstallations.deleted_at < before
+            delete_batch(
+                SlackInstallations,
+                SlackInstallations.org_id == org_id,
+                SlackInstallations.deleted_at < before,
+                limit=limit,
             ),
-            delete(SlackInstallStates).where(
+            delete_batch(
+                SlackInstallStates,
                 SlackInstallStates.org_id == org_id,
                 or_(
                     SlackInstallStates.expires_at < before,
                     SlackInstallStates.redeemed_at < before,
                 ),
+                limit=limit,
             ),
-            delete(SlackPosts).where(SlackPosts.org_id == org_id, SlackPosts.created_at < before),
+            delete_batch(
+                SlackPosts, SlackPosts.org_id == org_id, SlackPosts.created_at < before, limit=limit
+            ),
         )
         for stmt in statements:
             async with self._session_for(stmt, org_id=org_id) as session:
-                purged += (await session.execute(stmt)).rowcount or 0  # type: ignore[attr-defined]
+                purged += deleted(await session.execute(stmt))
                 await session.commit()
         return purged
 
-    async def purge_tenant(self, org_id: UUID) -> int:
+    async def purge_tenant(self, org_id: UUID, limit: int) -> int:
         purged = 0
         for table in (SlackInstallations, SlackInstallStates, SlackPosts):
-            stmt = delete(table).where(table.org_id == org_id)
+            stmt = delete_batch(table, table.org_id == org_id, limit=limit)
             async with self._session_for(stmt, org_id=org_id) as session:
-                purged += (await session.execute(stmt)).rowcount or 0  # type: ignore[attr-defined]
+                purged += deleted(await session.execute(stmt))
                 await session.commit()
         return purged

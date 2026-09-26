@@ -95,12 +95,24 @@ class EventStorageContract:
         for _ in range(2):
             await storage.append_event(gone, make_event(gone))
         stays = await storage.append_event(kept, make_event(kept))
-        assert await storage.purge_tenant(gone) == 2
+        assert await storage.purge_tenant(gone, 10) == 2
         assert await storage.read_after(gone, 0, 10) == []
         assert await storage.read_head(gone) == 0
         assert await storage.read_after(kept, 0, 10) == [stays]
         assert await storage.read_head(kept) == 1
-        assert await storage.purge_tenant(gone) == 0
+        assert await storage.purge_tenant(gone, 10) == 0
+
+    async def test_a_tenant_purge_goes_a_batch_at_a_time_and_the_cursor_last(
+        self, storage: EventStorageInterface
+    ) -> None:
+        gone = new_id()
+        for _ in range(3):
+            await storage.append_event(gone, make_event(gone))
+        assert await storage.purge_tenant(gone, 2) == 2
+        assert await storage.read_head(gone) == 3, "the cursor stays while events do"
+        assert await storage.purge_tenant(gone, 2) == 1
+        assert await storage.read_head(gone) == 0, "and goes with the last of them"
+        assert await storage.read_after(gone, 0, 10) == []
 
     async def test_an_appended_event_names_its_own_tenant(
         self, storage: EventStorageInterface

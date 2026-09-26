@@ -208,11 +208,26 @@ class SlackStorageContract:
         await storage.create_install_state(org, make_state(new_state()))
         await storage.create_post(org, make_post(new_id()))
         await storage.create_post(other, make_post(new_id()))
-        assert await storage.purge(org, now - timedelta(days=1)) == 0
-        assert await storage.purge(other, now + timedelta(hours=1)) == 1
-        assert await storage.purge(org, now + timedelta(hours=1)) == 3
+        assert await storage.purge(org, now - timedelta(days=1), 10) == 0
+        assert await storage.purge(other, now + timedelta(hours=1), 10) == 1
+        assert await storage.purge(org, now + timedelta(hours=1), 10) == 3
         await storage.write_installation(org, make_installation(), ())
         await storage.create_post(other, make_post(new_id()))
-        assert await storage.purge_tenant(org) == 1
+        assert await storage.purge_tenant(org, 10) == 1
         assert await storage.read_installation(org) is None
-        assert await storage.purge_tenant(other) == 1
+        assert await storage.purge_tenant(other, 10) == 1
+
+    async def test_a_backlog_past_a_batch_goes_a_batch_at_a_time(
+        self, storage: SlackStorageInterface
+    ) -> None:
+        org = new_id()
+        for _ in range(3):
+            await storage.create_post(org, make_post(new_id()))
+        later = utcnow() + timedelta(hours=1)
+        assert await storage.purge(org, later, 2) == 2
+        assert await storage.purge(org, later, 2) == 1
+        assert await storage.purge(org, later, 2) == 0
+        for _ in range(3):
+            await storage.create_post(org, make_post(new_id()))
+        assert await storage.purge_tenant(org, 2) == 2
+        assert await storage.purge_tenant(org, 2) == 1

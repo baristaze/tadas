@@ -42,6 +42,7 @@ class SlackOptions(Platform):
     # How long one renewal holds its claim; one that died is taken over after.
     refresh_claim: timedelta = timedelta(seconds=30)
     retention: timedelta = timedelta(days=30)
+    purge_batch: int = 1000  # rows of each kind one purge deletes at most
 
 
 def tokens_json(tokens: SlackTokens) -> str:
@@ -326,9 +327,10 @@ class SlackManagerImpl(SlackManagerInterface):
 
     async def purge_deleted(self, ctx: OpContext) -> int:
         ctx.require(Permission.WRITE)
+        batch = self._options.purge_batch
         if await self._tenancy.tenant_expired(ctx):
-            return await self._storage.purge_tenant(ctx.org_id)
-        return await self._storage.purge(ctx.org_id, utcnow() - self._options.retention)
+            return await self._storage.purge_tenant(ctx.org_id, batch)
+        return await self._storage.purge(ctx.org_id, utcnow() - self._options.retention, batch)
 
     async def _revoke_quietly(self, tokens: SlackTokens) -> None:
         try:

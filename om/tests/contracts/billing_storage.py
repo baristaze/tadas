@@ -186,14 +186,29 @@ class BillingStorageContract:
         await storage.write_account(org_a, account, (), old)
         await storage.write_account(org_a, account, (), fresh)
         cutoff = utcnow() - timedelta(days=30)
-        assert await storage.purge_deliveries(org_b, cutoff) == 0
-        assert await storage.purge_tenant(org_b) == 0
+        assert await storage.purge_deliveries(org_b, cutoff, 10) == 0
+        assert await storage.purge_tenant(org_b, 10) == 0
         assert await storage.read_delivery(org_a, old.id) == old
-        assert await storage.purge_deliveries(org_a, cutoff) == 1
+        assert await storage.purge_deliveries(org_a, cutoff, 10) == 1
         assert await storage.read_delivery(org_a, old.id) is None
         assert await storage.read_delivery(org_a, fresh.id) == fresh
-        assert await storage.purge_tenant(org_a) == 2
+        assert await storage.purge_tenant(org_a, 10) == 2
         assert await storage.read_account(org_a) is None
+
+    async def test_a_backlog_past_a_batch_goes_a_batch_at_a_time(
+        self, storage: BillingStorageInterface
+    ) -> None:
+        org = new_id()
+        account = make_account()
+        await seed(storage, org, account)
+        for i in range(3):
+            await storage.write_account(
+                org, account, (), make_delivery(f"evt_{i}", timedelta(days=40))
+            )
+        cutoff = utcnow() - timedelta(days=30)
+        assert await storage.purge_deliveries(org, cutoff, 2) == 2
+        assert await storage.purge_deliveries(org, cutoff, 2) == 1
+        assert await storage.purge_deliveries(org, cutoff, 2) == 0
 
     async def test_a_grant_round_trips(self, storage: BillingStorageInterface) -> None:
         org = new_id()

@@ -65,13 +65,14 @@ class IdempotencyStorageInterface(ABC):
 
     @abstractmethod
     async def purge_records(
-        self, org_id: UUID, finished_before: datetime, attempts_before: UUID
+        self, org_id: UUID, finished_before: datetime, attempts_before: UUID, limit: int
     ) -> int:
         """For the sweep, per tenant: deletes finished and released records that
         were born before `finished_before` (past the retention, a retry begins
         afresh) and held pending ones whose attempt token sorts below
         `attempts_before` (a marker no retry ever came back for, measured from
-        the attempt like the lease is); returns how many. The one hard delete of
+        the attempt like the lease is), at most `limit` of them, skipping rows
+        another transaction holds; returns how many. The one hard delete of
         the namespace."""
         ...
 

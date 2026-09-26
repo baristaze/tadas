@@ -54,17 +54,19 @@ class BillingStorageMemoryImpl(MemoryStorageBase, BillingStorageInterface):
     async def read_delivery(self, org_id: UUID, delivery_id: UUID) -> BillingDelivery | None:
         return self._get(self._deliveries, org_id, delivery_id)
 
-    async def purge_deliveries(self, org_id: UUID, before: datetime) -> int:
+    async def purge_deliveries(self, org_id: UUID, before: datetime, limit: int) -> int:
         async with self._lock:
-            gone = [d.id for d in self._rows(self._deliveries, org_id) if d.created_at < before]
+            gone = [d.id for d in self._rows(self._deliveries, org_id) if d.created_at < before][
+                :limit
+            ]
             for delivery_id in gone:
                 del self._deliveries[delivery_id]
             return len(gone)
 
-    async def purge_tenant(self, org_id: UUID) -> int:
+    async def purge_tenant(self, org_id: UUID, limit: int) -> int:
         async with self._lock:
-            accounts = [a.id for a in self._rows(self._accounts, org_id)]
-            deliveries = [d.id for d in self._rows(self._deliveries, org_id)]
+            accounts = [a.id for a in self._rows(self._accounts, org_id)][:limit]
+            deliveries = [d.id for d in self._rows(self._deliveries, org_id)][:limit]
             for account_id in accounts:
                 del self._accounts[account_id]
             for delivery_id in deliveries:

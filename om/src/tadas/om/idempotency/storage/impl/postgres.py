@@ -1,13 +1,13 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import and_, delete, or_, select, update
+from sqlalchemy import and_, or_, select, update
 
 from tadas.om.exceptions import DuplicateIdempotencyKey, UniqueKeyTaken
 from tadas.om.idempotency.storage import IdempotencyStorageInterface
 from tadas.om.idempotency.storage.tables.idempotency_records import IdempotencyRecords
 from tadas.om.idempotency.types.record import IdempotencyRecord
-from tadas.om.storage.impl.pg_base import PgStorageBase
+from tadas.om.storage.impl.pg_base import PgStorageBase, delete_batch, deleted
 from tadas.om.storage.utils.translation import to_model
 
 
@@ -72,30 +72,28 @@ class IdempotencyStoragePostgresImpl(PgStorageBase, IdempotencyStorageInterface)
             return released
 
     async def purge_records(
-        self, org_id: UUID, finished_before: datetime, attempts_before: UUID
+        self, org_id: UUID, finished_before: datetime, attempts_before: UUID, limit: int
     ) -> int:
-        stmt = (
-            delete(IdempotencyRecords)
-            .where(
-                IdempotencyRecords.org_id == org_id,
-                or_(
-                    and_(
-                        or_(
-                            IdempotencyRecords.status.is_not(None),
-                            IdempotencyRecords.attempt_id.is_(None),
-                        ),
-                        IdempotencyRecords.created_at < finished_before,
+        stmt = delete_batch(
+            IdempotencyRecords,
+            IdempotencyRecords.org_id == org_id,
+            or_(
+                and_(
+                    or_(
+                        IdempotencyRecords.status.is_not(None),
+                        IdempotencyRecords.attempt_id.is_(None),
                     ),
-                    and_(
-                        IdempotencyRecords.status.is_(None),
-                        IdempotencyRecords.attempt_id < attempts_before,
-                    ),
+                    IdempotencyRecords.created_at < finished_before,
                 ),
-            )
-            .returning(IdempotencyRecords.id)
+                and_(
+                    IdempotencyRecords.status.is_(None),
+                    IdempotencyRecords.attempt_id < attempts_before,
+                ),
+            ),
+            limit=limit,
         )
         async with self._session_for(stmt, org_id=org_id) as session:
-            purged = len((await session.execute(stmt)).scalars().all())
+            purged = deleted(await session.execute(stmt))
             await session.commit()
             return purged
 

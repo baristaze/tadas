@@ -2,12 +2,12 @@ from collections.abc import Sequence
 from datetime import datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import DateTime, Interval, case, delete, func, literal, select, update
+from sqlalchemy import DateTime, Interval, case, func, literal, select, update
 from sqlalchemy.sql import Select
 
 from tadas.om.base import EMPTY_UUID, new_id, utcnow
 from tadas.om.exceptions import TenantMismatch, UniqueKeyTaken
-from tadas.om.storage.impl.pg_base import PgStorageBase
+from tadas.om.storage.impl.pg_base import PgStorageBase, delete_batch, deleted
 from tadas.om.storage.utils.translation import to_model, to_values
 from tadas.om.work.storage import InsertOutcome, WorkStorageInterface
 from tadas.om.work.storage.tables.work_items import WorkItems
@@ -140,18 +140,16 @@ class WorkStoragePostgresImpl(PgStorageBase, WorkStorageInterface):
             await session.commit()
             return changed
 
-    async def purge_items(self, before: datetime) -> int:
-        stmt = (
-            delete(WorkItems)
-            .where(
-                WorkItems.status.in_([WorkStatus.DONE.value, WorkStatus.FAILED.value]),
-                WorkItems.updated_at < before,
-            )
-            .returning(WorkItems.id)
+    async def purge_items(self, before: datetime, limit: int) -> int:
+        stmt = delete_batch(
+            WorkItems,
+            WorkItems.status.in_([WorkStatus.DONE.value, WorkStatus.FAILED.value]),
+            WorkItems.updated_at < before,
+            limit=limit,
         )
         # Every tenant's settled items, so the system scope, spelled here.
         async with self._session_for(stmt, org_id=EMPTY_UUID) as session:
-            purged = len((await session.execute(stmt)).scalars().all())
+            purged = deleted(await session.execute(stmt))
             await session.commit()
             return purged
 
