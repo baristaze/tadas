@@ -4,17 +4,20 @@ import {
   ActionBar,
   Banner,
   Button,
+  CheckCheckIcon,
   CloseIcon,
   ConfirmDialog,
   FoldingCard,
   IconButton,
   LinkButton,
+  ListChecksIcon,
   Menu,
   MenuItem,
   MenuSeparator,
   MoreIcon,
   Muted,
   Page,
+  RotateCcwIcon,
   SegmentedControl,
 } from "../../design/kit";
 import { tokens } from "../../design/tokens";
@@ -282,11 +285,16 @@ function SectionMenu({ section, empty, bulk }: { section: TaskSection; empty: bo
       align="end"
       minWidth={200}
     >
-      <MenuItem onSelect={() => bulk.selectAll(section)} disabled={empty}>
+      <MenuItem onSelect={() => bulk.selectAll(section)} disabled={empty} icon={<ListChecksIcon />}>
         Select all
       </MenuItem>
       <MenuSeparator />
-      <MenuItem tone="danger" onSelect={() => bulk.askAll(section)} disabled={empty}>
+      <MenuItem
+        tone="danger"
+        onSelect={() => bulk.askAll(section)}
+        disabled={empty}
+        icon={section === "open" ? <CheckCheckIcon /> : <RotateCcwIcon />}
+      >
         {section === "open" ? "Mark all as done…" : "Reopen all…"}
       </MenuItem>
     </Menu>

@@ -1,6 +1,15 @@
+import type { ReactNode } from "react";
 import type { Role } from "../../api";
-import { Caret, Menu, MenuItemRadio } from "../../design/kit";
+import { BotIcon, Caret, CrownIcon, EyeIcon, Menu, MenuItemRadio, ShieldIcon, UserIcon } from "../../design/kit";
 import type { MemberRow } from "./settingsModel";
+
+const ROLE_ICONS: Record<Role, ReactNode> = {
+  owner: <CrownIcon />,
+  admin: <ShieldIcon />,
+  member: <UserIcon />,
+  viewer: <EyeIcon />,
+  service: <BotIcon />,
+};
 
 /** A member's role in the member table. A member who may change it gets a
  * small menu of the roles they may give, the current one checked; everyone
@@ -36,6 +45,7 @@ export function RoleControl({
         <MenuItemRadio
           key={role}
           checked={role === current}
+          icon={ROLE_ICONS[role]}
           onSelect={() => {
             if (role !== current) onChange(row.id, role);
           }}
