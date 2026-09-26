@@ -438,12 +438,39 @@ async def events(w: Any) -> None:
     r = await w.http(area, "POST /v1/realtime/tickets", "POST", "/v1/realtime/tickets", headers=h)
     ticket = r.json()["ticket"]
     tenancy = w.container.managers.tenancy
-    await w.measure(
+    principal = await w.measure(
         area,
         "WS /v1/realtime: redeem the ticket",
         lambda: tenancy.redeem_ticket(seed_request(), ticket),
         note="the handshake's manager call",
     )
+    if principal is None:
+        return
+    realtime = w.container.services.get_realtime_service()
+    detach = realtime.attach(principal, lambda reason: None)
+    try:
+        await w.measure(
+            area,
+            "WS /v1/realtime: the socket's recheck",
+            lambda: realtime.recheck(principal),
+            note="once per socket per TADAS_REALTIME_RECHECK_SECONDS",
+        )
+        ctx = principal.ctx
+        await w.measure(
+            area,
+            "WS /v1/realtime: the head, read",
+            lambda: realtime.head(ctx),
+            note="the hello; a ping when the head heard is older than the bound",
+        )
+        await w.client.post("/v1/tasks", headers=h, json={"title": "a hint for the pong"})
+        await w.measure(
+            area,
+            "WS /v1/realtime: ping, head heard on the bus",
+            lambda: realtime.pong_head(ctx),
+            note="a ping within the bound of the last hint or read",
+        )
+    finally:
+        detach()
 
 
 # ---------------------------------------------------------------- billing
