@@ -15,6 +15,7 @@ import { usePreferencesStore } from "../../store/preferences";
 import { errorMessage } from "../../app/errorMessage";
 import { isPlanLimit } from "../../store/upgrade";
 import { isStale, reorder, STALE_MESSAGE } from "./reorder";
+import { shownScope } from "./scopeModel";
 import {
   canAdd,
   canWrite,
@@ -43,7 +44,8 @@ export function useTasksVm() {
   const queryClient = useQueryClient();
   const me = useMe();
   const users = useUsers();
-  const scope = usePreferencesStore((s) => s.taskScope);
+  const orgKind = me.data?.org.kind;
+  const scope = shownScope(usePreferencesStore((s) => s.taskScope), orgKind);
   const setScope = usePreferencesStore((s) => s.setTaskScope);
   const open = useOpenTasks(scope);
   const done = useDoneTasks(scope);
@@ -239,6 +241,7 @@ export function useTasksVm() {
 
   return {
     scope,
+    orgKind,
     setScope: changeScope,
     title,
     setTitle,
