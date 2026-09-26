@@ -1,6 +1,7 @@
 # ADR 0041: An account is deleted at once, and its providers by the queue
 
-**Status**: accepted (2026-09-26). A deviation from STO-32.
+**Status**: accepted (2026-09-26). A deviation from STO-32, and from
+CTX-34 for the unassignment.
 
 ## Context
 
@@ -48,10 +49,13 @@ and slug, and `403 operator_role_held`. Then one named atomic write,
 `TenancyStorageInterface.delete_person`, deletes the identity (its
 second factor with it), every user it is in any org, removed ones too,
 with their memberships, sessions, API keys, and socket tickets, its
-sign-ins and operator tokens, and the sign-in delay of its address. It
-is a cross-tenant method on the system scope, enumerated with the
+sign-ins and operator tokens, the sign-in delay of its address, and
+every invitation sent to that address or accepted by one of its users.
+It is a cross-tenant method on the system scope, enumerated with the
 others, and every statement in it names the person and the orgs their
-users are in.
+users are in. It also counts, under a row lock, the owners of each team
+org the person owns, and refuses when one would be left with none, so
+two owners who leave at once cannot both go.
 
 This is the deviation: a hard delete outside the sweep. A soft delete
 would keep the email and the name for the retention, which is the one
@@ -65,9 +69,16 @@ so every socket they hold closes. Every payload carries ids only.
 
 **A team org keeps the footprint, by id.** Nothing the person made
 there is touched. The same commit asks, in each org they leave, for
-`UNASSIGN_TASKS`. The worker runs it as the person, through the update a
-person makes to clear an assignee, a page of their open tasks at a
-time. A per-seat plan's count follows the membership, as it does on a
+`UNASSIGN_TASKS`. The worker runs it under the person's name, through
+the update a person makes to clear an assignee, a page of their open
+tasks at a time. It runs on the service role whatever role the person
+held, and a viewer cannot clear an assignee: this is the deviation from
+CTX-34 (Worker Roles, The Work Queue): "a role may enqueue a kind only
+if it may call each of those operations itself". The
+unassignment is what the deletion does to the org, decided for every
+account, and not a write the person asks for; the kind's enqueue
+permission is `WRITE`, the width of its handler, and no route enqueues
+it. A per-seat plan's count follows the membership, as it does on a
 removal. The portal names an id it cannot resolve "Former member". No
 row is rewritten for it.
 
@@ -94,8 +105,12 @@ a customer the provider no longer holds is deleted already, and a
 closed billing account names neither. A provider that cannot be reached
 parks the item for a minute without spending an attempt: a guard
 parks, a bound fails. A provider that refuses fails the item, which
-retries and ends as a failed item an operator reads. Slack's side stays
-best effort, as every removal of the app is.
+retries and ends as a failed item an operator reads; the loop has no
+outcome that fails an item at once, so a refusal is asked two more
+times first. A refusal of the process's own key (revoked, or without
+the permission) is not the call's fault: the clients answer it as
+unavailable, and the item parks until a person fixes the key. Slack's
+side stays best effort, as every removal of the app is.
 
 The org waits for the providers because the queue would not run the
 work otherwise: a claim refuses an item of a deleted org. The local
@@ -115,11 +130,11 @@ there on its way to `/signed-out`, which says the account is gone.
 
 ## Consequences
 
-While a provider is down, the personal org's rows wait for it, out of
-reach of their person; anyone else they had added to the org keeps it
-until then. A provider that keeps refusing (a key without a permission)
+While a provider is down, or refuses the key, the personal org's rows
+wait for it, out of reach of their person; anyone else they had added
+to the org keeps it until then. A provider that refuses the call itself
 fails the item for good, and the org stays with it. Running the item
-again once the key is fixed is by hand today.
+again then is by hand today.
 
 A person who signs in through WorkOS before the item deletes their
 WorkOS user is a new person in Tadas: the identity the sign-in would

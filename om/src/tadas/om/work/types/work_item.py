@@ -153,9 +153,9 @@ class DeleteAccountPayload(Platform):
 
 
 class UnassignTasksPayload(Platform):
-    """The item's target is the user who left the org, and it runs as them:
-    their open tasks there are unassigned, as they could have done
-    themselves."""
+    """The item's target is the user who left the org, and it runs under
+    their name on the service role: their open tasks there are unassigned,
+    whatever role they held (ADR 0041)."""
 
 
 WORK_PAYLOADS: dict[WorkKind, type[Platform]] = {

@@ -16,9 +16,11 @@ fails it, which retries and then leaves a failed item for an operator to
 read. The org stays until the providers are done: deleted first, it could
 no longer run the work that names it.
 
-`UNASSIGN_TASKS` runs in each org the person left, as the person: their open
-tasks there go unassigned, each by the update a person makes to clear an
-assignee."""
+`UNASSIGN_TASKS` runs in each org the person left, under their name: their
+open tasks there go unassigned, each by the update a person makes to clear
+an assignee. It runs on the service role, whatever role the person held:
+the unassignment is what an account's deletion does, not a write the
+person asks for (ADR 0041)."""
 
 import logging
 from datetime import timedelta

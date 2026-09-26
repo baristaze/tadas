@@ -11,7 +11,7 @@ from tadas.services.api.gateway.auth import Ctx, Identity, Rctx, dev_sign_in_ope
 from tadas.services.api.gateway.idempotency import Idem
 from tadas.services.api.gateway.ratelimit import rate_limited
 from tadas.services.api.gateway.resolve import TenancyService
-from tadas.services.api.types.common import LIMIT_DEFAULT
+from tadas.services.api.types.common import LIMIT_DEFAULT, ErrorResponse
 from tadas.services.api.types.tenancy import (
     AccountDeletedView,
     AddApiKeyRequest,
@@ -154,7 +154,14 @@ async def update_me(ctx: Ctx, tenancy: TenancyService, body: UpdateMeRequest) ->
 # personal org goes whole, and the session presented ends with every other.
 # No idempotency key: the principal that would hold the marker is what this
 # erases, so a retry meets a session that no longer exists.
-@router.post("/me/deletion", response_model=AccountDeletedView)
+@router.post(
+    "/me/deletion",
+    response_model=AccountDeletedView,
+    responses={
+        403: {"model": ErrorResponse, "description": "operator_role_held"},
+        409: {"model": ErrorResponse, "description": "last_owner: `error.last_owner.orgs`"},
+    },
+)
 async def delete_account(
     ctx: Ctx, tenancy: TenancyService, body: DeleteAccountRequest
 ) -> AccountDeletedView:

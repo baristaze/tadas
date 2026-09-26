@@ -42,7 +42,7 @@ second lane is a second replica told its lane.
   purges whole. A provider that does not answer parks it for a minute,
   spending no attempt; a provider that refuses fails it. Each step finds
   its own work done on a rerun. The person's open tasks in each team org
-  they left go unassigned by an item of their own, run as the person.
+  they left go unassigned by an item of their own, run under their name.
   The last kind does nothing and keeps the loop honest. The worker holds
   the WorkOS key for the account's item, as the API does.
 - **What Slack sends.** Slack calls the API, which checks each call's

@@ -3,6 +3,7 @@
 // a deadline on every call, and the app's one retry. The one file in the app
 // that may call fetch.
 
+import type { LastOwnerDetail, OwnedOrgRef } from "./types";
 import {
   DEFAULT_RETRY_ATTEMPTS,
   DEFAULT_RETRY_BASE_DELAY_MS,
@@ -28,11 +29,7 @@ export interface StreamTruncated {
 }
 
 /** An org a `last_owner` refusal names: the team orgs the person is the last owner of. */
-export interface OwnedOrg {
-  id: string;
-  name: string;
-  slug: string;
-}
+export type OwnedOrg = OwnedOrgRef;
 
 export interface ErrorEnvelope {
   error: {
@@ -41,7 +38,7 @@ export interface ErrorEnvelope {
     request_id: string;
     plan_limit?: PlanLimit | null;
     stream?: StreamTruncated | null;
-    last_owner?: { orgs: OwnedOrg[] } | null;
+    last_owner?: LastOwnerDetail | null;
   };
 }
 

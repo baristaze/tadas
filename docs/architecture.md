@@ -239,7 +239,9 @@ context on keeps the stage the callee needs.
   write, `delete_person`, a cross-tenant method on the system scope,
   hard-deletes the identity, every user it is in any org with their
   memberships, sessions, keys, and tickets, its sign-ins and operator
-  tokens, and the sign-in delay of its address, and lands in the same
+  tokens, the sign-in delay of its address, and the invitations sent to
+  it or accepted by its users, refuses when a team org it owns would be
+  left with no owner (counted under a row lock), and lands in the same
   commit a revocation row per live credential, `tenancy.user.deleted`,
   a `work.UNASSIGN_TASKS` row, and the seat row in each org the person
   leaves, and one `work.DELETE_ACCOUNT` row in their personal org.

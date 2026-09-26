@@ -1462,6 +1462,25 @@ export interface components {
             /** Device Code */
             device_code: string;
         };
+        /** ErrorBody */
+        ErrorBody: {
+            /** Code */
+            code: string;
+            last_owner?: components["schemas"]["LastOwnerDetail"] | null;
+            /** Message */
+            message: string;
+            plan_limit?: components["schemas"]["PlanLimitDetail"] | null;
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+            stream?: components["schemas"]["StreamTruncatedDetail"] | null;
+        };
+        /** ErrorResponse */
+        ErrorResponse: {
+            error: components["schemas"]["ErrorBody"];
+        };
         /**
          * EventView
          * @description One record of the tenant's append-only stream, paged by `after_seq`.
@@ -1830,6 +1849,15 @@ export interface components {
             url: string | null;
         };
         /**
+         * LastOwnerDetail
+         * @description What a `last_owner` refusal carries: every team org the person is the
+         *     last owner of, which they hand on or delete before their account goes.
+         */
+        LastOwnerDetail: {
+            /** Orgs */
+            orgs: components["schemas"]["OwnedOrgRef"][];
+        };
+        /**
          * LogoutRequest
          * @description Where the identity provider sends the browser once it has ended its own
          *     session: this environment's portal page for it, and nothing else. Left
@@ -2048,6 +2076,21 @@ export interface components {
             slug: string;
         };
         /**
+         * OwnedOrgRef
+         * @description An org named in a refusal: enough to find it and to say which.
+         */
+        OwnedOrgRef: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /** Slug */
+            slug: string;
+        };
+        /**
          * ParkReason
          * @description Why a record waits, and so what wakes it.
          * @enum {string}
@@ -2063,6 +2106,22 @@ export interface components {
          * @enum {string}
          */
         Plan: "free" | "pro" | "team" | "max";
+        /**
+         * PlanLimitDetail
+         * @description What a `plan_limit_reached` refusal carries, so a client can offer the
+         *     plan that lifts the bound: the lever, the org's plan, the bound, and the
+         *     first plan above it that admits one more (null when none does).
+         */
+        PlanLimitDetail: {
+            /** Lever */
+            lever: string;
+            /** Limit */
+            limit: number | null;
+            /** Plan */
+            plan: string;
+            /** Suggested Plan */
+            suggested_plan: string | null;
+        };
         /**
          * PlanLimitsView
          * @description A plan's bounds; a null count is no bound.
@@ -2418,6 +2477,18 @@ export interface components {
             total_count: number;
             /** Total Size Bytes */
             total_size_bytes: number;
+        };
+        /**
+         * StreamTruncatedDetail
+         * @description What a `stream_truncated` refusal carries: the floor, the highest seq
+         *     trimmed from the stream, and the head. A client drops its cursor, reads
+         *     afresh what it shows, and goes on from the head.
+         */
+        StreamTruncatedDetail: {
+            /** Floor */
+            floor: number;
+            /** Head */
+            head: number;
         };
         /**
          * SubscriptionStatus
@@ -4036,6 +4107,24 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AccountDeletedView"];
+                };
+            };
+            /** @description operator_role_held */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description last_owner: `error.last_owner.orgs` */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Validation Error */
