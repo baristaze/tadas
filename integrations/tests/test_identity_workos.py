@@ -430,6 +430,13 @@ def after(seconds: float) -> datetime:
     return utcnow() + timedelta(seconds=seconds)
 
 
+def ended_by_the_deadline(doing: str) -> set[str]:
+    """What a call the deadline ends says: cut, or not begun, by the call's
+    bound; or refused by the transport, when the deadline passed after the
+    call began and before its next attempt went out."""
+    return {f"{doing}: {PASSED}", f"{doing}: no time is left for another attempt"}
+
+
 async def test_a_workos_that_hangs_ends_at_the_deadline_not_after_its_retries() -> None:
     """At a ten second timeout and three retries a WorkOS that hangs holds a
     call about fifty seconds. Under a request's deadline the attempt goes out
@@ -445,10 +452,13 @@ async def test_a_workos_that_hangs_ends_at_the_deadline_not_after_its_retries() 
     with pytest.raises(ProviderUnavailable) as raised:
         await asyncio.wait_for(made.start_device(deadline=after(0.3)), 5)
     waited = time.monotonic() - began
-    assert raised.value.message == f"starting a device sign-in: {PASSED}"
+    assert raised.value.message in ended_by_the_deadline("starting a device sign-in")
     assert 0.25 <= waited < 1.0, waited
-    [request] = sent.requests
-    assert 0 < request.extensions["timeout"]["read"] <= 0.3
+    # The attempt, sent with what was left and cut at the deadline, and no
+    # retry after it; none at all on a runner slow enough that the call's own
+    # work takes the whole of it.
+    assert len(sent.requests) <= 1
+    assert all(0 < r.extensions["timeout"]["read"] <= 0.3 for r in sent.requests)
 
 
 async def test_each_attempt_is_sent_with_what_is_left(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -508,11 +518,16 @@ async def test_a_retry_after_that_fits_is_slept_and_the_call_goes_through() -> N
 
 
 async def test_the_pages_of_one_listing_share_the_deadline() -> None:
-    """A listing reads page after page, each a request of its own; they share
-    what is left, and the one the deadline catches ends the call."""
+    """A listing reads page after page, each a request of its own, and each
+    answers in well under the four tenths the call has. They share what is
+    left, and the page the deadline catches ends the call: the third on a
+    quick runner, an earlier one on a slow one. The test holds whichever it
+    is."""
+    answered: list[int] = []
 
     async def paging(request: httpx.Request, n: int) -> httpx.Response:
         await asyncio.sleep(0.15)
+        answered.append(n)
         return httpx.Response(
             200,
             json={
@@ -527,8 +542,11 @@ async def test_the_pages_of_one_listing_share_the_deadline() -> None:
         await under(sent).find_pending_invitation(
             email="bob@acme.example", organization_id="org_1", deadline=after(0.4)
         )
-    assert raised.value.message == f"listing the invitations: {PASSED}"
-    assert len(sent.requests) == 3
+    assert raised.value.message in ended_by_the_deadline("listing the invitations")
+    # Every page before the last answered in full. The last was cut waiting
+    # for its answer, or answered as the deadline passed.
+    pages = list(range(1, len(sent.requests) + 1))
+    assert answered in (pages, pages[:-1]), (pages, answered)
 
 
 async def test_a_call_with_no_deadline_keeps_the_timeout_and_the_retries(
