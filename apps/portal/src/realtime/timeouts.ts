@@ -10,6 +10,11 @@ export const BACKOFF_MAX_MS = 30_000;
 // A socket that has said hello, or stayed open this long, counts as
 // connected; only then does the reconnect backoff start over.
 export const STABLE_OPEN_MS = 5_000;
+// A tab hidden this long closes its socket until it is looked at again. An
+// open socket costs the server about 72 transactions an hour (the credential
+// recheck and the pings, about 216 round trips), and a reconnect about 5. Five
+// minutes open is about 6, so a hide longer than this pays for its return.
+export const HIDDEN_PAUSE_MS = 5 * 60_000;
 
 /**
  * The wait before reconnect `attempt` (1 is the first): the base doubled per

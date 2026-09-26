@@ -5,7 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useConnectionStore } from "../store/connection";
 import { CLOSE_UNAUTHENTICATED, openChannel, SOCKET_OPEN, type Channel, type SocketLike } from "./channel";
 import type { Envelope } from "./envelopes";
-import { STABLE_OPEN_MS } from "./timeouts";
+import { watchPage, type PageLike } from "./pageVisibility";
+import { DEGRADED_POLL_INTERVAL_MS, HIDDEN_PAUSE_MS, PING_INTERVAL_MS, STABLE_OPEN_MS } from "./timeouts";
 
 class FakeSocket implements SocketLike {
   readyState = 0;
@@ -639,4 +640,257 @@ it("does not apply or continue a replay that finishes after stop", async () => {
   expect(route).not.toHaveBeenCalled();
   expect(fetchEventsAfter).toHaveBeenCalledTimes(1);
   expect(channel.cursor()).toBe(0);
+});
+
+/** A page whose visibility the test sets: a document and a window with no DOM. */
+function fakePage() {
+  const document = Object.assign(new EventTarget(), { hidden: false });
+  const window = new EventTarget();
+  const page: PageLike = { document, window };
+  return {
+    page,
+    hide() {
+      document.hidden = true;
+      document.dispatchEvent(new Event("visibilitychange"));
+    },
+    show() {
+      document.hidden = false;
+      document.dispatchEvent(new Event("visibilitychange"));
+    },
+    /** A window event; the page is visible unless `hidden` says otherwise. */
+    fire(type: string, fields: object = {}, hidden = false) {
+      document.hidden = hidden;
+      window.dispatchEvent(Object.assign(new Event(type), fields));
+    },
+  };
+}
+
+describe("a hidden tab", () => {
+  // The stream after the hello's 5: two changes land while the tab is away.
+  const stream = [event(6), event(7)];
+  const pages = (after: number) => stream.filter((e) => e.seq > after);
+  const status = () => useConnectionStore.getState().status;
+
+  /** An open channel at cursor 5, watching a fake page. */
+  async function watched(p: Pages = pages) {
+    const h = harness(p);
+    channel = h.channel;
+    const page = fakePage();
+    const unwatch = watchPage(page.page, h.channel);
+    await flush();
+    h.sockets[0]!.accept();
+    h.sockets[0]!.receive(hello(5));
+    await flush();
+    expect(status()).toBe("open");
+    return { h, page, unwatch };
+  }
+
+  it("pauses after five minutes hidden: no socket, no reconnect, no polling, no failure", async () => {
+    const { h, page } = await watched();
+    page.hide();
+    await vi.advanceTimersByTimeAsync(HIDDEN_PAUSE_MS - 1);
+    expect(h.sockets[0]!.readyState).toBe(SOCKET_OPEN);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(h.sockets[0]!.readyState).toBe(3);
+    expect(status()).toBe("paused");
+    expect(useConnectionStore.getState().failedCycles).toBe(0);
+
+    // Ten minutes more hidden: nothing is asked of the API, and nothing is sent.
+    const sent = h.sockets[0]!.sent.length;
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(h.requestTicket).toHaveBeenCalledTimes(1);
+    expect(h.sockets).toHaveLength(1);
+    expect(h.fetches).toEqual([]);
+    expect(h.sockets[0]!.sent).toHaveLength(sent);
+    expect(status()).toBe("paused");
+  });
+
+  it("reconnects with a fresh ticket on return and catches up from the cursor", async () => {
+    const { h, page } = await watched();
+    page.hide();
+    await vi.advanceTimersByTimeAsync(HIDDEN_PAUSE_MS + 60_000);
+    expect(channel!.cursor()).toBe(5);
+
+    page.show();
+    await flush();
+    expect(h.requestTicket).toHaveBeenCalledTimes(2);
+    expect(status()).toBe("connecting");
+    h.sockets[1]!.accept();
+    await flush();
+    expect(h.fetches).toEqual([5]);
+    expect(channel!.cursor()).toBe(7);
+    h.sockets[1]!.receive(hello(7));
+    expect(status()).toBe("open");
+  });
+
+  it("resumes on a page restored from the back/forward cache", async () => {
+    const { h, page } = await watched();
+    page.hide();
+    await vi.advanceTimersByTimeAsync(HIDDEN_PAUSE_MS);
+    page.fire("pageshow", { persisted: true });
+    await flush();
+    h.sockets[1]!.accept();
+    await flush();
+    expect(h.requestTicket).toHaveBeenCalledTimes(2);
+    expect(h.fetches).toEqual([5]);
+    expect(channel!.cursor()).toBe(7);
+  });
+
+  it.each(["focus", "online"])("resumes on %s", async (type) => {
+    const { h, page } = await watched();
+    page.hide();
+    await vi.advanceTimersByTimeAsync(HIDDEN_PAUSE_MS);
+    page.fire(type);
+    await flush();
+    h.sockets[1]!.accept();
+    await flush();
+    expect(h.requestTicket).toHaveBeenCalledTimes(2);
+    expect(h.fetches).toEqual([5]);
+  });
+
+  it("pauses again after an online that finds the tab still hidden", async () => {
+    const { h, page } = await watched();
+    page.hide();
+    await vi.advanceTimersByTimeAsync(HIDDEN_PAUSE_MS);
+    page.fire("online", {}, true);
+    await flush();
+    h.sockets[1]!.accept();
+    await flush();
+    expect(h.fetches).toEqual([5]);
+    await vi.advanceTimersByTimeAsync(HIDDEN_PAUSE_MS);
+    expect(h.sockets[1]!.readyState).toBe(3);
+    expect(status()).toBe("paused");
+  });
+
+  it("never pauses on a hide shorter than five minutes", async () => {
+    const { h, page } = await watched();
+    for (let i = 0; i < 3; i += 1) {
+      page.hide();
+      await vi.advanceTimersByTimeAsync(HIDDEN_PAUSE_MS - 1_000);
+      page.show();
+      await vi.advanceTimersByTimeAsync(1_000);
+    }
+    expect(h.sockets).toHaveLength(1);
+    expect(h.sockets[0]!.readyState).toBe(SOCKET_OPEN);
+    expect(h.requestTicket).toHaveBeenCalledTimes(1);
+    expect(status()).toBe("open");
+  });
+
+  it("makes one connect of many return signals at once", async () => {
+    const { h, page } = await watched();
+    page.hide();
+    await vi.advanceTimersByTimeAsync(HIDDEN_PAUSE_MS);
+    page.show();
+    page.fire("pageshow", { persisted: true });
+    page.fire("focus");
+    page.fire("online");
+    page.show();
+    await flush();
+    expect(h.requestTicket).toHaveBeenCalledTimes(2);
+    expect(h.sockets).toHaveLength(2);
+    h.sockets[1]!.accept();
+    await flush();
+    page.fire("focus");
+    await flush();
+    expect(h.requestTicket).toHaveBeenCalledTimes(2);
+    expect(h.fetches).toEqual([5]);
+  });
+
+  it("stops a degraded channel's reconnects and polling at the pause, and starts clean on return", async () => {
+    const h = harness(pages);
+    channel = h.channel;
+    const page = fakePage();
+    watchPage(page.page, h.channel);
+    await flush();
+    h.sockets[0]!.accept();
+    h.sockets[0]!.drop();
+    await vi.advanceTimersByTimeAsync(1_000);
+    h.sockets[1]!.accept();
+    h.sockets[1]!.drop();
+    expect(status()).toBe("degraded");
+
+    page.hide();
+    await vi.advanceTimersByTimeAsync(HIDDEN_PAUSE_MS);
+    expect(status()).toBe("paused");
+    const tickets = h.requestTicket.mock.calls.length;
+    const reads = h.refreshAll.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(10 * DEGRADED_POLL_INTERVAL_MS);
+    expect(h.requestTicket).toHaveBeenCalledTimes(tickets);
+    expect(h.refreshAll).toHaveBeenCalledTimes(reads);
+
+    // The return is a first connect: its first drop is a reconnect, not degraded.
+    page.show();
+    await flush();
+    const returned = h.sockets[h.sockets.length - 1]!;
+    returned.accept();
+    returned.drop();
+    expect(status()).toBe("connecting");
+  });
+
+  it("opens nothing from a ticket request the pause overtook", async () => {
+    const h = harness(pages);
+    channel = h.channel;
+    const page = fakePage();
+    watchPage(page.page, h.channel);
+    let answer!: (ticket: string) => void;
+    h.requestTicket.mockImplementationOnce(() => new Promise((resolve) => { answer = resolve; }));
+    await flush();
+    // The first request is already out; the next one hangs until answered.
+    h.sockets[0]!.accept();
+    h.sockets[0]!.drop();
+    await vi.advanceTimersByTimeAsync(1_000);
+    page.hide();
+    await vi.advanceTimersByTimeAsync(HIDDEN_PAUSE_MS);
+    answer("late");
+    await flush();
+    expect(h.sockets).toHaveLength(1);
+    expect(status()).toBe("paused");
+  });
+
+  it("re-reads everything on return when the stream was trimmed past the cursor", async () => {
+    const trimmed = (after: number) => {
+      if (after < 7) throw new ApiError(410, "stream_truncated", "gone", null, undefined, null, { floor: 7, head: 9 });
+      return [];
+    };
+    const { h, page } = await watched(trimmed);
+    h.refreshAll.mockClear();
+    page.hide();
+    await vi.advanceTimersByTimeAsync(HIDDEN_PAUSE_MS);
+    page.show();
+    await flush();
+    h.sockets[1]!.accept();
+    await flush();
+    expect(h.fetches).toEqual([5]);
+    expect(h.refreshAll).toHaveBeenCalledTimes(1);
+    expect(channel!.cursor()).toBe(9);
+  });
+
+  it("asks for a ticket on return, whose 401 is the sign-out, and connects nothing more", async () => {
+    // The transport client signs out on a 401 to the bearer the tab holds;
+    // the sign-out ends the session, and the provider stops the channel.
+    const { h, page } = await watched();
+    page.hide();
+    await vi.advanceTimersByTimeAsync(HIDDEN_PAUSE_MS);
+    const signOut = vi.fn(() => channel!.stop());
+    h.requestTicket.mockImplementationOnce(() => {
+      signOut();
+      return Promise.reject(new ApiError(401, "unauthenticated", "expired", null, undefined, null, null));
+    });
+    page.show();
+    await flush();
+    expect(signOut).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(h.requestTicket).toHaveBeenCalledTimes(2);
+    expect(h.sockets).toHaveLength(1);
+    expect(status()).toBe("closed");
+  });
+
+  it("stops listening to the page when unwatched", async () => {
+    const { h, page, unwatch } = await watched();
+    unwatch();
+    page.hide();
+    await vi.advanceTimersByTimeAsync(HIDDEN_PAUSE_MS + PING_INTERVAL_MS);
+    expect(h.sockets[0]!.readyState).toBe(SOCKET_OPEN);
+    expect(status()).toBe("open");
+  });
 });
