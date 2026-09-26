@@ -1,7 +1,8 @@
 from datetime import date, datetime
+from decimal import Decimal
 from uuid import UUID
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from tadas.om.orchestrations.types.orchestration import (
     FailReason,
@@ -20,7 +21,13 @@ class TaskView(View):
     notes: str
     status: TaskStatus
     assignee_id: UUID | None
-    position: float
+    position: float = Field(
+        description=(
+            "The rank as a float, for a client of the release before; order by"
+            " `rank`. It leaves the wire in the release after this one."
+        ),
+        json_schema_extra={"deprecated": True},
+    )
     created_at: datetime
     updated_at: datetime
     created_by: UUID
@@ -32,6 +39,22 @@ class TaskView(View):
     reminded_at: datetime | None = None
     # Set when the daily cleanup archived the task; null otherwise.
     archived_at: datetime | None = None
+    rank: str | None = Field(
+        default=None,
+        description=(
+            "Where an open task sits in the open list, which is ascending by"
+            " rank, then by id. An exact decimal number, written out in full:"
+            " compare two as numbers, never as floats and never as text. Null"
+            " only from a build that predates it, which orders by `position`."
+        ),
+    )
+
+    @field_validator("rank", mode="before")
+    @classmethod
+    def _written_out(cls, value: object) -> object:
+        """A rank is sent in full, never in exponent form: `0.00001`, not
+        `1E-5`, so a client compares digits it can read."""
+        return format(value, "f") if isinstance(value, Decimal) else value
 
 
 class TaskPageView(View):

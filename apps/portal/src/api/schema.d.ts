@@ -2772,8 +2772,17 @@ export interface components {
             id: string;
             /** Notes */
             notes: string;
-            /** Position */
+            /**
+             * Position
+             * @deprecated
+             * @description The rank as a float, for a client of the release before; order by `rank`. It leaves the wire in the release after this one.
+             */
             position: number;
+            /**
+             * Rank
+             * @description Where an open task sits in the open list, which is ascending by rank, then by id. An exact decimal number, written out in full: compare two as numbers, never as floats and never as text. Null only from a build that predates it, which orders by `position`.
+             */
+            rank?: string | null;
             /** Reminded At */
             reminded_at?: string | null;
             status: components["schemas"]["TaskStatus"];

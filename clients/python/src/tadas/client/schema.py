@@ -818,7 +818,8 @@ class TaskView(BaseModel):
     due_on: Annotated[date | None, Field(title='Due On')] = None
     id: Annotated[UUID, Field(title='Id')]
     notes: Annotated[str, Field(title='Notes')]
-    position: Annotated[float, Field(title='Position')]
+    position: Annotated[float, Field(deprecated=True, description='The rank as a float, for a client of the release before; order by `rank`. It leaves the wire in the release after this one.', title='Position')]
+    rank: Annotated[str | None, Field(description='Where an open task sits in the open list, which is ascending by rank, then by id. An exact decimal number, written out in full: compare two as numbers, never as floats and never as text. Null only from a build that predates it, which orders by `position`.', title='Rank')] = None
     reminded_at: Annotated[AwareDatetime | None, Field(title='Reminded At')] = None
     status: TaskStatus
     title: Annotated[str, Field(title='Title')]
