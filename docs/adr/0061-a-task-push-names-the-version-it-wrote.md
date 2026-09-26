@@ -1,8 +1,10 @@
 # ADR 0061: A task's push names the version it wrote
 
-**Status**: accepted (2026-09-26). Deviates from Realtime at the Edge,
-which keeps every field of the entity off the wire, for one field of
-the task: its version.
+**Status**: accepted (2026-09-26). Follows the guideline since v0.36.0:
+Realtime at the Edge lets a push carry one field of the entity, its
+compare-and-set `version`, which the write's outbox row carries and the
+relay copies onto the event and the publish, and NET-30 names it. It is
+not a deviation.
 
 ## Context
 

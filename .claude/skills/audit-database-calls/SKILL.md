@@ -124,7 +124,8 @@ the providers. It holds no cloud credential and reads no environment.
    none. Findings rank by their round trips at the sizes the report
    names. A fix is proposed in this order, the first that applies:
    remove the read, fold it into a read the flow already makes, defer
-   it off the request path, and only then run reads in parallel. That
+   it off the request path, cache its answer (with the TTL and what
+   invalidates it), and only then run reads in parallel. That
    order is the rule, because concurrent reads on a bounded pool can
    make the tail worse. Each role's pool has a fixed size
    (`database_pool_size` in `om/src/tadas/om/storage/settings.py`) and

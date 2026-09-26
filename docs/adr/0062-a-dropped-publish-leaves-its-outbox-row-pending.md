@@ -1,7 +1,13 @@
 # ADR 0062: A dropped publish leaves its outbox row pending
 
-**Status**: accepted (2026-09-26). Deviates from `ASY-09`, which fixes
-`publish` at `-> None`; the rule the guideline gives for it stands.
+**Status**: accepted (2026-09-26). Follows the guideline since v0.36.0
+for an entity change: Topics lets `publish` answer whether the bus took
+the event (ASY-09), and Database Roles marks a row done only once the
+bus took its publish (STO-20). The exception for ASY-09 leaves
+`pyproject.toml`, and `arch-check` passes without it. What this record
+decides for a work row departs from STO-20, which holds a request for
+work to the same rule; [ADR 0067](0067-what-0-36-0-asks-and-what-stays-a-choice.md)
+records that deviation.
 
 ## Context
 
@@ -45,9 +51,8 @@ The answer is a yes or no, not an id, so no broker's id reaches the
 interface, which is the rule's reason. Raising for a dropped message
 would also keep `-> None`, but then every caller that only wakes
 someone must catch it, and one that forgets fails a request after its
-write has landed. A bool is safe to ignore. `pyproject.toml` names
-`infra/src/tadas/infra/topics/__init__.py` as an exception to `ASY-09`,
-citing this record.
+write has landed. A bool is safe to ignore. `ASY-09` accepts it since
+guideline v0.36.0.
 
 **An entity change is done once the bus took its message.** A row whose
 publish was dropped is not marked. It stays pending, and the sweep
