@@ -4,23 +4,32 @@ The unit suite proves the engine is built with the numbers the settings name.
 These cases prove the numbers do what they say on a real connection: every
 contract case over Postgres runs under the settings' own deadline, a
 statement past its deadline is cancelled by the database, and a checkout past
-the pool waits its bound and fails. The last two set small bounds of their
-own, so each answers in a fraction of a second; the defaults are not changed
-by anything here.
+the pool waits its bound and fails. Through the storage funnel, both leave as
+`Unavailable`, on every role and under both logins. The cases after the first
+set small bounds of their own, so each answers in a fraction of a second; the
+defaults are not changed by anything here.
 """
 
 import time
 from collections.abc import AsyncIterator
+from typing import Any
+from uuid import UUID
 
 import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.exc import TimeoutError as PoolTimeoutError
 
-from tadas.om.storage.impl.pg_base import LoginSessions
+from tadas.om.base import EMPTY_UUID, new_id
+from tadas.om.events.storage.tables.events import Events
+from tadas.om.exceptions import Unavailable
+from tadas.om.storage.impl.pg_base import LoginSessions, PgStorageBase
 from tadas.om.storage.impl.postgres import login_sessions
 from tadas.om.storage.roles import DatabaseRole
 from tadas.om.storage.settings import MigrationSettings, RolePool
+from tadas.om.tasks.storage.tables.tasks import Tasks
+from tadas.om.tenancy.storage.tables.platform_sizes import PlatformSizes
+from tadas.om.work.storage.tables.work_items import WorkItems
 
 pytestmark = pytest.mark.integration
 
@@ -85,3 +94,57 @@ async def test_a_checkout_past_the_pool_waits_its_bound_and_fails(
                 await second.execute(text("SELECT 1"))
         waited = time.monotonic() - started
     assert 0.3 <= waited < 2.0
+
+
+A_TABLE_OF: dict[DatabaseRole, type[Any]] = {
+    DatabaseRole.CORE: Tasks,
+    DatabaseRole.ACTIVITY: Events,
+    DatabaseRole.QUEUE: WorkItems,
+    DatabaseRole.ADMIN: PlatformSizes,
+}
+"""A table of each role, which is what routes a session to that role's pool.
+The worker's claim is the queue role under the system login, and the outbox
+relay's claim the core role under it; a request's reads and writes are every
+role under the runtime login."""
+
+LOGINS = ("runtime", "system")
+
+
+def scope_of(login: str) -> UUID:
+    """The system scope opens the system login's pool; a tenant's, the runtime one's."""
+    return EMPTY_UUID if login == "system" else new_id()
+
+
+@pytest.mark.parametrize("login", LOGINS)
+@pytest.mark.parametrize("role", list(DatabaseRole))
+async def test_a_statement_past_its_deadline_leaves_the_funnel_unavailable(
+    tight_sessions: LoginSessions, role: DatabaseRole, login: str
+) -> None:
+    storage = PgStorageBase(tight_sessions)
+    with pytest.raises(Unavailable) as refused:
+        async with storage._session_for(A_TABLE_OF[role], org_id=scope_of(login)) as session:
+            await session.execute(text("SELECT pg_sleep(5)"))
+    assert refused.value.code == "unavailable"
+    assert f"a statement on the {role.value} role ({login} login) passed its deadline" in (
+        refused.value.message
+    )
+    assert isinstance(refused.value.__cause__, DBAPIError)
+
+
+@pytest.mark.parametrize("login", LOGINS)
+@pytest.mark.parametrize("role", list(DatabaseRole))
+async def test_a_checkout_past_its_bound_leaves_the_funnel_unavailable(
+    tight_sessions: LoginSessions, role: DatabaseRole, login: str
+) -> None:
+    """Another checkout holds the one connection of the pool the call would draw on."""
+    storage = PgStorageBase(tight_sessions)
+    pool = tight_sessions.system if login == "system" else tight_sessions
+    async with pool[role]() as holder:
+        await holder.connection()
+        with pytest.raises(Unavailable) as refused:
+            async with storage._session_for(A_TABLE_OF[role], org_id=scope_of(login)) as session:
+                await session.execute(text("SELECT 1"))
+    assert f"no connection to the {role.value} role ({login} login) within the checkout bound" in (
+        refused.value.message
+    )
+    assert isinstance(refused.value.__cause__, PoolTimeoutError)
