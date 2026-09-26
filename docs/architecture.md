@@ -1767,10 +1767,16 @@ page; this section says what exists.
   the account check, and the env file's fields are written once; the
   rules that stop a secret leaking stay inline in each of them, and
   `infra/tests/test_ops_skills.py` holds both halves.
-- **Audits.** Six more skills, `audit-retention`, `audit-query-indexes`,
-  `audit-database-calls`, `audit-credential-lifetimes`,
-  `audit-provider-calls`, and `audit-deploy-time`, each a read-only
-  analysis that repeats. The five that measure the code make a database
+- **Audits.** Six more skills, each a read-only analysis that repeats:
+  the four "Operational Skills" builds in, `audit-retention`,
+  `audit-query-indexes`, `audit-database-calls`, and
+  `audit-deploy-time`, and its two optional ones,
+  `audit-credential-lifetimes` and `audit-provider-calls`, which count
+  as well as read
+  ([ADR 0067](adr/0067-what-0-36-0-asks-and-what-stays-a-choice.md)).
+  An audit of calls proposes a fix in one order: remove a call, fold
+  it, defer it, cache it, and only then run calls in parallel. The
+  five that measure the code make a database
   of their own on the local stack (`ops/audit/auditdb.py`, named
   `audit_<slug>`), seed it (`ops/audit/seed.py`), measure it
   (`ops/audit/explain.py`, `ops/audit/dbcalls.py`), and drop it; the
