@@ -175,11 +175,14 @@ Zustand, one realtime channel.
   keyboard back on its button, and a click anywhere else closes it.
   Settings and Billing open with "← Tasks" above their title, the way
   back to the list.
-- The tasks page's heading is the list on screen. In a team org it is a
-  switch, My tasks | Team; in a personal org it is "My tasks", with no
-  switch. A personal org shows the `mine` list, which the server's rule
-  (a task assigned to the person, or unassigned and made by them) makes
-  every task of an org of one (`scopeModel.ts`).
+- The tasks page's heading is the list on screen. When the org has more
+  than one member, of either kind, it is a switch, My tasks | Team. When
+  the person is alone in the org it is "My tasks", with no switch, and
+  the page shows the `mine` list, which the server's rule (a task
+  assigned to the person, or unassigned and made by them) makes every
+  task of an org of one. A saved Team pick holds only where the switch
+  shows. The count is the member list the rows already name people
+  from, read whole, so it costs no read of its own (`scopeModel.ts`).
 - Tasks. Adding one is a single text box: type the title and press Enter,
   or click Add. The due date is set by editing the task, with a date
   picker and a link that clears it. A due date is a date, never a time:

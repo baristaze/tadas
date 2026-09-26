@@ -1,18 +1,27 @@
 import { describe, expect, it } from "vitest";
-import { SCOPE_CHOICES, scopeHeading, shownScope } from "./scopeModel";
+import { SCOPE_CHOICES, scopeHeading, scopeHeadingKind, shownScope } from "./scopeModel";
 
 describe("the list the tasks page shows", () => {
-  it("is the one picked in a team org", () => {
-    expect(shownScope("team", "team")).toBe("team");
-    expect(shownScope("mine", "team")).toBe("mine");
+  it("offers the switch when the org has more than one member, whatever its kind", () => {
+    // A personal org with two members and a team org of three alike.
+    expect(scopeHeadingKind(2)).toBe("switch");
+    expect(scopeHeadingKind(3)).toBe("switch");
   });
 
-  it("is always the person's own in a personal org", () => {
-    expect(shownScope("team", "personal")).toBe("mine");
-    expect(shownScope("mine", "personal")).toBe("mine");
+  it("says a plain My tasks when the person is alone, a team org of one included", () => {
+    expect(scopeHeadingKind(1)).toBe("alone");
+    expect(scopeHeadingKind(0)).toBe("alone");
   });
 
-  it("keeps the pick until the org is known", () => {
+  it("honours the saved team pick only where the switch shows", () => {
+    expect(shownScope("team", 2)).toBe("team");
+    expect(shownScope("mine", 2)).toBe("mine");
+    expect(shownScope("team", 1)).toBe("mine");
+    expect(shownScope("mine", 1)).toBe("mine");
+  });
+
+  it("keeps the pick while the member list is on its way", () => {
+    expect(scopeHeadingKind(undefined)).toBe("pending");
     expect(shownScope("team", undefined)).toBe("team");
   });
 

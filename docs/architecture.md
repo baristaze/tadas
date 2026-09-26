@@ -1158,8 +1158,8 @@ alone, and neither key may touch what the other's work does not need
   session and empties the query cache with the token, then sends the
   browser to WorkOS's logout when the API answers one, which comes back
   to `/signed-out`); the
-  tasks screen at `/` (its heading the list: My tasks | Team in a team
-  org, My tasks alone in a personal org; open in
+  tasks screen at `/` (its heading the list: My tasks | Team in an org
+  with more than one member, My tasks alone for a person alone in one; open in
   manual order and done newest first, both paged by the server's cursor
   with Show more, inline edit, drag to reorder, and in a task's open
   view its attachments: dropped or picked, posted straight to the store

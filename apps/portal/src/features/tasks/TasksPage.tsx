@@ -62,12 +62,13 @@ export function TasksPage() {
   );
 }
 
-/** The heading is the list on screen: a switch in a team org, the one list's
- * name in a personal org. The import sits at its right. */
+/** The heading is the list on screen: a switch when the org has more than
+ * one member, the one list's name when the person is alone in it. The
+ * import sits at its right. */
 function TasksHeading({ vm, imports }: { vm: TasksVm; imports: ImportVm }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: tokens.space.md, minHeight: 40, marginBottom: tokens.space.lg }}>
-      {vm.orgKind === "team" ? (
+      {vm.heading === "switch" ? (
         <>
           <h1 className="tadas-sr-only">{scopeHeading(vm.scope)}</h1>
           <SegmentedControl large label="Which tasks" value={vm.scope} options={SCOPE_CHOICES} onChange={vm.setScope} />
