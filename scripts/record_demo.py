@@ -19,7 +19,7 @@ checks both windows and stops, writing nothing, when a row wraps or the page
 scrolls sideways.
 
     make up
-    uv run --with pillow python scripts/record_demo.py docs/media/realtime-demo.gif
+    uv run python scripts/record_demo.py docs/media/realtime-demo.gif
 
 `make demo-gif` runs the second line. Other stacks: --api and --portal (the
 portal's build must point at the same API). Chrome: CHROME, or the default
@@ -565,7 +565,7 @@ async def screencast(cdp: Cdp, bob: Window, owner: Window, out: str, theme: str)
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser = argparse.ArgumentParser(description=(__doc__ or "").split("\n\n")[0])
     parser.add_argument("out", help="the GIF to write, e.g. docs/media/realtime-demo.gif")
     parser.add_argument("--api", default="http://127.0.0.1:8000")
     parser.add_argument("--portal", default="http://localhost:55173")

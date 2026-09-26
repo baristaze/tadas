@@ -155,16 +155,16 @@ seed: ## Create two local orgs with an owner, a member, and an admin of both to 
 # 55173). Empties the task list, then records docs/media/realtime-demo.gif:
 # Bob's window on the left, the owner's on the right.
 demo-gif: ## Record the README's realtime demo GIF against the running stack
-	uv run --with pillow python scripts/record_demo.py docs/media/realtime-demo.gif
+	uv run python scripts/record_demo.py docs/media/realtime-demo.gif
 
 # The same story in the dark theme, for the company site on a dark system.
 demo-gif-dark: ## Record the dark variant of the realtime demo GIF the company site shows
-	uv run --with pillow python scripts/record_demo.py docs/media/realtime-demo-dark.gif --theme dark
+	uv run python scripts/record_demo.py docs/media/realtime-demo-dark.gif --theme dark
 
 # Needs `make up` too. Bob in command mode on the left, the owner on
 # `tadas listen` on the right; records docs/media/cli-demo.gif.
 demo-cli-gif: ## Record the README's CLI demo GIF (command mode beside listen) against the running stack
-	uv run --with pillow python scripts/record_cli_demo.py docs/media/cli-demo.gif
+	uv run python scripts/record_cli_demo.py docs/media/cli-demo.gif
 
 # The ORM-versus-schema check needs a migrated database, which the fast gate
 # cannot reach, so `check` does not run it; CI's integration job runs it
@@ -186,7 +186,7 @@ lint: ## Ruff lint
 format-check: ## Ruff format, check only
 	uv run ruff format --check .
 
-typecheck: ## Pyright over every distribution
+typecheck: ## Pyright over every distribution and the scripts
 	uv run pyright
 
 arch-check: ## The guideline's static checks, configured in pyproject.toml

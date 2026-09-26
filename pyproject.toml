@@ -40,6 +40,9 @@ dev = [
     # Pinned exactly: `make openapi` regenerates clients/python/src/tadas/client/schema.py
     # with it and CI checks the committed file is current.
     "datamodel-code-generator==0.82.0",
+    # The demo recorders under scripts/ draw their frames with it, and the
+    # type check reads them with the rest.
+    "pillow>=12",
 ]
 
 [tool.pytest.ini_options]
