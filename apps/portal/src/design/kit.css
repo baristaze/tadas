@@ -643,3 +643,24 @@ li:hover .tadas-handle,
 .tadas-facts dd {
   margin: 0;
 }
+
+/* How far a background job is: a thin track, the accent filling it. */
+.tadas-progress {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--tadas-surface-subtle);
+  border: 1px solid var(--tadas-border);
+  overflow: hidden;
+}
+
+.tadas-progress-bar {
+  height: 100%;
+  background: var(--tadas-accent);
+  transition: width 240ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tadas-progress-bar {
+    transition: none;
+  }
+}

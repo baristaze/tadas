@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
-// Quick creation is one text box: the title, then Enter or Add. The view
-// model is stubbed; this case is about the form the page draws.
+// Quick creation is one text box: the title, then Enter or Add. The import
+// is an action of its own, outside that form. The view models are stubbed;
+// this case is about what the page draws.
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -18,7 +19,21 @@ const vm = vi.hoisted(() => ({
   error: null,
 }));
 
+const imports = vi.hoisted(() => ({
+  canImport: true,
+  dialogOpen: false,
+  openDialog: vi.fn(),
+  closeDialog: () => undefined,
+  picked: null,
+  pick: () => undefined,
+  starting: false,
+  failure: null,
+  start: () => Promise.resolve(),
+  shown: null,
+}));
+
 vi.mock("./useTasksVm", () => ({ useTasksVm: () => vm }));
+vi.mock("../imports/useImportVm", () => ({ useImportVm: () => imports }));
 vi.mock("../../app/AppNav", () => ({ AppNav: () => null }));
 vi.mock("../billing/PaymentNotice", () => ({ PaymentNotice: () => null }));
 vi.mock("./TaskItem", () => ({ TaskItem: () => null }));
@@ -58,4 +73,13 @@ it("creates on a click of Add", async () => {
   const add = container.querySelector("button[type=submit]") as HTMLButtonElement;
   await act(async () => add.click());
   expect(vm.add).toHaveBeenCalledOnce();
+});
+
+it("offers the import beside the lists, never inside the quick-add box", async () => {
+  const form = container.querySelector("form")!;
+  const importButton = [...container.querySelectorAll("button")].find((b) => b.textContent === "Import")!;
+  expect(importButton).toBeDefined();
+  expect(form.contains(importButton)).toBe(false);
+  await act(async () => importButton.click());
+  expect(imports.openDialog).toHaveBeenCalledOnce();
 });

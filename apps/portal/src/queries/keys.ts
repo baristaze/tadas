@@ -39,6 +39,12 @@ export const keys = {
     all: ["invitation"] as const,
     list: (limit: number) => ["invitation", "list", limit] as const,
   },
+  // An import is an orchestration record: the server pushes
+  // `orchestrations.orchestration.updated`, so the key starts with its entity.
+  imports: {
+    all: ["orchestration"] as const,
+    recent: ["orchestration", "import", "recent"] as const,
+  },
   tasks: {
     all: ["task"] as const,
     open: (scope: string) => ["task", "open", scope] as const,

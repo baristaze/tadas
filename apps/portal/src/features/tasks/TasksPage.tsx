@@ -7,6 +7,9 @@ import { TaskItem } from "./TaskItem";
 import type { DropSide } from "./tasksModel";
 import { useTasksVm, type TasksVm } from "./useTasksVm";
 import { PaymentNotice } from "../billing/PaymentNotice";
+import { ImportDialog } from "../imports/ImportDialog";
+import { ImportStatus } from "../imports/ImportStatus";
+import { useImportVm } from "../imports/useImportVm";
 
 const SCOPES: { value: TaskScope; label: string }[] = [
   { value: "mine", label: "My Tasks" },
@@ -15,11 +18,21 @@ const SCOPES: { value: TaskScope; label: string }[] = [
 
 export function TasksPage() {
   const vm = useTasksVm();
+  const imports = useImportVm(vm.canWrite);
   return (
     <Page title="Tasks" nav={<AppNav />} notice={<PaymentNotice />}>
       <div style={{ display: "flex", alignItems: "center", gap: tokens.space.md }}>
         <SegmentedControl label="Which tasks" value={vm.scope} options={SCOPES} onChange={vm.setScope} />
+        {imports.canImport ? (
+          <div style={{ marginLeft: "auto" }}>
+            <Button tone="plain" onClick={imports.openDialog}>
+              Import
+            </Button>
+          </div>
+        ) : null}
       </div>
+      <ImportStatus vm={imports} />
+      <ImportDialog vm={imports} />
       {vm.error ? (
         <Banner>
           {vm.error} <LinkButton onClick={vm.dismissError}>dismiss</LinkButton>
