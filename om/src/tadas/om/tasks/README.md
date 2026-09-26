@@ -55,7 +55,10 @@ seven kinds of thing [Tadas is made of](../../../../README.md).
   clearing it schedules none.
 - **Remind.** At nine in the morning of the due date, the task is marked
   reminded and every open screen of the org hears of it; so does the
-  org's Slack channel, when the org has one.
+  org's Slack channel, when the org has one. A screen that was away (its
+  connection dropped, or its tab was hidden long enough to pause) hears
+  of it when it comes back: each reminder by the task's title, or, past
+  three, how many it missed.
 - **Import** a CSV file. The file is uploaded as a
   [file](../media/README.md) of the `task_import` purpose, then the
   import starts, naming it. A worker reads the rows a hundred at a time;
