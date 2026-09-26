@@ -5,6 +5,7 @@ role). The claim, the purge, and the read of the oldest pending row are
 cross-tenant and serve the sweep."""
 
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from datetime import datetime, timedelta
 from uuid import UUID
 
@@ -42,8 +43,10 @@ class OutboxStorageInterface(ABC):
         ...
 
     @abstractmethod
-    async def mark_done(self, org_id: UUID, row_id: UUID) -> None:
-        """Stamps `done_at`; a row already done, or unknown, is left as is."""
+    async def mark_done(self, org_id: UUID, row_ids: Sequence[UUID]) -> None:
+        """Stamps `done_at` on the tenant's rows among `row_ids`, in one
+        statement, however many rows one relay delivered; a row already done,
+        another tenant's, or unknown, is left as is."""
         ...
 
     @abstractmethod

@@ -1,11 +1,12 @@
 import asyncio
+from collections import Counter
 from collections.abc import Callable, Sequence
 from datetime import timedelta
 from pathlib import Path
 from uuid import UUID
 
 import pytest
-from contracts.factories import make_user
+from contracts.factories import make_membership, make_user
 from contracts.outbox_storage import claim_all
 from contracts.plans import ON_TEAM, GrantedEverywhere
 from contracts.second_factor import (
@@ -833,20 +834,16 @@ async def test_users_update_their_own_display_name(
     viewer = await sign_in(manager, "cid@example.test", org.id)
 
     # The context carries the user's id; the entity is loaded by the manager.
-    me = await manager.get_user(viewer, viewer.user_id)
-    renamed = await manager.update_user(viewer, me.model_copy(update={"display_name": "Cid R."}))
+    renamed = await manager.rename_user(viewer, viewer.user_id, "Cid R.")
     assert renamed.display_name == "Cid R." and renamed.updated_at > renamed.created_at
     assert renamed.updated_by == viewer.user_id
     assert await manager.get_user(viewer, viewer.user_id) == renamed
 
     with pytest.raises(NotAuthorized):
-        owner_user = await manager.get_user(owner, owner.user_id)
-        await manager.update_user(viewer, owner_user.model_copy(update={"display_name": "Nope"}))
+        await manager.rename_user(viewer, owner.user_id, "Nope")
     with pytest.raises(ValidationFailed):
-        await manager.update_user(viewer, me.model_copy(update={"display_name": "  "}))
-    by_owner = await manager.update_user(
-        owner, renamed.model_copy(update={"display_name": "Cid", "email": "ignored@example.test"})
-    )
+        await manager.rename_user(viewer, viewer.user_id, "  ")
+    by_owner = await manager.rename_user(owner, viewer.user_id, "Cid")
     assert by_owner.display_name == "Cid" and by_owner.email == "cid@example.test"
 
 
@@ -1900,7 +1897,9 @@ async def test_one_person_joins_at_most_the_bound_of_orgs(
     assert identity is not None
     third = await storage.read_org_by_slug("c")
     assert third is not None
-    await storage.write_user(third.id, make_user(identity.id, "ann@example.test"))
+    raced = make_user(identity.id, "ann@example.test")
+    await storage.write_user(third.id, raced)
+    await storage.write_membership(third.id, make_membership(raced.id))
     with pytest.raises(MembershipLimitReached):
         await manager.dev_sign_in(request(), "ann@example.test")
     ictx = await manager.authenticate_login(request(), login.token)
@@ -2348,3 +2347,73 @@ async def test_a_person_records_their_time_zone_and_the_org_reads_it(
     assert await manager.get_time_zone(ann, new_id()) is None
     zed, _ = await manager.bootstrap(request(), "Zenith", "zenith", "zed@example.test", "Zed")
     assert await manager.get_time_zone(zed, ann.user_id) is None, "another org's user"
+
+
+# A sign-in reads a person's places in one read, however many they hold.
+
+
+class CountedReads(TenancyStorageMemoryImpl):
+    """Counts the reads a sign-in makes of a person's places: the calls the
+    manager makes, not the ones this memory impl makes inside its own."""
+
+    def __init__(self, outbox: OutboxStorageMemoryImpl) -> None:
+        super().__init__(outbox)
+        self.reads: Counter[str] = Counter()
+        self._inside = False
+
+    async def read_org(self, org_id: UUID) -> Org | None:
+        self.reads["read_org"] += 0 if self._inside else 1
+        return await super().read_org(org_id)
+
+    async def read_membership_for_user(self, org_id: UUID, user_id: UUID) -> Membership | None:
+        self.reads["read_membership_for_user"] += 0 if self._inside else 1
+        return await super().read_membership_for_user(org_id, user_id)
+
+    async def read_memberships_by_identity(
+        self, identity_id: UUID, limit: int, after_user_id: UUID | None = None
+    ) -> list[OrgMembership]:
+        self.reads["read_memberships_by_identity"] += 1
+        self._inside = True
+        try:
+            return await super().read_memberships_by_identity(identity_id, limit, after_user_id)
+        finally:
+            self._inside = False
+
+
+async def test_a_sign_in_reads_the_places_once_and_lists_the_living_ones(
+    infra: InfraLocalImpl, outbox: OutboxStorageMemoryImpl
+) -> None:
+    """The places a sign-in lists: every org the person is a live member of,
+    by user id, and not an org deleted or a membership ended. They are read
+    in one read, so a person in five orgs costs what a person in one does."""
+    storage = CountedReads(outbox)
+    manager = make_manager(storage, infra, TenancyOptions(dev_sign_in=True), outbox=outbox)
+    orgs = [
+        (await manager.bootstrap(request(), f"Org {i}", f"org-{i}", "ann@example.test", "Ann"))[1]
+        for i in range(5)
+    ]
+    await manager.bootstrap(request(), "Solo", "solo", "bob@example.test", "Bob")
+
+    storage.reads.clear()
+    one = await manager.dev_sign_in(request(), "bob@example.test")
+    reads_for_one = storage.reads.copy()
+    storage.reads.clear()
+    five = await manager.dev_sign_in(request(), "ann@example.test")
+    assert storage.reads == reads_for_one, "the reads do not grow with the orgs"
+    assert storage.reads["read_memberships_by_identity"] == 1
+    assert len(team(one.memberships)) == 1
+    assert {m.org.id for m in team(five.memberships)} == {org.id for org in orgs}
+    assert [m.user.id for m in five.memberships] == sorted(m.user.id for m in five.memberships)
+
+    # One org deleted, one membership ended: neither is a place any more.
+    gone = orgs[1].model_copy(update={"deleted_at": utcnow()})
+    await storage.write_org(gone.id, gone)
+    left = next(m for m in five.memberships if m.org.id == orgs[3].id)
+    ended = await storage.read_membership_for_user(orgs[3].id, left.user.id)
+    assert ended is not None
+    await storage.write_membership(orgs[3].id, ended.model_copy(update={"deleted_at": utcnow()}))
+    again = await manager.dev_sign_in(request(), "ann@example.test")
+    assert {m.org.id for m in team(again.memberships)} == {orgs[0].id, orgs[2].id, orgs[4].id}
+    kept = {m.org.id: m for m in five.memberships}
+    for place in again.memberships:
+        assert place.user == kept[place.org.id].user and place.role == kept[place.org.id].role

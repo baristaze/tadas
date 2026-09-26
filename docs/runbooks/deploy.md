@@ -11,7 +11,10 @@ Two branches, two workflows, one approval.
   with no approval. A merge is the deployment. A pull request never
   deploys, a fork's branch least of all: `ci` runs on every pull
   request, and a `workflow_run` carries this repository's staging role
-  whatever the code it followed.
+  whatever the code it followed. `main`'s ruleset requires the checks on
+  a branch up to date with `main`, so a pull request's checks ran on its
+  merge with the current `main`. After each merge, every other open pull
+  request updates its branch and runs its checks again before it merges.
 - `release` is production. It moves only by a fast-forward from `main`,
   which `.github/workflows/release.yml` makes when a person dispatches
   it; nobody commits to `release` and nothing merges into it. A push to

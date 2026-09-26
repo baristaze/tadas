@@ -23,12 +23,14 @@ push come. This is one of the seven kinds of thing
   There is no second step anyone could forget.
 - **Relayed at once.** The row is relayed in the request's own path.
   A change appends its event and publishes a push; a request for work
-  enqueues the item under the row's id and wakes the workers. Either
-  way the row is marked done.
+  enqueues the item under the row's id and wakes the workers. Then
+  every row the write landed is marked done at once, in one statement.
 - **Relayed by the sweep.** Whatever the request path left behind is
   claimed by the maintenance sweep, oldest first, a hundred rows at a
   time and again while a batch comes back whole, one attempt a row,
-  with a delay that doubles per attempt. A row whose attempts
+  with a delay that doubles per attempt. Each org's rows are relayed
+  together; when that fails, each is relayed alone, so only the row
+  that fails keeps an error. A row whose attempts
   are spent is failed for good, counted, and named by an event in the
   org's diary.
 - **Purged.** Done and failed rows are erased after the retention,

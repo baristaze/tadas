@@ -1,7 +1,11 @@
 # ADR 0044: The queue is fenced by one policy per login
 
-**Status**: accepted (2026-09-25). A deviation from the shape The
-Second Fence gives a policy; STO-28 holds.
+**Status**: accepted (2026-09-25). Follows the guideline since v0.35.0:
+The Second Fence lets a table that plans badly under the one policy
+carry one policy per login, kept where a measurement shows it, and
+STO-28 names the split's shape. It is not a deviation. The measurement
+is this record's table; the migration that makes the split names this
+record, and an applied migration is never edited.
 
 ## Context
 
@@ -84,5 +88,5 @@ A policy that names a login needs the login to exist when the
 migration runs. `migrate ensure-logins` runs before `migrate --all`
 everywhere, as it already must for the grants.
 
-A review reads the queue's two policies as this exception, not as a
-finding.
+A review reads the queue's two policies against the split STO-28
+names, with this record as its measurement.

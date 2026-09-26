@@ -1,9 +1,14 @@
 name: ci
 
+# A pull request merges only on a branch up to date with main (the main
+# ruleset), so its checks ran on its merge with the current main.
+# merge_group runs the same checks in a merge queue, which only an
+# organization's repository can turn on.
 on:
   push:
     branches: [main]
   pull_request:
+  merge_group:
 
 permissions:
   contents: read

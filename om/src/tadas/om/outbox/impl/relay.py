@@ -77,17 +77,39 @@ class OutboxRelayImpl(OutboxRelayInterface):
         claimed = await self._storage.claim_pending(
             limit, now, options.grace, options.backoff_base, options.backoff_cap
         )
-        relayed = 0
+        by_tenant: dict[UUID, list[OutboxRow]] = {}
         for row in claimed:
+            by_tenant.setdefault(row.org_id, []).append(row)
+        relayed = 0
+        for org_id, rows in by_tenant.items():
+            relayed += await self._relay_claimed(org_id, rows, now)
+        if relayed:
+            log.info("outbox sweep relayed %d rows", relayed)
+        return relayed
+
+    async def _relay_claimed(self, org_id: UUID, rows: Sequence[OutboxRow], now: datetime) -> int:
+        """One tenant's claimed rows, relayed together: one append, one mark.
+        When that fails, each row is relayed alone, so the row that fails
+        keeps its own error and delay and the rows beside it are relayed.
+        Delivering again what the first try delivered is harmless: every step
+        is idempotent on the row's id."""
+        if len(rows) > 1:
             try:
-                await self._deliver(row.org_id, row)
+                await self._deliver_all(org_id, rows)
+            except Exception:
+                log.warning("outbox relay of %d rows of %s failed; one by one", len(rows), org_id)
+            else:
+                OUTCOMES.labels(subsystem="outbox", outcome="relayed").inc(len(rows))
+                return len(rows)
+        relayed = 0
+        for row in rows:
+            try:
+                await self._deliver_all(org_id, (row,))
             except Exception as error:
-                await self._failed(row.org_id, row, f"{type(error).__name__}: {error}"[:500], now)
+                await self._failed(org_id, row, f"{type(error).__name__}: {error}"[:500], now)
                 continue
             OUTCOMES.labels(subsystem="outbox", outcome="relayed").inc()
             relayed += 1
-        if relayed:
-            log.info("outbox sweep relayed %d rows", relayed)
         return relayed
 
     async def oldest_pending_age(self) -> timedelta:
@@ -100,18 +122,18 @@ class OutboxRelayImpl(OutboxRelayInterface):
             OUTCOMES.labels(subsystem="outbox", outcome="purged").inc(purged)
         return purged
 
-    async def _deliver(self, org_id: UUID, row: OutboxRow) -> None:
-        await self._deliver_all(org_id, (row,))
-
     async def _deliver_all(self, org_id: UUID, rows: Sequence[OutboxRow]) -> None:
         """Each row's kind is its destination: an entity change becomes an event
         and an ENTITY_CHANGED publish, and a row of kind `work.<kind>`, the one
         a write that also starts work landed beside its entity's row, becomes a
         row in the queue and a WORK_AVAILABLE publish. The entity changes are
-        appended in one call, then each row is marked done. Raises on any step,
-        and every step is safe to run again: an event is idempotent on its
-        row's id and so is the enqueue, which presents that id as the item's
-        key."""
+        appended in one call, the work rows enqueued one by one, and then
+        every row is marked done in one statement. Raises on any step, and
+        every step is safe to run again: an event is idempotent on its row's
+        id and so is the enqueue, which presents that id as the item's key.
+        A row is marked done only once all of them are delivered, so a
+        failure leaves the whole batch for the sweep, never half of it
+        marked."""
         changes = [row for row in rows if not asks_for_work(row.kind)]
         if changes:
             # An event's id is its row's id: the append is idempotent on it, so
@@ -121,12 +143,10 @@ class OutboxRelayImpl(OutboxRelayInterface):
             )
             for event in appended:
                 await self._publish(org_id, event)
-            for row in changes:
-                await self._storage.mark_done(org_id, row.id)
         for row in rows:
             if asks_for_work(row.kind):
                 await self._enqueue(org_id, row)
-                await self._storage.mark_done(org_id, row.id)
+        await self._storage.mark_done(org_id, [row.id for row in rows])
 
     @staticmethod
     def _event_of(row: OutboxRow) -> Event:

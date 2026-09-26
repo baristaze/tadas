@@ -18,7 +18,7 @@ from tadas.om.opcontext import OpContext
 from tadas.om.storage.impl.postgres import StoragePostgresImpl
 from tadas.om.storage.settings import MigrationSettings
 from tadas.om.tasks.rules import BULK_BATCH
-from tadas.om.tasks.types.bulk import BulkAction, SkipReason
+from tadas.om.tasks.types.bulk import BulkAction, SkippedTask, SkipReason
 from tadas.om.tasks.types.filter import TaskFilter
 from tadas.om.tasks.types.task import Task, TaskScope, TaskStatus
 
@@ -101,3 +101,50 @@ async def test_a_reopen_on_free_opens_up_to_the_bound(
     assert {s.reason for s in reopened.skipped} == {SkipReason.PLAN_LIMIT}
     assert reopened.plan_bound is not None and reopened.plan_bound.limit == 10
     assert await tasks.count_active_tasks(ctx) == 10
+
+
+async def test_a_reopen_by_ids_lands_in_order_skips_a_moved_task_and_announces_each(
+    storage: StoragePostgresImpl, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The batch is one statement over Postgres: each task fenced on its own
+    version, the last named on top, and one event per task that changed, in
+    the order named. A task edited between the read and the write is left
+    alone, and announces nothing for the change."""
+    world = World(tmp_path, storage)
+    ctx = await world.org(Plan.TEAM)
+    tasks = world.managers.tasks
+    kept = await add(world, ctx, "kept open")
+    finished = [await add(world, ctx, f"done {index}") for index in range(5)]
+    await tasks.change_tasks(ctx, BulkAction.COMPLETE, [t.id for t in finished])
+    moved = finished[2]
+    task_storage = storage.get_tasks_storage()
+    write = task_storage.update_tasks_if_current
+
+    async def edited_first(*args: object) -> tuple[bool, ...]:
+        # Another writer lands between the change's read and its write.
+        current = await tasks.get_task(ctx, moved.id)
+        await tasks.update_task(
+            ctx, current.model_copy(update={"title": "renamed"}), current.version
+        )
+        monkeypatch.setattr(task_storage, "update_tasks_if_current", write)
+        return await write(*args)  # pyright: ignore[reportArgumentType]
+
+    monkeypatch.setattr(task_storage, "update_tasks_if_current", edited_first)
+    head = await storage.get_event_storage().read_head(ctx.org_id)
+    named = [t.id for t in reversed(finished)]
+
+    outcome = await tasks.change_tasks(ctx, BulkAction.REOPEN, named)
+
+    assert outcome.changed == tuple(i for i in named if i != moved.id)
+    assert outcome.skipped == (SkippedTask(id=moved.id, reason=SkipReason.CHANGED),)
+    assert await world.open_titles(ctx) == ["done 0", "done 1", "done 3", "done 4", "kept open"]
+    stored = await tasks.get_task(ctx, moved.id)
+    assert stored.status is TaskStatus.DONE and stored.title == "renamed"
+    announced = [
+        (e.kind, e.target_id)
+        for e in await storage.get_event_storage().read_after(ctx.org_id, head, 100)
+        if e.target_id != moved.id
+    ]
+    assert announced == [("tasks.task.updated", i) for i in outcome.changed]
+    assert await claim_all(storage.get_outbox_storage(), limit=1000) == []
+    assert kept.id not in outcome.changed

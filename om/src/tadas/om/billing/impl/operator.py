@@ -80,8 +80,7 @@ class BillingOperatorManagerImpl(BillingOperatorManagerInterface):
                 *self._wake(admin, org_id, before, account, now),
             )
             await self._storage.write_account(org_id, account, rows)
-        for row in rows:
-            await self._relay.relay(org_id, row)
+        await self._relay.relay_all(org_id, rows)
         log.info(
             "operator %s granted org %s %s",
             admin.identity_id,

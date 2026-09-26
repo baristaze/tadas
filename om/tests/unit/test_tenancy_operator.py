@@ -4,6 +4,7 @@ platform's size, and the creates that share their implementation with the
 seeding commands."""
 
 import logging
+from collections.abc import Sequence
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -71,9 +72,9 @@ class RecordingRelay(OutboxRelayImpl):
         super().__init__(*args)
         self.rows: list[OutboxRow] = []
 
-    async def relay(self, org_id: UUID, row: OutboxRow) -> bool:
-        self.rows.append(row)
-        return await super().relay(org_id, row)
+    async def relay_all(self, org_id: UUID, rows: Sequence[OutboxRow]) -> bool:
+        self.rows.extend(rows)
+        return await super().relay_all(org_id, rows)
 
 
 class Plane:

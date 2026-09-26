@@ -355,6 +355,13 @@ class TenancyManagerInterface(ABC):
     async def get_org(self, ctx: OpContext) -> Org: ...
 
     @abstractmethod
+    async def get_me(self, ctx: OpContext) -> OrgMembership:
+        """The caller's org, their user in it, and their membership's role,
+        read together in one transaction. The context carries ids, so what
+        the caller is shown is loaded here, as fresh as the request."""
+        ...
+
+    @abstractmethod
     async def create_org(
         self, ctx: OpContext, name: str, slug: str | None, attempt: Attempt | None = None
     ) -> OrgMembership:
@@ -438,8 +445,10 @@ class TenancyManagerInterface(ABC):
         ...
 
     @abstractmethod
-    async def update_user(self, ctx: OpContext, user: User) -> User:
-        """Copies the display name; email and identity belong to the identity."""
+    async def rename_user(self, ctx: OpContext, user_id: UUID, display_name: str) -> User:
+        """Sets a user's display name in this org: the caller's own, or
+        another member's with `manage_members`. Email and identity belong to
+        the identity. A blank name is ValidationFailed."""
         ...
 
     @abstractmethod
