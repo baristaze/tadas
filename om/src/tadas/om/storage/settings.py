@@ -19,6 +19,11 @@ from tadas.om.storage.roles import DatabaseRole
 LOCAL_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", "postgres"})
 """Where a development seed may write; the compose service name included."""
 
+MIGRATION_LOCK_TIMEOUT_SECONDS = 5.0
+"""The default of `database_migration_lock_timeout_seconds`: half the serving
+statements' deadline, so a request queued behind a migration that waits still
+ends inside its own."""
+
 
 @dataclass(frozen=True)
 class RolePool:
@@ -165,6 +170,16 @@ class MigrationSettings(StorageSettings):
         "postgresql+asyncpg://tadas_migration:tadas_migration@127.0.0.1:55432/tadas"
     )
     database_master_url: str | None = None
+
+    # The longest a statement of the migrate command waits for a lock, in
+    # seconds. A migration's DDL waits behind any transaction that holds its
+    # table, and every read and write of the table queues behind the DDL while
+    # it waits. Past the bound the statement fails, the role's chain rolls
+    # back, and the command asks to be run again (ADR 0071). The statements
+    # carry no deadline of their own: a backfill may run long.
+    database_migration_lock_timeout_seconds: float = Field(
+        default=MIGRATION_LOCK_TIMEOUT_SECONDS, gt=0
+    )
 
     def migration_role_urls(self) -> dict[DatabaseRole, str]:
         """Every role's URL under the migration login."""

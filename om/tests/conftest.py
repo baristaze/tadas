@@ -35,9 +35,14 @@ def migrated(migration_settings: MigrationSettings) -> dict[DatabaseRole, str]:
     """Every role migrated to its head, under the migration login, after the
     logins are in place; the URLs are the migration login's."""
     settings = migration_settings
-    asyncio.run(ensure_logins_at(settings.master_url(), settings.login_passwords()))
+    bound = settings.database_migration_lock_timeout_seconds
+    asyncio.run(
+        ensure_logins_at(
+            settings.master_url(), settings.login_passwords(), lock_timeout_seconds=bound
+        )
+    )
     urls = settings.migration_role_urls()
-    asyncio.run(upgrade_all(urls))
+    asyncio.run(upgrade_all(urls, lock_timeout_seconds=bound))
     return urls
 
 

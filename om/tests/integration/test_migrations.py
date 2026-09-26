@@ -1,9 +1,12 @@
 """Every role's migrated schema agrees with the ORM metadata, the latest
 revision of every role downgrades and upgrades again, the logins are safe to
-make twice, a data migration passes the fence it runs under, the personal
-org backfill gives every person one, and the due date backfill gives every
-task with a due time its date."""
+make twice, a migration behind a held lock gives up within its bound, a data
+migration passes the fence it runs under, the personal org backfill gives
+every person one, and the due date backfill gives every task with a due time
+its date."""
 
+import asyncio
+import time
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from uuid import UUID
@@ -25,7 +28,17 @@ from tadas.om.base import new_id
 from tadas.om.events.storage.impl.postgres import EventStoragePostgresImpl
 from tadas.om.opcontext import Role
 from tadas.om.storage.impl.pg_base import LoginSessions, set_scope
-from tadas.om.storage.migrate import backfill, check, downgrade, ensure_logins_at, head, upgrade
+from tadas.om.storage.migrate import (
+    RUN_AGAIN,
+    VERSION_TABLE,
+    backfill,
+    check,
+    downgrade,
+    ensure_logins_at,
+    head,
+    main,
+    upgrade,
+)
 from tadas.om.storage.roles import DatabaseRole
 from tadas.om.storage.settings import MigrationSettings
 from tadas.om.tasks.storage.impl.postgres import TasksStoragePostgresImpl
@@ -63,6 +76,41 @@ async def test_ensure_logins_runs_again_on_a_migrated_database(
     await ensure_logins_at(settings.master_url(), settings.login_passwords())
     for role in DatabaseRole:
         assert await check(role, migrated[role]) == []
+
+
+async def test_a_migration_behind_a_held_lock_gives_up_within_its_bound(
+    migrated: dict[DatabaseRole, str],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A transaction holds core's version table, which every run of core's
+    chain reads first, so it stands for a lock on any table a migration
+    touches. With the bound at one second, `migrate upgrade` gives up after
+    that second, applies nothing, and exits RUN_AGAIN, which the deploy's
+    pre-rollout task runs again on. Once the transaction ends, the same
+    command applies the revision. Without the bound, the run waited for as
+    long as the transaction stayed open."""
+    core = migrated[DatabaseRole.CORE]
+    await downgrade(DatabaseRole.CORE, core, "-1")
+    before = await on_core(core, f"SELECT version_num FROM core.{VERSION_TABLE}")
+    monkeypatch.setenv("TADAS_DATABASE_MIGRATION_LOCK_TIMEOUT_SECONDS", "1")
+    holder = create_async_engine(core)
+    try:
+        async with holder.begin() as held:
+            await held.execute(text(f"LOCK TABLE core.{VERSION_TABLE} IN ACCESS EXCLUSIVE MODE"))
+            started = time.monotonic()
+            code = await asyncio.to_thread(main, ["upgrade", "--role", "core"])
+            waited = time.monotonic() - started
+    finally:
+        await holder.dispose()
+    assert code == RUN_AGAIN
+    # The second of waiting, and what it costs to open a connection and read
+    # the chain around it.
+    assert 1.0 <= waited < 3.0
+    assert "core: a lock was not granted within 1 s" in capsys.readouterr().err
+    assert await on_core(core, f"SELECT version_num FROM core.{VERSION_TABLE}") == before
+    assert await asyncio.to_thread(main, ["upgrade", "--role", "core"]) == 0
+    assert await check(DatabaseRole.CORE, core) == []
 
 
 async def seed_two_tenants(pg_sessions: LoginSessions) -> None:
