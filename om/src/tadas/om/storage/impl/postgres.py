@@ -49,15 +49,33 @@ def connect_args(pool: RolePool) -> dict[str, Any]:
     }
 
 
+POOL_RECYCLE_SECONDS = 300
+"""The age past which a pooled connection is closed at checkout and a new one
+opened in its place. The shortest idle cutoff between a task and its database
+is the security group's connection tracking: 350 seconds on the newest EC2
+hosts, and a tracked connection idle past it is dropped without a word to
+either end. A connection is never idle longer than it is old, so none is used
+past that cutoff. Postgres itself closes no idle session: RDS leaves
+`idle_session_timeout` off, and the parameter group does not set it."""
+
+
 def engine_for(url: str, pool: RolePool) -> AsyncEngine:
     """One engine on a URL under one role's bounds. `max_overflow` is zero, not a
     knob of its own: the declared size is then the number of connections the
     process can hold, which is the number a worker's capacity is set against, and
     a checkout past it waits `pool_timeout` and fails rather than queueing
-    without end."""
+    without end.
+
+    No ping before a checkout: that is three round trips (BEGIN, a probe,
+    ROLLBACK) before every transaction. The pool recycles a connection before
+    anything on the path can drop it, and a connection the server closed anyway
+    fails the transaction's first statement, which writes nothing, so the
+    storage funnel opens the transaction again on a fresh connection
+    (`pg_base.scoped_session`). The failure also invalidates every connection
+    the pool opened before it, so the others are replaced at their checkout."""
     return create_async_engine(
         url,
-        pool_pre_ping=True,
+        pool_recycle=POOL_RECYCLE_SECONDS,
         pool_size=pool.size,
         max_overflow=0,
         pool_timeout=pool.checkout_timeout_seconds,
