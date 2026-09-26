@@ -1147,10 +1147,14 @@ alone, and neither key may touch what the other's work does not need
   to `/signed-out`), and one realtime
   channel that
   invalidates queries by the entity name inside a push's `kind`, or by
-  the query that carries the entity (a membership, through `me`); the
-  status says connecting from the moment a socket drops, degraded from
+  the query that carries the entity (a membership, through `me`),
+  except a live push about a task, which reads that one task and places
+  it into the cached lists (more than twenty tasks in one window read
+  the lists once instead); the status says connecting from the moment a socket drops, degraded from
   the second failed cycle, and closed on a 4401. Every
-  write sends the version of the task the query cache holds; a write
+  write sends the version of the task the query cache holds, and its
+  answer is placed into the cached lists with no list read again
+  (`src/queries/taskPlacement.ts`, pure, decides where); a write
   the server refused because the task changed since (the drag reorder
   is the natural case, from two windows) is said in one line and the
   list refetched. The reorder is one flow with its effects handed in
