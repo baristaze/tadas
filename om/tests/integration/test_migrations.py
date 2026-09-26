@@ -67,7 +67,7 @@ async def test_ensure_logins_runs_again_on_a_migrated_database(
 async def seed_two_tenants(pg_sessions: LoginSessions) -> None:
     events = EventStoragePostgresImpl(pg_sessions)
     for org in (new_id(), new_id()):
-        await events.append_event(org, make_event(org))
+        await events.append_events(org, [make_event(org)])
 
 
 def forced(connection: Connection) -> bool:

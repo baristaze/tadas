@@ -43,11 +43,16 @@ row erases them.
 ## The rules
 
 - **The sequence is gapless per org.** Each org has a cursor holding
-  its head. An append takes the head plus one under the cursor's lock,
-  inside the append's own transaction. Two appends to one org queue on
-  the cursor, and an append that rolls back returns the number with
-  it. The number is never computed by looking for the largest one and
-  hoping.
+  its head. An append takes the next numbers under the cursor's lock,
+  one per new event, in the statement that writes them, and holds the
+  lock to its commit. Two appends to one org queue on the cursor and
+  commit in the order of their numbers, so a reader never sees a number
+  before the ones below it. An append that rolls back returns its
+  numbers with it. The number is never computed by looking for the
+  largest one and hoping.
+- **Events appended together are numbered together.** An import's
+  hundred tasks are appended in one call and take a hundred numbers in a
+  row, in the file's order.
 - **Appending twice appends once.** An append is idempotent on the
   event's id. Relaying an outbox row twice consumes one number and
   leaves one line.

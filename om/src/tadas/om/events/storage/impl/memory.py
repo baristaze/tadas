@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from datetime import datetime
 from uuid import UUID
 
@@ -15,23 +16,36 @@ class EventStorageMemoryImpl(MemoryStorageBase, EventStorageInterface):
         self._cursors: dict[UUID, int] = {}
         self._floors: dict[UUID, int] = {}
 
-    async def append_event(self, org_id: UUID, event: Event) -> Event:
+    async def append_events(self, org_id: UUID, events: Sequence[Event]) -> tuple[Event, ...]:
+        batch = list(events)
+        if len({event.id for event in batch}) != len(batch):
+            raise ValueError("an append names one event id twice")
         async with self._lock:
-            stored = self._get(self._events, org_id, event.id)
-            if stored is not None:
-                return stored
-            # The tenant and the number are storage's, as the columns are in
-            # Postgres: an event that names another tenant is corrected. The
-            # write is fenced before the number is spent, the way Postgres
-            # rolls the number back with the insert it refused, so an id
-            # another tenant owns never moves this tenant's cursor.
-            appended = event.model_copy(update={"org_id": org_id})
-            self._fence(self._events, org_id, appended)
-            seq = self._cursors.get(org_id, 0) + 1
-            self._cursors[org_id] = seq
-            appended = appended.model_copy(update={"seq": seq})
-            self._put(self._events, org_id, appended)
-            return appended
+            stored: dict[UUID, Event] = {}
+            for event in batch:
+                found = self._get(self._events, org_id, event.id)
+                if found is not None:
+                    stored[event.id] = found
+            # The tenant and the numbers are storage's, as the columns are in
+            # Postgres: an event that names another tenant is corrected. Every
+            # write is fenced before a number is spent, the way Postgres rolls
+            # the whole call back with the insert it refused, so an id another
+            # tenant owns never moves this tenant's cursor.
+            fresh = [
+                event.model_copy(update={"org_id": org_id})
+                for event in batch
+                if event.id not in stored
+            ]
+            for event in fresh:
+                self._fence(self._events, org_id, event)
+            head = self._cursors.get(org_id, 0)
+            for seq, event in enumerate(fresh, start=head + 1):
+                appended = event.model_copy(update={"seq": seq})
+                self._put(self._events, org_id, appended)
+                stored[event.id] = appended
+            if fresh:
+                self._cursors[org_id] = head + len(fresh)
+            return tuple(stored[event.id] for event in batch)
 
     async def read_after(self, org_id: UUID, after_seq: int, limit: int) -> list[Event]:
         newer = [e for e in self._rows(self._events, org_id) if e.seq > after_seq]

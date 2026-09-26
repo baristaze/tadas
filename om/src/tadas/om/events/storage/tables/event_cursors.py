@@ -8,8 +8,10 @@ from tadas.om.storage.tables.base import Base
 
 class EventCursors(Base):
     """One row per tenant: `head` is the last seq the append assigned. The
-    append takes `head + 1` under this row's lock inside its own transaction,
-    so two appends to one tenant queue here and a rollback returns the number.
+    append takes `head + n` for its n new events under this row's lock, in the
+    statement that writes them, and holds the lock to its commit, so two
+    appends to one tenant queue here, commit in the order of their numbers,
+    and a rollback returns the numbers.
     The same row is the tenant's head seq, the number every pong carries.
 
     `floor` is the highest seq the trim removed, 0 while it removed none. The

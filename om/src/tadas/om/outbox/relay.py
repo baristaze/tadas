@@ -9,6 +9,7 @@ is settled. The relay is idempotent on the row's id, so relaying twice is
 harmless."""
 
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from datetime import timedelta
 from uuid import UUID
 
@@ -25,6 +26,17 @@ class OutboxRelayInterface(ABC):
         idempotency key, and publishes WORK_AVAILABLE. Either way the row is
         marked done. Returns False, and never raises, when a step failed: the
         row is durable and the sweep relays it again."""
+        ...
+
+    @abstractmethod
+    async def relay_all(self, org_id: UUID, rows: Sequence[OutboxRow]) -> bool:
+        """`relay` for the rows one write landed together, such as an import
+        step's hundred tasks: the entity changes among them are appended in
+        one call, so they take one run of contiguous numbers under one hold of
+        the tenant's cursor instead of one hold each, and are published in
+        that order; the work rows are enqueued one by one. Every row is then
+        marked done. Returns False, and never raises, when a step failed: the
+        rows are durable and the sweep relays what is left."""
         ...
 
     @abstractmethod

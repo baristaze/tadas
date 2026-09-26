@@ -115,8 +115,8 @@ async def test_the_runtime_login_naming_the_system_scope_reads_nothing(
     while the system login reads every tenant's rows."""
     events = EventStoragePostgresImpl(pg_sessions)
     first, second = new_id(), new_id()
-    await events.append_event(first, make_event(first))
-    await events.append_event(second, make_event(second))
+    await events.append_events(first, [make_event(first)])
+    await events.append_events(second, [make_event(second)])
 
     async with pg_sessions[DatabaseRole.ACTIVITY]() as session:
         assert await _event_ids(session, EMPTY_UUID) == []
@@ -148,8 +148,8 @@ async def test_the_policy_is_what_refuses_the_other_tenant(
     whatever the assertions say."""
     events = EventStoragePostgresImpl(pg_sessions)
     mine, theirs = new_id(), new_id()
-    await events.append_event(mine, make_event(mine))
-    await events.append_event(theirs, make_event(theirs))
+    await events.append_events(mine, [make_event(mine)])
+    await events.append_events(theirs, [make_event(theirs)])
     read = text("SELECT org_id FROM activity.events")
 
     async def orgs_seen() -> set[UUID]:
@@ -235,7 +235,7 @@ async def test_a_transaction_with_no_scope_reads_nothing_and_writes_refuse(
     accepted price, and the write is refused outright."""
     org = new_id()
     events = EventStoragePostgresImpl(pg_sessions)
-    appended = await events.append_event(org, make_event(org))
+    (appended,) = await events.append_events(org, [make_event(org)])
     assert await events.read_head(org) == 1
 
     async with pg_sessions[DatabaseRole.ACTIVITY]() as session:

@@ -292,7 +292,7 @@ async def seed_tasks(plane: Plane, org_id: UUID, count: int, status: TaskStatus)
             app="api",
         )
         assert await plane.tasks.create_task(org_id, task, (row,))
-        await plane.events.append_event(org_id, row_event(org_id, row))
+        await plane.events.append_events(org_id, [row_event(org_id, row)])
     return tasks
 
 

@@ -200,5 +200,4 @@ class OrchestrationsManagerImpl(OrchestrationsManagerInterface):
         await self._relay_all(ctx, rows)
 
     async def _relay_all(self, ctx: OpContext, rows: tuple[OutboxRow, ...]) -> None:
-        for row in rows:
-            await self._relay.relay(ctx.org_id, row)
+        await self._relay.relay_all(ctx.org_id, rows)

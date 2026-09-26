@@ -44,7 +44,7 @@ class EventsManagerImpl(EventsManagerInterface):
                 "app": ctx.app.type.value,
             }
         )
-        return await self._storage.append_event(ctx.org_id, stamped)
+        return (await self._storage.append_events(ctx.org_id, [stamped]))[0]
 
     async def get_events(self, ctx: OpContext, after_seq: int, limit: int) -> list[Event]:
         ctx.require(Permission.READ)
