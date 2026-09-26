@@ -16,6 +16,7 @@ output "alarm_names" {
       aws_cloudwatch_metric_alarm.work_backlog.alarm_name,
       aws_cloudwatch_metric_alarm.work_dead_letter.alarm_name,
       aws_cloudwatch_metric_alarm.outbox_lag.alarm_name,
+      aws_cloudwatch_metric_alarm.outbox_dead_letter.alarm_name,
     ],
     [for alarm in aws_cloudwatch_metric_alarm.read_latency : alarm.alarm_name],
     [for alarm in aws_cloudwatch_metric_alarm.queue_backlog : alarm.alarm_name],
