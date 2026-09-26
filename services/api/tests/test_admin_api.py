@@ -120,11 +120,14 @@ async def test_every_route_is_held_to_its_permission(
         as_writer = await client.request(method, path, headers=writer, **extra)
         expected = 201 if method == "POST" else 200
         assert as_writer.status_code == expected, f"{method} {path}: {as_writer.text}"
-    # The refused writes landed nothing: the org is only now deleted, by the writer.
+    # The refused writes landed nothing: the org is only now closed, by the
+    # writer, with nobody left in it; the queue deletes it.
     orgs = {
         o["slug"]: o for o in (await client.get("/v1/admin/orgs", headers=reader)).json()["items"]
     }
-    assert orgs["acme"]["deleted_at"] is not None and orgs["other"]["deleted_at"] is None
+    assert orgs["acme"]["deleted_at"] is None and orgs["other"]["deleted_at"] is None
+    members = await client.get(f"/v1/admin/orgs/{org_id}/members", headers=reader)
+    assert members.json()["items"] == []
 
 
 async def test_an_operator_reads_one_tenant_and_leaves_a_trail(
