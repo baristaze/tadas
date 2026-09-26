@@ -93,15 +93,36 @@ class MintOperatorTokenRequest(RequestBody):
 
 
 class IssuedOperatorTokenView(View):
-    """The token in the clear on the first response only; a replay under the
-    same Idempotency-Key answers with `token` null. A client that lost the
-    first answer mints another; the lost one expires within the hour."""
+    """The token in the clear, on this answer only; `id` names it afterwards,
+    in the list and the revoke, and is no secret. The mint ends the sign-in
+    it was given, so a client that lost this answer signs in again for
+    another token and revokes the lost one by its id from the list."""
 
     secret_fields = frozenset({"token"})
 
+    id: UUID
     token: str | None
     expires_at: datetime
     permission: OperatorRole
+
+
+class OperatorTokenView(View):
+    """One operator token as its operator reads it: never the secret, which is
+    kept as its digest. `revoked_at` is set once it was ended."""
+
+    id: UUID
+    permission: OperatorRole
+    created_at: datetime
+    expires_at: datetime
+    revoked_at: datetime | None
+
+
+class OperatorTokenPageView(View):
+    """One page of the caller's live operator tokens, newest first;
+    `next_cursor` as on `UserPageView`."""
+
+    items: list[OperatorTokenView]
+    next_cursor: str | None
 
 
 class OperatorWorkItemView(View):

@@ -146,8 +146,8 @@ class TenancyServiceImpl(TenancyServiceInterface):
             ),
         )
 
-    async def logout(self, ctx: OpContext, body: LogoutRequest | None) -> SignedOutView:
-        signed_out = await self._tenancy.logout(ctx, body.return_to if body else None)
+    async def logout(self, ictx: IdentityContext, body: LogoutRequest | None) -> SignedOutView:
+        signed_out = await self._tenancy.logout(ictx, body.return_to if body else None)
         return SignedOutView.model_validate(signed_out.session).model_copy(
             update={"provider_logout_url": signed_out.provider_logout_url}
         )

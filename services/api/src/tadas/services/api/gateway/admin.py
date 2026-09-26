@@ -1,17 +1,19 @@
 """The operator gate: the identity stage the bearer reaches is admitted only
 when the identity is an operator, and produces an OperatorContext. Two
 credentials reach it: the person's own sign-in, which admits only with a
-verified second factor, and an operator token, which carries one permission.
-The tenancy manager's `admit_operator` decides; the gate adds one rule of
-the edge: an operator with no second factor enrolled yet reaches the two
-enrolment routes and is refused on every other one, by name. No OpContext
-exists on this path."""
+verified second factor and then only to mint one operator token, and an
+operator token, which carries one permission and is what every read and
+write on the plane takes. The tenancy manager's `admit_operator` decides;
+the gate adds the rules of the edge that name the refusal: an operator with
+no second factor enrolled yet reaches the two enrolment routes, a sign-in
+with its code reaches the mint, and each is refused on every other route,
+by name. No OpContext exists on this path."""
 
 from typing import Annotated
 
 from fastapi import Depends, Request
 
-from tadas.om.exceptions import SecondFactorNotEnrolled
+from tadas.om.exceptions import OperatorTokenRequired, SecondFactorNotEnrolled
 from tadas.om.opcontext import OperatorContext, OperatorPermission
 from tadas.services.api.gateway.auth import Identity
 from tadas.services.api.gateway.resolve import container_of
@@ -27,12 +29,27 @@ async def enrolling_admin(request: Request, identity: Identity) -> OperatorConte
 EnrollingOperatorCtx = Annotated[OperatorContext, Depends(enrolling_admin)]
 
 
-async def current_admin(admin: EnrollingOperatorCtx) -> OperatorContext:
-    """An operator the plane admits to its work: one whose admission carries
-    more than `ENROL`."""
+async def minting_admin(admin: EnrollingOperatorCtx) -> OperatorContext:
+    """An operator whose second factor is enrolled: the mint's gate. The
+    manager then takes only a sign-in that verified a code, so a token never
+    mints a token."""
     if admin.permissions <= {OperatorPermission.ENROL}:
         raise SecondFactorNotEnrolled(
             "enrol a second factor first: POST /v1/admin/me/totp, then /confirm"
+        )
+    return admin
+
+
+MintingOperatorCtx = Annotated[OperatorContext, Depends(minting_admin)]
+
+
+async def current_admin(admin: MintingOperatorCtx) -> OperatorContext:
+    """An operator the plane admits to its work: an operator token, whose
+    admission carries a read or a write."""
+    if admin.permissions <= {OperatorPermission.MINT}:
+        raise OperatorTokenRequired(
+            "a sign-in mints an operator token and does nothing else: "
+            "POST /v1/admin/me/tokens, then present the token"
         )
     return admin
 

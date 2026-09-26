@@ -7,6 +7,7 @@ from tadas.om.idempotency.types.attempt import Attempt
 from tadas.om.opcontext import OperatorContext, OperatorPermission, OperatorRole
 from tadas.om.tasks.types.task import TaskStatus
 from tadas.om.tenancy import TenancyOperatorManagerInterface
+from tadas.om.tenancy.types.session import Session
 from tadas.om.work import WorkOperatorManagerInterface
 from tadas.services.api.services.admin import AdminServiceInterface
 from tadas.services.api.services.impl.tasks import decode_cursor as decode_task_cursor
@@ -19,6 +20,8 @@ from tadas.services.api.types.admin import (
     IssuedOperatorTokenView,
     IssuedTotpSecretView,
     MintOperatorTokenRequest,
+    OperatorTokenPageView,
+    OperatorTokenView,
     OperatorView,
     OperatorWorkItemView,
     PlatformSizeView,
@@ -76,8 +79,27 @@ class AdminServiceImpl(AdminServiceInterface):
         expires_in = None if body.expires_in is None else timedelta(seconds=body.expires_in)
         issued = await self._tenancy.issue_operator_token(admin, body.permission, expires_in)
         return IssuedOperatorTokenView(
-            token=issued.token, expires_at=issued.expires_at, permission=issued.operator_role
+            id=issued.id,
+            token=issued.token,
+            expires_at=issued.expires_at,
+            permission=issued.operator_role,
         )
+
+    async def list_tokens(
+        self, admin: OperatorContext, cursor: str | None, limit: int
+    ) -> OperatorTokenPageView:
+        limit = clamp_limit(limit)
+        after = decode_cursor("operator-tokens", cursor) if cursor else None
+        page = await self._tenancy.get_operator_tokens(admin, after, limit)
+        return OperatorTokenPageView(
+            items=[token_view(t) for t in page.items],
+            next_cursor=(
+                encode_cursor("operator-tokens", page.items[-1].id) if page.has_more else None
+            ),
+        )
+
+    async def revoke_token(self, admin: OperatorContext, token_id: UUID) -> OperatorTokenView:
+        return token_view(await self._tenancy.revoke_operator_token(admin, token_id))
 
     async def size(self, admin: OperatorContext) -> PlatformSizeView:
         return PlatformSizeView.model_validate(await self._tenancy.size(admin))
@@ -154,6 +176,19 @@ class AdminServiceImpl(AdminServiceInterface):
         self, admin: OperatorContext, org_id: UUID, item_id: UUID
     ) -> OperatorWorkItemView:
         return OperatorWorkItemView.model_validate(await self._work.requeue(admin, org_id, item_id))
+
+
+def token_view(token: Session) -> OperatorTokenView:
+    """A row of kind `operator_token` as the wire reads it: its one permission
+    under the name the mint takes it by, and never its digest."""
+    assert token.operator_role is not None, "an operator token names its permission"
+    return OperatorTokenView(
+        id=token.id,
+        permission=token.operator_role,
+        created_at=token.created_at,
+        expires_at=token.expires_at,
+        revoked_at=token.revoked_at,
+    )
 
 
 def operator_billing(billing: Billing) -> OperatorBillingView:

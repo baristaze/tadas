@@ -132,14 +132,16 @@ async def list_my_memberships(
     return await tenancy.get_identity_memberships(identity, cursor, limit)
 
 
-# The session presented ends; the answer names where the browser goes to end
+# The credential presented ends, whichever a person holds: a session, a
+# sign-in (with or without its second factor), or an operator token, which is
+# how an operator signs out. The answer names where the browser goes to end
 # the identity provider's session behind it, when there is one. The body is
 # optional: a caller with no browser sends none.
 @router.post("/auth/logout", response_model=SignedOutView)
 async def logout(
-    ctx: Ctx, tenancy: TenancyService, body: LogoutRequest | None = None
+    identity: Identity, tenancy: TenancyService, body: LogoutRequest | None = None
 ) -> SignedOutView:
-    return await tenancy.logout(ctx, body)
+    return await tenancy.logout(identity, body)
 
 
 @router.get("/me", response_model=MeView)

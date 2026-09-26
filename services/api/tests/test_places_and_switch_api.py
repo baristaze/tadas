@@ -6,7 +6,7 @@ from uuid import UUID
 
 import httpx
 import pytest
-from api_support import OWNER, enrol_operator, on_plan, seed_request, sign_in_as
+from api_support import OWNER, enrolled_sign_in, on_plan, seed_request, sign_in_as
 
 from tadas.om.billing.types.plan import Plan
 from tadas.om.opcontext import OperatorRole, Role
@@ -145,18 +145,18 @@ async def test_a_session_never_admits_an_operator(
     """A portal session proves the identity, and the identity is on the
     operator allowlist; the operator plane still refuses a tenant's
     credential, even one exchanged from a sign-in with a second factor. The
-    exchange ends that sign-in, so the plane refuses it after too: an
-    operator who enters a tenant signs in again for the plane."""
-    admin, _ = await enrol_operator(client, container, "root@example.test", OperatorRole.WRITE)
-    admitted = await client.get("/v1/admin/orgs", headers=admin)
-    assert admitted.status_code == 200, admitted.text
-    orgs = await client.get("/v1/auth/memberships", headers=admin)
+    exchange ends that sign-in, so it mints no token after: an operator who
+    enters a tenant signs in again for the plane."""
+    signed_in, _ = await enrolled_sign_in(
+        client, container, "root@example.test", OperatorRole.WRITE
+    )
+    orgs = await client.get("/v1/auth/memberships", headers=signed_in)
     ops = next(m["org"]["id"] for m in orgs.json()["items"] if m["org"]["kind"] == "team")
-    session = await client.post("/v1/auth/sessions", headers=admin, json={"org_id": ops})
+    session = await client.post("/v1/auth/sessions", headers=signed_in, json={"org_id": ops})
     assert session.status_code == 200, session.text
     refused = await client.get("/v1/admin/orgs", headers=bearer(session.json()["token"]))
     assert refused.status_code == 401, refused.text
-    used = await client.get("/v1/admin/orgs", headers=admin)
+    used = await client.post("/v1/admin/me/tokens", headers=signed_in, json={"permission": "read"})
     assert used.status_code == 401, used.text
 
 
