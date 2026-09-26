@@ -298,10 +298,16 @@ class TenancyManagerInterface(ABC):
         org_id: UUID,
         credential_kind: CredentialKind,
         credential_id: UUID,
+        *,
+        record_use: bool = True,
     ) -> SocketPrincipal:
         """Platform-internal: re-checks the credential behind a redeemed socket
         ticket and yields the socket's context with the credential's expiry,
-        the bound on the socket's authority."""
+        the bound on the socket's authority. The redemption calls it once,
+        and an open socket calls it again on an interval. That recheck passes
+        `record_use=False`: it asks whether the credential still holds, and a
+        question is not a use, so an open socket never keeps an idle session
+        alive."""
         ...
 
     @abstractmethod

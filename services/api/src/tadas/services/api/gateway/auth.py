@@ -14,6 +14,7 @@ from tadas.om.exceptions import NotAuthenticated, NotFound, PlatformException, V
 from tadas.om.opcontext import AppContext, AppType, IdentityContext, OpContext, RequestContext
 from tadas.om.tenancy.types.socket_ticket import SocketPrincipal
 from tadas.services.api.gateway.observability import request_id_of
+from tadas.services.api.gateway.ratelimit import failures_counted, spend_credential
 from tadas.services.api.gateway.resolve import container_of
 
 log = logging.getLogger(__name__)
@@ -72,9 +73,15 @@ async def current_context(
     rctx: Rctx,
     authorization: Annotated[str | None, Header()] = None,
 ) -> OpContext:
-    """The tenant stage: a session token or an api key, resolved to a membership."""
+    """The tenant stage: a session token or an api key, resolved to a membership.
+    The lookup counts its failures against the client address, and the
+    resolved credential spends its own budget (ADR 0059)."""
     tenancy = container_of(request).managers.tenancy
-    return await tenancy.authenticate(rctx, bearer_of(authorization))
+    credential = bearer_of(authorization)
+    async with failures_counted(request):
+        ctx = await tenancy.authenticate(rctx, credential)
+    await spend_credential(request, ctx)
+    return ctx
 
 
 Ctx = Annotated[OpContext, Depends(current_context)]
@@ -100,9 +107,13 @@ async def current_identity(
     which proves its user's identity as well as its tenant, and an operator
     token, which reaches the operator gate and nothing else. The operator
     gate then takes the sign-in credential, with its second factor, or the
-    operator token."""
+    operator token. The limits are the tenant stage's."""
     tenancy = container_of(request).managers.tenancy
-    return await tenancy.authenticate_login(rctx, bearer_of(authorization))
+    credential = bearer_of(authorization)
+    async with failures_counted(request):
+        identity = await tenancy.authenticate_login(rctx, credential)
+    await spend_credential(request, identity)
+    return identity
 
 
 Identity = Annotated[IdentityContext, Depends(current_identity)]

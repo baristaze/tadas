@@ -194,21 +194,41 @@ change. A name the image does not host refuses the boot.
   so a saturated process answers and says why instead of queueing
   work it cannot start. Admission fails closed and is counted in the
   process's own memory.
-- **Rate limits.** Per route, counted in the shared cache so every
-  replica shares one budget, keyed on the credential or, on an
-  unauthenticated route, the client address. Past the budget the
-  answer is a 429. Rate limits fail open: they are fairness, not a
-  security boundary.
+- **Rate limits.** Counted in the shared cache, so every replica
+  shares one budget. Past a budget the answer is a 429,
+  `rate_limited`, in the one envelope, with a `Retry-After` in
+  seconds: the time left on the window. There are three budgets.
+  - **Per credential.** Every session and API key has a budget of
+    reads (`GET`, `HEAD`) and one of writes, spent once the credential
+    resolves (`TADAS_CREDENTIAL_RATE_LIMIT_READS`, `_WRITES`, over
+    `TADAS_CREDENTIAL_RATE_WINDOW_SECONDS`). Two people behind one
+    address never share it.
+  - **Per address, on failed authentications.** A bearer that is
+    unknown, expired, or revoked answers 401 and counts against the
+    client address (`TADAS_FAILED_AUTHENTICATION_LIMIT`). Once that is
+    spent, every request from the address answers 429, a live
+    credential's included, and nothing is looked up until the window
+    ends. The refusal says so in its message.
+  - **Per address, on sign-in.** The sign-in routes share
+    `TADAS_LOGIN_RATE_LIMIT`, since no credential exists yet.
+
+  Rate limits fail open: they are fairness, not a security boundary
+  ([ADR 0059](../../docs/adr/0059-authenticated-routes-have-limits.md)).
 - **The client address behind a load balancer.** The forwarded address
   is trusted only from the peers the settings name, never from
   everyone, so a caller cannot pick its own address. Through the
   portal's CDN edge it is one hop further in, and only a request that
   carries the edge's secret (`TADAS_EDGE_SECRET`, in `X-Tadas-Edge`)
   gets that hop; the header never reaches a route.
-- **A socket is bounded twice.** It closes at the expiry of the
-  credential behind its ticket whatever the client does, and it
-  closes at once when that credential is revoked. Both close with
-  code 4401, which every client reads as "sign in again".
+- **A socket's trust is bounded.** It closes at once when the
+  credential behind its ticket is revoked, and at its expiry whatever
+  the client does. The revocation rides a bus that may lose it, so the
+  socket also re-checks the credential every
+  `TADAS_REALTIME_RECHECK_SECONDS` and closes when it is refused. Each
+  of these closes with code 4401, which every client reads as "sign in
+  again". A change of the member's role closes the socket with 1012,
+  which every client reads as "reconnect", and the new socket carries
+  the new role.
 - **The socket ticket is never logged.** Access logging is the
   gateway's own, by route template, with no query string.
 

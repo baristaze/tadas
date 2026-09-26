@@ -3,12 +3,16 @@ redeems the ticket; the handler subscribes to topics on the client's behalf
 through the realtime service, moves frames through the bounded send buffer,
 and closes the socket when its authority ends: when the credential behind
 the ticket is revoked or the membership ends, which the realtime service
-hears on the bus, and at the credential's expiry whatever the client does,
-which covers a revocation the bus never delivered."""
+hears on the bus; when the handler's own recheck of the credential is
+refused, which bounds a revocation the bus never delivered by minutes; and
+at the credential's expiry whatever the client does. A change of the
+member's role closes the socket too, with a code that asks the client to
+reconnect under the rights it has now."""
 
 import asyncio
 import contextlib
 import logging
+import random
 from collections.abc import Callable
 from typing import Annotated
 
@@ -20,6 +24,7 @@ from tadas.infra.topics import Topics
 from tadas.om.base import utcnow
 from tadas.om.exceptions import PlatformException
 from tadas.om.opcontext import OpContext
+from tadas.om.tenancy.types.socket_ticket import SocketPrincipal
 from tadas.services.api.gateway.auth import CLOSE_UNAUTHENTICATED, Ctx, Principal
 from tadas.services.api.gateway.resolve import RealtimeService, container_of
 from tadas.services.api.realtime.envelopes import (
@@ -33,7 +38,7 @@ from tadas.services.api.realtime.envelopes import (
 )
 from tadas.services.api.realtime.send_buffer import SendBuffer
 from tadas.services.api.realtime.timeouts import IDLE_TIMEOUT_SECONDS
-from tadas.services.api.services.realtime import RealtimeServiceInterface
+from tadas.services.api.services.realtime import RIGHTS_CHANGED, RealtimeServiceInterface
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/realtime", tags=["realtime"])
@@ -50,6 +55,12 @@ drops without a close frame. Every failure below ends as this close."""
 
 INTERNAL_ERROR = "internal_error"
 """The close reason that goes with it; the detail stays in the log."""
+
+CLOSE_RECONNECT = 1012
+"""The close code when the socket's rights changed and its credential still
+holds: the registered "service restart", which every client reads as
+"reconnect". 4401 would sign the person out, and nothing about their
+sign-in is wrong."""
 
 
 def new_send_buffer(websocket: WebSocket) -> SendBuffer:
@@ -121,7 +132,7 @@ async def serve_commands(
                 buffer.offer(ErrorEnvelope(code="bad_command", message=str(error)[:200]))
                 continue
             if command.op == "ping":
-                buffer.offer(PongEnvelope(seq=await realtime.head(ctx)))
+                buffer.offer(PongEnvelope(seq=await realtime.pong_head(ctx)))
             elif topic is None:
                 buffer.offer(ErrorEnvelope(code="bad_command", message="topic is required"))
             elif command.op == "subscribe":
@@ -140,6 +151,32 @@ async def serve_commands(
         return
 
 
+async def recheck_until_refused(
+    realtime: RealtimeServiceInterface,
+    principal: SocketPrincipal,
+    end: Callable[[str], None],
+    interval: float,
+    phase: Callable[[float], float] = lambda interval: random.uniform(0.0, interval),
+) -> None:
+    """Asks the realtime service, every `interval` seconds, whether the
+    socket's authority still holds, and ends the socket with the reason when
+    it does not. The first check waits a phase drawn at random within one
+    interval: sockets opened together (a deploy's reconnects) would
+    otherwise check together forever. No two checks are further apart than
+    the interval, so a revocation the bus lost holds a socket open for one
+    interval at most. A check that cannot be made raises, and the socket
+    closes as on any failure of its handler: a database out of reach is no
+    proof that the credential still holds."""
+    await asyncio.sleep(phase(interval))
+    while True:
+        reason = await realtime.recheck(principal)
+        if reason is not None:
+            log.info("socket of user %s closed on its recheck: %s", principal.ctx.user_id, reason)
+            end(reason)
+            return
+        await asyncio.sleep(interval)
+
+
 @router.websocket("")
 async def channel(
     websocket: WebSocket, principal: Principal, realtime: RealtimeService, buffer: SocketSendBuffer
@@ -150,16 +187,17 @@ async def channel(
 
     # The socket's authority ends with the credential behind its ticket: at
     # its expiry, or at its revocation, the socket is closed with 4401,
-    # whatever the client does. It is attached before anything is awaited:
-    # the redemption checked the credential, and a revocation that landed
-    # during an await before the attach would find no socket to close.
+    # whatever the client does; a change of its rights closes it with 1012.
+    # It is attached before anything is awaited: the redemption checked the
+    # credential, and a revocation that landed during an await before the
+    # attach would find no socket to close.
     ended: asyncio.Future[str] = loop.create_future()
 
     def end(reason: str) -> None:
         if not ended.done():
             ended.set_result(reason)
 
-    detach = realtime.attach(ctx, end)
+    detach = realtime.attach(principal, end)
     # The head is read before the drainer exists: a task created first and a
     # read that raises after it leave the drainer waiting on the buffer for
     # the life of the process, one more on every reconnect through an outage.
@@ -180,21 +218,34 @@ async def channel(
         serve_commands(websocket, ctx, realtime, buffer, subscriptions),
         name=f"commands-{ctx.user_id}",
     )
+    recheck = asyncio.create_task(
+        recheck_until_refused(
+            realtime, principal, end, container_of(websocket).settings.realtime_recheck_seconds
+        ),
+        name=f"recheck-{ctx.user_id}",
+    )
     # How the socket ends, decided before the teardown and sent after it: the
     # teardown is the only place the subscriptions are dropped, so nothing
     # between here and it may raise past it.
     code: int = 1000
     reason: str | None = None
     try:
-        await asyncio.wait({commands, ended}, return_when=asyncio.FIRST_COMPLETED)
+        await asyncio.wait({commands, recheck, ended}, return_when=asyncio.FIRST_COMPLETED)
         if ended.done():
-            code, reason = CLOSE_UNAUTHENTICATED, ended.result()
-        elif not commands.cancelled() and (failure := commands.exception()) is not None:
-            log.error("%s failed", commands.get_name(), exc_info=failure)
-            code, reason = CLOSE_INTERNAL_ERROR, INTERNAL_ERROR
+            reason = ended.result()
+            code = CLOSE_RECONNECT if reason == RIGHTS_CHANGED else CLOSE_UNAUTHENTICATED
+        else:
+            for task in (commands, recheck):
+                if not task.done() or task.cancelled():
+                    continue
+                if (failure := task.exception()) is not None:
+                    log.error("%s failed", task.get_name(), exc_info=failure)
+                    code, reason = CLOSE_INTERNAL_ERROR, INTERNAL_ERROR
+                    break
     finally:
         expiry.cancel()
         detach()
+        await settle(recheck)
         await settle(commands)
         for unsubscribe in subscriptions.values():
             unsubscribe()

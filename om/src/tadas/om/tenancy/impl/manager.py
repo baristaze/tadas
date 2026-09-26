@@ -740,16 +740,18 @@ class TenancyManagerImpl(TenancyManagerInterface):
             raise InvalidCredential(
                 "expected the sign-in credential, a session token, or an operator token"
             )
-        found = await self._storage.read_session_by_digest(hash_token(credential))
+        # The credential and the identity it proves in one read: the operator
+        # gate takes what it needs of the identity from the stage, so an
+        # operator's call reads the identity once.
+        found = await self._storage.read_session_with_identity_by_digest(hash_token(credential))
         if found is None:
             raise InvalidCredential(f"unknown {kind.value} credential")
-        org_id, proof = found
+        org_id, proof, identity = found
         self._check_session(proof, kind)
         if kind is CredentialKind.SESSION_TOKEN:
             # A session proves its user's identity only while it proves the
             # tenant too: the org, the user, and the membership are live.
             await self._principal(org_id, proof.user_id, proof)
-        identity = await self._storage.read_identity(proof.identity_id)
         if identity is None:
             raise InvalidCredential("the identity is gone")
         return IdentityContext(
@@ -763,6 +765,8 @@ class TenancyManagerImpl(TenancyManagerInterface):
             credential_id=proof.id,
             second_factor=proof.second_factor_at is not None,
             operator_role=proof.operator_role,
+            operator_entry=identity.operator_role,
+            second_factor_enrolled=identity.totp_enrolled,
         )
 
     async def exchange_login(self, ictx: IdentityContext, org_id: UUID) -> IssuedSession:
@@ -893,7 +897,13 @@ class TenancyManagerImpl(TenancyManagerInterface):
                 raise InvalidCredential("unknown api key")
             org_id, api_key = found
             self._check_api_key(api_key)
-            org, user, membership = await self._principal(org_id, api_key.user_id)
+            (
+                found_org,
+                found_user,
+                found_membership,
+                account,
+            ) = await self._storage.read_key_principal(org_id, api_key.user_id)
+            org, user, membership = self._live_principal(found_org, found_user, found_membership)
             ctx = build_context(
                 rctx,
                 user_id=user.id,
@@ -906,8 +916,9 @@ class TenancyManagerImpl(TenancyManagerInterface):
             )
             # A key of an org whose plan has none is kept and refused, never
             # revoked: it says why, and it works again the day the org is on
-            # a plan with keys.
-            await self._refuse_without_keys(ctx)
+            # a plan with keys. The plan comes from the account read with
+            # the principal, as current as a read of its own.
+            refuse_past(self._entitlements.entitlements_of(ctx, account).plan, Lever.API_KEYS, 0)
             return ctx
         raise InvalidCredential("this route accepts a session token or an api key")
 
@@ -916,8 +927,10 @@ class TenancyManagerImpl(TenancyManagerInterface):
             raise InvalidCredential(
                 "the operator plane takes the sign-in credential or an operator token"
             )
-        identity = await self._storage.read_identity(ictx.identity_id)
-        if identity is None or identity.operator_role is None:
+        # The allowlist entry and the enrolment as the stage read them, with
+        # the credential, in this request: no second read of the identity.
+        entry = ictx.operator_entry
+        if entry is None:
             raise NotAnOperator("this identity is not an operator")
         if ictx.credential_kind is CredentialKind.OPERATOR_TOKEN:
             # The one exception to "a sign-in alone never admits": a second
@@ -925,28 +938,28 @@ class TenancyManagerImpl(TenancyManagerInterface):
             # one permission, and never more than the entry grants today.
             if ictx.operator_role is None:
                 raise InvalidCredential("an operator token names its permission")
-            granted = operator_permissions_of(ictx.operator_role) & operator_permissions_of(
-                identity.operator_role
-            )
-        elif not identity.totp_enrolled:
+            granted = operator_permissions_of(ictx.operator_role) & operator_permissions_of(entry)
+        elif not ictx.second_factor_enrolled:
             # Allowlisted, with no second factor yet: the two calls that
             # enrol one, and nothing else.
             granted = frozenset({OperatorPermission.ENROL})
         elif not ictx.second_factor:
             raise SecondFactorRequired("sign in with the code from your authenticator")
         else:
-            granted = operator_permissions_of(identity.operator_role)
+            granted = operator_permissions_of(entry)
         return OperatorContext(
             request_id=ictx.request_id,
             app=ictx.app,
             trace_id=ictx.trace_id,
             caused_by_request_id=ictx.caused_by_request_id,
-            identity_id=identity.id,
-            email=identity.email,
+            identity_id=ictx.identity_id,
+            email=ictx.email,
             credential_kind=ictx.credential_kind,
             credential_id=ictx.credential_id,
             second_factor=ictx.second_factor,
             operator_role=ictx.operator_role,
+            operator_entry=entry,
+            second_factor_enrolled=ictx.second_factor_enrolled,
             permissions=granted,
         )
 
@@ -1030,13 +1043,17 @@ class TenancyManagerImpl(TenancyManagerInterface):
         org_id: UUID,
         credential_kind: CredentialKind,
         credential_id: UUID,
+        *,
+        record_use: bool = True,
     ) -> SocketPrincipal:
         if credential_kind is CredentialKind.SESSION_TOKEN:
             session = await self._storage.read_session(org_id, credential_id)
             if session is None:
                 raise InvalidCredential("the session behind the ticket is gone")
             self._check_session(session, CredentialKind.SESSION_TOKEN)
-            org, user, membership = await self._principal(org_id, session.user_id, session)
+            org, user, membership = await self._principal(
+                org_id, session.user_id, session if record_use else None
+            )
             role = membership.role
             expires_at = session.expires_at
         elif credential_kind is CredentialKind.API_KEY:
@@ -1059,7 +1076,12 @@ class TenancyManagerImpl(TenancyManagerInterface):
             teams=membership.teams,
             credential_id=credential_id,
         )
-        return SocketPrincipal(ctx=ctx, expires_at=expires_at)
+        return SocketPrincipal(
+            ctx=ctx,
+            expires_at=expires_at,
+            credential_kind=credential_kind,
+            membership_id=membership.id,
+        )
 
     async def redeem_ticket(self, rctx: RequestContext, ticket: str) -> SocketPrincipal:
         if credential_kind_of(ticket) is not CredentialKind.SOCKET_TICKET:
@@ -2142,7 +2164,14 @@ class TenancyManagerImpl(TenancyManagerInterface):
             last = session.last_seen_at
             if last is None or last + self._options.session_seen_every <= now:
                 seen = (session.id, now)
-        org, user, membership = await self._storage.read_principal(org_id, user_id, seen)
+        return self._live_principal(*await self._storage.read_principal(org_id, user_id, seen))
+
+    @staticmethod
+    def _live_principal(
+        org: Org | None, user: User | None, membership: Membership | None
+    ) -> tuple[Org, User, Membership]:
+        """The principal a read found, when all three are live, or
+        InvalidCredential."""
         if org is None or org.deleted_at is not None:
             raise InvalidCredential("the org is gone")
         if user is None or user.deleted_at is not None:

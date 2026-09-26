@@ -14,8 +14,8 @@ touches and the ADR that explains why it is shaped that way.
   migration does, the protection on `release`, and what to do when the
   cloud is not configured.
 - [operate.md](operate.md): the profile an investigation runs under,
-  the dashboard, the alarms, the costs, and the exact commands that
-  read each of them.
+  the dashboard, the alarms, a client answered 429, the costs, and the
+  exact commands that read each of them.
 - [scale.md](scale.md): the one variable that scales an environment,
   what turns on under it, and how to read that it happened.
 - [tenant-isolation.md](tenant-isolation.md): where the cross-tenant

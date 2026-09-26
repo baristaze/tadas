@@ -1,6 +1,8 @@
 import pytest
 from contracts.tenancy_storage import TenancyStorageContract
 
+from tadas.om.billing.storage import BillingStorageInterface
+from tadas.om.billing.storage.impl.postgres import BillingStoragePostgresImpl
 from tadas.om.idempotency.storage import IdempotencyStorageInterface
 from tadas.om.idempotency.storage.impl.postgres import IdempotencyStoragePostgresImpl
 from tadas.om.outbox.storage import OutboxStorageInterface
@@ -23,6 +25,10 @@ class TestTenancyStoragePostgres(TenancyStorageContract):
         self, pg_sessions: dict[DatabaseRole, SessionFactory]
     ) -> IdempotencyStorageInterface:
         return IdempotencyStoragePostgresImpl(pg_sessions)
+
+    @pytest.fixture
+    def accounts(self, pg_sessions: dict[DatabaseRole, SessionFactory]) -> BillingStorageInterface:
+        return BillingStoragePostgresImpl(pg_sessions)
 
     @pytest.fixture
     def storage(self, pg_sessions: dict[DatabaseRole, SessionFactory]) -> TenancyStorageInterface:

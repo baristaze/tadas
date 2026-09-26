@@ -7,6 +7,7 @@ from collections.abc import Callable
 from datetime import datetime
 from uuid import UUID
 
+from tadas.om.billing.types.account import BillingAccount
 from tadas.om.opcontext import Role
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.tenancy.types.api_key import ApiKey
@@ -353,6 +354,18 @@ class TenancyStorageInterface(ABC):
         ...
 
     @abstractmethod
+    async def read_key_principal(
+        self, org_id: UUID, user_id: UUID
+    ) -> tuple[Org | None, User | None, Membership | None, BillingAccount | None]:
+        """What `read_principal` reads, and beside it the org's billing
+        account, from one statement in one transaction: an api key's use
+        asks the plan whether keys are on it, every time, so the account is
+        read with the principal instead of in a transaction of its own. The
+        account is None when the org has none, or when the org is not
+        found. Nothing is written."""
+        ...
+
+    @abstractmethod
     async def write_membership(
         self, org_id: UUID, membership: Membership, outbox_rows: tuple[OutboxRow, ...] = ()
     ) -> None: ...
@@ -374,6 +387,16 @@ class TenancyStorageInterface(ABC):
         """Cross-tenant lookup: the gateway holds a token, not a tenant; the
         tenant travels back. A login credential and an operator token are
         rows of the system scope; a session token is its tenant's."""
+        ...
+
+    @abstractmethod
+    async def read_session_with_identity_by_digest(
+        self, token_hash: str
+    ) -> tuple[UUID, Session, Identity | None] | None:
+        """Cross-tenant lookup, as `read_session_by_digest`, with the identity
+        the credential proves beside it, from one statement under the system
+        scope: the identity stage reads both on every use. The identity is
+        None when it is gone."""
         ...
 
     @abstractmethod

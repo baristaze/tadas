@@ -9,6 +9,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tadas.om.base import EMPTY_UUID, Identifiable, new_id
+from tadas.om.billing.storage.tables.billing_accounts import BillingAccounts
+from tadas.om.billing.types.account import BillingAccount
 from tadas.om.exceptions import Conflict, NotFound, UniqueKeyTaken
 from tadas.om.idempotency.storage.tables.idempotency_records import IdempotencyRecords
 from tadas.om.opcontext import Role
@@ -709,6 +711,39 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
                 None if membership is None else to_model(membership, Membership),
             )
 
+    async def read_key_principal(
+        self, org_id: UUID, user_id: UUID
+    ) -> tuple[Org | None, User | None, Membership | None, BillingAccount | None]:
+        # The principal's statement with the org's billing account joined on:
+        # a table of the same role and the same tenant fence, read under the
+        # same scope, so the join crosses neither.
+        stmt = (
+            select(Orgs, Users, Memberships, BillingAccounts)
+            .select_from(Orgs)
+            .outerjoin(Users, and_(Users.org_id == Orgs.org_id, Users.id == user_id))
+            .outerjoin(
+                Memberships,
+                and_(
+                    Memberships.org_id == Orgs.org_id,
+                    Memberships.user_id == user_id,
+                    Memberships.deleted_at.is_(None),
+                ),
+            )
+            .outerjoin(BillingAccounts, BillingAccounts.org_id == Orgs.org_id)
+            .where(Orgs.org_id == org_id, Orgs.id == org_id)
+        )
+        async with self._session_for(stmt, org_id=org_id, user_id=user_id) as session:
+            found = (await session.execute(stmt)).one_or_none()
+            if found is None:
+                return None, None, None, None
+            org, user, membership, account = found
+            return (
+                to_model(org, Org),
+                None if user is None else to_model(user, User),
+                None if membership is None else to_model(membership, Membership),
+                None if account is None else to_model(account, BillingAccount),
+            )
+
     async def write_membership(
         self, org_id: UUID, membership: Membership, outbox_rows: tuple[OutboxRow, ...] = ()
     ) -> None:
@@ -743,6 +778,25 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
         async with self._session_for(stmt, org_id=EMPTY_UUID) as session:
             row = (await session.execute(stmt)).scalar_one_or_none()
             return None if row is None else (row.org_id, to_model(row, Session))
+
+    async def read_session_with_identity_by_digest(
+        self, token_hash: str
+    ) -> tuple[UUID, Session, Identity | None] | None:
+        stmt = (
+            select(Sessions, Identities)
+            .outerjoin(Identities, Identities.id == Sessions.identity_id)
+            .where(Sessions.token_hash == token_hash)
+        )
+        async with self._session_for(stmt, org_id=EMPTY_UUID) as session:
+            found = (await session.execute(stmt)).one_or_none()
+            if found is None:
+                return None
+            row, identity = found
+            return (
+                row.org_id,
+                to_model(row, Session),
+                None if identity is None else to_model(identity, Identity),
+            )
 
     async def read_session_by_id(self, session_id: UUID) -> tuple[UUID, Session] | None:
         stmt = select(Sessions).where(Sessions.id == session_id)

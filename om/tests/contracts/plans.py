@@ -23,6 +23,9 @@ class FixedPlan(EntitlementsInterface):
         self.plan = plan
 
     async def get_entitlements(self, ctx: OpContext) -> Entitlements:
+        return self.entitlements_of(ctx, None)
+
+    def entitlements_of(self, ctx: OpContext, account: BillingAccount | None) -> Entitlements:
         ctx.require(Permission.READ)
         return Entitlements(plan=self.plan, limits=limits_of(self.plan))
 

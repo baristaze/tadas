@@ -148,6 +148,11 @@ class IdentityContext(RequestContext):
     # transition, never taken from the request.
     second_factor: bool = False
     operator_role: OperatorRole | None = None
+    # What the identity behind the credential records, read with it in the
+    # same statement: its allowlist entry and whether a second factor is
+    # enrolled. The operator gate decides on these, so it reads nothing.
+    operator_entry: OperatorRole | None = None
+    second_factor_enrolled: bool = False
 
 
 class OpContext(RequestContext):

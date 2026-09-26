@@ -3,6 +3,8 @@ from datetime import datetime
 from uuid import UUID
 
 from tadas.om.base import EMPTY_UUID
+from tadas.om.billing.storage import BillingStorageInterface
+from tadas.om.billing.types.account import BillingAccount
 from tadas.om.exceptions import Conflict, NotFound, UniqueKeyTaken
 from tadas.om.idempotency.storage import AttemptFenceInterface
 from tadas.om.opcontext import Role
@@ -29,9 +31,14 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
         self,
         outbox: OutboxLandingInterface | None = None,
         markers: AttemptFenceInterface | None = None,
+        accounts: BillingStorageInterface | None = None,
     ) -> None:
+        """`accounts` is the billing storage `read_key_principal` reads the
+        org's account from, where its Postgres twin joins the table; with
+        none, no org has an account."""
         super().__init__(outbox)
         self._markers = markers
+        self._accounts = accounts
         self._identities: dict[UUID, Identity] = {}
         self._sign_in_delays: dict[str, SignInDelay] = {}
         self._orgs: MemoryTable[Org] = {}
@@ -566,6 +573,24 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
                     )
         return found
 
+    async def read_key_principal(
+        self, org_id: UUID, user_id: UUID
+    ) -> tuple[Org | None, User | None, Membership | None, BillingAccount | None]:
+        org = self._get(self._orgs, org_id, org_id)
+        if org is None:
+            return None, None, None, None
+        user = self._get(self._users, org_id, user_id)
+        membership = next(
+            (
+                m
+                for m in self._rows(self._memberships, org_id)
+                if m.user_id == user_id and m.deleted_at is None
+            ),
+            None,
+        )
+        account = None if self._accounts is None else await self._accounts.read_account(org_id)
+        return org, user, membership, account
+
     async def write_membership(
         self, org_id: UUID, membership: Membership, outbox_rows: tuple[OutboxRow, ...] = ()
     ) -> None:
@@ -600,6 +625,18 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
         return next(
             (
                 (org_id, session)
+                for org_id, session in self._sessions.values()
+                if session.token_hash == token_hash
+            ),
+            None,
+        )
+
+    async def read_session_with_identity_by_digest(
+        self, token_hash: str
+    ) -> tuple[UUID, Session, Identity | None] | None:
+        return next(
+            (
+                (org_id, session, self._identities.get(session.identity_id))
                 for org_id, session in self._sessions.values()
                 if session.token_hash == token_hash
             ),

@@ -5,6 +5,7 @@ ticket and no longer."""
 
 import asyncio
 import logging
+import time
 from datetime import timedelta
 from pathlib import Path
 from uuid import UUID
@@ -29,7 +30,12 @@ from tadas.services.api.container import AppContainer
 from tadas.services.api.gateway.auth import CLOSE_UNAUTHENTICATED
 from tadas.services.api.realtime.envelopes import ErrorEnvelope
 from tadas.services.api.realtime.send_buffer import SendBuffer
-from tadas.services.api.services.realtime import CREDENTIAL_REVOKED, MEMBERSHIP_ENDED
+from tadas.services.api.realtime.socket import CLOSE_RECONNECT
+from tadas.services.api.services.realtime import (
+    CREDENTIAL_REVOKED,
+    MEMBERSHIP_ENDED,
+    RIGHTS_CHANGED,
+)
 
 
 def test_a_refused_ticket_closes_the_accepted_socket_with_4401(tmp_path: Path) -> None:
@@ -375,12 +381,13 @@ def socket_handlers(container: AppContainer) -> int:
 def test_a_command_that_fails_closes_the_socket_and_leaves_no_subscription(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Every client pings, and a ping reads the stream head: a database blip
-    during one ends the command loop with a backend error. The socket is
-    accepted, so there is no HTTP response left to answer with; it closes with
-    1011 and its subscription and drainer go with it. Before, the error
-    escaped the teardown and the handler stayed in the dispatcher forever."""
-    container = build_container(tmp_path)
+    """Every client pings, and a ping reads the stream head when the head it
+    heard is too old (here, always): a database blip during one ends the
+    command loop with a backend error. The socket is accepted, so there is
+    no HTTP response left to answer with; it closes with 1011 and its
+    subscription and drainer go with it, instead of the error escaping the
+    teardown and leaving the handler in the dispatcher."""
+    container = build_container(tmp_path, realtime_head_max_age_seconds=0)
     _, org = run(
         container.managers.tenancy.bootstrap(
             seed_request(), "Acme", "acme", OWNER["email"], OWNER["name"]
@@ -410,3 +417,121 @@ def test_a_command_that_fails_closes_the_socket_and_leaves_no_subscription(
     assert closed.value.code == 1011
     assert closed.value.reason == "internal_error"
     assert socket_handlers(container) == 0, "the socket's subscription outlived it"
+
+
+RECHECK = 0.2
+"""A recheck interval short enough for a test to wait out."""
+
+
+def revoke_in_storage(container: AppContainer, token: str) -> None:
+    """Revokes the session behind the token in storage alone: no outbox row,
+    so no message on the bus, as when the bus lost it."""
+    storage = container.storage.get_tenancy_storage()
+    found = run(storage.read_session_by_digest(hash_token(token)))
+    assert found is not None
+    org_id, session = found
+    run(storage.write_session(org_id, session.model_copy(update={"revoked_at": utcnow()})))
+
+
+def test_a_revocation_the_bus_lost_closes_the_socket_within_the_recheck(tmp_path: Path) -> None:
+    """The session is revoked and no message is sent: the socket's own
+    recheck finds it and closes with 4401 within one interval."""
+    container = build_container(tmp_path, realtime_recheck_seconds=RECHECK)
+    token = session_token(container)
+    with TestClient(create_app(container)) as tc:
+        headers = {"Authorization": f"Bearer {token}"}
+        with open_socket(tc, headers) as ws:
+            assert ws.receive_json()["type"] == "hello"
+            revoke_in_storage(container, token)
+            with pytest.raises(WebSocketDisconnect) as closed:
+                ws.receive_json()
+    assert closed.value.code == CLOSE_UNAUTHENTICATED
+    assert closed.value.reason == "not_authenticated"
+
+
+def test_a_socket_whose_credential_holds_stays_open_through_its_rechecks(
+    tmp_path: Path,
+) -> None:
+    container = build_container(tmp_path, realtime_recheck_seconds=RECHECK)
+    token = session_token(container)
+    with TestClient(create_app(container)) as tc:
+        with open_socket(tc, {"Authorization": f"Bearer {token}"}) as ws:
+            assert ws.receive_json()["type"] == "hello"
+            for _ in range(4):
+                time.sleep(RECHECK)  # the app's loop, on its own thread, rechecks meanwhile
+                ws.send_json({"op": "ping"})
+                assert ws.receive_json()["type"] == "pong"
+
+
+def test_a_change_of_role_closes_the_socket_to_reconnect(tmp_path: Path) -> None:
+    """The member is still signed in, so the close is 1012 and not 4401: the
+    client reconnects, and its new ticket carries the role it has now."""
+    container = build_container(tmp_path)
+    _, org = run(
+        container.managers.tenancy.bootstrap(
+            seed_request(), "Acme", "acme", OWNER["email"], OWNER["name"]
+        )
+    )
+    bob = run(add_member(container, org.id, "bob@example.test", Role.ADMIN))
+    with TestClient(create_app(container)) as tc:
+        owner = sign_in(tc, OWNER["email"], org.id)
+        member = sign_in(tc, "bob@example.test", org.id)
+        with open_socket(tc, member) as ws:
+            assert ws.receive_json()["type"] == "hello"
+            changed = tc.patch(f"/v1/memberships/{bob.id}", headers=owner, json={"role": "member"})
+            assert changed.status_code == 200
+            with pytest.raises(WebSocketDisconnect) as closed:
+                ws.receive_json()
+        assert closed.value.code == CLOSE_RECONNECT
+        assert closed.value.reason == RIGHTS_CHANGED
+        # The reconnect is admitted, under the new role.
+        with open_socket(tc, member) as ws:
+            assert ws.receive_json()["type"] == "hello"
+
+
+def test_a_change_of_role_the_bus_lost_closes_the_socket_within_the_recheck(
+    tmp_path: Path,
+) -> None:
+    container = build_container(tmp_path, realtime_recheck_seconds=RECHECK)
+    _, org = run(
+        container.managers.tenancy.bootstrap(
+            seed_request(), "Acme", "acme", OWNER["email"], OWNER["name"]
+        )
+    )
+    bob = run(add_member(container, org.id, "bob@example.test", Role.ADMIN))
+    storage = container.storage.get_tenancy_storage()
+    with TestClient(create_app(container)) as tc:
+        member = sign_in(tc, "bob@example.test", org.id)
+        with open_socket(tc, member) as ws:
+            assert ws.receive_json()["type"] == "hello"
+            membership = run(storage.read_membership_for_user(org.id, bob.id))
+            assert membership is not None
+            demoted = membership.model_copy(update={"role": Role.MEMBER})
+            run(storage.write_membership(org.id, demoted, ()))
+            with pytest.raises(WebSocketDisconnect) as closed:
+                ws.receive_json()
+    assert closed.value.code == CLOSE_RECONNECT
+    assert closed.value.reason == RIGHTS_CHANGED
+
+
+def test_a_recheck_that_cannot_be_made_closes_the_socket(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A database out of reach is no proof the credential holds: the socket
+    closes with 1011, as on any failure of its handler, and the client
+    reconnects once a ticket can be minted again."""
+    container = build_container(tmp_path, realtime_recheck_seconds=RECHECK)
+    service = container.services.get_realtime_service()
+
+    async def unreachable(principal: object) -> str | None:
+        raise BackendFailed("postgres", "read_session", "connection refused")
+
+    monkeypatch.setattr(service, "recheck", unreachable)
+    token = session_token(container)
+    with TestClient(create_app(container)) as tc:
+        with open_socket(tc, {"Authorization": f"Bearer {token}"}) as ws:
+            assert ws.receive_json()["type"] == "hello"
+            with pytest.raises(WebSocketDisconnect) as closed:
+                ws.receive_json()
+    assert closed.value.code == 1011
+    assert closed.value.reason == "internal_error"
