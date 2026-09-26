@@ -402,12 +402,61 @@ async def test_invitations_are_sent_found_and_read_back() -> None:
     assert sent.id == "inv_1" and sent.state is InvitationState.PENDING
     pending = await made.find_pending_invitation(email="bob@acme.example", organization_id="org_1")
     assert pending is not None and pending.id == "inv_2"
-    accepted = await made.accepted_invitation(organization_id="org_1", user_id="user_1")
+    accepted = await made.accepted_invitation(
+        organization_id="org_1", user_id="user_1", email="bob@acme.example"
+    )
     assert accepted is not None and accepted.id == "inv_1"
-    assert await made.accepted_invitation(organization_id="org_1", user_id="user_9") is None
+    assert (
+        await made.accepted_invitation(
+            organization_id="org_1", user_id="user_9", email="bob@acme.example"
+        )
+        is None
+    )
     # Every management call carries the application's key, so an invitation
     # is sent in the application's context and lands its person there.
     assert {r.headers["authorization"] for r in recorder.requests} == {f"Bearer {API_KEY}"}
+
+
+async def test_the_accepted_invitation_is_read_by_the_persons_address_first() -> None:
+    """One page of the invitations sent to the address; the organization's
+    others only when none of those is the one, since an invitation to a
+    company's domain may be accepted with another address of it."""
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        query = parse_qs(request.url.query.decode())
+        by_address = query.get("email") == ["bob@acme.example"]
+        data = (
+            [invitation("inv_1", "accepted", "user_1")]
+            if by_address
+            else [invitation("inv_2", "accepted", "user_2")]
+        )
+        return httpx.Response(
+            200,
+            json={"object": "list", "data": data, "list_metadata": {"before": None, "after": None}},
+        )
+
+    made, recorder = provider(answer)
+    accepted = await made.accepted_invitation(
+        organization_id="org_1", user_id="user_1", email="bob@acme.example"
+    )
+    assert accepted is not None and accepted.id == "inv_1"
+    [only] = recorder.requests
+    assert only.url.path == "/user_management/invitations"
+    assert parse_qs(only.url.query.decode()) == {
+        "organization_id": ["org_1"],
+        "email": ["bob@acme.example"],
+        "limit": ["100"],
+        "order": ["desc"],
+    }
+
+    made, recorder = provider(answer)
+    accepted = await made.accepted_invitation(
+        organization_id="org_1", user_id="user_2", email="bob@acme.example"
+    )
+    assert accepted is not None and accepted.id == "inv_2"
+    first, second = (parse_qs(r.url.query.decode()) for r in recorder.requests)
+    assert first["email"] == ["bob@acme.example"] and "email" not in second
+    assert second["organization_id"] == ["org_1"]
 
 
 async def test_the_admin_portal_link_is_for_the_organization_and_the_intent() -> None:

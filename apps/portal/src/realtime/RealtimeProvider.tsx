@@ -1,6 +1,7 @@
 // One provider owns the socket for the whole app; the loop itself lives in
 // channel.ts, without React, and this component gives it the query cache, the
-// transport client, and the connection store, and shows the degraded banner.
+// transport client, the connection store, and the page's visibility, and
+// shows the degraded banner. A paused socket shows none: it is not a failure.
 import { useQueryClient } from "@tanstack/react-query";
 import { ApiError, type IssuedTicketView } from "../api";
 import { useEffect, type ReactNode } from "react";
@@ -16,6 +17,7 @@ import { useSessionStore } from "../store/session";
 import { openChannel } from "./channel";
 import type { Envelope } from "./envelopes";
 import { announceReminder } from "./reminder";
+import { watchPage } from "./pageVisibility";
 import { reminderOf, routeEnvelope } from "./router";
 import { createTaskHints, ReadAsList } from "./taskHints";
 
@@ -73,7 +75,12 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
       // too; only a close for the session the tab still holds signs it out.
       onUnauthenticated: () => forgetSessionIfHeld(token),
     });
+    // A hidden tab's socket pauses, and any sign of the person's return
+    // (shown, restored, focused, back online) resumes it. A session that
+    // expired meanwhile is refused its ticket with a 401, which signs out.
+    const unwatch = watchPage({ document, window }, channel);
     return () => {
+      unwatch();
       channel.stop();
       hints.stop();
     };

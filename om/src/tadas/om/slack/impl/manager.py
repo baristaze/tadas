@@ -5,7 +5,8 @@ from uuid import UUID
 
 from pydantic import SecretStr
 
-from tadas.infra.secrets import SecretsInterface
+from tadas.infra.exceptions import InfraException
+from tadas.infra.secrets import SecretNotFound, SecretsInterface
 from tadas.integrations.slack import (
     SlackError,
     SlackFailed,
@@ -197,12 +198,16 @@ class SlackManagerImpl(SlackManagerInterface):
         Slack's side is best effort: a Slack that cannot be reached leaves the
         app there, and a person removes it in Slack; Tadas holds no token for
         it either way."""
-        if uninstall and await self._secrets.has(ctx.org_id, current.credential_ref):
+        if uninstall:
             try:
                 tokens = tokens_from(await self._secrets.get(ctx.org_id, current.credential_ref))
                 await self._slack.uninstall(tokens.access_token.get_secret_value())
             except SlackError as error:
                 log.warning("slack app of org %s was not removed at Slack: %s", ctx.org_id, error)
+            except InfraException as error:
+                if error.code != SecretNotFound.code:
+                    raise
+                # No token: nothing to remove the app with.
         await self._secrets.delete(ctx.org_id, current.credential_ref)
         now = utcnow()
         deleted = current.model_copy(
@@ -231,10 +236,14 @@ class SlackManagerImpl(SlackManagerInterface):
         installation = await self._storage.read_installation(ctx.org_id)
         if installation is None:
             raise NotFound("the org has no Slack installation")
-        if not await self._secrets.has(ctx.org_id, installation.credential_ref):
+        try:
+            tokens = tokens_from(await self._secrets.get(ctx.org_id, installation.credential_ref))
+        except InfraException as error:
+            # Translated by its code: a token that is gone breaks the install.
+            if error.code != SecretNotFound.code:
+                raise
             await self.mark_broken(ctx, "token_missing")
-            raise SlackTokenRevoked("token_missing")
-        tokens = tokens_from(await self._secrets.get(ctx.org_id, installation.credential_ref))
+            raise SlackTokenRevoked("token_missing") from None
         now = utcnow()
         expires = tokens.expires_at
         if expires is None or tokens.refresh_token is None:

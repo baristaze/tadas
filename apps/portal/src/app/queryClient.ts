@@ -14,8 +14,10 @@ export const STALE_MS = 10_000;
 export const PUSHED_STALE_MS = 5 * 60_000;
 
 /** Whether the channel keeps this query fresh right now: a push reaches it
- * and the socket is open. While it is not (connecting, degraded, closed) the
- * query is read the way it always is, on its own clock and on focus. */
+ * and the socket is open. While it is not (connecting, degraded, paused,
+ * closed) the query is read the way it always is, on its own clock and on
+ * focus, so the focus that ends a hidden tab's pause reads it even if the
+ * socket is slow to return. */
 export function keptFreshNow(query: Query): boolean {
   return useConnectionStore.getState().status === "open" && isKeptFresh(query.queryKey);
 }

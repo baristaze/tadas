@@ -1413,7 +1413,13 @@ alone, and neither key may touch what the other's work does not need
   ([ADR 0061](adr/0061-a-task-push-names-the-version-it-wrote.md)); a
   query a push reaches is fresh for five minutes and off the focus
   refetch while the socket is open; the status says connecting from the moment a socket drops, degraded from
-  the second failed cycle, and closed on a 4401. Every
+  the second failed cycle, and closed on a 4401. A tab hidden five
+  minutes closes its socket and says paused, which is no failure: no
+  reconnect, no failed cycle, no polling, no banner. The page turning
+  visible, a `pageshow`, a `focus`, or `online` resumes it once, with a
+  fresh ticket and a replay from the cursor, and while paused no query
+  counts as kept fresh
+  ([ADR 0064](adr/0064-a-hidden-tab-pauses-its-socket.md)). Every
   write sends the version of the task the query cache holds, and its
   answer is placed into the cached lists with no list read again
   (`src/queries/taskPlacement.ts`, pure, decides where); a write
