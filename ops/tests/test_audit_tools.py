@@ -3,9 +3,11 @@ refusals that keep a run on its own local database, the seed's scale, the
 statement file's headers, the counter's arithmetic, and the deploy
 timeline's reading of what the pipeline and the cluster record."""
 
+import asyncio
+
 import pytest
 from auditdb import check_name, on_database
-from dbcalls import Row, Trip, Txn, Window, selected, summary
+from dbcalls import REC, Row, Trip, Txn, Window, count_provider_calls, providers, selected, summary
 from deploy_timeline import events, steps, when
 from explain import SYSTEM, explain_sql, index_statement, parse
 from seed import FIXED, Counts, statements
@@ -180,6 +182,37 @@ def test_the_summary_folds_repeated_calls_into_a_range() -> None:
     )
     assert lines[2] == "| tasks | GET /v1/tasks | 2 | 14-18 | 3-4 | core | 200 |"
     assert lines[3] == "| tasks | POST /v1/tasks | 1 | 35 | 8 | activity,core | 201 |"
+
+
+def test_a_provider_call_is_counted_once_and_start_is_not() -> None:
+    class Twin:
+        async def start(self) -> None: ...
+
+        async def read_subscription(self, sid: str) -> str:
+            return sid
+
+        async def cancel_subscription(self, sid: str) -> str:
+            return await self.read_subscription(sid)
+
+        def verify_delivery(self) -> None: ...
+
+    twin = Twin()
+    count_provider_calls("payments", twin)
+    mark = REC.mark()
+    asyncio.run(twin.start())
+    assert asyncio.run(twin.cancel_subscription("sub_1")) == "sub_1"
+    twin.verify_delivery()
+    assert REC.since(mark).calls == ["payments.cancel_subscription"]
+
+
+def test_the_provider_table_lists_only_the_calls_that_made_one() -> None:
+    quiet = row("GET /v1/tasks", 14, 3, ["core"])
+    signs_in = {
+        **row("POST /v1/auth/callback", 20, 5, ["core"]),
+        "provider_calls": ["identity.authenticate_code"],
+    }
+    lines = providers([quiet, signs_in, signs_in])
+    assert lines[2:] == ["| tasks | POST /v1/auth/callback | 2 | identity.authenticate_code |"]
 
 
 def test_a_selection_always_runs_the_seed_first() -> None:
