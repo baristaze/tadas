@@ -32,6 +32,7 @@ from tadas.om.work.types.handler import WorkHandlerInterface
 from tadas.om.work.types.work_item import WorkItem, WorkKind, WorkStatus
 from tadas.workers.maintenance.container import WorkerContainer
 from tadas.workers.maintenance.loop import LoopOptions, WorkerLoop
+from tadas.workers.maintenance.settings import MaintenanceSettings
 
 
 class SlowHandler(WorkHandlerInterface):
@@ -122,6 +123,9 @@ class LeaseLosingWork(WorkManagerInterface):
 
     async def maintenance_contexts(self, rctx: RequestContext) -> list[OpContext]:
         return await self._inner.maintenance_contexts(rctx)
+
+    async def mark_purged(self, ctx: OpContext) -> bool:
+        return await self._inner.mark_purged(ctx)
 
 
 class StallingWork(LeaseLosingWork):
@@ -657,7 +661,7 @@ async def test_sweep_relays_the_outbox_and_purges_done_rows(tmp_path: Path) -> N
     assert [(e.id, e.kind, e.target_id) for e in events] == [(row.id, row.kind, task.id)]
     # With no retention the second sweep purged the done row: nothing pending,
     # nothing done, and the relay of a purged row is never asked for.
-    assert await outbox.purge_done(utcnow()) == 0
+    assert await outbox.purge_done(utcnow(), 1000) == 0
 
 
 async def test_a_lost_lease_is_never_written_over(tmp_path: Path) -> None:
@@ -797,6 +801,8 @@ def test_outbox_retention_outlives_the_database_backup_retention() -> None:
     assert match is not None
     backup_days = int(match.group(1))
     assert LoopOptions(worker_id="w").outbox_retention > timedelta(days=backup_days)
+    setting = MaintenanceSettings.model_fields["outbox_retention_days"].default
+    assert timedelta(days=setting) > timedelta(days=backup_days)
 
 
 async def test_sweep_purges_settled_work_items_and_finished_idempotency_records(

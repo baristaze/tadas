@@ -46,6 +46,9 @@ def loop_options(settings: MaintenanceSettings, lane: str | None = None) -> Loop
         heartbeat_interval=timedelta(seconds=settings.worker_heartbeat_seconds),
         sweep_interval=timedelta(seconds=settings.worker_sweep_seconds),
         poll_interval=timedelta(seconds=settings.worker_poll_seconds),
+        outbox_retention=timedelta(days=settings.outbox_retention_days),
+        purge_batch=settings.worker_purge_batch,
+        sweep_budget=timedelta(seconds=settings.worker_sweep_budget_seconds),
     )
 
 

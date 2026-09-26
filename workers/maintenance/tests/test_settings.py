@@ -7,11 +7,16 @@ default is listed here with the reason, so a new field needs a decision."""
 
 import re
 import subprocess
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
+from tadas.infra.impl.local import InfraLocalImpl
+from tadas.om.storage.impl.memory import StorageMemoryImpl
+from tadas.workers.maintenance.container import WorkerContainer
+from tadas.workers.maintenance.main import loop_options
 from tadas.workers.maintenance.settings import MaintenanceSettings
 
 PREFIX = MaintenanceSettings.model_config.get("env_prefix", "")
@@ -67,6 +72,19 @@ LOCAL_DEFAULT_SERVES_THE_CLOUD = {
     "worker_heartbeat_seconds": "the local default is the tuning",
     "worker_sweep_seconds": "the local default is the tuning",
     "worker_poll_seconds": "the local default is the tuning",
+    "worker_purge_batch": "the local default is the tuning",
+    "worker_sweep_budget_seconds": "the local default is the tuning",
+    "outbox_retention_days": "one retention everywhere; it outlives the backups",
+    "work_retention_days": "one retention everywhere",
+    "idempotency_retention_hours": "one retention everywhere",
+    "tenancy_retention_days": "one retention everywhere",
+    "socket_ticket_retention_hours": "one retention everywhere",
+    "sign_in_delay_retention_hours": "one retention everywhere",
+    "tasks_retention_days": "one retention everywhere",
+    "media_retention_days": "one retention everywhere",
+    "media_pending_expiry_hours": "one retention everywhere",
+    "billing_delivery_retention_days": "one retention everywhere",
+    "slack_retention_days": "one retention everywhere",
     "slack_timeout_seconds": "the local default is the tuning",
     "slack_inbound_visibility_seconds": "the local default is the tuning",
 }
@@ -147,6 +165,19 @@ BOUNDED = (
     "worker_heartbeat_seconds",
     "worker_sweep_seconds",
     "worker_poll_seconds",
+    "worker_purge_batch",
+    "worker_sweep_budget_seconds",
+    "outbox_retention_days",
+    "work_retention_days",
+    "idempotency_retention_hours",
+    "tenancy_retention_days",
+    "socket_ticket_retention_hours",
+    "sign_in_delay_retention_hours",
+    "tasks_retention_days",
+    "media_retention_days",
+    "media_pending_expiry_hours",
+    "billing_delivery_retention_days",
+    "slack_retention_days",
 )
 
 
@@ -161,3 +192,47 @@ def test_a_count_or_a_duration_of_zero_is_refused(field: str) -> None:
         MaintenanceSettings.model_validate({**base, field: 0})
     with pytest.raises(ValidationError):
         MaintenanceSettings.model_validate({**base, field: -1})
+
+
+def test_the_sweep_defaults_keep_what_each_namespace_kept() -> None:
+    """Each retention defaults to what its manager kept before it was a
+    setting, but for the socket tickets, which live a minute and are kept a
+    day. The worker hands each one to its manager."""
+    settings = MaintenanceSettings.model_validate({"_env_file": None, "environment": "test"})
+    assert (settings.worker_purge_batch, settings.worker_sweep_budget_seconds) == (1000, 20)
+    assert settings.outbox_retention_days == 8
+    assert settings.work_retention_days == 30
+    assert settings.idempotency_retention_hours == 24
+    assert settings.tenancy_retention_days == 30
+    assert settings.socket_ticket_retention_hours == 24
+    assert settings.sign_in_delay_retention_hours == 30 * 24
+    assert settings.tasks_retention_days == 30
+    assert (settings.media_retention_days, settings.media_pending_expiry_hours) == (1, 24)
+    assert settings.billing_delivery_retention_days == 30
+    assert settings.slack_retention_days == 30
+
+
+def test_the_worker_hands_each_retention_to_its_manager(tmp_path: Path) -> None:
+    settings = MaintenanceSettings.model_validate(
+        {
+            "_env_file": None,
+            "environment": "test",
+            "worker_id": "maintenance-test",
+            "billing_backend": "twin",
+            "slack_backend": "twin",
+            "worker_purge_batch": 7,
+            "tasks_retention_days": 3,
+            "socket_ticket_retention_hours": 2,
+        }
+    )
+    container = WorkerContainer.for_tests(
+        StorageMemoryImpl(), InfraLocalImpl(tmp_path), settings=settings
+    )
+    tasks = container.managers.tasks._options  # type: ignore[attr-defined]
+    tenancy = container.managers.tenancy._options  # type: ignore[attr-defined]
+    assert (tasks.retention, tasks.purge_batch) == (timedelta(days=3), 7)
+    assert (tenancy.ticket_retention, tenancy.purge_batch) == (timedelta(hours=2), 7)
+    assert tenancy.retention == timedelta(days=30)
+    options = loop_options(settings)
+    assert (options.purge_batch, options.sweep_budget) == (7, timedelta(seconds=20))
+    assert options.outbox_retention == timedelta(days=8)
