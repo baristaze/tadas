@@ -5,7 +5,9 @@ logins, the operator's second factor and token, the traffic identity
 between runs, a session's idle lifetime, and the enqueue permission that
 covers a handler's calls (`WORK_ENQUEUE_PERMISSIONS`, held by the
 worker's tests since the first user-caused kinds) hold now and
-are gone from the list. Each item left names what closes it.
+are gone from the list; trimmed (2026-09-26): the work queue's and the
+outbox's alarms (`OPS-15`) hold, from the gauges the worker's sweep
+writes. Each item left names what closes it.
 
 ## Context
 
@@ -36,9 +38,6 @@ These are deviations, each recorded with its reason and its route back:
   count would make the root's number a lie. With autoscaling on, an apply
   returns a scaled service to its floor, and the policy raises it again
   within its cooldown.
-- **Queue and outbox alarms (`OPS-15`).** The work queue and the outbox
-  are tables, so they have no metric to alarm on until the worker
-  publishes one. TAZ-59.
 
 ## Consequences
 

@@ -33,6 +33,9 @@ push come. This is one of the seven kinds of thing
   org's diary.
 - **Purged.** Done and failed rows are erased after the retention,
   eight days by default.
+- **Watched.** Each sweep reads how long ago the oldest row neither
+  relayed nor failed landed, across every org, and an alarm fires past
+  five minutes: the relay is stuck.
 
 ## The rules
 

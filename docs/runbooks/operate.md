@@ -36,9 +36,13 @@ declared in `deployment/terraform/modules/dashboard` from
 dashboard's panels by title (`infra/tests/test_dashboard_parity.py`
 holds them equal): Targets up, HTTP requests per second by route, HTTP
 responses per second by status, HTTP latency p95 by route, Outcomes per
-second. The last row is the cloud's own: the database's CPU and
+second. The rows after them are the cloud's own: the database's CPU and
 connections, the cache's CPU, the queue's visible and dead messages,
-the running tasks.
+the running tasks, the reads with a latency alarm, each queue's oldest
+message, and the sweep's pass duration. The last row is both
+dashboards' again, the work queue and the outbox that live in Postgres:
+Work queue oldest ready item age, Work items failed in the last fifteen
+minutes, Outbox oldest pending row age.
 
 ```bash
 aws cloudwatch get-dashboard --dashboard-name tadas-staging \
@@ -69,22 +73,42 @@ record and its org; reading that one org's rows is `ops-root-cause`.
 
 ## The alarms
 
-Thirteen per environment (one per service, two per inbound queue), to the topic `tadas-<environment>-alarms`, from
+Sixteen per environment (one per service, two per inbound queue), to the topic `tadas-<environment>-alarms`, from
 `deployment/terraform/modules/alarms`. Their thresholds are the
-module's inputs with defaults: 5 percent 5xx, 1 second p95 at the load
-balancer, 1 second p95 for `GET /v1/billing` as the API times it, 80
-percent database CPU, 2 GiB free storage, one unhealthy target, one task
-below desired, a queue's oldest message older than ten minutes (past
-the five tries a failing message gets before it is dead-lettered),
-one message in a queue's `-dead` twin, and a sweep pass longer than 30
-seconds (its budget is 20, so a longer pass is one step that is slow on
-its own; the worker's `sweep:` lines name the tenant and the purge); three periods of one minute each,
-six for the tasks below desired, which a routine worker deploy would
-otherwise trip, and one for a dead letter. A queue that goes idle stops
-reporting, so a queue alarm keeps its state through missing data: a
-dead-letter alarm stays in `ALARM` until a person takes the message off
-`-dead`, not until the queue goes quiet. The last command below counts
-what a dead-letter queue holds.
+module's inputs with defaults, and they are illustrative: a busier
+platform moves them.
+
+| Alarm | Fires when | Periods |
+|-------|------------|---------|
+| `tadas-<env>-http-5xx-ratio` | more than 5 percent of requests answer 5xx | 3 |
+| `tadas-<env>-http-p95-latency` | the load balancer's p95 passes 1 second | 3 |
+| `tadas-<env>-unhealthy-targets` | one API target fails its health check | 3 |
+| `tadas-<env>-read-latency-v1-billing` | `GET /v1/billing` passes 1 second at p95, as the API times it | 3 |
+| `tadas-<env>-database-cpu` | the database's CPU passes 80 percent | 3 |
+| `tadas-<env>-database-free-storage` | free storage falls under 2 GiB | 3 |
+| `tadas-<env>-webhooks-backlog`, `-slack-backlog` | a queue's oldest message waited more than ten minutes, past the five tries a failing message gets before it is dead-lettered | 3 |
+| `tadas-<env>-webhooks-dead-letter`, `-slack-dead-letter` | one message is in the queue's `-dead` twin | 1 |
+| `tadas-<env>-sweep-duration` | a sweep pass took longer than 30 seconds: its budget is 20, so a longer pass is one step that is slow on its own, and the worker's `sweep:` lines name the tenant and the purge | 3 |
+| `tadas-<env>-work-backlog` | the work item ready longest waited more than ten minutes for a worker: none is claiming | 3 |
+| `tadas-<env>-work-dead-letter` | a work item failed for good in the last fifteen minutes | 1 |
+| `tadas-<env>-outbox-lag` | the oldest outbox row not yet relayed landed more than five minutes ago: the relay is stuck | 3 |
+| `tadas-<env>-api-tasks-below-desired`, `-maintenance-tasks-below-desired` | a service runs fewer tasks than it wants; six periods, which a routine worker deploy would otherwise trip | 6 |
+
+A period is one minute. A queue that goes idle stops reporting, so a
+queue alarm keeps its state through missing data: a dead-letter alarm
+stays in `ALARM` until a person takes the message off `-dead`, not
+until the queue goes quiet. The command at the end of the next block
+counts what a dead-letter queue holds.
+
+The last three read what no AWS service publishes, because the work
+queue and the outbox are Postgres tables. Each sweep pass reads three
+numbers across every tenant and writes them as fields of its one line
+in `/tadas/<environment>/maintenance`, and a metric filter per field
+writes them to the `Tadas` namespace. They keep their state through
+missing data too: a worker that is not running writes no line, which
+the maintenance tasks alarm reports. The work dead-letter alarm turns
+`OK` fifteen minutes after the last failure, or once the item is
+requeued; the item stays failed until a person sends it back (below).
 
 ```bash
 aws cloudwatch describe-alarms --alarm-name-prefix tadas-staging- \
@@ -155,6 +179,34 @@ terraform -chdir=deployment/terraform/environments/staging plan -lock=false -ref
 
 The account and the two names are staging's entry in
 `deployment/cloud/environments.json`.
+
+## The work queue and the outbox
+
+The three numbers behind their alarms, pass by pass, from the worker's
+own lines:
+
+```bash
+now=$(date +%s); query=$(aws logs start-query --log-group-name /tadas/staging/maintenance \
+  --start-time "$((now - 3600))" --end-time "$now" \
+  --query-string 'fields @timestamp, sweep.work_oldest_ready_seconds, sweep.work_failed_recently, sweep.outbox_oldest_pending_seconds | filter ispresent(sweep.duration_ms) | sort @timestamp desc | limit 20' \
+  --query queryId --output text)
+sleep 2; aws logs get-query-results --query-id "$query" --query 'results[]' --output json
+
+aws cloudwatch get-metric-statistics --namespace Tadas --metric-name tadas_work_oldest_ready_seconds \
+  --start-time "$(date -u -d '-1 hour' +%FT%TZ 2>/dev/null || date -u -v-1H +%FT%TZ)" --end-time "$(date -u +%FT%TZ)" \
+  --period 60 --statistics Maximum --query 'sort_by(Datapoints, &Timestamp)[-10:].[Timestamp,Maximum]' --output text
+```
+
+A backlog with the maintenance service at its desired count is a worker
+that claims nothing: read its log for `claim failed`, and the Outcomes
+widget for `worker`/`lease_lost`. An item on a lane no worker serves
+waits too. A dead letter is the next section. An outbox lag is a relay
+that keeps failing: each attempt of the sweep is a warning in the
+worker's log, `outbox relay of <row id> (<kind>) failed on attempt <n>:
+<error>`, and the error says whether the event store or the bus
+refused. After its tenth attempt the row is `failed for good`, an
+`outbox.row.failed` event in its org's diary, which `ops-root-cause`
+reads, and it no longer counts as pending.
 
 ## A work item that failed for good
 

@@ -1163,7 +1163,16 @@ alone, and neither key may touch what the other's work does not need
   and the cross-tenant purges run on every pass, each again while its
   batch comes back full and the budget lasts; the pass always takes one
   tenant, even past the budget.
-  Each pass writes its duration on one line, which an alarm reads.
+  Each pass ends with three reads across tenants, one statement each,
+  whatever the budget: the age of the queued item ready longest on any
+  lane (`oldest_ready_age`, the first entry of the partial index
+  `ix_work_items_available_at_queued`), the items failed in the last
+  fifteen minutes and still failed (`failed_within`, a range of
+  `ix_work_items_status_updated_at`), and the age of the oldest outbox
+  row neither done nor failed (`oldest_pending_age`, the head of
+  `ix_outbox_rows_done_at_id`). Each pass writes its duration and these
+  three on one line, which the alarms read; a read that failed leaves
+  its field off, so its alarm sees no data rather than a zero.
   Under a tenant whose org row is deleted longer ago than the retention
   it is every row that goes, its open and done tasks among them, since
   an open task carries no `deleted_at` of its own and the sweep that
@@ -1604,20 +1613,27 @@ page; this section says what exists.
   escalate an alarm, and a platform of one tenant and one user is the
   developer at work.
 - **Dashboards and alarms.** `modules/dashboard` declares the CloudWatch
-  dashboard `tadas-<env>` from a template whose first five panels carry
-  the titles of the local Grafana dashboard
+  dashboard `tadas-<env>` from a template whose first five panels and
+  last three carry the titles of the local Grafana dashboard
   (`deployment/local/grafana/dashboards/tadas-overview.json`), and
   `infra/tests/test_dashboard_parity.py` holds the titles equal.
   `modules/alarms` declares the SNS topic `tadas-<env>-alarms`, the
-  email subscription from `alarm_email`, and thirteen alarms: the load
+  email subscription from `alarm_email`, and sixteen alarms: the load
   balancer's 5xx ratio, its unhealthy targets, its p95, the p95 of
   `GET /v1/billing` on its own, the database's CPU and free storage,
   each of the two inbound queues (`webhooks`, `slack`) backing up and a
   message landing in its dead-letter queue, a sweep pass longer than 30
-  seconds, and each of the two services running below its desired
-  count. The sweep's alarm reads the worker's line per pass the same
-  way: a log metric filter writes its `sweep.duration_ms` to
-  `tadas_sweep_duration_ms`. A read's own
+  seconds, the work queue's item ready longest waiting past ten minutes,
+  a work item failed for good in the last fifteen, the outbox's oldest
+  pending row past five minutes, and each of the two services running
+  below its desired count. The sweep's alarm reads the worker's line per
+  pass: a log metric filter writes its `sweep.duration_ms` to
+  `tadas_sweep_duration_ms`. The work queue and the outbox are tables,
+  so the same line carries their three numbers, which the pass reads
+  across tenants, and a filter per field writes
+  `tadas_work_oldest_ready_seconds`, `tadas_work_failed_recently`, and
+  `tadas_outbox_oldest_pending_seconds`; the worker exports each as a
+  Prometheus gauge of the same name too, which Grafana draws. A read's own
   p95 comes from the API's access lines: each carries its route and its
   time as JSON fields, and a log metric filter writes them to
   `tadas_read_latency_ms`, which the dashboard draws beside the alarm.

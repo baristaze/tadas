@@ -93,7 +93,7 @@ run "the_thresholds_are_the_defaults" {
 
   assert {
     condition     = length(output.alarm_names) == 16
-    error_message = "The environment declares sixteen alarms: the thirteen before, the work backlog, the work dead letter, and the outbox lag."
+    error_message = "The environment declares sixteen alarms, the work backlog, the work dead letter, and the outbox lag among them."
   }
 }
 
