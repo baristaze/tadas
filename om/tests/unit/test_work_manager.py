@@ -30,7 +30,7 @@ from tadas.om.opcontext import (
 from tadas.om.root import Managers, build_managers
 from tadas.om.storage.impl.memory import StorageMemoryImpl
 from tadas.om.tenancy.impl.manager import TenancyOptions
-from tadas.om.tenancy.types.role import operator_permissions_of
+from tadas.om.tenancy.rules import operator_permissions_of
 from tadas.om.work.impl.manager import DEAD_LETTER_KIND, WorkOptions
 from tadas.om.work.impl.operator import REQUEUED_KIND
 from tadas.om.work.types.work_item import WorkItem, WorkKind, WorkStatus

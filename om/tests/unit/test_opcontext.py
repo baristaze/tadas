@@ -35,8 +35,8 @@ from tadas.om.opcontext import (
 from tadas.om.outbox.impl.relay import OutboxRelayImpl
 from tadas.om.outbox.storage.impl.memory import OutboxStorageMemoryImpl
 from tadas.om.tenancy.impl.manager import TenancyManagerImpl, TenancyOptions
+from tadas.om.tenancy.rules import operator_permissions_of, permissions_of
 from tadas.om.tenancy.storage.impl.memory import TenancyStorageMemoryImpl
-from tadas.om.tenancy.types.role import operator_permissions_of, permissions_of
 
 APP = AppContext(type=AppType.PORTAL, version="portal@test")
 

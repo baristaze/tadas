@@ -73,7 +73,8 @@ context on keeps the stage the callee needs.
   sessions, api keys, socket tickets; sign-in through the identity
   provider, tenant-scoped session tokens, role-capped api keys, the
   operator allowlist, and the service contexts workers run under. Permissions are a function of role, one table in
-  `tenancy.types.role`; the ladder beside it ranks the person roles
+  the namespace's rules module, `tenancy.rules`, since a table a decision
+  reads is a rule; the ladder beside it ranks the person roles
   (viewer, member, admin, owner) and a unit test holds it to the table, so
   a role at most another holds a subset of its permissions. The service
   role is no rung: `role_at_most` answers False on either side of it, and

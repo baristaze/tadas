@@ -48,6 +48,7 @@ from tadas.om.tenancy.rules import (
     MAX_OPERATOR_TOKEN_TTL,
     closed_org,
     matching_totp_step,
+    operator_permissions_of,
     otpauth_uri,
 )
 from tadas.om.tenancy.storage import TenancyStorageInterface
@@ -55,7 +56,6 @@ from tadas.om.tenancy.types.identity import Identity
 from tadas.om.tenancy.types.issued import IssuedOperatorToken, IssuedTotpSecret
 from tadas.om.tenancy.types.org import Org
 from tadas.om.tenancy.types.page import OperatorTokenPage, OrgPage, UserPage
-from tadas.om.tenancy.types.role import operator_permissions_of
 from tadas.om.tenancy.types.session import Session
 from tadas.om.tenancy.types.size import PlatformSize
 from tadas.om.tenancy.types.user import User

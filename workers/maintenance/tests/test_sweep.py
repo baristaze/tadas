@@ -29,8 +29,8 @@ from tadas.om.outbox import OutboxRelayInterface
 from tadas.om.tasks.rules import RANK_SCALE_BOUND, placed
 from tadas.om.tasks.types.filter import TaskFilter
 from tadas.om.tasks.types.task import Task, TaskScope, TaskStatus
+from tadas.om.tenancy.rules import permissions_of
 from tadas.om.tenancy.types.org import Org
-from tadas.om.tenancy.types.role import permissions_of
 from tadas.om.work import WorkManagerInterface
 from tadas.workers.maintenance.container import WorkerContainer
 from tadas.workers.maintenance.loop import (

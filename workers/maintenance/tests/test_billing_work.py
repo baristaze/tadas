@@ -21,7 +21,7 @@ from tadas.integrations.payments.twin import PaymentsTwinImpl
 from tadas.om.base import EMPTY_UUID, new_id, utcnow
 from tadas.om.billing.types.plan import Plan
 from tadas.om.opcontext import OpContext, Role
-from tadas.om.tenancy.types.role import ROLE_PERMISSIONS
+from tadas.om.tenancy.rules import ROLE_PERMISSIONS
 from tadas.om.work.types.handler import WorkParked, WorkRefused
 from tadas.om.work.types.work_item import WORK_ENQUEUE_PERMISSIONS, WorkItem, WorkKind
 from tadas.workers.maintenance.container import WorkerContainer
