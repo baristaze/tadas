@@ -60,7 +60,6 @@ from tadas.om.tasks.rules import (
     import_row_part,
     imported,
     parse_import,
-    placed,
     rank_after,
     reminder_person,
     reminder_time,
@@ -237,7 +236,7 @@ class TasksManagerImpl(TasksManagerInterface):
                 "deleted_at": None,
                 "deleted_by": None,
                 "status": TaskStatus.OPEN,
-                **placed(rank),
+                "rank": rank,
                 "version": 1,
                 "reminded_at": None,
             }
@@ -279,7 +278,7 @@ class TasksManagerImpl(TasksManagerInterface):
             "version": expected_version + 1,
         }
         if current.status == TaskStatus.DONE and task.status == TaskStatus.OPEN:
-            changes.update(placed(await self._rank_for_one_more(ctx, exclude=task.id)))
+            changes["rank"] = await self._rank_for_one_more(ctx, exclude=task.id)
             changes["archived_at"] = None  # an open task is never archived
         rescheduled = task.due_on != current.due_on
         if rescheduled:
@@ -320,7 +319,7 @@ class TasksManagerImpl(TasksManagerInterface):
         # task is written and no other task's version moves.
         moved = task.model_copy(
             update={
-                **placed(rank),
+                "rank": rank,
                 "updated_at": utcnow(),
                 "updated_by": ctx.user_id,
                 "version": expected_version + 1,
@@ -423,7 +422,7 @@ class TasksManagerImpl(TasksManagerInterface):
                     update={
                         **changes,
                         "status": TaskStatus.OPEN,
-                        **placed(ranks[index]),
+                        "rank": ranks[index],
                         "archived_at": None,
                         "version": task.version + 1,
                     }
@@ -633,7 +632,6 @@ class TasksManagerImpl(TasksManagerInterface):
                 assignee_id=row.assignee_id,
                 due_on=row.due_on,
                 rank=rank,
-                position=float(rank),  # the mirror `placed` writes
             )
             rows = (
                 versioned_row(ctx, "tasks.task.created", task.id, task.version),
@@ -830,7 +828,7 @@ class TasksManagerImpl(TasksManagerInterface):
                 return 0  # the run moved since it was read; the next pass reads it again
             written = task.model_copy(
                 update={
-                    **placed(new_rank),
+                    "rank": new_rank,
                     "updated_at": now,
                     "updated_by": ctx.user_id,
                     "version": task.version + 1,

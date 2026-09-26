@@ -375,7 +375,6 @@ def make_task(org_id: UUID, title: str, status: TaskStatus, rank: int) -> Task:
         title=title,
         status=status,
         rank=Decimal(rank),
-        position=float(rank),
     )
 
 

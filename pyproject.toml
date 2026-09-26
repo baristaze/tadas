@@ -92,13 +92,23 @@ path = "om/src/tadas/om/work/storage/tables/work_items.py"
 adr = "docs/adr/0026-what-0-31-0-leaves-as-a-choice.md"
 reason = "the unique index is (org_id, idempotency_key), led by the tenant as the lens asks"
 
-# The release before writes a task's position and cannot write its rank; a
-# trigger gives such a row the rank its position names, for one release.
+# A build before the rank writes a task's position and cannot write its rank;
+# a trigger gives such a row the rank its position names, until the column
+# goes.
 [[tool.arch-check.exception]]
 rule = "STO-05"
 path = "om/migrations/sql/core/202610120000_task_rank.up.sql"
 adr = "docs/adr/0050-a-move-writes-one-row.md"
 reason = "expand scaffolding for the release before, which cannot write the rank; it goes with the position in the contract release"
+
+# This release names no position; the release before reads it as a number. A
+# trigger gives every row this release writes its rank's float, until the
+# column goes.
+[[tool.arch-check.exception]]
+rule = "STO-05"
+path = "om/migrations/sql/core/202610200000_task_position_unmapped.up.sql"
+adr = "docs/adr/0050-a-move-writes-one-row.md"
+reason = "contract scaffolding for the release before, which reads the position this release no longer writes; it goes with the column"
 
 # The company site is a page, not an app: HTML and CSS on Vite, no script,
 # so no React.

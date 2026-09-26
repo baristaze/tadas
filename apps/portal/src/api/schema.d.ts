@@ -2847,14 +2847,14 @@ export interface components {
             /**
              * Position
              * @deprecated
-             * @description The rank as a float, for a client of the release before; order by `rank`. It leaves the wire in the release after this one.
+             * @description The rank as a float, for a client of the release before, which requires it. Order by `rank`: no client reads this, and it leaves the wire in the release after this one.
              */
-            position: number;
+            position?: number | null;
             /**
              * Rank
-             * @description Where an open task sits in the open list, which is ascending by rank, then by id. An exact decimal number, written out in full: compare two as numbers, never as floats and never as text. Null only from a build that predates it, which orders by `position`.
+             * @description Where an open task sits in the open list, which is ascending by rank, then by id. An exact decimal number, written out in full: compare two as numbers, never as floats and never as text.
              */
-            rank?: string | null;
+            rank: string;
             /** Reminded At */
             reminded_at?: string | null;
             status: components["schemas"]["TaskStatus"];
