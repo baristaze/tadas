@@ -115,13 +115,15 @@ change. A name the image does not host refuses the boot.
   across every org: create an org with its owner, add a member, read
   an org, its members, its tasks, and its events, list every org a
   page at a time, delete a team org (a personal org is refused), read
-  an org's plan and grant it one with no payment, and read the
+  an org's plan and grant it one with no payment, send one of an org's
+  failed work items back to the queue, and read the
   platform's size: the tenant count, the
   user count, and the tasks of the last twenty-four hours.
   (`/v1/admin/orgs`, `/v1/admin/orgs/{org_id}`,
   `/v1/admin/orgs/{org_id}/members`, `/v1/admin/orgs/{org_id}/tasks`,
   `/v1/admin/orgs/{org_id}/events`, `/v1/admin/orgs/{org_id}/billing`,
-  `/v1/admin/orgs/{org_id}/plan`, `/v1/admin/size`). A read route
+  `/v1/admin/orgs/{org_id}/plan`,
+  `/v1/admin/orgs/{org_id}/work/{item_id}/requeue`, `/v1/admin/size`). A read route
   needs an operator who may read; a write route one who may write.
   The plane admits two credentials: a person's sign-in that verified a
   TOTP code, and an operator token. An operator enrols the second
