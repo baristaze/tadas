@@ -25,7 +25,7 @@ file of the run's own always runs in full.
 
 ## Role and credential
 
-Investigator, local only. The skill runs on the local stack (`make
+None, local only. The skill runs on the local stack (`make
 infra-up`, with `make migrate` run once), in a database it makes and
 drops, with the provider twins (identity, payments, Slack) in place of
 the providers. It holds no cloud credential and reads no environment.

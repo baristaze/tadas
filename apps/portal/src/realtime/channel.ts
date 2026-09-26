@@ -44,6 +44,14 @@ export interface ChannelDeps {
    * first catch-up). Only the last record of each entity is routed, so the
    * entity's queries are read again whole; `route` when absent. */
   routeReplayed?(envelope: Envelope): void;
+  /** Whether a record read back from the stream is one a person is told
+   * about, not only refreshed by: a reminder. The collapse to one record per
+   * entity keeps each such record, whatever record of its entity follows. */
+  isAnnounced?(envelope: Envelope): boolean;
+  /** The records a read-back kept for `isAnnounced`, in stream order, handed
+   * over once it ends: one call for a whole replay, every page of it, and one
+   * for the first catch-up. Only what the read-back read is ever handed. */
+  announce?(envelopes: Envelope[]): void;
   /** Refreshes every query, for a first catch-up the stream's tail cannot answer. */
   refreshAll(): Promise<unknown>;
   connection: { getState(): ConnectionState };
@@ -91,6 +99,12 @@ export function openChannel(deps: ChannelDeps): Channel {
   // in the same render that mounts the page's first queries.
   const startedAt = now();
   const routeReplayed = deps.routeReplayed ?? deps.route;
+  const isAnnounced = deps.isAnnounced ?? (() => false);
+  // Hands over what a read-back kept, unless the channel stopped meanwhile:
+  // a switch or a sign-out drops what the old session read.
+  const announceKept = (kept: Envelope[]) => {
+    if (!stopped && kept.length > 0) deps.announce?.(kept);
+  };
   // Frames and replays are applied strictly in arrival order.
   let inbox: Promise<void> = Promise.resolve();
 
@@ -131,30 +145,43 @@ export function openChannel(deps: ChannelDeps): Channel {
   // is not in storage yet), so reading the same page again would too. The
   // cursor stays where it is, and the next push or pong retries from there.
   // A fetch refused as truncated is a resync instead.
+  //
+  // A page is routed one record per entity (below), but a record a person is
+  // told about (`isAnnounced`, a reminder) is kept whatever follows it,
+  // across every page, and handed to `announce` once the replay ends, however
+  // it ends: the cursor has moved past it, so no later replay reads it again.
   const replay = async (after: number): Promise<void> => {
-    let from = after;
-    while (!stopped) {
-      let page: EventView[];
-      try {
-        page = await deps.fetchEventsAfter(from, deps.pageSize);
-      } catch (error) {
-        const head = truncatedHead(error);
-        if (head !== null) await resync(head);
-        return;
+    const kept: Envelope[] = [];
+    try {
+      let from = after;
+      while (!stopped) {
+        let page: EventView[];
+        try {
+          page = await deps.fetchEventsAfter(from, deps.pageSize);
+        } catch (error) {
+          const head = truncatedHead(error);
+          if (head !== null) await resync(head);
+          return;
+        }
+        if (stopped) return;
+        // One route per entity, not per record: routing invalidates every query
+        // the entity is read from, so a page of two hundred task records that
+        // each triggered a route would cancel and restart the list refetch two
+        // hundred times over. The last record of an entity is the one routed,
+        // and every record still moves the cursor.
+        const last = new Map<string, Envelope>();
+        for (const event of page) {
+          apply(eventEnvelope(event), (routed) => {
+            last.set(entityOf(event.kind), routed);
+            if (isAnnounced(routed)) kept.push(routed);
+          });
+        }
+        for (const envelope of last.values()) routeReplayed(envelope);
+        if (isLastPage(page.length, deps.pageSize) || cursor === null || cursor <= from) return;
+        from = cursor;
       }
-      if (stopped) return;
-      // One route per entity, not per record: routing invalidates every query
-      // the entity is read from, so a page of two hundred task records that
-      // each triggered a route would cancel and restart the list refetch two
-      // hundred times over. The last record of an entity is the one routed,
-      // and every record still moves the cursor.
-      const last = new Map<string, Envelope>();
-      for (const event of page) {
-        apply(eventEnvelope(event), (routed) => last.set(entityOf(event.kind), routed));
-      }
-      for (const envelope of last.values()) routeReplayed(envelope);
-      if (isLastPage(page.length, deps.pageSize) || cursor === null || cursor <= from) return;
-      from = cursor;
+    } finally {
+      announceKept(kept);
     }
   };
 
@@ -218,8 +245,14 @@ export function openChannel(deps: ChannelDeps): Channel {
       return;
     }
     const last = new Map<string, Envelope>();
-    for (const event of recent) last.set(entityOf(event.kind), eventEnvelope(event));
+    const kept: Envelope[] = [];
+    for (const event of recent) {
+      const envelope = eventEnvelope(event);
+      last.set(entityOf(event.kind), envelope);
+      if (isAnnounced(envelope)) kept.push(envelope);
+    }
     for (const envelope of last.values()) routeReplayed(envelope);
+    announceKept(kept);
   };
 
   const stopPolling = () => {
