@@ -41,6 +41,88 @@ def test_login_keeps_a_session_and_whoami_reads_it(
     assert stack.tadas("logout", token=None).output == "no session to forget\n"
 
 
+def test_login_over_a_kept_session_ends_that_session_and_keeps_the_new_one(
+    stack: Stack, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stack.login(monkeypatch=monkeypatch)
+    first = config.load_session()
+    assert first is not None
+
+    again = stack.login("--org", "acme", monkeypatch=monkeypatch)
+    assert again.exit_code == 0, again.output
+    assert again.stdout.endswith("the session kept before is ended\n")
+    second = config.load_session()
+    assert second is not None and second.token != first.token and second.org_slug == "acme"
+
+    # The old token answers 401; the new one is the kept session and works.
+    assert stack.tadas("whoami", token=first.token).exit_code == main.EXIT_NOT_SIGNED_IN
+    assert stack.tadas("whoami", token=None).exit_code == 0
+
+
+def test_login_over_a_session_already_gone_says_nothing_of_it(
+    stack: Stack, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stack.login(monkeypatch=monkeypatch)
+    first = config.load_session()
+    assert first is not None
+
+    async def revoke_elsewhere() -> None:
+        async with stack.client(first.token) as client:
+            await client.logout()
+
+    asyncio.run(revoke_elsewhere())
+    again = stack.login(monkeypatch=monkeypatch)
+    assert again.exit_code == 0, again.output
+    assert "session kept before" not in again.output
+    assert stack.tadas("whoami", token=None).exit_code == 0
+
+
+def test_login_keeps_the_new_session_when_the_old_ones_api_cannot_be_reached(
+    stack: Stack, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The kept session goes back to the API that issued it and nowhere else;
+    when that API is away, the new session is kept all the same and stderr
+    says the old one lapses on its own."""
+    config.save_session(
+        config.Session(
+            api_url="https://gone.example.test",
+            token="ses_kept",
+            email="ann@example.test",
+            display_name="Ann",
+            org_slug="acme",
+            org_name="Acme",
+        )
+    )
+    sent_to: list[str] = []
+
+    def build(url: str, token: str | None) -> ApiClient:
+        sent_to.append(url)
+        if url == "https://gone.example.test":
+
+            def refuse(request: httpx.Request) -> httpx.Response:
+                raise httpx.ConnectError("refused")
+
+            return ApiClient(
+                url,
+                app="cli",
+                app_version="cli@test",
+                token=token,
+                transport=httpx.MockTransport(refuse),
+                backoff_seconds=0.0,
+            )
+        return stack.client(token)
+
+    monkeypatch.setattr(main, "build_client", build)
+    result = stack.login(monkeypatch=monkeypatch)
+    assert result.exit_code == 0, result.output
+    assert result.stderr.endswith(
+        "the session kept before was not ended; cannot reach https://gone.example.test: refused\n"
+    )
+    assert sent_to == ["http://test", "https://gone.example.test"]
+    session = config.load_session()
+    assert session is not None and session.token != "ses_kept"
+
+
 def test_login_naming_an_org_the_person_is_not_in_is_a_usage_error(
     stack: Stack, monkeypatch: pytest.MonkeyPatch
 ) -> None:

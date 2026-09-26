@@ -13,13 +13,16 @@ from uuid import uuid4
 import pytest
 from worker_support import build_container, request, sign_in
 
+from tadas.infra.exceptions import BackendFailed, BackendUnreachable
 from tadas.infra.queues import QueueMessage, Queues
+from tadas.integrations.exceptions import PaymentsKeyRefused, PaymentsRefused, ProviderUnavailable
 from tadas.integrations.payments.deliveries import delivery_of
 from tadas.integrations.payments.twin import PaymentsTwinImpl
 from tadas.om.base import EMPTY_UUID, new_id, utcnow
 from tadas.om.billing.types.plan import Plan
 from tadas.om.opcontext import OpContext, Role
 from tadas.om.tenancy.types.role import ROLE_PERMISSIONS
+from tadas.om.work.types.handler import WorkParked, WorkRefused
 from tadas.om.work.types.work_item import WORK_ENQUEUE_PERMISSIONS, WorkItem, WorkKind
 from tadas.workers.maintenance.container import WorkerContainer
 from tadas.workers.maintenance.deliveries import DeliveryConsumer, DeliveryOptions
@@ -125,7 +128,9 @@ async def test_the_consumer_runs_until_it_is_stopped(tmp_path: Path) -> None:
     assert (await container.managers.billing.get_billing(ctx)).plan is Plan.TEAM
 
 
-async def test_the_seat_count_follows_the_members_when_the_item_runs(tmp_path: Path) -> None:
+async def seats_to_sync(tmp_path: Path) -> tuple[WorkerContainer, OpContext, OpContext, WorkItem]:
+    """Acme pays for one seat on Max and has just added Bob: the owner's
+    context, the service context the item runs under, and the item."""
     container = build_container(tmp_path)
     ctx = await sign_in(container)
     consumer = consumer_of(container)
@@ -135,7 +140,6 @@ async def test_the_seat_count_follows_the_members_when_the_item_runs(tmp_path: P
         request(), "acme", "bob@example.test", "Bob", Role.MEMBER
     )
     service = await container.managers.tenancy.service_context(request(), ctx.org_id, EMPTY_UUID)
-    handler = SyncSeatsHandlerImpl(container.managers.tenancy, container.managers.billing)
     now = utcnow()
     item = WorkItem(
         id=new_id(),
@@ -149,12 +153,54 @@ async def test_the_seat_count_follows_the_members_when_the_item_runs(tmp_path: P
         request_id=ctx.request_id,
         available_at=now,
     )
+    return container, ctx, service, item
+
+
+async def test_the_seat_count_follows_the_members_when_the_item_runs(tmp_path: Path) -> None:
+    container, ctx, service, item = await seats_to_sync(tmp_path)
+    handler = SyncSeatsHandlerImpl(container.managers.tenancy, container.managers.billing)
     await handler.handle(service, item)
     await handler.handle(service, item)  # at least once: the second run changes nothing
     twin = twin_of(container)
     assert [quantity for _, quantity in twin.quantity_changes] == [2]
     billing = await container.managers.billing.get_billing(ctx)
     assert billing.account is not None and billing.account.quantity == 2
+
+
+@pytest.mark.parametrize(
+    ("error", "outcome"),
+    [
+        # What the Stripe client raises for a refusal of its own key (401,
+        # 403), a throttle, and an unreachable processor: the item waits.
+        (PaymentsKeyRefused("update subscription quantity", "PermissionError"), WorkParked),
+        (PaymentsKeyRefused("update subscription quantity", "AuthenticationError"), WorkParked),
+        (ProviderUnavailable("the payment processor throttled update"), WorkParked),
+        (BackendUnreachable("stripe", "update subscription quantity", "ConnectError"), WorkParked),
+        # A refusal of the request itself: the same call gets the same answer.
+        (PaymentsRefused("update subscription quantity", "parameter_invalid"), WorkRefused),
+        # A failure that may come out differently is the queue's to retry.
+        (BackendFailed("stripe", "update subscription quantity", "api_error"), BackendFailed),
+    ],
+)
+async def test_a_seat_count_the_processor_refuses_fails_and_one_that_may_pass_parks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    error: Exception,
+    outcome: type[Exception],
+) -> None:
+    container, ctx, service, item = await seats_to_sync(tmp_path)
+
+    async def answer(subscription_id: str, quantity: int, idempotency_key: str) -> object:
+        raise error
+
+    monkeypatch.setattr(twin_of(container), "set_quantity", answer)
+    handler = SyncSeatsHandlerImpl(container.managers.tenancy, container.managers.billing)
+    with pytest.raises(outcome) as raised:
+        await handler.handle(service, item)
+    assert str(error) in str(raised.value)
+    # Either way the mirror still says what the processor bills.
+    billing = await container.managers.billing.get_billing(ctx)
+    assert billing.account is not None and billing.account.quantity == 1
 
 
 def test_every_kind_is_asked_for_by_a_permission_as_wide_as_its_handler(tmp_path: Path) -> None:

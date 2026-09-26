@@ -97,6 +97,18 @@ network, so enter host `valkey` and port `6379` (not `localhost` or
 | Backing services plus dashboards | `make devx-up` |
 | Backing services plus app containers, no dashboards | `make stack-up` |
 
+`make up` and `make devx-up` exit 0 only when every long-running service
+is up (healthy, where it has a healthcheck) and every one-shot succeeded.
+A one-shot is a service that does one job and exits: `glitchtip-db` and
+`glitchtip-seed`. `up --wait` handles `glitchtip-db` itself, since
+`glitchtip` waits for it to complete successfully. It would count
+`glitchtip-seed`'s exit as a failure, even a clean one, because nothing
+waits for it. So the seed has a profile of its own, `devx-seed`, that
+`up` leaves out, and the Makefile runs it after the wait: in the
+foreground, removed when done, its exit code the step's. A new one-shot
+follows one of the two patterns: a service depends on it with
+`service_completed_successfully`, or it gets the `devx-seed` treatment.
+
 ## One service at a time
 
 Set this once per shell. It names both files and the profile, so every
@@ -201,7 +213,9 @@ Everything below needs the `devx` profile (`make up` or `make devx-up`).
   Jaeger data source shows the same traces.
 - **Errors.** GlitchTip is Sentry-compatible. `glitchtip-db` creates its
   database on the stack's Postgres and `glitchtip-seed` creates the admin
-  and one project, `tadas`, whose DSN key is fixed. So the DSNs are known
+  and one project, `tadas`, whose DSN key is fixed. The seed is idempotent
+  and runs on every `make up` and `make devx-up`; by hand it is
+  `dc --profile devx-seed run --rm glitchtip-seed`. So the DSNs are known
   ahead of time: `http://0123456789abcdef0123456789abcdef@glitchtip:8000/1`
   in the app containers, and the same key at `localhost:58000` or
   `127.0.0.1:58000` for the portal and host processes (`TADAS_SENTRY_DSN`
@@ -220,6 +234,7 @@ Everything below needs the `devx` profile (`make up` or `make devx-up`).
 |---------|----------------------|
 | `postgres` exits right after start | A volume from another Postgres major version. `make reset`, or reset only the database as above. |
 | `api` exits at start with `Failed connecting to valkey` | Valkey was not reachable yet as the API booted. `dc up -d --wait api`. |
+| `make up` or `make devx-up` fails right after `glitchtip-seed` runs | The seed failed, and its last line says why; every other service is up. Fix that and rerun: the seed is idempotent. |
 | `port is already allocated` | Another process holds that host port: `lsof -nP -iTCP:<port> -sTCP:LISTEN`. For a dashboard, set its `TADAS_<DASHBOARD>_PORT` in `.env`. |
 | The portal loads but every request fails | The API is down, or the portal was built for another `VITE_API_URL`: `dc ps api`, then rebuild the portal. The portal's nginx forwards `/v1` to the `api` container, so both must be up. |
 | The API refuses to start, naming a setting | `.env` predates a rename; compare it with `.env.example`. |

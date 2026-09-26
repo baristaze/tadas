@@ -1,7 +1,8 @@
 """The billing routes and the processor's webhook over the in-process app and
 the payment processor's twin: the plan an org reads, the typed refusal a
 lever answers with, a checkout, a signed delivery queued and applied once,
-and a cancellation that holds the plan to its period's end."""
+a cancellation that holds the plan to its period's end, and the status
+each route answers when the processor fails."""
 
 import json
 from datetime import timedelta
@@ -10,11 +11,13 @@ from uuid import UUID
 
 import httpx
 import pytest
+import stripe
 from api_support import add_member, on_plan, seed_request, sign_in, sign_in_as
 
 from tadas.infra.queues import Queues
 from tadas.integrations.payments import ProviderDelivery
 from tadas.integrations.payments.deliveries import sign
+from tadas.integrations.payments.stripe import translated
 from tadas.integrations.payments.twin import PaymentsTwinImpl
 from tadas.om.base import EMPTY_UUID
 from tadas.om.billing.types.plan import Plan
@@ -275,3 +278,63 @@ async def test_every_other_org_is_untouched_by_a_delivery(
     await pay(client, container, free)
     otto = await sign_in_as(client, "otto@example.test", other.id)
     assert (await client.get("/v1/billing", headers=otto)).json()["plan"] == "free"
+
+
+@pytest.mark.parametrize(
+    ("error", "status", "code"),
+    [
+        # The runtime key refused: unavailable until a person fixes the key.
+        (stripe.PermissionError("no", http_status=403), 503, "payments_key_refused"),
+        (stripe.AuthenticationError("revoked", http_status=401), 503, "payments_key_refused"),
+        # A throttle, and a processor out of reach: not right now.
+        (stripe.RateLimitError("slow down", http_status=429), 503, "unavailable"),
+        (stripe.APIConnectionError("reset"), 503, "unavailable"),
+        # The request itself.
+        (
+            stripe.InvalidRequestError("bad", None, code="parameter_invalid"),
+            502,
+            "payments_refused",
+        ),
+        (stripe.CardError("declined", None, code="card_declined"), 502, "payments_refused"),
+        # The processor's own failure.
+        (stripe.APIError("boom", http_status=500), 500, "backend_failed"),
+    ],
+)
+async def test_each_billing_route_answers_the_status_of_whose_problem_it_is(
+    client: httpx.AsyncClient,
+    container: AppContainer,
+    free: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    error: stripe.StripeError,
+    status: int,
+    code: str,
+) -> None:
+    """The processor's failure, through the real client's translation, as
+    the checkout, the portal, a cancel, and a resume answer it. The billing
+    read asks the processor nothing and answers from the mirror."""
+    twin = twin_of(container)
+
+    async def failing(*args: object, **kwargs: object) -> object:
+        async with translated("the call"):
+            raise error
+
+    def answered(response: httpx.Response) -> None:
+        assert response.status_code == status, response.text
+        assert response.json()["error"]["code"] == code
+        assert response.json()["error"]["message"] == "internal error"
+
+    monkeypatch.setattr(twin, "create_checkout", failing)
+    answered(
+        await client.post(
+            "/v1/billing/checkout", headers=free, json={"plan": "pro", "return_url": PORTAL}
+        )
+    )
+    monkeypatch.undo()
+    await pay(client, container, free)
+    monkeypatch.setattr(twin, "create_portal_session", failing)
+    monkeypatch.setattr(twin, "set_cancel_at_period_end", failing)
+    answered(await client.post("/v1/billing/portal", headers=free, json={"return_url": PORTAL}))
+    answered(await client.post("/v1/billing/cancel", headers=free))
+    answered(await client.post("/v1/billing/resume", headers=free))
+    read = await client.get("/v1/billing", headers=free)
+    assert read.status_code == 200 and read.json()["plan"] == "pro"

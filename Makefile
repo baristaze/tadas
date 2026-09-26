@@ -18,6 +18,13 @@ COMPOSE_LINUX := $(if $(filter Linux,$(shell uname -s)),-f deployment/local/dock
 COMPOSE ?= docker compose $(COMPOSE_ENV) -f deployment/local/docker-compose.yml $(COMPOSE_LINUX)
 COMPOSE_FULL := $(COMPOSE) -f deployment/local/docker-compose.full.yml
 ROLES := core activity queue admin
+# GlitchTip's seed is a one-shot that no service depends on, and `up --wait`
+# counts a one-shot's exit as a failure even when it exits 0. So the seed
+# sits in the devx-seed profile, which `up` leaves out, and runs here, after
+# the wait has seen GlitchTip healthy: in the foreground, removed when done,
+# and with its own exit code as the step's. It is idempotent, so every `up`
+# runs it again. Prefixed with the compose command of the target that runs it.
+GLITCHTIP_SEED := --profile devx --profile devx-seed run --rm --no-deps -T glitchtip-seed
 # The traffic run's knobs: `make traffic PROFILE=light DURATION=30`.
 PROFILE ?= light
 DURATION ?= 30
@@ -48,19 +55,23 @@ setup: ## Install every Python and TypeScript dependency
 # The one-command session. `up` starts the data services first, migrates and
 # seeds them, then starts the app containers and the dashboards; it is safe
 # to rerun and keeps data. `down` keeps data; `reset` wipes it and starts over.
+# `up --wait` waits on the long-running services only, and GlitchTip's seed
+# runs to completion after it as a step of its own (see GLITCHTIP_SEED), so
+# either target exits 0 when every service is up and the seed succeeded.
 up: .env ## Everything: stack, migrations, seed, app containers, dashboards; keeps data
 	$(COMPOSE) up -d --wait
 	$(MAKE) --no-print-directory buckets
 	$(MAKE) --no-print-directory migrate seed
 	$(COMPOSE_FULL) --profile devx up -d --build --wait
+	$(COMPOSE_FULL) $(GLITCHTIP_SEED)
 	@$(MAKE) --no-print-directory urls
 
 down: ## Stop every local container; the data stays for the next `make up`
-	$(COMPOSE_FULL) --profile devx down --remove-orphans
+	$(COMPOSE_FULL) --profile devx --profile devx-seed down --remove-orphans
 
 # Names every file and profile so no container of any of them is left behind.
 reset: ## Wipe every container and all local data, then `make up`
-	$(COMPOSE_FULL) --profile devx down -v --remove-orphans
+	$(COMPOSE_FULL) --profile devx --profile devx-seed down -v --remove-orphans
 	$(MAKE) --no-print-directory up
 
 urls: ## Print the local URLs and the seeded sign-ins
@@ -92,6 +103,7 @@ buckets: ## Create the object store's buckets in MinIO, if they are missing
 
 devx-up: ## The local stack plus developer dashboards (pgweb, Valkey Admin, ElasticMQ UI, Prometheus and its collector, Grafana, Jaeger, GlitchTip)
 	$(COMPOSE) --profile devx up -d --wait
+	$(COMPOSE) $(GLITCHTIP_SEED)
 
 stack-up: ## The local stack plus the api, maintenance, and portal containers
 	$(COMPOSE_FULL) up -d --build --wait
