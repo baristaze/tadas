@@ -849,7 +849,20 @@ opens and no call site carries one, and the driver's connect timeout is
 the checkout bound, so a database that accepts no connection fails a
 call inside the same bound. There is no overflow: the declared size is
 the number of connections the process can hold, and a checkout past it
-waits and then fails rather than queueing without end. One engine serves
+waits and then fails rather than queueing without end. Both failures
+leave the storage funnel (`PgStorageBase._session_for`, which every
+statement of every role and both logins passes) as `Unavailable`, 503
+`unavailable`, never as the driver's own error: a checkout past its bound
+(the pool had no connection free, or a new one did not open in time) and
+a statement Postgres cancelled at its deadline (SQLSTATE 57014). Each is
+counted, in `tadas_outcomes_total` under `storage` and `checkout_timeout`
+or `statement_timeout`. So a caller reads a database that did not answer
+in time as "try again", as it reads a provider that did not: the API
+answers 503 `unavailable` with the request id and logs a warning, the
+portal and the Python client retry a read and a keyed create, the
+worker's claim and the relay after an answer log a warning and leave the
+rest to the next poll and the sweep, and a socket closes with 1011 as on
+any failure of its handler. One engine serves
 each distinct URL and bounds, so roles that share both share a pool and
 a role given bounds of its own is the bulkhead between two load profiles
 on one database. `StoragePostgresImpl` takes the URLs and the bounds
@@ -1096,7 +1109,10 @@ alone, and neither key may touch what the other's work does not need
   stripped from the scope whether it matches or not. The envelope carries the
   exception's code and status; for a status of 500 or more its message
   is `internal error` and the real one goes to the log under the
-  request id. An unhandled exception is answered inside the
+  request id. That line is a warning when the code is `unavailable`, a
+  dependency that did not answer in time and that the client asks again,
+  and an error, which the tracker reports, for any other failure
+  (`failure_level`). An unhandled exception is answered inside the
   observability middleware, while the id is still in hand, so the 500
   carries the request id header, the log line the id, and the request
   counter the status; Starlette's own catch-all stays as the last
