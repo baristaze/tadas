@@ -13,10 +13,12 @@ from tadas.services.api.gateway.ratelimit import rate_limited
 from tadas.services.api.gateway.resolve import TenancyService
 from tadas.services.api.types.common import LIMIT_DEFAULT
 from tadas.services.api.types.tenancy import (
+    AccountDeletedView,
     AddApiKeyRequest,
     ApiKeyPageView,
     ApiKeyView,
     CreateTeamOrgRequest,
+    DeleteAccountRequest,
     DeviceSignInView,
     DeviceTokenRequest,
     DevSignInRequest,
@@ -146,6 +148,17 @@ async def me(ctx: Ctx, tenancy: TenancyService) -> MeView:
 @router.patch("/me", response_model=UserView)
 async def update_me(ctx: Ctx, tenancy: TenancyService, body: UpdateMeRequest) -> UserView:
     return await tenancy.update_me(ctx, body)
+
+
+# The caller's whole account, gone: every org they are in loses them, their
+# personal org goes whole, and the session presented ends with every other.
+# No idempotency key: the principal that would hold the marker is what this
+# erases, so a retry meets a session that no longer exists.
+@router.post("/me/deletion", response_model=AccountDeletedView)
+async def delete_account(
+    ctx: Ctx, tenancy: TenancyService, body: DeleteAccountRequest
+) -> AccountDeletedView:
+    return await tenancy.delete_account(ctx, body)
 
 
 @router.get("/me/identity", response_model=IdentityView)

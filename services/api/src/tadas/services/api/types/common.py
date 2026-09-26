@@ -42,12 +42,28 @@ class StreamTruncatedDetail(View):
     head: int
 
 
+class OwnedOrgRef(View):
+    """An org named in a refusal: enough to find it and to say which."""
+
+    id: UUID
+    name: str
+    slug: str
+
+
+class LastOwnerDetail(View):
+    """What a `last_owner` refusal carries: every team org the person is the
+    last owner of, which they hand on or delete before their account goes."""
+
+    orgs: list[OwnedOrgRef]
+
+
 class ErrorBody(View):
     code: str
     message: str
     request_id: UUID
     plan_limit: PlanLimitDetail | None = None
     stream: StreamTruncatedDetail | None = None
+    last_owner: LastOwnerDetail | None = None
 
 
 class ErrorResponse(View):

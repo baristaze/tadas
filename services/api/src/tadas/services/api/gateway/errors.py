@@ -5,6 +5,7 @@ request id is still in hand; the catch-all here is the last resort for what
 escapes outside it. Routers never set error status codes."""
 
 import logging
+from uuid import UUID
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -13,6 +14,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from tadas.infra.exceptions import InfraException
 from tadas.om.exceptions import (
+    LastOwner,
     PlanLimitReached,
     PlatformException,
     SignInDelayed,
@@ -21,7 +23,12 @@ from tadas.om.exceptions import (
 from tadas.services.api.gateway.envelope import INTERNAL_ERROR, error_response
 from tadas.services.api.gateway.observability import request_id_of
 from tadas.services.api.gateway.ratelimit import RateLimited
-from tadas.services.api.types.common import PlanLimitDetail, StreamTruncatedDetail
+from tadas.services.api.types.common import (
+    LastOwnerDetail,
+    OwnedOrgRef,
+    PlanLimitDetail,
+    StreamTruncatedDetail,
+)
 
 log = logging.getLogger(__name__)
 
@@ -38,9 +45,10 @@ def envelope(
     headers: dict[str, str] | None = None,
     plan_limit: PlanLimitDetail | None = None,
     stream: StreamTruncatedDetail | None = None,
+    last_owner: LastOwnerDetail | None = None,
 ) -> JSONResponse:
     return error_response(
-        request_id_of(request.scope), status, code, message, headers, plan_limit, stream
+        request_id_of(request.scope), status, code, message, headers, plan_limit, stream, last_owner
     )
 
 
@@ -77,7 +85,15 @@ def presented(
     if isinstance(exc, StreamTruncated):
         # The refusal names where the stream goes on from.
         stream = StreamTruncatedDetail(floor=exc.floor, head=exc.head)
-    return envelope(request, exc.http_status, exc.code, exc.message, headers, detail, stream)
+    last_owner = None
+    if isinstance(exc, LastOwner):
+        # The refusal names the orgs that would be left with nobody to run them.
+        last_owner = LastOwnerDetail(
+            orgs=[OwnedOrgRef(id=UUID(i), name=n, slug=s) for i, n, s in exc.orgs]
+        )
+    return envelope(
+        request, exc.http_status, exc.code, exc.message, headers, detail, stream, last_owner
+    )
 
 
 def register_error_handlers(app: FastAPI) -> None:

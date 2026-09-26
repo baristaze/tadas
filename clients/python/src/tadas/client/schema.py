@@ -9,6 +9,17 @@ from uuid import UUID
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, RootModel
 
 
+class AccountDeletedView(BaseModel):
+    """
+    The account is gone: `deleted_at` is when. The database's backups
+    still hold it until they expire, seven days on. `provider_logout_url` is
+    where the browser goes next, as on a sign-out; null when the sign-in
+    left no session there.
+    """
+    deleted_at: Annotated[AwareDatetime, Field(title='Deleted At')]
+    provider_logout_url: Annotated[str | None, Field(title='Provider Logout Url')] = None
+
+
 class TtlDays(RootModel[int]):
     root: Annotated[int, Field(ge=1, le=90, title='Ttl Days')]
 
@@ -93,6 +104,23 @@ class CredentialKind(StrEnum):
     socket_ticket = 'socket_ticket'
     operator_token = 'operator_token'
     internal = 'internal'
+
+
+class ReturnTo(RootModel[str]):
+    root: Annotated[str, Field(max_length=2000, min_length=1, title='Return To')]
+
+
+class DeleteAccountRequest(BaseModel):
+    """
+    The account's email as the person typed it, which is how they say
+    they mean it; and, as on the sign-out, where the identity provider sends
+    the browser once it has ended its own session.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    email: Annotated[str, Field(max_length=320, min_length=1, title='Email')]
+    return_to: Annotated[ReturnTo | None, Field(title='Return To')] = None
 
 
 class DeliveryReceivedView(BaseModel):
@@ -249,10 +277,6 @@ class IssuedTotpSecretView(BaseModel):
     authenticator app reads. A replay carries none.
     """
     otpauth_uri: Annotated[str | None, Field(title='Otpauth Uri')]
-
-
-class ReturnTo(RootModel[str]):
-    root: Annotated[str, Field(max_length=2000, min_length=1, title='Return To')]
 
 
 class LogoutRequest(BaseModel):

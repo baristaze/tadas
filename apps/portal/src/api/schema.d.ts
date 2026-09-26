@@ -601,6 +601,23 @@ export interface paths {
         patch: operations["update_me_v1_me_patch"];
         trace?: never;
     };
+    "/v1/me/deletion": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Delete Account */
+        post: operations["delete_account_v1_me_deletion_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/me/identity": {
         parameters: {
             query?: never;
@@ -1180,6 +1197,22 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * AccountDeletedView
+         * @description The account is gone: `deleted_at` is when. The database's backups
+         *     still hold it until they expire, seven days on. `provider_logout_url` is
+         *     where the browser goes next, as on a sign-out; null when the sign-in
+         *     left no session there.
+         */
+        AccountDeletedView: {
+            /**
+             * Deleted At
+             * Format: date-time
+             */
+            deleted_at: string;
+            /** Provider Logout Url */
+            provider_logout_url?: string | null;
+        };
         /** AddApiKeyRequest */
         AddApiKeyRequest: {
             /** Name */
@@ -1359,6 +1392,18 @@ export interface components {
          * @enum {string}
          */
         CredentialKind: "api_key" | "session_token" | "login" | "socket_ticket" | "operator_token" | "internal";
+        /**
+         * DeleteAccountRequest
+         * @description The account's email as the person typed it, which is how they say
+         *     they mean it; and, as on the sign-out, where the identity provider sends
+         *     the browser once it has ended its own session.
+         */
+        DeleteAccountRequest: {
+            /** Email */
+            email: string;
+            /** Return To */
+            return_to?: string | null;
+        };
         /**
          * DeliveryReceivedView
          * @description The delivery checked out and is queued; the processor stops retrying.
@@ -3954,6 +3999,43 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["UserView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_account_v1_me_deletion_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeleteAccountRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountDeletedView"];
                 };
             };
             /** @description Validation Error */
