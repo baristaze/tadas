@@ -83,7 +83,12 @@ context on keeps the stage the callee needs.
   would outlive it, so `create_api_key` refuses an api key credential, and
   an api key has no sign-out: it never proves an identity. The operator plane (every org, delete an org; an owner deletes their own team org through the tenant's manager) is a second
   manager, `TenancyOperatorManagerInterface`, which takes `OperatorContext`
-  and nothing else. Its `delete_org` takes an owner's path (below): one
+  and nothing else, but the sweep's `tally_size`, which takes no context.
+  Its `size` reads the platform's size as the maintenance worker last
+  counted it, one row of `admin.platform_sizes` with the moment of the
+  count, and counts nothing: no request scans the roles the application
+  writes to (STO-21, [ADR 0074](adr/0074-the-platforms-size-is-a-tally-the-sweep-keeps.md)).
+  Before the first count it is `NotFound`. Its `delete_org` takes an owner's path (below): one
   `write_closed_org` commit ends every member and credential, so every
   socket of the tenant closes, and asks for `work.DELETE_ORG`, every row
   under the operator's identity; a closed org is answered as it stands
@@ -815,8 +820,9 @@ call site and held to the enumerated exceptions by
 `om/tests/unit/test_session_scope.py`. What proves the policy is live
 rather than merely enabled is the two-run negative control in
 [the tenant isolation runbook](runbooks/tenant-isolation.md). Migrations are hand-written SQL under
-`om/migrations/sql/<role>/` with Alembic wrappers; `core`, `activity`,
-and `queue` have chains today, and `admin` has no table yet. Each role's
+`om/migrations/sql/<role>/` with Alembic wrappers, one chain per role.
+`admin` holds one table, `platform_sizes`, the operator plane's tally of
+the platform's size, which only the sweep writes. Each role's
 pool carries bounds of its own: a size, how long a checkout waits before
 it fails, and the deadline every statement on it runs under. Each is a
 setting with a per-role override that defaults to the shared value, the
@@ -1352,6 +1358,16 @@ alone, and neither key may touch what the other's work does not need
   purges across tenants run on every pass, each again while its batch comes back full
   and the budget lasts; the pass always takes one tenant, even past the
   budget.
+  Once every five minutes (`TADAS_WORKER_TALLY_SECONDS`, 300), and on a
+  worker's first pass, the pass counts the platform's size across
+  tenants, whatever the budget (`tally_size`: the live orgs and users in
+  one statement, then the tasks created and the events produced in the
+  day before the count), and writes it as the one row of
+  `admin.platform_sizes`, which a count older than the row's does not
+  replace. Each worker counts on its own clock, and a count that fails
+  is tried again on the next pass. At 5,000 tenants a count is 12 round
+  trips and about 20 ms
+  ([ADR 0074](adr/0074-the-platforms-size-is-a-tally-the-sweep-keeps.md)).
   Each pass ends with three reads across tenants, one statement each,
   whatever the budget: the age of the queued item ready longest on any
   lane (`oldest_ready_age`, the first entry of the partial index
@@ -1829,9 +1845,10 @@ page; this section says what exists.
   open ticket a verdict against `main`. None of the tools is imported by
   a process; `ops/tests/test_audit_database.py` runs them end to end.
   The first responder is an agent: `ops-investigate` and
-  `ops-watch` read the platform's size (`tadas-ops size`) before they
-  escalate an alarm, and a platform of one tenant and one user is the
-  developer at work.
+  `ops-watch` read the platform's size (`tadas-ops size`, the worker's
+  latest count and how long ago it counted) before they escalate an
+  alarm, and a platform of one tenant and one user is the developer at
+  work.
 - **Dashboards and alarms.** `modules/dashboard` declares the CloudWatch
   dashboard `tadas-<env>` from a template whose first five panels and
   last three carry the titles of the local Grafana dashboard
