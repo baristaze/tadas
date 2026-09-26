@@ -5,10 +5,12 @@ Slack's own address alone; an install's code and a refresh become tokens;
 a call in is checked against the signing secret over its raw body, in
 constant time, inside five minutes; a call a request makes ends at the
 request's deadline; the twin signs the way Slack does, stays local, issues
-tokens that renew once, and fails on request; and the off client reaches
-Slack for nothing."""
+tokens that renew once, refuses a channel its bot was removed from and
+hands back the event of its invite, and fails on request; and the off
+client reaches Slack for nothing."""
 
 import asyncio
+import json
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -470,6 +472,29 @@ async def test_the_twin_installs_renews_once_and_revokes() -> None:
     assert twin.uninstalled == ["T0ACME"]
     with pytest.raises(SlackTokenRevoked):
         await twin.post_message(fresh, "C0TEAM", "after")
+
+
+async def test_the_twins_bot_removed_from_a_channel_is_invited_back_by_an_event() -> None:
+    twin = SlackTwinImpl("test")
+    grant = await twin.exchange_code(twin.approve("T0ACME", "U0ANN"), "https://r")
+    token = grant.tokens.access_token.get_secret_value()
+    twin.remove_bot("T0ACME", "C0TEAM")
+    with pytest.raises(SlackChannelUnusable) as refused:
+        await twin.post_message(token, "C0TEAM", "while it is out")
+    assert refused.value.slack_code == "not_in_channel"
+    assert await twin.post_message(token, "C0OTHER", "another channel still works")
+    joined = twin.invite_bot("T0ACME", "C0TEAM")
+    assert joined["event"] == {
+        "type": "member_joined_channel",
+        "user": grant.bot_user_id,
+        "channel": "C0TEAM",
+        "channel_type": "C",
+        "team": "T0ACME",
+        "inviter": "UTWIN0001",
+    }
+    delivery = inbound_event(event_of(json.dumps(joined).encode()), utcnow(), 0)
+    assert delivery.key == delivery_key(joined["event_id"])
+    assert await twin.post_message(token, "C0TEAM", "back in")
 
 
 async def test_a_token_one_twin_issued_works_in_another_process() -> None:

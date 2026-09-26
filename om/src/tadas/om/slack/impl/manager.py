@@ -8,6 +8,7 @@ from pydantic import SecretStr
 from tadas.infra.exceptions import InfraException
 from tadas.infra.secrets import SecretNotFound, SecretsInterface
 from tadas.integrations.slack import (
+    UNUSABLE_CHANNEL_ERRORS,
     SlackError,
     SlackFailed,
     SlackGrant,
@@ -337,6 +338,28 @@ class SlackManagerImpl(SlackManagerInterface):
         )
         await self._write(ctx, broken, "updated")
         return broken
+
+    async def bot_joined(self, ctx: OpContext, channel_id: str) -> SlackInstallation | None:
+        ctx.require(Permission.WRITE)
+        current = await self._storage.read_installation(ctx.org_id)
+        if (
+            current is None
+            or current.channel_id != channel_id
+            or current.status is not SlackInstallationStatus.BROKEN
+            or current.broken_reason not in UNUSABLE_CHANNEL_ERRORS
+        ):
+            return None
+        log.info("slack bot of org %s is back in its channel: %s", ctx.org_id, channel_id)
+        mended = current.model_copy(
+            update={
+                "status": SlackInstallationStatus.OK,
+                "broken_reason": None,
+                "updated_at": utcnow(),
+                "updated_by": ctx.user_id,
+            }
+        )
+        await self._write(ctx, mended, "updated")
+        return mended
 
     async def read_post(self, ctx: OpContext, key: UUID) -> SlackPost | None:
         ctx.require(Permission.READ)

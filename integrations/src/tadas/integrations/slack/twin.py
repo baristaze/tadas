@@ -1,11 +1,13 @@
 """The deterministic twin: Slack's side of an app, in-process.
 
-It keeps workspaces and their people, issues install codes and tokens the
-way OAuth v2 with token rotation does (an access token that expires, a
-refresh token that works once), records every post, reply, and App Home,
-signs requests with Slack's scheme under a signing secret of its own, and
-fails on request, so a test can drive the rate limit, the unusable channel,
-and the revoked install the real service would. It refuses to run outside a
+It keeps workspaces, their people, and the channels its bot was removed
+from; issues install codes and tokens the way OAuth v2 with token rotation
+does (an access token that expires, a refresh token that works once);
+records every post, reply, and App Home; hands back the event Slack sends
+when the bot is invited to a channel; signs requests with Slack's scheme
+under a signing secret of its own; and fails on request, so a test can
+drive the rate limit, the unusable channel, and the revoked install the
+real service would. It refuses to run outside a
 local environment, and every token and message it makes says it came from
 the twin."""
 
@@ -20,6 +22,7 @@ from pydantic import SecretStr
 from tadas.infra.base import utcnow
 from tadas.integrations.slack import (
     BOT_SCOPES,
+    SlackChannelUnusable,
     SlackError,
     SlackFailed,
     SlackGrant,
@@ -50,6 +53,13 @@ TWIN_INSTALLER = "UTWIN0001"
 """The workspace, and the person in it, the twin's own install page approves
 for: what "Add to Slack" installs into on a laptop."""
 
+TWIN_APP = "ATWIN"
+
+
+def bot_user_of(team_id: str) -> str:
+    """The bot user an install of the twin's app has in a workspace."""
+    return f"UBOT{team_id}"
+
 
 @dataclass(frozen=True)
 class TwinPost:
@@ -73,6 +83,7 @@ class SlackTwinImpl(SlackInterface):
     _codes: dict[str, SlackGrant] = field(default_factory=dict)
     _emails: dict[tuple[str, str], str] = field(default_factory=dict)
     _revoked: set[str] = field(default_factory=set)  # teams, and tokens refreshed away
+    _removed: set[tuple[str, str]] = field(default_factory=set)  # (team, channel) the bot left
     _minted: int = 0
 
     def __post_init__(self) -> None:
@@ -104,13 +115,42 @@ class SlackTwinImpl(SlackInterface):
         self._codes[code] = SlackGrant(
             team_id=team_id,
             team_name=team_name,
-            app_id="ATWIN",
-            bot_user_id=f"UBOT{team_id}",
+            app_id=TWIN_APP,
+            bot_user_id=bot_user_of(team_id),
             scopes=scopes,
             installer_user_id=installer_user_id,
             tokens=self._mint(team_id),
         )
         return code
+
+    def remove_bot(self, team_id: str, channel_id: str) -> None:
+        """Someone removed the bot from a channel: a post there answers
+        `not_in_channel` until the bot is invited again."""
+        self._removed.add((team_id, channel_id))
+
+    def invite_bot(
+        self, team_id: str, channel_id: str, inviter: str = TWIN_INSTALLER
+    ) -> dict[str, Any]:
+        """`/invite @tadas` in a channel: posts there work again, and the
+        answer is the Events API body Slack then sends the app, a
+        `member_joined_channel` whose member is the bot."""
+        self._removed.discard((team_id, channel_id))
+        self._minted += 1
+        return {
+            "type": "event_callback",
+            "team_id": team_id,
+            "api_app_id": TWIN_APP,
+            "event_id": f"EvTWIN{self._minted:06d}",
+            "event_time": int(utcnow().timestamp()),
+            "event": {
+                "type": "member_joined_channel",
+                "user": bot_user_of(team_id),
+                "channel": channel_id,
+                "channel_type": "C",
+                "team": team_id,
+                "inviter": inviter,
+            },
+        }
 
     def revoke_team(self, team_id: str) -> None:
         """The workspace removed the app: every token it held stops working."""
@@ -180,6 +220,8 @@ class SlackTwinImpl(SlackInterface):
         self, token: str, channel_id: str, text: str, thread_ts: str | None = None
     ) -> str:
         team = self._authorized(token, "chat.postMessage")
+        if (team, channel_id) in self._removed:
+            raise SlackChannelUnusable("not_in_channel")
         ts = f"twin.{len(self.posts) + 1:06d}"
         self.posts.append(TwinPost(team, channel_id, text, ts, thread_ts))
         log.info("slack twin posted %s to %s: %s", ts, channel_id, text)
