@@ -332,5 +332,13 @@ class OutboxRelayImpl(OutboxRelayInterface):
                 target_id=appended.target_id,
                 seq=appended.seq,
                 actor_id=appended.actor_id,
+                version=version_of(appended),
             ),
         )
+
+
+def version_of(event: Event) -> int | None:
+    """The version the change wrote, which a versioned record's row names in
+    its payload (`versioned_row`); None for every other row."""
+    version = event.payload.get("version")
+    return version if isinstance(version, int) and not isinstance(version, bool) else None

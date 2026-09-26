@@ -7,7 +7,7 @@ import { act, createElement, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ApiError, type MeView, type TaskPageView, type TaskView, type UserPageView } from "../../api";
-import { placeTask, refreshTaskLists, removeTask, taskStamp } from "../../queries/taskCache";
+import { heldTask, placeTask, refreshTaskLists, removeTask, taskStamp } from "../../queries/taskCache";
 import { fetchTask } from "../../queries/tasks";
 import { parseEnvelope } from "../../realtime/envelopes";
 import { routeEnvelope } from "../../realtime/router";
@@ -220,6 +220,7 @@ it("quick-creates a task from its title alone, with no due date", async () => {
 function hintsOver(client: QueryClient) {
   return createTaskHints({
     readTask: fetchTask,
+    held: (id, version) => heldTask(client, id, version),
     isGone: (cause) => cause instanceof ApiError && cause.status === 404,
     stamp: () => taskStamp(client),
     place: (task, since) => placeTask(client, task, { since }),
@@ -228,13 +229,13 @@ function hintsOver(client: QueryClient) {
   });
 }
 
-function pushAbout(kind: string, id: string) {
+function pushAbout(kind: string, id: string, version?: number) {
   return parseEnvelope(
     JSON.stringify({
       type: "event",
       sent_at: null,
       topic: "entity_changed",
-      payload: { kind, target_id: id, seq: 9, actor_id: "u1" },
+      payload: { kind, target_id: id, seq: 9, actor_id: "u1", ...(version === undefined ? {} : { version }) },
     }),
   )!;
 }
@@ -246,7 +247,39 @@ const windowPasses = () =>
 
 const listReads = () => net.log.filter((path) => path.startsWith("/v1/tasks?"));
 
-it("ticks with one PATCH, reads that one task on its push, and reads no list", async () => {
+it("ticks with one PATCH and reads nothing on its own push, which names the version the answer holds", async () => {
+  await mount();
+  net.log.length = 0;
+  const hints = hintsOver(queryClient);
+  await act(async () => void vm().complete(alpha));
+  await tick();
+  const completed: TaskView = { ...alpha, status: "done", version: 2, updated_at: "2026-09-20T10:05:00Z" };
+  await act(async () => void net.writes[0]!.resolve(completed));
+  await tick();
+  routeEnvelope(queryClient, pushAbout("tasks.task.updated", "t1", 2), hints);
+  await windowPasses();
+  expect(net.writes.map((w) => `${w.method} ${w.path}`)).toEqual(["PATCH /v1/tasks/t1"]);
+  expect(net.log).toEqual([]);
+  expect(vm().done.map((r) => r.task.id)).toEqual(["t1"]);
+  hints.stop();
+});
+
+it("reads nothing when its own push arrives before the write's answer, within the window", async () => {
+  await mount();
+  net.log.length = 0;
+  const hints = hintsOver(queryClient);
+  await act(async () => void vm().complete(alpha));
+  await tick();
+  routeEnvelope(queryClient, pushAbout("tasks.task.updated", "t1", 2), hints);
+  const completed: TaskView = { ...alpha, status: "done", version: 2, updated_at: "2026-09-20T10:05:00Z" };
+  await act(async () => void net.writes[0]!.resolve(completed));
+  await windowPasses();
+  expect(net.log).toEqual([]);
+  expect(vm().done[0]!.task.version).toBe(2);
+  hints.stop();
+});
+
+it("ticks with one PATCH, reads that one task on a push that names no version, and reads no list", async () => {
   await mount();
   net.log.length = 0;
   const hints = hintsOver(queryClient);
@@ -320,7 +353,8 @@ it("updates from someone else's push with one read of that task, and drops a tas
   net.log.length = 0;
   const hints = hintsOver(queryClient);
   net.reads.set("/v1/tasks/t2", { ...beta, title: "Beta, from the other tab", version: 2 });
-  routeEnvelope(queryClient, pushAbout("tasks.task.updated", "t2"), hints);
+  // This tab holds version 1; the push names 2, so it reads.
+  routeEnvelope(queryClient, pushAbout("tasks.task.updated", "t2", 2), hints);
   await windowPasses();
   expect(vm().open.map((r) => r.row.title)).toEqual(["Alpha", "Beta, from the other tab"]);
   expect(net.log).toEqual(["/v1/tasks/t2"]);

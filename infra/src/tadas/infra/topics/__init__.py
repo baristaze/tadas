@@ -39,7 +39,7 @@ class TopicPayload(BaseModel):
 
 class Topics(StrEnum):
     WORK_AVAILABLE = "work_available"
-    ENTITY_CHANGED = "entity_changed"  # kind, target_id, seq: the realtime producer
+    ENTITY_CHANGED = "entity_changed"  # kind, target_id, seq, version: the realtime producer
 
 
 class WorkAvailablePayload(TopicPayload):
@@ -59,6 +59,10 @@ class EntityChangedPayload(TopicPayload):
     # release behind parses here instead of being dropped as malformed, and
     # the two sides roll out in either order. Every producer sets it.
     actor_id: UUID = NO_ACTOR
+    # The version the change wrote, where the record carries one and the
+    # writer knew it. A client that already holds the record at this version
+    # has nothing to read. None: read it.
+    version: int | None = None
 
 
 TOPIC_PAYLOADS: dict[Topics, type[TopicPayload]] = {

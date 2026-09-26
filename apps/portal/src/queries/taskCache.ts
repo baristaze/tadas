@@ -130,6 +130,17 @@ export function taskStamp(queryClient: QueryClient): number {
   return ledgerOf(queryClient).clock;
 }
 
+/** The task as this tab placed it, when that is at or past `version`: a
+ * write's answer or a read's, never an optimistic edit, and never a task a
+ * 404 took out. Placing puts a task into every cached list, and the ledger
+ * places it again into a list read while it was placed, so every list this
+ * tab holds already shows it; a push naming that version has nothing to read. */
+export function heldTask(queryClient: QueryClient, id: string, version: number): TaskView | null {
+  const seen = ledgerOf(queryClient).seen.get(id);
+  if (!seen?.task || seen.version === null || seen.version < version) return null;
+  return seen.task;
+}
+
 export interface PlaceOptions extends PlacementOptions {
   /** The stamp at which the read that answered was issued. */
   since?: number;

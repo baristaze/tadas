@@ -154,17 +154,19 @@ async def test_create_update_delete_record_and_push(
     with pytest.raises(NotFound):
         await manager.get_task(ctx, created.id)
     pushes = [p for p in seen if isinstance(p, EntityChangedPayload)]
-    assert [(p.kind, p.target_id, p.seq) for p in pushes] == [
-        ("tasks.task.created", created.id, 1),
-        ("tasks.task.updated", created.id, 2),
-        ("tasks.task.deleted", created.id, 3),
+    # Each push names the version its write set, so the tab that wrote it,
+    # holding that version already, reads nothing.
+    assert [(p.kind, p.target_id, p.seq, p.version) for p in pushes] == [
+        ("tasks.task.created", created.id, 1, 1),
+        ("tasks.task.updated", created.id, 2, 2),
+        ("tasks.task.deleted", created.id, 3, 3),
     ]
     # Every push is a record: the event carries the row's id and the caller's
-    # provenance, and ids only, never a field's value; the outbox row behind
-    # it is done.
+    # provenance, and the version, never a field's value; the outbox row
+    # behind it is done.
     recorded = await events.get_events(ctx, after_seq=0, limit=10)
     assert [e.id for e in recorded] == [p.idempotency_key for p in pushes]
-    assert [e.payload for e in recorded] == [{}, {}, {}]
+    assert [e.payload for e in recorded] == [{"version": 1}, {"version": 2}, {"version": 3}]
     assert recorded[0].actor_id == ctx.user_id and recorded[0].request_id == ctx.request_id
     assert recorded[0].app == "portal"
     assert await claim_all(outbox) == []

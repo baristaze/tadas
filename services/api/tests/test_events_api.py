@@ -105,6 +105,7 @@ def test_a_push_carries_the_stream_position(tmp_path: Path) -> None:
                 "target_id": created.json()["id"],
                 "seq": 1,
                 "actor_id": session.json()["user"]["id"],
+                "version": 1,
             }
         replay = tc.get("/v1/events", headers=headers, params={"after_seq": 0})
         assert [e["seq"] for e in replay.json()] == [1]

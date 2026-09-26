@@ -4,6 +4,8 @@ last sequence it saw, and the projection a push carries on the channel."""
 from datetime import datetime
 from uuid import UUID
 
+from pydantic import Field
+
 from tadas.services.api.types.common import View
 
 
@@ -31,9 +33,14 @@ class OperatorEventView(EventView):
 
 class EntityChangedView(View):
     """What a push says: which record changed, how, who changed it, and where
-    it sits in the stream. Every push has a record, so `seq` is always present."""
+    it sits in the stream. Every push has a record, so `seq` is always present.
+    `version` is the version the change wrote, on a record that carries one
+    (ADR 0061): a client that holds the record at that version reads nothing.
+    Left out of the frame when the change names none, and the client reads
+    the record."""
 
     kind: str
     target_id: UUID
     seq: int
     actor_id: UUID
+    version: int | None = Field(default=None, exclude_if=lambda version: version is None)

@@ -34,13 +34,16 @@ export interface UnsubscribedEnvelope extends Base {
 
 // Mirrors the service's EntityChangedView: which record changed (`kind` is
 // "<namespace>.<entity>.<action>"), who changed it, and where it sits in the
-// tenant's stream. Every push has a record, so `seq` is always a number. Read
-// tolerantly: a field the client does not know is ignored.
+// tenant's stream. Every push has a record, so `seq` is always a number.
+// `version` is the version the change wrote, on a record that carries one;
+// absent, only a read can tell. Read tolerantly: a field the client does not
+// know is ignored.
 export interface EntityChangedView {
   kind: string;
   target_id: string;
   seq: number;
   actor_id: string;
+  version?: number;
 }
 
 // The entity name inside a kind, which is what query keys start with.

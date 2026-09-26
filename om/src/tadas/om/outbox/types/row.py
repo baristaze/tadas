@@ -61,6 +61,14 @@ def outbox_row(
     )
 
 
+def versioned_row(ctx: ProvenanceScope, kind: str, target_id: UUID, version: int) -> OutboxRow:
+    """The row of a change to a record that carries a version: its payload is
+    the version the change wrote, a counter and never a field's value. The
+    push carries it, so a client that already holds the record at that
+    version, the one whose own write it is, reads nothing (ADR 0061)."""
+    return outbox_row(ctx, kind, target_id, {"version": version})
+
+
 def snapshot(entity: BaseModel, *, exclude: frozenset[str] = frozenset()) -> Mapping[str, Any]:
     """The JSON-mode dump of an entity, minus the fields named; the payload of
     a `<namespace>.<entity>.<action>` row is the entity's snapshot."""

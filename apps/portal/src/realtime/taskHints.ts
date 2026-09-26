@@ -1,10 +1,12 @@
-// A push about a task is a hint: it names the task, never its fields. The
-// page reads that one task through the authorized read and places the
-// answer into the lists it holds; a 404 (deleted, or no longer this org's to
-// see) takes it out. Hints are gathered while they keep coming, so a task
-// pushed twice is read once, and a burst reads the lists once instead of task
-// by task. Everything it reaches for is handed in, so it runs in a test with
-// fake timers and no query cache.
+// A push about a task is a hint: it names the task and the version its change
+// wrote, never its fields. The page reads that one task through the
+// authorized read and places the answer into the lists it holds; a 404
+// (deleted, or no longer this org's to see) takes it out. A tab that already
+// holds the task at that version reads nothing: the tab that made the write
+// placed the write's answer, and the push is about that answer. Hints are
+// gathered while they keep coming, so a task pushed twice is read once, and a
+// burst reads the lists once instead of task by task. Everything it reaches
+// for is handed in, so it runs in a test with fake timers and no query cache.
 import type { TaskView } from "../api";
 
 /** How long a window stays open after its last hint. The pushes of one
@@ -32,6 +34,9 @@ export class ReadAsList extends Error {
 export interface TaskHintEffects {
   /** The authorized read of one task. */
   readTask(id: string): Promise<TaskView>;
+  /** The task as this tab holds it, when that is at or past `version`;
+   * otherwise null. */
+  held(id: string, version: number): TaskView | null;
   /** Whether a failed read says the task is gone (a 404). */
   isGone(cause: unknown): boolean;
   /** The cache's clock when a read is issued; handed back with its answer. */
@@ -43,19 +48,23 @@ export interface TaskHintEffects {
 }
 
 export interface TaskHints {
-  /** Notes a push about one task. Resolves with the task read, or null when it
-   * is gone; rejects with ReadAsList when a burst was read as lists instead. */
-  hint(id: string): Promise<TaskView | null>;
+  /** Notes a push about one task, with the version its change wrote when the
+   * push names one. Resolves with the task read (or held), or null when it is
+   * gone; rejects with ReadAsList when a burst was read as lists instead. */
+  hint(id: string, version?: number): Promise<TaskView | null>;
   stop(): void;
 }
 
 interface Waiter {
+  /** The newest version the window's pushes named; null once a push named
+   * none, since then only a read can tell. */
+  version: number | null;
   promise: Promise<TaskView | null>;
   resolve(task: TaskView | null): void;
   reject(cause: unknown): void;
 }
 
-function waiter(): Waiter {
+function waiter(version: number | null): Waiter {
   let resolve!: (task: TaskView | null) => void;
   let reject!: (cause: unknown) => void;
   const promise = new Promise<TaskView | null>((yes, no) => {
@@ -64,7 +73,7 @@ function waiter(): Waiter {
   });
   // A hint nobody awaits must not surface as an unhandled rejection.
   promise.catch(() => undefined);
-  return { promise, resolve, reject };
+  return { version, promise, resolve, reject };
 }
 
 export function createTaskHints(effects: TaskHintEffects): TaskHints {
@@ -83,7 +92,16 @@ export function createTaskHints(effects: TaskHintEffects): TaskHints {
     close();
     const batch = gathered;
     gathered = new Map();
-    if (stopped || batch.size === 0) return;
+    if (stopped) return;
+    // Checked when the window closes, not when the push arrives: the push of
+    // this tab's own write can come before the write's answer does.
+    for (const [id, w] of batch) {
+      const held = w.version === null ? null : effects.held(id, w.version);
+      if (!held) continue;
+      batch.delete(id);
+      w.resolve(held);
+    }
+    if (batch.size === 0) return;
     if (batch.size > HINT_BURST) {
       effects.refreshLists();
       for (const w of batch.values()) w.reject(new ReadAsList());
@@ -115,10 +133,14 @@ export function createTaskHints(effects: TaskHintEffects): TaskHints {
   };
 
   return {
-    hint(id) {
+    hint(id, version) {
+      const named = version ?? null;
       const held = gathered.get(id);
-      if (held) return held.promise;
-      const w = waiter();
+      if (held) {
+        held.version = held.version === null || named === null ? null : Math.max(held.version, named);
+        return held.promise;
+      }
+      const w = waiter(named);
       gathered.set(id, w);
       if (quiet) clearTimeout(quiet);
       quiet = setTimeout(() => void flush(), HINT_WINDOW_MS);

@@ -2,7 +2,7 @@ import { QueryClient, type InfiniteData, type QueryKey } from "@tanstack/react-q
 import { describe, expect, it } from "vitest";
 import type { MeView, TaskPageView, TaskView } from "../api";
 import { keys } from "./keys";
-import { placeTask, refreshTaskLists, removeTask, taskStamp } from "./taskCache";
+import { heldTask, placeTask, refreshTaskLists, removeTask, taskStamp } from "./taskCache";
 
 const task = (id: string, overrides: Partial<TaskView> = {}): TaskView => ({
   id,
@@ -138,6 +138,31 @@ describe("the task cache", () => {
       .getQueryData<InfiniteData<TaskPageView>>(keys.tasks.open("team"))!
       .pages.flatMap((p) => p.items.map((t) => t.id));
     expect(ids).toEqual(["n", "a"]);
+  });
+
+  it("holds a task a write's answer placed, at that version and every older one", () => {
+    const { queryClient } = cache();
+    const answer = task("a", { status: "done", version: 2 });
+    placeTask(queryClient, answer);
+    expect(heldTask(queryClient, "a", 2)).toEqual(answer);
+    expect(heldTask(queryClient, "a", 1)).toEqual(answer);
+    expect(heldTask(queryClient, "a", 3)).toBeNull();
+  });
+
+  it("holds nothing it only loaded in a list or edited optimistically", () => {
+    // A list read is not placed, so another scope's list may be older; only
+    // a placed answer is in every list.
+    const { queryClient } = cache();
+    expect(heldTask(queryClient, "b", 1)).toBeNull();
+    placeTask(queryClient, task("b", { status: "done", version: 2 }), { optimistic: true });
+    expect(heldTask(queryClient, "b", 1)).toBeNull();
+  });
+
+  it("holds nothing of a task a 404 took out, even at the version it had", () => {
+    const { queryClient } = cache();
+    placeTask(queryClient, task("a", { version: 2 }));
+    removeTask(queryClient, "a", { since: taskStamp(queryClient) });
+    expect(heldTask(queryClient, "a", 2)).toBeNull();
   });
 
   it("reads every task list once on refresh", () => {

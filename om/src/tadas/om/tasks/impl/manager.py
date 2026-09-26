@@ -36,7 +36,7 @@ from tadas.om.orchestrations.types.orchestration import (
     TaskImportInput,
 )
 from tadas.om.outbox import OutboxRelayInterface
-from tadas.om.outbox.types.row import OutboxRow, outbox_row
+from tadas.om.outbox.types.row import OutboxRow, outbox_row, versioned_row
 from tadas.om.slack import SlackManagerInterface
 from tadas.om.slack.types.installation import SlackInstallationStatus
 from tadas.om.tasks.manager import TasksManagerInterface
@@ -242,7 +242,7 @@ class TasksManagerImpl(TasksManagerInterface):
             }
         )
         rows = (
-            outbox_row(ctx, "tasks.task.created", created.id, {}),  # ids only
+            versioned_row(ctx, "tasks.task.created", created.id, created.version),
             *self._reminder_rows(ctx, created),
             *await self._slack_rows(ctx, created.id, SlackPostEvent.CREATED),
         )
@@ -427,7 +427,7 @@ class TasksManagerImpl(TasksManagerInterface):
                         "version": task.version + 1,
                     }
                 )
-            rows = (outbox_row(ctx, "tasks.task.updated", task.id, {}),)
+            rows = (versioned_row(ctx, "tasks.task.updated", task.id, changed.version),)
             updates.append((changed, task.version, rows))
         landed = await self._storage.update_tasks_if_current(ctx.org_id, updates)
         landed_rows: list[OutboxRow] = []
@@ -635,7 +635,7 @@ class TasksManagerImpl(TasksManagerInterface):
                 position=float(rank),  # the mirror `placed` writes
             )
             rows = (
-                outbox_row(ctx, "tasks.task.created", task.id, {}),
+                versioned_row(ctx, "tasks.task.created", task.id, task.version),
                 *self._reminder_rows(ctx, task),
             )
             tasks.append((task, rows))
@@ -835,7 +835,7 @@ class TasksManagerImpl(TasksManagerInterface):
                     "version": task.version + 1,
                 }
             )
-            rows = (outbox_row(ctx, "tasks.task.updated", task.id, {}),)
+            rows = (versioned_row(ctx, "tasks.task.updated", task.id, written.version),)
             updates.append((written, task.version, rows))
         try:
             await self._storage.update_tasks(ctx.org_id, updates)
@@ -974,11 +974,12 @@ class TasksManagerImpl(TasksManagerInterface):
         conditioned on the version the caller read; the relay then appends the
         event and pushes at once, and the sweep catches what a crash left
         behind. Every push is also a record, so a client that missed the push
-        replays by seq. A row carries ids and never a field's value, so the
-        relay and the stream hold nothing a person's erasure has to find; a
-        client that hears of a change reads the task. The rows of the work the
-        write starts (`work`) land in the same commit."""
-        rows = (outbox_row(ctx, f"tasks.task.{action}", task.id, {}), *work)
+        replays by seq. A row carries the version the write set and never a
+        field's value, so the relay and the stream hold nothing a person's
+        erasure has to find; a client that hears of a change reads the task,
+        unless it already holds that version. The rows of the work the write
+        starts (`work`) land in the same commit."""
+        rows = (versioned_row(ctx, f"tasks.task.{action}", task.id, task.version), *work)
         await self._storage.update_task(ctx.org_id, task, expected_version, rows)
         await self._relay.relay_all(ctx.org_id, rows)
 
