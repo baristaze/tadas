@@ -136,13 +136,16 @@ class PaymentsTwinImpl(PaymentsInterface):
         return self._view(found)
 
     async def set_quantity(
-        self, subscription_id: str, quantity: int, idempotency_key: str
+        self, subscription: ProviderSubscription, quantity: int, idempotency_key: str
     ) -> ProviderSubscription:
-        found = self._subscription(subscription_id)
+        found = self._subscription(subscription.id)
+        if subscription.item_id != found["item"]:
+            # The processor refuses an item that is not the subscription's.
+            raise PaymentsRefused("update subscription quantity", "resource_missing")
         if idempotency_key not in self.quantity_keys:
             self.quantity_keys[idempotency_key] = quantity
             found["quantity"] = quantity
-            self.quantity_changes.append((subscription_id, quantity))
+            self.quantity_changes.append((subscription.id, quantity))
         return self._view(found)
 
     async def cancel_subscription(self, subscription_id: str) -> None:
@@ -172,6 +175,7 @@ class PaymentsTwinImpl(PaymentsInterface):
         subscription_id = self._id("sub")
         self.subscriptions[subscription_id] = {
             "id": subscription_id,
+            "item": self._id("si"),
             "customer": session["customer"],
             "status": "active",
             "lookup_key": session["lookup_key"],
@@ -276,4 +280,5 @@ class PaymentsTwinImpl(PaymentsInterface):
             current_period_end=found["current_period_end"],
             cancel_at_period_end=found["cancel_at_period_end"],
             org_id=found["org_id"],
+            item_id=found["item"],
         )

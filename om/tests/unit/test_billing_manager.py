@@ -4,8 +4,10 @@ any order; a cancellation that holds the plan to its period's end; a
 per-seat subscription that follows the members; an operator's grant; and
 the levers of the tasks and tenancy managers that read the plan."""
 
+from collections import Counter
 from datetime import timedelta
 from pathlib import Path
+from typing import Any
 from uuid import UUID
 
 import pytest
@@ -338,6 +340,24 @@ async def test_a_max_subscription_follows_the_member_count_once_per_change(
     assert world.twin.quantity_changes == [(subscription, 11)]
     billing = await world.billing.get_billing(ctx)
     assert billing.account is not None and billing.account.quantity == 11
+
+
+async def test_a_seat_change_reads_the_subscription_once_and_updates_it_once(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ctx = await world.org("acme")
+    await world.buy(ctx, Plan.MAX, seats=1)
+    calls: Counter[str] = Counter()
+    for name in ("read_subscription", "set_quantity"):
+        real = getattr(world.twin, name)
+
+        async def call(*args: Any, _real: Any = real, _name: str = name) -> Any:
+            calls[_name] += 1
+            return await _real(*args)
+
+        monkeypatch.setattr(world.twin, name, call)
+    await world.billing.sync_seats(ctx, 3, "item-1-3")
+    assert calls == {"read_subscription": 1, "set_quantity": 1}
 
 
 async def test_seats_on_a_plan_not_per_seat_change_nothing(world: World) -> None:

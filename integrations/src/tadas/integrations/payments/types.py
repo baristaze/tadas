@@ -25,6 +25,8 @@ class ProviderSubscription(InfraModel):
     cancel_at_period_end: bool
     org_id: UUID | None
     """The org its metadata names, when it names one."""
+    item_id: str | None
+    """Its first item, the one a seat count changes; None when it has none."""
 
 
 class ProviderDelivery(InfraModel):
