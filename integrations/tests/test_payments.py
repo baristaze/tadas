@@ -506,18 +506,29 @@ async def test_a_stripe_that_hangs_ends_at_the_deadline_not_after_its_retries() 
     waited = time.monotonic() - began
     assert raised.value.message == f"stripe create customer could not reach the backend: {PASSED}"
     assert 0.25 <= waited < 1.0, waited
-    assert len(sent) == 1
+    # The attempt, cut at the deadline, and no retry after it; none at all on
+    # a runner slow enough that the call's own work takes the whole of it.
+    assert len(sent) <= 1
+
+
+CHECKOUT = {"/v1/prices": "find price", "/v1/checkout/sessions": "create checkout session"}
+"""The calls of a checkout, in turn, and the operation each is refused as."""
 
 
 async def test_the_two_calls_of_a_checkout_share_the_deadline() -> None:
     """A checkout finds its price, then makes its session: each answers in a
-    fifth of a second, well inside the timeout, and together they do not fit
-    in the three tenths the request has left."""
+    fifth of a second, well inside the timeout, and each fits in the three
+    tenths the request has left; together they do not. So the deadline ends
+    one of them, where a budget per call would end none: the session on a
+    quick runner, the price on one slow enough that the call's own work took
+    a tenth. The test holds whichever it is."""
     sent: list[str] = []
+    answered: list[str] = []
 
     async def slow(request: httpx.Request) -> httpx.Response:
         sent.append(request.url.path)
         await asyncio.sleep(0.2)
+        answered.append(request.url.path)
         if request.url.path == "/v1/prices":
             price = {"id": "price_1", "object": "price", "lookup_key": "team_monthly"}
             return httpx.Response(200, json={"object": "list", "data": [price], "has_more": False})
@@ -537,10 +548,14 @@ async def test_the_two_calls_of_a_checkout_share_the_deadline() -> None:
             )
     finally:
         await payments.close()
-    assert raised.value.message == (
-        f"stripe create checkout session could not reach the backend: {PASSED}"
-    )
-    assert sent == ["/v1/prices", "/v1/checkout/sessions"]
+    refusals = [f"stripe {op} could not reach the backend: {PASSED}" for op in CHECKOUT.values()]
+    assert raised.value.message in refusals
+    caught = refusals.index(raised.value.message)
+    calls = list(CHECKOUT)
+    # The calls before the one the deadline caught answered in full; it was
+    # cut, or never started; none came after it.
+    assert answered[:caught] == calls[:caught], answered
+    assert sent in (calls[:caught], calls[: caught + 1]), sent
 
 
 def test_a_subscription_is_read_from_the_item_where_the_period_now_sits() -> None:

@@ -27,7 +27,7 @@ from tadas.om.opcontext import (
     Role,
     build_context,
 )
-from tadas.om.tenancy.types.role import operator_permissions_of, permissions_of
+from tadas.om.tenancy.rules import operator_permissions_of, permissions_of
 
 APP = AppContext(type=AppType.API, version="api@test")
 

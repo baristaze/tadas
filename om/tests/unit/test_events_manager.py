@@ -17,7 +17,7 @@ from tadas.om.opcontext import (
     build_context,
 )
 from tadas.om.tenancy import TenancyManagerInterface
-from tadas.om.tenancy.types.role import permissions_of
+from tadas.om.tenancy.rules import permissions_of
 
 APP = AppContext(type=AppType.PORTAL, version="portal@test")
 

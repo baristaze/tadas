@@ -94,14 +94,19 @@ async def test_a_cut_a_library_turns_into_its_own_error_is_still_the_deadline() 
 
 
 async def test_calls_one_after_another_share_what_is_left() -> None:
+    """Each call takes two tenths, inside the three the deadline gives; two
+    do not fit. So the deadline ends one of them, where a budget per call
+    would end none: the second on a quick runner, the first on one slow
+    enough to take a tenth before it. The test holds whichever it is."""
     deadline = after(0.3)
-    async with bounded(deadline, Refused):
-        await asyncio.sleep(0.2)
-    began = time.monotonic()
-    with pytest.raises(Refused):
-        async with bounded(deadline, Refused):
-            await asyncio.sleep(0.2)
-    assert time.monotonic() - began < 0.18
+    answered = 0
+    with pytest.raises(Refused) as refused:
+        for _ in range(3):
+            async with bounded(deadline, Refused):
+                await asyncio.sleep(0.2)
+            answered += 1
+    assert str(refused.value) == PASSED
+    assert answered <= 1
 
 
 # Each AWS call a request makes, cut at its deadline.

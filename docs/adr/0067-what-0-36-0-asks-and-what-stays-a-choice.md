@@ -1,6 +1,9 @@
 # ADR 0067: What guideline 0.36.0 asks, and what stays a choice
 
-**Status**: accepted (2026-09-26).
+**Status**: accepted (2026-09-26). Its first decision is no longer a
+deviation: since v0.37.0, STO-20 marks a work row done once its item is
+queued, as Tadas does ([ADR 0079](0079-what-0-37-0-asks.md)). The other
+two stay choices.
 
 ## Context
 

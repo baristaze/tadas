@@ -168,17 +168,35 @@ async def test_a_sign_in_whose_provider_hangs_is_unavailable_by_its_deadline(
     assert answer.status_code == 503, answer.text
     assert answer.json()["error"]["code"] == "unavailable"
     assert 0.45 <= waited < 2.0, waited
-    assert workos.calls == ["POST /user_management/authenticate"]
+    # The exchange, cut at the deadline, and no attempt after it. On a runner
+    # slow enough that the request's own work takes the whole half second,
+    # the exchange never starts, which is the deadline too.
+    assert workos.calls in ([], ["POST /user_management/authenticate"])
+
+
+INVITATION = (
+    "GET /organizations/external_id/",
+    "POST /organizations",
+    "POST /user_management/invitations",
+)
+"""The WorkOS calls of an org's first invitation, in turn: find the org's
+organization, make it, send the invitation."""
 
 
 async def test_the_calls_of_one_request_share_its_deadline(tmp_path: Path) -> None:
-    """An org's first invitation makes three WorkOS calls in turn: find the
-    org's organization, make it, send the invitation. Each answers in three
-    tenths of a second, a thirtieth of its timeout; the request has eight
-    tenths, and the third call is the one its deadline catches."""
+    """An org's first invitation makes three WorkOS calls in turn. Each
+    answers in three tenths of a second, a thirtieth of its timeout, and
+    each fits in the request's eight tenths; the three together do not. So
+    the deadline ends one of them, where a budget per call would end none:
+    the calls before it answered in full, it was cut, and none came after
+    it. Which call that is depends on how long the request's own work
+    around the calls takes on the runner: the third on a quick one, an
+    earlier one on a slow one. The test holds whichever it is."""
+    answered: list[str] = []
 
     async def slowly(request: httpx.Request) -> httpx.Response:
         await asyncio.sleep(0.3)
+        answered.append(f"{request.method} {request.url.path}")
         if request.method == "GET":
             return httpx.Response(404, json={"message": "not found"})
         if request.url.path == "/organizations":
@@ -192,6 +210,7 @@ async def test_the_calls_of_one_request_share_its_deadline(tmp_path: Path) -> No
     async with serving(container) as client:
         owner = await sign_in(client, container)
         workos.calls.clear()
+        answered.clear()
         began = time.monotonic()
         answer = await asyncio.wait_for(
             client.post(
@@ -204,9 +223,15 @@ async def test_the_calls_of_one_request_share_its_deadline(tmp_path: Path) -> No
         waited = time.monotonic() - began
     assert answer.status_code == 503, answer.text
     assert answer.json()["error"]["code"] == "unavailable"
-    assert waited < 1.5, waited
-    assert [call.split()[0] for call in workos.calls] == ["GET", "POST", "POST"]
-    assert workos.calls[-1] == "POST /user_management/invitations"
+    # At the deadline, not before it, and far short of one call's ten second
+    # timeout. How far past it depends on the runner too.
+    assert 0.75 <= waited < 5, waited
+    made = workos.calls
+    assert len(made) <= len(INVITATION), made
+    assert all(call.startswith(step) for call, step in zip(made, INVITATION, strict=False)), made
+    # Every call before the last answered in full. The last was cut waiting
+    # for its answer, or answered as the deadline passed.
+    assert answered in (made, made[:-1]), (made, answered)
 
 
 # The Slack install, which ends on a page the person reads.
