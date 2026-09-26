@@ -85,6 +85,7 @@ LOCAL_DEFAULT_SERVES_THE_CLOUD = {
     "media_retention_days": "one retention everywhere",
     "media_pending_expiry_hours": "one retention everywhere",
     "billing_delivery_retention_days": "one retention everywhere",
+    "billing_account_cache_seconds": "the local bound is the bound",
     "slack_retention_days": "one retention everywhere",
     "slack_timeout_seconds": "the local default is the tuning",
     "slack_inbound_visibility_seconds": "the local default is the tuning",
@@ -180,6 +181,7 @@ BOUNDED = (
     "media_pending_expiry_hours",
     "billing_delivery_retention_days",
     "slack_retention_days",
+    "billing_account_cache_seconds",
 )
 
 

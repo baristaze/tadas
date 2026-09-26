@@ -98,6 +98,7 @@ def build_managers(
         absent_payments() if integrations is None else integrations.get_payments(),
         outbox,
         lambda: managers.tenancy,
+        infra.get_cache(CacheScope.BILLING_ACCOUNT),
         billing_options or BillingOptions(),
     )
     tenancy = TenancyManagerImpl(
@@ -182,7 +183,10 @@ def build_managers(
         outbox=outbox,
         billing=billing,
         billing_operator=BillingOperatorManagerImpl(
-            storage.get_billing_storage(), storage.get_tenancy_storage(), outbox
+            storage.get_billing_storage(),
+            storage.get_tenancy_storage(),
+            outbox,
+            infra.get_cache(CacheScope.BILLING_ACCOUNT),
         ),
         orchestrations=orchestrations,
     )

@@ -7,10 +7,12 @@ from tadas.infra.observability import OUTCOMES
 
 
 class CacheMemoryImpl(CacheInterface):
+    """One map of values, counters among them, as in Valkey: a counter is a
+    value `get` reads, and `put` or `invalidate` of its key replaces it."""
+
     def __init__(self, scope: CacheScope) -> None:
         self._scope = scope
         self._values: dict[str, tuple[bytes, datetime]] = {}
-        self._counters: dict[str, tuple[int, datetime]] = {}
 
     async def get(self, org_id: UUID, key: str) -> bytes | None:
         value = self._lookup(cache_key(org_id, key))
@@ -32,18 +34,18 @@ class CacheMemoryImpl(CacheInterface):
 
     async def invalidate(self, org_id: UUID, key: str) -> None:
         self._values.pop(cache_key(org_id, key), None)
-        self._counters.pop(cache_key(org_id, key), None)
 
     async def increment(self, org_id: UUID, key: str, ttl: timedelta) -> tuple[int, timedelta]:
         now = utcnow()
         full_key = cache_key(org_id, key)
-        entry = self._counters.get(full_key)
+        entry = self._values.get(full_key)
         if entry is None or entry[1] <= now:
-            self._counters[full_key] = (1, now + ttl)
+            self._values[full_key] = (b"1", now + ttl)
             return 1, ttl
-        count, expires_at = entry
-        self._counters[full_key] = (count + 1, expires_at)
-        return count + 1, expires_at - now
+        value, expires_at = entry
+        count = int(value) + 1
+        self._values[full_key] = (str(count).encode(), expires_at)
+        return count, expires_at - now
 
     def describe(self) -> str:
         return f"cache[{self._scope.value}]=memory"

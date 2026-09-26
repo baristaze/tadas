@@ -69,6 +69,12 @@ class MaintenanceSettings(StorageSettings, InfraSettings, IntegrationsSettings):
     # links to the task list there. The local stack's portal by default; a deployed
     # environment names its own.
     portal_url: str = "http://localhost:55173"
+    # How long an org's billing account is read from the cache before storage
+    # is asked again, in seconds. Every write of the account orphans the
+    # cached one at once, so this is the backstop: the longest a plan read can
+    # be stale when that fails (ADR 0066). The API and the worker read the
+    # same cache, so both take it.
+    billing_account_cache_seconds: int = Field(default=60, gt=0, le=3600)
     # How long a received Slack delivery stays hidden from other consumers
     # while one handles it; one that is not deleted by then comes back.
     slack_inbound_visibility_seconds: int = Field(default=60, gt=0)

@@ -23,6 +23,7 @@ from tadas.integrations.impl.configured import (
 )
 from tadas.integrations.payments import PaymentsInterface
 from tadas.integrations.root import IntegrationsInterface
+from tadas.om.billing.impl.manager import BillingOptions
 from tadas.om.root import Managers, TenancyOperatorOptions, TenancyOptions, build_managers
 from tadas.om.storage.impl.memory import StorageMemoryImpl
 from tadas.om.storage.impl.postgres import StoragePostgresImpl
@@ -205,6 +206,9 @@ class AppContainer:
             tenancy_options(settings),
             operator_options(settings),
             integrations,
+            billing_options=BillingOptions(
+                account_ttl=timedelta(seconds=settings.billing_account_cache_seconds)
+            ),
         )
         services = build_services(
             managers,

@@ -8,7 +8,7 @@ from pathlib import Path
 import httpx
 import pytest
 import typer
-from api_support import OWNER, run, seed_request
+from api_support import OWNER, account_written, run, seed_request
 from cli_support import BOB, Stack
 from typer.testing import CliRunner
 
@@ -347,6 +347,7 @@ def test_a_task_past_the_plans_bound_is_refused_with_exit_1_and_says_who_lifts_i
     account = run(billing.read_account(stack.org_id))
     assert account is not None
     run(billing.write_account(stack.org_id, account.model_copy(update={"comped_plan": None}), ()))
+    run(account_written(stack.container, stack.org_id))
     for n in range(10):
         assert stack.tadas("add", f"task {n}").exit_code == 0
     refused = stack.tadas("add", "one too many")

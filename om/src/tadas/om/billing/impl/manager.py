@@ -3,9 +3,11 @@ from collections.abc import Callable
 from datetime import datetime, timedelta
 from uuid import UUID
 
+from tadas.infra.cache import CacheInterface
 from tadas.integrations.payments import PaymentsInterface
 from tadas.integrations.payments.types import ProviderDelivery, ProviderSubscription
 from tadas.om.base import Platform, new_id, utcnow
+from tadas.om.billing.impl.cache import AccountCache
 from tadas.om.billing.manager import BillingManagerInterface
 from tadas.om.billing.rules import (
     LIVE_STATUSES,
@@ -86,6 +88,10 @@ class BillingOptions(Platform):
     purge_batch: int = 1000
     """Marks one purge statement deletes at most; the sweep calls again for
     the rest."""
+    account_ttl: timedelta = timedelta(seconds=60)
+    """How long a cached account is read before storage is asked again. A
+    write orphans the cached account at once; this bounds how stale a read
+    can be when that fails."""
 
 
 def billing_of(account: BillingAccount | None, now: datetime) -> Billing:
@@ -132,22 +138,30 @@ class BillingManagerImpl(BillingManagerInterface):
         payments: PaymentsInterface,
         relay: OutboxRelayInterface,
         tenancy: Callable[[], TenancyManagerInterface],
+        cache: CacheInterface,
         options: BillingOptions,
         clock: Callable[[], datetime] = utcnow,
     ) -> None:
         """`tenancy` is a provider and not the manager itself: the tenancy
         manager asks this one for an org's entitlements, and this one asks it
         whether a tenant is past its retention, so the root binds the edge at
-        call time."""
+        call time.
+
+        `cache` is the billing account's scope. The reads that answer what
+        the org is on (`get_entitlements`, `get_billing`) read the account
+        through it; every write of the account bumps the org's generation
+        after its commit. A write reads storage, never the cache."""
         self._storage = storage
         self._payments = payments
         self._relay = relay
         self._tenancy = tenancy
         self._options = options
         self._clock = clock
+        self._accounts = AccountCache(cache, options.account_ttl)
 
     async def get_entitlements(self, ctx: OpContext) -> Entitlements:
-        return self.entitlements_of(ctx, await self._storage.read_account(ctx.org_id))
+        ctx.require(Permission.READ)
+        return self.entitlements_of(ctx, await self._cached_account(ctx))
 
     def entitlements_of(self, ctx: OpContext, account: BillingAccount | None) -> Entitlements:
         ctx.require(Permission.READ)
@@ -156,7 +170,7 @@ class BillingManagerImpl(BillingManagerInterface):
 
     async def get_billing(self, ctx: OpContext) -> Billing:
         ctx.require(Permission.READ)
-        return billing_of(await self._storage.read_account(ctx.org_id), self._clock())
+        return billing_of(await self._cached_account(ctx), self._clock())
 
     async def start_checkout(
         self,
@@ -300,6 +314,7 @@ class BillingManagerImpl(BillingManagerInterface):
         )
         applied = await self._storage.write_account(ctx.org_id, updated, rows, mark)
         if applied:
+            await self._accounts.changed(ctx.org_id)
             await self._relay.relay_all(ctx.org_id, rows)
             log.info(
                 "applied %s %s to org %s",
@@ -363,6 +378,7 @@ class BillingManagerImpl(BillingManagerInterface):
                 *wake_rows(ctx, ctx.org_id, None, created, now),
             )
             if await self._storage.create_account(ctx.org_id, created, rows):
+                await self._accounts.changed(ctx.org_id)
                 await self._relay.relay_all(ctx.org_id, rows)
                 return billing_of(created, now)
             account = await self._storage.read_account(ctx.org_id)
@@ -383,7 +399,9 @@ class BillingManagerImpl(BillingManagerInterface):
         ctx.require(Permission.WRITE)
         if not await self._tenancy().tenant_expired(ctx):
             return 0
-        return await self._storage.purge_tenant(ctx.org_id, self._options.purge_batch)
+        purged = await self._storage.purge_tenant(ctx.org_id, self._options.purge_batch)
+        await self._accounts.changed(ctx.org_id)
+        return purged
 
     async def _with_customer(
         self, ctx: OpContext, account: BillingAccount | None, customer_id: str
@@ -407,6 +425,7 @@ class BillingManagerImpl(BillingManagerInterface):
         )
         rows = (outbox_row(ctx, ACCOUNT_CREATED, created.id, {}),)
         if await self._storage.create_account(ctx.org_id, created, rows):
+            await self._accounts.changed(ctx.org_id)
             await self._relay.relay_all(ctx.org_id, rows)
             return created
         # Another start raced this one and made the account first; the
@@ -427,4 +446,10 @@ class BillingManagerImpl(BillingManagerInterface):
     ) -> None:
         rows = (*self._rows(ctx, account), *work)
         await self._storage.write_account(ctx.org_id, account, rows)
+        await self._accounts.changed(ctx.org_id)
         await self._relay.relay_all(ctx.org_id, rows)
+
+    async def _cached_account(self, ctx: OpContext) -> BillingAccount | None:
+        """The org's account for a read, from the cache when it holds it.
+        The caller has checked its permission first."""
+        return await self._accounts.read(ctx.org_id, lambda: self._storage.read_account(ctx.org_id))
