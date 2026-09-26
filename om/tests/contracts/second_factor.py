@@ -52,24 +52,44 @@ async def enrolled_operator(
 ) -> tuple[OperatorContext, bytes]:
     """An allowlisted identity through its first sign-in to the plane: admitted
     to enrol, a secret minted and confirmed with a first code, then signed in
-    again with a second code and admitted with its entry. Returns that stage
-    and the secret, for a test that signs in again."""
+    again with a second code, a token minted with the whole of its entry, and
+    admitted on that token. Returns that stage and the secret, for a test
+    that signs in again."""
     login = await manager.dev_sign_in(operator_request(), email)
     enrolling = await manager.admit_operator(
         await manager.authenticate_login(operator_request(), login.token)
     )
     secret = secret_of((await operator.enrol_totp(enrolling)).otpauth_uri)
     await operator.confirm_totp(enrolling, clock.code(secret))
-    return await signed_in_operator(manager, clock, email, secret), secret
+    return await signed_in_operator(manager, operator, clock, email, secret), secret
 
 
-async def signed_in_operator(
+async def minting_operator(
     manager: TenancyManagerImpl, clock: SteppingClock, email: str, secret: bytes
 ) -> OperatorContext:
-    """An enrolled operator signing in, then verifying a fresh code."""
+    """An enrolled operator signing in, then verifying a fresh code: the stage
+    that mints one token and does nothing else."""
     login = await second_factor(manager, email, clock.code(secret))
     return await manager.admit_operator(
         await manager.authenticate_login(operator_request(), login.token)
+    )
+
+
+async def signed_in_operator(
+    manager: TenancyManagerImpl,
+    operator: TenancyOperatorManagerImpl,
+    clock: SteppingClock,
+    email: str,
+    secret: bytes,
+) -> OperatorContext:
+    """An enrolled operator signing in with a fresh code, then presenting the
+    token that sign-in mints with the whole of the entry: the stage the plane
+    reads and writes with."""
+    minting = await minting_operator(manager, clock, email, secret)
+    assert minting.operator_entry is not None, "an admitted operator has an entry"
+    issued = await operator.issue_operator_token(minting, minting.operator_entry)
+    return await manager.admit_operator(
+        await manager.authenticate_login(operator_request(), issued.token)
     )
 
 

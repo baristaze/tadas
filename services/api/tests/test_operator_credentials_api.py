@@ -4,10 +4,19 @@ operator token an agent presents instead of a sign-in, and the grant job's
 command."""
 
 import argparse
+from uuid import uuid4
 
 import httpx
 import pytest
-from api_support import bearer, code_at, dev_login, enrol_operator, secret_of, seed_request
+from api_support import (
+    bearer,
+    code_at,
+    dev_login,
+    enrol_operator,
+    enrolled_sign_in,
+    secret_of,
+    seed_request,
+)
 
 from tadas.om.opcontext import OperatorRole
 from tadas.om.tenancy.rules import email_digest
@@ -53,7 +62,8 @@ async def test_an_operator_enrols_a_second_factor_before_the_plane_admits_them(
     required = await client.get("/v1/admin/me", headers=enrolling)
     assert required.status_code == 401, required.text
     assert required.json()["error"]["code"] == "second_factor_required"
-    # The code is verified on a sign-in, which answers with a new one.
+    # The code is verified on a sign-in, which answers with a new one and
+    # ends the one it was verified on.
     fresh = bearer(await dev_login(client, "root@example.test"))
     bad = await client.post("/v1/auth/second-factor", headers=fresh, json={"totp_code": "000000"})
     assert bad.status_code == 401, bad.text
@@ -61,16 +71,20 @@ async def test_an_operator_enrols_a_second_factor_before_the_plane_admits_them(
     login = await client.post("/v1/auth/second-factor", headers=fresh, json={"totp_code": code})
     assert login.status_code == 200, login.text
     signed_in = bearer(login.json()["token"])
-    admitted = await client.get("/v1/admin/me", headers=signed_in)
-    assert admitted.status_code == 200 and admitted.json()["operator_role"] == "write"
+    # With its code, the sign-in mints a token and reads nothing itself.
+    for path in ("/v1/admin/me", "/v1/admin/orgs", "/v1/admin/me/tokens"):
+        refused = await client.get(path, headers=signed_in)
+        assert refused.status_code == 403, refused.text
+        assert refused.json()["error"]["code"] == "operator_token_required"
     again = await client.post("/v1/admin/me/totp", headers=signed_in)
     assert again.status_code == 409, again.text
     reused = await client.post("/v1/auth/second-factor", headers=fresh, json={"totp_code": code})
     assert reused.status_code == 401, reused.text
     # A session is no sign-in: the second factor is verified on a login only.
-    org_id = (await client.get("/v1/auth/memberships", headers=fresh)).json()["items"][0]
+    other = bearer(await dev_login(client, "root@example.test"))
+    org_id = (await client.get("/v1/auth/memberships", headers=other)).json()["items"][0]
     session = await client.post(
-        "/v1/auth/sessions", headers=fresh, json={"org_id": org_id["org"]["id"]}
+        "/v1/auth/sessions", headers=other, json={"org_id": org_id["org"]["id"]}
     )
     tenant = bearer(session.json()["token"])
     on_session = await client.post(
@@ -82,15 +96,27 @@ async def test_an_operator_enrols_a_second_factor_before_the_plane_admits_them(
 async def test_an_operator_token_is_minted_once_and_admits_with_its_one_permission(
     client: httpx.AsyncClient, container: AppContainer, owner: dict[str, str]
 ) -> None:
-    writer, _ = await enrol_operator(client, container, "root@example.test", OperatorRole.WRITE)
-    mint = {**writer, "Idempotency-Key": "token-1"}
-    issued = await client.post("/v1/admin/me/tokens", headers=mint, json={"permission": "read"})
-    assert issued.status_code == 201, issued.text
+    signed_in, _ = await enrolled_sign_in(
+        client, container, "root@example.test", OperatorRole.WRITE
+    )
+    # An hour at most: a mint refused on its body ends nothing.
+    long = await client.post(
+        "/v1/admin/me/tokens", headers=signed_in, json={"permission": "read", "expires_in": 3601}
+    )
+    assert long.status_code == 422, long.text
+    issued = await client.post(
+        "/v1/admin/me/tokens", headers=signed_in, json={"permission": "read"}
+    )
+    assert issued.status_code == 200, issued.text
     token = issued.json()["token"]
     assert token.startswith("opr_") and issued.json()["permission"] == "read"
-    replay = await client.post("/v1/admin/me/tokens", headers=mint, json={"permission": "read"})
-    assert replay.status_code == 201 and replay.headers["Idempotent-Replayed"] == "true"
-    assert replay.json()["token"] is None, "shown once"
+    assert issued.json()["id"], "named, so it can be revoked by itself"
+    # The mint ends the sign-in: a replay or a retry after a lost answer signs
+    # in again, and a leaked sign-in mints nothing more.
+    replay = await client.post(
+        "/v1/admin/me/tokens", headers=signed_in, json={"permission": "read"}
+    )
+    assert replay.status_code == 401, replay.text
 
     agent = bearer(token)
     me = await client.get("/v1/admin/me", headers=agent)
@@ -109,14 +135,123 @@ async def test_an_operator_token_is_minted_once_and_admits_with_its_one_permissi
     assert (await client.get("/v1/auth/memberships", headers=agent)).status_code == 401
     exchanged = await client.post("/v1/auth/sessions", headers=agent, json={"org_id": org_id})
     assert exchanged.status_code == 401, exchanged.text
-    # An hour at most, and never wider than the entry.
-    long = await client.post(
-        "/v1/admin/me/tokens", headers=writer, json={"permission": "read", "expires_in": 3601}
-    )
-    assert long.status_code == 422, long.text
-    reader, _ = await enrol_operator(client, container, "sup@example.test", OperatorRole.READ)
+    # Never wider than the entry.
+    reader, _ = await enrolled_sign_in(client, container, "sup@example.test", OperatorRole.READ)
     wider = await client.post("/v1/admin/me/tokens", headers=reader, json={"permission": "write"})
     assert wider.status_code == 403, wider.text
+
+
+async def test_a_read_operator_mints_with_the_key_a_client_sends(
+    client: httpx.AsyncClient, container: AppContainer
+) -> None:
+    """The mint is an exchange of the sign-in and keeps no marker, so the
+    `Idempotency-Key` a client sends is not what decides it: a read entry's
+    mint lands, where the marker, a write of the plane, refused it."""
+    reader, _ = await enrolled_sign_in(client, container, "sup@example.test", OperatorRole.READ)
+    issued = await client.post(
+        "/v1/admin/me/tokens",
+        headers={**reader, "Idempotency-Key": "token-1"},
+        json={"permission": "read"},
+    )
+    assert issued.status_code == 200, issued.text
+    assert issued.json()["token"].startswith("opr_")
+
+
+async def test_a_revoked_token_is_refused_on_its_next_request(
+    client: httpx.AsyncClient, container: AppContainer
+) -> None:
+    """An operator lists their live tokens, the grant job's for their
+    identity among them, and ends one by its id: that one is refused at
+    once, the others stand, and a second revoke answers the first."""
+    writer, _ = await enrol_operator(client, container, "root@example.test", OperatorRole.WRITE)
+    tenancy = container.managers.tenancy
+    spare = await tenancy.grant_operator_token(seed_request(), "root@example.test")
+    listed = await client.get("/v1/admin/me/tokens", headers=writer)
+    assert listed.status_code == 200, listed.text
+    items = listed.json()["items"]
+    assert items[0]["id"] == str(spare.id) and len(items) == 2
+    assert {item["permission"] for item in items} == {"write"}
+    assert all("token" not in item for item in items), "never the secret"
+    page = await client.get("/v1/admin/me/tokens", headers=writer, params={"limit": 1})
+    assert [i["id"] for i in page.json()["items"]] == [str(spare.id)]
+    rest = await client.get(
+        "/v1/admin/me/tokens", headers=writer, params={"cursor": page.json()["next_cursor"]}
+    )
+    assert [i["id"] for i in rest.json()["items"]] == [items[1]["id"]]
+
+    assert (await client.get("/v1/admin/me", headers=bearer(spare.token))).status_code == 200
+    revoked = await client.delete(f"/v1/admin/me/tokens/{spare.id}", headers=writer)
+    assert revoked.status_code == 200, revoked.text
+    assert revoked.json()["revoked_at"] is not None
+    refused = await client.get("/v1/admin/me", headers=bearer(spare.token))
+    assert refused.status_code == 401, refused.text
+    assert refused.json()["error"]["message"] == "operator token revoked"
+    assert (await client.get("/v1/admin/me", headers=writer)).status_code == 200
+    again = await client.delete(f"/v1/admin/me/tokens/{spare.id}", headers=writer)
+    assert again.status_code == 200 and again.json() == revoked.json()
+    left = await client.get("/v1/admin/me/tokens", headers=writer)
+    assert [i["id"] for i in left.json()["items"]] == [items[1]["id"]]
+
+
+async def test_an_operator_never_revokes_another_operators_token(
+    client: httpx.AsyncClient, container: AppContainer
+) -> None:
+    """Ending another operator's credentials is the grant job's disable, not
+    a route of the plane: whatever the entry, another's token is not found."""
+    writer, _ = await enrol_operator(client, container, "root@example.test", OperatorRole.WRITE)
+    reader, _ = await enrol_operator(client, container, "sup@example.test", OperatorRole.READ)
+    theirs = (await client.get("/v1/admin/me/tokens", headers=reader)).json()["items"][0]["id"]
+    mine = (await client.get("/v1/admin/me/tokens", headers=writer)).json()["items"][0]["id"]
+    for headers, token_id in ((writer, theirs), (reader, mine)):
+        refused = await client.delete(f"/v1/admin/me/tokens/{token_id}", headers=headers)
+        assert refused.status_code == 404, refused.text
+    for headers in (writer, reader):
+        assert (await client.get("/v1/admin/me", headers=headers)).status_code == 200
+    unknown = await client.delete(f"/v1/admin/me/tokens/{uuid4()}", headers=reader)
+    assert unknown.status_code == 404, unknown.text
+
+
+async def test_a_sign_out_ends_the_sign_in_or_the_token_presented(
+    client: httpx.AsyncClient, container: AppContainer, owner: dict[str, str]
+) -> None:
+    """The one sign-out takes every credential a person holds: a sign-in at
+    the picker, an operator's sign-in with its code, and an operator token.
+    Each is refused after. An api key has none: its holder revokes it."""
+    picker = bearer(await dev_login(client, "owner@example.test"))
+    out = await client.post("/v1/auth/logout", headers=picker)
+    assert out.status_code == 200, out.text
+    assert out.json()["credential_kind"] == "login" and out.json()["revoked_at"]
+    assert (await client.get("/v1/auth/memberships", headers=picker)).status_code == 401
+
+    signed_in, _ = await enrolled_sign_in(
+        client, container, "root@example.test", OperatorRole.WRITE
+    )
+    assert (await client.post("/v1/auth/logout", headers=signed_in)).status_code == 200
+    minted = await client.post(
+        "/v1/admin/me/tokens", headers=signed_in, json={"permission": "read"}
+    )
+    assert minted.status_code == 401, minted.text
+
+    token = await container.managers.tenancy.grant_operator_token(
+        seed_request(), "root@example.test"
+    )
+    agent = bearer(token.token)
+    ended = await client.post("/v1/auth/logout", headers=agent)
+    assert ended.status_code == 200, ended.text
+    assert ended.json()["id"] == str(token.id)
+    assert ended.json()["credential_kind"] == "operator_token"
+    assert ended.json()["provider_logout_url"] is None
+    assert (await client.get("/v1/admin/me", headers=agent)).status_code == 401
+    assert (await client.post("/v1/auth/logout", headers=agent)).status_code == 401
+
+    key = await client.post(
+        "/v1/api-keys",
+        headers={**owner, "Idempotency-Key": "key-1"},
+        json={"name": "ci", "role": "member"},
+    )
+    assert key.status_code == 201, key.text
+    by_key = await client.post("/v1/auth/logout", headers=bearer(key.json()["key"]))
+    assert by_key.status_code == 401, by_key.text
 
 
 def grant_args(**given: object) -> argparse.Namespace:

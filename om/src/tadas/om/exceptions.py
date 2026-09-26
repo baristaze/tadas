@@ -169,6 +169,14 @@ class SecondFactorNotEnrolled(TenancyException, NotAuthorized):
     code = "second_factor_not_enrolled"
 
 
+class OperatorTokenRequired(TenancyException, NotAuthorized):
+    """An operator's sign-in, with its second factor, reached a route other
+    than the mint. The sign-in mints one operator token, and the plane reads
+    and writes with that token only (ADR 0068)."""
+
+    code = "operator_token_required"
+
+
 class WorkException(PlatformException): ...
 
 

@@ -6,8 +6,12 @@ viewer's write gets. The creating routes run under the operator's
 idempotency record, keyed like every other creating route.
 
 The two enrolment routes take `EnrollingOperatorCtx`, the one gate an
-operator with no second factor yet passes; every other route takes
-`OperatorCtx`, which refuses that operator `second_factor_not_enrolled`."""
+operator with no second factor yet passes. The mint takes
+`MintingOperatorCtx`, which refuses that operator
+`second_factor_not_enrolled`; the manager then takes a sign-in with its code
+and nothing else. Every other route takes `OperatorCtx`, which refuses a
+sign-in `operator_token_required` too: the plane reads and writes with a
+token, which its operator lists and revokes one at a time (ADR 0068)."""
 
 from typing import Annotated
 from uuid import UUID
@@ -15,7 +19,11 @@ from uuid import UUID
 from fastapi import APIRouter, Query, Response
 
 from tadas.om.tasks.types.task import TaskStatus
-from tadas.services.api.gateway.admin import EnrollingOperatorCtx, OperatorCtx
+from tadas.services.api.gateway.admin import (
+    EnrollingOperatorCtx,
+    MintingOperatorCtx,
+    OperatorCtx,
+)
 from tadas.services.api.gateway.idempotency import OperatorIdem
 from tadas.services.api.gateway.resolve import AdminService
 from tadas.services.api.types.admin import (
@@ -25,6 +33,8 @@ from tadas.services.api.types.admin import (
     IssuedOperatorTokenView,
     IssuedTotpSecretView,
     MintOperatorTokenRequest,
+    OperatorTokenPageView,
+    OperatorTokenView,
     OperatorView,
     OperatorWorkItemView,
     PlatformSizeView,
@@ -64,17 +74,43 @@ async def confirm_totp(
     return await service.confirm_totp(admin, body)
 
 
-@router.post("/me/tokens", response_model=IssuedOperatorTokenView, status_code=201)
+# The mint exchanges the sign-in: it ends in the write that lands the token,
+# so the sign-in is the mint's key, and the route carries no Idempotency-Key
+# and answers 200, as the exchange of a sign-in for a session does (ADR 0037,
+# ADR 0068). A retry after a lost answer is refused and the person signs in
+# again.
+@router.post("/me/tokens", response_model=IssuedOperatorTokenView)
 async def mint_token(
+    admin: MintingOperatorCtx, service: AdminService, body: MintOperatorTokenRequest
+) -> IssuedOperatorTokenView:
+    """An operator token: one permission, never wider than the caller's
+    entry, an hour at most. Minted only from a sign-in that verified a second
+    factor, which it ends, so a token never mints a token and a sign-in
+    mints one."""
+    return await service.mint_token(admin, body)
+
+
+@router.get("/me/tokens", response_model=OperatorTokenPageView)
+async def list_tokens(
     admin: OperatorCtx,
     service: AdminService,
-    body: MintOperatorTokenRequest,
-    idem: OperatorIdem,
-) -> Response:
-    """An operator token for an agent: one permission, never wider than the
-    caller's entry, an hour at most. Minted only from a sign-in that
-    verified a second factor, so a token never mints a token."""
-    return await idem.run(201, lambda attempt: service.mint_token(admin, body))
+    cursor: str | None = None,
+    limit: int = LIMIT_DEFAULT,
+) -> OperatorTokenPageView:
+    """The caller's own live operator tokens, newest first: the ids a revoke
+    names, whoever minted them (the caller, or the grant job for a machine
+    identity). Never a token's secret."""
+    return await service.list_tokens(admin, cursor, limit)
+
+
+@router.delete("/me/tokens/{token_id}", response_model=OperatorTokenView)
+async def revoke_token(
+    admin: OperatorCtx, service: AdminService, token_id: UUID
+) -> OperatorTokenView:
+    """Ends one of the caller's own tokens at once; its next request is
+    refused. Ending one ended already answers it as stored. Another
+    operator's token is `404`: ending it is the grant job's disable."""
+    return await service.revoke_token(admin, token_id)
 
 
 @router.get("/size", response_model=PlatformSizeView)

@@ -1,6 +1,7 @@
 """Read models that carry a freshly minted secret in the clear, exactly once."""
 
 from datetime import datetime
+from uuid import UUID
 
 from tadas.om.base import Platform
 from tadas.om.opcontext import OperatorRole, Role
@@ -43,8 +44,11 @@ class IssuedTicket(Platform):
 
 
 class IssuedOperatorToken(Platform):
-    """An operator token in the clear, once: one permission, an hour at most."""
+    """An operator token in the clear, once: one permission, an hour at most.
+    `id` names it afterwards, in the list of live tokens and in the revoke of
+    one, and is no secret."""
 
+    id: UUID
     token: str
     expires_at: datetime
     operator_role: OperatorRole
@@ -67,9 +71,10 @@ class SignInStart(Platform):
 
 
 class SignedOut(Platform):
-    """A session ended by its own holder, and where the browser goes next to
-    end the identity provider's session behind it: None when the sign-in
-    left none there (the device sign-in, the local sign-in)."""
+    """A credential ended by its own holder, a session, a sign-in, or an
+    operator token, and where the browser goes next to end the identity
+    provider's session behind it: None when the sign-in left none there
+    (the device sign-in, the local sign-in, an operator token)."""
 
     session: Session
     provider_logout_url: str | None = None

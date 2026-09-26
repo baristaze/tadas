@@ -80,8 +80,8 @@ context on keeps the stage the callee needs.
   every operation that issues a credential or grants a membership refuses
   it by name before the ladder is asked. An api key never mints another:
   revoking a leaked key has to end the access it gave, and a successor
-  would outlive it, so `create_api_key` refuses an api key credential the
-  way `logout` refuses anything but a session. The operator plane (every org, delete an org; an owner deletes their own team org through the tenant's manager) is a second
+  would outlive it, so `create_api_key` refuses an api key credential, and
+  an api key has no sign-out: it never proves an identity. The operator plane (every org, delete an org; an owner deletes their own team org through the tenant's manager) is a second
   manager, `TenancyOperatorManagerInterface`, which takes `OperatorContext`
   and nothing else. Its `delete_org` takes an owner's path (below): one
   `write_closed_org` commit ends every member and credential, so every
@@ -156,12 +156,17 @@ context on keeps the stage the callee needs.
   browser holds (`ProvidedSignIn.session_id`, the `sid` claim of the
   access token WorkOS answers the exchange with), kept on the login and
   on every session exchanged or switched from it
-  (`sessions.provider_session_id`, server-side only); `logout` answers
-  `SignedOut`, the ended session and the provider's logout URL for that
-  session with a `return_to` the environment names
-  (`TenancyOptions.sign_out_return_uris`), or none for the device and
-  the local sign-in. `verify_second_factor` takes a login and a TOTP code and
-  answers a new login that records it, behind the per-email delay.
+  (`sessions.provider_session_id`, server-side only); `logout` takes the
+  identity stage and ends the credential it came from, whichever it is: a
+  session, announced under its tenant; a login, with or without its
+  second factor; an operator token (ADR 0068). It answers `SignedOut`,
+  the ended row and the provider's logout URL for that session with a
+  `return_to` the environment names (`TenancyOptions.sign_out_return_uris`),
+  or none for the device and the local sign-in and an operator token.
+  `verify_second_factor` takes a login and a TOTP code and answers a new
+  login that records it, behind the per-email delay, and ends the login
+  it was given in the same write (`exchange_sign_in` into the system
+  scope).
   `dev_sign_in` signs in by address alone and is `NotFound` unless the
   options turn it on, which the API's settings refuse outside `local`
   and `test` (ADR 0029). Tadas keeps no password, and an identity has
@@ -1118,7 +1123,15 @@ alone, and neither key may touch what the other's work does not need
   `authenticate_login` over it (the sign-in credential or a live session,
   on the tenant choice, the switch, `GET /v1/auth/memberships`, and the
   operator gate), `OperatorCtx` is `admit_operator` over the identity,
-  which admits the sign-in credential alone. `authenticate_login` reads
+  which reads and writes with an operator token alone: a sign-in that
+  verified a code is admitted with `OperatorPermission.MINT`, which
+  `MintingOperatorCtx` takes to `POST /v1/admin/me/tokens` and every other
+  route refuses (`operator_token_required`, 403). The mint ends that
+  sign-in in the write that lands the token, and an operator lists
+  (`get_operator_tokens`) and revokes (`revoke_operator_token`) their own
+  tokens one at a time; the grant job's disable ends every token and
+  every sign-in with a code of the identity in the entry's commit
+  (`disable_operator`), ADR 0068. `authenticate_login` reads
   the credential and the identity it proves in one system statement,
   and puts the identity's allowlist entry and its enrolment on the
   stage, so `admit_operator` decides without a read of its own. The

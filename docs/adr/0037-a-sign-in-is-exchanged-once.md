@@ -1,6 +1,9 @@
 # ADR 0037: A sign-in is exchanged once, and its retry signs in again
 
-**Status**: accepted (2026-09-25)
+**Status**: accepted (2026-09-25), amended by
+[ADR 0068](0068-an-operator-credential-ends-by-itself.md) (2026-09-26):
+the second factor ends the sign-in it verified, and an operator's sign-in
+is exchanged once for an operator token.
 
 ## Context
 

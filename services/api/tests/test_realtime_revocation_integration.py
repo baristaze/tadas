@@ -25,7 +25,7 @@ from websockets.exceptions import ConnectionClosed
 
 from tadas.om.base import new_id
 from tadas.om.billing.types.plan import Plan
-from tadas.om.opcontext import OpContext, Role
+from tadas.om.opcontext import IdentityContext, OpContext, Role
 from tadas.om.outbox.types.row import outbox_row
 from tadas.om.tenancy.types.org import Org
 from tadas.services.api.app import create_app
@@ -137,8 +137,8 @@ async def test_a_revocation_in_one_process_closes_the_socket_in_another(
     async with websockets.connect(f"ws://{address}/v1/realtime?ticket={ticket}") as ws:
         assert '"type":"hello"' in str(await ws.recv())
         # Process A revokes the session; its relay publishes on the shared bus.
-        ctx = await revoker.managers.tenancy.authenticate(seed_request(), token)
-        await revoker.managers.tenancy.logout(ctx)
+        ictx = await revoker.managers.tenancy.authenticate_login(seed_request(), token)
+        await revoker.managers.tenancy.logout(ictx)
         with pytest.raises(ConnectionClosed) as closed:
             await asyncio.wait_for(ws.recv(), timeout=10)
     assert closed.value.rcvd is not None
@@ -164,6 +164,13 @@ async def context_of(container: AppContainer, headers: dict[str, str]) -> OpCont
     return await container.managers.tenancy.authenticate(seed_request(), token)
 
 
+async def identity_of(container: AppContainer, headers: dict[str, str]) -> IdentityContext:
+    """The identity stage the session behind `headers` proves: what a
+    sign-out takes."""
+    token = headers["Authorization"].removeprefix("Bearer ")
+    return await container.managers.tenancy.authenticate_login(seed_request(), token)
+
+
 async def closed_within(ws: websockets.ClientConnection, seconds: float) -> ConnectionClosed:
     with pytest.raises(ConnectionClosed) as closed:
         while True:
@@ -185,7 +192,7 @@ async def test_a_revocation_the_bus_never_carried_closes_within_the_recheck(
         ticket = await ticket_for(address, headers)
         async with websockets.connect(f"ws://{address}/v1/realtime?ticket={ticket}") as ws:
             assert '"type":"hello"' in str(await ws.recv())
-            await revoker.managers.tenancy.logout(await context_of(revoker, headers))
+            await revoker.managers.tenancy.logout(await identity_of(revoker, headers))
             started = time.monotonic()
             closed = await closed_within(ws, RECHECK_SECONDS + 5)
             waited = time.monotonic() - started

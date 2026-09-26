@@ -79,6 +79,10 @@ class OperatorPermission(StrEnum):
     ENROL = "enrol"
     """What an allowlisted identity holds before its second factor is
     enrolled: the two enrolment calls and nothing else."""
+    MINT = "mint"
+    """What a sign-in that verified a second factor holds: the mint of one
+    operator token, which ends the sign-in, and nothing else. Every read and
+    every write on the plane is a token's, so each can be ended by itself."""
 
 
 class CredentialKind(StrEnum):

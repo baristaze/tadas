@@ -760,6 +760,39 @@ async def test_admin_me_reads_the_operators_own_entry() -> None:
     assert recorder.requests[0].headers["authorization"] == "Bearer lgn_1"
 
 
+OPERATOR_TOKEN = {
+    "id": str(uuid4()),
+    "permission": "read",
+    "created_at": "2026-09-26T10:00:00Z",
+    "expires_at": "2026-09-26T11:00:00Z",
+    "revoked_at": None,
+}
+
+
+async def test_admin_tokens_pages_the_operators_own_tokens() -> None:
+    page = {"items": [OPERATOR_TOKEN], "next_cursor": "c-2"}
+    recorder = Recorder({"/v1/admin/me/tokens": httpx.Response(200, json=page)})
+    async with client_over(recorder, token="opr_1") as client:
+        first = await client.admin_tokens()
+        await client.admin_tokens(cursor=first.next_cursor, limit=5)
+    assert [str(t.id) for t in first.items] == [OPERATOR_TOKEN["id"]]
+    assert first.items[0].permission.value == "read" and first.items[0].revoked_at is None
+    assert dict(recorder.requests[0].url.params) == {"limit": "200"}
+    assert dict(recorder.requests[1].url.params) == {"limit": "5", "cursor": "c-2"}
+
+
+async def test_admin_revoke_token_deletes_one_by_its_id() -> None:
+    token_id = UUID(OPERATOR_TOKEN["id"])
+    revoked = {**OPERATOR_TOKEN, "revoked_at": "2026-09-26T10:30:00Z"}
+    path = f"/v1/admin/me/tokens/{token_id}"
+    recorder = Recorder({path: httpx.Response(200, json=revoked)})
+    async with client_over(recorder, token="opr_1") as client:
+        view = await client.admin_revoke_token(token_id)
+    assert view.id == token_id and view.revoked_at is not None
+    sent = recorder.requests[0]
+    assert sent.method == "DELETE" and sent.url.path == path
+
+
 def test_the_servers_retry_after_is_read_in_whole_seconds() -> None:
     assert retry_after_seconds("2") == 2.0
     assert retry_after_seconds(None) is None

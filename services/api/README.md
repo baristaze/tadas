@@ -22,11 +22,14 @@ change. A name the image does not host refuses the boot.
   sign-in (`/v1/auth/second-factor`). List my places; exchange the
   login, once, or switch a session, for a session in one org; sign out
   (`/v1/auth/memberships`, `/v1/auth/sessions`, `/v1/auth/logout`).
-  The sign-out takes an optional `return_to`, one of this
-  environment's `TADAS_SIGN_OUT_RETURN_URIS`, and answers the session
-  it ended with `provider_logout_url`: WorkOS's logout for the AuthKit
-  session the sign-in left in the browser, or null when there is none
-  (the device sign-in, the local sign-in).
+  The sign-out ends the credential presented, whichever a person holds:
+  a session, a login (with or without its second factor), or an
+  operator token; an API key has none and is `401`. It takes an optional
+  `return_to`, one of this environment's `TADAS_SIGN_OUT_RETURN_URIS`,
+  and answers the row it ended with `provider_logout_url`: WorkOS's
+  logout for the AuthKit session the sign-in left in the browser, or
+  null when there is none (the device sign-in, the local sign-in, an
+  operator token).
   Locally and in the tests only, sign in by address alone
   (`/v1/auth/dev-sign-in`, ADR 0029); a deployed process refuses to
   start with it on.
@@ -140,13 +143,16 @@ change. A name the image does not host refuses the boot.
   `/v1/admin/orgs/{org_id}/plan`,
   `/v1/admin/orgs/{org_id}/work/{item_id}/requeue`, `/v1/admin/size`). A read route
   needs an operator who may read; a write route one who may write.
-  The plane admits two credentials: a person's sign-in that verified a
-  TOTP code, and an operator token. An operator enrols the second
-  factor once, at the first sign-in to the plane, and until then only
-  the two enrolment routes answer (`/v1/admin/me/totp`,
-  `/v1/admin/me/totp/confirm`). A signed-in operator mints an operator
-  token for an agent, one permission and an hour at most
-  (`/v1/admin/me/tokens`).
+  Every read and write takes an operator token. An operator enrols the
+  second factor once, at the first sign-in to the plane, and until then
+  only the two enrolment routes answer (`/v1/admin/me/totp`,
+  `/v1/admin/me/totp/confirm`). A sign-in that verified a TOTP code
+  mints one operator token, one permission and an hour at most, and
+  ends in that mint; every other route refuses it `403
+  operator_token_required` (`POST /v1/admin/me/tokens`). An operator
+  lists their own live tokens and revokes one by its id, refused from its
+  next request; another operator's is `404` (`GET /v1/admin/me/tokens`,
+  `DELETE /v1/admin/me/tokens/{token_id}`, ADR 0068).
 - **Operational.** Liveness (`/healthz`, the process alone),
   readiness (`/readyz`, asks the database under a deadline shorter
   than the probe's interval), metrics (`/metrics`), and the OpenAPI

@@ -16,6 +16,7 @@ from contracts.factories import (
     make_identity,
     make_invitation,
     make_membership,
+    make_operator_token,
     make_org,
     make_personal_org,
     make_session,
@@ -1549,6 +1550,103 @@ class TenancyStorageContract:
             await storage.exchange_sign_in(org.id, new, ended)
         assert await storage.read_session_by_id(sign_in.id) == (EMPTY_UUID, sign_in), "still live"
         assert await storage.read_session(org.id, new.id) is None
+
+    async def test_exchange_sign_in_lands_an_operator_token_in_the_system_scope(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        """A sign-in with its second factor mints one operator token: the
+        token lands beside the sign-in, in the system scope, and the sign-in
+        ends in the same commit, so a second mint with it lands nothing."""
+        sign_in = make_sign_in(new_id(), uuid4().hex)
+        await storage.write_session(EMPTY_UUID, sign_in)
+        token = make_operator_token(sign_in.identity_id, uuid4().hex)
+        ended = sign_in.model_copy(update={"revoked_at": utcnow()})
+        await storage.exchange_sign_in(EMPTY_UUID, token, ended)
+        assert await storage.read_session_by_id(sign_in.id) == (EMPTY_UUID, ended)
+        assert await storage.read_session_by_digest(token.token_hash) == (EMPTY_UUID, token)
+        again = make_operator_token(sign_in.identity_id, uuid4().hex)
+        with pytest.raises(Conflict):
+            await storage.exchange_sign_in(EMPTY_UUID, again, ended)
+        assert await storage.read_session_by_digest(again.token_hash) is None
+
+    async def test_an_identitys_live_operator_tokens_are_read_newest_first(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        """Only the one identity's, only tokens, only live ones, a page at a
+        time: a revoked or expired token, a sign-in, a session of the same
+        person, and another operator's token are none of them."""
+        identity_id, other_id = new_id(), new_id()
+        live = [make_operator_token(identity_id, uuid4().hex) for _ in range(3)]
+        revoked = make_operator_token(identity_id, uuid4().hex).model_copy(
+            update={"revoked_at": utcnow()}
+        )
+        expired = make_operator_token(identity_id, uuid4().hex, ttl=timedelta(seconds=-1))
+        others = [
+            revoked,
+            expired,
+            make_sign_in(identity_id, uuid4().hex),
+            make_operator_token(other_id, uuid4().hex),
+        ]
+        for row in (*live, *others):
+            await storage.write_session(EMPTY_UUID, row)
+        await storage.write_session(new_id(), make_session(identity_id, new_id(), uuid4().hex))
+        now = utcnow()
+        newest_first = live[::-1]
+        assert await storage.read_operator_tokens(identity_id, now, None, 10) == newest_first
+        first = await storage.read_operator_tokens(identity_id, now, None, 2)
+        assert first == newest_first[:2]
+        rest = await storage.read_operator_tokens(identity_id, now, first[-1].id, 2)
+        assert rest == newest_first[2:]
+        assert await storage.read_operator_tokens(new_id(), now, None, 10) == []
+
+    async def test_disabling_an_operator_ends_its_operator_credentials_in_one_commit(
+        self, storage: TenancyStorageInterface, outbox: OutboxStorageInterface
+    ) -> None:
+        """The entry, its audit row, and the end of every live token and every
+        sign-in that verified a second factor. A plain sign-in and a tenant
+        session of the same person are theirs, not the operator's, and stay."""
+        identity = make_identity(operator_role=OperatorRole.WRITE)
+        await storage.write_identity(identity)
+        now = utcnow()
+        tokens = [make_operator_token(identity.id, uuid4().hex) for _ in range(2)]
+        verified = make_sign_in(identity.id, uuid4().hex).model_copy(
+            update={"second_factor_at": now}
+        )
+        plain = make_sign_in(identity.id, uuid4().hex)
+        expired = make_operator_token(identity.id, uuid4().hex, ttl=timedelta(seconds=-1))
+        someone_elses = make_operator_token(new_id(), uuid4().hex)
+        for row in (*tokens, verified, plain, expired, someone_elses):
+            await storage.write_session(EMPTY_UUID, row)
+        org = make_org()
+        session = make_session(identity.id, new_id(), uuid4().hex)
+        await storage.write_session(org.id, session)
+        disabled = identity.model_copy(update={"operator_role": None})
+        row = OutboxRow(
+            id=new_id(),
+            created_at=now,
+            org_id=EMPTY_UUID,
+            kind="tenancy.operator.disabled",
+            target_id=identity.id,
+            payload={},
+            actor_id=EMPTY_UUID,
+            request_id=new_id(),
+            app="cli",
+        )
+        assert await storage.disable_operator(disabled, (row,), now) == 3
+        assert await storage.read_identity(identity.id) == disabled
+        assert [r.org_id for r in await claim_all(outbox) if r.id == row.id] == [EMPTY_UUID]
+        for ended in (*tokens, verified):
+            found = await storage.read_session_by_id(ended.id)
+            assert found is not None and found[1].revoked_at == now, ended.credential_kind
+            assert found[1].updated_by == EMPTY_UUID
+        for kept in (plain, expired, someone_elses):
+            assert await storage.read_session_by_id(kept.id) == (EMPTY_UUID, kept)
+        assert await storage.read_session(org.id, session.id) == session
+        assert await storage.read_operator_tokens(identity.id, now, None, 10) == []
+        # Nothing is left to end; a gone identity is NotFound and lands nothing.
+        assert await storage.disable_operator(disabled, (), now) == 0
+        with pytest.raises(NotFound):
+            await storage.disable_operator(make_identity(), (), now)
 
     async def test_membership_for_user(self, storage: TenancyStorageInterface) -> None:
         org = make_org()

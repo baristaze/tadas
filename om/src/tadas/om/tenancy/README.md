@@ -36,9 +36,10 @@ of the seven kinds of thing [Tadas is made of](../../../../README.md).
   token is kept.
 - **Second factor**: an operator's TOTP secret, sealed under a key the
   process holds, enrolled once it is confirmed by a first code.
-- **Operator token**: an agent's credential for the operator plane.
-  One permission, an hour at most, kept as its hash, and good for the
-  operator plane alone.
+- **Operator token**: the credential the operator plane reads and
+  writes with, a person's or an agent's. One permission, an hour at most,
+  kept as its hash, good for the operator plane alone, and ended by
+  itself when its operator revokes it.
 - **API key**: a named, expiring credential for a program, with a
   role. Only the hash is kept; the key is shown once.
 - **Socket ticket**: a single-use, short-lived pass for the live
@@ -67,8 +68,10 @@ of the seven kinds of thing [Tadas is made of](../../../../README.md).
   asking every few seconds, gets the login.
 - **Confirm the second factor.** An operator with a second factor
   presents their login and the code from their authenticator, and gets
-  a new login that records it; the operator plane asks for that one. A
-  run of wrong codes for one email makes the next one wait.
+  a new login that records it; the operator plane asks for that one. The
+  login presented ends in the same step, so a person holds one sign-in
+  at a time. A run of wrong codes for one email makes the next one wait,
+  and a wrong code ends nothing.
 - **Sign in locally.** On a developer's machine and in the tests, a
   person signs in by their address alone, and is made the first time,
   for the seed, the demos, and the traffic generator. A deployed
@@ -88,7 +91,10 @@ of the seven kinds of thing [Tadas is made of](../../../../README.md).
   the session. So the client ends the session it held once it holds the
   new one, with the old session's own token, as a sign-out does (ADR
   0047).
-- **Sign out.** The session presented is revoked. A session that came
+- **Sign out.** The credential presented ends, whichever it is: a
+  session, a login (one at the org picker, or an operator's with its
+  code), or an operator token. An API key is a program's and has no
+  sign-out; its holder revokes it. A session that came
   from a sign-in through the provider's hosted page also names the
   provider's own session in that browser, and the sign-out answers the
   provider's logout address for it: the browser goes there, the
@@ -192,12 +198,22 @@ of the seven kinds of thing [Tadas is made of](../../../../README.md).
 - **Grant an operator.** The grant job puts an identity on the
   allowlist, takes it off, or mints the operator token of the
   provisioner or the smoke identity. Each change of the allowlist is
-  audited. The platform's own identities live in a reserved domain,
+  audited. Taking an identity off ends every operator token and every
+  sign-in with a code it holds, at once, so a grant made again later
+  revives none of them. The platform's own identities live in a reserved domain,
   which a sign-in refuses, and the first grant makes them.
 - **Enrol a second factor.** An allowlisted person's first sign-in to
   the operator plane reaches two calls and nothing else: mint the
   secret, then confirm it with a first code. From then on the plane
   admits them only on a sign-in that verified a code.
+- **Mint, list, and revoke operator tokens.** An operator's sign-in with
+  its code mints one operator token and does nothing else: the mint ends
+  the sign-in. The operator lists their own live tokens, the grant job's
+  for them among them, and revokes any one by its id; it is refused from
+  its next request. Revoking one that has ended already answers it as
+  it is. Another operator's tokens are not theirs to see or end: the
+  grant job's disable ends those
+  ([ADR 0068](../../../../../docs/adr/0068-an-operator-credential-ends-by-itself.md)).
 - **Record a time zone.** A person's time zone is an IANA name, like
   `Europe/Istanbul`, kept on their identity, so it holds in every org
   they are in. The portal sends the one the browser reports when the
@@ -250,12 +266,13 @@ of the seven kinds of thing [Tadas is made of](../../../../README.md).
 - **A verified address or nothing.** The identity provider's sign-in
   counts only with an address it verified; that is what links a person
   Tadas already knows to the provider's name for them.
-- **The operator plane takes a second factor or a token.** A session
+- **The operator plane reads and writes with a token.** A session
   proves the person, but it is a tenant's credential, and the operator
   plane refuses it. A person's sign-in admits only when it verified a
-  TOTP code; an agent presents an operator token, minted by an
-  operator signed in with a code or by the grant job. A token never
-  mints a token and never enters a tenant.
+  TOTP code, and then only to mint one operator token, which ends it.
+  Every read and write on the plane presents a token, minted that way or
+  by the grant job. A token never mints a token and never enters a
+  tenant.
 - **A code works once.** A TOTP code accepted once is refused after,
   even inside its thirty seconds.
 - **A gone org refuses its logins.** Exchanging a login for an org

@@ -194,12 +194,28 @@ def bearer(token: str) -> dict[str, str]:
 async def enrol_operator(
     client: httpx.AsyncClient, container: AppContainer, email: str, role: OperatorRole
 ) -> tuple[dict[str, str], bytes]:
+    """An operator through their first sign-in to the plane, over the API, and
+    the token that sign-in mints with the whole of the entry. Returns that
+    token's headers, which the plane reads and writes with, and the secret."""
+    signed_in, secret = await enrolled_sign_in(client, container, email, role)
+    token = await client.post(
+        "/v1/admin/me/tokens", headers=signed_in, json={"permission": role.value}
+    )
+    assert token.status_code == 200, token.text
+    return bearer(token.json()["token"]), secret
+
+
+async def enrolled_sign_in(
+    client: httpx.AsyncClient, container: AppContainer, email: str, role: OperatorRole
+) -> tuple[dict[str, str], bytes]:
     """An operator through their first sign-in to the plane, over the API: put
     on the allowlist (seeded into an org of their own), admitted to enrol,
     the secret minted and confirmed with this step's code, then signed in
-    again with the next step's. Returns that sign-in's headers and the
-    secret. The next sign-in of the same operator in one test is refused as
-    a reused step unless the clock has moved on, so a test signs in once."""
+    again with the next step's. Returns that sign-in's headers, which mint
+    one token and do nothing else, and the secret. The next sign-in of the
+    same operator in one test is refused as a reused step unless the clock
+    has moved on, so a test signs in once; the grant job mints any other
+    token a test needs for the same identity."""
     slug = email.split("@")[0]
     await container.managers.tenancy.bootstrap(
         seed_request(), slug.title(), slug, email, "Op", operator_role=role

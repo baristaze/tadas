@@ -35,6 +35,8 @@ from tadas.client.types import (
     MembershipChoiceView,
     MeView,
     OperatorEventView,
+    OperatorTokenPageView,
+    OperatorTokenView,
     OperatorView,
     OperatorWorkItemView,
     OrgView,
@@ -519,9 +521,10 @@ class ApiClient:
         return SsoLinkView.model_validate(answer)
 
     async def logout(self) -> SignedOutView:
-        """Ends the session this client holds. The answer's
-        `provider_logout_url` is a browser's next stop; a sign-in without a
-        browser (the device sign-in, the local one) has none."""
+        """Ends the credential this client holds: a session, a sign-in, or an
+        operator token. The answer's `provider_logout_url` is a browser's
+        next stop; a sign-in without a browser (the device sign-in, the local
+        one) has none, and neither has an operator token."""
         return SignedOutView.model_validate(await self.request("POST", "/v1/auth/logout"))
 
     async def me(self) -> MeView:
@@ -840,13 +843,30 @@ class ApiClient:
     async def ticket(self) -> IssuedTicketView:
         return IssuedTicketView.model_validate(await self.request("POST", "/v1/realtime/tickets"))
 
-    # The operator plane. The bearer is the operator's own sign-in (the login
-    # token), never a tenant session; a caller sets `token` to it.
+    # The operator plane. The bearer is an operator token, never a tenant
+    # session; a caller sets `token` to it. The operator's own sign-in, with
+    # its second factor, mints one token and does nothing else.
 
     async def admin_me(self) -> OperatorView:
         """Who the operator plane admitted and what the entry grants; the check a
         skill makes before its first read."""
         return OperatorView.model_validate(await self.request("GET", "/v1/admin/me"))
+
+    async def admin_tokens(
+        self, *, cursor: str | None = None, limit: int = LIMIT_MAX
+    ) -> OperatorTokenPageView:
+        """The operator's own live tokens, newest first: the ids a revoke names."""
+        params: dict[str, Any] = {"limit": limit}
+        if cursor:
+            params["cursor"] = cursor
+        body = await self.request("GET", "/v1/admin/me/tokens", params=params)
+        return OperatorTokenPageView.model_validate(body)
+
+    async def admin_revoke_token(self, token_id: UUID) -> OperatorTokenView:
+        """Ends one of the operator's own tokens at once; one ended already is
+        answered as it is."""
+        body = await self.request("DELETE", f"/v1/admin/me/tokens/{token_id}")
+        return OperatorTokenView.model_validate(body)
 
     async def admin_size(self) -> PlatformSizeView:
         return PlatformSizeView.model_validate(await self.request("GET", "/v1/admin/size"))

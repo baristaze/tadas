@@ -101,12 +101,16 @@ it.
 
 ## When a token is refused or expired
 
-A token carries one permission and expires within the hour.
+A token carries one permission and expires within the hour, and a
+person can end it sooner: `uv run tadas-ops token --env <env> --list`
+and `--revoke <id>`. A revoked token is refused like an expired one. A
+skill never lists or revokes a token: ending a credential is the
+person's step, as minting one is.
 
 The operator's: stop and ask the person to run `uv run tadas-ops token
---env <env> --identity operator` in their own terminal, which asks
-there for the password and the TOTP code; never ask for either in the
-conversation.
+--env <env> --identity operator` in their own terminal, which signs
+them in there and asks there for the TOTP code; never ask for the
+sign-in or the code in the conversation.
 
 The provisioner's: stop and ask the person to refresh it, in the cloud
 by dispatching `grant-operator.yml` with `mint_token: provisioner`,

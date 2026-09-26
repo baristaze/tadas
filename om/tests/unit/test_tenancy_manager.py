@@ -14,6 +14,7 @@ from contracts.second_factor import (
     TOTP_KEY,
     SteppingClock,
     enrolled_operator,
+    minting_operator,
     second_factor,
     secret_of,
 )
@@ -72,7 +73,6 @@ from tadas.om.tenancy.types.invitation import Invitation
 from tadas.om.tenancy.types.issued import OrgMembership
 from tadas.om.tenancy.types.membership import Membership
 from tadas.om.tenancy.types.org import Org, OrgKind
-from tadas.om.tenancy.types.role import operator_permissions_of
 from tadas.om.tenancy.types.socket_ticket import SocketPrincipal
 from tadas.om.tenancy.types.user import PERSONAL_FIELDS, User
 
@@ -888,11 +888,12 @@ async def test_sessions_are_listed_revoked_and_logged_out(
     assert await manager.get_sessions(viewer, limit=10) != sessions
 
     issued = await manager.create_api_key(ctx, "ci", Role.MEMBER)
-    key_ctx = await manager.authenticate(request(), issued.key)
-    with pytest.raises(ValidationFailed):
-        await manager.logout(key_ctx)
+    # An api key has no sign-out: it never proves an identity, and its holder
+    # revokes it.
+    with pytest.raises(InvalidCredential):
+        await manager.authenticate_login(request(), issued.key)
 
-    signed_out = await manager.logout(ctx)
+    signed_out = await manager.logout(await manager.authenticate_login(request(), first.token))
     out = signed_out.session
     assert out.id == ctx.security.credential_id and out.revoked_at is not None
     # The local sign-in leaves no session at the provider to end.
@@ -974,7 +975,15 @@ async def test_revoking_a_session_announces_it_on_the_bus_without_its_token(
     ]
 
     # Logging out is the same revocation, announced the same way.
-    out = (await manager.logout(ctx)).session
+    third = await manager.exchange_login(
+        await manager.authenticate_login(
+            request(), (await manager.dev_sign_in(request(), "ann@example.test")).token
+        ),
+        org.id,
+    )
+    out = (await manager.logout(await manager.authenticate_login(request(), third.token))).session
+    logged_out = next(r for _, r in relay.rows if r.target_id == out.id)
+    assert logged_out.actor_id == ctx.user_id and logged_out.org_id == org.id
     assert [r.target_id for _, r in relay.rows if r.kind == "tenancy.session.revoked"] == [
         revoked.id,
         out.id,
@@ -1057,7 +1066,8 @@ async def test_operator_gate_admits_only_operators_signing_in(
         await admitted_on_login(manager, "ann@example.test")
 
     admin, secret = await enrolled_operator(manager, operator, clock, "root@example.test")
-    assert admin.email == "root@example.test" and admin.second_factor
+    assert admin.email == "root@example.test"
+    assert admin.credential_kind is CredentialKind.OPERATOR_TOKEN
     # Two team orgs, and the personal org of each of their two owners.
     every = await operator.get_orgs(admin, None, limit=10)
     assert len(every.items) == 4 and not every.has_more
@@ -1113,7 +1123,11 @@ async def test_an_operator_enrols_a_second_factor_before_the_plane_admits_them(
         await second_factor(manager, "root@example.test", "000000")
     code = clock.code(secret)
     admin = await admitted_on_login(manager, "root@example.test", code)
-    assert admin.permissions == operator_permissions_of(OperatorRole.WRITE)
+    # With its code, a sign-in mints one token and does nothing else.
+    assert admin.permissions == {OperatorPermission.MINT}
+    assert admin.operator_entry is OperatorRole.WRITE
+    with pytest.raises(NotAuthorized):
+        await operator.get_orgs(admin, None, limit=10)
     with pytest.raises(InvalidCredential):
         await second_factor(manager, "root@example.test", code)
     # A tenant's sign-in needs no code, and one who has no factor may not send one.
@@ -1147,7 +1161,8 @@ async def test_an_operator_token_carries_one_permission_and_reaches_the_plane_on
     clock: SteppingClock,
 ) -> None:
     await seed_operator(manager, "root@example.test")
-    admin, _ = await enrolled_operator(manager, operator, clock, "root@example.test")
+    _, secret = await enrolled_operator(manager, operator, clock, "root@example.test")
+    admin = await minting_operator(manager, clock, "root@example.test", secret)
     issued = await operator.issue_operator_token(admin, OperatorRole.READ)
     assert issued.token.startswith("opr_")
     assert timedelta(minutes=59) < issued.expires_at - utcnow() <= timedelta(hours=1)
@@ -1170,11 +1185,13 @@ async def test_an_operator_token_carries_one_permission_and_reaches_the_plane_on
         await manager.exchange_login(ictx, new_id())
     with pytest.raises(InvalidCredential):
         await manager.authenticate(request(), issued.token)
-    # An hour at most, never wider than the entry.
+    # An hour at most, never wider than the entry; a refused mint ends nothing.
+    admin = await minting_operator(manager, clock, "root@example.test", secret)
     with pytest.raises(ValidationFailed):
         await operator.issue_operator_token(admin, OperatorRole.READ, timedelta(seconds=3601))
     await seed_operator(manager, "sup@example.test", OperatorRole.READ)
-    sup, _ = await enrolled_operator(manager, operator, clock, "sup@example.test")
+    _, sup_secret = await enrolled_operator(manager, operator, clock, "sup@example.test")
+    sup = await minting_operator(manager, clock, "sup@example.test", sup_secret)
     with pytest.raises(NotAuthorized):
         await operator.issue_operator_token(sup, OperatorRole.WRITE)
     # A token past its expiry is refused; one whose entry narrowed is narrowed.
@@ -1184,9 +1201,13 @@ async def test_an_operator_token_carries_one_permission_and_reaches_the_plane_on
         await manager.authenticate_login(request(), writer.token)
     )
     assert narrowed.permissions == {OperatorPermission.READ}
+    # Off the plane, the token has ended: a grant made again revives it not.
     await manager.disable_operator(request(), "root@example.test")
-    with pytest.raises(NotAnOperator):
-        await manager.admit_operator(await manager.authenticate_login(request(), writer.token))
+    with pytest.raises(CredentialExpired):
+        await manager.authenticate_login(request(), writer.token)
+    await manager.grant_operator(request(), "root@example.test", OperatorRole.WRITE)
+    with pytest.raises(CredentialExpired):
+        await manager.authenticate_login(request(), writer.token)
     short = await manager.grant_operator_token(request(), "sup@example.test", timedelta(seconds=1))
     row = await storage.read_session_by_digest(hash_token(short.token))
     assert row is not None
@@ -1195,6 +1216,172 @@ async def test_an_operator_token_carries_one_permission_and_reaches_the_plane_on
     )
     with pytest.raises(CredentialExpired):
         await manager.authenticate_login(request(), short.token)
+
+
+async def test_a_sign_in_with_its_code_mints_one_token_and_ends(
+    manager: TenancyManagerImpl,
+    operator: TenancyOperatorManagerImpl,
+    storage: TenancyStorageMemoryImpl,
+    clock: SteppingClock,
+) -> None:
+    """The sign-in is exchanged for a token, as a tenant's is for a session:
+    it ends in the write that lands the token, so a leaked one mints nothing
+    more, and every read and write on the plane is a token's."""
+    await seed_operator(manager, "root@example.test")
+    admin, secret = await enrolled_operator(manager, operator, clock, "root@example.test")
+    login = await second_factor(manager, "root@example.test", clock.code(secret))
+    minting = await manager.admit_operator(await manager.authenticate_login(request(), login.token))
+    with pytest.raises(NotAuthorized):
+        await operator.size(minting)
+    issued = await operator.issue_operator_token(minting, OperatorRole.READ)
+    row = await storage.read_session_by_id(issued.id)
+    assert row is not None and row[1].token_hash == hash_token(issued.token)
+    assert row[1].created_by == minting.identity_id
+    ended = await storage.read_session_by_id(minting.credential_id)
+    assert ended is not None and ended[1].revoked_at is not None
+    with pytest.raises(CredentialExpired):
+        await manager.authenticate_login(request(), login.token)
+    with pytest.raises(CredentialExpired):
+        await operator.issue_operator_token(minting, OperatorRole.READ)
+    # One sign-in, one token: the enrolment's sign-in minted the other one.
+    listed = await operator.get_operator_tokens(admin, None, limit=10)
+    assert [t.id for t in listed.items] == [issued.id, admin.credential_id]
+
+
+async def test_the_second_factor_ends_the_sign_in_it_verified(
+    manager: TenancyManagerImpl, operator: TenancyOperatorManagerImpl, clock: SteppingClock
+) -> None:
+    """A person holds one sign-in at a time: a wrong code ends nothing, and
+    the right one ends the sign-in it was verified on."""
+    await seed_operator(manager, "root@example.test")
+    _, secret = await enrolled_operator(manager, operator, clock, "root@example.test")
+    plain = await manager.dev_sign_in(request(), "root@example.test")
+    with pytest.raises(InvalidCredential):
+        await manager.verify_second_factor(
+            await manager.authenticate_login(request(), plain.token), "000000"
+        )
+    verified = await manager.verify_second_factor(
+        await manager.authenticate_login(request(), plain.token), clock.code(secret)
+    )
+    assert (await manager.authenticate_login(request(), verified.token)).second_factor
+    with pytest.raises(CredentialExpired):
+        await manager.authenticate_login(request(), plain.token)
+
+
+async def test_an_operator_lists_and_revokes_their_own_tokens_one_at_a_time(
+    manager: TenancyManagerImpl,
+    operator: TenancyOperatorManagerImpl,
+    storage: TenancyStorageMemoryImpl,
+    clock: SteppingClock,
+) -> None:
+    """A revoke is a `revoked_at` the operator is named on, refused on the
+    token's next request, idempotent, and the operator's own: another
+    operator's token is none of theirs, and the grant job's machine tokens
+    are listed by no person."""
+    await seed_operator(manager, "root@example.test")
+    admin, secret = await enrolled_operator(manager, operator, clock, "root@example.test")
+    minted = [
+        await operator.issue_operator_token(
+            await minting_operator(manager, clock, "root@example.test", secret), OperatorRole.READ
+        )
+        for _ in range(2)
+    ]
+    await manager.grant_operator(
+        request(), "provisioner@platform.tadas.invalid", OperatorRole.WRITE
+    )
+    machine = await manager.grant_operator_token(request(), "provisioner@platform.tadas.invalid")
+    every = await operator.get_operator_tokens(admin, None, limit=10)
+    assert [t.id for t in every.items] == [minted[1].id, minted[0].id, admin.credential_id]
+    assert not every.has_more and machine.id not in {t.id for t in every.items}
+    first = await operator.get_operator_tokens(admin, None, limit=2)
+    assert first.has_more
+    rest = await operator.get_operator_tokens(admin, first.items[-1].id, limit=2)
+    assert first.items + rest.items == every.items and not rest.has_more
+
+    revoked = await operator.revoke_operator_token(admin, minted[0].id)
+    assert revoked.revoked_at is not None and revoked.updated_by == admin.identity_id
+    with pytest.raises(CredentialExpired) as refused:
+        await manager.authenticate_login(request(), minted[0].token)
+    assert refused.value.message == "operator token revoked"
+    await manager.authenticate_login(request(), minted[1].token)  # the others stand
+    again = await operator.revoke_operator_token(admin, minted[0].id)
+    assert again == revoked, "a second revoke answers the first one's row"
+    listed = await operator.get_operator_tokens(admin, None, limit=10)
+    assert minted[0].id not in {t.id for t in listed.items}
+    with pytest.raises(NotFound):
+        await operator.revoke_operator_token(admin, new_id())
+    with pytest.raises(NotFound):
+        await operator.revoke_operator_token(admin, machine.id)
+    with pytest.raises(NotFound):
+        await operator.revoke_operator_token(admin, admin.identity_id)
+
+    # Another operator reaches none of them, whatever their entry.
+    await seed_operator(manager, "sup@example.test")
+    sup, _ = await enrolled_operator(manager, operator, clock, "sup@example.test")
+    with pytest.raises(NotFound):
+        await operator.revoke_operator_token(sup, minted[1].id)
+    await manager.authenticate_login(request(), minted[1].token)
+    assert minted[1].id not in {
+        t.id for t in (await operator.get_operator_tokens(sup, None, limit=10)).items
+    }
+    # A token ends itself as well as its siblings.
+    ended = await operator.revoke_operator_token(admin, admin.credential_id)
+    assert ended.revoked_at is not None
+
+
+async def test_a_sign_out_ends_the_credential_presented_whichever_it_is(
+    manager: TenancyManagerImpl, operator: TenancyOperatorManagerImpl, clock: SteppingClock
+) -> None:
+    """A sign-in with no code, a sign-in with its code, and an operator token
+    each end on their own sign-out; the next use of each is refused."""
+    await manager.bootstrap(request(), "Acme", "acme", "ann@example.test", "Ann")
+    picker = await manager.dev_sign_in(request(), "ann@example.test")
+    out = await manager.logout(await manager.authenticate_login(request(), picker.token))
+    assert out.session.credential_kind is CredentialKind.LOGIN and out.session.revoked_at
+    with pytest.raises(CredentialExpired):
+        await manager.authenticate_login(request(), picker.token)
+
+    await seed_operator(manager, "root@example.test")
+    admin, secret = await enrolled_operator(manager, operator, clock, "root@example.test")
+    verified = await second_factor(manager, "root@example.test", clock.code(secret))
+    ictx = await manager.authenticate_login(request(), verified.token)
+    await manager.logout(ictx)
+    with pytest.raises(CredentialExpired):
+        await manager.authenticate_login(request(), verified.token)
+    with pytest.raises(CredentialExpired):
+        await operator.issue_operator_token(await manager.admit_operator(ictx), OperatorRole.READ)
+
+    token = await manager.grant_operator_token(request(), "root@example.test")
+    signed_out = await manager.logout(await manager.authenticate_login(request(), token.token))
+    assert signed_out.session.id == token.id and signed_out.provider_logout_url is None
+    with pytest.raises(CredentialExpired):
+        await manager.authenticate_login(request(), token.token)
+    assert token.id not in {
+        t.id for t in (await operator.get_operator_tokens(admin, None, limit=10)).items
+    }
+
+
+async def test_disabling_an_operator_ends_its_credentials_and_not_its_tenant_ones(
+    manager: TenancyManagerImpl, operator: TenancyOperatorManagerImpl, clock: SteppingClock
+) -> None:
+    """Off the plane at once, for good: a grant made again revives no token
+    and no sign-in with a code. The person's tenant session is theirs, and
+    stands."""
+    _, org = await manager.bootstrap(
+        request(), "Root", "root", "root@example.test", "Root", operator_role=OperatorRole.WRITE
+    )
+    tenant = await sign_in(manager, "root@example.test", org.id)
+    admin, secret = await enrolled_operator(manager, operator, clock, "root@example.test")
+    token = await manager.grant_operator_token(request(), "root@example.test")
+    verified = await second_factor(manager, "root@example.test", clock.code(secret))
+    await manager.disable_operator(request(), "root@example.test")
+    await manager.grant_operator(request(), "root@example.test", OperatorRole.WRITE)
+    for credential in (token.token, verified.token):
+        with pytest.raises(CredentialExpired):
+            await manager.authenticate_login(request(), credential)
+    listed = await operator.get_operator_tokens(admin, None, limit=10)
+    assert token.id not in {t.id for t in listed.items}
+    assert (await manager.get_me(tenant)).user.id == tenant.user_id
 
 
 def counted_reads(storage: TenancyStorageMemoryImpl, monkeypatch: pytest.MonkeyPatch) -> list[str]:
@@ -1245,9 +1432,9 @@ async def test_each_credential_is_checked_in_the_fewest_reads(
     key = await manager.create_api_key(owner, "ci", Role.MEMBER)
     await seed_operator(manager, "root@example.test")
     _, secret = await enrolled_operator(manager, operator, clock, "root@example.test")
+    minting = await minting_operator(manager, clock, "root@example.test", secret)
+    token = await operator.issue_operator_token(minting, OperatorRole.READ)
     login = await second_factor(manager, "root@example.test", clock.code(secret))
-    admin = await manager.admit_operator(await manager.authenticate_login(request(), login.token))
-    token = await operator.issue_operator_token(admin, OperatorRole.READ)
 
     async def asked_twice(ctx: OpContext) -> Entitlements:
         raise AssertionError("the key's plan is read with its principal")
@@ -1693,9 +1880,13 @@ async def test_redeeming_a_ticket_rechecks_the_credential_behind_it(
     manager: TenancyManagerImpl,
 ) -> None:
     _, org = await manager.bootstrap(request(), "Acme", "acme", "ann@example.test", "Ann")
-    ctx = await sign_in(manager, "ann@example.test", org.id)
+    login = await manager.dev_sign_in(request(), "ann@example.test")
+    session = await manager.exchange_login(
+        await manager.authenticate_login(request(), login.token), org.id
+    )
+    ctx = await manager.authenticate(request(), session.token)
     issued = await manager.issue_ticket(ctx)
-    await manager.logout(ctx)
+    await manager.logout(await manager.authenticate_login(request(), session.token))
     with pytest.raises(CredentialExpired):
         await manager.redeem_ticket(request(), issued.ticket)
 
@@ -2243,8 +2434,7 @@ async def test_a_live_session_proves_the_identity_and_a_dead_one_does_not(
     ictx = await manager.authenticate_login(request(), session.token)
     assert ictx.email == "ann@example.test"
     assert ictx.credential_kind is CredentialKind.SESSION_TOKEN
-    ctx = await manager.authenticate(request(), session.token)
-    await manager.logout(ctx)
+    await manager.logout(ictx)
     with pytest.raises(CredentialExpired):
         await manager.authenticate_login(request(), session.token)
     with pytest.raises(InvalidCredential):

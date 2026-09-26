@@ -182,10 +182,12 @@ class TenancyManagerInterface(ABC):
     async def verify_second_factor(self, ictx: IdentityContext, totp_code: str) -> IssuedLogin:
         """Platform-internal: a sign-in's second factor. The login presented is
         answered with a new one that records the verified code, which the
-        operator gate asks for; the code is checked against the identity's
-        enrolled secret and refused when it was used already. A run of wrong
-        codes for the email makes the next one wait (SignInDelayed). Only a
-        login credential is taken (InvalidCredential otherwise)."""
+        operator gate asks for, and ends in the write that lands it, so a
+        person holds one sign-in at a time; a wrong code ends nothing. The
+        code is checked against the identity's enrolled secret and refused
+        when it was used already. A run of wrong codes for the email makes
+        the next one wait (SignInDelayed). Only a login credential is taken
+        (InvalidCredential otherwise)."""
         ...
 
     @abstractmethod
@@ -243,13 +245,16 @@ class TenancyManagerInterface(ABC):
         verified identity when it is on the operator allowlist, NotAnOperator
         otherwise. Two credentials admit, and a tenant's never does (a tenant
         session is InvalidCredential): the person's own sign-in, and an
-        operator token. A sign-in admits with the permissions the entry's role
-        grants only when it verified a TOTP code (SecondFactorRequired when an
-        enrolled operator's did not); an operator with no second factor
+        operator token. A sign-in that verified a TOTP code is admitted with
+        `OperatorPermission.MINT` alone: it mints one operator token and does
+        nothing else on the plane (SecondFactorRequired when an enrolled
+        operator's sign-in verified none); an operator with no second factor
         enrolled yet is admitted with `OperatorPermission.ENROL` alone. An
         operator token admits with its one permission, never wider than the
         entry grants today: the one exception to "a sign-in alone never
-        admits", since a second factor or the grant job stood behind it."""
+        admits", since a second factor or the grant job stood behind it. So
+        every read and write on the plane is a token's, and each token is
+        listed and ended by itself."""
         ...
 
     @abstractmethod
@@ -270,8 +275,9 @@ class TenancyManagerInterface(ABC):
     @abstractmethod
     async def disable_operator(self, rctx: RequestContext, email: str) -> Identity:
         """Platform-internal: the grant job's. Takes the identity off the
-        allowlist, audited; its operator tokens stop admitting at once, since
-        the gate reads the entry on every request."""
+        allowlist, audited, and ends every operator token and every sign-in
+        with a second factor it holds, in the same commit: they stop at once,
+        and a grant made again later revives none of them."""
         ...
 
     @abstractmethod
@@ -575,12 +581,17 @@ class TenancyManagerInterface(ABC):
     async def revoke_session(self, ctx: OpContext, session_id: UUID) -> Session: ...
 
     @abstractmethod
-    async def logout(self, ctx: OpContext, return_to: str | None = None) -> SignedOut:
-        """Revokes the session the caller presented, and answers where the
-        browser goes to end the identity provider's session behind it, when
-        the sign-in left one there. `return_to` is where the provider sends
-        the browser after: one of `sign_out_return_uris`, else refused; None
-        leaves it to the provider's default."""
+    async def logout(self, ictx: IdentityContext, return_to: str | None = None) -> SignedOut:
+        """Platform-internal: ending its own sign-in is an operation of the
+        identity stage. Ends the credential the stage came from, whichever
+        it is: a session, announced so the socket it opened closes; a sign-in,
+        with or without its second factor; an operator token, which is the
+        operator's sign-out. It answers where the browser goes to end the
+        identity provider's session behind it, when the sign-in left one
+        there. `return_to` is where the provider sends the browser after: one
+        of `sign_out_return_uris`, else refused; None leaves it to the
+        provider's default. An api key has no sign-out: it is never an
+        identity stage, and its holder revokes it."""
         ...
 
     @abstractmethod

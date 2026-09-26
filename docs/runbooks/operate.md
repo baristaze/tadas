@@ -325,8 +325,9 @@ uv run tadas-ops work requeue --env staging --org <org id> <item id>
 # requeued <item id> (DELETE_ACCOUNT) in org <org id>: queued, 0 of 3 attempts spent, available now
 ```
 
-It signs you in with the second factor and mints a `write` token for
-that one call; the env file keeps its `read` token. The item runs again
+It signs you in with the second factor, mints a `write` token for
+that one call, and signs that token out after it; the env file keeps its
+`read` token. The item runs again
 as a fresh one, with every attempt it had. A `work.item.requeued` event
 in the org's diary names you. An item that is not failed is refused
 (`work_not_failed`), so running it twice does nothing the second time.

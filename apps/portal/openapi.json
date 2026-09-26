@@ -1384,11 +1384,16 @@
         "type": "object"
       },
       "IssuedOperatorTokenView": {
-        "description": "The token in the clear on the first response only; a replay under the\nsame Idempotency-Key answers with `token` null. A client that lost the\nfirst answer mints another; the lost one expires within the hour.",
+        "description": "The token in the clear, on this answer only; `id` names it afterwards,\nin the list and the revoke, and is no secret. The mint ends the sign-in\nit was given, so a client that lost this answer signs in again for\nanother token and revokes the lost one by its id from the list.",
         "properties": {
           "expires_at": {
             "format": "date-time",
             "title": "Expires At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
             "type": "string"
           },
           "permission": {
@@ -1407,6 +1412,7 @@
           }
         },
         "required": [
+          "id",
           "token",
           "expires_at",
           "permission"
@@ -1905,6 +1911,79 @@
         ],
         "title": "OperatorRole",
         "type": "string"
+      },
+      "OperatorTokenPageView": {
+        "description": "One page of the caller's live operator tokens, newest first;\n`next_cursor` as on `UserPageView`.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/OperatorTokenView"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "OperatorTokenPageView",
+        "type": "object"
+      },
+      "OperatorTokenView": {
+        "description": "One operator token as its operator reads it: never the secret, which is\nkept as its digest. `revoked_at` is set once it was ended.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "permission": {
+            "$ref": "#/components/schemas/OperatorRole"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked At"
+          }
+        },
+        "required": [
+          "id",
+          "permission",
+          "created_at",
+          "expires_at",
+          "revoked_at"
+        ],
+        "title": "OperatorTokenView",
+        "type": "object"
       },
       "OperatorView": {
         "description": "Who the operator plane admitted: the identity and what its allowlist\nentry grants, so a skill checks it holds the entry it expects before it\nreads anything.",
@@ -2581,7 +2660,7 @@
         "type": "object"
       },
       "SignedOutView": {
-        "description": "The session that ended, and `provider_logout_url`: where the browser\ngoes next to end the identity provider's session behind it, so the next\nsign-in on this browser asks who it is. Null when the sign-in left no\nsession there (the device sign-in, the local sign-in). It names the\nprovider's session, which is not a secret.",
+        "description": "The credential that ended, a session, a sign-in, or an operator\ntoken, and `provider_logout_url`: where the browser goes next to end the\nidentity provider's session behind it, so the next sign-in on this\nbrowser asks who it is. Null when the sign-in left no session there\n(the device sign-in, the local sign-in, an operator token). It names the\nprovider's session, which is not a secret.",
         "properties": {
           "created_at": {
             "format": "date-time",
@@ -3518,8 +3597,114 @@
       }
     },
     "/v1/admin/me/tokens": {
+      "get": {
+        "description": "The caller's own live operator tokens, newest first: the ids a revoke\nnames, whoever minted them (the caller, or the grant job for a machine\nidentity). Never a token's secret.",
+        "operationId": "list_tokens_v1_admin_me_tokens_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app-version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Version"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperatorTokenPageView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Tokens",
+        "tags": [
+          "admin"
+        ]
+      },
       "post": {
-        "description": "An operator token for an agent: one permission, never wider than the\ncaller's entry, an hour at most. Minted only from a sign-in that\nverified a second factor, so a token never mints a token.",
+        "description": "An operator token: one permission, never wider than the caller's\nentry, an hour at most. Minted only from a sign-in that verified a second\nfactor, which it ends, so a token never mints a token and a sign-in\nmints one.",
         "operationId": "mint_token_v1_admin_me_tokens_post",
         "parameters": [
           {
@@ -3569,24 +3754,6 @@
               ],
               "title": "X-App-Version"
             }
-          },
-          {
-            "in": "header",
-            "name": "idempotency-key",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "maxLength": 255,
-                  "minLength": 1,
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Idempotency-Key"
-            }
           }
         ],
         "requestBody": {
@@ -3600,7 +3767,7 @@
           "required": true
         },
         "responses": {
-          "201": {
+          "200": {
             "content": {
               "application/json": {
                 "schema": {
@@ -3622,6 +3789,98 @@
           }
         },
         "summary": "Mint Token",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/v1/admin/me/tokens/{token_id}": {
+      "delete": {
+        "description": "Ends one of the caller's own tokens at once; its next request is\nrefused. Ending one ended already answers it as stored. Another\noperator's token is `404`: ending it is the grant job's disable.",
+        "operationId": "revoke_token_v1_admin_me_tokens__token_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "token_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Token Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app-version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Version"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperatorTokenView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Revoke Token",
         "tags": [
           "admin"
         ]

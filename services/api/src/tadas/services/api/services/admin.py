@@ -14,6 +14,8 @@ from tadas.services.api.types.admin import (
     IssuedOperatorTokenView,
     IssuedTotpSecretView,
     MintOperatorTokenRequest,
+    OperatorTokenPageView,
+    OperatorTokenView,
     OperatorView,
     OperatorWorkItemView,
     PlatformSizeView,
@@ -46,6 +48,17 @@ class AdminServiceInterface(ABC):
     async def mint_token(
         self, admin: OperatorContext, body: MintOperatorTokenRequest
     ) -> IssuedOperatorTokenView: ...
+
+    @abstractmethod
+    async def list_tokens(
+        self, admin: OperatorContext, cursor: str | None, limit: int
+    ) -> OperatorTokenPageView:
+        """One page of the caller's live tokens; `cursor` is the previous
+        page's `next_cursor`."""
+        ...
+
+    @abstractmethod
+    async def revoke_token(self, admin: OperatorContext, token_id: UUID) -> OperatorTokenView: ...
 
     @abstractmethod
     async def size(self, admin: OperatorContext) -> PlatformSizeView: ...

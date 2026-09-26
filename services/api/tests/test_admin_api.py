@@ -23,8 +23,8 @@ OPERATOR_LOG = "tadas.om.tenancy.impl.operator"
 async def admit(
     client: httpx.AsyncClient, container: AppContainer, role: OperatorRole, email: str
 ) -> dict[str, str]:
-    """An operator's headers: the person's own sign-in, with a second factor,
-    on the allowlist with `role`."""
+    """An operator's headers: the token the person's own sign-in, with a
+    second factor, minted with the whole of an entry of `role`."""
     headers, _ = await enrol_operator(client, container, email, role)
     return headers
 
@@ -62,6 +62,7 @@ def routes(org_id: str) -> list[tuple[str, str, str, dict[str, Any]]]:
     write operator's call lands."""
     return [
         ("read", "GET", "/v1/admin/me", {}),
+        ("read", "GET", "/v1/admin/me/tokens", {}),
         ("read", "GET", "/v1/admin/size", {}),
         ("read", "GET", "/v1/admin/orgs", {}),
         ("read", "GET", f"/v1/admin/orgs/{org_id}", {}),
