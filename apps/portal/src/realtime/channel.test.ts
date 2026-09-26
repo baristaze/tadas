@@ -49,6 +49,15 @@ function push(seq: number): Envelope {
 
 const seqOf = (e: Envelope) => (e as { payload: { seq: number } }).payload.seq;
 
+const REMINDED = "tasks.task.reminded";
+
+/** A reminder of task `target` in the stream. */
+function reminded(seq: number, target: string): EventView {
+  return { ...event(seq), kind: REMINDED, target_id: target };
+}
+
+const isReminder = (e: Envelope) => e.type === "event" && e.payload.kind === REMINDED;
+
 const hello = (seq: number) => ({ type: "hello", sent_at: null, org_id: "o1", user_id: "u1", seq, ping_interval_seconds: 25 });
 
 /** The stream in storage, as pages after a seq. */
@@ -58,6 +67,7 @@ function harness(pages: Pages = () => [], pageSize = 200, clock?: () => number, 
   const sockets: FakeSocket[] = [];
   const routed: Envelope[] = [];
   const replayed: Envelope[] = [];
+  const announced: number[][] = [];
   const fetches: number[] = [];
   const requestTicket = vi.fn(() => Promise.resolve("tkt"));
   const onUnauthenticated = vi.fn();
@@ -79,11 +89,13 @@ function harness(pages: Pages = () => [], pageSize = 200, clock?: () => number, 
       routed.push(envelope);
     },
     routeReplayed: split ? (envelope) => void replayed.push(envelope) : undefined,
+    isAnnounced: isReminder,
+    announce: (envelopes) => void announced.push(envelopes.map(seqOf)),
     refreshAll,
     connection: useConnectionStore,
     pageSize,
   });
-  return { channel, sockets, routed, replayed, fetches, requestTicket, onUnauthenticated, refreshAll };
+  return { channel, sockets, routed, replayed, announced, fetches, requestTicket, onUnauthenticated, refreshAll };
 }
 
 // Lets the ticket request and the inbox settle without moving the clock.
@@ -375,6 +387,120 @@ describe("stream cursor", () => {
     h2.sockets[0]!.receive(push(6));
     await flush();
     expect(channel.cursor()).toBe(6);
+  });
+});
+
+describe("a reminder read back from the stream", () => {
+  /** A channel with its cursor at 5, then dropped and reconnected: the open
+   * replays from the cursor. */
+  async function reconnected(stream: EventView[], pageSize = 200) {
+    const h = harness((after) => stream.filter((e) => e.seq > after).slice(0, pageSize), pageSize, undefined, true);
+    channel = h.channel;
+    await flush();
+    h.sockets[0]!.accept();
+    await flush();
+    h.sockets[0]!.receive(hello(5));
+    await flush();
+    h.sockets[0]!.drop();
+    await vi.advanceTimersByTimeAsync(1_000);
+    h.sockets[1]!.accept();
+    await flush();
+    return h;
+  }
+
+  it("is kept through the collapse: a later update of the same task does not hide it", async () => {
+    const h = await reconnected([reminded(6, "t1"), { ...event(7), target_id: "t1" }, event(8)]);
+    expect(channel!.cursor()).toBe(8);
+    // The lists are read once, from the last task record; the reminder is announced.
+    expect(h.replayed.map(seqOf)).toEqual([8]);
+    expect(h.announced).toEqual([[6]]);
+  });
+
+  it("hands over every reminder of a replay at once, across its pages, in stream order", async () => {
+    const stream = [reminded(6, "t1"), event(7), reminded(8, "t2"), reminded(9, "t3"), event(10)];
+    const h = await reconnected(stream, 2);
+    expect(h.fetches).toEqual([5, 7, 9]);
+    expect(channel!.cursor()).toBe(10);
+    expect(h.announced).toEqual([[6, 8, 9]]);
+  });
+
+  it("announces nothing for a replay with no reminder", async () => {
+    const h = await reconnected([event(6), event(7)]);
+    expect(channel!.cursor()).toBe(7);
+    expect(h.announced).toEqual([]);
+  });
+
+  it("is handed over when a later page fails, since the cursor has moved past it", async () => {
+    let calls = 0;
+    const stream = [reminded(6, "t1"), event(7), event(8), event(9)];
+    const h = harness(
+      (after) => {
+        calls += 1;
+        if (calls > 1) throw new Error("the network went away");
+        return stream.filter((e) => e.seq > after).slice(0, 2);
+      },
+      2,
+      undefined,
+      true,
+    );
+    channel = h.channel;
+    await flush();
+    h.sockets[0]!.accept();
+    await flush();
+    h.sockets[0]!.receive(hello(5));
+    await flush();
+    h.sockets[0]!.drop();
+    await vi.advanceTimersByTimeAsync(1_000);
+    h.sockets[1]!.accept();
+    await flush();
+    expect(channel.cursor()).toBe(7);
+    expect(h.announced).toEqual([[6]]);
+  });
+
+  it("is kept by the first catch-up too", async () => {
+    let clock = 0;
+    const stream = [
+      { ...reminded(4, "t1"), produced_at: "2026-09-16T12:00:01Z" },
+      { ...event(5), target_id: "t1", produced_at: "2026-09-16T12:00:02Z" },
+    ];
+    const h = harness((after) => stream.filter((e) => e.seq > after), 200, () => clock, true);
+    channel = h.channel;
+    await flush();
+    h.sockets[0]!.accept();
+    await flush();
+    clock += 3000;
+    h.sockets[0]!.receive({ ...hello(5), sent_at: "2026-09-16T12:00:03Z" });
+    await flush();
+    expect(h.replayed.map(seqOf)).toEqual([5]);
+    expect(h.announced).toEqual([[4]]);
+  });
+
+  it("is not handed over by a replay that finishes after stop", async () => {
+    let resolvePage!: (page: EventView[]) => void;
+    const socket = new FakeSocket();
+    const announce = vi.fn();
+    channel = openChannel({
+      requestTicket: async () => "tkt",
+      openSocket: () => socket,
+      fetchEventsAfter: vi.fn(() => new Promise<EventView[]>((resolve) => { resolvePage = resolve; })),
+      route: vi.fn(),
+      isAnnounced: isReminder,
+      announce,
+      refreshAll: async () => undefined,
+      connection: useConnectionStore,
+      pageSize: 200,
+    });
+    await flush();
+    socket.accept();
+    await flush();
+    socket.receive(hello(0));
+    await flush();
+    socket.receive(push(2));
+    await flush();
+    channel.stop();
+    resolvePage([reminded(1, "t1"), event(2)]);
+    await flush();
+    expect(announce).not.toHaveBeenCalled();
   });
 });
 

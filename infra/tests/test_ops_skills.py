@@ -19,6 +19,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 SKILLS = ROOT / ".claude" / "skills"
 PREAMBLE = SKILLS / "_shared" / "ops-preamble.md"
+README = ROOT / "ops" / "README.md"
 REFERENCE = ".claude/skills/_shared/ops-preamble.md"
 
 # Every skill that can reach an environment, and so holds a credential.
@@ -147,6 +148,25 @@ def test_an_audit_reports_and_never_changes_the_code(name: str) -> None:
     for section in ("## Input", "## Role and credential", "## Procedure", "## What it never does"):
         assert section in _skill(name), f"{name} has no {section}"
     assert "## Output" in _skill(name)
+
+
+def _readme_needs(name: str) -> str:
+    """What `ops/README.md` says a skill needs: its "Needs" cell, a note in parentheses left out."""
+    row = re.search(rf"^\| `{re.escape(name)}` \| ([^|]+) \|", README.read_text(), re.MULTILINE)
+    assert row, f"ops/README.md has no row for {name}"
+    return re.sub(r"\([^)]*\)", "", row.group(1)).strip().lower()
+
+
+@pytest.mark.parametrize("name", AUDITS)
+def test_an_audit_holds_the_one_role_ops_readme_gives_it(name: str) -> None:
+    """An audit opens its Role and credential section with its role, and
+    ops/README.md names the same one, so a reader who trusts either grants
+    the same credential."""
+    section = _skill(name).split("## Role and credential", 1)[1].strip()
+    said = re.split(r"[,.]", section, maxsplit=1)[0].strip().lower()
+    needs = _readme_needs(name)
+    assert "," not in needs, f"ops/README.md gives {name} more than one role: {needs}"
+    assert said == needs
 
 
 @pytest.mark.parametrize("name", AUDITS)
