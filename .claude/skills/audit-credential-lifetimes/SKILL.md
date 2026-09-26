@@ -25,7 +25,7 @@ root.
 
 ## Role and credential
 
-Investigator, local only. The counts run on the local stack (`make
+None, local only. The counts run on the local stack (`make
 infra-up`, with `make migrate` run once), in a database the run makes
 and drops, with the provider twins in place of the providers. It holds
 no cloud credential, reads no environment, and reads no env file.

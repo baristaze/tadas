@@ -1508,7 +1508,12 @@ alone, and neither key may touch what the other's work does not need
   hello's `sent_at` less the time the tab waited for it, less fifteen
   seconds, past a statement's deadline), and the rest of the cache stays
   as read. Only a tail that cannot tell (every record on it that recent)
-  or a hello with no time refreshes every query.
+  or a hello with no time refreshes every query. A record read back
+  (a replay, the first catch-up) is routed once per entity, the last,
+  but a reminder is kept whatever follows it and announced when the
+  read-back ends: each by its task's title up to three, and past three
+  one notice that counts them, with nothing read to find them
+  ([ADR 0075](adr/0075-a-reminder-missed-while-away-is-announced-after-the-reconnect.md)).
   Errors go to the Sentry-compatible backend named by `sentryDsn` in
   the runtime `config.json` (locally, by `VITE_SENTRY_DSN`), through
   every route's `errorElement` and React's root error hooks; the DSN is
@@ -1798,15 +1803,17 @@ page; this section says what exists.
   `local` the Prometheus and Jaeger URLs of the `devx` profile. Every
   skill verifies the profile it holds with `sts get-caller-identity`
   before it reads, and refuses a wider one.
-- **Skills.** The nine of "Operational Skills", under `.claude/skills/`,
-  copied from the guideline's templates with the product's name:
+- **Skills.** The nine of "Operational Skills", under `.claude/skills/`:
   `ops-investigate`, `ops-watch`, `ops-root-cause`, `ops-infra-as-code`,
   `ops-cloud-deployment-create`, `ops-cloud-deployment-nuke`,
   `ops-simulate-traffic`, `stress-test-create-or-update`,
-  `stress-test-run`. Every one that reads or drives an environment
-  takes `--env local|staging|production`, and `local` reads the
-  compose stack's twins, so each is exercised with no cloud; create
-  and nuke take `staging` or `production` only, and
+  `stress-test-run`. Each starts from the guideline's template with the
+  product's name in, and grows with the product: it names Tadas's own
+  tools, documents, and steps, so it is fuller than its template, and
+  the skill here is the one that runs. Every one that reads or drives
+  an environment takes `--env local|staging|production`, and `local`
+  reads the compose stack's twins, so each is exercised with no cloud;
+  create and nuke take `staging` or `production` only, and
   `stress-test-create-or-update` writes a file and touches none. The
   eight that hold a credential read
   `.claude/skills/_shared/ops-preamble.md` first, where the profiles,
@@ -1820,6 +1827,13 @@ page; this section says what exists.
   `audit-credential-lifetimes` and `audit-provider-calls`, which count
   as well as read
   ([ADR 0067](adr/0067-what-0-36-0-asks-and-what-stays-a-choice.md)).
+  They start from the guideline's templates and grow the same way.
+  Each opens with the one role it needs, the role `ops/README.md`
+  gives it, and `infra/tests/test_ops_skills.py` holds the two equal.
+  The deploy audit and the retention audit need the investigator, for
+  what they read in a cloud environment. The four that run on the
+  local stack alone need none: they hold no operator credential, and
+  the investigator reads no database row.
   An audit of calls proposes a fix in one order: remove a call, fold
   it, defer it, cache it, and only then run calls in parallel. The
   five that measure the code make a database
