@@ -23,11 +23,13 @@ done ones, delete one, read the stream after where it stood at the start,
 see one of its own changes arrive on the socket. A person thinks between
 steps.
 
-The people of an org share its tasks, and a move can renumber every open
-task of the org, so a session's write can meet a task that moved on since
-it read it. The API answers that with 412, the optimistic-concurrency
-refusal, and a session does what a client does: it reads the task afresh
-and makes the write once more on the fresh version. A task that is gone,
+The people of an org share its open list, and the sessions of a run add,
+move, and finish tasks in it at once. A move writes the moved task alone,
+so a session's write meets a task that moved on since it read it only when
+something else wrote that task: a reminder that went out, or the sweep
+giving a run of long ranks short ones. The API answers that with 412, the
+optimistic-concurrency refusal, and a session does what a client does: it
+reads the task afresh and makes the write once more on the fresh version. A task that is gone,
 404 on the write or on the read, is dropped and the session goes on
 without it. Both are counted on their own, as conflicts and as tasks gone,
 and neither is an error or a failure: they are the API working as it

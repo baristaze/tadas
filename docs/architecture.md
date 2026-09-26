@@ -318,23 +318,29 @@ context on keeps the stage the callee needs.
   signs `updated_by` with the operator's identity and names the requeue by
   a `work.item.requeued` event whose actor is that identity. Done or
   failed items are purged by the sweep after the work retention (30 days).
-- `tasks`: the to-do items (`Task`: title, notes, status, position,
+- `tasks`: the to-do items (`Task`: title, notes, status, rank,
   version, and the due date `due_on` with `reminded_at` beside it), listed by a `TaskFilter` (team or mine) and paged by a
-  cursor, `OpenTaskCursor` over (position, id) for the open list and
+  cursor, `OpenTaskCursor` over (rank, id) for the open list and
   `TaskCursor` over (updated_at, id) for the done one, all passed
   unchanged from the manager to storage; the visibility, cursor, and
   placement rules are pure functions in `tasks.rules`, the active-task
   bound is the plan's (`count_open_tasks`, asked before a create and a
   reopen, a read then a write, so a race at the bound can overshoot by
   the racers), which the memory
-  impl calls and the Postgres impl mirrors in SQL. A placement reads one
-  open place, bounded in the statement: the top one for a task created
-  or reopened, the one that follows the anchor for a move
-  (`tasks.rules.follows`, which the statement spells and a contract case
-  holds to the function). A gap halved down to
-  float precision is renumbered: the whole open list gets whole-number
-  positions in one compare-and-set over every row (`update_tasks`),
-  each announced. A task carries a
+  impl calls and the Postgres impl mirrors in SQL. The rank is an exact
+  decimal (`numeric`, `Decimal`, a string on the wire), so there is
+  always a rank between two others (`tasks.rules.spread`): a placement
+  reads one open place, bounded in the statement (the top one for a
+  task created or reopened, the smallest rank past the anchor's for a
+  move) and writes the placed task alone, and no other task's version
+  moves ([ADR 0050](adr/0050-a-move-writes-one-row.md)). A rank past 24
+  digits after the point is found by the sweep through a partial index
+  that holds only such ranks, and its run (between the nearest ranks of
+  at most 12 digits, 100 places each way at most) is respaced in one
+  compare-and-set over its rows (`update_tasks`, `respace_ranks`), each
+  announced. The float `position` is written beside the rank for the
+  release before, and a trigger gives a row that release writes the
+  rank its position names; both go with the contract. A task carries a
   `version` because it is edited from two windows and two terminals at
   once ([ADR 0009](adr/0009-tasks-carry-a-version.md)): the manager's
   copy increments it on update, move, and soft delete, and the storage
@@ -346,7 +352,7 @@ context on keeps the stage the callee needs.
   update reads: `If-Match` on a `PATCH` and a `DELETE`, `expected_version`
   on the move, and a write that names none is `ValidationFailed`. The
   copy on update keeps `PROVENANCE_FIELDS` and the task's
-  `MANAGER_OWNED_FIELDS` (its position and its version) as stored.
+  `MANAGER_OWNED_FIELDS` (its rank, its position, and its version) as stored.
   The update never inserts; the create primitive is the only way in. So
   a snapshot that missed a write is refused, never merged over it, and
   an edit that raced a delete finds the task gone and cannot bring it

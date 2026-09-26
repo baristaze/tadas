@@ -6,13 +6,13 @@ seven kinds of thing [Tadas is made of](../../../../README.md).
 ## The nouns
 
 - **Task**: a title, notes, a status (open or done), an assignee, a
-  position in the open list, a due date, and a version. It remembers
+  rank in the open list, a due date, and a version. It remembers
   who created it, who last changed it, and when its reminder went out.
 - **Filter**: which tasks a list shows. *Team* shows every task of the
   org. *Mine* shows the tasks assigned to me, plus the unassigned ones I
   created.
 - **Cursor**: where the previous page ended, so the next page starts
-  right after it. The open list pages by position, the done list by the
+  right after it. The open list pages by rank, the done list by the
   time of the last change.
 - **Page**: the tasks of one page and whether another page follows.
 - **Attachment**: a [file](../media/README.md) kept with a task.
@@ -37,7 +37,8 @@ seven kinds of thing [Tadas is made of](../../../../README.md).
 - **Read one task.**
 - **Edit**: the title, the notes, the assignee, the status. A task
   reopened from done goes back to the top of the open list.
-- **Move** an open task right after another one, or to the top.
+- **Move** an open task right after another one, or to the top. The
+  move writes that task and no other.
 - **Complete or reopen many tasks at once**: the ones named, at most a
   thousand, or every task of the open or the done list in a scope. The
   change runs a hundred tasks a commit, so a list of thousands is many
@@ -69,6 +70,8 @@ seven kinds of thing [Tadas is made of](../../../../README.md).
   goes back to the top of the done list, and has the archive age again
   before the next cleanup takes it. Reopening an archived task restores
   it too.
+- **Respace.** When a rank grows long, the sweep gives the tasks around
+  it short ranks again, in the order they had.
 - **Sweep.** Deleted tasks are erased for good after the retention,
   thirty days by default. A task's files are deleted before it is, so
   a file its delete could not reach is deleted then.
@@ -105,15 +108,28 @@ seven kinds of thing [Tadas is made of](../../../../README.md).
   it is deleted, its place in the open list, and its version stay as
   stored, whatever the edit sends; a move places a task, and every
   write sets the version.
-- **The fractional position.** Open tasks are ordered by a number. A
-  new task takes one less than the smallest, so it lands on top. A
-  task moved after another takes the midpoint between that task and
-  the one that follows it, or one more than it when it is last. So a
-  move changes one task and no other.
-- **Renumbering.** Halving a gap runs out of room eventually. When the
-  midpoint equals a neighbour, the whole open list is renumbered with
-  whole numbers in one step, every task whose position changed
-  announced, and the gaps are wide again.
+- **The rank.** Open tasks are ordered by a rank, an exact decimal
+  number, top first. Between two ranks there is always another. A new
+  task takes a whole number below the top one, so it lands on top. A
+  task moved after another takes the shortest rank between that task's
+  and the next one's, or the whole number after it when it is last. So
+  a move writes one task and no other, and no other task's version
+  moves.
+- **Two tasks can share a rank.** Two people who add a task at the same
+  moment can both take the rank above the same top. The list orders
+  the two by their ids. A task moved after either of them goes after
+  both.
+- **A long rank is respaced.** Moves into one and the same gap add a
+  digit every three moves or so. Past 24 digits after the point, the
+  sweep takes the run of tasks around it (up to the nearest ranks of at
+  most 12 digits, a hundred tasks each way at most) and gives them short
+  ranks, spread evenly, in the order they had. It is one write; each
+  task in it takes a new version and is announced like an edit. A run
+  someone wrote meanwhile is left for the next sweep. The order a
+  person sees never changes.
+- **The position is the rank's float.** A task also carries its rank as
+  a float, its position, for the release before, which orders by it.
+  It goes in the release after this one.
 - **A page is a page.** A page holds at most two hundred tasks, and
   "another page follows" is a fact about the rows, not a guess.
 - **Assignment is checked when it changes.** Assigning a task to
