@@ -406,7 +406,11 @@ context on keeps the stage the callee needs.
   batch: `read_tasks` or a page of the list, the rules a single edit
   applies (`tasks.rules.bulk_skip`), then `update_tasks_if_current`, the
   compare-and-set of `update_tasks` with each row fenced on its own and
-  a stale one left alone rather than refusing the batch. A reopen reads
+  a stale one left alone rather than refusing the batch. In Postgres the
+  batch is one `UPDATE ... FROM unnest(...)`: one array per column and
+  the version each task was read at, joined on the id, the tenant, and
+  that version, returning the ids it wrote; the outbox rows of those
+  tasks follow in one batch in the same commit. A reopen reads
   the plan's room once, as a step of an import does, and names the
   bound (`PlanBound`) for the tasks past it. The answer (`BulkOutcome`)
   lists the tasks it changed and skipped up to `BULK_REPORT_CAP` and

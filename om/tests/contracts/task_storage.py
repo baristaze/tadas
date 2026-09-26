@@ -20,7 +20,7 @@ from tadas.om.orchestrations.types.orchestration import (
     Step,
 )
 from tadas.om.outbox.types.row import OutboxRow
-from tadas.om.tasks.rules import RANK_SCALE_BOUND, needs_respace
+from tadas.om.tasks.rules import RANK_SCALE_BOUND, needs_respace, placed
 from tadas.om.tasks.storage import TasksStorageInterface
 from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor, TaskFilter
 from tadas.om.tasks.types.task import Task, TaskScope, TaskStatus
@@ -597,6 +597,48 @@ class TaskStorageContract:
         assert await storage.read_task(org, second.id) == moved
         assert await storage.read_task(org, third.id) == done(third)
         assert await storage.update_tasks_if_current(org, []) == ()
+
+    async def test_updates_if_current_write_every_field_each_task_carries(
+        self, storage: TasksStorageInterface
+    ) -> None:
+        """A reopen writes a different rank to each task, clears what it
+        clears, and keeps what it keeps: each task reads back as written,
+        its exact decimal rank and its nulls included, the batch's order
+        of ranks with it."""
+        org = new_id()
+        due = date(2030, 9, 30)
+        tasks = [
+            make_task(f"task {index}", status=TaskStatus.DONE, rank=index) for index in range(3)
+        ]
+        tasks[0] = tasks[0].model_copy(update={"archived_at": utcnow(), "due_on": due})
+        tasks[1] = tasks[1].model_copy(update={"assignee_id": new_id(), "notes": "kept"})
+        for task in tasks:
+            await seed(storage, org, task)
+        ranks = [Decimal("-1.000000000000000000000000000001"), Decimal("-2.5"), Decimal("-3")]
+        reopened = [
+            task.model_copy(
+                update={
+                    "status": TaskStatus.OPEN,
+                    **placed(rank),
+                    "archived_at": None,
+                    "updated_at": utcnow(),
+                    "version": task.version + 1,
+                }
+            )
+            for task, rank in zip(tasks, ranks, strict=True)
+        ]
+        landed = await storage.update_tasks_if_current(
+            org,
+            [
+                (changed, task.version, (make_row(org, changed, "updated"),))
+                for changed, task in zip(reopened, tasks, strict=True)
+            ],
+        )
+        assert landed == (True, True, True)
+        stored = await storage.read_tasks(org, [task.id for task in tasks])
+        assert [stored[task.id] for task in tasks] == reopened
+        assert stored[tasks[0].id].due_on == due and stored[tasks[0].id].archived_at is None
+        assert stored[tasks[0].id].rank == ranks[0]
 
     async def test_updates_if_current_under_another_tenant_land_nothing_of_theirs(
         self, storage: TasksStorageInterface
