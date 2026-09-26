@@ -1122,7 +1122,13 @@ alone, and neither key may touch what the other's work does not need
   handler re-checks the credential every
   `TADAS_REALTIME_RECHECK_SECONDS` (five minutes by default), through
   the same `resume` the redemption ran, and closes with 4401 when it is
-  refused. The first check waits a phase drawn at random within one
+  refused. For an api key that check includes the plan's lever on keys,
+  as every request of the key does: a downgrade to a plan without keys
+  refuses it with `plan_limit_reached`. The plan rides the key's
+  principal read, so the recheck reads no more for it. A plan change
+  lands `billing.account.updated`, and the realtime service that hears
+  it wakes the recheck of every socket an api key of that org opened, at
+  once. The first check waits a phase drawn at random within one
   interval, so sockets opened together do not check together. The
   recheck asks and does not use: it never records a use of the session,
   so an open socket never keeps an idle session alive, and a tab left
