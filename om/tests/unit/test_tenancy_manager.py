@@ -489,8 +489,11 @@ async def test_a_session_idle_past_its_idle_lifetime_has_ended(
     await manager.authenticate(request(), issued.token)
     again = await storage.read_session(org.id, ctx.credential_id)
     assert again is not None and again.last_seen_at == seen.last_seen_at, "once a minute"
-    # Four hours without a request, well inside the twelve-hour absolute one.
-    idle = seen.model_copy(update={"last_seen_at": utcnow() - timedelta(hours=4, seconds=1)})
+    # Just past the idle lifetime without a request, well inside the absolute one.
+    options = TenancyOptions()
+    assert options.session_idle_ttl < options.session_ttl
+    since = utcnow() - options.session_idle_ttl - timedelta(seconds=1)
+    idle = seen.model_copy(update={"last_seen_at": since})
     await storage.write_session(org.id, idle)
     with pytest.raises(CredentialExpired, match="idle"):
         await manager.authenticate(request(), issued.token)
