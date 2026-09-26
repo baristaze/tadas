@@ -190,7 +190,7 @@ context on keeps the stage the callee needs.
   keeps it out, so a limit is a page size and never a ceiling past which
   a live key stops being listed. The purge also removes
   sessions and socket tickets expired past their retention: a revoked
-  session expires within its twelve hours, so its expiry alone decides,
+  session expires within its thirty days, so its expiry alone decides,
   and a socket ticket, which lives a minute, is kept a day. Login credentials are stored under the system scope,
   and the purge runs across tenants in that scope, so the expired ones
   go with every tenant's dead sessions; api keys are purged once
@@ -650,11 +650,21 @@ context on keeps the stage the callee needs.
   relay (`WorkManagerInterface.enqueue_relayed(org_id, row)`, no
   context, the actor from the row, the row's id as the item's
   idempotency key, so a relay that runs twice leaves one item) and
-  publishes `work_available`. Once every row of the call is delivered,
-  they are marked done in one conditional statement (`done_at` is set
+  publishes `work_available`. The rows the call delivered are then
+  marked done in one conditional statement (`done_at` is set
   where it is null, by the row ids as one array parameter, so one
   prepared statement serves a row or a hundred); a failure before that
-  marks none and leaves the call to the sweep.
+  marks none and leaves the call to the sweep. An entity change is
+  delivered once the bus took its message, and `publish` says whether
+  it did: a refusal and an open breaker both answer False. A row whose
+  message was dropped is left out of the mark, counted as `outbox` /
+  `publish_failed` (the breaker's drops included), and stays pending
+  for the sweep; the relay answers False. Every entity change is kept
+  this way, a hint as much as a revocation, since a revocation is how
+  the realtime service learns a socket's authority ended and nothing
+  replays it for the server. A work row is delivered once enqueued:
+  the queue is its truth and the workers poll, so its wake-up is a hint
+  ([ADR 0062](adr/0062-a-dropped-publish-leaves-its-outbox-row-pending.md)).
   The relay reaches the work manager through a provider the business
   root binds, because the work manager needs the tenancy manager, which
   needs the relay; the graph the root hands back is still whole.
@@ -696,7 +706,9 @@ context on keeps the stage the callee needs.
   its own and starves nothing behind it. The sweep relays each
   tenant's claimed rows together, as `relay_all` does; when they fail
   together it relays each alone, so only the row that fails spends its
-  attempt on an error. A failed relay keeps its
+  attempt on an error; a row whose message the bus dropped spends its
+  attempt on `the bus dropped the publish`, and the rows published
+  beside it are marked. A failed relay keeps its
   `last_error`; past the relay's `max_attempts` the row is failed for
   good (`failed_at`), logged, counted as `dead_letter`, and named by an
   `outbox.row.failed` event under the row's own provenance, best effort,
@@ -859,7 +871,9 @@ later, so it defaults to `NO_ACTOR`, the reserved UUID no person's id
 equals: a frame from a replica one release behind is a change by nobody
 the client knows, not a frame dropped as malformed. A bucket listing is
 bounded like a storage read: keys in lexical order, at most `limit`, after
-the key `after` names (S3 `MaxKeys` and `StartAfter`). A topic is best effort. Every capability interface declares `start()` and `close()`; the
+the key `after` names (S3 `MaxKeys` and `StartAfter`). A topic is best effort, and
+`publish` says whether the bus took the message, so a producer that must
+not lose one sends it again. Every capability interface declares `start()` and `close()`; the
 roots call them unconditionally: the Valkey topic listener opens its
 subscriber in `start()`, and each hosted impl (S3, SQS, Secrets Manager)
 opens its one client there, holds it through an exit stack for every
@@ -895,8 +909,8 @@ backoff that grows with consecutive failures.
   open breaker from a Valkey that is down: a `get` is a miss, a `put`
   and an `invalidate` are dropped, `increment` answers no count in the
   window asked for, which the login limit reads as fail open, and a
-  publish is dropped, a
-  topic being best effort. A payload of the wrong type still raises,
+  publish is dropped and answers False, a
+  topic being best effort; the outbox relay keeps that row pending. A payload of the wrong type still raises,
   because the breaker declines to pay the timeout and never to keep the
   contract. Its four outcomes are counted under the `valkey_breaker`
   subsystem: `opened`, `refused` once per call it turns away, `probed`
@@ -1102,7 +1116,9 @@ alone, and neither key may touch what the other's work does not need
   closes the sockets it names with 4401 (the one the session or the key
   opened, every one of the removed user, every one of a deleted org),
   in whichever process they
-  live. The bus is at most once, so the socket does not rest on it: the
+  live. A revocation the bus drops stays pending in the outbox, and the
+  sweep publishes it again once the bus answers. The socket does not
+  rest on the bus even so, since the bus can be down for longer: the
   handler re-checks the credential every
   `TADAS_REALTIME_RECHECK_SECONDS` (five minutes by default), through
   the same `resume` the redemption ran, and closes with 4401 when it is

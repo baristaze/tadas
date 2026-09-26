@@ -189,7 +189,8 @@ async def test_the_recheck_answers_what_the_redemption_would(tmp_path: Path) -> 
     found = await storage.read_session_by_digest(hash_token(idle_token))
     assert found is not None
     _, session = found
-    long_ago = utcnow() - timedelta(days=1)
+    idle_lifetime = timedelta(seconds=container.settings.session_idle_lifetime_seconds)
+    long_ago = utcnow() - idle_lifetime - timedelta(seconds=1)
     await storage.write_session(org.id, session.model_copy(update={"last_seen_at": long_ago}))
     assert await realtime.recheck(idle) == "not_authenticated"
 

@@ -3,7 +3,8 @@ row behind every push, the work item a write starts) is never a second
 statement a manager remembers to make. The manager writes the core row and
 the `OutboxRow`s that announce it in one named atomic storage method, then
 relays each at once (in the API, once the request's answer is sent); the
-maintenance sweep claims whatever a crash left behind, one attempt at a time with a growing
+maintenance sweep claims whatever a crash or a dropped message left behind,
+one attempt at a time with a growing
 delay, fails a row whose attempts are spent (a dead letter), and purges what
 is settled. The relay is idempotent on the row's id, so relaying twice is
 harmless."""
@@ -23,9 +24,12 @@ class OutboxRelayInterface(ABC):
         the row describes (idempotent on the row's id) and publishes
         ENTITY_CHANGED with (kind, target_id, seq); a row of kind `work.<kind>`
         enqueues the work item it names, under the row's id as the item's
-        idempotency key, and publishes WORK_AVAILABLE. Either way the row is
-        marked done. Returns False, and never raises, when a step failed: the
-        row is durable and the sweep relays it again."""
+        idempotency key, and publishes WORK_AVAILABLE. The row is then marked
+        done: an entity change once the bus took its message, a work row once
+        it is enqueued, since the queue is its truth and the workers poll.
+        Returns False, and never raises, when a step failed or the bus dropped
+        the message: the row is durable, stays pending, and the sweep relays
+        it again."""
         ...
 
     @abstractmethod
@@ -34,10 +38,12 @@ class OutboxRelayInterface(ABC):
         step's hundred tasks: the entity changes among them are appended in
         one call, so they take one run of contiguous numbers under one hold of
         the tenant's cursor instead of one hold each, and are published in
-        that order; the work rows are enqueued one by one. Every row is then
-        marked done in one statement, once all of them are delivered. Returns
-        False, and never raises, when a step failed: the rows are durable and
-        the sweep relays them."""
+        that order; the work rows are enqueued one by one. The rows delivered
+        are then marked done in one statement. A row whose message the bus
+        dropped is not among them: it stays pending, and the rows beside it
+        are marked. Returns False, and never raises, when a step failed or a
+        message was dropped: the rows are durable and the sweep relays what
+        is pending."""
         ...
 
     @abstractmethod
@@ -83,8 +89,9 @@ class OutboxRelayInterface(ABC):
         attempt is due and that are older than the grace (a younger row is the
         request path's to relay), oldest first and never a row another sweep
         holds, and relays each tenant's rows together, as `relay_all` does.
-        When a tenant's rows fail together, each is relayed alone: a row that
-        fails keeps its error and waits out a delay that doubles per attempt,
+        When a tenant's rows fail together, each is relayed alone. A row that
+        fails, or whose message the bus dropped while the rows beside it were
+        published, keeps its error and waits out a delay that doubles per attempt,
         and one whose attempts are spent is failed for good, logged, counted,
         and named by an audit event. Returns how many were relayed."""
         ...

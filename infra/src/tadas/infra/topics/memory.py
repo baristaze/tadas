@@ -10,9 +10,10 @@ class TopicsMemoryImpl(TopicsInterface):
     def __init__(self) -> None:
         self._subscribers = LocalSubscribers()
 
-    async def publish(self, topic: Topics, payload: TopicPayload) -> None:
+    async def publish(self, topic: Topics, payload: TopicPayload) -> bool:
         check_payload(topic, payload)
         await self._subscribers.dispatch(topic, payload)
+        return True
 
     def subscribe(self, topic: Topics, consumer: str, handler: TopicHandler) -> Callable[[], None]:
         return self._subscribers.add(topic, consumer, handler)

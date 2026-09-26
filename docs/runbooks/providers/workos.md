@@ -35,7 +35,7 @@ WorkOS team                                          the people who may open the
 |   +-- application  "Tadas App"  client_01M3640D8WBF9KC0P89YW4E72N
 |   |   +-- API keys tab                             tadas-staging, tadas-local: the keys Tadas holds
 |   |   +-- Redirects tab                            redirect URIs, the initiate login URI, and the rest
-|   |   +-- Sessions tab                             WorkOS's own defaults
+|   |   +-- Sessions tab                             the AuthKit session: 30 days, 14 idle
 |   +-- organizations                                one per Tadas team org, external_id = the org's id
 |   |   +-- single sign-on, verified domains         set up by the org's admin
 |   +-- users and invitations                        made by sign-ins and by Tadas
@@ -99,6 +99,21 @@ in Production.
 | User invitation URL | Not set | Only for an app that hosts its own sign-in page. Not set, the invitation email links to AuthKit's own page for it, which accepts the invitation and sends the person on through the initiate login URI. The portal's `/login` also takes `?invitation_token=`, so a link made by hand works too. |
 | Password reset URL | Not set | Tadas turns on no password sign-in, so nothing sends a reset. |
 
+## The Sessions tab, field by field
+
+A sign-in through AuthKit leaves an AuthKit session in the browser.
+While it lives, the next sign-in there goes through with no prompt. The
+portal keeps its Tadas session in the tab, so a new tab signs in again,
+and this session decides whether the person sees a prompt. The Tadas
+session itself is Tadas's own: WorkOS's settings never end it early or
+keep it alive. Tadas never refreshes the AuthKit session.
+
+| Field | What Tadas sets | Why |
+|-------|-----------------|-----|
+| Maximum session length | 30 days | A Tadas session's absolute lifetime (`TADAS_SESSION_LIFETIME_SECONDS`, [ADR 0063](../../adr/0063-sessions-last-weeks.md)). A new tab asks for a sign-in once a month, as an open one does. |
+| Inactivity timeout | 14 days | A Tadas session's idle lifetime (`TADAS_SESSION_IDLE_LIFETIME_SECONDS`). A person away for two weeks signs in again in a new tab too. |
+| Access token duration | WorkOS's default | Tadas reads the access token once, at the exchange, for its session id, and never presents it. |
+
 ## First-time setup, by hand
 
 Do these once per WorkOS environment. Staging first.
@@ -136,7 +151,7 @@ in `.env.example`, in one pull request.
 Never take a key from **Developer > API Keys**. That page is the
 environment's, and its keys are the default application's.
 
-### 3. The Redirects tab
+### 3. The Redirects and Sessions tabs
 
 The bootstrap adds the redirect URIs and checks the key. It needs a key
 from step 2:
@@ -163,6 +178,13 @@ says:
    `https://app.staging.tadas.fyi/signed-out` as the default.
 5. Leave **Sign-up URL**, **User invitation URL**, and **Password reset
    URL** not set.
+
+Then open the **Sessions** tab, as
+[its table](#the-sessions-tab-field-by-field) says:
+
+1. **Maximum session length**: 30 days.
+2. **Inactivity timeout**: 14 days.
+3. Leave **Access token duration** at its default.
 
 Do not add redirects on **Developer > Redirects**. That list is the
 default application's, so an entry there changes nothing for Tadas.
@@ -248,6 +270,7 @@ email code. You land in Tadas, signed in.
 | The client id and the allowed callback | Terraform, from the environment's root | Every deploy |
 | The Tadas App's redirect URIs | `tadas-ops workos-bootstrap --apply` | A person runs it after a change to `environments.yaml` |
 | The Redirects tab's other fields, the sign-out URIs among them | A person, by hand; the bootstrap prints each as a check | Once, and after a change to `environments.yaml` |
+| The Sessions tab's two lifetimes | A person, by hand; the bootstrap prints each as a check | Once, and after a change to a Tadas session's lifetimes |
 | The allowed sign-out return | Terraform, from the environment's root (`TADAS_SIGN_OUT_RETURN_URIS`) | Every deploy |
 | Organizations, invitations, Admin Portal links | The API | When an owner or an admin invites or opens single sign-on |
 | A deleted account's WorkOS user, deleted | The worker (`DELETE_ACCOUNT`) | When a person deletes their account |
@@ -272,7 +295,8 @@ and works on the Tadas App with the key the file's variable holds.
 5. It prints the tab's other fields as checks to make by eye. The
    sign-out URIs are among them: WorkOS has no API for them, and its
    logout answers a made-up session the same whatever the return, so
-   no request can probe them either.
+   no request can probe them either. It prints the Sessions tab's two
+   lifetimes the same way.
 
 A URI or a default only the dashboard can fix makes the run exit 1.
 When everything is in place, the output ends:
@@ -285,6 +309,8 @@ sign-out URIs: http://localhost:55173/signed-out, http://localhost:5173/signed-o
 sign-up URL: not set: AuthKit hosts the sign-up page
 user invitation URL: not set: AuthKit's page takes it, then the login initiation URI
 password reset URL: not set: no password sign-in is on
+maximum session length: 30 days, a Tadas session's absolute lifetime (check it on Applications, application client_01M3640D8WBF9KC0P89YW4E72N, its Sessions tab; no API reads or writes it)
+inactivity timeout: 14 days, a Tadas session's idle lifetime (check it on the same tab)
 webhooks: none
 nothing to change
 ```

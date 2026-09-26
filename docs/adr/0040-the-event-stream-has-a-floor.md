@@ -5,7 +5,9 @@ the worker keeps 90 days of events by default. Where the sweep runs
 the trim is amended (2026-09-26) by
 [ADR 0045](0045-retention-purges-run-once-a-pass-across-tenants.md):
 once a pass for every org, in one statement that moves each org's
-floor with its own events.
+floor with its own events. A portal session lasts up to 30 days since
+[ADR 0063](0063-sessions-last-weeks.md), not 12 hours; a tab still
+cannot live 90 days, so the argument for the rollout holds.
 
 ## Context
 
