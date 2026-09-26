@@ -69,9 +69,14 @@ named with `-dead` after it. Slack's calls in are in
    It prints tenants, users, and the entities written in the last day
    (for a to-do product, the tasks and the events), through `GET /v1/admin/size`
    with the env file's operator token (`uv run tadas-ops size --env <env>`,
-   which leaves the traffic generator's own tenants out). A platform
-   of one tenant and one user is the developer. Every finding below is
-   read against this number and against whose traffic it was.
+   which leaves the traffic generator's own tenants out). The size is
+   the maintenance worker's latest count, made every five minutes, and
+   the command prints how long ago it counted. A count older than ten
+   minutes says the worker's sweep has stopped counting, which is a
+   finding of its own; a `404` says no worker has counted in this
+   environment yet. A platform of one tenant and one user is the
+   developer. Every finding below is read against this number and
+   against whose traffic it was.
 3. Alarms. Cloud:
 
    ```bash
@@ -398,7 +403,7 @@ named with `-dead` after it. Slack's calls in are in
 # Investigation: <env>, last <since>
 
 **Credential.** <profile and the Arn it resolved to, or local>
-**Size.** <tenants> tenants, <users> users, <n> written in the last day
+**Size.** <tenants> tenants, <users> users, <n> written in the last day, counted <age> ago
 
 ## Alarms
 

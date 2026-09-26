@@ -24,7 +24,7 @@ from tadas.om.storage.impl.pg_base import (
     set_scope,
     violated_constraint,
 )
-from tadas.om.storage.utils.translation import apply_row, to_model, to_row
+from tadas.om.storage.utils.translation import apply_row, to_model, to_row, to_values
 from tadas.om.tenancy.rules import email_digest, fold_email
 from tadas.om.tenancy.storage import TenancyStorageInterface
 from tadas.om.tenancy.storage.tables.api_keys import ApiKeys
@@ -32,6 +32,7 @@ from tadas.om.tenancy.storage.tables.identities import Identities
 from tadas.om.tenancy.storage.tables.invitations import Invitations
 from tadas.om.tenancy.storage.tables.memberships import Memberships
 from tadas.om.tenancy.storage.tables.orgs import Orgs
+from tadas.om.tenancy.storage.tables.platform_sizes import PlatformSizes
 from tadas.om.tenancy.storage.tables.sessions import Sessions
 from tadas.om.tenancy.storage.tables.sign_in_delays import SignInDelays
 from tadas.om.tenancy.storage.tables.socket_tickets import SocketTickets
@@ -44,6 +45,7 @@ from tadas.om.tenancy.types.membership import Membership
 from tadas.om.tenancy.types.org import Org
 from tadas.om.tenancy.types.session import Session
 from tadas.om.tenancy.types.sign_in_delay import SignInDelay
+from tadas.om.tenancy.types.size import PlatformSize
 from tadas.om.tenancy.types.socket_ticket import SocketTicket
 from tadas.om.tenancy.types.user import User
 
@@ -236,6 +238,28 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
         async with self._session_for(stmt, org_id=EMPTY_UUID) as session:
             found = (await session.execute(stmt)).one()
             return found[0], found[1]
+
+    async def write_platform_size(self, size: PlatformSize) -> None:
+        # One statement: the row is written, or rewritten by a newer count.
+        values = to_values(size, PlatformSizes)
+        stmt = (
+            insert(PlatformSizes)
+            .values(id=EMPTY_UUID, **values)
+            .on_conflict_do_update(
+                index_elements=[PlatformSizes.id],
+                set_=values,
+                where=PlatformSizes.counted_at < size.counted_at,
+            )
+        )
+        async with self._session_for(stmt, org_id=EMPTY_UUID) as session:
+            await session.execute(stmt)
+            await session.commit()
+
+    async def read_platform_size(self) -> PlatformSize | None:
+        stmt = select(PlatformSizes).where(PlatformSizes.id == EMPTY_UUID)
+        async with self._session_for(stmt, org_id=EMPTY_UUID) as session:
+            row = (await session.execute(stmt)).scalar_one_or_none()
+            return None if row is None else to_model(row, PlatformSize)
 
     async def read_orgs(self, limit: int, after_id: UUID | None = None) -> list[Org]:
         stmt = select(Orgs).order_by(Orgs.id).limit(limit)

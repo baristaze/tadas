@@ -78,7 +78,9 @@ refused or expired, stop, and name the refresh the preamble gives.
    enough, and an unattended run does not wait.
 3. Note the start time and the size of the platform before the run
    (`uv run tadas-ops size --env <env>`), so the report can say what
-   the run added. Run:
+   the run added. The size is the worker's count every five minutes:
+   the one that says what the run added is the first whose
+   `counted_at` is past the run's end. Run:
 
    ```bash
    uv run tadas-ops stress --scenario ops/stress/<name>.yaml \

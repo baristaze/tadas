@@ -75,6 +75,7 @@ LOCAL_DEFAULT_SERVES_THE_CLOUD = {
     "worker_poll_seconds": "the local default is the tuning",
     "worker_purge_batch": "the local default is the tuning",
     "worker_sweep_budget_seconds": "the local default is the tuning",
+    "worker_tally_seconds": "the local default is the tuning",
     "outbox_retention_days": "one retention everywhere; it outlives the backups",
     "work_retention_days": "one retention everywhere",
     "idempotency_retention_hours": "one retention everywhere",
@@ -240,6 +241,7 @@ def test_the_worker_hands_each_retention_to_its_manager(tmp_path: Path) -> None:
     options = loop_options(settings)
     assert (options.purge_batch, options.sweep_budget) == (7, timedelta(seconds=20))
     assert options.outbox_retention == timedelta(days=8)
+    assert options.tally_interval == timedelta(minutes=5)
 
 
 def test_the_event_retention_keeps_ninety_days_and_0_turns_it_off() -> None:
