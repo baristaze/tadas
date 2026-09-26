@@ -3,7 +3,6 @@ from datetime import datetime
 from uuid import UUID
 
 from tadas.infra.cache import CacheInterface
-from tadas.infra.observability import current_traceparent
 from tadas.om.base import new_id, utcnow
 from tadas.om.billing.impl.cache import account_changed
 from tadas.om.billing.impl.manager import (
@@ -137,5 +136,5 @@ class BillingOperatorManagerImpl(BillingOperatorManagerInterface):
             actor_id=admin.identity_id,
             request_id=admin.request_id,
             app=admin.app.type.value,
-            traceparent=current_traceparent(),
+            traceparent=admin.traceparent,
         )

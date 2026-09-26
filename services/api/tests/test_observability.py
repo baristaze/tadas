@@ -18,7 +18,7 @@ def ensure_tracer_provider() -> None:
         trace.set_tracer_provider(TracerProvider())
 
 
-async def test_the_request_context_carries_the_trace_id(
+async def test_the_request_context_carries_the_trace_id_and_its_traceparent(
     client: httpx.AsyncClient,
     container: AppContainer,
     owner: dict[str, str],
@@ -40,6 +40,10 @@ async def test_the_request_context_carries_the_trace_id(
     trace_id = built[0].trace_id
     assert trace_id is not None and len(trace_id) == 32 and int(trace_id, 16) != 0
     assert built[0].request_id is not None
+    # The trace context too, as the header a handoff carries on: every row
+    # this request lands reads it off the stage.
+    traceparent = built[0].traceparent
+    assert traceparent is not None and traceparent.split("-")[1] == trace_id
 
 
 async def test_the_request_id_is_echoed_and_the_route_is_counted(

@@ -19,7 +19,7 @@ from datetime import timedelta
 from uuid import UUID
 
 from opentelemetry import trace
-from opentelemetry.trace import SpanKind
+from opentelemetry.trace import Span, SpanKind
 
 from tadas.infra.cache import CacheInterface
 from tadas.infra.observability import (
@@ -31,6 +31,7 @@ from tadas.infra.observability import (
     caused_by_request_id_var,
     links_to,
     request_id_var,
+    traceparent_of,
 )
 from tadas.infra.topics import TopicPayload, Topics, TopicsInterface, WorkAvailablePayload
 from tadas.om.base import EMPTY_UUID, Platform, new_id
@@ -219,15 +220,22 @@ class WorkerLoop:
                     self._wake.wait(), timeout=self._options.poll_interval.total_seconds()
                 )
 
-    def _request(self) -> RequestContext:
-        """The request stage the worker mints at its edge: one per claim and one per
-        sweep pass, the way the gateway mints one per request."""
-        return RequestContext(request_id=new_id(), app=self._app)
+    def _request(self, traceparent: str | None = None) -> RequestContext:
+        """The request stage the worker mints at its edge: one per claim, with the
+        trace context of the run's span, and one per sweep pass, which raises
+        none, the way the gateway mints one per request."""
+        return RequestContext(request_id=new_id(), app=self._app, traceparent=traceparent)
 
     async def _try_claim(self) -> bool:
+        # The run's span starts here, at the run's edge, as a request's starts
+        # at the gateway: the stage minted for the claim carries its trace
+        # context, and every row the run lands takes it from the stage. It is
+        # named, linked, and made current once an item is in hand. A claim
+        # that finds nothing never ends it, so nothing is exported for it.
+        span = tracer.start_span("work", kind=SpanKind.CONSUMER)
         try:
             claimed = await self._work.claim(
-                self._request(),
+                self._request(traceparent_of(span)),
                 self._options.lane,
                 self.kinds,
                 self._options.worker_id,
@@ -240,7 +248,16 @@ class WorkerLoop:
         if claimed is None:
             return False
         ctx, item = claimed
-        task = asyncio.create_task(self._run_item(ctx, item), name=f"work-{item.id}")
+        # Linked to the trace of the request that filled the queue, and not a
+        # child of it: the item waited in a durable queue, which holds it well
+        # past the end of that request, so the causal edge joins two traces
+        # instead of stretching one over both. An item with no trace context
+        # on it starts a trace here.
+        span.update_name(f"work {item.kind.value}")
+        for link in links_to(item.traceparent):
+            span.add_link(link.context, link.attributes)
+        span.set_attributes(self._span_attributes(ctx, item))
+        task = asyncio.create_task(self._run_item(ctx, item, span), name=f"work-{item.id}")
         self._running[task] = (ctx, item)
         task.add_done_callback(self._on_item_done)
         return True
@@ -255,7 +272,7 @@ class WorkerLoop:
 
     # Running one item.
 
-    async def _run_item(self, ctx: OpContext, item: WorkItem) -> None:
+    async def _run_item(self, ctx: OpContext, item: WorkItem, span: Span) -> None:
         # The claim refined the request stage minted for it; every log line of
         # the run carries its request id, the way the API's middleware does,
         # and the request that caused the work beside it.
@@ -264,17 +281,9 @@ class WorkerLoop:
             str(ctx.caused_by_request_id) if ctx.caused_by_request_id is not None else None
         )
         try:
-            # The run's span, linked to the trace of the request that filled
-            # the queue and not a child of it: the item waited in a durable
-            # queue, which holds it well past the end of that request, so the
-            # causal edge joins two traces instead of stretching one over
-            # both. An item with no trace context on it starts a trace here.
-            with tracer.start_as_current_span(
-                f"work {item.kind.value}",
-                kind=SpanKind.CONSUMER,
-                links=links_to(item.traceparent),
-                attributes=self._span_attributes(ctx, item),
-            ):
+            # The run's span, started at the claim: current for the run, and
+            # ended with it.
+            with trace.use_span(span, end_on_exit=True):
                 await self._handle(ctx, item)
         finally:
             caused_by_request_id_var.reset(cause)

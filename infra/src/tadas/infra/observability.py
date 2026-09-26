@@ -16,7 +16,7 @@ from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExport
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from opentelemetry.trace import Link
+from opentelemetry.trace import Link, Span
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, generate_latest
 from sentry_sdk.scrubber import DEFAULT_DENYLIST, EventScrubber
@@ -236,8 +236,14 @@ def current_traceparent() -> str | None:
     handoff carries: an id names a trace, and only the header carries what a
     later span links to. Empty when no tracer is configured or no span is
     open, and the far side then starts a trace of its own."""
+    return traceparent_of(trace.get_current_span())
+
+
+def traceparent_of(span: Span) -> str | None:
+    """The W3C `traceparent` of `span`, whether it is in progress or not yet:
+    for a stage minted as its span starts. Empty for the no-op tracer's span."""
     carrier: dict[str, str] = {}
-    _propagator.inject(carrier)
+    _propagator.inject(carrier, context=trace.set_span_in_context(span))
     return carrier.get(TRACEPARENT)
 
 

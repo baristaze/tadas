@@ -6,7 +6,6 @@ from uuid import UUID
 
 from pydantic import Field
 
-from tadas.infra.observability import current_traceparent
 from tadas.om.base import EMPTY_UUID, Platform, new_id, utcnow
 from tadas.om.billing.rules import effective_plan, refuse_past, seats_metered
 from tadas.om.billing.storage import BillingStorageInterface
@@ -417,7 +416,7 @@ class TenancyOperatorManagerImpl(TenancyOperatorManagerInterface):
             actor_id=admin.identity_id,
             request_id=admin.request_id,
             app=admin.app.type.value,
-            traceparent=current_traceparent(),
+            traceparent=admin.traceparent,
         )
 
     async def _seat_for_one_more(

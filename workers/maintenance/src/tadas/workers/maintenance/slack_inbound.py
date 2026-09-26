@@ -30,7 +30,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-from tadas.infra.observability import OUTCOMES
+from tadas.infra.observability import OUTCOMES, current_traceparent
 from tadas.infra.queues import Queues, QueuesInterface
 from tadas.integrations.slack import (
     SlackChannelUnusable,
@@ -210,7 +210,7 @@ class SlackInboundHandler:
             await self._event(delivery)
 
     def _request(self) -> RequestContext:
-        return RequestContext(request_id=new_id(), app=self._app)
+        return RequestContext(request_id=new_id(), app=self._app, traceparent=current_traceparent())
 
     async def _command(self, delivery: SlackInbound) -> None:
         payload = delivery.payload

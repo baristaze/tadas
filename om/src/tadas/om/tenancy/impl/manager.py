@@ -10,7 +10,6 @@ from pydantic import Field
 
 from tadas.infra.cache import CacheInterface
 from tadas.infra.exceptions import InfraException
-from tadas.infra.observability import current_traceparent
 from tadas.integrations.exceptions import (
     DevicePending,
     DeviceSlowDown,
@@ -848,6 +847,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
             request_id=rctx.request_id,
             app=rctx.app,
             trace_id=rctx.trace_id,
+            traceparent=rctx.traceparent,
             caused_by_request_id=rctx.caused_by_request_id,
             deadline=rctx.deadline,
             identity_id=identity.id,
@@ -1021,6 +1021,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
             request_id=ictx.request_id,
             app=ictx.app,
             trace_id=ictx.trace_id,
+            traceparent=ictx.traceparent,
             caused_by_request_id=ictx.caused_by_request_id,
             deadline=ictx.deadline,
             identity_id=ictx.identity_id,
@@ -1082,7 +1083,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
             payload={} if operator_role is None else {"operator_role": operator_role.value},
             actor_id=EMPTY_UUID,
             request_id=rctx.request_id,
-            traceparent=current_traceparent(),
+            traceparent=rctx.traceparent,
             app=rctx.app.type.value,
         )
         if operator_role is None:
@@ -1728,7 +1729,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
                 payload={"user_id": str(actor)},
                 actor_id=actor,
                 request_id=ctx.request_id,
-                traceparent=current_traceparent(),
+                traceparent=ctx.traceparent,
                 app=ctx.app.type.value,
             )
 
@@ -2031,7 +2032,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
             payload=self._session_payload(ended),
             actor_id=ended.user_id,
             request_id=rctx.request_id,
-            traceparent=current_traceparent(),
+            traceparent=rctx.traceparent,
             app=rctx.app.type.value,
         )
 
