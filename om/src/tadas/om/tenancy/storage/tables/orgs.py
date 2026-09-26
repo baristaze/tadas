@@ -1,3 +1,4 @@
+from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import CheckConstraint, Index, text
@@ -45,3 +46,4 @@ class Orgs(IdentifiableMixin, NamedMixin, TrackableMixin, SoftDeletableMixin, Ba
     kind: Mapped[str] = mapped_column(server_default=text("'team'"))
     personal_identity_id: Mapped[UUID | None]
     provider_org_id: Mapped[str | None]
+    purged_at: Mapped[datetime | None]

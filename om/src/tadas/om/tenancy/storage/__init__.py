@@ -104,10 +104,10 @@ class TenancyStorageInterface(ABC):
         ...
 
     @abstractmethod
-    async def purge_sign_in_delays(self, before: datetime) -> int:
+    async def purge_sign_in_delays(self, before: datetime, limit: int) -> int:
         """Global table: a delay belongs to an email, known or not. The sweep
-        deletes every run whose last failure is older than `before`; returns
-        how many went."""
+        deletes at most `limit` runs whose last failure is older than
+        `before`; returns how many went."""
         ...
 
     # Orgs are the tenants; their own id is their org_id.
@@ -137,6 +137,13 @@ class TenancyStorageInterface(ABC):
         """Cross-tenant sweep: every tenant, for the operator plane and for sweeps,
         in id order; `after_id` pages, so a sweep reaches every tenant and not
         only the first clamp of them."""
+        ...
+
+    @abstractmethod
+    async def mark_org_purged(self, org_id: UUID, purged_at: datetime) -> bool:
+        """Stamps `purged_at` on a deleted org that carries none; the sweep's
+        own write, so nothing announces it. False when the org is not deleted,
+        is already stamped, or is unknown."""
         ...
 
     @abstractmethod
@@ -452,20 +459,25 @@ class TenancyStorageInterface(ABC):
         ...
 
     @abstractmethod
-    async def purge_deleted(self, org_id: UUID, before: datetime) -> int:
+    async def purge_deleted(
+        self, org_id: UUID, before: datetime, tickets_before: datetime, limit: int
+    ) -> int:
         """The one hard delete: removes the tenant's users soft-deleted before `before`
         with their memberships (and any membership ended before `before`), its
-        api keys revoked or expired before `before`, its sessions revoked or
-        expired before `before`, its socket tickets redeemed or expired
-        before `before`, and its invitations accepted, revoked, or expired
-        before `before`; returns how many rows went."""
+        api keys revoked or expired before `before`, its sessions expired
+        before `before` (a revoked one expires within the session's lifetime
+        and goes then), its socket tickets expired before `tickets_before`,
+        and its invitations accepted, revoked, or expired before `before`; at
+        most `limit` rows of each kind, skipping rows another transaction
+        holds; returns how many rows went."""
         ...
 
     @abstractmethod
-    async def purge_tenant(self, org_id: UUID) -> int:
+    async def purge_tenant(self, org_id: UUID, limit: int) -> int:
         """The hard delete of a deleted tenant's rows once the retention has
         passed: every user, membership, api key, session, socket ticket, and
-        invitation of the tenant, whatever its state; returns how many rows went. The org row
+        invitation of the tenant, whatever its state, at most `limit` of each
+        kind per call; returns how many rows went. The org row
         stays as the record that the tenant existed, so the operator plane
         still lists it and no new tenant takes its id."""
         ...

@@ -340,7 +340,11 @@ class TenancyManagerInterface(ABC):
         carries the tenant, the service role, and the system user (`EMPTY_UUID`)
         as its user id, so a tenant whose members have all left, or that was
         deleted, is still swept; a sweep that skipped a deleted tenant would
-        leave its rows and its claimed work forever."""
+        leave its rows and its claimed work forever. The one tenant left out
+        is one marked purged (`mark_purged`): nothing of it is left to sweep.
+        The contexts share the request stage `rctx`, and `tenant_expired`
+        answers for them from the org rows this call read, once per tenant
+        per pass."""
         ...
 
     # The principal.
@@ -543,7 +547,19 @@ class TenancyManagerInterface(ABC):
         """Platform-internal: True when the tenant's org row is deleted longer ago
         than the retention. Every namespace's sweep asks it before its own
         purge, so one answer decides for the whole system: a tenant past it
-        keeps its org row as the record and no row of any other kind."""
+        keeps its org row as the record and no row of any other kind. Under a
+        context `service_contexts` minted, the answer is the one it read with
+        the org rows, so a pass reads it once per tenant and not once per
+        namespace."""
+        ...
+
+    @abstractmethod
+    async def mark_purged(self, ctx: OpContext) -> bool:
+        """Platform-internal, for the sweep, after a pass found nothing of the
+        tenant left to trim: stamps the org `purged_at` when the tenant is past
+        its retention, and the sweep leaves it out from then on; its org row
+        stays as the record. False, with nothing written, for any other
+        tenant: a live one always has something to trim later."""
         ...
 
     @abstractmethod

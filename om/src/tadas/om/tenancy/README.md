@@ -139,7 +139,8 @@ of the seven kinds of thing [Tadas is made of](../../../../README.md).
   members, its tasks, and its events, read the platform's size, list
   every org, and delete a team org. A personal org is never deleted.
   A deleted org keeps its row as the record; everything else of it is
-  purged once the retention has passed.
+  purged once the retention has passed, and once nothing is left the
+  org is marked purged and the sweep stops visiting it.
 - **Grant an operator.** The grant job puts an identity on the
   allowlist, takes it off, or mints the operator token of the
   provisioner or the smoke identity. Each change of the allowlist is
@@ -155,11 +156,14 @@ of the seven kinds of thing [Tadas is made of](../../../../README.md).
   person signs in. A task's reminder goes out at nine in the morning
   there ([tasks](../tasks/README.md)). Anything that is not such a name,
   an offset like `+03:00` among them, is refused.
-- **Sweep.** Removed members, revoked or expired keys and sessions,
-  spent tickets, closed or expired invitations, and old runs of wrong
+- **Sweep.** Removed members, revoked or expired keys, expired
+  sessions, closed or expired invitations, and old runs of wrong
   second-factor codes are deleted for good
-  after the retention, thirty days by default. Erasing a person is this
-  purge: the events of this namespace carry ids and never a value.
+  after the retention, thirty days by default; a revoked session goes
+  once it has expired too, within its twelve hours. A socket ticket,
+  which lives a minute, is deleted a day after it expired. Erasing a
+  person is this purge: the events of this namespace carry ids and
+  never a value.
 
 ## The rules
 

@@ -1,3 +1,4 @@
+from datetime import datetime
 from enum import StrEnum
 from uuid import UUID
 
@@ -24,6 +25,10 @@ class Org(Identifiable, Named, Trackable, SoftDeletable):
     """The org's organization at the identity provider, which carries this
     org's id as its external id. Made the first time an owner or an admin
     invites someone or opens single sign-on, and kept from then on."""
+    purged_at: datetime | None = None
+    """When the sweep found nothing left of this deleted tenant to trim. The
+    sweep leaves it out from then on; the row stays as the record. None on
+    every tenant that is live or still has rows."""
 
     @model_validator(mode="after")
     def _personal_names_its_person(self) -> Org:

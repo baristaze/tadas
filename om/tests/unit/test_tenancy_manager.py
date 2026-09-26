@@ -897,8 +897,8 @@ class SpyRelay(OutboxRelayInterface):
     async def relay_pending(self, limit: int) -> int:
         return await self._relay.relay_pending(limit)
 
-    async def purge_done(self, retention: timedelta) -> int:
-        return await self._relay.purge_done(retention)
+    async def purge_done(self, retention: timedelta, limit: int) -> int:
+        return await self._relay.purge_done(retention, limit)
 
 
 async def test_revoking_a_session_announces_it_on_the_bus_without_its_token(
@@ -1291,6 +1291,33 @@ async def test_a_deleted_orgs_rows_are_purged_once_the_retention_has_passed(
     tombstone = await storage.read_org(org.id)
     assert tombstone is not None and tombstone.deleted_at is not None
     assert await no_retention.purge_deleted(sweep) == 0
+
+
+async def test_a_deleted_tenant_past_its_retention_is_marked_purged_and_left_out(
+    manager: TenancyManagerImpl, storage: TenancyStorageMemoryImpl
+) -> None:
+    """The sweep marks a tenant purged once a pass found nothing of it left;
+    the mark takes only a tenant past its retention, and the sweep's
+    contexts leave a marked one out. The expiry the pass asks is answered
+    from the org rows the contexts were minted from."""
+    _, live = await manager.bootstrap(request(), "Live", "live", "ann@example.test", "Ann")
+    _, gone = await manager.bootstrap(request(), "Gone", "gone", "bob@example.test", "Bob")
+    stored = await storage.read_org(gone.id)
+    assert stored is not None
+    long_ago = utcnow() - timedelta(days=40)
+    await storage.write_org(gone.id, stored.model_copy(update={"deleted_at": long_ago}))
+    contexts = {c.org_id: c for c in await manager.service_contexts(request())}
+    assert await manager.tenant_expired(contexts[gone.id]) is True
+    assert await manager.tenant_expired(contexts[live.id]) is False
+    assert await manager.mark_purged(contexts[live.id]) is False, "a live tenant"
+    assert await manager.mark_purged(contexts[EMPTY_UUID]) is False, "the system scope"
+    assert await manager.mark_purged(contexts[gone.id]) is True
+    marked = await storage.read_org(gone.id)
+    assert marked is not None and marked.purged_at is not None
+    assert await manager.mark_purged(contexts[gone.id]) is False, "once"
+    swept = [c.org_id for c in await manager.service_contexts(request())]
+    assert gone.id not in swept and live.id in swept and swept[0] == EMPTY_UUID
+    assert await manager.tenant_expired(contexts[gone.id]) is True, "read again outside a pass"
 
 
 async def test_resume_and_service_contexts(manager: TenancyManagerImpl) -> None:

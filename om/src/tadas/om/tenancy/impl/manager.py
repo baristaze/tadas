@@ -179,8 +179,17 @@ class TenancyOptions(Platform):
     """How many orgs one person may join; the bound on every read of the users
     one identity is. An add past it is refused (`MembershipLimitReached`)."""
     retention: timedelta = timedelta(days=30)
-    """Removed members, revoked keys, dead sessions, spent socket tickets, and
-    closed invitations are purged this long after they ended."""
+    """Removed members, revoked keys, dead sessions, and closed invitations
+    are purged this long after they ended, and a deleted tenant's rows this
+    long after its delete."""
+    ticket_retention: timedelta = timedelta(days=1)
+    """A socket ticket lives a minute and is spent once; it is purged this
+    long after it expired."""
+    sign_in_delay_retention: timedelta = timedelta(days=30)
+    """A run of failed sign-ins is forgotten this long after its last failure."""
+    purge_batch: int = 1000
+    """Rows one purge statement deletes at most; the sweep calls again for
+    the rest."""
     sign_in_redirect_uris: tuple[str, ...] = ()
     """Where a sign-in at the identity provider may come back to: this
     environment's own portal callback, and nothing else. A redirect not
@@ -243,6 +252,11 @@ async def issue_operator_token(
     )
 
 
+def expired(org: Org, before: datetime) -> bool:
+    """A tenant past its retention: deleted before `before`."""
+    return org.deleted_at is not None and org.deleted_at < before
+
+
 class TenancyManagerImpl(TenancyManagerInterface):
     def __init__(
         self,
@@ -266,6 +280,10 @@ class TenancyManagerImpl(TenancyManagerInterface):
         self._totp = TotpSealer(options.totp_encryption_key)
         # The TOTP time step is read from this clock, so a test can step it.
         self._clock = clock
+        # The last sweep pass's answer to `tenant_expired`, read with the org
+        # rows `service_contexts` pages through: its request id, the tenants
+        # it minted a context for, and those of them past the retention.
+        self._pass: tuple[UUID, frozenset[UUID], frozenset[UUID]] | None = None
 
     # The transitions: each takes a stage and produces a stronger one.
 
@@ -1115,8 +1133,16 @@ class TenancyManagerImpl(TenancyManagerInterface):
         # and no user or membership is read, so it costs one read per page of
         # tenants and a tenant whose members have all left is still swept. So
         # is a deleted tenant: its rows and its claimed work are the sweep's to
-        # settle. The system scope comes first: login credentials live under it.
-        scopes = [EMPTY_UUID, *(org.id for org in await self._every_org())]
+        # settle, until a pass found none left and marked it purged. The system
+        # scope comes first: login credentials live under it.
+        orgs = [org for org in await self._every_org() if org.purged_at is None]
+        before = utcnow() - self._options.retention
+        scopes = [EMPTY_UUID, *(org.id for org in orgs)]
+        self._pass = (
+            rctx.request_id,
+            frozenset(scopes),
+            frozenset(org.id for org in orgs if expired(org, before)),
+        )
         return [
             build_context(
                 rctx,
@@ -1668,22 +1694,35 @@ class TenancyManagerImpl(TenancyManagerInterface):
 
     async def purge_deleted(self, ctx: OpContext) -> int:
         ctx.require(Permission.MANAGE_MEMBERS)
+        batch = self._options.purge_batch
         if await self.tenant_expired(ctx):
             # The tenant itself is past the retention: every row of it goes.
-            return await self._storage.purge_tenant(ctx.org_id)
-        before = utcnow() - self._options.retention
-        purged = await self._storage.purge_deleted(ctx.org_id, before)
+            return await self._storage.purge_tenant(ctx.org_id, batch)
+        now = utcnow()
+        purged = await self._storage.purge_deleted(
+            ctx.org_id, now - self._options.retention, now - self._options.ticket_retention, batch
+        )
         if ctx.org_id == EMPTY_UUID:
             # The system scope also holds the sign-in delays, keyed on emails
             # nobody may hold: a run that ended long ago goes with the logins.
-            purged += await self._storage.purge_sign_in_delays(before)
+            purged += await self._storage.purge_sign_in_delays(
+                now - self._options.sign_in_delay_retention, batch
+            )
         return purged
 
     async def tenant_expired(self, ctx: OpContext) -> bool:
         ctx.require(Permission.READ)
+        swept = self._pass
+        if swept is not None and ctx.request_id == swept[0] and ctx.org_id in swept[1]:
+            return ctx.org_id in swept[2]
         org = await self._storage.read_org(ctx.org_id)
-        before = utcnow() - self._options.retention
-        return org is not None and org.deleted_at is not None and org.deleted_at < before
+        return org is not None and expired(org, utcnow() - self._options.retention)
+
+    async def mark_purged(self, ctx: OpContext) -> bool:
+        ctx.require(Permission.MANAGE_MEMBERS)
+        if not await self.tenant_expired(ctx):
+            return False
+        return await self._storage.mark_org_purged(ctx.org_id, utcnow())
 
     async def issue_ticket(self, ctx: OpContext) -> IssuedTicket:
         ctx.require(Permission.READ)
