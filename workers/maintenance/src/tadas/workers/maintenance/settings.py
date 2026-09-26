@@ -43,3 +43,6 @@ class MaintenanceSettings(StorageSettings, InfraSettings, IntegrationsSettings):
     # How long a received Slack delivery stays hidden from other consumers
     # while one handles it; one that is not deleted by then comes back.
     slack_inbound_visibility_seconds: int = Field(default=60, gt=0)
+    # A done task unchanged this many days is archived by the daily cleanup.
+    # Illustrative, like the plans' numbers.
+    tasks_archive_after_days: int = Field(default=90, gt=0)

@@ -3,6 +3,7 @@ the integrations (the payment processor and the Slack app), and managers.
 The loop holds the container directly."""
 
 import logging
+from datetime import timedelta
 
 from tadas.infra.impl.configured import InfraConfiguredImpl
 from tadas.infra.root import InfraInterface
@@ -13,9 +14,16 @@ from tadas.integrations.slack import SlackInterface
 from tadas.om.root import Managers, build_managers
 from tadas.om.storage.impl.postgres import StoragePostgresImpl
 from tadas.om.storage.root import StorageInterface
+from tadas.om.tasks.impl.manager import TasksOptions
 from tadas.workers.maintenance.settings import MaintenanceSettings
 
 log = logging.getLogger(__name__)
+
+
+def tasks_options(settings: MaintenanceSettings) -> TasksOptions:
+    """What the worker's tasks manager reads that a setting names: the age at
+    which the daily cleanup archives a done task."""
+    return TasksOptions(archive_after=timedelta(days=settings.tasks_archive_after_days))
 
 
 class WorkerContainer:
@@ -59,7 +67,12 @@ class WorkerContainer:
             settings,
             storage,
             infra,
-            build_managers(storage, infra, integrations=integrations),
+            build_managers(
+                storage,
+                infra,
+                integrations=integrations,
+                tasks_options=tasks_options(settings),
+            ),
             integrations,
         )
 
@@ -89,7 +102,12 @@ class WorkerContainer:
             settings,
             storage,
             infra,
-            build_managers(storage, infra, integrations=integrations),
+            build_managers(
+                storage,
+                infra,
+                integrations=integrations,
+                tasks_options=tasks_options(settings),
+            ),
             integrations,
         )
 

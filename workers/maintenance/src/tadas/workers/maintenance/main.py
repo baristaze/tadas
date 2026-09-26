@@ -19,12 +19,17 @@ from tadas.infra.observability import (
 )
 from tadas.infra.trust import install_trust_store
 from tadas.om.opcontext import AppContext, AppType
+from tadas.om.orchestrations.types.orchestration import OrchestrationKind
 from tadas.om.work.types.work_item import WorkKind
 from tadas.workers.maintenance.container import WorkerContainer
 from tadas.workers.maintenance.deliveries import DeliveryConsumer, DeliveryOptions
 from tadas.workers.maintenance.handler import NoopHandlerImpl, SyncSeatsHandlerImpl
 from tadas.workers.maintenance.health import Probe, WorkerHttpServer
 from tadas.workers.maintenance.loop import LoopOptions, WorkerLoop
+from tadas.workers.maintenance.orchestrations import (
+    OrchestrationHandlerImpl,
+    WakeParkedHandlerImpl,
+)
 from tadas.workers.maintenance.reminders import TaskReminderHandlerImpl
 from tadas.workers.maintenance.settings import MaintenanceSettings
 from tadas.workers.maintenance.slack_inbound import (
@@ -62,7 +67,11 @@ def build_loop(container: WorkerContainer, lane: str | None = None) -> WorkerLoo
             "events": container.managers.events.purge_expired,
             "billing": container.managers.billing.purge_deleted,
             "slack": container.managers.slack.purge_deleted,
+            "orchestrations": container.managers.orchestrations.purge_deleted,
         },
+        # A record kept per day opens here: the org's cleanup of old done
+        # tasks. Its unique key makes every sweep after the day's first a no-op.
+        chores={"cleanup": container.managers.tasks.open_cleanup},
         handlers={
             WorkKind.NOOP: NoopHandlerImpl(),
             WorkKind.SYNC_SEATS: SyncSeatsHandlerImpl(
@@ -72,6 +81,14 @@ def build_loop(container: WorkerContainer, lane: str | None = None) -> WorkerLoo
             WorkKind.SLACK_POST: SlackPostHandlerImpl(
                 container.managers.tasks, container.managers.slack, container.slack
             ),
+            WorkKind.ORCHESTRATION: OrchestrationHandlerImpl(
+                container.managers.orchestrations,
+                {
+                    OrchestrationKind.TASK_IMPORT: container.managers.tasks.step_import,
+                    OrchestrationKind.TASK_CLEANUP: container.managers.tasks.step_cleanup,
+                },
+            ),
+            WorkKind.WAKE_PARKED: WakeParkedHandlerImpl(container.managers.orchestrations),
         },
         topics=container.infra.get_topics(),
         liveness=container.infra.get_cache(CacheScope.WORKER_LIVENESS),
