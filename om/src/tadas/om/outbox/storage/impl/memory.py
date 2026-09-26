@@ -69,6 +69,16 @@ class OutboxStorageMemoryImpl(OutboxStorageInterface, OutboxLandingInterface):
             found[1].model_copy(update={"last_error": error, "failed_at": failed_at}),
         )
 
+    async def oldest_pending_at(self) -> datetime | None:
+        return min(
+            (
+                row.created_at
+                for _, row in self._rows.values()
+                if row.done_at is None and row.failed_at is None
+            ),
+            default=None,
+        )
+
     async def purge_done(self, before: datetime, limit: int) -> int:
         done = [
             row_id

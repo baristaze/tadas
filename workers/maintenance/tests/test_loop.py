@@ -149,6 +149,12 @@ class LeaseLosingWork(WorkManagerInterface):
     async def purge_items(self) -> int:
         return await self._inner.purge_items()
 
+    async def oldest_ready_age(self) -> timedelta:
+        return await self._inner.oldest_ready_age()
+
+    async def failed_within(self, window: timedelta) -> int:
+        return await self._inner.failed_within(window)
+
     async def maintenance_contexts(self, rctx: RequestContext) -> list[OpContext]:
         return await self._inner.maintenance_contexts(rctx)
 

@@ -1,7 +1,7 @@
 """The hot reads, held by a live Postgres: the `mine` scope, the done list and
 the archive, the cleanup's read of the archivable tasks, the re-mint's fence,
-and the idempotency, invitations, and Slack purges each read the index made
-for them.
+the idempotency, invitations, and Slack purges, and the sweep's three gauges
+each read the index made for them.
 
 The plans are read off the statements the storage impls send, captured as
 they go to the driver, and explained under the scope the statement ran in, by
@@ -29,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from tadas.om.base import EMPTY_UUID, new_id, utcnow
 from tadas.om.idempotency.storage.impl.postgres import IdempotencyStoragePostgresImpl
+from tadas.om.outbox.storage.impl.postgres import OutboxStoragePostgresImpl
 from tadas.om.slack.storage.impl.postgres import SlackStoragePostgresImpl
 from tadas.om.storage.impl.pg_base import LoginSessions, set_scope
 from tadas.om.storage.impl.postgres import login_sessions
@@ -38,6 +39,7 @@ from tadas.om.tasks.storage.impl.postgres import TasksStoragePostgresImpl
 from tadas.om.tasks.types.filter import TaskCursor, TaskFilter
 from tadas.om.tasks.types.task import TaskScope
 from tadas.om.tenancy.storage.impl.postgres import TenancyStoragePostgresImpl
+from tadas.om.work.storage.impl.postgres import WorkStoragePostgresImpl
 
 pytestmark = pytest.mark.integration
 
@@ -100,17 +102,22 @@ def literal(value: Any) -> str:
 
 
 async def plans(
-    watched: Watched, org_id: UUID, call: Callable[[], Awaitable[object]], naming: str
+    watched: Watched,
+    org_id: UUID,
+    call: Callable[[], Awaitable[object]],
+    naming: str,
+    role: DatabaseRole = DatabaseRole.CORE,
 ) -> tuple[str, str]:
     """The plans of the one statement `call` sends that names `naming`: with
     its values, and generic, the plan of the statement prepared with every
-    value a parameter. EXPLAIN runs nothing."""
+    value a parameter. The system scope is explained as the system login, as
+    it runs. EXPLAIN runs nothing."""
     sessions, engines = watched
     sql, parameters = next(s for s in await sent(engines, call) if naming in s[0])
-    found: list[str] = []
     logins = sessions.system if org_id == EMPTY_UUID else sessions
+    found: list[str] = []
     for generic in (False, True):
-        async with logins[DatabaseRole.CORE]() as session:
+        async with logins[role]() as session:
             await set_scope(session, org_id, None, None)
             await session.execute(text("SET LOCAL enable_seqscan = off"))
             connection = await session.connection()
@@ -118,7 +125,9 @@ async def plans(
                 await session.execute(text("SET LOCAL plan_cache_mode = force_generic_plan"))
                 await connection.exec_driver_sql(f"PREPARE hot_read AS {sql}")
                 values = ", ".join(literal(value) for value in parameters)
-                rows = await connection.exec_driver_sql(f"EXPLAIN EXECUTE hot_read({values})")
+                # A statement with no value is executed with no parentheses.
+                arguments = f"({values})" if values else ""
+                rows = await connection.exec_driver_sql(f"EXPLAIN EXECUTE hot_read{arguments}")
             else:
                 rows = await connection.exec_driver_sql(f"EXPLAIN {sql}", parameters)
             found.append("\n".join(row[0] for row in rows))
@@ -338,3 +347,86 @@ async def test_the_invitations_and_slack_purges_read_their_indexes(watched: Watc
         custom, generic = await plans(watched, scope, call, naming)
         assert served(custom, *index), custom
         assert served(generic, *index), generic
+
+
+async def test_the_sweeps_gauges_read_one_index_entry_or_one_range(
+    watched: Watched, migrated: dict[DatabaseRole, str]
+) -> None:
+    """The oldest ready item is the first entry of the index of queued items,
+    parked ones among them, and not every queued item on every lane; the
+    items failed of late are a range of the status index; the oldest pending
+    outbox row is the head of the done-at index, where done_at is null, and
+    never the done rows behind it."""
+    sessions = watched[0]
+    async with sessions.system[DatabaseRole.QUEUE]() as session:
+        await set_scope(session, EMPTY_UUID, None, None)
+        # Done items mostly, a tenth failed, and a queued tenth, most of it
+        # parked for later, over three lanes and TENANTS tenants.
+        await session.execute(
+            text(
+                "INSERT INTO queue.work_items (id, org_id, created_at, updated_at, created_by,"
+                " kind, target_id, idempotency_key, payload, lane, status, available_at,"
+                " attempts, max_attempts, updated_by, request_id)"
+                " SELECT uuidv7(), t.a[1 + g % :n], now(), now() - g * interval '1 second',"
+                " gen_random_uuid(), 'NOOP', gen_random_uuid(), gen_random_uuid(), '{}',"
+                " (ARRAY['default', 'region:a', 'region:b'])[1 + g % 3],"
+                " CASE WHEN g % 10 < 8 THEN 'done' WHEN g % 10 = 8 THEN 'failed'"
+                " ELSE 'queued' END,"
+                " CASE WHEN g % 100 = 9 THEN now() - g * interval '1 second'"
+                " ELSE now() + interval '1 day' END,"
+                " 1, 3, gen_random_uuid(), gen_random_uuid()"
+                " FROM generate_series(1, 30000) g, (SELECT CAST(:orgs AS uuid[]) AS a) t"
+            ),
+            {"orgs": [new_id() for _ in range(TENANTS)], "n": TENANTS},
+        )
+        await session.commit()
+    async with sessions.system[DatabaseRole.CORE]() as session:
+        await set_scope(session, EMPTY_UUID, None, None)
+        # Done rows mostly, and a few pending and failed.
+        await session.execute(
+            text(
+                "INSERT INTO core.outbox_rows (id, org_id, created_at, kind, target_id,"
+                " payload, actor_id, request_id, app, done_at, attempts, failed_at)"
+                " SELECT uuidv7(), t.a[1 + g % :n], now() - g * interval '1 second',"
+                " 'tasks.task.created', gen_random_uuid(), '{}', gen_random_uuid(),"
+                " gen_random_uuid(), 'portal',"
+                " CASE WHEN g % 100 > 1 THEN now() END, 0,"
+                " CASE WHEN g % 100 = 1 THEN now() END"
+                " FROM generate_series(1, 30000) g, (SELECT CAST(:orgs AS uuid[]) AS a) t"
+            ),
+            {"orgs": [new_id() for _ in range(TENANTS)], "n": TENANTS},
+        )
+        await session.commit()
+    await analyze(migrated, "core.outbox_rows", "queue.work_items")
+    work = WorkStoragePostgresImpl(sessions)
+    outbox = OutboxStoragePostgresImpl(sessions)
+    for call, naming, role, index, first_entry in (
+        (
+            lambda: work.oldest_ready_at(utcnow()),
+            "queue.work_items",
+            DatabaseRole.QUEUE,
+            "ix_work_items_available_at_queued",
+            True,
+        ),
+        (
+            lambda: work.count_failed_since(utcnow() - timedelta(minutes=15)),
+            "queue.work_items",
+            DatabaseRole.QUEUE,
+            "ix_work_items_status_updated_at",
+            False,
+        ),
+        (
+            outbox.oldest_pending_at,
+            "core.outbox_rows",
+            DatabaseRole.CORE,
+            "ix_outbox_rows_done_at_id",
+            False,
+        ),
+    ):
+        custom, generic = await plans(watched, EMPTY_UUID, call, naming, role)
+        assert served(custom, index), custom
+        assert served(generic, index), generic
+        if first_entry:
+            # A walk in the index's order that stops at its first row.
+            assert "Limit" in custom and "Limit" in generic, custom + generic
+            assert "Bitmap" not in custom + generic, custom + generic

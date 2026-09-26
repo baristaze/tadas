@@ -418,3 +418,46 @@ class WorkStorageContract:
         assert await storage.read_item(org, fresh_done.id) == fresh_done
         assert await storage.read_item(other_org, elsewhere.id) is None
         assert await storage.purge_items(utcnow() - timedelta(days=1), 1000) == 0
+
+    async def test_the_item_ready_longest_is_read_across_lanes_and_tenants(
+        self, storage: WorkStorageInterface, lane: str
+    ) -> None:
+        """The backlog gauge's read: the queued item whose time came first, on
+        any lane and in any tenant. An item parked until later is not ready,
+        and neither is one claimed or failed, however long ago its time came."""
+        assert await storage.oldest_ready_at(utcnow()) is None
+        org, other = new_id(), new_id()
+        hour = timedelta(hours=1)
+        oldest = make_item(lane=f"{lane}-b", available_in=-2 * hour)
+        newer = make_item(lane=lane, available_in=-hour)
+        parked = make_item(lane=lane, available_in=hour)
+        claimed = make_item(lane=lane, available_in=-3 * hour).model_copy(
+            update={"status": WorkStatus.CLAIMED, "lease_expires_at": utcnow() + LEASE}
+        )
+        failed = make_item(lane=lane, available_in=-4 * hour).model_copy(
+            update={"status": WorkStatus.FAILED}
+        )
+        await storage.create_item(other, oldest)
+        for item in (newer, parked, claimed, failed):
+            await storage.create_item(org, item)
+        assert await storage.oldest_ready_at(utcnow()) == oldest.available_at
+        # The parked item's time is the one that comes next.
+        assert await storage.oldest_ready_at(utcnow() - 3 * hour) is None
+
+    async def test_failed_items_are_counted_from_when_they_failed_in_every_tenant(
+        self, storage: WorkStorageInterface, lane: str
+    ) -> None:
+        """The dead-letter gauge's read: the items failed since a time, in any
+        tenant, by their last change, which is when they failed."""
+        org, other = new_id(), new_id()
+        failed = {"status": WorkStatus.FAILED}
+        earlier = {**failed, "updated_at": utcnow() - timedelta(hours=2)}
+        await storage.create_item(org, make_item(lane=lane).model_copy(update=failed))
+        await storage.create_item(other, make_item(lane=lane).model_copy(update=failed))
+        await storage.create_item(org, make_item(lane=lane).model_copy(update=earlier))
+        await storage.create_item(
+            org, make_item(lane=lane).model_copy(update={"status": WorkStatus.DONE})
+        )
+        assert await storage.count_failed_since(utcnow() - timedelta(hours=1)) == 2
+        assert await storage.count_failed_since(utcnow() - timedelta(hours=3)) == 3
+        assert await storage.count_failed_since(utcnow()) == 0

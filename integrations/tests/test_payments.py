@@ -3,7 +3,9 @@ delivery passes, the ids a delivery names, the twin's refusal outside a
 local environment, the boot's refusal of a key that is not a restricted key
 of the environment's mode, the processes
 reading the runtime key alone, the boot's check of what the key may read,
-and the real client's reading of a subscription."""
+the real client's reading of a subscription, and its translation of a
+failure by whose problem it is: the key's, the request's, or the
+processor's."""
 
 import json
 import logging
@@ -15,8 +17,10 @@ from uuid import uuid4
 import pytest
 import stripe
 
+from tadas.infra.exceptions import BackendFailed, BackendUnreachable
 from tadas.integrations.exceptions import (
     DeliveryRefused,
+    PaymentsKeyRefused,
     PaymentsRefused,
     PaymentsUnconfigured,
     ProviderUnavailable,
@@ -25,7 +29,7 @@ from tadas.integrations.exceptions import (
 from tadas.integrations.impl.configured import payments_for, refuse_unsafe_payments
 from tadas.integrations.payments.deliveries import delivery_of, sign, verified
 from tadas.integrations.payments.permissions import CHECKOUT_SESSIONS, RUNTIME_PERMISSIONS
-from tadas.integrations.payments.stripe import PaymentsStripeImpl, subscription_of
+from tadas.integrations.payments.stripe import PaymentsStripeImpl, subscription_of, translated
 from tadas.integrations.payments.twin import TWIN_WEBHOOK_SECRET, PaymentsTwinImpl
 from tadas.integrations.payments.types import ORG_METADATA_KEY, delivery_key
 from tadas.integrations.settings import IntegrationsSettings, key_mode
@@ -614,3 +618,116 @@ async def test_a_cancel_the_processor_refuses_as_a_request_is_refused() -> None:
     with pytest.raises(PaymentsRefused) as raised:
         await payments.cancel_subscription("sub_1")
     assert "parameter_invalid" in str(raised.value)
+
+
+KEY_TEXT = "Invalid API Key provided: rk_test_****abcd"
+"""What the processor says of a key it refuses: part of the key itself."""
+
+
+@pytest.mark.parametrize(
+    ("error", "raised", "status", "code"),
+    [
+        # The process's own key: revoked, or without the permission.
+        (
+            stripe.AuthenticationError(KEY_TEXT, http_status=401),
+            PaymentsKeyRefused,
+            503,
+            "payments_key_refused",
+        ),
+        (
+            stripe.PermissionError("no", http_status=403, code="secret_key_required"),
+            PaymentsKeyRefused,
+            503,
+            "payments_key_refused",
+        ),
+        # Not right now.
+        (
+            stripe.RateLimitError("slow down", http_status=429, code="rate_limit"),
+            ProviderUnavailable,
+            503,
+            "unavailable",
+        ),
+        (stripe.APIConnectionError("reset"), BackendUnreachable, 503, "unavailable"),
+        # The request itself.
+        (
+            stripe.InvalidRequestError("bad", "items", code="parameter_invalid", http_status=400),
+            PaymentsRefused,
+            502,
+            "payments_refused",
+        ),
+        (
+            stripe.InvalidRequestError("gone", None, code="resource_missing", http_status=404),
+            PaymentsRefused,
+            502,
+            "payments_refused",
+        ),
+        (
+            stripe.CardError("declined", None, code="card_declined", http_status=402),
+            PaymentsRefused,
+            502,
+            "payments_refused",
+        ),
+        (
+            stripe.IdempotencyError("reused", http_status=400, code="idempotency_key_in_use"),
+            PaymentsRefused,
+            502,
+            "payments_refused",
+        ),
+        # The processor's own failure.
+        (stripe.APIError("boom", http_status=500), BackendFailed, 500, "backend_failed"),
+    ],
+)
+async def test_a_failure_is_translated_by_whose_problem_it_is(
+    error: stripe.StripeError, raised: type[Exception], status: int, code: str
+) -> None:
+    with pytest.raises(raised) as caught:
+        async with translated("update subscription quantity"):
+            raise error
+    assert type(caught.value) is raised
+    assert (caught.value.http_status, caught.value.code) == (status, code)  # type: ignore[attr-defined]
+    assert "update subscription quantity" in str(caught.value)
+    assert "rk_test" not in str(caught.value)
+
+
+class _Seats:
+    """The SDK client's `v1` as far as a seat count reads it: one
+    subscription with one item, and an update that fails as it is told."""
+
+    def __init__(self, update_error: Exception) -> None:
+        seats = self
+
+        class Subscriptions:
+            async def retrieve_async(self, subscription_id: str) -> object:
+                raw = {
+                    "id": subscription_id,
+                    "customer": "cus_1",
+                    "status": "active",
+                    "items": {"data": [{"id": "si_1", "quantity": 1}]},
+                }
+                return type("S", (), {"to_dict": lambda self: raw})()
+
+            async def update_async(self, *args: object) -> object:
+                raise seats._error
+
+        self._error = update_error
+        self.subscriptions = Subscriptions()
+        self.v1 = self
+
+
+@pytest.mark.parametrize(
+    ("error", "raised"),
+    [
+        (stripe.PermissionError("no", http_status=403), PaymentsKeyRefused),
+        (stripe.AuthenticationError(KEY_TEXT, http_status=401), PaymentsKeyRefused),
+        (stripe.InvalidRequestError("bad", "quantity", code="parameter_invalid"), PaymentsRefused),
+    ],
+)
+async def test_a_seat_count_tells_a_refused_key_from_a_refused_request(
+    error: Exception, raised: type[Exception]
+) -> None:
+    """Every call translates the same way, not only an account's end."""
+    payments = await _checked(set())
+    payments._client = _Seats(error)  # type: ignore[assignment]
+    with pytest.raises(raised) as caught:
+        await payments.set_quantity("sub_1", 3, "tadas-seats-x-3")
+    assert type(caught.value) is raised

@@ -92,6 +92,16 @@ class OutboxStoragePostgresImpl(PgStorageBase, OutboxStorageInterface):
             await session.execute(stmt)
             await session.commit()
 
+    async def oldest_pending_at(self) -> datetime | None:
+        # The pending rows are the head of `ix_outbox_rows_done_at_id`, where
+        # done_at is null: the backlog and the dead letters not yet purged,
+        # and never the done rows behind them.
+        stmt = select(func.min(OutboxRows.created_at)).where(
+            OutboxRows.done_at.is_(None), OutboxRows.failed_at.is_(None)
+        )
+        async with self._session_for(stmt, org_id=EMPTY_UUID) as session:
+            return (await session.execute(stmt)).scalar_one()
+
     async def purge_done(self, before: datetime, limit: int) -> int:
         # Two statements, not one with an OR: each branch has an index of its
         # own, `ix_outbox_rows_done_at_id` and the partial

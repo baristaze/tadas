@@ -81,7 +81,11 @@ of the seven kinds of thing [Tadas is made of](../../../../README.md).
   orgs the person belongs to, a page at a time. Exchanging a live
   session for another org is a switch: the session presented ends in
   the same step that issues the new one, so a person holds one session
-  per tab.
+  per tab. A sign-in over a tab or a terminal that still holds a session
+  is a new sign-in, not a switch: its exchange presents the sign-in, not
+  the session. So the client ends the session it held once it holds the
+  new one, with the old session's own token, as a sign-out does (ADR
+  0047).
 - **Sign out.** The session presented is revoked. A session that came
   from a sign-in through the provider's hosted page also names the
   provider's own session in that browser, and the sign-out answers the

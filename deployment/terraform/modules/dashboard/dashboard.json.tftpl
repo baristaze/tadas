@@ -207,6 +207,57 @@
         "yAxis": { "left": { "min": 0, "label": "milliseconds" } },
         "metrics": [["Tadas", "tadas_sweep_duration_ms", { "label": "sweep pass" }]]
       }
+    },
+    {
+      "type": "metric",
+      "x": 0,
+      "y": 30,
+      "width": 8,
+      "height": 6,
+      "properties": {
+        "title": "Work queue oldest ready item age",
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "${region}",
+        "period": 60,
+        "stat": "Maximum",
+        "yAxis": { "left": { "min": 0, "label": "seconds" } },
+        "metrics": [["Tadas", "tadas_work_oldest_ready_seconds", { "label": "oldest ready" }]]
+      }
+    },
+    {
+      "type": "metric",
+      "x": 8,
+      "y": 30,
+      "width": 8,
+      "height": 6,
+      "properties": {
+        "title": "Work items failed in the last fifteen minutes",
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "${region}",
+        "period": 60,
+        "stat": "Maximum",
+        "yAxis": { "left": { "min": 0, "label": "items" } },
+        "metrics": [["Tadas", "tadas_work_failed_recently", { "label": "failed" }]]
+      }
+    },
+    {
+      "type": "metric",
+      "x": 16,
+      "y": 30,
+      "width": 8,
+      "height": 6,
+      "properties": {
+        "title": "Outbox oldest pending row age",
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "${region}",
+        "period": 60,
+        "stat": "Maximum",
+        "yAxis": { "left": { "min": 0, "label": "seconds" } },
+        "metrics": [["Tadas", "tadas_outbox_oldest_pending_seconds", { "label": "oldest pending" }]]
+      }
     }
   ]
 }

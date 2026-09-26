@@ -24,6 +24,7 @@ import stripe
 
 from tadas.infra.exceptions import BackendFailed, BackendUnreachable
 from tadas.integrations.exceptions import (
+    PaymentsKeyRefused,
     PaymentsRefused,
     PaymentsUnconfigured,
     ProviderUnavailable,
@@ -296,7 +297,7 @@ class PaymentsStripeImpl(PaymentsInterface):
             found.update((await v1.subscriptions.retrieve_async(subscription_id)).to_dict())
 
         # The read on the way is the end's too: one the processor no longer
-        # holds has nothing to cancel, and a key it refuses is the process's.
+        # holds has nothing to cancel.
         await ended("read subscription", read)
         if not found or subscription_of(found).status in ENDED_STATUSES:
             return
@@ -343,19 +344,10 @@ def subscription_of(raw: dict[str, Any]) -> ProviderSubscription:
 
 async def ended(operation: str, call: Callable[[], Awaitable[object]]) -> None:
     """One call on the way to ending something of a deleted account. What the
-    processor no longer holds is ended already. A refusal of the runtime key
-    itself (a key revoked, or without the permission) is the process's, not
-    the call's, and is unavailable until a person fixes the key, so the work
-    that asked waits for it rather than failing."""
+    processor no longer holds is ended already."""
     try:
         async with translated(operation):
-            try:
-                await call()
-            except (stripe.PermissionError, stripe.AuthenticationError) as error:
-                reason = error.code or type(error).__name__
-                raise ProviderUnavailable(
-                    f"the runtime key may not {operation} ({reason}); give it the permission"
-                ) from None
+            await call()
     except PaymentsRefused as refused:
         if "resource_missing" not in refused.message:
             raise
@@ -363,17 +355,35 @@ async def ended(operation: str, call: Callable[[], Awaitable[object]]) -> None:
 
 @asynccontextmanager
 async def translated(operation: str) -> AsyncIterator[None]:
-    """The SDK's errors as the integrations family: a refusal names the
-    processor's error code, an unreachable processor is a 503, and anything
-    else is a failure of the backend. No payload and no key reaches the
-    message."""
+    """The SDK's errors as the integrations family, by whose problem it is.
+
+    - A refusal of the runtime key itself (401 revoked, 403 without the
+      permission) is the process's: `PaymentsKeyRefused`, unavailable
+      until a person fixes the key.
+    - A throttle (429, after the SDK's own retries) is not right now:
+      `ProviderUnavailable`.
+    - A refusal of the request (400, 402, 404, an idempotency key reused
+      for another request) is the call's: `PaymentsRefused`, and the same
+      request gets the same answer.
+    - An unreachable processor is `BackendUnreachable`, and anything else,
+      a 5xx among it, is a failure of the backend.
+
+    Each names the processor's error code. No payload and no key reaches
+    the message."""
     try:
         yield
     except stripe.APIConnectionError as error:
         raise BackendUnreachable("stripe", operation, type(error).__name__) from None
+    except (stripe.PermissionError, stripe.AuthenticationError) as error:
+        reason = error.code or type(error).__name__
+        log.error("stripe refused the runtime key for %s: %s", operation, reason)
+        raise PaymentsKeyRefused(operation, reason) from None
+    except stripe.RateLimitError as error:
+        reason = error.code or type(error).__name__
+        log.warning("stripe throttled %s: %s", operation, reason)
+        throttled = f"the payment processor throttled {operation}: {reason}"
+        raise ProviderUnavailable(throttled) from None
     except (
-        stripe.PermissionError,
-        stripe.AuthenticationError,
         stripe.InvalidRequestError,
         stripe.CardError,
         stripe.IdempotencyError,

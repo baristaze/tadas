@@ -19,6 +19,16 @@ ROOT = Path(__file__).resolve().parents[2]
 GRAFANA = ROOT / "deployment" / "local" / "grafana" / "dashboards" / "tadas-overview.json"
 CLOUD = ROOT / "deployment" / "terraform" / "modules" / "dashboard" / "dashboard.json.tftpl"
 
+LOOP = ROOT / "workers" / "maintenance" / "src" / "tadas" / "workers" / "maintenance" / "loop.py"
+
+QUEUE_PANELS = {
+    "Work queue oldest ready item age": "work_oldest_ready_seconds",
+    "Work items failed in the last fifteen minutes": "work_failed_recently",
+    "Outbox oldest pending row age": "outbox_oldest_pending_seconds",
+}
+"""The last row of both dashboards, the Postgres queue's, by title, and the
+field of the sweep's line each one draws; its metric is `tadas_<field>`."""
+
 CLOUD_TITLE_FOR = {
     "HTTP latency p95 by route": "HTTP latency p95, all routes, at the load balancer",
 }
@@ -39,13 +49,17 @@ def _cloud_titles() -> list[str]:
 def test_the_cloud_dashboard_carries_every_local_panel_by_title() -> None:
     local = _grafana_titles()
     cloud = _cloud_titles()
-    assert len(local) == 5, "the local dashboard is the five panels an operator asks first"
-    expected = [CLOUD_TITLE_FOR.get(title, title) for title in local]
-    assert cloud[: len(local)] == expected, "the first cloud widgets are the local panels, in order"
+    assert len(local) == 8, (
+        "the local dashboard is the five panels an operator asks first and the queue's row"
+    )
+    first = [CLOUD_TITLE_FOR.get(title, title) for title in local[:5]]
+    assert cloud[:5] == first, "the first cloud widgets are the local panels, in order"
+    assert local[5:] == list(QUEUE_PANELS), "the local dashboard ends on the queue's row"
+    assert cloud[-3:] == list(QUEUE_PANELS), "and so does the cloud's"
 
 
 def test_the_cloud_dashboard_adds_the_backing_services_and_the_alarmed_reads() -> None:
-    extra = _cloud_titles()[len(_grafana_titles()) :]
+    extra = _cloud_titles()[5:-3]
     assert extra == [
         "Database CPU and connections",
         "Cache CPU",
@@ -133,3 +147,26 @@ def test_the_sweep_widget_draws_the_metric_the_sweep_alarm_watches() -> None:
     assert 'metric_name         = "tadas_sweep_duration_ms"' in alarms
     environment = (CLOUD.parent.parent / "environment" / "main.tf").read_text()
     assert "maintenance_log_group_name = module.maintenance.log_group_name" in environment
+
+
+def test_the_queue_row_draws_what_the_postgres_queue_alarms_watch() -> None:
+    """The worker writes each of the three as a field of its sweep line and
+    as a gauge of the metric's name. The alarms module's filters turn each
+    field into `tadas_<field>` in the cloud, from the worker's log group, and
+    one alarm reads each; the cloud widget draws the same metric, and the
+    Grafana panel the gauge."""
+    body = json.loads(re.sub(r"\$\{\w+\}", "null", CLOUD.read_text()))
+    widgets = {widget["properties"]["title"]: widget["properties"] for widget in body["widgets"]}
+    panels = {panel["title"]: panel for panel in json.loads(GRAFANA.read_text())["panels"]}
+    alarms = (CLOUD.parent.parent / "alarms" / "main.tf").read_text()
+    loop = LOOP.read_text()
+    assert 'pattern        = "{ $.sweep.${each.key} = * }"' in alarms
+    assert 'name      = "tadas_${each.key}"' in alarms
+    for title, field in QUEUE_PANELS.items():
+        metric = f"tadas_{field}"
+        assert widgets[title]["stat"] == "Maximum"
+        assert widgets[title]["metrics"][0][:2] == ["Tadas", metric]
+        assert f"max({metric})" in panels[title]["targets"][0]["expr"]
+        assert re.search(rf"^\s+{field}\s+= \"", alarms, re.MULTILINE), field
+        assert f'metric_name         = "{metric}"' in alarms
+        assert f'"{field}"' in loop, f"the sweep's line carries {field}"

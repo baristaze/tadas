@@ -920,6 +920,9 @@ class SpyRelay(OutboxRelayInterface):
     async def purge_done(self, retention: timedelta, limit: int) -> int:
         return await self._relay.purge_done(retention, limit)
 
+    async def oldest_pending_age(self) -> timedelta:
+        return await self._relay.oldest_pending_age()
+
 
 async def test_revoking_a_session_announces_it_on_the_bus_without_its_token(
     storage: TenancyStorageMemoryImpl, infra: InfraLocalImpl, outbox: OutboxStorageMemoryImpl

@@ -285,8 +285,11 @@ def login(
     api: Api = None,
 ) -> None:
     """Sign in through the browser with a one-time code and keep the session
-    for the next commands."""
+    for the next commands. A session kept before is ended once the new one is
+    kept."""
     api_url = config.api_url(api)
+    # Read before the sign-in: keeping the new session overwrites the file.
+    replaced = config.load_session()
 
     async def go() -> None:
         async with build_client(api_url, None) as client:
@@ -305,8 +308,33 @@ def login(
                 f"signed in as {session.user.display_name} at {session.org.name}"
                 f" ({session.role.value})\nsession kept in {path}"
             )
+        if replaced is not None and replaced.token != session.token:
+            await end_replaced(replaced)
 
     _run(go())
+
+
+async def end_replaced(replaced: config.Session) -> None:
+    """Ends the session a login replaced, at the API that issued it and with
+    its own token, as `logout` does. Best effort: the new session is kept
+    whatever the API answers, and a session it could not end lapses when it
+    expires, which stderr says."""
+    try:
+        async with build_client(replaced.api_url, replaced.token) as client:
+            await client.logout()
+    except ApiError as error:
+        # Revoked or expired already: nothing is left to end.
+        if error.status in (401, 422):
+            return
+        typer.echo(f"the session kept before was not ended; the API refused: {error}", err=True)
+        return
+    except httpx.TransportError as error:
+        typer.echo(
+            f"the session kept before was not ended; cannot reach {replaced.api_url}: {error}",
+            err=True,
+        )
+        return
+    typer.echo("the session kept before is ended")
 
 
 def keep(api_url: str, session: IssuedSessionView) -> Path:
