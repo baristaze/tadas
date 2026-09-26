@@ -41,6 +41,7 @@ from tadas.om.tenancy.types.api_key import ApiKey
 from tadas.om.tenancy.types.identity import Identity
 from tadas.om.tenancy.types.invitation import InvitationState
 from tadas.om.tenancy.types.session import Session
+from tadas.om.tenancy.types.size import PlatformSize
 from tadas.om.tenancy.types.user import User
 
 
@@ -243,6 +244,35 @@ class TenancyStorageContract:
             second.id, second.model_copy(update={"deleted_at": utcnow(), "deleted_by": new_id()})
         )
         assert await storage.count_orgs_and_users() == (1, 2)
+
+    async def test_the_tally_keeps_the_newest_count_of_the_platforms_size(
+        self, storage: TenancyStorageInterface
+    ) -> None:
+        """One row, read back as written; a newer count replaces it and an
+        older one, from a worker that counted first and wrote last, does not."""
+        assert await storage.read_platform_size() is None
+        at = utcnow()
+        first = PlatformSize(
+            tenants=3,
+            users=5,
+            tasks_last_24h=7,
+            events_last_24h=11,
+            since=at - timedelta(hours=24),
+            counted_at=at,
+        )
+        await storage.write_platform_size(first)
+        assert await storage.read_platform_size() == first
+        later = first.model_copy(
+            update={
+                "tenants": 4,
+                "counted_at": at + timedelta(minutes=5),
+                "since": at + timedelta(minutes=5) - timedelta(hours=24),
+            }
+        )
+        await storage.write_platform_size(later)
+        assert await storage.read_platform_size() == later
+        await storage.write_platform_size(first)
+        assert await storage.read_platform_size() == later
 
     async def test_an_org_write_lands_its_outbox_row_beside_it(
         self, storage: TenancyStorageInterface
