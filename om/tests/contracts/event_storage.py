@@ -15,7 +15,7 @@ from tadas.om.events.types.event import Event
 from tadas.om.exceptions import TenantMismatch
 
 CROSS_TENANT_CASES: frozenset[str] = frozenset(
-    {"append_events", "purge_tenant", "read_after", "read_floor", "read_head"}
+    {"append_events", "purge_tenant", "read_after", "read_floor", "read_head", "read_page"}
 )
 """Every method of `EventStorageInterface` that takes a tenant has a case in
 this module that presents another tenant's. `test_storage_exceptions.py` holds
@@ -328,6 +328,20 @@ class EventStorageContract:
         assert await storage.read_after(org, 0, 10) == kept
         # The next append continues from the head, never from the floor.
         assert (await append_one(storage, org, make_event(org))).seq == 6
+
+    async def test_a_page_carries_the_floor_and_the_head_of_its_own_tenant(
+        self, storage: EventStorageInterface
+    ) -> None:
+        org, other = new_id(), new_id()
+        now = await drained(storage)
+        kept = (await self.append_aged(storage, org, now, 100, 100, 1, 1))[2:]
+        await storage.trim(now - timedelta(days=90), 1000)
+        page = await storage.read_page(org, 2, 10)
+        assert (page.events, page.floor, page.head) == (tuple(kept), 2, 4)
+        assert (await storage.read_page(org, 0, 1)).events == tuple(kept[:1])
+        # Another tenant's page is its own: none of these events, no floor.
+        empty = await storage.read_page(other, 0, 10)
+        assert (empty.events, empty.floor, empty.head) == ((), 0, 0)
 
     async def test_the_trim_takes_one_batch_at_a_time(self, storage: EventStorageInterface) -> None:
         org = new_id()

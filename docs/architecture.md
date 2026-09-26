@@ -118,7 +118,8 @@ context on keeps the stage the callee needs.
   `expires_at`; invitations by `updated_at`, and redeemed install states
   by `redeemed_at`; idempotency records, delivery marks, and Slack posts
   by `created_at`; the pending markers by `attempt_id`; pending uploads
-  by `(status, created_at)` and settled orchestrations by `(status,
+  by `created_at` over the pending ones, whose status the purge names as
+  the same literal, and settled orchestrations by `(status,
   updated_at)`; events by `produced_at`; and the outbox's dead letters
   `(failed_at)` over the failed ones, beside the `(done_at, id)` the done
   ones walk ([ADR 0045](adr/0045-retention-purges-run-once-a-pass-across-tenants.md)). The seeding
@@ -756,7 +757,10 @@ missing. `PgStorageBase._session_for` is the funnel every statement
 already passes, and it takes the scope of the call, so the tenant is
 named once per transaction and not once per query: it writes
 `app.org_id`, and `app.user_id` when the call narrows to one person,
-with `set_config(..., true)`, which dies with the transaction. Each
+with `set_config(..., true)`, which dies with the transaction. The
+settings go out in the message that begins the transaction, `BEGIN;
+SELECT set_config(...);`, so the scope costs no round trip of its own
+([ADR 0053](adr/0053-the-scope-rides-in-the-message-that-begins.md)). Each
 policy is `FOR ALL`, `USING` and `WITH CHECK` the same expression, with
 `FORCE ROW LEVEL SECURITY` so the owner is held too. `queue.work_items`
 is the one table fenced by login, with two such policies, the tenant
@@ -1207,6 +1211,11 @@ alone, and neither key may touch what the other's work does not need
   leads with the retention column serves each purge across tenants, so a
   tenant with nothing to purge costs the pass nothing there
   ([ADR 0045](adr/0045-retention-purges-run-once-a-pass-across-tenants.md)).
+  Each purge that deletes across tenants plans its statements with their
+  values (`SET LOCAL plan_cache_mode = force_custom_plan`, its
+  transaction's first statement), so a connection whose first runs met a
+  backlog never keeps a plan that reads the whole table on an idle pass
+  ([ADR 0056](adr/0056-purges-across-tenants-plan-with-their-values.md)).
   A purge whose batch comes back full is called again, in turn with the
   other full ones, while the pass's budget lasts
   (`TADAS_WORKER_SWEEP_BUDGET_SECONDS`, 20). Past the budget the pass
@@ -1666,6 +1675,17 @@ page; this section says what exists.
   the account check, and the env file's fields are written once; the
   rules that stop a secret leaking stay inline in each of them, and
   `infra/tests/test_ops_skills.py` holds both halves.
+- **Audits.** Four more skills, `audit-retention`, `audit-query-indexes`,
+  `audit-database-calls`, and `audit-deploy-time`, each a read-only
+  analysis that repeats. The three about the database make a database of
+  their own on the local stack (`ops/audit/auditdb.py`, named
+  `audit_<slug>`), seed it (`ops/audit/seed.py`), measure it
+  (`ops/audit/explain.py`, `ops/audit/dbcalls.py`), and drop it; the
+  deploy audit reads the pipeline's runs and the cluster's events
+  (`ops/audit/deploy_timeline.py`) under the investigate profile. Each
+  writes a report and proposes tickets. `tickets-triage` gives every
+  open ticket a verdict against `main`. None of the tools is imported by
+  a process; `ops/tests/test_audit_database.py` runs them end to end.
   The first responder is an agent: `ops-investigate` and
   `ops-watch` read the platform's size (`tadas-ops size`) before they
   escalate an alarm, and a platform of one tenant and one user is the

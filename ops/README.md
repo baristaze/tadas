@@ -186,8 +186,10 @@ change`.
 
 ## The skills
 
-Nine, under `.claude/skills/`. Every one that reads or drives an
-environment takes `--env local|staging|production` (create and nuke
+Fourteen, under `.claude/skills/`, in two kinds.
+
+The operational skills act on an environment. Every one that reads or
+drives one takes `--env local|staging|production` (create and nuke
 take `staging` or `production`; the scenario writer takes none), and
 every one names the role it needs, what it reads, what it never does,
 and its report.
@@ -211,6 +213,31 @@ promise and an inlined line is a guarantee.
 | `stress-test-create-or-update` | none | Write or change a scenario file, with a target stated before any run. |
 | `stress-test-run` | Provisioner, Investigator | Run a scenario, read the signals back, and say whether the target held. |
 
+The audits answer a question about the system that repeats: after a
+big change, before a release, when the product grows. An audit is
+read-only. The ones about the database build their own: a database
+named `audit_<slug>` on the local stack, seeded at a stated scale and
+dropped when the run ends, so a run never logs in to a shared one. An
+audit writes a report to `~/Downloads/tadas_<audit>_<date>.md`, with
+the answer first, a table with a verdict per row, the findings by
+impact with a fix and an effort each, and what it could not verify; it
+proposes tickets and never fixes. Its tools are under
+[ops/audit/](audit/README.md). The two that read staging hold the
+investigate profile and read the preamble like the operational skills.
+
+| Skill | Needs | Answers |
+|-------|-------|---------|
+| `audit-retention` | Investigator (staging), none (local) | Which tables and stores grow without bound, what trims each, and whether that purge holds up when the table is large. |
+| `audit-query-indexes` | none (local) | Do the indexes fit the queries: every statement mapped to its index and measured on a seeded database, the hot paths, and what breaks first under load. |
+| `audit-database-calls` | none (local) | How many round trips and transactions each endpoint and worker flow makes, at its least and its most, and why. |
+| `audit-deploy-time` | Investigator | Where a deploy's minutes go, phase by phase, and which setting or step would shorten it. |
+
+`tickets-triage` is beside them, not one of them: it reads the tracker
+and the repository, not the system, and holds none of the platform's
+roles. It gives every open ticket of this repository a verdict with its
+evidence, and with `--apply` and the person's word it closes the done
+and the moot.
+
 ## The first responder
 
 The first responder is an agent. An alarm is read against the
@@ -223,8 +250,9 @@ with the size, the signals for one request id, and what changed.
 
 - Never writes to the cloud. A change is a pull request, and the
   pipeline applies it.
-- Never logs in to a database. The operator plane answers what a
-  support case needs, and the role denies the connection.
+- Never logs in to a shared database. The operator plane answers what a
+  support case needs, and the role denies the connection. An audit logs
+  in only to the database it made on the local stack.
 - Never prints a secret. A skill verifies its identity and reads what
   the read role allows; a secret's value is outside that.
 - Never reads telemetry by tenant. Telemetry carries no tenant id; a

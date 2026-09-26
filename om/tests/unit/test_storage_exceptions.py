@@ -53,7 +53,7 @@ STORAGE_EXCEPTIONS: frozenset[tuple[str, str]] = frozenset(
         ("TenancyStorageInterface", "read_org_by_slug"),
         ("TenancyStorageInterface", "read_orgs"),
         ("TenancyStorageInterface", "count_orgs"),
-        ("TenancyStorageInterface", "count_users"),
+        ("TenancyStorageInterface", "count_orgs_and_users"),
         ("TasksStorageInterface", "count_created_since"),
         ("EventStorageInterface", "count_since"),
         ("TenancyStorageInterface", "read_users_by_identity"),

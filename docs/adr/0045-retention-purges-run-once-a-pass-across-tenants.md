@@ -1,6 +1,8 @@
 # ADR 0045: Retention purges run once a pass across tenants
 
-**Status**: accepted (2026-09-26). Amends
+**Status**: accepted (2026-09-26), amended by
+[ADR 0056](0056-purges-across-tenants-plan-with-their-values.md): each
+purge plans with its values. Amends
 [ADR 0040](0040-the-event-stream-has-a-floor.md): the trim runs once a
 pass for every org, not once per org. The floor, and the transaction
 that moves it, stand.

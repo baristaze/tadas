@@ -14,7 +14,13 @@ from tadas.om.slack.storage.tables.slack import (
     SlackPosts,
 )
 from tadas.om.slack.types.installation import SlackInstallation, SlackInstallState, SlackPost
-from tadas.om.storage.impl.pg_base import PgStorageBase, delete_batch, deleted, violated_constraint
+from tadas.om.storage.impl.pg_base import (
+    PLAN_WITH_VALUES,
+    PgStorageBase,
+    delete_batch,
+    deleted,
+    violated_constraint,
+)
 from tadas.om.storage.utils.translation import to_model, to_row
 
 
@@ -154,8 +160,10 @@ class SlackStoragePostgresImpl(PgStorageBase, SlackStorageInterface):
             delete_batch(SlackPosts, SlackPosts.created_at < before, limit=limit),
         )
         # Every tenant's rows past the retention, so the system scope, spelled
-        # here; the three tables are one role's, so one transaction.
+        # here; the three tables are one role's, so one transaction, planned
+        # with its values so each index serves an idle pass too.
         async with self._session_for(SlackPosts, org_id=EMPTY_UUID) as session:
+            await session.execute(PLAN_WITH_VALUES)
             for stmt in statements:
                 purged += deleted(await session.execute(stmt))
             await session.commit()

@@ -98,6 +98,16 @@ class TasksStorageInterface(ABC):
         ...
 
     @abstractmethod
+    async def count_open_and_read_places(
+        self, org_id: UUID, criterion: TaskFilter, exclude: UUID | None, limit: int
+    ) -> tuple[int, list[Place]]:
+        """One transaction: what `count_open_tasks` counts, then what
+        `read_open_places` reads from the top. What one more open task under
+        a plan's bound needs: the count the bound is held to, and the top
+        place it goes above."""
+        ...
+
+    @abstractmethod
     async def read_open_places_before(self, org_id: UUID, before: Place, limit: int) -> list[Place]:
         """The open places strictly before `before`, nearest first, at most
         `limit`: the side of a respaced run above its long rank."""

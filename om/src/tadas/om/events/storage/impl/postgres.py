@@ -33,6 +33,7 @@ from tadas.om.events.storage import EventStorageInterface
 from tadas.om.events.storage.tables.event_cursors import EventCursors
 from tadas.om.events.storage.tables.events import Events
 from tadas.om.events.types.event import Event
+from tadas.om.events.types.page import StreamPage
 from tadas.om.exceptions import TenantMismatch, UniqueKeyTaken
 from tadas.om.storage.impl.pg_base import PgStorageBase, delete_batch, deleted, violated_constraint
 from tadas.om.storage.utils.translation import to_model, to_values
@@ -287,6 +288,22 @@ class EventStoragePostgresImpl(PgStorageBase, EventStorageInterface):
         async with self._session_for(stmt, org_id=org_id) as session:
             result = await session.execute(stmt)
             return [to_model(row, Event) for row in result.scalars()]
+
+    async def read_page(self, org_id: UUID, after_seq: int, limit: int) -> StreamPage:
+        page = (
+            select(Events)
+            .where(Events.org_id == org_id, Events.seq > after_seq)
+            .order_by(Events.seq)
+            .limit(limit)
+        )
+        cursor = select(EventCursors.floor, EventCursors.head).where(EventCursors.org_id == org_id)
+        async with self._session_for(Events, org_id=org_id) as session:
+            events = tuple(to_model(row, Event) for row in (await session.execute(page)).scalars())
+            # Read committed: this statement sees every trim committed before
+            # it, the ones before the page included.
+            found = (await session.execute(cursor)).one_or_none()
+        floor, head = (0, 0) if found is None else (int(found.floor), int(found.head))
+        return StreamPage(events=events, floor=floor, head=head)
 
     async def purge_tenant(self, org_id: UUID, limit: int) -> int:
         events = delete_batch(Events, Events.org_id == org_id, limit=limit)

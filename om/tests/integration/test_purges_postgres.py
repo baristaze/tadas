@@ -12,10 +12,17 @@ table this small the planner would read the heap whatever indexes exist,
 and the question here is whether an index can serve the statement at all.
 A predicate no index serves, such as `done_at < x OR failed_at < x` with no
 index on `failed_at`, still plans a sequential scan then.
+
+Whether the plan cache keeps an index is a second question, asked of tables
+with rows and statistics. The driver prepares each statement once per
+connection, and after five runs Postgres may keep a generic plan. So a purge
+runs as the sweep runs it, on one connection: a backlog first, then a pass
+with nothing to purge, and the plan read is the one that connection holds
+for the idle pass. Sequential scans stay on there.
 """
 
 from collections.abc import AsyncIterator, Awaitable, Callable
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -76,11 +83,12 @@ async def watched(
 async def sent(
     engines: list[AsyncEngine], call: Callable[[], Awaitable[object]]
 ) -> list[Statement]:
-    """The statements `call` sends, but for the scope each transaction opens with."""
+    """The statements `call` sends, but for the scope and the plan-cache
+    setting a transaction opens with."""
     captured: list[Statement] = []
 
     def record(conn: Any, cursor: Any, statement: str, parameters: Any, *_: Any) -> None:
-        if "set_config" not in statement:
+        if "set_config" not in statement and "plan_cache_mode" not in statement:
             captured.append((statement, parameters))
 
     for engine in engines:
@@ -191,7 +199,7 @@ async def test_every_purge_across_tenants_reads_an_index_led_by_its_retention(
         lambda: MediaStoragePostgresImpl(sessions).read_purgeable(cut, cut, 1000),
     )
     assert served(files, "ix_files_deleted_at"), files
-    assert served(files, "ix_files_status_created_at"), files
+    assert served(files, "ix_files_created_at_pending"), files
     users, memberships, keys, tenancy_sessions, tickets, invitations = await across(
         DatabaseRole.CORE,
         lambda: TenancyStoragePostgresImpl(sessions).purge_deleted(cut, cut, 1000),
@@ -415,3 +423,308 @@ async def test_records_and_posts_go_a_batch_at_a_time_over_postgres(
         await slack.create_post(org, posted_at(make_post(new_id()), then))
     assert await slack.purge(then + timedelta(hours=1), 2) == 2
     assert await slack.purge(then + timedelta(hours=1), 2) == 1
+
+
+BACKLOG_ROWS = 20000
+"""Rows per table, their ages spread over sixty days: enough that reading a
+whole table costs more than an index walk, as it does in production."""
+
+BATCH = 1000
+"""The batch the sweep takes, each manager's `purge_batch`."""
+
+MEDIA_BATCH = 100
+"""Media's batch: each file it reads costs a request to the store."""
+
+SETTLE = 8
+"""Runs with a backlog before the idle pass. Postgres weighs a generic plan
+after five, so eight leave the connection settled on whichever it keeps."""
+
+AGE = f"now() - interval '60 days' + g * interval '{60 * 86400 // BACKLOG_ROWS} seconds'"
+"""The age of row `g`: oldest first, as rows land in time."""
+
+TENANT = "md5((g % 5000)::text)::uuid"
+"""The tenant of row `g`: the rows spread over 5,000 tenants, as a sweep
+across tenants meets them."""
+
+ACTOR = "CAST(:actor AS uuid)"
+
+BORN = {"id": "gen_random_uuid()", "org_id": TENANT, "created_at": AGE}
+TRACKED = BORN | {"updated_at": AGE, "created_by": ACTOR, "updated_by": ACTOR}
+DELETED = {"deleted_at": AGE, "deleted_by": ACTOR}
+
+BACKLOG: dict[DatabaseRole, dict[str, dict[str, str]]] = {
+    DatabaseRole.CORE: {
+        "users": TRACKED
+        | DELETED
+        | {
+            "identity_id": "gen_random_uuid()",
+            "email": "'u' || g || '@example.com'",
+            "display_name": "'User'",
+        },
+        "memberships": TRACKED
+        | DELETED
+        | {"user_id": "gen_random_uuid()", "role": "'member'", "teams": "'[]'"},
+        "api_keys": TRACKED
+        | {
+            "name": "'key'",
+            "user_id": "gen_random_uuid()",
+            "key_hash": "md5('k' || g)",
+            "role": "'member'",
+            "expires_at": AGE,
+        },
+        "sessions": TRACKED
+        | {
+            "identity_id": "gen_random_uuid()",
+            "user_id": "gen_random_uuid()",
+            "token_hash": "md5('s' || g)",
+            "credential_kind": "'session'",
+            "expires_at": AGE,
+        },
+        "socket_tickets": BORN
+        | {
+            "user_id": "gen_random_uuid()",
+            "ticket_hash": "md5('t' || g)",
+            "credential_kind": "'session'",
+            "credential_id": "gen_random_uuid()",
+            "expires_at": AGE,
+        },
+        "invitations": TRACKED
+        | {
+            "email": "'i' || g || '@example.com'",
+            "role": "'member'",
+            "provider_invitation_id": "md5('i' || g)",
+            "state": "CASE WHEN g % 2 = 0 THEN 'accepted' ELSE 'pending' END",
+            "expires_at": AGE,
+        },
+        "billing_deliveries": BORN | {"event_id": "'evt_' || g", "event_type": "'invoice.paid'"},
+        "slack_installations": TRACKED
+        | DELETED
+        | {
+            "team_id": "'T' || g",
+            "team_name": "'Team'",
+            "app_id": "'A1'",
+            "bot_user_id": "'B1'",
+            "scopes": "'chat:write'",
+            "installed_by_slack_user": "'U1'",
+            "credential_ref": "'ref'",
+            "status": "'active'",
+        },
+        "slack_install_states": BORN
+        | {
+            "user_id": "gen_random_uuid()",
+            "state_hash": "md5('st' || g)",
+            "expires_at": AGE,
+            "redeemed_at": f"CASE WHEN g % 2 = 0 THEN {AGE} END",
+        },
+        "slack_posts": BORN | {"key": "gen_random_uuid()", "channel_id": "'C1'", "ts": "g::text"},
+        "orchestrations": TRACKED
+        | {
+            "kind": "'task_import'",
+            "input": "'{}'",
+            "status": "(ARRAY['succeeded', 'failed', 'running', 'parked'])[1 + g % 4]",
+            "cursor": "0",
+            "applied": "0",
+            "skipped": "0",
+            "row_errors": "'[]'",
+            "version": "1",
+        },
+        "outbox_rows": BORN
+        | {
+            "kind": "'task.updated'",
+            "target_id": "gen_random_uuid()",
+            "payload": "'{}'",
+            "actor_id": ACTOR,
+            "request_id": "gen_random_uuid()",
+            "app": "'api'",
+            "attempts": "1",
+            "done_at": f"CASE WHEN g % 20 > 0 THEN {AGE} END",
+            "failed_at": f"CASE WHEN g % 20 = 0 THEN {AGE} END",
+        },
+        "files": TRACKED
+        | {
+            "name": "'note'",
+            "key": "'k/' || g",
+            "extension": "'webm'",
+            "content_type": "'audio/webm'",
+            "size_bytes": "1024",
+            "purpose": "'voice_dictation'",
+            "status": "CASE WHEN g % 20 = 0 THEN 'pending' ELSE 'stored' END",
+            "deleted_at": f"CASE WHEN g % 20 = 1 THEN {AGE} END",
+            "deleted_by": f"CASE WHEN g % 20 = 1 THEN {ACTOR} END",
+        },
+    },
+    DatabaseRole.QUEUE: {
+        "work_items": TRACKED
+        | {
+            "kind": "'NOOP'",
+            "target_id": "gen_random_uuid()",
+            "idempotency_key": "gen_random_uuid()",
+            "request_id": "gen_random_uuid()",
+            "payload": "'{}'",
+            "lane": "'default'",
+            "status": "(ARRAY['done', 'failed', 'queued'])[1 + g % 3]",
+            "available_at": "now()",
+            "attempts": "1",
+            "max_attempts": "5",
+        },
+    },
+}
+"""Each table a purge across tenants reads, by role, with the value of each
+column of row `g`. Every row is past a cut a day ahead."""
+
+
+async def backlog(sessions: LoginSessions, migrated: dict[DatabaseRole, str]) -> None:
+    """`BACKLOG_ROWS` rows in each table of `BACKLOG`, written in the system
+    scope since they are many tenants' rows; then ANALYZE under the owner,
+    since the plan cache weighs its plans by the statistics."""
+    values = {"actor": new_id(), "n": BACKLOG_ROWS}
+    for role, tables in BACKLOG.items():
+        async with sessions.system[role]() as session:
+            await set_scope(session, EMPTY_UUID, None, None)
+            for table, columns in tables.items():
+                await session.execute(
+                    text(
+                        f"INSERT INTO {role.value}.{table} ({', '.join(columns)})"
+                        f" SELECT {', '.join(columns.values())} FROM generate_series(1, :n) g"
+                    ),
+                    values,
+                )
+            await session.commit()
+        engine = create_async_engine(migrated[role])
+        try:
+            async with engine.begin() as connection:
+                await connection.execute(text("ANALYZE"))
+        finally:
+            await engine.dispose()
+
+
+def spelled(value: object) -> str:
+    """A captured value as a SQL literal; the prepared statement types it."""
+    if value is None:
+        return "NULL"
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, datetime):
+        return f"'{value.isoformat()}'"
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+async def settled_idle_plans(
+    watched: tuple[LoginSessions, list[AsyncEngine]],
+    role: DatabaseRole,
+    purge: Callable[[timedelta], Awaitable[object]],
+) -> list[str]:
+    """The plans one connection holds for an idle pass of `purge`, after it
+    ran the purge `SETTLE` times with a backlog. `purge` takes how far past
+    now its cut stands: a day ahead, everything is past it; `ANCIENT` back,
+    nothing is. Each statement of the idle pass is explained as its prepared
+    statement on that connection, under the transaction's plan-cache setting,
+    so the plan read is the one the cache hands the next idle pass."""
+    sessions, engines = watched
+    for _ in range(SETTLE):
+        await purge(timedelta(days=1))
+    idle: list[tuple[str, Any, str]] = []
+    mode = "auto"
+
+    def record(conn: Any, cursor: Any, statement: str, parameters: Any, *_: Any) -> None:
+        nonlocal mode
+        if "plan_cache_mode" in statement:
+            mode = statement.rsplit("=", 1)[1].strip()
+        elif "set_config" not in statement:
+            idle.append((statement, parameters, mode))
+
+    def ended(conn: Any) -> None:
+        nonlocal mode
+        mode = "auto"
+
+    listeners = (("before_cursor_execute", record), ("commit", ended), ("rollback", ended))
+    for engine in engines:
+        for name, listener in listeners:
+            event.listen(engine.sync_engine, name, listener)
+    try:
+        await purge(-ANCIENT)
+    finally:
+        for engine in engines:
+            for name, listener in listeners:
+                event.remove(engine.sync_engine, name, listener)
+    found: list[str] = []
+    async with sessions.system[role]() as session:
+        await set_scope(session, EMPTY_UUID, None, None)
+        connection = await session.connection()
+        listed = await connection.exec_driver_sql(
+            "SELECT statement, name FROM pg_prepared_statements"
+        )
+        prepared: dict[str, str] = {statement: name for statement, name in listed.all()}
+        for sql, parameters, statement_mode in idle:
+            assert sql in prepared, f"not prepared on the settled connection: {sql}"
+            await connection.exec_driver_sql(f"SET LOCAL plan_cache_mode = {statement_mode}")
+            # EXECUTE takes no bound parameter, so the values are spelled.
+            values = ", ".join(spelled(value) for value in parameters)
+            rows = await connection.exec_driver_sql(f"EXPLAIN EXECUTE {prepared[sql]}({values})")
+            found.append("\n".join(row[0] for row in rows))
+        await session.rollback()
+    return found
+
+
+async def test_an_idle_pass_after_a_backlog_still_reads_each_purge_index(
+    watched: tuple[LoginSessions, list[AsyncEngine]], migrated: dict[DatabaseRole, str]
+) -> None:
+    """The plan cache never settles a purge on a scan of its whole table. A
+    connection whose first runs met a backlog would otherwise keep a generic
+    plan that reads every row, and run it on every idle pass after."""
+    sessions = watched[0]
+    await backlog(sessions, migrated)
+
+    def cut(ahead: timedelta) -> datetime:
+        return utcnow() + ahead
+
+    tenancy = TenancyStoragePostgresImpl(sessions)
+    users, memberships, keys, tenancy_sessions, tickets, invitations = await settled_idle_plans(
+        watched,
+        DatabaseRole.CORE,
+        lambda ahead: tenancy.purge_deleted(cut(ahead), cut(ahead), BATCH),
+    )
+    assert served(users, "ix_users_deleted_at"), users
+    assert served(memberships, "ix_memberships_deleted_at"), memberships
+    assert served(keys, "ix_api_keys_deleted_at") and "ix_api_keys_expires_at" in keys, keys
+    assert served(tenancy_sessions, "ix_sessions_expires_at"), tenancy_sessions
+    assert served(tickets, "ix_socket_tickets_expires_at"), tickets
+    assert served(invitations, "ix_invitations_updated_at"), invitations
+    assert "ix_invitations_expires_at" in invitations, invitations
+    media = MediaStoragePostgresImpl(sessions)
+    (files,) = await settled_idle_plans(
+        watched,
+        DatabaseRole.CORE,
+        lambda ahead: media.read_purgeable(cut(ahead), cut(ahead), MEDIA_BATCH),
+    )
+    assert served(files, "ix_files_deleted_at"), files
+    assert served(files, "ix_files_created_at_pending"), files
+    billing = BillingStoragePostgresImpl(sessions)
+    (deliveries,) = await settled_idle_plans(
+        watched, DatabaseRole.CORE, lambda ahead: billing.purge_deliveries(cut(ahead), BATCH)
+    )
+    assert served(deliveries, "ix_billing_deliveries_created_at"), deliveries
+    slack = SlackStoragePostgresImpl(sessions)
+    installations, states, posts = await settled_idle_plans(
+        watched, DatabaseRole.CORE, lambda ahead: slack.purge(cut(ahead), BATCH)
+    )
+    assert served(installations, "ix_slack_installations_deleted_at"), installations
+    assert served(states, "ix_slack_install_states_expires_at"), states
+    assert "ix_slack_install_states_redeemed_at" in states, states
+    assert served(posts, "ix_slack_posts_created_at"), posts
+    orchestrations = OrchestrationsStoragePostgresImpl(sessions)
+    (settled,) = await settled_idle_plans(
+        watched, DatabaseRole.CORE, lambda ahead: orchestrations.purge_settled(cut(ahead), BATCH)
+    )
+    assert served(settled, "ix_orchestrations_status_updated_at"), settled
+    outbox = OutboxStoragePostgresImpl(sessions)
+    done, failed = await settled_idle_plans(
+        watched, DatabaseRole.CORE, lambda ahead: outbox.purge_done(cut(ahead), BATCH)
+    )
+    assert served(done, "ix_outbox_rows_done_at_id"), done
+    assert served(failed, "ix_outbox_rows_failed_at"), failed
+    work = WorkStoragePostgresImpl(sessions)
+    (items,) = await settled_idle_plans(
+        watched, DatabaseRole.QUEUE, lambda ahead: work.purge_items(cut(ahead), BATCH)
+    )
+    assert served(items, "ix_work_items_status_updated_at"), items

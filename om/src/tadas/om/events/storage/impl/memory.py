@@ -6,6 +6,7 @@ from uuid import UUID
 
 from tadas.om.events.storage import EventStorageInterface
 from tadas.om.events.types.event import Event
+from tadas.om.events.types.page import StreamPage
 from tadas.om.storage.impl.memory_base import MemoryStorageBase, MemoryTable
 
 
@@ -52,6 +53,13 @@ class EventStorageMemoryImpl(MemoryStorageBase, EventStorageInterface):
     async def read_after(self, org_id: UUID, after_seq: int, limit: int) -> list[Event]:
         newer = [e for e in self._rows(self._events, org_id) if e.seq > after_seq]
         return sorted(newer, key=lambda e: e.seq)[:limit]
+
+    async def read_page(self, org_id: UUID, after_seq: int, limit: int) -> StreamPage:
+        return StreamPage(
+            events=tuple(await self.read_after(org_id, after_seq, limit)),
+            floor=await self.read_floor(org_id),
+            head=await self.read_head(org_id),
+        )
 
     async def purge_tenant(self, org_id: UUID, limit: int) -> int:
         async with self._lock:
