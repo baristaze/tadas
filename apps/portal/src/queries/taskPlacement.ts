@@ -92,12 +92,14 @@ export function compareRank(a: string, b: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
-/** The open list's order: rank, then id, ascending. A task without a rank
- * (a reopen shown before the server answers, or an answer from a build that
- * predates the rank) is placed by its position. */
+/** Where a reopen sits before the server answers: on top, where the server
+ * puts it. The server's top moves one whole number per task placed there,
+ * so no rank it gives reaches this one. It is never sent. */
+export const ON_TOP = `-1${"0".repeat(40)}`;
+
+/** The open list's order: rank, then id, ascending. */
 export function compareOpen(a: TaskView, b: TaskView): number {
-  const byPlace = a.rank != null && b.rank != null ? compareRank(a.rank, b.rank) : a.position - b.position;
-  return byPlace || byId(a, b);
+  return compareRank(a.rank, b.rank) || byId(a, b);
 }
 
 /** An instant in microseconds, the precision the server orders by; a

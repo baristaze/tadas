@@ -64,7 +64,7 @@ from tadas.om.work.types.work_item import WorkKind, work_row_kind
 log = logging.getLogger(__name__)
 
 SIZE_WINDOW = timedelta(hours=24)
-"""How far back the traffic figures of the platform's size look."""
+"""How far back from its count the traffic figures of the platform's size look."""
 
 
 TOTP_ISSUER = "Tadas"
@@ -224,15 +224,30 @@ class TenancyOperatorManagerImpl(TenancyOperatorManagerInterface):
 
     async def size(self, admin: OperatorContext) -> PlatformSize:
         admin.require(OperatorPermission.READ)
-        since = utcnow() - SIZE_WINDOW
+        # The tally the sweep keeps: a count across tenants never runs in a
+        # request (ADR 0074).
+        size = await self._storage.read_platform_size()
+        if size is None:
+            raise NotFound(
+                "the platform's size is not counted yet; the maintenance worker counts it"
+                " on its first sweep"
+            )
+        return size
+
+    async def tally_size(self) -> PlatformSize:
+        counted_at = utcnow()
+        since = counted_at - SIZE_WINDOW
         tenants, users = await self._storage.count_orgs_and_users()
-        return PlatformSize(
+        size = PlatformSize(
             tenants=tenants,
             users=users,
             tasks_last_24h=await self._tasks.count_created_since(since),
             events_last_24h=await self._events.count_since(since),
             since=since,
+            counted_at=counted_at,
         )
+        await self._storage.write_platform_size(size)
+        return size
 
     async def create_org(
         self,

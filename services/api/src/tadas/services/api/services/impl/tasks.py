@@ -38,8 +38,7 @@ from tadas.services.api.types.tasks import (
 def encode_cursor(status: TaskStatus, task: Task) -> str:
     """Opaque on the wire: the list it belongs to and where its page ended,
     the last task's (rank, id) for the open list and (updated_at, id) for
-    the done one. A cursor the release before issued names the position,
-    which a rank is filled from exactly, so it reads the same."""
+    the done one."""
     mark = format(task.rank, "f") if status == TaskStatus.OPEN else task.updated_at.isoformat()
     raw = f"{status.value}|{mark}|{task.id}".encode()
     return base64.urlsafe_b64encode(raw).decode().rstrip("=")

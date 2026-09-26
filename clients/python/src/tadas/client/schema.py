@@ -505,9 +505,11 @@ class PlatformSizeView(BaseModel):
     """
     How big the platform is, what the first responder to an alarm reads
     before it escalates: live tenants and users, and the tasks created and
-    events produced in the last twenty-four hours, a window that starts at
-    `since` and ends at the read.
+    events produced in the twenty-four hours from `since` to `counted_at`.
+    The maintenance worker counts it every few minutes, and this is its
+    latest count: `counted_at` says how old the answer is.
     """
+    counted_at: Annotated[AwareDatetime, Field(title='Counted At')]
     events_last_24h: Annotated[int, Field(title='Events Last 24H')]
     since: Annotated[AwareDatetime, Field(title='Since')]
     tasks_last_24h: Annotated[int, Field(title='Tasks Last 24H')]
@@ -831,8 +833,8 @@ class TaskView(BaseModel):
     due_on: Annotated[date | None, Field(title='Due On')] = None
     id: Annotated[UUID, Field(title='Id')]
     notes: Annotated[str, Field(title='Notes')]
-    position: Annotated[float, Field(deprecated=True, description='The rank as a float, for a client of the release before; order by `rank`. It leaves the wire in the release after this one.', title='Position')]
-    rank: Annotated[str | None, Field(description='Where an open task sits in the open list, which is ascending by rank, then by id. An exact decimal number, written out in full: compare two as numbers, never as floats and never as text. Null only from a build that predates it, which orders by `position`.', title='Rank')] = None
+    position: Annotated[float | None, Field(deprecated=True, description='The rank as a float, for a client of the release before, which requires it. Order by `rank`: no client reads this, and it leaves the wire in the release after this one.', title='Position')] = None
+    rank: Annotated[str, Field(description='Where an open task sits in the open list, which is ascending by rank, then by id. An exact decimal number, written out in full: compare two as numbers, never as floats and never as text.', title='Rank')]
     reminded_at: Annotated[AwareDatetime | None, Field(title='Reminded At')] = None
     status: TaskStatus
     title: Annotated[str, Field(title='Title')]

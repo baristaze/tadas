@@ -197,13 +197,13 @@ def statements(c: Counts) -> list[tuple[str, str]]:
             "open tasks",
             f"""INSERT INTO core.tasks (id, org_id, created_at, updated_at, created_by, title,
                 notes, status, assignee_id,
-                                    "position", rank, updated_by, version, due_on)
+                                    rank, updated_by, version, due_on)
             SELECT uuidv7(-(interval '700 days') + g * interval '10 minutes'), {big},
                    now() - interval '700 days' + g * interval '10 minutes',
                        now() - (random() * 300) * interval '1 day',
                    bu.u[1 + (g * 7) % greatest(bu.k - 1, 1)], 'Open task ' || g, '', 'open',
                    CASE WHEN random() < 0.7 THEN bu.u[1 + (g * 13) % greatest(bu.k - 1, 1)] END,
-                   g::float8, g::numeric, bu.u[1], 1,
+                   g::numeric, bu.u[1], 1,
                    CASE WHEN random() < 0.3 THEN current_date + (random() * 60)::int END
             FROM generate_series(1, {c.open_tasks}) g, bu""",
         ),
@@ -211,26 +211,26 @@ def statements(c: Counts) -> list[tuple[str, str]]:
             "done tasks",
             f"""INSERT INTO core.tasks (id, org_id, created_at, updated_at, created_by, title,
                 notes, status, assignee_id,
-                                    "position", rank, updated_by, version)
+                                    rank, updated_by, version)
             SELECT uuidv7(-(interval '700 days') + g * interval '9 minutes'), {big},
                    now() - interval '700 days' + g * interval '9 minutes',
                        now() - (random() * 89) * interval '1 day',
                    bu.u[1 + (g * 7) % greatest(bu.k - 1, 1)], 'Done task ' || g, '', 'done',
                    CASE WHEN random() < 0.7 THEN bu.u[1 + (g * 13) % greatest(bu.k - 1, 1)] END,
-                   g::float8, g::numeric, bu.u[1], 2
+                   g::numeric, bu.u[1], 2
             FROM generate_series(1, {c.done_tasks}) g, bu""",
         ),
         (
             "archived tasks",
             f"""INSERT INTO core.tasks (id, org_id, created_at, updated_at, created_by, title,
                 notes, status, assignee_id,
-                                    "position", rank, updated_by, version, archived_at)
+                                    rank, updated_by, version, archived_at)
             SELECT uuidv7(-(interval '720 days') + g * interval '15 minutes'), {big},
                    now() - interval '720 days' + g * interval '15 minutes', ts,
                        bu.u[1 + (g * 7) % greatest(bu.k - 1, 1)],
                    'Archived task ' || g, '', 'done',
                    CASE WHEN random() < 0.7 THEN bu.u[1 + (g * 13) % greatest(bu.k - 1, 1)] END,
-                   g::float8, g::numeric, bu.u[1], 3, ts
+                   g::numeric, bu.u[1], 3, ts
             FROM (SELECT g, now() - (random() * 700) * interval '1 day' AS ts
                   FROM generate_series(1, {c.archived_tasks}) g) s, bu""",
         ),
@@ -238,12 +238,12 @@ def statements(c: Counts) -> list[tuple[str, str]]:
             "deleted tasks",
             f"""INSERT INTO core.tasks (id, org_id, created_at, updated_at, created_by, title,
                 notes, status, assignee_id,
-                                    "position", rank, updated_by, version, deleted_at, deleted_by)
+                                    rank, updated_by, version, deleted_at, deleted_by)
             SELECT uuidv7(-(interval '400 days') + g * interval '1 hour'), {big},
                 now() - interval '400 days', dt,
                    bu.u[1], 'Deleted task ' || g, '',
                        CASE WHEN g % 2 = 0 THEN 'open' ELSE 'done' END,
-                   NULL, g::float8, g::numeric, bu.u[1], 2, dt, bu.u[1]
+                   NULL, g::numeric, bu.u[1], 2, dt, bu.u[1]
             FROM (SELECT g,
                 CASE WHEN g <= {deleted_young} THEN now() - (random() * 29) * interval '1 day'
                                  ELSE now() - (31 + random() * 5) * interval '1 day' END AS dt
@@ -253,11 +253,11 @@ def statements(c: Counts) -> list[tuple[str, str]]:
             "personal tasks",
             """INSERT INTO core.tasks (id, org_id, created_at, updated_at, created_by, title,
                 notes, status,
-                                   "position", rank, updated_by, version)
+                                   rank, updated_by, version)
             SELECT uuidv7(-(interval '100 days') + (p.n * 5 + k) * interval '1 second'), p.org_id,
                    now() - interval '100 days', now() - (k * interval '3 days'), p.user_id,
                        'Task', '',
-                   CASE WHEN k <= 3 THEN 'open' ELSE 'done' END, k::float8, k::numeric, p.user_id, 1
+                   CASE WHEN k <= 3 THEN 'open' ELSE 'done' END, k::numeric, p.user_id, 1
             FROM people p CROSS JOIN generate_series(1, 5) k""",
         ),
         (

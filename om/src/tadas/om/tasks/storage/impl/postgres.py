@@ -13,6 +13,7 @@ from sqlalchemy import (
     and_,
     bindparam,
     func,
+    inspect,
     literal,
     literal_column,
     or_,
@@ -39,10 +40,9 @@ from tadas.om.tasks.storage.tables.tasks import Tasks
 from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor, TaskFilter
 from tadas.om.tasks.types.task import Task, TaskScope, TaskStatus
 
-WRITTEN: tuple[str, ...] = tuple(
-    name for name in cast(Table, Tasks.__table__).c.keys() if name != "org_id"
-)
-"""The columns a bulk update writes from the task; `org_id` never moves."""
+WRITTEN: tuple[str, ...] = tuple(name for name in inspect(Tasks).columns.keys() if name != "org_id")
+"""The columns a bulk update writes from the task: the mapped ones, so a
+column the mapping leaves out is never named; `org_id` never moves."""
 
 
 def _update_if_current_statement() -> ReturningUpdate[Any]:

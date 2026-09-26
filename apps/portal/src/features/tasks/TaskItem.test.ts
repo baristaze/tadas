@@ -19,7 +19,7 @@ afterEach(async () => { await act(async () => root.render(null)); });
 it("keeps an unsaved draft and its original version through a realtime refresh", async () => {
   const task: TaskView = {
     id: "t1", title: "Original", notes: "", status: "open", assignee_id: null,
-    position: 0, version: 1, created_by: "u1", deleted_at: null, due_on: null, reminded_at: null,
+    rank: "0", version: 1, created_by: "u1", deleted_at: null, due_on: null, reminded_at: null,
     created_at: "2026-09-20T10:00:00Z", updated_at: "2026-09-20T10:00:00Z",
   };
   const onSave = vi.fn();
@@ -53,7 +53,7 @@ it("keeps an unsaved draft and its original version through a realtime refresh",
 it("holds the Save button while the save it started is in flight", async () => {
   const task: TaskView = {
     id: "t2", title: "Original", notes: "", status: "open", assignee_id: null,
-    position: 0, version: 1, created_by: "u1", deleted_at: null, due_on: null, reminded_at: null,
+    rank: "0", version: 1, created_by: "u1", deleted_at: null, due_on: null, reminded_at: null,
     created_at: "2026-09-20T10:00:00Z", updated_at: "2026-09-20T10:00:00Z",
   };
   const render = (saving: boolean) => act(async () => {
@@ -74,7 +74,7 @@ it("holds the Save button while the save it started is in flight", async () => {
 it("leads with the drag handle, keeps one line, and names the creator without a marker", async () => {
   const task: TaskView = {
     id: "t3", title: "Migrate DB", notes: "", status: "open", assignee_id: "u1",
-    position: 0, version: 1, created_by: "u1", deleted_at: null, due_on: null, reminded_at: null,
+    rank: "0", version: 1, created_by: "u1", deleted_at: null, due_on: null, reminded_at: null,
     created_at: "2026-09-20T10:00:00Z", updated_at: "2026-09-20T10:00:00Z",
   };
   const onEdit = vi.fn();
@@ -107,7 +107,7 @@ it("leads with the drag handle, keeps one line, and names the creator without a 
 it("lets someone who cannot write open a task's files, read-only, with no edit form", async () => {
   const task: TaskView = {
     id: "t1", title: "Read only", notes: "", status: "open", assignee_id: null,
-    position: 0, version: 1, created_by: "u1", deleted_at: null,
+    rank: "0", version: 1, created_by: "u1", deleted_at: null,
     created_at: "2026-09-20T10:00:00Z", updated_at: "2026-09-20T10:00:00Z",
   };
   await act(async () => {
@@ -131,7 +131,7 @@ it("shows the due date on the row and sends a set, changed, or cleared one from 
   const todayIso = `${today.getFullYear()}-${two(today.getMonth() + 1)}-${two(today.getDate())}`;
   const task: TaskView = {
     id: "t4", title: "Call the bank", notes: "", status: "open", assignee_id: null,
-    position: 0, version: 5, created_by: "u1", deleted_at: null,
+    rank: "0", version: 5, created_by: "u1", deleted_at: null,
     due_on: todayIso, reminded_at: null,
     created_at: "2026-09-20T10:00:00Z", updated_at: "2026-09-20T10:00:00Z",
   };
@@ -176,7 +176,7 @@ it("shows the due date on the row and sends a set, changed, or cleared one from 
 it("sets a due date on a task that had none", async () => {
   const task: TaskView = {
     id: "t5", title: "Plan", notes: "", status: "open", assignee_id: null,
-    position: 0, version: 2, created_by: "u1", deleted_at: null, due_on: null, reminded_at: null,
+    rank: "0", version: 2, created_by: "u1", deleted_at: null, due_on: null, reminded_at: null,
     created_at: "2026-09-20T10:00:00Z", updated_at: "2026-09-20T10:00:00Z",
   };
   const onSave = vi.fn();
@@ -204,7 +204,7 @@ it("sets a due date on a task that had none", async () => {
 describe("a row one selects in", () => {
   const task: TaskView = {
     id: "t9", title: "Pick me", notes: "", status: "open", assignee_id: null,
-    position: 0, version: 1, created_by: "u1", deleted_at: null, due_on: null, reminded_at: null,
+    rank: "0", version: 1, created_by: "u1", deleted_at: null, due_on: null, reminded_at: null,
     created_at: "2026-09-20T10:00:00Z", updated_at: "2026-09-20T10:00:00Z",
   };
   const onToggle = vi.fn();

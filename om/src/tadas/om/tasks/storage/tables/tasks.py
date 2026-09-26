@@ -2,7 +2,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import Index, Numeric, text
+from sqlalchemy import Column, Double, Index, Numeric, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from tadas.om.storage.tables.base import (
@@ -22,9 +22,13 @@ class Tasks(IdentifiableMixin, TrackableMixin, SoftDeletableMixin, Base):
     __org_id_index__ = False
     __table_args__ = (
         Index("ix_tasks_org_id_status_rank", "org_id", "status", "rank"),
-        # The release before orders the open list by position; the index goes
-        # with the column (ADR 0050).
-        Index("ix_tasks_org_id_status_position", "org_id", "status", "position"),
+        # The rank as a float: in the table and out of the mapping. The
+        # release before names it in every insert and reads it as a number,
+        # so a trigger keeps it the rank's float on every row this release
+        # writes (migration 202610200000). No statement of this release names
+        # it, and the release after this one drops it and this line (ADR
+        # 0038, ADR 0050).
+        Column("position", Double(), nullable=False),
         Index("ix_tasks_org_id_status_id", "org_id", "status", "id"),
         # The done list and the archive, one index per shelf, so the cleanup's
         # read of the archivable tasks never walks the archive. The predicates
@@ -89,6 +93,7 @@ class Tasks(IdentifiableMixin, TrackableMixin, SoftDeletableMixin, Base):
             postgresql_where=text("status = 'done' AND archived_at IS NULL AND deleted_at IS NULL"),
         ),
     )
+    __mapper_args__ = {"exclude_properties": ["position"]}
     title: Mapped[str]
     notes: Mapped[str]
     status: Mapped[str]
@@ -96,10 +101,6 @@ class Tasks(IdentifiableMixin, TrackableMixin, SoftDeletableMixin, Base):
     # The order of the open list: an exact decimal, compared exactly
     # (tasks.rules.spread).
     rank: Mapped[Decimal] = mapped_column(Numeric())
-    # The rank as a float, for the release before, which orders by it. A
-    # trigger gives a row that release writes a rank from it (migration
-    # 202610120000). Both go with that release (ADR 0050).
-    position: Mapped[float]
     # The compare-and-set column. The server default is for a row an older
     # build inserts during a rollout; the object model always sends a value.
     version: Mapped[int] = mapped_column(server_default="1")

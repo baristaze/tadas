@@ -3,7 +3,7 @@ import type { TaskPageView, TaskScope, TaskView } from "../../api";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { keys } from "../../queries/keys";
 import { placeTask, refreshTaskLists, removeTask } from "../../queries/taskCache";
-import { windowOf } from "../../queries/taskPlacement";
+import { ON_TOP, windowOf } from "../../queries/taskPlacement";
 import {
   DONE_PAGE_SIZE,
   OPEN_PAGE_SIZE,
@@ -163,7 +163,7 @@ export function useTasksVm() {
     // The server puts a reopened task on top of the open list.
     placeTask(
       queryClient,
-      { ...task, status: "open", rank: null, position: Number.NEGATIVE_INFINITY },
+      { ...task, status: "open", rank: ON_TOP },
       { optimistic: true },
     );
     try {

@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { BulkTasksRequest, TaskScope, TaskView } from "../../api";
 import { errorMessage } from "../../app/errorMessage";
 import { placeTask, refreshTaskLists } from "../../queries/taskCache";
+import { ON_TOP } from "../../queries/taskPlacement";
 import { fetchTaskCount, useBulkTasks } from "../../queries/tasks";
 import { notify, UNDO_TTL_MS } from "../../store/notices";
 import type { TaskSection } from "../../store/preferences";
@@ -120,7 +121,7 @@ export function useBulkVm({
       const moved: TaskView =
         request.action === "complete"
           ? { ...task, status: "done", updated_at: now }
-          : { ...task, status: "open", rank: null, position: Number.NEGATIVE_INFINITY, archived_at: null };
+          : { ...task, status: "open", rank: ON_TOP, archived_at: null };
       placeTask(queryClient, moved, { optimistic: true });
     }
     clear();
