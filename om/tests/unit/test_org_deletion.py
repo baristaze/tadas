@@ -66,6 +66,18 @@ class SpyRelay(OutboxRelayInterface):
     async def oldest_pending_age(self) -> timedelta:
         return await self._relay.oldest_pending_age()
 
+    def hold(self, request_id: UUID) -> None:
+        self._relay.hold(request_id)
+
+    def held(self, request_id: UUID) -> int:
+        return self._relay.held(request_id)
+
+    async def release(self, request_id: UUID) -> int:
+        return await self._relay.release(request_id)
+
+    def abandon(self, request_id: UUID) -> int:
+        return self._relay.abandon(request_id)
+
 
 @pytest.fixture
 def storage() -> TenancyStorageMemoryImpl:

@@ -91,6 +91,7 @@ class RequestIdMiddleware:
         token = request_id_var.set(str(request_id))
         status = {"code": 0}
         started = time.perf_counter()
+        answered: dict[str, float] = {}
 
         async def send_with_request_id(message: MutableMapping[str, Any]) -> None:
             if message["type"] in ("http.response.start", "websocket.accept"):
@@ -98,6 +99,8 @@ class RequestIdMiddleware:
             if message["type"] == "http.response.start":
                 status["code"] = message["status"]
             await send(message)
+            if message["type"] == "http.response.body" and not message.get("more_body"):
+                answered.setdefault("at", time.perf_counter())
 
         # The server span is opened here, around everything downstream, so the
         # context the gateway builds reads a real trace id. The route template
@@ -125,7 +128,10 @@ class RequestIdMiddleware:
                 span.update_name(f"{method} {template}")
                 span.set_attribute("http.route", template)
                 if scope["type"] == "http":
-                    elapsed = time.perf_counter() - started
+                    # The latency is the caller's: up to the answer's last
+                    # byte. What runs after it (the outbox relay,
+                    # `gateway/relay.py`) is in the span, not in the latency.
+                    elapsed = answered.get("at", time.perf_counter()) - started
                     span.set_attribute("http.response.status_code", status["code"])
                     label = method_label(method)
                     HTTP_REQUESTS.labels(route=template, method=label, status=status["code"]).inc()

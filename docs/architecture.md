@@ -665,8 +665,21 @@ context on keeps the stage the callee needs.
   its change the same way.
   Tadas relays in the request path, the step the guideline names as the
   one a system takes when push latency earns it, and pays the round
-  trips it names for a push that arrives in milliseconds; the sweep
-  alone, on an interval of a second or two, is the cheaper first step
+  trips it names for a push that arrives in milliseconds. In the API
+  those round trips follow the answer. The gateway's innermost
+  middleware (`gateway/relay.py`) holds each HTTP request's id on the
+  relay (`hold`) before the request runs; a row that names a held
+  request is kept rather than relayed, found by the row's own
+  `request_id` and never by ambient state; and once the answer's last
+  byte is sent the middleware releases the hold (`release`), which
+  relays what it kept, each org's rows in one `relay_all`. It runs
+  inside admission, so it keeps the request's slot, and under the
+  request's id and server span, as a child span of its own. The access
+  line and the latency histogram time the answer, not the relay. A
+  worker holds nothing and relays at once. A process stopped between
+  the answer and the relay abandons the hold (`abandon`) and logs how
+  many rows it leaves, and the sweep relays them past its grace. The
+  sweep alone, on an interval of a second or two, is the cheaper first step
   the guideline names, and Tadas keeps the sweep as the fallback
   instead. A relay that fails is logged and counted, never raised; the
   maintenance sweep claims whatever is pending. The claim is one
@@ -1273,7 +1286,8 @@ alone, and neither key may touch what the other's work does not need
   caused it where a handoff named one; one filter attaches all four and
   no call site passes any.
 - Two processes raise spans: the API's middleware opens the server span
-  per request, and the worker opens one per run of a work item. The run's
+  per request, with the outbox relay after the answer as its child, and
+  the worker opens one per run of a work item. The run's
   span links to the trace context the item carried instead of becoming its
   child, because a durable queue holds an item well past the end of the
   request that filled it; an item that carries none starts a trace of its

@@ -1,5 +1,7 @@
+import asyncio
 import logging
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from uuid import UUID
 
@@ -29,6 +31,16 @@ class OutboxOptions(Platform):
     """Past this many sweep attempts the row is a dead letter."""
 
 
+@dataclass
+class _Hold:
+    """One request's hold: how many holders it has (a caller may send one
+    request id twice) and the rows handed over while it was open, with the
+    org each was relayed under."""
+
+    holders: int = 0
+    rows: list[tuple[UUID, OutboxRow]] = field(default_factory=list)
+
+
 class OutboxRelayImpl(OutboxRelayInterface):
     def __init__(
         self,
@@ -47,11 +59,62 @@ class OutboxRelayImpl(OutboxRelayInterface):
         self._topics = topics
         self._work = work
         self._options = options or OutboxOptions()
+        self._holds: dict[UUID, _Hold] = {}
 
     async def relay(self, org_id: UUID, row: OutboxRow) -> bool:
         return await self.relay_all(org_id, (row,))
 
     async def relay_all(self, org_id: UUID, rows: Sequence[OutboxRow]) -> bool:
+        if self._holds:
+            for row in rows:
+                if (hold := self._holds.get(row.request_id)) is not None:
+                    hold.rows.append((org_id, row))
+            rows = [row for row in rows if row.request_id not in self._holds]
+        return await self._relay_now(org_id, rows)
+
+    def hold(self, request_id: UUID) -> None:
+        self._holds.setdefault(request_id, _Hold()).holders += 1
+
+    def held(self, request_id: UUID) -> int:
+        hold = self._holds.get(request_id)
+        return 0 if hold is None else len(hold.rows)
+
+    async def release(self, request_id: UUID) -> int:
+        hold = self._holds.get(request_id)
+        if hold is None:
+            return 0
+        held, hold.rows = hold.rows, []
+        hold.holders -= 1
+        if hold.holders == 0:
+            del self._holds[request_id]
+        by_org: dict[UUID, list[OutboxRow]] = {}
+        for org_id, row in held:
+            by_org.setdefault(org_id, []).append(row)
+        left = len(held)
+        try:
+            for org_id, rows in by_org.items():
+                await self._relay_now(org_id, rows)
+                left -= len(rows)
+        except asyncio.CancelledError:
+            log.warning("%d outbox rows held for after the answer are left to the sweep", left)
+            raise
+        return len(held)
+
+    def abandon(self, request_id: UUID) -> int:
+        hold = self._holds.get(request_id)
+        if hold is None:
+            return 0
+        hold.holders -= 1
+        if hold.holders > 0:
+            return 0  # the other holder relays them
+        del self._holds[request_id]
+        if hold.rows:
+            log.warning(
+                "%d outbox rows held for after the answer are left to the sweep", len(hold.rows)
+            )
+        return len(hold.rows)
+
+    async def _relay_now(self, org_id: UUID, rows: Sequence[OutboxRow]) -> bool:
         if not rows:
             return True
         try:

@@ -183,6 +183,12 @@ change. A name the image does not host refuses the boot.
 - **Bearer by prefix.** The credential's prefix says what it is: a
   session token, an API key, a login, a ticket, or an operator token. A missing or
   invalid one is a 401; a route asked with the wrong kind is refused.
+- **The answer never waits for the relay.** A write commits its
+  outbox rows before it answers. Their relay, the push and the queued
+  work, runs once the answer is sent, under the same request id and
+  trace. A relay that fails is logged, and the maintenance sweep
+  relays the rows. The latency a route reports is the time to its
+  answer.
 - **Admission.** The process bounds what it has in flight. Past the
   bound a request is refused at once with a 503 and a `Retry-After`,
   so a saturated process answers and says why instead of queueing
