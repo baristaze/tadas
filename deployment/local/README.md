@@ -115,7 +115,7 @@ network, where it cannot reach the host processes.
 | What is running, with health | `dc ps` |
 | Follow one service's logs | `dc logs -f api` |
 | Rebuild and restart only the API after a code change | `dc up -d --build --wait api` |
-| Rebuild the portal (also after changing `VITE_API_URL`) | `dc up -d --build --wait portal` |
+| Rebuild the portal (also after changing `VITE_API_URL`, empty for the page's own origin) | `dc up -d --build --wait portal` |
 | Restart a service without rebuilding | `dc restart maintenance` |
 | Stop the app containers, keep the backing services (to switch to `scripts/dev.sh`) | `dc stop api maintenance portal` |
 | Start only the dashboards | `dc up -d pgweb valkey-admin elasticmq-ui prometheus otel-collector grafana jaeger glitchtip` |
@@ -221,6 +221,6 @@ Everything below needs the `devx` profile (`make up` or `make devx-up`).
 | `postgres` exits right after start | A volume from another Postgres major version. `make reset`, or reset only the database as above. |
 | `api` exits at start with `Failed connecting to valkey` | Valkey was not reachable yet as the API booted. `dc up -d --wait api`. |
 | `port is already allocated` | Another process holds that host port: `lsof -nP -iTCP:<port> -sTCP:LISTEN`. For a dashboard, set its `TADAS_<DASHBOARD>_PORT` in `.env`. |
-| The portal loads but every request fails | The API is down, or the portal was built for another `VITE_API_URL`: `dc ps api`, then rebuild the portal. |
+| The portal loads but every request fails | The API is down, or the portal was built for another `VITE_API_URL`: `dc ps api`, then rebuild the portal. The portal's nginx forwards `/v1` to the `api` container, so both must be up. |
 | The API refuses to start, naming a setting | `.env` predates a rename; compare it with `.env.example`. |
 | `scripts/dev.sh` fails on port 8000 | The `api` container is running: `dc stop api maintenance portal`. |

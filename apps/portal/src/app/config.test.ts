@@ -62,7 +62,13 @@ describe("runtime config", () => {
         devSignIn: true,
       });
     }
-    expect(resolveConfig(null, {}, origin).apiUrl).toBe("http://127.0.0.1:8000");
+  });
+
+  it("calls the API on the page's own origin when no build variable names another", () => {
+    // The dev server and the portal container forward /v1 to the API, as
+    // the cloud's distribution does, so local calls are same-origin too.
+    expect(resolveConfig(null, {}, origin).apiUrl).toBe(origin);
+    expect(resolveConfig(null, { VITE_API_URL: "" }, origin).apiUrl).toBe(origin);
   });
 
   it("offers the local sign-in locally and only where a config names it", () => {
