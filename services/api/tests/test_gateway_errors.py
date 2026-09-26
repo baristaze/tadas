@@ -8,9 +8,9 @@ import httpx
 import pytest
 from fastapi import FastAPI
 
-from tadas.infra.exceptions import BackendFailed
+from tadas.infra.exceptions import BackendFailed, BackendUnreachable
 from tadas.infra.observability import RequestIdFilter
-from tadas.om.exceptions import PlatformException
+from tadas.om.exceptions import PlatformException, Unavailable
 
 
 class Overloaded(PlatformException):
@@ -51,6 +51,39 @@ async def test_a_5xx_message_stays_in_the_log(
     ]
     assert "s3 get failed with AccessDenied" in errors[0].getMessage()
     assert "pool exhausted on db-7" in errors[1].getMessage()
+
+
+async def test_an_unavailable_failure_is_a_warning_and_not_an_error(
+    app: FastAPI, client: httpx.AsyncClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A dependency that did not answer in time is "not right now": the
+    client comes back, so it is logged as a warning, which the error tracker
+    does not take for an event. Read by its code, from either root."""
+
+    @app.get("/database-slow", include_in_schema=False)
+    async def database_slow() -> None:
+        raise Unavailable("the database did not answer in time: a statement passed its deadline")
+
+    @app.get("/backend-slow", include_in_schema=False)
+    async def backend_slow() -> None:
+        raise BackendUnreachable("s3", "get", "ReadTimeoutError")
+
+    caplog.handler.addFilter(RequestIdFilter())
+    with caplog.at_level(logging.WARNING):
+        answers = [await client.get("/database-slow"), await client.get("/backend-slow")]
+
+    for answer in answers:
+        assert answer.status_code == 503
+        assert answer.json()["error"] == {
+            "code": "unavailable",
+            "message": "internal error",
+            "request_id": answer.headers["x-request-id"],
+        }
+    lines = [r for r in caplog.records if r.name == "tadas.services.api.gateway.errors"]
+    assert [(r.levelno, r.request_id) for r in lines] == [  # type: ignore[attr-defined]
+        (logging.WARNING, answer.headers["x-request-id"]) for answer in answers
+    ]
+    assert "a statement passed its deadline" in lines[0].getMessage()
 
 
 async def test_a_refusal_still_names_its_reason(client: httpx.AsyncClient) -> None:

@@ -20,6 +20,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from tadas.infra.observability import RequestIdFilter
 from tadas.infra.topics import EntityChangedPayload, TopicPayload, Topics
 from tadas.om.events.types.event import Event
+from tadas.om.exceptions import Unavailable
 from tadas.om.outbox.impl.relay import OutboxOptions, OutboxRelayImpl
 from tadas.services.api.container import AppContainer
 from tadas.services.api.gateway.relay import RELAY_SPAN
@@ -147,6 +148,31 @@ async def test_a_relay_that_fails_after_the_answer_is_logged_and_the_sweep_relay
     assert await the_sweep(container).relay_pending(10) == 1
     assert [h.target_id for h in heard] == [UUID(response.json()["id"])]
     assert await outbox.oldest_pending_at() is None
+
+
+async def test_a_relay_the_stream_did_not_answer_in_time_is_a_warning(
+    client: httpx.AsyncClient,
+    container: AppContainer,
+    owner: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The stream's database did not answer in time: the sweep relays the rows
+    later, as on any failure of the relay, and the line is a warning, not an
+    error the tracker reports."""
+    events = container.storage.get_event_storage()
+
+    async def not_in_time(org_id: UUID, appended: Sequence[Event]) -> tuple[Event, ...]:
+        raise Unavailable("the database did not answer in time: a statement passed its deadline")
+
+    monkeypatch.setattr(events, "append_events", not_in_time)
+    with caplog.at_level(logging.WARNING, logger="tadas.om.outbox.impl.relay"):
+        response = await client.post("/v1/tasks", headers=owner, json={"title": "write"})
+    assert response.status_code == 201
+    (failed,) = [r for r in caplog.records if r.name == "tadas.om.outbox.impl.relay"]
+    assert failed.levelno == logging.WARNING
+    assert "failed; the sweep retries" in failed.getMessage()
+    assert await container.storage.get_outbox_storage().oldest_pending_at() is not None
 
 
 async def test_the_relay_is_a_span_of_the_request(

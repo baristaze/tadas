@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import re
 from collections.abc import Callable, Sequence
 from datetime import datetime, timedelta
@@ -27,7 +28,7 @@ from tadas.infra.observability import (
 from tadas.om.base import EMPTY_UUID, new_id, utcnow
 from tadas.om.events.impl.manager import EventsOptions
 from tadas.om.events.types.event import Event
-from tadas.om.exceptions import LeaseLost
+from tadas.om.exceptions import LeaseLost, Unavailable
 from tadas.om.idempotency.impl.manager import IdempotencyOptions
 from tadas.om.opcontext import OpContext, RequestContext
 from tadas.om.outbox.storage import OutboxStorageInterface
@@ -356,6 +357,43 @@ async def until(predicate: Callable[[], bool], within: float = 3.0) -> None:
     while not predicate():
         assert asyncio.get_running_loop().time() < deadline, "condition not met in time"
         await asyncio.sleep(0.01)
+
+
+@pytest.mark.parametrize(
+    ("error", "level"),
+    [
+        (
+            Unavailable("the database did not answer in time: a statement passed its deadline"),
+            logging.WARNING,
+        ),
+        (RuntimeError("the claim is broken"), logging.ERROR),
+    ],
+)
+async def test_a_claim_that_fails_is_counted_and_logged_at_its_level(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    error: Exception,
+    level: int,
+) -> None:
+    """The next poll claims again, so a claim that fails is counted and
+    logged, and the loop goes on. A queue that did not answer in time is "not
+    right now", a warning; any other failure is an error the tracker reports."""
+    container = build_container(tmp_path)
+
+    async def refused(*args: object) -> None:
+        raise error
+
+    monkeypatch.setattr(container.managers.work, "claim", refused)
+    before = outcome("worker", "claim_error")
+    with caplog.at_level(logging.WARNING, logger="tadas.workers.maintenance.loop"):
+        loop, task = start_loop(container, RecordingHandler(), fast_options())
+        await until(lambda: outcome("worker", "claim_error") >= before + 2)
+        loop.stop()
+        await task
+    claims = [r for r in caplog.records if r.getMessage() == "claim failed"]
+    assert len(claims) >= 2
+    assert {r.levelno for r in claims} == {level}
 
 
 async def test_claims_within_capacity_and_completes(tmp_path: Path) -> None:

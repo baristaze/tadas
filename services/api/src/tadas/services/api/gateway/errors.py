@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from tadas.infra.exceptions import InfraException
+from tadas.infra.observability import failure_level
 from tadas.om.exceptions import (
     LastOwner,
     PlanLimitReached,
@@ -61,12 +62,16 @@ def presented(
     the process's problem: its message names backends, hosts, and codes the
     client cannot act on, so it goes to the log under the request id and the
     client reads "internal error" with the exception's own code and status.
+    An `unavailable` failure, a dependency that did not answer in time, is
+    logged as a warning and any other as an error (`failure_level`): the
+    first is the client's to retry, the second a defect to look at.
 
     These handlers are reached from a socket too, where the scope carries no
     method, so the line is written from the scope and not from a `Request`
     attribute that only an HTTP scope has."""
     if exc.http_status >= 500:
-        log.error(
+        log.log(
+            failure_level(exc),
             "%s on %s %s: %s",
             exc.code,
             request.scope.get("method", "WEBSOCKET"),
