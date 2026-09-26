@@ -135,13 +135,17 @@ export function billingActions(billing: BillingView): BillingActions {
   };
 }
 
-/** What a failed checkout says: billing not set up here, the processor's
- * refusal with its code and reference, or the server's own words. */
+/** What a failed checkout says: billing not set up here, billing out of
+ * reach until the processor's key is fixed, the processor's refusal with its
+ * code and reference, or the server's own words. */
 export function checkoutFailure(caught: unknown): string {
   if (caught instanceof ApiError) {
     if (caught.code === "billing_unavailable") return "Billing is not set up in this environment.";
+    const reference = caught.requestId ? ` Reference: ${caught.requestId}` : "";
+    if (caught.code === "payments_key_refused") {
+      return `Billing is unavailable right now. Try again later.${reference}`;
+    }
     if (caught.code === "payments_refused") {
-      const reference = caught.requestId ? ` Reference: ${caught.requestId}` : "";
       return `The payment processor refused (payments_refused).${reference}`;
     }
     return caught.message;

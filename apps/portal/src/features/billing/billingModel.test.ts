@@ -151,6 +151,9 @@ describe("the billing page", () => {
     expect(checkoutFailure(new ApiError(503, "billing_unavailable", "internal error", "req_1"))).toBe(
       "Billing is not set up in this environment.",
     );
+    expect(checkoutFailure(new ApiError(503, "payments_key_refused", "internal error", "req_3"))).toBe(
+      "Billing is unavailable right now. Try again later. Reference: req_3",
+    );
     expect(checkoutFailure(new ApiError(502, "payments_refused", "internal error", "req_2"))).toBe(
       "The payment processor refused (payments_refused). Reference: req_2",
     );
