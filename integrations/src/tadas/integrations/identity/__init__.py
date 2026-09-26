@@ -184,13 +184,15 @@ class IdentityProviderInterface(ABC):
 
     @abstractmethod
     async def accepted_invitation(
-        self, *, organization_id: str, user_id: str
+        self, *, organization_id: str, user_id: str, email: str
     ) -> ProvidedInvitation | None:
         """The invitation of the organization the person accepted, when one
         is: the provider's record of who accepted it, which a sign-in reads
         rather than the address the invitation was sent to, since an
         invitation to a company's domain may be accepted with another address
-        of the same domain."""
+        of the same domain. `email` is the person's address: the invitation
+        sent to it is looked for first, and the organization's others only
+        when none of those is the one."""
         ...
 
     @abstractmethod
