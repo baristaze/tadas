@@ -118,7 +118,8 @@ context on keeps the stage the callee needs.
   `expires_at`; invitations by `updated_at`, and redeemed install states
   by `redeemed_at`; idempotency records, delivery marks, and Slack posts
   by `created_at`; the pending markers by `attempt_id`; pending uploads
-  by `(status, created_at)` and settled orchestrations by `(status,
+  by `created_at` over the pending ones, whose status the purge names as
+  the same literal, and settled orchestrations by `(status,
   updated_at)`; events by `produced_at`; and the outbox's dead letters
   `(failed_at)` over the failed ones, beside the `(done_at, id)` the done
   ones walk ([ADR 0045](adr/0045-retention-purges-run-once-a-pass-across-tenants.md)). The seeding
@@ -1197,6 +1198,11 @@ alone, and neither key may touch what the other's work does not need
   leads with the retention column serves each purge across tenants, so a
   tenant with nothing to purge costs the pass nothing there
   ([ADR 0045](adr/0045-retention-purges-run-once-a-pass-across-tenants.md)).
+  Each purge that deletes across tenants plans its statements with their
+  values (`SET LOCAL plan_cache_mode = force_custom_plan`, its
+  transaction's first statement), so a connection whose first runs met a
+  backlog never keeps a plan that reads the whole table on an idle pass
+  ([ADR 0056](adr/0056-purges-across-tenants-plan-with-their-values.md)).
   A purge whose batch comes back full is called again, in turn with the
   other full ones, while the pass's budget lasts
   (`TADAS_WORKER_SWEEP_BUDGET_SECONDS`, 20). Past the budget the pass

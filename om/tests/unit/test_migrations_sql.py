@@ -3,6 +3,7 @@
 import pytest
 from sqlalchemy.dialects import postgresql
 
+from tadas.om.media.types.file import FileStatus
 from tadas.om.storage.migrate import (
     MIGRATIONS_DIR,
     check_role_of_sql,
@@ -156,7 +157,6 @@ PARTIAL_INDEXES = {
     "ix_idempotency_records_attempt_id": "status IS NULL",
     "ix_tasks_deleted_at": "deleted_at IS NOT NULL",
     "ix_files_deleted_at": "deleted_at IS NOT NULL",
-    "ix_files_status_created_at": "deleted_at IS NULL",
     "ix_users_deleted_at": "deleted_at IS NOT NULL",
     "ix_memberships_deleted_at": "deleted_at IS NOT NULL",
     "ix_api_keys_deleted_at": "deleted_at IS NOT NULL",
@@ -202,3 +202,23 @@ def test_the_long_rank_index_and_its_read_spell_one_literal_bound() -> None:
         path.read_text() for path in sorted((MIGRATIONS_DIR / "sql" / "core").glob("*.up.sql"))
     )
     assert f"(org_id, rank) WHERE {predicate};" in chain
+
+
+def test_the_pending_uploads_index_and_the_migration_spell_one_literal() -> None:
+    """The index of pending uploads names the status in its predicate, and
+    the chain builds it with that predicate. The files purge names the status
+    as the same literal, so a generic plan proves the predicate and reads the
+    index; the integration suite reads that plan."""
+    index = next(
+        i
+        for t in role_metadata(DatabaseRole.CORE).tables.values()
+        for i in t.indexes
+        if i.name == "ix_files_created_at_pending"
+    )
+    predicate = f"deleted_at IS NULL AND status = '{FileStatus.PENDING.value}'"
+    assert str(index.dialect_kwargs["postgresql_where"]) == predicate
+    assert [c.name for c in index.columns] == ["created_at"]
+    chain = "\n".join(
+        path.read_text() for path in sorted((MIGRATIONS_DIR / "sql" / "core").glob("*.up.sql"))
+    )
+    assert f"core.files (created_at) WHERE {predicate};" in chain

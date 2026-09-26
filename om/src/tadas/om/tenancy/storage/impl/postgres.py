@@ -15,6 +15,7 @@ from tadas.om.opcontext import Role
 from tadas.om.outbox.storage.tables.outbox_rows import OutboxRows
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.storage.impl.pg_base import (
+    PLAN_WITH_VALUES,
     PgStorageBase,
     delete_batch,
     deleted,
@@ -901,6 +902,8 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
         # Every tenant's rows past the retention, and the sign-in sessions of
         # the system scope with them, so the system scope, spelled here.
         async with self._session_for(gone_users, org_id=EMPTY_UUID) as session:
+            # Planned with its values, so each index serves an idle pass too.
+            await session.execute(PLAN_WITH_VALUES)
             # The users travel back with their tenants: their memberships go
             # with them.
             gone = (await session.execute(gone_users)).all()

@@ -22,13 +22,14 @@ class Files(IdentifiableMixin, NamedMixin, TrackableMixin, SoftDeletableMixin, B
         Index("ix_files_org_id_deleted_at", "org_id", "deleted_at"),
         Index("ix_files_org_id_status_created_at", "org_id", "status", "created_at"),
         # The sweep's two reads across tenants: the deleted files by their
-        # delete, and the live pending uploads by their birth.
+        # delete, and the live pending uploads by their birth. The second
+        # holds the pending uploads alone, so a confirm writes it no entry;
+        # the read names its status as the same literal.
         Index("ix_files_deleted_at", "deleted_at", postgresql_where=text("deleted_at IS NOT NULL")),
         Index(
-            "ix_files_status_created_at",
-            "status",
+            "ix_files_created_at_pending",
             "created_at",
-            postgresql_where=text("deleted_at IS NULL"),
+            postgresql_where=text("deleted_at IS NULL AND status = 'pending'"),
         ),
     )
     key: Mapped[str]

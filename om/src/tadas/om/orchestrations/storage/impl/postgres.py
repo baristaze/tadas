@@ -18,7 +18,7 @@ from tadas.om.orchestrations.types.orchestration import (
 )
 from tadas.om.outbox.storage.tables.outbox_rows import OutboxRows
 from tadas.om.outbox.types.row import OutboxRow
-from tadas.om.storage.impl.pg_base import PgStorageBase, delete_batch, deleted
+from tadas.om.storage.impl.pg_base import PLAN_WITH_VALUES, PgStorageBase, delete_batch, deleted
 from tadas.om.storage.utils.translation import to_model, to_row, to_values
 
 PERIOD_KEY = "uq_orchestrations_org_id_kind_period"
@@ -148,7 +148,9 @@ class OrchestrationsStoragePostgresImpl(PgStorageBase, OrchestrationsStorageInte
             limit=limit,
         )
         # Every tenant's settled records, so the system scope, spelled here.
+        # Planned with its values, so the index serves an idle pass too.
         async with self._session_for(stmt, org_id=EMPTY_UUID) as session:
+            await session.execute(PLAN_WITH_VALUES)
             purged = deleted(await session.execute(stmt))
             await session.commit()
             return purged

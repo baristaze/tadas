@@ -10,7 +10,7 @@ from tadas.om.outbox.rules import MAX_DOUBLINGS
 from tadas.om.outbox.storage import OutboxStorageInterface
 from tadas.om.outbox.storage.tables.outbox_rows import OutboxRows
 from tadas.om.outbox.types.row import OutboxRow
-from tadas.om.storage.impl.pg_base import PgStorageBase, delete_batch, deleted
+from tadas.om.storage.impl.pg_base import PLAN_WITH_VALUES, PgStorageBase, delete_batch, deleted
 from tadas.om.storage.utils.translation import to_model
 
 
@@ -112,13 +112,15 @@ class OutboxStoragePostgresImpl(PgStorageBase, OutboxStorageInterface):
     async def purge_done(self, before: datetime, limit: int) -> int:
         # Two statements, not one with an OR: each branch has an index of its
         # own, `ix_outbox_rows_done_at_id` and the partial
-        # `ix_outbox_rows_failed_at`, and an OR would read neither.
+        # `ix_outbox_rows_failed_at`, and an OR would read neither. Each is
+        # planned with its values, so its index serves an idle pass too.
         purged = 0
         for stmt in (
             delete_batch(OutboxRows, OutboxRows.done_at < before, limit=limit),
             delete_batch(OutboxRows, OutboxRows.failed_at < before, limit=limit),
         ):
             async with self._session_for(stmt, org_id=EMPTY_UUID) as session:
+                await session.execute(PLAN_WITH_VALUES)
                 purged += deleted(await session.execute(stmt))
                 await session.commit()
         return purged
