@@ -1,5 +1,6 @@
-"""`tadas-ops size`: the operator's token reads `/v1/admin/size`, and the
-tenants the traffic generator created are left out of it."""
+"""`tadas-ops size`: the operator's token reads `/v1/admin/size`, the
+tenants the traffic generator created are left out of it, and how long ago
+the worker counted it is printed beside it."""
 
 import argparse
 from pathlib import Path
@@ -37,6 +38,7 @@ def operator_api(request: httpx.Request) -> httpx.Response:
                 "tasks_last_24h": 40,
                 "events_last_24h": 90,
                 "since": "2026-09-19T12:00:00Z",
+                "counted_at": "2026-09-20T12:00:00Z",
             },
         )
     if request.url.path == "/v1/admin/orgs":
@@ -72,6 +74,8 @@ async def test_size_reads_the_operator_plane_with_the_token_and_leaves_run_tenan
     out = capsys.readouterr().out
     assert "tenants                  2" in out and "users                    10" in out
     assert "tasks_last_24h           40" in out
+    assert "counted_at               2026-09-20 12:00:00+00:00" in out
+    assert "counted                  " in out and "s ago, by the maintenance worker's sweep" in out
     assert "traffic run tenants      1 left out (2 users)" in out
 
 
