@@ -6,7 +6,12 @@ from uuid import UUID
 
 from fastapi.responses import JSONResponse
 
-from tadas.services.api.types.common import ErrorBody, ErrorResponse, PlanLimitDetail
+from tadas.services.api.types.common import (
+    ErrorBody,
+    ErrorResponse,
+    PlanLimitDetail,
+    StreamTruncatedDetail,
+)
 
 INTERNAL_ERROR = ("internal_error", "internal error")
 """The code and message a client sees for any failure it cannot act on."""
@@ -19,9 +24,19 @@ def error_response(
     message: str,
     headers: dict[str, str] | None = None,
     plan_limit: PlanLimitDetail | None = None,
+    stream: StreamTruncatedDetail | None = None,
 ) -> JSONResponse:
     body = ErrorResponse(
-        error=ErrorBody(code=code, message=message, request_id=request_id, plan_limit=plan_limit)
+        error=ErrorBody(
+            code=code,
+            message=message,
+            request_id=request_id,
+            plan_limit=plan_limit,
+            stream=stream,
+        )
     )
-    content = body.model_dump(mode="json", exclude_none=plan_limit is None)
+    # A detail the refusal does not carry is absent, not null; a detail it
+    # carries keeps its own null fields.
+    absent = {name for name, value in (("plan_limit", plan_limit), ("stream", stream)) if not value}
+    content = body.model_dump(mode="json", exclude={"error": absent})
     return JSONResponse(status_code=status, content=content, headers=headers)

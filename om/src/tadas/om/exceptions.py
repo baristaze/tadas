@@ -155,6 +155,24 @@ class LeaseLost(WorkException, Conflict):
     """The item is no longer claimed by this worker; another one may hold it."""
 
 
+class EventsException(PlatformException): ...
+
+
+class StreamTruncated(EventsException):
+    """A read of the stream after a seq below the tenant's floor: the events
+    between that seq and the floor are trimmed, so no page can close the gap.
+    The caller stops replaying, reads afresh what it shows, and goes on from
+    `head`. Gone, not a conflict: asking again never succeeds (ADR 0039)."""
+
+    http_status = 410
+    code = "stream_truncated"
+
+    def __init__(self, *, floor: int, head: int) -> None:
+        super().__init__(f"the stream is kept after seq {floor}; read afresh and go on from {head}")
+        self.floor = floor
+        self.head = head
+
+
 class IdempotencyException(PlatformException): ...
 
 

@@ -1,13 +1,23 @@
-from tadas.om.base import Platform
+from datetime import timedelta
+
+from pydantic import Field
+
+from tadas.om.base import Platform, utcnow
 from tadas.om.events.manager import EventsManagerInterface
 from tadas.om.events.storage import EventStorageInterface
 from tadas.om.events.types.event import Event
+from tadas.om.exceptions import StreamTruncated
 from tadas.om.opcontext import OpContext, Permission
 from tadas.om.tenancy import TenancyManagerInterface
 
 
 class EventsOptions(Platform):
     max_limit: int = 500
+    retention: timedelta | None = None
+    """How long a living tenant's events are kept. None keeps every one, and
+    the sweep never moves the floor (ADR 0039)."""
+    trim_batch: int = Field(default=1000, gt=0)
+    """The most events one sweep pass trims from one tenant's stream."""
 
 
 class EventsManagerImpl(EventsManagerInterface):
@@ -36,13 +46,23 @@ class EventsManagerImpl(EventsManagerInterface):
 
     async def get_events(self, ctx: OpContext, after_seq: int, limit: int) -> list[Event]:
         ctx.require(Permission.READ)
-        return await self._storage.read_after(ctx.org_id, max(0, after_seq), self._clamp(limit))
+        after = max(0, after_seq)
+        page = await self._storage.read_after(ctx.org_id, after, self._clamp(limit))
+        # The floor is read after the page. A trim that committed before the
+        # page was read is seen here too, so a page with a hole never leaves.
+        floor = await self._storage.read_floor(ctx.org_id)
+        if after < floor:
+            raise StreamTruncated(floor=floor, head=await self._storage.read_head(ctx.org_id))
+        return page
 
     async def purge_expired(self, ctx: OpContext) -> int:
         ctx.require(Permission.WRITE)
         if await self._tenancy.tenant_expired(ctx):
             return await self._storage.purge_tenant(ctx.org_id)
-        return 0
+        if self._options.retention is None:
+            return 0
+        before = utcnow() - self._options.retention
+        return await self._storage.trim(ctx.org_id, before, self._options.trim_batch)
 
     async def get_head(self, ctx: OpContext) -> int:
         ctx.require(Permission.READ)
