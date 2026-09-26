@@ -10,6 +10,7 @@ from urllib.parse import parse_qs, urlsplit
 
 import httpx
 import pytest
+from workos import AsyncWorkOSClient
 
 from tadas.integrations.exceptions import (
     DeviceDenied,
@@ -331,6 +332,66 @@ async def test_a_network_failure_is_unavailable() -> None:
     made, _ = provider(refuse)
     with pytest.raises(ProviderUnavailable):
         await made.start_device()
+
+
+DEVICE = {
+    "device_code": "dc",
+    "user_code": "ABCD-EFGH",
+    "verification_uri": "https://auth.example/device",
+    "expires_in": 300,
+}
+
+
+def sent_with(seconds: float) -> dict[str, float]:
+    """The timeout a request carries to the transport, as httpx names it."""
+    return {"connect": seconds, "read": seconds, "write": seconds, "pool": seconds}
+
+
+@pytest.mark.parametrize(("setting", "sent"), [(10.0, 10), (2.5, 3), (0.2, 1)])
+async def test_every_call_is_sent_with_the_timeout_from_settings(
+    monkeypatch: pytest.MonkeyPatch, setting: float, sent: int
+) -> None:
+    """The SDK names a timeout on every request, and it overrides the one of
+    the HTTP client it is handed. It takes whole seconds, so the setting is
+    rounded up, never down to none; the environment's is never read."""
+    monkeypatch.setenv("WORKOS_REQUEST_TIMEOUT", "60")
+    recorder = Recorder(lambda r: httpx.Response(200, json=DEVICE))
+    made = IdentityProviderWorkOSImpl(
+        client_id=CLIENT_ID,
+        api_key=API_KEY,
+        timeout=timedelta(seconds=setting),
+        max_retries=0,
+        transport=httpx.MockTransport(recorder),
+    )
+    await made.start_device()
+    [request] = recorder.requests
+    assert request.extensions["timeout"] == sent_with(sent)
+
+
+async def test_a_call_that_times_out_is_tried_again_each_time_under_the_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The SDK's three retries take a timeout too, so a WorkOS that hangs
+    costs four attempts of the timeout, and the call is then unavailable."""
+
+    def no_wait(attempt: int, retry_after: str | None = None) -> float:
+        return 0.0
+
+    monkeypatch.setattr(AsyncWorkOSClient, "_calculate_retry_delay", staticmethod(no_wait))
+
+    def hang(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("no answer", request=request)
+
+    recorder = Recorder(hang)
+    made = IdentityProviderWorkOSImpl(
+        client_id=CLIENT_ID,
+        api_key=API_KEY,
+        timeout=timedelta(seconds=10),
+        transport=httpx.MockTransport(recorder),
+    )
+    with pytest.raises(ProviderUnavailable):
+        await made.start_device()
+    assert [r.extensions["timeout"] for r in recorder.requests] == [sent_with(10)] * 4
 
 
 async def test_an_unprocessable_invitation_is_a_conflict() -> None:

@@ -372,6 +372,7 @@ Tadas already issued are Tadas's own and outlive any key.
 | A deleted org's work sits parked, or fails with `deleting the organization` | As for an account: the key is `off` or WorkOS is down; or WorkOS refused the call | As for an account; the org stays live and empty until the item runs again |
 | An invited person lands somewhere other than Tadas | The invitation was sent from the WorkOS dashboard, which always uses the default application | Invite from Tadas's settings page |
 | An invitation or the Admin Portal link fails | WorkOS is down, or the key was revoked | `/tadas/<env>/api`, then WorkOS's status page |
+| A sign-in waits, then answers `503`: `sign-in is not available: exchanging the sign-in code: WorkOSTimeoutError` | WorkOS does not answer. Each call waits `TADAS_WORKOS_TIMEOUT_SECONDS` (10 seconds), and the SDK tries it three more times, so a call gives up after about 50 seconds | WorkOS's status page, then `/tadas/<env>/api` |
 | A person signs in at WorkOS but Tadas refuses them | Their address is not verified at WorkOS, or single sign-on is not theirs to join (their domain is not verified by the org) | `/tadas/<env>/api`, by the request id the portal shows |
 
 ## When an environment is torn down

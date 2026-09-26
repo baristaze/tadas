@@ -152,7 +152,7 @@ sign-in becomes a person.
 | `TADAS_IDENTITY_PROVIDER` | `workos`, `twin`, or `none` (the default). `twin` is refused at boot outside `local` and `test`. |
 | `TADAS_WORKOS_CLIENT_ID` | The Tadas App application's client id. Not a secret: every authorization URL carries it. Staging's Tadas App serves the local stack and staging; production has its own. |
 | `TADAS_WORKOS_API_KEY` | The Tadas App application's API key, made on that application's own API keys tab, never the environment's API Keys page. A secret, and the process's one WorkOS credential: the client secret of the code exchange (which sends the PKCE verifier as well), and the key of every management call (organizations, invitations, the admin portal), so an invitation carries the application's context. The device sign-in sends no secret. At start the client proves it is the application's key and refuses to boot on any other (ADR 0033). Locally from `.env` or the shell; deployed, injected into the API from the secret store (`<prefix>workos_api_key`). Empty or `off` means not configured: the process starts, says so, and every sign-in through WorkOS answers `503`. |
-| `TADAS_WORKOS_BASE_URL`, `TADAS_WORKOS_TIMEOUT_SECONDS` | Where the client calls, and the timeout on every call (10 seconds). |
+| `TADAS_WORKOS_BASE_URL`, `TADAS_WORKOS_TIMEOUT_SECONDS` | Where the client calls, and the timeout every call is sent with (10 seconds). The SDK takes whole seconds, so a fraction is rounded up. |
 
 The WorkOS environments, the application's redirects, and the key are
 set up as [the WorkOS runbook](../docs/runbooks/providers/workos.md)
@@ -161,7 +161,10 @@ says.
 ## What every integration holds to
 
 - **A timeout on every call.** The real client builds its own HTTP
-  client with the timeout from settings and hands it to the SDK.
+  client with the timeout from settings and hands it to the SDK. An SDK
+  that names a timeout on each request as well gets the same one, since
+  the request's wins over the client's. WorkOS's does, and falls back to
+  60 seconds. A test reads the timeout a request is sent with.
 - **One exception family.** Every provider error is translated into an
   integration exception, each a leaf of infra's (`ProviderUnavailable`
   is a `503`, `ProviderRefused` a `400`, `ProviderConflict` a `409`),
