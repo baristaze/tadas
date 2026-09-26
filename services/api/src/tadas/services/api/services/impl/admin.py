@@ -7,6 +7,7 @@ from tadas.om.idempotency.types.attempt import Attempt
 from tadas.om.opcontext import OperatorContext, OperatorPermission, OperatorRole
 from tadas.om.tasks.types.task import TaskStatus
 from tadas.om.tenancy import TenancyOperatorManagerInterface
+from tadas.om.work import WorkOperatorManagerInterface
 from tadas.services.api.services.admin import AdminServiceInterface
 from tadas.services.api.services.impl.tasks import decode_cursor as decode_task_cursor
 from tadas.services.api.services.impl.tasks import encode_cursor as encode_task_cursor
@@ -19,6 +20,7 @@ from tadas.services.api.types.admin import (
     IssuedTotpSecretView,
     MintOperatorTokenRequest,
     OperatorView,
+    OperatorWorkItemView,
     PlatformSizeView,
     TotpConfirmedView,
 )
@@ -35,10 +37,14 @@ class AdminServiceImpl(AdminServiceInterface):
     the same way from either plane."""
 
     def __init__(
-        self, tenancy: TenancyOperatorManagerInterface, billing: BillingOperatorManagerInterface
+        self,
+        tenancy: TenancyOperatorManagerInterface,
+        billing: BillingOperatorManagerInterface,
+        work: WorkOperatorManagerInterface,
     ) -> None:
         self._tenancy = tenancy
         self._billing = billing
+        self._work = work
 
     async def get_orgs(self, admin: OperatorContext, cursor: str | None, limit: int) -> OrgPageView:
         limit = clamp_limit(limit)
@@ -143,6 +149,11 @@ class AdminServiceImpl(AdminServiceInterface):
         self, admin: OperatorContext, org_id: UUID, body: CompPlanRequest
     ) -> OperatorBillingView:
         return operator_billing(await self._billing.comp_plan(admin, org_id, body.plan))
+
+    async def requeue_work(
+        self, admin: OperatorContext, org_id: UUID, item_id: UUID
+    ) -> OperatorWorkItemView:
+        return OperatorWorkItemView.model_validate(await self._work.requeue(admin, org_id, item_id))
 
 
 def operator_billing(billing: Billing) -> OperatorBillingView:

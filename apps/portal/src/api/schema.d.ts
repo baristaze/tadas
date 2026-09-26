@@ -217,6 +217,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/admin/orgs/{org_id}/work/{item_id}/requeue": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Requeue Work
+         * @description Sends one failed work item back to the queue, available now, with its
+         *     attempts reset; the org's diary names the operator who did. Refused
+         *     with `409 work_not_failed` for an item that is not failed, so a second
+         *     call finds the first one's work done and says so.
+         */
+        post: operations["requeue_work_v1_admin_orgs__org_id__work__item_id__requeue_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/size": {
         parameters: {
             query?: never;
@@ -2028,6 +2051,42 @@ export interface components {
             operator_role: components["schemas"]["OperatorRole"];
         };
         /**
+         * OperatorWorkItemView
+         * @description One background job as an operator reads it: what it does and for
+         *     which record, where it stands, and how many of its attempts are spent.
+         *     The payload and the claim stay the worker's.
+         */
+        OperatorWorkItemView: {
+            /** Attempts */
+            attempts: number;
+            /**
+             * Available At
+             * Format: date-time
+             */
+            available_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            kind: components["schemas"]["WorkKind"];
+            /** Last Error */
+            last_error: string | null;
+            /** Max Attempts */
+            max_attempts: number;
+            status: components["schemas"]["WorkStatus"];
+            /**
+             * Target Id
+             * Format: uuid
+             */
+            target_id: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /**
          * OrchestrationStatus
          * @enum {string}
          */
@@ -2671,6 +2730,16 @@ export interface components {
             /** Error Type */
             type: string;
         };
+        /**
+         * WorkKind
+         * @enum {string}
+         */
+        WorkKind: "NOOP" | "SYNC_SEATS" | "TASK_REMINDER" | "SLACK_POST" | "ORCHESTRATION" | "WAKE_PARKED" | "DELETE_ACCOUNT" | "UNASSIGN_TASKS";
+        /**
+         * WorkStatus
+         * @enum {string}
+         */
+        WorkStatus: "queued" | "claimed" | "done" | "failed";
     };
     responses: never;
     parameters: never;
@@ -3181,6 +3250,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TaskPageView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    requeue_work_v1_admin_orgs__org_id__work__item_id__requeue_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
+            };
+            path: {
+                org_id: string;
+                item_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperatorWorkItemView"];
                 };
             };
             /** @description Validation Error */
