@@ -166,15 +166,17 @@ second lane is a second replica told its lane.
   org, but always one, and the next sweep starts at the org it stopped
   at, so every org is reached in turn.
 
-  Each pass ends with three reads across every tenant, one statement
+  Each pass ends with four reads across every tenant, one statement
   each, whatever the budget: how long the work item ready longest has
   waited, on any lane; how many items failed in the last fifteen
-  minutes and are still failed; and how long ago the oldest outbox row
-  neither relayed nor failed landed. It then logs one line with its
-  duration and the three, as the fields `sweep.duration_ms`,
-  `sweep.work_oldest_ready_seconds`, `sweep.work_failed_recently`, and
-  `sweep.outbox_oldest_pending_seconds`, which the cloud's alarms read.
-  The three are gauges of the same names on `/metrics` too, which
+  minutes and are still failed; how long ago the oldest outbox row
+  neither relayed nor failed landed; and how many outbox rows failed for
+  good in the last fifteen minutes, which the lag no longer sees. It
+  then logs one line with its duration and the four, as the fields
+  `sweep.duration_ms`, `sweep.work_oldest_ready_seconds`,
+  `sweep.work_failed_recently`, `sweep.outbox_oldest_pending_seconds`,
+  and `sweep.outbox_failed_recently`, which the cloud's alarms read.
+  The four are gauges of the same names on `/metrics` too, which
   Grafana draws. A read that fails leaves its field off the line and its
   gauge as it was, so an alarm sees no data rather than a zero.
 

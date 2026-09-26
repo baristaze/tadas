@@ -98,8 +98,10 @@ named with `-dead` after it. Slack's calls in are in
      more (an item failed for good in the last fifteen minutes)
    - outbox lag: `max(tadas_outbox_oldest_pending_seconds)`, alarm above
      300 (the oldest row not yet relayed landed five minutes ago)
+   - outbox dead letter: `max(tadas_outbox_failed_recently)`, alarm at 1
+     or more (a row failed for good in the last fifteen minutes)
 
-   The last three are the worker's sweep reads, one per pass; a local
+   The last four are the worker's sweep reads, one per pass; a local
    stack whose worker is not running has none, which is "not read".
    With `--alarm <name>`, start here and apply the first responder
    rule of step 11 before reading anything else.
@@ -152,26 +154,32 @@ named with `-dead` after it. Slack's calls in are in
    finds it. A running cleanup whose `_succeeded` never follows in a day
    is a step the queue keeps retrying: read the worker's `failed`
    outcomes beside it. The work queue and the outbox are Postgres
-   tables, and each sweep pass reads three numbers of them across every
+   tables, and each sweep pass reads four numbers of them across every
    tenant: `tadas_work_oldest_ready_seconds` (how long the item ready
    longest has waited), `tadas_work_failed_recently` (items failed in the
-   last fifteen minutes and still failed), and
+   last fifteen minutes and still failed),
    `tadas_outbox_oldest_pending_seconds` (how long ago the oldest row not
-   yet relayed landed). Locally they are gauges on Prometheus. In the
-   cloud they are metrics of the same names in `Tadas` with no dimension,
-   which the alarms `tadas-<env>-work-backlog`, `-work-dead-letter`, and
-   `-outbox-lag` read, filtered from the worker's sweep line:
+   yet relayed landed), and `tadas_outbox_failed_recently` (rows failed
+   for good in the last fifteen minutes). Locally they are gauges on
+   Prometheus. In the cloud they are metrics of the same names in `Tadas`
+   with no dimension, which the alarms `tadas-<env>-work-backlog`,
+   `-work-dead-letter`, `-outbox-lag`, and `-outbox-dead-letter` read,
+   filtered from the worker's sweep line:
 
    ```bash
    aws cloudwatch get-metric-data --profile tadas-<env>-investigate \
      --start-time <start> --end-time <end> \
-     --metric-data-queries '[{"Id":"ready","MetricStat":{"Metric":{"Namespace":"Tadas","MetricName":"tadas_work_oldest_ready_seconds"},"Period":60,"Stat":"Maximum"}},{"Id":"failed","MetricStat":{"Metric":{"Namespace":"Tadas","MetricName":"tadas_work_failed_recently"},"Period":60,"Stat":"Maximum"}},{"Id":"outbox","MetricStat":{"Metric":{"Namespace":"Tadas","MetricName":"tadas_outbox_oldest_pending_seconds"},"Period":60,"Stat":"Maximum"}}]'
+     --metric-data-queries '[{"Id":"ready","MetricStat":{"Metric":{"Namespace":"Tadas","MetricName":"tadas_work_oldest_ready_seconds"},"Period":60,"Stat":"Maximum"}},{"Id":"failed","MetricStat":{"Metric":{"Namespace":"Tadas","MetricName":"tadas_work_failed_recently"},"Period":60,"Stat":"Maximum"}},{"Id":"outbox","MetricStat":{"Metric":{"Namespace":"Tadas","MetricName":"tadas_outbox_oldest_pending_seconds"},"Period":60,"Stat":"Maximum"}},{"Id":"dead","MetricStat":{"Metric":{"Namespace":"Tadas","MetricName":"tadas_outbox_failed_recently"},"Period":60,"Stat":"Maximum"}}]'
    ```
 
    A backlog with the maintenance service at its desired count is a
    worker that claims nothing: read its log for `claim failed`. An
    outbox lag is a relay that keeps failing: its log names each attempt,
    `outbox relay of <row id> (<kind>) failed on attempt <n>: <error>`.
+   An outbox dead letter is the last of those attempts: the log says
+   `outbox row <row id> (<kind>) failed for good after <n> attempts:
+   <error>`, and the org's diary holds an `outbox.row.failed` event that
+   names the row's kind and target.
    A work item failed for good is step 7's line. The inbound queues'
    depth and oldest age, and pool checkouts, have no metric of the
    worker's; the cloud reads the pool from the database's connection
