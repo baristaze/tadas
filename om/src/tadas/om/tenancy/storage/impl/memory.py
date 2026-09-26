@@ -12,7 +12,7 @@ from tadas.om.outbox.storage import OutboxLandingInterface
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.storage.impl.memory_base import HasId, MemoryStorageBase, MemoryTable
 from tadas.om.tenancy.rules import email_digest as digest_of
-from tadas.om.tenancy.rules import is_after_in_id_order, is_after_newest_first
+from tadas.om.tenancy.rules import fold_email, is_after_in_id_order, is_after_newest_first
 from tadas.om.tenancy.storage import TenancyStorageInterface
 from tadas.om.tenancy.types.api_key import ApiKey
 from tadas.om.tenancy.types.identity import Identity
@@ -183,7 +183,7 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
         self._require_free(
             self._identities.values(),
             identity,
-            lambda other: other.email == identity.email,
+            lambda other: digest_of(other.email) == digest_of(identity.email),
             "uq_identities_email_digest",
         )
         # uq_identities_issuer_subject: one identity per subject of an issuer.
@@ -492,7 +492,7 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
                     if theirs(org_id, row.user_id):
                         del table[row_id]
             for invitation_id, (org_id, invitation) in list(self._invitations.items()):
-                if invitation.email in {email, email.lower()} or theirs(
+                if invitation.email == fold_email(email) or theirs(
                     org_id, invitation.accepted_user_id
                 ):
                     del self._invitations[invitation_id]
@@ -843,7 +843,7 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
             (
                 i
                 for i in self._rows(self._invitations, org_id)
-                if i.email == email and i.state is InvitationState.PENDING
+                if i.email == fold_email(email) and i.state is InvitationState.PENDING
             ),
             None,
         )

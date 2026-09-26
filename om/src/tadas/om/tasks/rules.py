@@ -21,6 +21,7 @@ from tadas.om.exceptions import ValidationFailed
 from tadas.om.tasks.types.bulk import BulkAction, SkipReason
 from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor, TaskFilter
 from tadas.om.tasks.types.task import Task, TaskScope, TaskStatus
+from tadas.om.tenancy.rules import fold_email
 
 Place = tuple[Decimal, UUID]
 """Where an open task sits: its rank and its id, the pair the open list is
@@ -373,15 +374,15 @@ def parse_import(data: bytes, max_bytes: int, max_rows: int = IMPORT_MAX_ROWS) -
 def import_refusal(row: ImportRow, members: Mapping[str, UUID]) -> str | None:
     """Why a row makes no task, or None when it makes one: a title it lacks
     or one too long, a due date that is not `YYYY-MM-DD`, an assignee who is
-    not a member of the org. `members` maps a member's address, lower-cased,
-    to the member."""
+    not a member of the org. `members` maps a member's address, folded
+    (`tenancy.rules.fold_email`), to the member."""
     if not row.title:
         return "no title"
     if len(row.title) > MAX_TITLE_LENGTH:
         return f"a title is at most {MAX_TITLE_LENGTH} characters"
     if row.due_on and _date(row.due_on) is None:
         return f"due_on {row.due_on!r} is not a date (YYYY-MM-DD)"
-    if row.assignee_email and row.assignee_email.lower() not in members:
+    if row.assignee_email and fold_email(row.assignee_email) not in members:
         return f"{row.assignee_email} is not a member of this org"
     return None
 
@@ -393,7 +394,7 @@ def imported(row: ImportRow, members: Mapping[str, UUID]) -> ImportedTask:
         title=row.title,
         notes=row.notes,
         due_on=_date(row.due_on) if row.due_on else None,
-        assignee_id=members[row.assignee_email.lower()] if row.assignee_email else None,
+        assignee_id=members[fold_email(row.assignee_email)] if row.assignee_email else None,
     )
 
 

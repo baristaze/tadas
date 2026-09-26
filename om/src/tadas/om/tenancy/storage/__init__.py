@@ -272,8 +272,8 @@ class TenancyStorageInterface(ABC):
         memberships, api keys, and socket tickets, every session it holds
         (the tenants' sessions, its sign-ins, and its operator tokens), the
         sign-in delay keyed on the digest of `email`, and every invitation
-        that holds `email` or names one of those users as the one who
-        accepted it. The outbox rows land in the same commit, each under the
+        that holds `email`, folded, or names one of those users as the one
+        who accepted it. The outbox rows land in the same commit, each under the
         tenant it names. A session or an api key that was still live when it
         went lands the row `revocation_row(org_id, kind, id)` builds,
         `tenancy.session.revoked` or `tenancy.api_key.deleted`, so a socket
@@ -548,7 +548,8 @@ class TenancyStorageInterface(ABC):
 
     @abstractmethod
     async def read_pending_invitation(self, org_id: UUID, email: str) -> Invitation | None:
-        """The tenant's pending invitation for the address, expired or not."""
+        """The tenant's pending invitation for the address, in any spelling
+        (`rules.fold_email`), expired or not."""
         ...
 
     @abstractmethod

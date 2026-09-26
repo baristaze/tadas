@@ -82,6 +82,7 @@ from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor, TaskFilter
 from tadas.om.tasks.types.page import TaskPage
 from tadas.om.tasks.types.task import DueReminder, Task, TaskScope, TaskStatus
 from tadas.om.tenancy import TenancyManagerInterface
+from tadas.om.tenancy.rules import fold_email
 from tadas.om.work.types.work_item import (
     SlackPostEvent,
     SlackPostPayload,
@@ -643,14 +644,14 @@ class TasksManagerImpl(TasksManagerInterface):
         return tasks
 
     async def _members(self, ctx: OpContext) -> dict[str, UUID]:
-        """The org's members by address, lower-cased: whom a row may assign."""
+        """The org's members by address, folded: whom a row may assign."""
         members: dict[str, UUID] = {}
         after: UUID | None = None
         while True:
             page = await self._tenancy.get_users(ctx, after, self._options.max_limit)
             for user in page.items:
                 if user.deleted_at is None:
-                    members[user.email.lower()] = user.id
+                    members[fold_email(user.email)] = user.id
             if not page.has_more or not page.items:
                 return members
             after = page.items[-1].id
