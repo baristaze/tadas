@@ -170,7 +170,7 @@ class TenancyOperatorManagerInterface(ABC):
         limit: int,
     ) -> TaskPage:
         """One page of the tenant's tasks in `status`, every task of the team,
-        in the order the tenant's own list reads: the open list by position
+        in the order the tenant's own list reads: the open list by rank
         after an `OpenTaskCursor`, the done list newest first before a
         `TaskCursor`. A cursor of the other list is `ValidationFailed`."""
         ...

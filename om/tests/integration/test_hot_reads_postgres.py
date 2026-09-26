@@ -167,7 +167,7 @@ async def seed_tasks(sessions: LoginSessions, org: UUID) -> list[UUID]:
             await session.execute(
                 text(
                     "INSERT INTO core.tasks (id, org_id, created_at, updated_at, created_by,"
-                    " updated_by, title, notes, status, assignee_id, position, version,"
+                    " updated_by, title, notes, status, assignee_id, rank, version,"
                     " archived_at)"
                     " SELECT uuidv7(), :org, now(), now() - g * interval '1 minute',"
                     " p.a[1 + g % :n], p.a[1 + g % :n], 'Task', '', :status,"
@@ -270,12 +270,12 @@ async def test_the_read_of_the_tenants_with_a_chore_due_walks_two_partial_indexe
         await session.execute(
             text(
                 "INSERT INTO core.tasks (id, org_id, created_at, updated_at, created_by,"
-                " updated_by, title, notes, status, position, rank, version)"
+                " updated_by, title, notes, status, rank, version)"
                 " SELECT uuidv7(), t.a[1 + g % :n], now(),"
                 " CASE WHEN g % 100 = 0 THEN now() - interval '200 days'"
                 " ELSE now() - g * interval '1 minute' END,"
                 " gen_random_uuid(), gen_random_uuid(), 'Task', '',"
-                " CASE WHEN g % 2 = 0 THEN 'done' ELSE 'open' END, g,"
+                " CASE WHEN g % 2 = 0 THEN 'done' ELSE 'open' END,"
                 " CASE WHEN g % 100 = 1 THEN g + 0.0000000000000000000000001 ELSE g END, 1"
                 " FROM generate_series(1, 20000) g, (SELECT CAST(:orgs AS uuid[]) AS a) t"
             ),

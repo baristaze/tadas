@@ -22,7 +22,6 @@ from tadas.om.tasks.rules import (
     is_short,
     is_visible,
     needs_respace,
-    placed,
     rank_after,
     rank_between,
     rank_scale,
@@ -208,10 +207,6 @@ def test_is_after_cuts_the_open_list_by_rank_then_id() -> None:
     assert is_after(task, OpenTaskCursor(rank=D(2), id=UUID(int=task.id.int - 1)))
     assert not is_after(task, OpenTaskCursor(rank=D(2), id=UUID(int=task.id.int + 1)))
     assert is_after(make_task(rank="2.0000000000000000000001"), at), "every digit counts"
-
-
-def test_a_placement_writes_the_rank_and_its_float() -> None:
-    assert placed(D("1.25")) == {"rank": D("1.25"), "position": 1.25}
 
 
 def chain(length: int) -> list[Place]:

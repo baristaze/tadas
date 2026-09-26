@@ -28,7 +28,7 @@ from tadas.om.outbox.impl.relay import OutboxOptions, OutboxRelayImpl
 from tadas.om.outbox.storage.impl.memory import OutboxStorageMemoryImpl
 from tadas.om.outbox.types.row import OutboxRow, outbox_row
 from tadas.om.tasks.impl.manager import TasksManagerImpl, TasksOptions
-from tadas.om.tasks.rules import Place, needs_respace, placed
+from tadas.om.tasks.rules import Place, needs_respace
 from tadas.om.tasks.storage.impl.memory import TasksStorageMemoryImpl
 from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor, TaskFilter
 from tadas.om.tasks.types.task import Task, TaskScope, TaskStatus
@@ -213,17 +213,14 @@ async def test_update_keeps_the_manager_owned_fields_and_takes_the_callers_versi
     second = await manager.create_task(ctx, make_task(ctx, "second"))
     assert Task.MANAGER_OWNED_FIELDS == (
         "rank",
-        "position",
         "version",
         "reminded_at",
         "archived_at",
     )
-    forged = first.model_copy(
-        update={"title": "renamed", "rank": Decimal(-(10**9)), "position": -1e9, "version": 99}
-    )
+    forged = first.model_copy(update={"title": "renamed", "rank": Decimal(-(10**9)), "version": 99})
     updated = await manager.update_task(ctx, forged, first.version)
     assert updated.title == "renamed"
-    assert (updated.rank, updated.position) == (first.rank, first.position)
+    assert updated.rank == first.rank
     assert updated.version == first.version + 1
     assert await open_titles(manager, ctx, TaskScope.TEAM) == ["second", "renamed"]
     stale = second.model_copy(update={"title": "stale"})
@@ -686,7 +683,7 @@ async def test_a_move_after_one_of_two_tasks_that_share_a_rank_goes_after_both(
     storage = manager._storage  # type: ignore[attr-defined]
 
     async def place(task: Task, rank: int) -> None:
-        moved = task.model_copy(update={**placed(Decimal(rank)), "version": task.version + 1})
+        moved = task.model_copy(update={"rank": Decimal(rank), "version": task.version + 1})
         await storage.update_tasks(ctx.org_id, [(moved, task.version, (_row(ctx, moved),))])
 
     for task in (x, y):
@@ -732,7 +729,6 @@ async def test_the_sweep_respaces_a_run_of_long_ranks_and_keeps_the_order(
     assert len(changed) == respaced
     assert all(after[task_id].version == before[task_id].version + 1 for task_id in changed)
     assert top.id not in changed and below.id not in changed and b.id not in changed
-    assert all(after[task_id].position == float(after[task_id].rank) for task_id in changed)
     recorded = await events.get_events(ctx, after_seq=0, limit=1000)
     assert sorted(e.target_id for e in recorded[seen:]) == sorted(changed)
     assert await storage.read_long_place(ctx.org_id) is None
