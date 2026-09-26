@@ -2,7 +2,7 @@ from collections.abc import Sequence
 from datetime import datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import DateTime, Interval, case, func, literal, select, update
+from sqlalchemy import DateTime, Interval, case, func, literal, literal_column, select, update
 from sqlalchemy.sql import Select
 
 from tadas.om.base import EMPTY_UUID, new_id, utcnow
@@ -186,6 +186,25 @@ class WorkStoragePostgresImpl(PgStorageBase, WorkStorageInterface):
             purged = deleted(await session.execute(stmt))
             await session.commit()
             return purged
+
+    async def oldest_ready_at(self, now: datetime) -> datetime | None:
+        # The status is spelled as a literal, not bound: the partial index of
+        # queued items is chosen only where the statement names its predicate,
+        # and a prepared statement's generic plan sees a parameter instead.
+        queued = literal_column(f"'{WorkStatus.QUEUED.value}'")
+        stmt = select(func.min(WorkItems.available_at)).where(
+            WorkItems.status == queued, WorkItems.available_at <= now
+        )
+        # Every tenant's queue, so the system scope, spelled here.
+        async with self._session_for(stmt, org_id=EMPTY_UUID) as session:
+            return (await session.execute(stmt)).scalar_one()
+
+    async def count_failed_since(self, since: datetime) -> int:
+        stmt = select(func.count()).where(
+            WorkItems.status == WorkStatus.FAILED.value, WorkItems.updated_at > since
+        )
+        async with self._session_for(stmt, org_id=EMPTY_UUID) as session:
+            return (await session.execute(stmt)).scalar_one()
 
     async def read_item(self, org_id: UUID, item_id: UUID) -> WorkItem | None:
         stmt = select(WorkItems).where(WorkItems.org_id == org_id, WorkItems.id == item_id)

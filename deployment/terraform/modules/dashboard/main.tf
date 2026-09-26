@@ -5,7 +5,9 @@
 # latency; the rows after them are what only the cloud has: the database,
 # the cache, the queue, and the tasks, then the reads with a latency alarm,
 # the age of each queue's oldest message, and the sweep's pass duration,
-# which the alarms read.
+# which the alarms read. The last row is both dashboards' again: the work
+# queue's oldest ready item, its items failed of late, and the outbox's
+# oldest pending row, which the Postgres queue alarms read.
 #
 # The body is dashboard.json.tftpl, a JSON document with interpolations and
 # nothing else (no template loops), so the test can read it as JSON. The

@@ -18,7 +18,7 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.trace import Link
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
-from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, generate_latest
 from sentry_sdk.scrubber import DEFAULT_DENYLIST, EventScrubber
 
 request_id_var: ContextVar[str | None] = ContextVar("tadas_request_id", default=None)
@@ -61,6 +61,21 @@ SWEEP_SECONDS = Histogram(
     "tadas_sweep_seconds",
     "How long one maintenance sweep pass took",
     buckets=(0.1, 0.5, 1, 2.5, 5, 10, 20, 30, 60, 120),
+)
+# The sweep's reads of the work queue and the outbox, one each per pass, as
+# the pass read them. The same three numbers are fields of the pass's log
+# line, which the alarms read in the cloud; these are what Grafana draws.
+WORK_OLDEST_READY_SECONDS = Gauge(
+    "tadas_work_oldest_ready_seconds",
+    "How long the work item ready longest has waited for a worker, on any lane",
+)
+WORK_FAILED_RECENTLY = Gauge(
+    "tadas_work_failed_recently",
+    "Work items that failed in the last fifteen minutes and are still failed",
+)
+OUTBOX_OLDEST_PENDING_SECONDS = Gauge(
+    "tadas_outbox_oldest_pending_seconds",
+    "How long ago the oldest outbox row that is neither relayed nor failed landed",
 )
 
 

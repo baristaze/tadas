@@ -161,3 +161,7 @@ jobs:
         run: terraform -chdir=deployment/terraform/modules/dashboard init -backend=false -input=false
       - if: matrix.root == 'environments/staging'
         run: terraform -chdir=deployment/terraform/modules/dashboard test
+      - if: matrix.root == 'environments/staging'
+        run: terraform -chdir=deployment/terraform/modules/alarms init -backend=false -input=false
+      - if: matrix.root == 'environments/staging'
+        run: terraform -chdir=deployment/terraform/modules/alarms test

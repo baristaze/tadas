@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import Index
+from sqlalchemy import Index, text
 from sqlalchemy.orm import Mapped
 
 from tadas.om.storage.tables.base import Base, IdentifiableMixin, TrackableMixin
@@ -24,6 +24,13 @@ class WorkItems(IdentifiableMixin, TrackableMixin, Base):
         Index("ix_work_items_lane_status_available_at_id", "lane", "status", "available_at", "id"),
         # The sweep requeues expired leases across tenants.
         Index("ix_work_items_status_lease_expires_at", "status", "lease_expires_at"),
+        # The sweep reads the item ready longest on any lane, for the backlog
+        # alarm: the first entry here. The claim's index leads with the lane.
+        Index(
+            "ix_work_items_available_at_queued",
+            "available_at",
+            postgresql_where=text("status = 'queued'"),
+        ),
     )
     kind: Mapped[str]
     target_id: Mapped[UUID]

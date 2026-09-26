@@ -225,3 +225,24 @@ async def test_a_write_that_also_starts_work_rides_a_second_row_the_relay_enqueu
         )
         is None
     ), "one row, not two"
+
+
+async def test_the_gauge_reads_the_oldest_row_still_pending(infra: InfraLocalImpl) -> None:
+    """How long ago the oldest row neither done nor failed landed, a row
+    waiting out its delay included; zero once every row is settled."""
+    outbox = OutboxStorageMemoryImpl()
+    tasks = TasksStorageMemoryImpl(outbox)
+    org = new_id()
+    poison, fine = make_task(), make_task()
+    poison_row = make_row(org, poison.id, age=timedelta(minutes=7))
+    fine_row = make_row(org, fine.id, age=timedelta(minutes=1))
+    await tasks.create_task(org, poison, (poison_row,))
+    await tasks.create_task(org, fine, (fine_row,))
+    relay = OutboxRelayImpl(
+        outbox, PoisonedEvents(poison_row.id), infra.get_topics(), options=NO_GRACE
+    )
+    assert timedelta(minutes=7) <= await relay.oldest_pending_age() < timedelta(minutes=8)
+    assert await relay.relay_pending(10) == 1
+    assert timedelta(minutes=7) <= await relay.oldest_pending_age() < timedelta(minutes=8)
+    assert await relay.relay_pending(10) == 0  # the poison row's last attempt
+    assert await relay.oldest_pending_age() == timedelta(0)
