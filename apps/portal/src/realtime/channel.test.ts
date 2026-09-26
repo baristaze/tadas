@@ -6,7 +6,7 @@ import { useConnectionStore } from "../store/connection";
 import { CLOSE_UNAUTHENTICATED, openChannel, SOCKET_OPEN, type Channel, type SocketLike } from "./channel";
 import type { Envelope } from "./envelopes";
 import { watchPage, type PageLike } from "./pageVisibility";
-import { DEGRADED_POLL_INTERVAL_MS, HIDDEN_PAUSE_MS, PING_INTERVAL_MS, STABLE_OPEN_MS } from "./timeouts";
+import { backoffDelay, DEGRADED_POLL_INTERVAL_MS, HIDDEN_PAUSE_MS, PING_INTERVAL_MS, STABLE_OPEN_MS } from "./timeouts";
 
 class FakeSocket implements SocketLike {
   readyState = 0;
@@ -112,9 +112,27 @@ afterEach(() => {
   channel?.stop();
   channel = null;
   vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
 describe("reconnect backoff", () => {
+  // Each wait is drawn from a window, and the windows of two attempts meet:
+  // the second one opens where the first one closes. A check timed on that
+  // edge passes or fails by the draw. So a test that times a reconnect runs
+  // at both ends of the jitter, with Math.random fixed, and waits exactly the
+  // delay drawn. 1 - 2 ** -53 is the largest double below 1, the top of what
+  // Math.random may answer.
+  const JITTER_ENDS = [
+    { end: "shortest", draw: 0 },
+    { end: "longest", draw: 1 - 2 ** -53 },
+  ];
+
+  /** Fixes the jitter at `draw` for this test; answers the wait of each attempt. */
+  function jitterAt(draw: number): (attempt: number) => number {
+    vi.spyOn(Math, "random").mockReturnValue(draw);
+    return (attempt) => backoffDelay(attempt, () => draw);
+  }
+
   it("signs out on a 4401 close and never reconnects", async () => {
     const h = harness();
     channel = h.channel;
@@ -143,7 +161,8 @@ describe("reconnect backoff", () => {
     expect(h.sockets).toHaveLength(1);
   });
 
-  it("keeps backing off while the server accepts and closes at once", async () => {
+  it.each(JITTER_ENDS)("keeps backing off while the server accepts and closes at once, each wait at its $end", async ({ draw }) => {
+    const wait = jitterAt(draw);
     const h = harness();
     channel = h.channel;
     await flush();
@@ -151,34 +170,35 @@ describe("reconnect backoff", () => {
     h.sockets[0]!.drop();
     expect(h.requestTicket).toHaveBeenCalledTimes(1);
 
-    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.advanceTimersByTimeAsync(wait(1));
     expect(h.requestTicket).toHaveBeenCalledTimes(2);
     h.sockets[1]!.accept();
     h.sockets[1]!.drop();
 
     // The second try waits twice as long: an accept without a hello is not a connection.
-    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.advanceTimersByTimeAsync(wait(2) - 1);
     expect(h.requestTicket).toHaveBeenCalledTimes(2);
-    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.advanceTimersByTimeAsync(1);
     expect(h.requestTicket).toHaveBeenCalledTimes(3);
     expect(useConnectionStore.getState().status).not.toBe("open");
   });
 
-  it("starts the backoff over once the hello frame has arrived", async () => {
+  it.each(JITTER_ENDS)("starts the backoff over once the hello frame has arrived, each wait at its $end", async ({ draw }) => {
+    const wait = jitterAt(draw);
     const h = harness();
     channel = h.channel;
     await flush();
     h.sockets[0]!.accept();
     h.sockets[0]!.drop();
-    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.advanceTimersByTimeAsync(wait(1));
     h.sockets[1]!.accept();
     expect(useConnectionStore.getState().status).toBe("connecting");
     h.sockets[1]!.receive(hello(5));
     expect(useConnectionStore.getState().status).toBe("open");
     h.sockets[1]!.drop();
 
-    // Back to the first delay.
-    await vi.advanceTimersByTimeAsync(1_000);
+    // Back to the first delay, which is half the second one.
+    await vi.advanceTimersByTimeAsync(wait(1));
     expect(h.requestTicket).toHaveBeenCalledTimes(3);
   });
 
@@ -235,18 +255,20 @@ describe("reconnect backoff", () => {
     expect(useConnectionStore.getState().status).toBe("connecting");
   });
 
-  it("counts a socket that stays open long enough as connected even without a hello", async () => {
+  it.each(JITTER_ENDS)("counts a socket that stays open long enough as connected even without a hello, each wait at its $end", async ({ draw }) => {
+    const wait = jitterAt(draw);
     const h = harness();
     channel = h.channel;
     await flush();
     h.sockets[0]!.accept();
     h.sockets[0]!.drop();
-    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.advanceTimersByTimeAsync(wait(1));
     h.sockets[1]!.accept();
     await vi.advanceTimersByTimeAsync(STABLE_OPEN_MS);
     expect(useConnectionStore.getState().status).toBe("open");
     h.sockets[1]!.drop();
-    await vi.advanceTimersByTimeAsync(1_000);
+    // Back to the first delay.
+    await vi.advanceTimersByTimeAsync(wait(1));
     expect(h.requestTicket).toHaveBeenCalledTimes(3);
   });
 
