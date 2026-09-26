@@ -141,7 +141,13 @@ Zustand, one realtime channel.
   none says so. The exchange turns the choice into the one session the tab
   holds. One choice sends one exchange: while it is in flight the picker's
   buttons are disabled, and a click that still gets through is dropped
-  (`src/app/oneAtATime.ts`). The org chip in the chrome (`src/app/OrgChip.tsx`) shows the
+  (`src/app/oneAtATime.ts`). A sign-in over a tab that is still signed in
+  replaces the session the tab held (`src/app/takeUpSignIn.ts`): the new
+  one is taken up first, then the old one is ended at the server with its
+  own token, the logout a sign-out makes. That is best effort, and a
+  session the server could not end lapses when it expires. The logout's
+  answer may name the identity provider's logout; the tab does not go
+  there, since the person is signing in, not out. The org chip in the chrome (`src/app/OrgChip.tsx`) shows the
   current org and marks a personal one. Its name goes home, to the task
   list; its caret opens a menu: the other places to
   switch to, and a new team org (`/orgs/new`, `src/features/new_org/`: a

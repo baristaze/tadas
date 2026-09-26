@@ -222,7 +222,10 @@ context on keeps the stage the callee needs.
   presented with a session is a switch: `replace_session` revokes it and
   lands the new one in one transaction, each statement under its own
   tenant's scope, with the revocation's outbox row, so the old socket
-  closes. One person is a
+  closes. A sign-in over a tab or a terminal that still holds a session
+  presents the login, not the session, so the client ends the held
+  session itself once the new one is taken up: a best-effort
+  `/v1/auth/logout` with the old token (ADR 0047). One person is a
   member of at most `max_orgs_per_identity` orgs (100, an option of both
   tenancy managers). Every read of the users one identity is asks for
   one past the bound; an add or an org create past it is

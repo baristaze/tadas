@@ -4,8 +4,10 @@ import { useNavigate } from "react-router-dom";
 import { adoptSession } from "../../app/adoptSession";
 import { errorMessage } from "../../app/errorMessage";
 import { inFlight, oneAtATime } from "../../app/oneAtATime";
-import { useExchangeSession } from "../../queries/tenancy";
+import { takeUpSignIn } from "../../app/takeUpSignIn";
+import { useEndReplacedSession, useExchangeSession } from "../../queries/tenancy";
 import { useNoticesStore } from "../../store/notices";
+import { useSessionStore } from "../../store/session";
 import { chooseOrg, landingPath, type OrgChoice } from "./signInModel";
 
 /** The step every sign-in ends in: the person's places, one goes straight
@@ -15,6 +17,7 @@ export function useEnterOrg() {
   const navigate = useNavigate();
   const notify = useNoticesStore((s) => s.notify);
   const exchange = useExchangeSession();
+  const endReplaced = useEndReplacedSession();
   const [choice, setChoice] = useState<OrgChoice>({ kind: "none" });
   const [held, setHeld] = useState<{ token: string; returnTo: string } | null>(null);
   const choosing = useRef(inFlight());
@@ -22,8 +25,13 @@ export function useEnterOrg() {
   const enter = async (token: string, membership: MembershipChoiceView, returnTo: string) => {
     const issued = await exchange.mutateAsync({ loginToken: token, body: { org_id: membership.org.id } });
     // A tab already signed in (another org, another person) drops that
-    // session first, so nothing fetched under it is shown under this one.
-    adoptSession(issued);
+    // session here, so nothing fetched under it is shown under this one,
+    // and the server ends it after, so it does not outlive the tab's hold.
+    void takeUpSignIn(issued, {
+      held: () => useSessionStore.getState().token,
+      adopt: adoptSession,
+      end: (held) => endReplaced.mutateAsync(held),
+    });
     navigate(landingPath(returnTo), { replace: true });
   };
 
