@@ -32,7 +32,7 @@ served to it. Exposure is by listing, never by folder.
 - [Terraform](deployment/terraform/modules/README.md): the roots, the modules, the state, the credentials, and the portal's CDN, which serves the API's paths too
 - [Cloud cost](deployment/cloud/README.md): the five sizes, each environment's size, the postures and their budgets
 - [Operations](ops/README.md): roles, profiles, credentials, signals, the ops binary, the skills, the audits, the first responder
-- [Audit tools](ops/audit/README.md): what the audit skills run: a database of the run's own, the heavy seed, the plans, the database call counter, and the deploy timeline
+- [Audit tools](ops/audit/README.md): what the audit skills run: a database of the run's own, the heavy seed, the plans, the database and provider call counter, and the deploy timeline
 - [Stress tests](ops/stress/README.md): what a good one is and the scenario file
 - [Runbooks](docs/runbooks/README.md): one file per operational procedure
 - [Deploy runbook](docs/runbooks/deploy.md): cutting a release, approving a plan, rolling back
@@ -51,7 +51,7 @@ served to it. Exposure is by listing, never by folder.
 ## Platform operators
 
 - [Operations](ops/README.md): roles, profiles, credentials, signals, the ops binary, the skills, the audits, the first responder, what an operator never does
-- [Audit tools](ops/audit/README.md): what the audit skills run: a database of the run's own, the heavy seed, the plans, the database call counter, and the deploy timeline
+- [Audit tools](ops/audit/README.md): what the audit skills run: a database of the run's own, the heavy seed, the plans, the database and provider call counter, and the deploy timeline
 - [Stress tests](ops/stress/README.md): what a good one is and the scenario file
 - [Runbooks](docs/runbooks/README.md): one file per operational procedure
 - [Deploy runbook](docs/runbooks/deploy.md): cutting a release, approving a plan, rolling back

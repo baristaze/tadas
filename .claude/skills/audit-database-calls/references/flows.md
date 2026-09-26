@@ -53,7 +53,15 @@ What a flow has on `w`, the `World`:
 - `w.container` (the API's managers and services), `w.worker` (the
   worker's container), `w.loop` (the worker loop: `_try_claim`,
   `_sweep_once`), `w.idp` (the identity twin: `issue_code`,
-  `confirm_device`), `w.integrations` (the payments and Slack twins).
+  `confirm_device`), `w.integrations` (the payments and Slack twins:
+  `get_payments()`, which is also `w.container.payments`, and
+  `get_slack()`; the twins' tests under `integrations/tests/` show
+  their helpers, such as `complete_checkout` and `signed`). A billing
+  `return_url` is on an origin the API allows (`cors_origins`,
+  `http://localhost:5173`); a sign-in's redirect is on `55173`. A
+  queue's consumer runs through the worker's
+  `build_consumer(w.worker)` and `build_inbound(w.worker)` (in
+  `workers/maintenance/src/tadas/workers/maintenance/main.py`).
 - `await w.sql("<statement>")`: a statement as the superuser on the
   audit database, uncounted, for setup no route makes, such as aging
   rows past a retention or making an item ready now.
