@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from datetime import datetime, timedelta
 from uuid import UUID
 
@@ -52,11 +53,13 @@ class OutboxStorageMemoryImpl(OutboxStorageInterface, OutboxLandingInterface):
             claimed.append(spent)
         return claimed
 
-    async def mark_done(self, org_id: UUID, row_id: UUID) -> None:
-        found = self._rows.get(row_id)
-        if found is None or found[0] != org_id or found[1].done_at is not None:
-            return
-        self._rows[row_id] = (org_id, found[1].model_copy(update={"done_at": utcnow()}))
+    async def mark_done(self, org_id: UUID, row_ids: Sequence[UUID]) -> None:
+        now = utcnow()
+        for row_id in row_ids:
+            found = self._rows.get(row_id)
+            if found is None or found[0] != org_id or found[1].done_at is not None:
+                continue
+            self._rows[row_id] = (org_id, found[1].model_copy(update={"done_at": now}))
 
     async def record_failure(
         self, org_id: UUID, row_id: UUID, error: str, failed_at: datetime | None

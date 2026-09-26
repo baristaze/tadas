@@ -21,7 +21,7 @@ from tadas.om.events.types.event import Event
 from tadas.om.opcontext import AppContext, AppType, OpContext, RequestContext
 from tadas.om.outbox.impl.relay import DEAD_LETTER_KIND, OutboxOptions, OutboxRelayImpl
 from tadas.om.outbox.storage.impl.memory import OutboxStorageMemoryImpl
-from tadas.om.outbox.types.row import outbox_row, snapshot
+from tadas.om.outbox.types.row import OutboxRow, outbox_row, snapshot
 from tadas.om.root import Managers, build_managers
 from tadas.om.storage.impl.memory import StorageMemoryImpl
 from tadas.om.tasks.storage.impl.memory import TasksStorageMemoryImpl
@@ -131,7 +131,7 @@ async def test_purge_takes_done_and_failed_rows_past_the_retention(infra: InfraL
     done_row, failed_row = make_row(org, done.id), make_row(org, failed.id)
     await tasks.create_task(org, done, (done_row,))
     await tasks.create_task(org, failed, (failed_row,))
-    await outbox.mark_done(org, done_row.id)
+    await outbox.mark_done(org, [done_row.id])
     await outbox.record_failure(org, failed_row.id, "for good", utcnow())
     relay = OutboxRelayImpl(outbox, EventStorageMemoryImpl(), infra.get_topics())
     assert await relay.purge_done(timedelta(hours=1), 1000) == 0
@@ -246,3 +246,98 @@ async def test_the_gauge_reads_the_oldest_row_still_pending(infra: InfraLocalImp
     assert timedelta(minutes=7) <= await relay.oldest_pending_age() < timedelta(minutes=8)
     assert await relay.relay_pending(10) == 0  # the poison row's last attempt
     assert await relay.oldest_pending_age() == timedelta(0)
+
+
+class CountedMarks(OutboxStorageMemoryImpl):
+    """Counts the calls that mark rows done, and how many rows each named."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.marks: list[int] = []
+
+    async def mark_done(self, org_id: UUID, row_ids: Sequence[UUID]) -> None:
+        self.marks.append(len(row_ids))
+        await super().mark_done(org_id, row_ids)
+
+
+async def landed_rows(outbox: OutboxStorageMemoryImpl, org: UUID, count: int) -> list[OutboxRow]:
+    tasks = TasksStorageMemoryImpl(outbox)
+    rows: list[OutboxRow] = []
+    for _ in range(count):
+        task = make_task()
+        rows.append(make_row(org, task.id))
+        await tasks.create_task(org, task, (rows[-1],))
+    return rows
+
+
+async def test_a_batch_is_marked_done_in_one_call_and_relaying_it_again_changes_nothing(
+    infra: InfraLocalImpl,
+) -> None:
+    outbox = CountedMarks()
+    events = EventStorageMemoryImpl()
+    org = new_id()
+    rows = await landed_rows(outbox, org, 5)
+    relay = OutboxRelayImpl(outbox, events, infra.get_topics())
+    assert await relay.relay_all(org, rows)
+    assert outbox.marks == [5], "one mark for the batch, not one a row"
+    first = {r.id: r.done_at for _, r in outbox._rows.values()}
+    assert all(first[row.id] is not None for row in rows)
+    appended = await events.read_after(org, 0, 10)
+    assert [e.id for e in appended] == [row.id for row in rows]
+
+    # A second relay of the same rows, as the sweep makes after a crash
+    # between the append and the mark: the same events, and the marks stand.
+    assert await relay.relay_all(org, rows)
+    assert await events.read_after(org, 0, 10) == appended
+    assert {r.id: r.done_at for _, r in outbox._rows.values()} == first
+
+
+async def test_a_row_settled_meanwhile_keeps_its_mark_and_the_batch_lands(
+    infra: InfraLocalImpl,
+) -> None:
+    """The mark is conditional per row: a row the sweep relayed while this
+    batch was on its way keeps the time it was marked, and a row failed for
+    good stays failed and out of every claim."""
+    outbox = CountedMarks()
+    org = new_id()
+    rows = await landed_rows(outbox, org, 3)
+    relay = OutboxRelayImpl(outbox, EventStorageMemoryImpl(), infra.get_topics())
+    await outbox.mark_done(org, [rows[0].id])
+    marked = {r.id: r for _, r in outbox._rows.values()}[rows[0].id].done_at
+    assert await relay.relay_all(org, rows)
+    stored = {r.id: r for _, r in outbox._rows.values()}
+    assert stored[rows[0].id].done_at == marked
+    assert all(stored[row.id].done_at is not None for row in rows[1:])
+    assert await claim_all(outbox) == []
+
+
+async def test_a_failed_batch_marks_nothing_and_the_sweep_relays_it(
+    infra: InfraLocalImpl,
+) -> None:
+    outbox = CountedMarks()
+    org = new_id()
+    rows = await landed_rows(outbox, org, 3)
+    relay = OutboxRelayImpl(outbox, PoisonedEvents(rows[1].id), infra.get_topics())
+    assert not await relay.relay_all(org, rows)
+    assert outbox.marks == []
+    assert {r.id for r in await claim_all(outbox)} == {row.id for row in rows}
+
+
+async def test_the_sweep_relays_each_tenants_rows_together(infra: InfraLocalImpl) -> None:
+    """One mark a tenant when its rows relay; when one of them fails, the
+    rest of that tenant's rows relay one by one and the failing one keeps
+    its own error and attempt, while the other tenant is untouched by it."""
+    outbox = CountedMarks()
+    ann, bob = new_id(), new_id()
+    ann_rows = await landed_rows(outbox, ann, 3)
+    bob_rows = await landed_rows(outbox, bob, 4)
+    events = PoisonedEvents(ann_rows[1].id)
+    relay = OutboxRelayImpl(outbox, events, infra.get_topics(), options=NO_GRACE)
+    assert await relay.relay_pending(100) == 6
+    assert sorted(outbox.marks) == [1, 1, 4], "bob's four at once; ann's two one by one"
+    stored = {r.id: r for _, r in outbox._rows.values()}
+    poison = stored[ann_rows[1].id]
+    assert poison.done_at is None and poison.attempts == 1
+    assert poison.last_error == "RuntimeError: cannot append this one"
+    assert all(stored[row.id].done_at is not None for row in (*bob_rows, ann_rows[0], ann_rows[2]))
+    assert len(await events.read_after(bob, 0, 10)) == 4

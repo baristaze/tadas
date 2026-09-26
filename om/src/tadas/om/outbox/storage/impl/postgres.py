@@ -1,7 +1,9 @@
+from collections.abc import Sequence
 from datetime import datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import DateTime, Interval, func, literal, or_, select, update
+from sqlalchemy import DateTime, Interval, Uuid, any_, bindparam, func, literal, or_, select, update
+from sqlalchemy.dialects.postgresql import ARRAY
 
 from tadas.om.base import EMPTY_UUID, utcnow
 from tadas.om.outbox.rules import MAX_DOUBLINGS
@@ -62,11 +64,16 @@ class OutboxStoragePostgresImpl(PgStorageBase, OutboxStorageInterface):
             await session.commit()
             return claimed
 
-    async def mark_done(self, org_id: UUID, row_id: UUID) -> None:
+    async def mark_done(self, org_id: UUID, row_ids: Sequence[UUID]) -> None:
+        if not row_ids:
+            return
+        # One array parameter, not an IN list: the statement is the same text
+        # for one row or a hundred, so one prepared statement serves them all.
+        ids = bindparam("row_ids", list(row_ids), type_=ARRAY(Uuid()))
         stmt = (
             update(OutboxRows)
             .where(
-                OutboxRows.id == row_id,
+                OutboxRows.id == any_(ids),
                 OutboxRows.org_id == org_id,
                 OutboxRows.done_at.is_(None),
             )

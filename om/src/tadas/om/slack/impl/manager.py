@@ -347,5 +347,4 @@ class SlackManagerImpl(SlackManagerInterface):
         portal's settings hear it and read the installation again. Ids only."""
         rows = (outbox_row(ctx, f"slack.installation.{action}", installation.id, {}),)
         await self._storage.write_installation(ctx.org_id, installation, rows)
-        for row in rows:
-            await self._relay.relay(ctx.org_id, row)
+        await self._relay.relay_all(ctx.org_id, rows)

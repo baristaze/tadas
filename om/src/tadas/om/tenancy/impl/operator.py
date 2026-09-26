@@ -346,8 +346,7 @@ class TenancyOperatorManagerImpl(TenancyOperatorManagerInterface):
         # Each member's removal, so a socket closes because its person left,
         # then each revocation. Every row is durable already: whatever a crash
         # leaves unrelayed, the sweep relays.
-        for landed in (work, *ended):
-            await self._relay.relay(org_id, landed)
+        await self._relay.relay_all(org_id, (work, *ended))
         log.info("operator %s deleted org %s", admin.identity_id, org_id)
         return closed
 

@@ -297,8 +297,7 @@ class BillingManagerImpl(BillingManagerInterface):
         )
         applied = await self._storage.write_account(ctx.org_id, updated, rows, mark)
         if applied:
-            for row in rows:
-                await self._relay.relay(ctx.org_id, row)
+            await self._relay.relay_all(ctx.org_id, rows)
             log.info(
                 "applied %s %s to org %s",
                 delivery.event_type,
@@ -361,8 +360,7 @@ class BillingManagerImpl(BillingManagerInterface):
                 *wake_rows(ctx, ctx.org_id, None, created, now),
             )
             if await self._storage.create_account(ctx.org_id, created, rows):
-                for row in rows:
-                    await self._relay.relay(ctx.org_id, row)
+                await self._relay.relay_all(ctx.org_id, rows)
                 return billing_of(created, now)
             account = await self._storage.read_account(ctx.org_id)
             if account is None:
@@ -406,8 +404,7 @@ class BillingManagerImpl(BillingManagerInterface):
         )
         rows = (outbox_row(ctx, ACCOUNT_CREATED, created.id, {}),)
         if await self._storage.create_account(ctx.org_id, created, rows):
-            for row in rows:
-                await self._relay.relay(ctx.org_id, row)
+            await self._relay.relay_all(ctx.org_id, rows)
             return created
         # Another start raced this one and made the account first; the
         # processor's idempotency key made them one customer.
@@ -427,5 +424,4 @@ class BillingManagerImpl(BillingManagerInterface):
     ) -> None:
         rows = (*self._rows(ctx, account), *work)
         await self._storage.write_account(ctx.org_id, account, rows)
-        for row in rows:
-            await self._relay.relay(ctx.org_id, row)
+        await self._relay.relay_all(ctx.org_id, rows)

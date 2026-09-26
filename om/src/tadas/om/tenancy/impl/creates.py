@@ -348,6 +348,5 @@ async def add_member_to(
     await storage.create_member(
         org_id, user, membership, rows, to_write, personal, invitation=invitation
     )
-    for landed in rows:
-        await relay.relay(org_id, landed)
+    await relay.relay_all(org_id, rows)
     return user, True

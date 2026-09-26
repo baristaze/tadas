@@ -1533,8 +1533,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
         # their membership ended, not because a credential was revoked; then
         # each revocation, as the record it is. Every row is durable already:
         # whatever a crash leaves unrelayed, the sweep relays.
-        for landed in (*rows, *revocations):
-            await self._relay.relay(ctx.org_id, landed)
+        await self._relay.relay_all(ctx.org_id, (*rows, *revocations))
         return removed
 
     async def delete_account(
@@ -1623,8 +1622,11 @@ class TenancyManagerImpl(TenancyManagerInterface):
         # Each removal first, so a socket closes because its person left;
         # then each revocation, as the record it is. Every row is durable
         # already: whatever a crash leaves unrelayed, the sweep relays.
+        by_org: dict[UUID, list[OutboxRow]] = {}
         for landed in (*rows, *revocations):
-            await self._relay.relay(landed.org_id, landed)
+            by_org.setdefault(landed.org_id, []).append(landed)
+        for org_id, landed_rows in by_org.items():
+            await self._relay.relay_all(org_id, landed_rows)
         log.info("identity %s deleted its account", identity.id)
         provider_logout = None if asking is None else self._provider_logout(asking, return_to)
         return AccountDeleted(deleted_at=now, provider_logout_url=provider_logout)
@@ -1724,8 +1726,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
         # Each member's removal first, so a socket closes because its person
         # left; then each revocation, as the record it is. Every row is
         # durable already: whatever a crash leaves unrelayed, the sweep relays.
-        for landed in (work, *ended):
-            await self._relay.relay(ctx.org_id, landed)
+        await self._relay.relay_all(ctx.org_id, (work, *ended))
         log.info("owner %s deleted org %s", ctx.user_id, org.id)
         landing = None if asking is None else await self._land_home(user, asking)
         return OrgDeleted(deleted_at=now, session=landing)
