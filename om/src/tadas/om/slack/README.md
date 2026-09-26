@@ -45,6 +45,10 @@ what Tadas posted there. This is one of the kinds of thing
   archived, or Tadas was removed from it), or refuses to renew the token,
   the installation says so and posting stops until someone binds a
   channel again or installs again.
+- **Mend.** When someone invites Tadas back to the channel it posts to
+  (`/invite @tadas`), Slack says so, and an installation that channel
+  broke is well again: posting resumes, with no `/tadas connect` and no
+  new install. A token Slack refused still takes a new install.
 - **Uninstall.** An owner or an admin clicks **Remove from Slack**; or
   someone removes the app in Slack, and Slack tells Tadas. Either way the
   token is deleted and the installation ends.

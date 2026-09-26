@@ -561,7 +561,10 @@ context on keeps the stage the callee needs.
   and its refresh token works once, so `bot_token` renews it an hour
   before expiry, one renewal at a time (a conditional write on
   `refreshing_until`), and keeps the new pair before using it; a
-  renewal Slack refuses marks the installation broken. Starting an
+  renewal Slack refuses marks the installation broken, and so does a
+  post Slack refuses for its channel. The bot's join to the bound
+  channel (`bot_joined`, from Slack's `member_joined_channel`) mends a
+  channel's break; a token's stays until a new install. Starting an
   install, binding the channel, and uninstalling need
   `MANAGE_MEMBERS`. Two operations take the request stage, because
   Slack's calls carry no tenant: `finish_install` finds the org from
@@ -1377,7 +1380,7 @@ alone, and neither key may touch what the other's work does not need
   Beside the loop, `serve` consumes the `slack` queue: each command or
   event the API checked and acknowledged is handled (`/tadas`, `/tadas
   team`, `/tadas add`, `/tadas connect`, `/tadas help`, a mention, the
-  App Home, an uninstall) and deleted, and one whose handling failed
+  App Home, an uninstall, the bot joining a channel) and deleted, and one whose handling failed
   for a reason a retry can change is left for the queue to hand back.
   The person typing is the org's member whose identity holds the email
   Slack gives for them (`users.info`). The Slack client is the one of

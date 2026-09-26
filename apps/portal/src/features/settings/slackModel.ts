@@ -38,11 +38,14 @@ export function brokenReasonText(reason: string | null): string {
     return "Slack no longer accepts the install's token: add Tadas to Slack again.";
   }
   switch (reason) {
+    // Slack tells Tadas when @tadas joins the channel again, and posting
+    // resumes by itself: no /tadas connect, no new install.
     case "not_in_channel":
-      return `@tadas is not in the channel: type ${INVITE_COMMAND} in it, then ${CONNECT_COMMAND}.`;
+      return `@tadas is not in the channel: type ${INVITE_COMMAND} in it, and posting resumes.`;
     case "channel_not_found":
+      return `The channel was deleted, or @tadas was removed from it: type ${INVITE_COMMAND} in it, and posting resumes; or type ${CONNECT_COMMAND} in another.`;
     case "is_archived":
-      return `The channel was deleted or archived: type ${CONNECT_COMMAND} in another.`;
+      return `The channel was archived: type ${CONNECT_COMMAND} in another.`;
     default:
       return reason
         ? `Slack refuses posts to the channel (${reason}): type ${CONNECT_COMMAND} in it again, or in another.`
