@@ -98,10 +98,16 @@ async def follow(
         if state == "reconnecting":
             print("connection lost; reconnecting", file=err, flush=True)
 
+    changes = aiter(channel(client, on_state, read))
     try:
-        async for change in channel(client, on_state, read):
+        async for change in changes:
             if change.entity == ENTITY and change.target_id == import_id:
                 await read()
     except Stopped as stopped:
         return stopped.view
+    finally:
+        # The socket closes here, not whenever the loop's shutdown gets to it.
+        close = getattr(changes, "aclose", None)
+        if close is not None:
+            await close()
     raise RuntimeError("the channel ended before the import stopped")
