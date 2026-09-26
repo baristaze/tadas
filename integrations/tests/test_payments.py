@@ -442,6 +442,7 @@ def test_a_subscription_is_read_from_the_item_where_the_period_now_sits() -> Non
         True,
     )
     assert read.current_period_end is not None and read.org_id == org
+    assert read.item_id == "si_1"
 
 
 class _Sessions:
@@ -691,27 +692,61 @@ async def test_a_failure_is_translated_by_whose_problem_it_is(
 
 class _Seats:
     """The SDK client's `v1` as far as a seat count reads it: one
-    subscription with one item, and an update that fails as it is told."""
+    subscription with one item, every call recorded, and an update that
+    fails as it is told."""
 
-    def __init__(self, update_error: Exception) -> None:
+    def __init__(self, update_error: Exception | None = None) -> None:
         seats = self
+        self.calls: list[tuple[Any, ...]] = []
+        self._raw: dict[str, Any] = {
+            "id": "sub_1",
+            "customer": "cus_1",
+            "status": "active",
+            "items": {"data": [{"id": "si_1", "quantity": 1}]},
+        }
+
+        def answer() -> object:
+            raw = seats._raw
+            return type("S", (), {"to_dict": lambda self: raw})()
 
         class Subscriptions:
             async def retrieve_async(self, subscription_id: str) -> object:
-                raw = {
-                    "id": subscription_id,
-                    "customer": "cus_1",
-                    "status": "active",
-                    "items": {"data": [{"id": "si_1", "quantity": 1}]},
-                }
-                return type("S", (), {"to_dict": lambda self: raw})()
+                seats.calls.append(("retrieve", subscription_id))
+                return answer()
 
-            async def update_async(self, *args: object) -> object:
-                raise seats._error
+            async def update_async(self, *args: Any) -> object:
+                seats.calls.append(("update", *args))
+                if seats._error is not None:
+                    raise seats._error
+                [item] = args[1]["items"]
+                seats._raw["items"]["data"][0]["quantity"] = item["quantity"]
+                return answer()
 
         self._error = update_error
         self.subscriptions = Subscriptions()
         self.v1 = self
+
+
+async def test_a_seat_count_is_one_read_and_one_update_of_the_item_read() -> None:
+    payments = await _checked(set())
+    payments._client = seats = _Seats()  # type: ignore[assignment]
+    current = await payments.read_subscription("sub_1")
+    assert current is not None and current.item_id == "si_1"
+    updated = await payments.set_quantity(current, 3, "tadas-seats-x-3")
+    assert updated.quantity == 3
+    assert seats.calls == [
+        ("retrieve", "sub_1"),
+        (
+            "update",
+            "sub_1",
+            {"items": [{"id": "si_1", "quantity": 3}], "proration_behavior": "none"},
+            {"idempotency_key": "tadas-seats-x-3"},
+        ),
+    ]
+    itemless = current.model_copy(update={"item_id": None})
+    with pytest.raises(PaymentsRefused):
+        await payments.set_quantity(itemless, 3, "tadas-seats-x-3")
+    assert len(seats.calls) == 2, "a subscription with no item is not sent"
 
 
 @pytest.mark.parametrize(
@@ -728,6 +763,8 @@ async def test_a_seat_count_tells_a_refused_key_from_a_refused_request(
     """Every call translates the same way, not only an account's end."""
     payments = await _checked(set())
     payments._client = _Seats(error)  # type: ignore[assignment]
+    current = await payments.read_subscription("sub_1")
+    assert current is not None
     with pytest.raises(raised) as caught:
-        await payments.set_quantity("sub_1", 3, "tadas-seats-x-3")
+        await payments.set_quantity(current, 3, "tadas-seats-x-3")
     assert type(caught.value) is raised

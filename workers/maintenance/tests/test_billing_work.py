@@ -190,7 +190,7 @@ async def test_a_seat_count_the_processor_refuses_fails_and_one_that_may_pass_pa
 ) -> None:
     container, ctx, service, item = await seats_to_sync(tmp_path)
 
-    async def answer(subscription_id: str, quantity: int, idempotency_key: str) -> object:
+    async def answer(subscription: object, quantity: int, idempotency_key: str) -> object:
         raise error
 
     monkeypatch.setattr(twin_of(container), "set_quantity", answer)

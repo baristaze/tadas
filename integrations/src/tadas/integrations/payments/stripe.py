@@ -267,19 +267,15 @@ class PaymentsStripeImpl(PaymentsInterface):
         return subscription_of(subscription.to_dict())
 
     async def set_quantity(
-        self, subscription_id: str, quantity: int, idempotency_key: str
+        self, subscription: ProviderSubscription, quantity: int, idempotency_key: str
     ) -> ProviderSubscription:
-        v1 = self._v1()
-        async with translated("read subscription"):
-            current = (await v1.subscriptions.retrieve_async(subscription_id)).to_dict()
-        items = (current.get("items") or {}).get("data") or []
-        if not items:
+        if subscription.item_id is None:
             raise PaymentsRefused("update subscription quantity", "the subscription has no item")
         async with translated("update subscription quantity"):
-            subscription = await v1.subscriptions.update_async(
-                subscription_id,
+            updated = await self._v1().subscriptions.update_async(
+                subscription.id,
                 {
-                    "items": [{"id": items[0]["id"], "quantity": quantity}],
+                    "items": [{"id": subscription.item_id, "quantity": quantity}],
                     # A seat added or removed is billed from the next invoice:
                     # no prorated line per member change, and nothing to
                     # refund when one is added and removed within a period.
@@ -287,7 +283,7 @@ class PaymentsStripeImpl(PaymentsInterface):
                 },
                 {"idempotency_key": idempotency_key},
             )
-        return subscription_of(subscription.to_dict())
+        return subscription_of(updated.to_dict())
 
     async def cancel_subscription(self, subscription_id: str) -> None:
         v1 = self._v1()
@@ -339,6 +335,7 @@ def subscription_of(raw: dict[str, Any]) -> ProviderSubscription:
         ),
         cancel_at_period_end=bool(raw.get("cancel_at_period_end")),
         org_id=org_id,
+        item_id=str(item["id"]) if item.get("id") else None,
     )
 
 

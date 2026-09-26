@@ -130,7 +130,7 @@ async def test_the_absent_provider_refuses_every_call() -> None:
         absent.find_pending_invitation(email="e@x.test", organization_id="o"),
         absent.resend_invitation("i"),
         absent.revoke_invitation("i"),
-        absent.accepted_invitation(organization_id="o", user_id="u"),
+        absent.accepted_invitation(organization_id="o", user_id="u", email="e@x.test"),
         absent.portal_link(organization_id="o", intent="sso", return_url="https://x"),
     ):
         with pytest.raises(ProviderUnavailable, match="closed"):

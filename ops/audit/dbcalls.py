@@ -4,6 +4,7 @@ the process.
     uv run python ops/audit/dbcalls.py run audit_<run> --out <results.json> \
         [--flows <extra.py> ...] [--only tasks,sweep]
     uv run python ops/audit/dbcalls.py summary <results.json>
+    uv run python ops/audit/dbcalls.py providers <results.json>
 
 `run` builds the real API and the real worker in this process over the
 audit database (Postgres storage, the provider twins, the local infra),
@@ -20,6 +21,12 @@ flows in `FLOWS`, in order.
 round trips (every statement already prepared), the transactions, and the
 roles, each as a range when the call ran more than once.
 
+Each call also records, in order, the calls it made to a provider: every
+call out of the identity, payments, and Slack twins that stands where the
+real client would reach the network. `providers` prints them, one line per
+call that made any. A call the infra makes (a bucket, a queue, a secret) is
+not counted: locally it reaches no provider.
+
 The counter is installed in this process only, by patching the adapter's
 classes; nothing of it reaches the application's own code.
 """
@@ -30,6 +37,7 @@ import argparse
 import asyncio
 import contextvars
 import importlib.util
+import inspect
 import json
 import logging
 import sys
@@ -63,14 +71,17 @@ class Txn:
 class Recorder:
     trips: list[Trip] = field(default_factory=list)
     txns: list[Txn] = field(default_factory=list)
+    calls: list[str] = field(default_factory=list)  # provider calls, "<provider>.<method>"
 
-    def mark(self) -> tuple[int, int]:
-        return len(self.trips), len(self.txns)
+    def mark(self) -> tuple[int, int, int]:
+        return len(self.trips), len(self.txns), len(self.calls)
 
-    def since(self, mark: tuple[int, int]) -> Window:
-        return Window(self.trips[mark[0] :], self.txns[mark[1] :])
+    def since(self, mark: tuple[int, int, int]) -> Window:
+        return Window(self.trips[mark[0] :], self.txns[mark[1] :], self.calls[mark[2] :])
 
     def record(self, kind: str, sql: str) -> None:
+        if UNCOUNTED.get():
+            return
         txn = CURRENT.get()
         trip = Trip(kind, " ".join(sql.split())[:300], txn.n if txn else None)
         self.trips.append(trip)
@@ -82,6 +93,7 @@ class Recorder:
 class Window:
     trips: list[Trip]
     txns: list[Txn]
+    calls: list[str] = field(default_factory=list)
 
     @property
     def round_trips(self) -> int:
@@ -105,11 +117,12 @@ class Window:
 
     def detail(self) -> list[str]:
         """One line per transaction: its role and scope, the storage method,
-        its round trips, and the statements after the scope's own."""
+        its round trips, and its statements. The scope rides on the `BEGIN`
+        and is no statement of its own."""
         lines = []
         for txn in self.txns:
             kinds = [t.kind for t in txn.trips if t.kind != "PREPARE"]
-            statements = [t.sql[:200] for t in txn.trips if t.kind in ("EXEC", "EXECMANY")][1:]
+            statements = [t.sql[:200] for t in txn.trips if t.kind in ("EXEC", "EXECMANY")]
             lines.append(
                 f"T{txn.n} {txn.role}/{txn.scope} {txn.method}: {len(kinds)} trips | "
                 + " ; ".join(statements)
@@ -122,6 +135,7 @@ class Window:
 
 REC = Recorder()
 CURRENT: contextvars.ContextVar[Txn | None] = contextvars.ContextVar("audit_txn", default=None)
+UNCOUNTED: contextvars.ContextVar[bool] = contextvars.ContextVar("audit_uncounted", default=False)
 _installed = False
 
 
@@ -214,6 +228,34 @@ def install() -> None:
     pg_base.PgStorageBase._session_for = labelled  # type: ignore[method-assign]
 
 
+PROVIDERS = {"identity": "get_identity_provider", "payments": "get_payments", "slack": "get_slack"}
+IN_PROVIDER: contextvars.ContextVar[bool] = contextvars.ContextVar("audit_provider", default=False)
+
+
+def count_provider_calls(label: str, provider: Any) -> None:
+    """Wraps, on this instance, every public coroutine method but `start` and
+    `close`: those are the calls the real client sends over the network. A
+    call made from inside another is part of it and is not counted again."""
+    for name in dir(type(provider)):
+        method = getattr(provider, name, None)
+        if name.startswith("_") or name in ("start", "close"):
+            continue
+        if not inspect.iscoroutinefunction(method):
+            continue
+
+        async def counted(*args: Any, _name: str = name, _method: Any = method, **kw: Any) -> Any:
+            if IN_PROVIDER.get():
+                return await _method(*args, **kw)
+            REC.calls.append(f"{label}.{_name}")
+            token = IN_PROVIDER.set(True)
+            try:
+                return await _method(*args, **kw)
+            finally:
+                IN_PROVIDER.reset(token)
+
+        setattr(provider, name, counted)
+
+
 # --------------------------------------------------------------------- world
 
 
@@ -230,6 +272,7 @@ class Row:
     roles: list[str]
     note: str
     detail: list[str]
+    provider_calls: list[str] = field(default_factory=list)
 
 
 class World:
@@ -251,11 +294,11 @@ class World:
         self.storage: Any = None
         self.infra: Any = None
 
-    def mark(self) -> tuple[int, int]:
+    def mark(self) -> tuple[int, int, int]:
         """Where the counter stands; `since(mark)` is what was sent after it."""
         return REC.mark()
 
-    def since(self, mark: tuple[int, int]) -> Window:
+    def since(self, mark: tuple[int, int, int]) -> Window:
         return REC.since(mark)
 
     def record(self, area: str, name: str, status: object, window: Window, note: str = "") -> None:
@@ -272,6 +315,7 @@ class World:
                 window.roles,
                 note,
                 window.detail(),
+                list(window.calls),
             )
         )
 
@@ -305,12 +349,14 @@ class World:
         from sqlalchemy.ext.asyncio import create_async_engine
 
         engine = create_async_engine(superuser_on(self.name))
+        token = UNCOUNTED.set(True)
         try:
             async with engine.begin() as connection:
                 result = await connection.exec_driver_sql(statement)
                 return list(result.all()) if result.returns_rows else []
         finally:
             await engine.dispose()
+            UNCOUNTED.reset(token)
 
 
 @asynccontextmanager
@@ -356,6 +402,8 @@ async def world(name: str) -> AsyncIterator[World]:
         payments_for(settings, settings.environment),
         slack_for(settings, settings.environment),
     )
+    for label, getter in PROVIDERS.items():
+        count_provider_calls(label, getattr(w.integrations, getter)())
     w.infra = InfraLocalImpl(Path(tempfile.mkdtemp(prefix=f"{name}_")))
     w.container = AppContainer.for_tests(w.storage, w.infra, settings, w.integrations)
     ms = MaintenanceSettings.model_validate({**common, "worker_id": f"{name}-worker"})
@@ -450,6 +498,20 @@ def summary(rows: list[dict[str, Any]]) -> list[str]:
     return lines
 
 
+def providers(rows: list[dict[str, Any]]) -> list[str]:
+    """One table line per (area, call) that called a provider: its runs and
+    each distinct sequence of provider calls it made, in order."""
+    groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for row in rows:
+        if row.get("provider_calls"):
+            groups.setdefault((row["area"], row["name"]), []).append(row)
+    lines = ["| Area | Call | Runs | Provider calls, in order |", "|---|---|---|---|"]
+    for (area, name), runs in groups.items():
+        sequences = dict.fromkeys(", ".join(run["provider_calls"]) for run in runs)
+        lines.append(f"| {area} | {name} | {len(runs)} | {' / '.join(sequences)} |")
+    return lines
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="dbcalls", description=(__doc__ or "").split("\n\n")[0])
     sub = parser.add_subparsers(dest="command", required=True)
@@ -462,11 +524,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     s = sub.add_parser("summary", help="one line per call from a results file")
     s.add_argument("results", type=Path)
+    p = sub.add_parser("providers", help="the provider calls of each call from a results file")
+    p.add_argument("results", type=Path)
     args = parser.parse_args(argv)
     if args.command == "run":
         only = set(args.only.split(",")) if args.only else None
         return asyncio.run(run(args.name, args.flows, only, args.out))
-    print("\n".join(summary(json.loads(args.results.read_text()))))
+    fold = providers if args.command == "providers" else summary
+    print("\n".join(fold(json.loads(args.results.read_text()))))
     return 0
 
 

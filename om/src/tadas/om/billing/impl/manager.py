@@ -336,7 +336,7 @@ class BillingManagerImpl(BillingManagerInterface):
         if current is None:
             return billing_of(account, now)
         if current.quantity != wanted:
-            current = await self._payments.set_quantity(current.id, wanted, idempotency_key)
+            current = await self._payments.set_quantity(current, wanted, idempotency_key)
             log.info("org %s now pays for %d seats", ctx.org_id, wanted)
         updated = mirrored(account, current, ctx.user_id, now)
         await self._write(ctx, updated)

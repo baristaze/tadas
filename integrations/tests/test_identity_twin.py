@@ -107,7 +107,9 @@ async def test_an_invitation_is_sent_once_resent_revoked_and_accepted() -> None:
     code = twin.accept_invitation(sent.id, "robert@acme.example")
     signed_in = await twin.authenticate_code(code, code_verifier=None)
     assert signed_in.organization_id == org.id
-    accepted = await twin.accepted_invitation(organization_id=org.id, user_id=signed_in.user.id)
+    accepted = await twin.accepted_invitation(
+        organization_id=org.id, user_id=signed_in.user.id, email=signed_in.user.email
+    )
     assert accepted is not None and accepted.state is InvitationState.ACCEPTED
     with pytest.raises(ProviderRefused):
         await twin.revoke_invitation(sent.id)

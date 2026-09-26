@@ -1,8 +1,10 @@
 """Signing in through the identity provider, the local sign-in, invitations,
 and single sign-on, over the memory storage and the provider's twin."""
 
+from collections import Counter
 from datetime import timedelta
 from pathlib import Path
+from typing import Any
 from uuid import UUID
 
 import pytest
@@ -467,11 +469,15 @@ async def test_an_invitation_accepted_with_another_address_of_the_domain_lands_i
 
 
 async def test_a_member_accepting_an_invitation_keeps_their_place(
-    manager: TenancyManagerImpl, storage: TenancyStorageMemoryImpl, twin: IdentityProviderTwinImpl
+    manager: TenancyManagerImpl,
+    storage: TenancyStorageMemoryImpl,
+    twin: IdentityProviderTwinImpl,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     ann = await owner_of_team(manager)
     invitation = await manager.invite_member(ann, "bob@acme.example", Role.ADMIN)
     _, bob, _ = await manager.add_member(request(), "acme", "bob@acme.example", "Bob", Role.VIEWER)
+    calls = counted(twin, monkeypatch)
     login = await manager.sign_in_with_code(
         request(), twin.accept_invitation(invitation.provider_invitation_id)
     )
@@ -480,6 +486,9 @@ async def test_a_member_accepting_an_invitation_keeps_their_place(
     closed = await storage.read_invitation(ann.org_id, invitation.id)
     assert closed is not None and closed.state is InvitationState.ACCEPTED
     assert closed.accepted_user_id == bob.id
+    # A member with an invitation to their address pending: the invitations
+    # are read, and the organization is not.
+    assert calls == {"accepted_invitation": 1}
 
 
 # Single sign-on.
@@ -570,6 +579,74 @@ async def test_an_organization_that_names_no_living_org_joins_nothing(
     code = twin.issue_code("eve@acme.example", organization_id=stray.id, via_sso=True)
     login = await manager.sign_in_with_code(request(), code)
     assert [m.org.kind for m in login.memberships] == [OrgKind.PERSONAL]
+
+
+# A sign-in through an organization asks the provider only what it must.
+
+
+def counted(twin: IdentityProviderTwinImpl, monkeypatch: pytest.MonkeyPatch) -> Counter[str]:
+    """How many times a sign-in asked the provider for the organization and
+    for the invitation the person accepted."""
+    calls: Counter[str] = Counter()
+    for name in ("get_organization", "accepted_invitation"):
+        real = getattr(twin, name)
+
+        async def call(*args: Any, _real: Any = real, _name: str = name, **kwargs: Any) -> Any:
+            calls[_name] += 1
+            return await _real(*args, **kwargs)
+
+        monkeypatch.setattr(twin, name, call)
+    return calls
+
+
+async def test_a_member_signing_in_through_the_organization_asks_the_provider_nothing(
+    manager: TenancyManagerImpl,
+    storage: TenancyStorageMemoryImpl,
+    twin: IdentityProviderTwinImpl,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ann = await owner_of_team(manager)
+    invitation = await manager.invite_member(ann, "bob@acme.example", Role.ADMIN)
+    await manager.invite_member(ann, "cy@acme.example", Role.MEMBER)
+    calls = counted(twin, monkeypatch)
+    code = twin.accept_invitation(invitation.provider_invitation_id)
+    await manager.sign_in_with_code(request(), code)
+    # A new invitee: the organization once, the invitations once.
+    assert calls == {"get_organization": 1, "accepted_invitation": 1}
+    org = await storage.read_org(ann.org_id)
+    assert org is not None and org.provider_org_id is not None
+    twin.verify_domain(org.provider_org_id, "acme.example")
+    calls.clear()
+    for via_sso in (False, True):
+        code = twin.issue_code(
+            "bob@acme.example", organization_id=org.provider_org_id, via_sso=via_sso
+        )
+        login = await manager.sign_in_with_code(request(), code)
+        [place] = [m for m in login.memberships if m.org.id == ann.org_id]
+        assert place.role is Role.ADMIN
+    assert calls == {}
+
+
+async def test_a_removed_member_signing_in_through_the_organization_is_looked_up(
+    manager: TenancyManagerImpl,
+    storage: TenancyStorageMemoryImpl,
+    twin: IdentityProviderTwinImpl,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ann = await owner_of_team(manager)
+    org = await provider_org(manager, storage, ann)
+    assert org.provider_org_id is not None
+    twin.verify_domain(org.provider_org_id, "acme.example")
+    code = twin.issue_code("eve@acme.example", organization_id=org.provider_org_id, via_sso=True)
+    login = await manager.sign_in_with_code(request(), code)
+    [place] = [m for m in login.memberships if m.org.id == org.id]
+    await manager.remove_member(ann, place.user.id)
+    calls = counted(twin, monkeypatch)
+    code = twin.issue_code("eve@acme.example", organization_id=org.provider_org_id, via_sso=True)
+    login = await manager.sign_in_with_code(request(), code)
+    assert org.id in {m.org.id for m in login.memberships}
+    # No invitation is pending in the org, so the provider's are not read.
+    assert calls == {"get_organization": 1}
 
 
 # Signing out ends the provider's session too.

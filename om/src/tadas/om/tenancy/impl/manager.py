@@ -500,9 +500,12 @@ class TenancyManagerImpl(TenancyManagerInterface):
         if is_platform_email(person.email):
             raise InvalidCredential("that address belongs to the platform")
         identity = await self._identity_of(signed_in)
-        if signed_in.organization_id is not None:
-            await self._join_through_provider(rctx, identity, signed_in)
-        memberships = await self._with_personal(identity, await self._memberships_of(identity.id))
+        memberships = await self._memberships_of(identity.id)
+        if signed_in.organization_id is not None and await self._join_through_provider(
+            rctx, identity, signed_in, memberships
+        ):
+            memberships = await self._memberships_of(identity.id)
+        memberships = await self._with_personal(identity, memberships)
         return await self._issue_login(
             identity, memberships, provider_session_id=signed_in.session_id
         )
@@ -560,30 +563,56 @@ class TenancyManagerImpl(TenancyManagerInterface):
         return identity
 
     async def _join_through_provider(
-        self, rctx: RequestContext, identity: Identity, signed_in: ProvidedSignIn
-    ) -> None:
+        self,
+        rctx: RequestContext,
+        identity: Identity,
+        signed_in: ProvidedSignIn,
+        held: tuple[OrgMembership, ...],
+    ) -> bool:
         """The membership a sign-in through one of the provider's organizations
         lands: the invitation the person accepted, with its role; else, for a
         sign-in through the org's single sign-on, a member's place when the
         person's address is in a domain the org verified. Anything else lands
         nothing, and the sign-in goes on: a place the person cannot have is
-        not a reason to refuse them their own."""
-        assert signed_in.organization_id is not None
+        not a reason to refuse them their own. True when it tried to land one.
+
+        A person who holds a live place in the org the organization stands
+        for is not asked about: each of their places carries its org's
+        organization id. The provider's invitations are read for them only
+        when the org holds a pending invitation to their own address, which
+        their sign-in may have accepted. Anyone else is asked about in full,
+        and the provider's invitations are read only while the org holds a
+        pending invitation, since only a pending one is accepted."""
+        organization_id = signed_in.organization_id
+        assert organization_id is not None
+        member_of = next((m.org for m in held if m.org.provider_org_id == organization_id), None)
         try:
-            provided = await self._provider.get_organization(signed_in.organization_id)
-            org = await self._org_of(provided)
-            if org is None:
-                return
-            accepted = await self._provider.accepted_invitation(
-                organization_id=provided.id, user_id=signed_in.user.id
+            if member_of is not None:
+                org, provided = member_of, None
+                pending = await self._storage.read_pending_invitation(org.id, identity.email)
+            else:
+                provided = await self._provider.get_organization(organization_id)
+                found = await self._org_of(provided)
+                if found is None:
+                    return False
+                org = found
+                pending = next(iter(await self._storage.read_invitations(org.id, None, 1)), None)
+            accepted = (
+                None
+                if pending is None
+                else await self._provider.accepted_invitation(
+                    organization_id=organization_id,
+                    user_id=signed_in.user.id,
+                    email=signed_in.user.email,
+                )
             )
         except (ProviderRefused, ProviderUnavailable) as error:
             log.warning(
                 "sign-in through organization %s joined nothing: %s",
-                signed_in.organization_id,
+                organization_id,
                 error,
             )
-            return
+            return False
         invitation = (
             None
             if accepted is None
@@ -592,14 +621,17 @@ class TenancyManagerImpl(TenancyManagerInterface):
         try:
             if invitation is not None and invitation.state is InvitationState.PENDING:
                 await self._accept(rctx, org, identity, signed_in, invitation)
-            elif signed_in.via_sso and org.kind is OrgKind.TEAM:
+                return True
+            if provided is not None and signed_in.via_sso and org.kind is OrgKind.TEAM:
                 if sso_joins(identity.email, provided.verified_domains):
                     await self._join(rctx, org, identity, signed_in, Role.MEMBER, org.created_by)
+                    return True
         except (MembershipLimitReached, PlanLimitReached) as error:
             # A person over their own bound of orgs, or an org whose plan has
             # no seat left: the invitation stays pending, and the sign-in
             # goes on into the places the person has.
             log.warning("sign-in into org %s joined nothing: %s", org.id, error.message)
+        return False
 
     async def _org_of(self, provided: ProvidedOrganization) -> Org | None:
         """The living team or personal org the provider's organization stands

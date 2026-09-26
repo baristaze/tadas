@@ -336,11 +336,23 @@ class IdentityProviderWorkOSImpl(IdentityProviderInterface):
         return _invitation(revoked)
 
     async def accepted_invitation(
-        self, *, organization_id: str, user_id: str
+        self, *, organization_id: str, user_id: str, email: str
+    ) -> ProvidedInvitation | None:
+        """The invitations sent to the person's address first: one page, and
+        the invitation almost always. The organization's others are read
+        only when none of those is the one, since an invitation to a
+        company's domain may be accepted with another address of it."""
+        by_address = await self._accepted_among(organization_id, user_id, email)
+        if by_address is not None:
+            return by_address
+        return await self._accepted_among(organization_id, user_id, None)
+
+    async def _accepted_among(
+        self, organization_id: str, user_id: str, email: str | None
     ) -> ProvidedInvitation | None:
         try:
             page = await self._workos.user_management.list_invitations(
-                organization_id=organization_id, limit=100
+                organization_id=organization_id, email=email, limit=100
             )
             async for invitation in page.auto_paging_iter():
                 if (
