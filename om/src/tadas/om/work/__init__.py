@@ -1,3 +1,3 @@
-from .manager import WorkManagerInterface
+from .manager import WorkManagerInterface, WorkOperatorManagerInterface
 
-__all__ = ["WorkManagerInterface"]
+__all__ = ["WorkManagerInterface", "WorkOperatorManagerInterface"]

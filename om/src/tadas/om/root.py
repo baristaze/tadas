@@ -30,8 +30,9 @@ from tadas.om.tasks.impl.manager import TasksManagerImpl, TasksOptions
 from tadas.om.tenancy import TenancyManagerInterface, TenancyOperatorManagerInterface
 from tadas.om.tenancy.impl.manager import TenancyManagerImpl, TenancyOptions
 from tadas.om.tenancy.impl.operator import TenancyOperatorManagerImpl, TenancyOperatorOptions
-from tadas.om.work import WorkManagerInterface
+from tadas.om.work import WorkManagerInterface, WorkOperatorManagerInterface
 from tadas.om.work.impl.manager import WorkManagerImpl, WorkOptions
+from tadas.om.work.impl.operator import WorkOperatorManagerImpl
 
 
 @dataclass(frozen=True)
@@ -39,6 +40,7 @@ class Managers:
     tenancy: TenancyManagerInterface
     tenancy_operator: TenancyOperatorManagerInterface
     work: WorkManagerInterface
+    work_operator: WorkOperatorManagerInterface
     tasks: TasksManagerInterface
     media: MediaManagerInterface
     slack: SlackManagerInterface
@@ -166,6 +168,12 @@ def build_managers(
         tenancy=tenancy,
         tenancy_operator=tenancy_operator,
         work=work,
+        work_operator=WorkOperatorManagerImpl(
+            storage.get_work_storage(),
+            storage.get_tenancy_storage(),
+            storage.get_event_storage(),
+            infra.get_topics(),
+        ),
         tasks=tasks,
         media=media,
         slack=slack,

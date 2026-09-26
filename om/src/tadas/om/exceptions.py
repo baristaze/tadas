@@ -176,6 +176,13 @@ class LeaseLost(WorkException, Conflict):
     """The item is no longer claimed by this worker; another one may hold it."""
 
 
+class WorkNotFailed(WorkException, Conflict):
+    """An operator's requeue named an item that is not failed: one that is
+    queued, running, or done has a way forward already."""
+
+    code = "work_not_failed"
+
+
 class EventsException(PlatformException): ...
 
 
