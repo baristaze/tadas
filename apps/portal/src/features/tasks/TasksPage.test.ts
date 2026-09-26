@@ -9,7 +9,8 @@ import { TasksPage } from "./TasksPage";
 
 const vm = vi.hoisted(() => ({
   scope: "mine",
-  setScope: () => undefined,
+  heading: "switch" as "switch" | "alone" | "pending",
+  setScope: vi.fn(),
   title: "Call the bank",
   setTitle: () => undefined,
   add: vi.fn(() => Promise.resolve()),
@@ -46,6 +47,8 @@ document.body.append(container);
 
 beforeEach(async () => {
   vm.add.mockClear();
+  vm.setScope.mockClear();
+  vm.heading = "switch";
   root = createRoot(container);
   await act(async () => root.render(createElement(TasksPage)));
 });
@@ -83,4 +86,26 @@ it("offers the import beside the lists, never inside the quick-add box", async (
   expect(form.contains(importButton)).toBe(false);
   await act(async () => importButton.click());
   expect(imports.openDialog).toHaveBeenCalledOnce();
+});
+
+it("has no Tasks title: in an org with company the switch is the heading", async () => {
+  expect([...container.querySelectorAll("h1")].map((h) => h.textContent)).toEqual(["My tasks"]);
+  expect(container.querySelector("h1")!.className).toBe("tadas-sr-only");
+  const choices = [...container.querySelectorAll("[role='radiogroup'] [role='radio']")];
+  expect(choices.map((c) => [c.textContent, c.getAttribute("aria-checked")])).toEqual([
+    ["My tasks", "true"],
+    ["Team", "false"],
+  ]);
+  await act(async () => (choices[1] as HTMLButtonElement).click());
+  expect(vm.setScope).toHaveBeenCalledWith("team");
+});
+
+it("says My tasks, with no switch, when the person is alone in the org", async () => {
+  vm.heading = "alone";
+  await act(async () => root.render(createElement(TasksPage)));
+  const heading = container.querySelector("h1")!;
+  expect(heading.textContent).toBe("My tasks");
+  expect(heading.className).toBe("tadas-title");
+  expect(container.querySelector("[role='radiogroup']")).toBeNull();
+  expect([...container.querySelectorAll("button")].some((b) => b.textContent === "Import")).toBe(true);
 });

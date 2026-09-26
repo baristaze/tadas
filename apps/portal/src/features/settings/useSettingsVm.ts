@@ -1,13 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { errorMessage } from "../../app/errorMessage";
-import { forgetSession } from "../../app/forgetSession";
 import { useSlackStatus, useStartSlackInstall, useUninstallSlack } from "../../queries/slack";
-import { useApiKeys, useCreateApiKey, useLogout, useMe, useRevokeApiKey, useUsers } from "../../queries/tenancy";
+import { useApiKeys, useCreateApiKey, useMe, useRevokeApiKey, useUsers } from "../../queries/tenancy";
 import { useNoticesStore } from "../../store/notices";
 import { isPlanLimit } from "../../store/upgrade";
-import { noteSignedOut } from "../../store/signInState";
-import { apiKeyRows, canManageKeys, memberRows, signedInAs } from "./settingsModel";
-import { signOut } from "./signOut";
+import { apiKeyRows, canManageKeys, memberRows } from "./settingsModel";
 import { canManageSlack, installOutcomeText, slackSummary } from "./slackModel";
 
 /** The `?slack=` outcome Slack's install sends the browser back with, read
@@ -28,7 +25,6 @@ export function useSettingsVm() {
   const apiKeys = useApiKeys(mayManageKeys);
   const createKey = useCreateApiKey();
   const revokeKey = useRevokeApiKey();
-  const logout = useLogout();
   const notify = useNoticesStore((s) => s.notify);
   const [newKeyName, setNewKeyName] = useState("");
   const [issuedKey, setIssuedKey] = useState<string | null>(null);
@@ -97,28 +93,8 @@ export function useSettingsVm() {
     }
   };
 
-  // The server session is revoked, then the token and the cache go; the
-  // realtime channel closes with the token. A sign-out finishes here even
-  // when the server cannot be reached. A session signed in through the
-  // identity provider then sends the browser to its logout, which ends the
-  // provider's session and comes back to `/signed-out`. Until the browser
-  // leaves, and for a session with nothing to end there, `/login` waits for
-  // the person to ask rather than starting a sign-in.
-  const forget = () => {
-    noteSignedOut();
-    forgetSession();
-  };
-  const leave = () =>
-    void signOut({
-      revoke: () => logout.mutateAsync({ return_to: `${window.location.origin}/signed-out` }),
-      forget,
-      report: notify,
-      leave: (url) => window.location.assign(url),
-    });
-
   return {
     me: me.data,
-    signedInAs: signedInAs(me.data),
     loading: me.isPending || users.isPending || (mayManageKeys && apiKeys.isPending),
     error: me.error ?? users.error ?? (mayManageKeys ? apiKeys.error : null),
     members,
@@ -147,8 +123,6 @@ export function useSettingsVm() {
       uninstall: uninstallSlack,
       uninstalling: uninstall.isPending,
     },
-    signOut: leave,
-    signingOut: logout.isPending,
   };
 }
 

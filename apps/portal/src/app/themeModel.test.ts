@@ -1,11 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { applyTheme, nextTheme, parseTheme, themeLabel } from "./themeModel";
+import { applyTheme, parseTheme, THEME_CHOICES } from "./themeModel";
 
 describe("the theme", () => {
-  it("cycles system, light, dark, and back", () => {
-    expect(nextTheme("system")).toBe("light");
-    expect(nextTheme("light")).toBe("dark");
-    expect(nextTheme("dark")).toBe("system");
+  it("offers system, light, and dark, in that order", () => {
+    expect(THEME_CHOICES.map((choice) => choice.value)).toEqual(["system", "light", "dark"]);
+    expect(THEME_CHOICES.map((choice) => choice.label)).toEqual(["System", "Light", "Dark"]);
   });
 
   it("reads anything it does not know as the system's", () => {
@@ -23,10 +22,5 @@ describe("the theme", () => {
     expect(root.dataset.theme).toBe("light");
     applyTheme(root, "system");
     expect(root.dataset.theme).toBeUndefined();
-  });
-
-  it("names each choice for the toggle's label", () => {
-    expect(themeLabel("system")).toBe("system theme");
-    expect(themeLabel("dark")).toBe("dark theme");
   });
 });

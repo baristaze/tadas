@@ -19,6 +19,7 @@ import { usePreferencesStore } from "../../store/preferences";
 import { errorMessage } from "../../app/errorMessage";
 import { isPlanLimit } from "../../store/upgrade";
 import { isStale, reorder, STALE_MESSAGE } from "./reorder";
+import { scopeHeadingKind, shownScope } from "./scopeModel";
 import {
   canAdd,
   canWrite,
@@ -44,7 +45,10 @@ export function useTasksVm() {
   const queryClient = useQueryClient();
   const me = useMe();
   const users = useUsers();
-  const scope = usePreferencesStore((s) => s.taskScope);
+  // The member list the rows name people from, read whole: its length says
+  // whether the person has company in this org.
+  const members = users.isPending ? undefined : (users.data?.length ?? undefined);
+  const scope = shownScope(usePreferencesStore((s) => s.taskScope), members);
   const setScope = usePreferencesStore((s) => s.setTaskScope);
   const open = useOpenTasks(scope);
   const done = useDoneTasks(scope);
@@ -249,6 +253,7 @@ export function useTasksVm() {
 
   return {
     scope,
+    heading: scopeHeadingKind(members),
     setScope: changeScope,
     title,
     setTitle,

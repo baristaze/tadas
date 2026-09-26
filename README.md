@@ -7,13 +7,13 @@ at the center (`om/`), one infrastructure toolkit (`infra/`), services
 and workers around them, and apps at the edge.
 
 <p align="center">
-  <img src="docs/media/realtime-demo.gif" width="876" alt="Two portal windows side by side, Bob on the left and the owner on the right, both on Acme's Team's Tasks. Bob adds three tasks and opens the second to give it a due date; he opens the third, assigns it to the owner, and attaches an image, which shows as a preview. The owner opens the same task and sees the image. Bob completes the first task. Each change appears in the owner's window at once.">
+  <img src="docs/media/realtime-demo.gif" width="876" alt="Two portal windows side by side, Bob on the left and the owner on the right, both on Acme's Team list. Bob adds three tasks and opens the second to give it a due date; he opens the third, assigns it to the owner, and attaches an image, which shows as a preview. The owner opens the same task and sees the image. Bob completes the first task. Each change appears in the owner's window at once.">
 </p>
 
 The portal in two windows, signed in through the local sign-in as two of the
 people `make seed` creates: `bob@example.test` on the left,
 `owner@example.test` on the right, both in the seeded team org, Acme, on
-Team's Tasks. Bob adds a task from the one text box, adds a second and
+its Team list. Bob adds a task from the one text box, adds a second and
 opens it to give it a due date, then adds a third. He opens the third,
 assigns it to the owner, and attaches an image, which the task shows as a
 preview; the owner opens the same task and sees it too. Then Bob completes
@@ -137,8 +137,8 @@ make stack-up     # in containers, built from the working tree: API, worker, por
 The API is at the same address either way; only the portal's port differs:
 `scripts/dev.sh` serves it from Vite on http://localhost:5173, `make
 stack-up` from nginx on the port in the table above. Sign in as the
-seeded owner and member in two browser windows to see "My Tasks" differ from
-"Team's Tasks" and to watch changes arrive live, or as the seeded admin
+seeded owner and member in two browser windows to see "My tasks" differ from
+"Team" and to watch changes arrive live, or as the seeded admin
 to switch between orgs, all at `/login/dev`. `/login` is how a person
 enters a deployed environment: WorkOS AuthKit (an email code or link,
 Google, GitHub, or their company's single sign-on), and a first sign-in

@@ -125,6 +125,9 @@ const shownTasks = () => [...container.querySelectorAll("[data-task]")].map((nod
 const button = (text: string) =>
   [...container.querySelectorAll("button")].find((node) => node.textContent?.includes(text)) as HTMLButtonElement;
 
+/** The org chip's caret, which opens the switcher; the org's name goes home. */
+const switcher = () => container.querySelector("button[aria-label='Switch or create an organization']") as HTMLButtonElement;
+
 async function open(path: string) {
   router = createMemoryRouter(routes, { initialEntries: [path] });
   await act(async () => {
@@ -148,7 +151,7 @@ it("shows the new org's tasks after a switch from the chip, read once under the 
   await open("/");
   expect(shownTasks()).toEqual(["Acme's task"]);
 
-  await act(async () => button("Acme").click());
+  await act(async () => switcher().click());
   await act(async () => button("Beta").click());
   await settle();
 

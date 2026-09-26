@@ -30,7 +30,7 @@ Zustand, one realtime channel.
   through the API instead. The settings page shows the org's storage
   used.
 - An import is `src/features/imports/`: the tasks page's Import action (a
-  button of its own beside the list switch; the quick-add form stays one
+  button of its own beside the page's heading; the quick-add form stays one
   text box) opens a small dialog that picks a CSV file. The file goes up
   the way an attachment does (`importFlow.ts`, its effects handed in), and
   the import starts naming it. The rows are read in the worker; the page
@@ -124,10 +124,11 @@ Zustand, one realtime channel.
   hands the code to the API, which exchanges it with WorkOS server-side,
   and a person nobody knew is signed up by it, with their personal org. A
   tab that just signed out waits on `/login` for the person to ask, rather
-  than being signed straight back in. The sign-out itself asks the API to
+  than being signed straight back in. Sign out is the last item of the
+  account menu. It asks the API to
   end the session with a return to this origin's `/signed-out`; when the
   API answers WorkOS's logout, the browser goes there last
-  (`src/features/settings/signOut.ts`), WorkOS ends its AuthKit session,
+  (`src/app/signOut.ts`), WorkOS ends its AuthKit session,
   and sends the browser back to `/signed-out`, the sign-in page waiting
   with "You are signed out." So the next sign-in on this browser asks who
   it is. A session from the local sign-in stays on the portal. `/sign-in` and `/sign-up` still lead
@@ -141,7 +142,8 @@ Zustand, one realtime channel.
   holds. One choice sends one exchange: while it is in flight the picker's
   buttons are disabled, and a click that still gets through is dropped
   (`src/app/oneAtATime.ts`). The org chip in the chrome (`src/app/OrgChip.tsx`) shows the
-  current org, marks a personal one, and opens a menu: the other places to
+  current org and marks a personal one. Its name goes home, to the task
+  list; its caret opens a menu: the other places to
   switch to, and a new team org (`/orgs/new`, `src/features/new_org/`: a
   name and an optional short name, which the server makes from the name
   when it is left empty). A switch presents the current session to the
@@ -162,6 +164,25 @@ Zustand, one realtime channel.
   nothing of the old one stays on screen. The new provider opens a new
   socket; a later 4401 from the old socket signs nothing out, since it
   belongs to a token the tab no longer holds.
+- The chrome (`src/app/AppNav.tsx`) is one bar on every signed-in page,
+  with no tabs. On the left, the org chip. On the right, a gear that goes
+  to Settings, and the account menu (`src/app/AccountMenu.tsx`): the
+  person's email (the part before the @ on a narrow window) opens it on a
+  click, never on hover. It shows the email and the current org, and holds
+  Settings, the theme (System, Light, Dark, the one in use checked), and
+  Sign out. Both menus are the kit's `Menu`: Enter, Space, or an arrow
+  opens it, the arrows, Home, and End move, Escape closes it and puts the
+  keyboard back on its button, and a click anywhere else closes it.
+  Settings and Billing open with "← Tasks" above their title, the way
+  back to the list.
+- The tasks page's heading is the list on screen. When the org has more
+  than one member, of either kind, it is a switch, My tasks | Team. When
+  the person is alone in the org it is "My tasks", with no switch, and
+  the page shows the `mine` list, which the server's rule (a task
+  assigned to the person, or unassigned and made by them) makes every
+  task of an org of one. A saved Team pick holds only where the switch
+  shows. The count is the member list the rows already name people
+  from, read whole, so it costs no read of its own (`scopeModel.ts`).
 - Tasks. Adding one is a single text box: type the title and press Enter,
   or click Add. The due date is set by editing the task, with a date
   picker and a link that clears it. A due date is a date, never a time:
@@ -200,11 +221,21 @@ Zustand, one realtime channel.
   code of its own. `kit.css` holds what inline styles cannot say (hover,
   focus, the dragged row). Feature code styles through the tokens and the
   kit, never a literal colour. Every text colour meets WCAG AA in both
-  themes. The theme follows the system until the person picks one with
-  the toggle in the chrome (system, light, dark, in turn); the pick is a
+  themes. The theme follows the system until the person picks one in the
+  account menu (System, Light, Dark); the pick is a
   `data-theme` attribute on the root, set before the app renders. The
   typeface is Inter, bundled with the build (`@fontsource-variable/inter`),
   so the page loads no font from another origin.
+- The tab's icon is the product's mark, the company site's
+  `favicon.svg`, in `public/` with two drawings of it:
+  `favicon-32.png` for a browser that takes no SVG icon, and
+  `apple-touch-icon.png`, 180 by 180 on the mark's indigo, for a home
+  screen. `scripts/favicons.sh apps/portal/public` draws the two again
+  from the SVG, through headless Chrome, when the mark changes; the site
+  runs it on `apps/site/public`. The build copies `public/` to the root
+  of `dist/`, and the deploy uploads it with the entry points, revalidated
+  on every load. There is no web manifest: the portal is not installed as
+  an app, and the icons need none.
 
 ## Run
 

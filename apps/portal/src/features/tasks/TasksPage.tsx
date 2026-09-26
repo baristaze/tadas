@@ -1,4 +1,3 @@
-import type { TaskScope } from "../../api";
 import { useState, type DragEvent } from "react";
 import { AppNav } from "../../app/AppNav";
 import { Banner, Button, Card, LinkButton, Muted, Page, SegmentedControl } from "../../design/kit";
@@ -6,32 +5,18 @@ import { tokens } from "../../design/tokens";
 import { ArchivedTasks } from "./ArchivedTasks";
 import { TaskItem } from "./TaskItem";
 import type { DropSide } from "./tasksModel";
+import { SCOPE_CHOICES, scopeHeading } from "./scopeModel";
 import { useTasksVm, type TasksVm } from "./useTasksVm";
 import { PaymentNotice } from "../billing/PaymentNotice";
 import { ImportDialog } from "../imports/ImportDialog";
 import { ImportStatus } from "../imports/ImportStatus";
-import { useImportVm } from "../imports/useImportVm";
-
-const SCOPES: { value: TaskScope; label: string }[] = [
-  { value: "mine", label: "My Tasks" },
-  { value: "team", label: "Team's Tasks" },
-];
+import { useImportVm, type ImportVm } from "../imports/useImportVm";
 
 export function TasksPage() {
   const vm = useTasksVm();
   const imports = useImportVm(vm.canWrite);
   return (
-    <Page title="Tasks" nav={<AppNav />} notice={<PaymentNotice />}>
-      <div style={{ display: "flex", alignItems: "center", gap: tokens.space.md }}>
-        <SegmentedControl label="Which tasks" value={vm.scope} options={SCOPES} onChange={vm.setScope} />
-        {imports.canImport ? (
-          <div style={{ marginLeft: "auto" }}>
-            <Button tone="plain" onClick={imports.openDialog}>
-              Import
-            </Button>
-          </div>
-        ) : null}
-      </div>
+    <Page heading={<TasksHeading vm={vm} imports={imports} />} nav={<AppNav />} notice={<PaymentNotice />}>
       <ImportStatus vm={imports} />
       <ImportDialog vm={imports} />
       {vm.error ? (
@@ -74,6 +59,33 @@ export function TasksPage() {
         <TaskGroups key={vm.scope} vm={vm} />
       )}
     </Page>
+  );
+}
+
+/** The heading is the list on screen: a switch when the org has more than
+ * one member, the one list's name when the person is alone in it. The
+ * import sits at its right. */
+function TasksHeading({ vm, imports }: { vm: TasksVm; imports: ImportVm }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: tokens.space.md, minHeight: 40, marginBottom: tokens.space.lg }}>
+      {vm.heading === "switch" ? (
+        <>
+          <h1 className="tadas-sr-only">{scopeHeading(vm.scope)}</h1>
+          <SegmentedControl large label="Which tasks" value={vm.scope} options={SCOPE_CHOICES} onChange={vm.setScope} />
+        </>
+      ) : (
+        <h1 className="tadas-title" style={{ margin: 0 }}>
+          {scopeHeading(vm.scope)}
+        </h1>
+      )}
+      {imports.canImport ? (
+        <div style={{ marginLeft: "auto" }}>
+          <Button tone="plain" onClick={imports.openDialog}>
+            Import
+          </Button>
+        </div>
+      ) : null}
+    </div>
   );
 }
 

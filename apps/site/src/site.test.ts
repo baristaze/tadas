@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { expect, test } from "vitest";
 import environments from "../../../deployment/cloud/environments.json";
 import { fillLinks, linksFor } from "./links";
@@ -57,4 +57,16 @@ test("the plans carry their prices", () => {
   expect(text).toMatch(/Max \$3 \/ member \/ month/);
   expect(text).toMatch(/\$30 a month minimum/);
   expect(text).not.toMatch(/illustrative/i);
+});
+
+// The tab shows the mark: the SVG, a 32-pixel PNG for a browser that takes no
+// SVG icon, and the home-screen icon, each a file in public/.
+test.each(["index.html", "404.html"])("%s links the icons, and each is in public/", (name) => {
+  const html = page(name);
+  expect(html).toContain('<link rel="icon" href="/favicon.svg" type="image/svg+xml" />');
+  expect(html).toContain('<link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32" />');
+  expect(html).toContain('<link rel="apple-touch-icon" href="/apple-touch-icon.png" />');
+  for (const file of ["favicon.svg", "favicon-32.png", "apple-touch-icon.png"]) {
+    expect(existsSync(new URL(`../public/${file}`, import.meta.url)), file).toBe(true);
+  }
 });
