@@ -610,6 +610,19 @@
         "title": "ExchangeSessionRequest",
         "type": "object"
       },
+      "FailReason": {
+        "description": "Why a record ended without finishing: a bound, never a guard.",
+        "enum": [
+          "file_too_large",
+          "too_many_rows",
+          "not_csv",
+          "no_title_column",
+          "file_gone",
+          "defect"
+        ],
+        "title": "FailReason",
+        "type": "string"
+      },
       "FilePageView": {
         "description": "One page of files, oldest first. `next_cursor` fetches the next page and\nis null on the last one.",
         "properties": {
@@ -643,7 +656,8 @@
         "description": "Which domain context a file came from. The purpose decides the bounds an\nupload is held to and what `subject_id` names.",
         "enum": [
           "task_attachment",
-          "voice_dictation"
+          "voice_dictation",
+          "task_import"
         ],
         "title": "FilePurpose",
         "type": "string"
@@ -796,6 +810,136 @@
           "created_at"
         ],
         "title": "IdentityView",
+        "type": "object"
+      },
+      "ImportPageView": {
+        "description": "The org's newest imports, newest first.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ImportView"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "ImportPageView",
+        "type": "object"
+      },
+      "ImportView": {
+        "description": "An import of tasks from a CSV file, read as it runs. `status` is\n`running`, `parked`, `succeeded`, or `failed`. `total` is the file's data\nrows, null until the first step counted them; `cursor` is how many were\nread; `created` the tasks the import made, `skipped` the rows it passed\nover, and `row_errors` the first twenty of those with the reason. A\n`parked` import names its `park_reason`: `plan_limit` is the plan's bound\non active tasks, lifted by a higher plan (which resumes it) or by tasks\nfinished and `POST /v1/tasks/imports/{id}/resume`. A `failed` one names\nits `fail_reason`: `file_too_large`, `too_many_rows`, `not_csv`,\n`no_title_column`, `file_gone`, or `defect`. Every change is pushed as\n`orchestrations.orchestration.updated` on the realtime channel.",
+        "properties": {
+          "created": {
+            "title": "Created",
+            "type": "integer"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "format": "uuid",
+            "title": "Created By",
+            "type": "string"
+          },
+          "cursor": {
+            "title": "Cursor",
+            "type": "integer"
+          },
+          "fail_reason": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FailReason"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "file_id": {
+            "format": "uuid",
+            "title": "File Id",
+            "type": "string"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "park_reason": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ParkReason"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "row_errors": {
+            "items": {
+              "$ref": "#/components/schemas/RowErrorView"
+            },
+            "title": "Row Errors",
+            "type": "array"
+          },
+          "skipped": {
+            "title": "Skipped",
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "#/components/schemas/OrchestrationStatus"
+          },
+          "total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "file_id",
+          "status",
+          "total",
+          "cursor",
+          "created",
+          "skipped",
+          "row_errors",
+          "park_reason",
+          "fail_reason",
+          "created_at",
+          "updated_at",
+          "finished_at",
+          "created_by"
+        ],
+        "title": "ImportView",
         "type": "object"
       },
       "InvitationPageView": {
@@ -1513,6 +1657,16 @@
         "title": "OperatorView",
         "type": "object"
       },
+      "OrchestrationStatus": {
+        "enum": [
+          "running",
+          "parked",
+          "succeeded",
+          "failed"
+        ],
+        "title": "OrchestrationStatus",
+        "type": "string"
+      },
       "OrgKind": {
         "description": "What an org is for. Every person has exactly one personal org, made\nwith them; every other org is a team org, made on purpose.",
         "enum": [
@@ -1597,6 +1751,14 @@
         ],
         "title": "OrgView",
         "type": "object"
+      },
+      "ParkReason": {
+        "description": "Why a record waits, and so what wakes it.",
+        "enum": [
+          "plan_limit"
+        ],
+        "title": "ParkReason",
+        "type": "string"
       },
       "Permission": {
         "enum": [
@@ -1782,6 +1944,26 @@
         "title": "RedirectView",
         "type": "object"
       },
+      "RestoreTaskRequest": {
+        "additionalProperties": false,
+        "description": "Takes an archived task back to the done list. `expected_version` is the\ntask's as the caller read it: 412 `precondition_failed` when it changed\nsince, and 422 `validation_failed` when the request names none or the\ntask is not archived.",
+        "properties": {
+          "expected_version": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Version"
+          }
+        },
+        "title": "RestoreTaskRequest",
+        "type": "object"
+      },
       "Role": {
         "enum": [
           "owner",
@@ -1792,6 +1974,25 @@
         ],
         "title": "Role",
         "type": "string"
+      },
+      "RowErrorView": {
+        "description": "A row the import skipped: its number, the first data row being 1, and why.",
+        "properties": {
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "row": {
+            "title": "Row",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "row",
+          "reason"
+        ],
+        "title": "RowErrorView",
+        "type": "object"
       },
       "SecondFactorRequest": {
         "additionalProperties": false,
@@ -2210,6 +2411,22 @@
         "title": "StartCheckoutRequest",
         "type": "object"
       },
+      "StartImportRequest": {
+        "additionalProperties": false,
+        "description": "The import of a CSV file uploaded under the `task_import` purpose\n(`POST /v1/tasks/imports/files`, then the media routes) and confirmed.\nIts columns are `title` (needed), `notes`, `due_on` (`YYYY-MM-DD`), and\n`assignee_email` (a member of the org), by header name.",
+        "properties": {
+          "file_id": {
+            "format": "uuid",
+            "title": "File Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file_id"
+        ],
+        "title": "StartImportRequest",
+        "type": "object"
+      },
       "StorageUsageView": {
         "description": "What the org keeps in the store, counted from its files: the stored ones\nper purpose and in total, and the uploads started and not yet confirmed.\nA removed file stops counting at once.",
         "properties": {
@@ -2305,6 +2522,18 @@
       },
       "TaskView": {
         "properties": {
+          "archived_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archived At"
+          },
           "assignee_id": {
             "anyOf": [
               {
@@ -8511,6 +8740,615 @@
         ]
       }
     },
+    "/v1/tasks/archived": {
+      "get": {
+        "description": "The done tasks the daily cleanup archived, newest first. An archived\ntask leaves the done list; it is still read by its id and restored.",
+        "operationId": "list_archived_tasks_v1_tasks_archived_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "scope",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/TaskScope",
+              "default": "team"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app-version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Version"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskPageView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Archived Tasks",
+        "tags": [
+          "tasks"
+        ]
+      }
+    },
+    "/v1/tasks/imports": {
+      "get": {
+        "operationId": "list_imports_v1_tasks_imports_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 10,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app-version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Version"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportPageView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Imports",
+        "tags": [
+          "tasks"
+        ]
+      },
+      "post": {
+        "description": "Accepted: the import runs in the background, a hundred rows a step.",
+        "operationId": "start_import_v1_tasks_imports_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app-version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Version"
+            }
+          },
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 255,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartImportRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Start Import",
+        "tags": [
+          "tasks"
+        ]
+      }
+    },
+    "/v1/tasks/imports/files": {
+      "post": {
+        "description": "Starts the upload of a CSV file to import (`text/csv`, a `.csv` name, at\nmost 1 MB). Then `POST /v1/media/files/{id}/upload`, the form, and\n`POST /v1/media/files/{id}/confirm`.",
+        "operationId": "create_import_file_v1_tasks_imports_files_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app-version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Version"
+            }
+          },
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 255,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddFileRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Import File",
+        "tags": [
+          "tasks"
+        ]
+      }
+    },
+    "/v1/tasks/imports/{import_id}": {
+      "get": {
+        "operationId": "get_import_v1_tasks_imports__import_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "import_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Import Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app-version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Version"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Import",
+        "tags": [
+          "tasks"
+        ]
+      }
+    },
+    "/v1/tasks/imports/{import_id}/resume": {
+      "post": {
+        "description": "A parked import runs again from the row it stopped at, and parks again\nat once if the plan still has no room. A running one is answered as it\nis; a finished one is refused (422).",
+        "operationId": "resume_import_v1_tasks_imports__import_id__resume_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "import_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Import Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app-version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Version"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Resume Import",
+        "tags": [
+          "tasks"
+        ]
+      }
+    },
     "/v1/tasks/{task_id}": {
       "delete": {
         "operationId": "delete_task_v1_tasks__task_id__delete",
@@ -9257,6 +10095,107 @@
           }
         },
         "summary": "Move Task",
+        "tags": [
+          "tasks"
+        ]
+      }
+    },
+    "/v1/tasks/{task_id}/restore": {
+      "post": {
+        "operationId": "restore_task_v1_tasks__task_id__restore_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-app-version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Version"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RestoreTaskRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Restore Task",
         "tags": [
           "tasks"
         ]

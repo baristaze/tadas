@@ -165,7 +165,7 @@ async def test_usage_is_counted_from_the_rows(
         700,
     )
     by = {p["purpose"]: p for p in body["purposes"]}
-    assert set(by) == {"task_attachment", "voice_dictation"}
+    assert set(by) == {"task_attachment", "voice_dictation", "task_import"}
     assert by["voice_dictation"]["count"] == 0
 
 

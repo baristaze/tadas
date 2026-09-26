@@ -7,6 +7,7 @@ from uuid import UUID
 from tadas.om.media.types.file import File
 from tadas.om.media.types.page import FilePage
 from tadas.om.opcontext import OpContext
+from tadas.om.orchestrations.types.orchestration import Orchestration, OrchestrationPage
 from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor, TaskFilter
 from tadas.om.tasks.types.page import TaskPage
 from tadas.om.tasks.types.task import DueReminder, Task
@@ -48,7 +49,17 @@ class TasksManagerInterface(ABC):
         ...
 
     @abstractmethod
-    async def get_task(self, ctx: OpContext, task_id: UUID) -> Task: ...
+    async def get_archived_tasks(
+        self, ctx: OpContext, criterion: TaskFilter, before: TaskCursor | None, limit: int
+    ) -> TaskPage:
+        """One page of the archived tasks the filter shows, newest first,
+        paged as the done list is."""
+        ...
+
+    @abstractmethod
+    async def get_task(self, ctx: OpContext, task_id: UUID) -> Task:
+        """A live task, archived or not: an archived one is still read."""
+        ...
 
     @abstractmethod
     async def create_task(self, ctx: OpContext, task: Task) -> Task:
@@ -85,6 +96,13 @@ class TasksManagerInterface(ABC):
         ...
 
     @abstractmethod
+    async def restore_task(self, ctx: OpContext, task_id: UUID, expected_version: int) -> Task:
+        """Takes an archived task back to the done list, at its top. A task
+        that is not archived is refused (`ValidationFailed`). `expected_version`
+        is the one the caller read, as on `update_task`."""
+        ...
+
+    @abstractmethod
     async def attach_file(self, ctx: OpContext, task_id: UUID, file: File) -> File:
         """Starts an upload of a file to a live task: the media namespace lands
         it pending, as a task attachment whose subject is the task, whatever
@@ -103,6 +121,68 @@ class TasksManagerInterface(ABC):
     async def remove_attachment(self, ctx: OpContext, task_id: UUID, file_id: UUID) -> File:
         """Soft-deletes one attachment of a live task. A file that is not this
         task's attachment is `NotFound`, as one that never existed is."""
+        ...
+
+    # The import of tasks from a CSV file.
+
+    @abstractmethod
+    async def create_import_file(self, ctx: OpContext, file: File) -> File:
+        """Starts the upload of a CSV file to import: the media namespace
+        lands it pending under the `task_import` purpose and its bounds,
+        whatever purpose and subject the caller's file names. The bytes and
+        the confirm go through the media namespace."""
+        ...
+
+    @abstractmethod
+    async def start_import(self, ctx: OpContext, import_id: UUID, file_id: UUID) -> Orchestration:
+        """Starts the import of a stored `task_import` file: the record and
+        the work row of its first step, in one commit. The rows are read by
+        the worker, a batch a step. An id written already answers the import
+        as stored."""
+        ...
+
+    @abstractmethod
+    async def get_import(self, ctx: OpContext, import_id: UUID) -> Orchestration: ...
+
+    @abstractmethod
+    async def get_imports(self, ctx: OpContext, limit: int) -> OrchestrationPage:
+        """The org's newest imports, newest first."""
+        ...
+
+    @abstractmethod
+    async def resume_import(self, ctx: OpContext, import_id: UUID) -> Orchestration:
+        """A person's wake of a parked import: it runs again from its cursor,
+        and parks again at once if the plan still has no room."""
+        ...
+
+    @abstractmethod
+    async def step_import(self, ctx: OpContext, record: Orchestration) -> Orchestration:
+        """One step of an import: reads the file, checks its bounds, and makes
+        the tasks of the next batch of rows in one commit with the record's
+        next cursor (`TasksStorageInterface.create_tasks_in_step`). A row that
+        makes no task is skipped and named; a row that would take the org past
+        its plan's bound of active tasks parks the record `plan_limit` at that
+        row; a file past a bound fails it. Each task's id is derived from the
+        import and the row, so a step run twice makes each task once."""
+        ...
+
+    # The daily cleanup of old done tasks.
+
+    @abstractmethod
+    async def open_cleanup(self, ctx: OpContext) -> Orchestration | None:
+        """The sweep, for one tenant: opens today's cleanup record when the org
+        has a done task unchanged for the archive age and today's record is
+        not open yet; the org, the kind, and the day are its unique key, so
+        every sweep after the first one of the day opens nothing. None when
+        there is nothing to archive."""
+        ...
+
+    @abstractmethod
+    async def step_cleanup(self, ctx: OpContext, record: Orchestration) -> Orchestration:
+        """One step of a cleanup: archives the next batch of done tasks
+        unchanged since the record's cutoff, in one conditional write with the
+        record's next cursor (`TasksStorageInterface.update_archived_in_step`).
+        A task reopened, edited, or deleted meanwhile is left alone."""
         ...
 
     @abstractmethod

@@ -16,14 +16,17 @@ def new_id() -> UUID:
     return uuid7()
 
 
-def derived_id(key: UUID, at: datetime) -> UUID:
+def derived_id(key: UUID, at: datetime, part: str = "") -> UUID:
     """The one id not minted fresh: a v7 whose time is `at` and whose random
-    bits are taken from `key`. An entity an outside delivery creates takes it,
-    with the delivery's key and the time the platform received it, so the same
+    bits are taken from `key`, and from `part` when one key makes many (an
+    import's rows). An entity an outside delivery creates takes it, with the
+    delivery's key and the time the platform received it, so the same
     delivery handled twice presents the same id and the create meets the row
-    already there. It sorts by time like every other id."""
+    already there; so does a row of an import stepped twice. It sorts by time
+    like every other id."""
     millis = int(at.timestamp() * 1000) & ((1 << 48) - 1)
-    tail = int.from_bytes(hashlib.sha256(key.bytes).digest()[:10], "big")
+    digest = hashlib.sha256(key.bytes + part.encode()).digest()
+    tail = int.from_bytes(digest[:10], "big")
     rand_a = tail >> 68  # 12 bits
     rand_b = tail & ((1 << 62) - 1)  # 62 bits
     value = (millis << 80) | (0x7 << 76) | (rand_a << 64) | (0b10 << 62) | rand_b

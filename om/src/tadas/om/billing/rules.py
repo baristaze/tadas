@@ -106,6 +106,12 @@ def effective_plan(account: BillingAccount | None, now: datetime) -> Plan:
     return max((p for p in candidates if p is not None), key=PLAN_ORDER.index)
 
 
+def plan_rose(before: Plan, after: Plan) -> bool:
+    """Whether a change of plan lifted the org's bounds: the event that wakes
+    a record parked on one (an import stopped at the plan's active tasks)."""
+    return PLAN_ORDER.index(after) > PLAN_ORDER.index(before)
+
+
 def ends_at(account: BillingAccount | None, now: datetime) -> datetime | None:
     """When a paid plan set to end drops the org to what is left, or None."""
     if paid_plan(account, now) is None or account is None or not account.cancel_at_period_end:

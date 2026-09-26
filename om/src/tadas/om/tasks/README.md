@@ -16,6 +16,10 @@ seven kinds of thing [Tadas is made of](../../../../README.md).
   time of the last change.
 - **Page**: the tasks of one page and whether another page follows.
 - **Attachment**: a [file](../media/README.md) kept with a task.
+- **Import**: tasks made from the rows of a CSV file, a long job kept
+  as an [orchestration](../orchestrations/README.md).
+- **Archived task**: a done task the daily cleanup put away, because
+  nobody changed it for the archive age (ninety days by default).
 
 ## What can happen
 
@@ -39,6 +43,20 @@ seven kinds of thing [Tadas is made of](../../../../README.md).
 - **Remind.** At nine in the morning of the due date, the task is marked
   reminded and every open screen of the org hears of it; so does the
   org's Slack channel, when the org has one.
+- **Import** a CSV file. The file is uploaded as a
+  [file](../media/README.md) of the `task_import` purpose, then the
+  import starts, naming it. A worker reads the rows a hundred at a time;
+  each batch creates its tasks and moves the import's cursor in one
+  commit. The tasks go to the bottom of the open list, in the file's
+  order. An imported task posts nothing to Slack.
+- **Archive.** Once a day, per org, the cleanup archives the done tasks
+  nobody changed for the archive age, five hundred per step, each step
+  one conditional write that only takes tasks still done and still that
+  old. A task reopened or edited meanwhile is left alone.
+- **List the archived tasks**, newest first, and **restore** one: it
+  goes back to the top of the done list, and has the archive age again
+  before the next cleanup takes it. Reopening an archived task restores
+  it too.
 - **Sweep.** Deleted tasks are erased for good after the retention.
 
 ## The rules
@@ -93,6 +111,25 @@ seven kinds of thing [Tadas is made of](../../../../README.md).
   recorded, the reminder keeps UTC's morning. The zone is read when the
   reminder runs, so a task handed to someone else, or a person who
   moved, is still met on their own morning.
+- **The import file is small and plain.** Its columns are `title`
+  (needed), `notes`, `due_on` (`YYYY-MM-DD`), and `assignee_email` (a
+  member of the org), by header name and in any order; any other column
+  is ignored. A file is at most a megabyte and five thousand rows.
+- **A bad row is skipped, a bad file fails.** A row with no title, a
+  date that is not a date, or an assignee who is not a member makes no
+  task; the import counts it and names the first twenty with the reason.
+  A file past a bound, not a CSV file, or without a `title` column fails
+  the import at once, and nothing is created.
+- **An import stops at the plan, not past it.** When the next row would
+  take the org past its plan's active tasks, the import parks there and
+  keeps the tasks it made. A plan that rises wakes it; so does Resume,
+  after tasks were finished. It goes on from the row it stopped at.
+- **A row makes one task, however often its step runs.** A task's id is
+  derived from the import and the row number, so a step that runs twice
+  meets its tasks already there.
+- **Archived is not deleted.** An archived task keeps its attachments
+  and can be read by its id. It leaves the done list and every count
+  shown by default; it never was an active task, so it frees no room.
 - **A reminder is for the due date it was set for.** It goes out only
   while the task is open, not deleted, still due on that date, and not
   yet reminded, all checked in one write. So a reminder for a date that

@@ -5,7 +5,7 @@ from typing import Any
 from uuid import UUID
 
 import pytest
-from contracts.doubles import Members, context, media_of, no_slack
+from contracts.doubles import Members, context, media_of, no_slack, orchestrations_of
 from contracts.factories import make_org
 from contracts.outbox_storage import claim_all
 from contracts.plans import ON_TEAM
@@ -21,6 +21,7 @@ from tadas.om.opcontext import (
     OpContext,
     Role,
 )
+from tadas.om.orchestrations.storage.impl.memory import OrchestrationsStorageMemoryImpl
 from tadas.om.outbox.impl.relay import OutboxOptions, OutboxRelayImpl
 from tadas.om.outbox.storage.impl.memory import OutboxStorageMemoryImpl
 from tadas.om.outbox.types.row import OutboxRow, outbox_row
@@ -84,6 +85,7 @@ def manager(
         no_slack(),
         TasksOptions(),
         entitlements=ON_TEAM,
+        orchestrations=orchestrations_of(OrchestrationsStorageMemoryImpl(), members, relay),
     )
 
 
@@ -204,7 +206,7 @@ async def test_update_keeps_the_manager_owned_fields_and_takes_the_callers_versi
     ctx = context(Role.MEMBER)
     first = await manager.create_task(ctx, make_task(ctx, "first"))
     second = await manager.create_task(ctx, make_task(ctx, "second"))
-    assert Task.MANAGER_OWNED_FIELDS == ("position", "version", "reminded_at")
+    assert Task.MANAGER_OWNED_FIELDS == ("position", "version", "reminded_at", "archived_at")
     forged = first.model_copy(update={"title": "renamed", "position": -1e9, "version": 99})
     updated = await manager.update_task(ctx, forged, first.version)
     assert updated.title == "renamed"
@@ -443,6 +445,7 @@ async def test_a_write_that_lands_between_the_read_and_the_write_is_refused(
         no_slack(),
         TasksOptions(),
         entitlements=ON_TEAM,
+        orchestrations=orchestrations_of(OrchestrationsStorageMemoryImpl(), members, relay),
     )
     org = make_org()
     ann, bob = context(Role.MEMBER, org), context(Role.MEMBER, org)
@@ -472,6 +475,7 @@ async def test_lists_are_clamped(infra: InfraLocalImpl, members: Members) -> Non
         no_slack(),
         TasksOptions(max_limit=2),
         entitlements=ON_TEAM,
+        orchestrations=orchestrations_of(OrchestrationsStorageMemoryImpl(), members, relay),
     )
     ctx = context(Role.MEMBER)
     for i in range(3):
@@ -541,6 +545,7 @@ async def test_a_failed_relay_leaves_the_row_for_the_sweep(
         no_slack(),
         TasksOptions(),
         entitlements=ON_TEAM,
+        orchestrations=orchestrations_of(OrchestrationsStorageMemoryImpl(), members, relay),
     )
     ctx = context(Role.MEMBER)
     created = await manager.create_task(ctx, make_task(ctx))
@@ -669,6 +674,7 @@ async def test_the_sweep_purges_only_deleted_tasks_while_the_tenant_lives(
         no_slack(),
         TasksOptions(retention=timedelta(0)),
         entitlements=ON_TEAM,
+        orchestrations=manager._orchestrations,  # type: ignore[attr-defined]
     )
     assert await past.purge_deleted(ctx) == 1
     assert (await manager.get_task(ctx, live.id)).id == live.id

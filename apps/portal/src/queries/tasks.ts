@@ -1,7 +1,8 @@
-import { useInfiniteQuery, useMutation } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery } from "@tanstack/react-query";
 import type {
   AddTaskRequest,
   MoveTaskRequest,
+  RestoreTaskRequest,
   TaskPageView,
   TaskScope,
   TaskStatus,
@@ -82,5 +83,25 @@ export function useDeleteTask() {
   return useMutation({
     mutationFn: ({ id, version }: { id: string; version: number }) =>
       api.del<TaskView>(`/v1/tasks/${id}`, { ifMatch: version }),
+  });
+}
+
+/** The archive's first page, newest first: read only when the person opens
+ * it. A task push refreshes it by the convention, as it does the lists. */
+export const ARCHIVED_PAGE_SIZE = 50;
+
+export function useArchivedTasks(scope: TaskScope, enabled: boolean) {
+  return useQuery({
+    queryKey: keys.tasks.archived(scope),
+    enabled,
+    queryFn: ({ signal }) =>
+      api.get<TaskPageView>(`/v1/tasks/archived?scope=${scope}&limit=${ARCHIVED_PAGE_SIZE}`, { signal }),
+  });
+}
+
+export function useRestoreTask() {
+  return useMutation({
+    mutationFn: ({ id, version }: { id: string; version: number }) =>
+      api.post<TaskView>(`/v1/tasks/${id}/restore`, { expected_version: version } satisfies RestoreTaskRequest),
   });
 }

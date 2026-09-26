@@ -38,6 +38,10 @@ to ask one.
   counts as one more active task.
 - A member past the plan's seats is refused.
 - The first API key on Free is refused, and so is every one after it.
+- An import of tasks that reaches the bound is not refused: it parks,
+  keeping the tasks it made, and goes on when the plan rises. A change
+  of plan that lifts the org's bounds (a payment, a grant) wakes it, in
+  the same commit that records the new plan.
 
 Nothing the org already has is ever taken away by a bound. An org that
 moves to a smaller plan keeps its tasks, its members, and its keys, and is

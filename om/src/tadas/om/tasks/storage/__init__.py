@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from datetime import date, datetime
 from uuid import UUID
 
+from tadas.om.orchestrations.types.orchestration import Step
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.tasks.rules import Place
 from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor, TaskFilter
@@ -43,8 +44,29 @@ class TasksStorageInterface(ABC):
     async def read_done_tasks(
         self, org_id: UUID, criterion: TaskFilter, before: TaskCursor | None, limit: int
     ) -> list[Task]:
-        """Done tasks the filter shows, newest first by (updated_at, id), strictly
-        before the cursor (tasks.rules.is_before)."""
+        """Done tasks the filter shows and the cleanup has not archived, newest
+        first by (updated_at, id), strictly before the cursor
+        (tasks.rules.is_before)."""
+        ...
+
+    @abstractmethod
+    async def read_archived_tasks(
+        self, org_id: UUID, criterion: TaskFilter, before: TaskCursor | None, limit: int
+    ) -> list[Task]:
+        """Archived tasks the filter shows, newest first by (updated_at, id),
+        strictly before the cursor, as the done list pages."""
+        ...
+
+    @abstractmethod
+    async def read_last_place(self, org_id: UUID) -> Place | None:
+        """The place at the bottom of the open list, or None when it is empty:
+        where an import puts its tasks after."""
+        ...
+
+    @abstractmethod
+    async def read_archivable(self, org_id: UUID, before: datetime, limit: int) -> list[UUID]:
+        """The ids of the tasks the cleanup archives (tasks.rules.is_archivable),
+        oldest change first, at most `limit`."""
         ...
 
     @abstractmethod
@@ -113,6 +135,45 @@ class TasksStorageInterface(ABC):
         outbox rows, each against its own expected version, in one commit, or
         none does and `PreconditionFailed` is raised. The renumbering of an open
         list is this write: a list renumbered halfway is out of order."""
+        ...
+
+    @abstractmethod
+    async def create_tasks_in_step(
+        self,
+        org_id: UUID,
+        tasks: Sequence[tuple[Task, tuple[OutboxRow, ...]]],
+        step: Step,
+        step_rows: tuple[OutboxRow, ...],
+    ) -> tuple[bool, ...]:
+        """One step of an import, one commit: every task an id not written yet
+        (a row stepped twice meets its task already there), each with the rows
+        that announce it, and the record as the step left it with the rows
+        that announce it and ask for its next step. The record is a
+        compare-and-set on the version the step read (`Step`), and its
+        `applied` grows by the tasks this commit wrote. A record that moved
+        raises `PreconditionFailed` and lands nothing. Answers, per task and in
+        order, whether this commit wrote it (and landed its rows) or found it
+        there already."""
+        ...
+
+    @abstractmethod
+    async def update_archived_in_step(
+        self,
+        org_id: UUID,
+        candidates: Sequence[tuple[UUID, tuple[OutboxRow, ...]]],
+        before: datetime,
+        archived_at: datetime,
+        actor: UUID,
+        step: Step,
+        step_rows: tuple[OutboxRow, ...],
+    ) -> tuple[bool, ...]:
+        """One step of a cleanup, one commit: one conditional write archives
+        the candidates that are still archivable before `before`
+        (tasks.rules.is_archivable), moving each one's version on, with the
+        rows that announce the ones it archived; a candidate reopened, edited,
+        or deleted since it was read is left alone. The record lands beside it
+        as on `create_tasks_in_step`. Answers, per candidate and in order,
+        whether this commit archived it (and landed its rows)."""
         ...
 
     @abstractmethod

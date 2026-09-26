@@ -64,6 +64,11 @@ BOUNDS: Mapping[FilePurpose, UploadBounds] = {
         max_bytes=100 * 1024 * 1024, types={**_IMAGES, **_DOCUMENTS, **_AUDIO, **_VIDEO}
     ),
     FilePurpose.VOICE_DICTATION: UploadBounds(max_bytes=10 * 1024 * 1024, types=_AUDIO),
+    # Five thousand rows of a title, a note, a date, and an address fit in
+    # well under a megabyte.
+    FilePurpose.TASK_IMPORT: UploadBounds(
+        max_bytes=1024 * 1024, types={"text/csv": frozenset({"csv"})}
+    ),
 }
 """The bounds of every purpose. The numbers are illustrative; the shape is
 that each purpose names its own ceiling and its own types, and a type

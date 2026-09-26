@@ -172,6 +172,18 @@ class ExchangeSessionRequest(BaseModel):
     org_id: Annotated[UUID, Field(title='Org Id')]
 
 
+class FailReason(StrEnum):
+    """
+    Why a record ended without finishing: a bound, never a guard.
+    """
+    file_too_large = 'file_too_large'
+    too_many_rows = 'too_many_rows'
+    not_csv = 'not_csv'
+    no_title_column = 'no_title_column'
+    file_gone = 'file_gone'
+    defect = 'defect'
+
+
 class FilePurpose(StrEnum):
     """
     Which domain context a file came from. The purpose decides the bounds an
@@ -179,6 +191,7 @@ class FilePurpose(StrEnum):
     """
     task_attachment = 'task_attachment'
     voice_dictation = 'voice_dictation'
+    task_import = 'task_import'
 
 
 class FileStatus(StrEnum):
@@ -332,6 +345,13 @@ class OperatorView(BaseModel):
     operator_role: OperatorRole
 
 
+class OrchestrationStatus(StrEnum):
+    running = 'running'
+    parked = 'parked'
+    succeeded = 'succeeded'
+    failed = 'failed'
+
+
 class OrgKind(StrEnum):
     """
     What an org is for. Every person has exactly one personal org, made
@@ -353,6 +373,13 @@ class OrgView(BaseModel):
     kind: OrgKind
     name: Annotated[str, Field(title='Name')]
     slug: Annotated[str, Field(title='Slug')]
+
+
+class ParkReason(StrEnum):
+    """
+    Why a record waits, and so what wakes it.
+    """
+    plan_limit = 'plan_limit'
 
 
 class Permission(StrEnum):
@@ -422,12 +449,33 @@ class RedirectView(BaseModel):
     url: Annotated[str, Field(title='Url')]
 
 
+class RestoreTaskRequest(BaseModel):
+    """
+    Takes an archived task back to the done list. `expected_version` is the
+    task's as the caller read it: 412 `precondition_failed` when it changed
+    since, and 422 `validation_failed` when the request names none or the
+    task is not archived.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    expected_version: Annotated[ExpectedVersion | None, Field(title='Expected Version')] = None
+
+
 class Role(StrEnum):
     owner = 'owner'
     admin = 'admin'
     member = 'member'
     viewer = 'viewer'
     service = 'service'
+
+
+class RowErrorView(BaseModel):
+    """
+    A row the import skipped: its number, the first data row being 1, and why.
+    """
+    reason: Annotated[str, Field(title='Reason')]
+    row: Annotated[int, Field(title='Row')]
 
 
 class SecondFactorRequest(BaseModel):
@@ -609,6 +657,19 @@ class StartCheckoutRequest(BaseModel):
     return_url: Annotated[str, Field(max_length=2000, min_length=1, title='Return Url')]
 
 
+class StartImportRequest(BaseModel):
+    """
+    The import of a CSV file uploaded under the `task_import` purpose
+    (`POST /v1/tasks/imports/files`, then the media routes) and confirmed.
+    Its columns are `title` (needed), `notes`, `due_on` (`YYYY-MM-DD`), and
+    `assignee_email` (a member of the org), by header name.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    file_id: Annotated[UUID, Field(title='File Id')]
+
+
 class StorageUsageView(BaseModel):
     """
     What the org keeps in the store, counted from its files: the stored ones
@@ -649,6 +710,7 @@ class TaskStatus(StrEnum):
 
 
 class TaskView(BaseModel):
+    archived_at: Annotated[AwareDatetime | None, Field(title='Archived At')] = None
     assignee_id: Annotated[UUID | None, Field(title='Assignee Id')]
     created_at: Annotated[AwareDatetime, Field(title='Created At')]
     created_by: Annotated[UUID, Field(title='Created By')]
@@ -841,6 +903,36 @@ class IdentityView(BaseModel):
     time_zone: Annotated[str | None, Field(title='Time Zone')] = None
 
 
+class ImportView(BaseModel):
+    """
+    An import of tasks from a CSV file, read as it runs. `status` is
+    `running`, `parked`, `succeeded`, or `failed`. `total` is the file's data
+    rows, null until the first step counted them; `cursor` is how many were
+    read; `created` the tasks the import made, `skipped` the rows it passed
+    over, and `row_errors` the first twenty of those with the reason. A
+    `parked` import names its `park_reason`: `plan_limit` is the plan's bound
+    on active tasks, lifted by a higher plan (which resumes it) or by tasks
+    finished and `POST /v1/tasks/imports/{id}/resume`. A `failed` one names
+    its `fail_reason`: `file_too_large`, `too_many_rows`, `not_csv`,
+    `no_title_column`, `file_gone`, or `defect`. Every change is pushed as
+    `orchestrations.orchestration.updated` on the realtime channel.
+    """
+    created: Annotated[int, Field(title='Created')]
+    created_at: Annotated[AwareDatetime, Field(title='Created At')]
+    created_by: Annotated[UUID, Field(title='Created By')]
+    cursor: Annotated[int, Field(title='Cursor')]
+    fail_reason: FailReason | None
+    file_id: Annotated[UUID, Field(title='File Id')]
+    finished_at: Annotated[AwareDatetime | None, Field(title='Finished At')]
+    id: Annotated[UUID, Field(title='Id')]
+    park_reason: ParkReason | None
+    row_errors: Annotated[list[RowErrorView], Field(title='Row Errors')]
+    skipped: Annotated[int, Field(title='Skipped')]
+    status: OrchestrationStatus
+    total: Annotated[int | None, Field(title='Total')]
+    updated_at: Annotated[AwareDatetime, Field(title='Updated At')]
+
+
 class InvitationView(BaseModel):
     """
     A person asked to join the org. The identity provider sent the email
@@ -992,6 +1084,13 @@ class ApiKeyPageView(BaseModel):
     """
     items: Annotated[list[ApiKeyView], Field(title='Items')]
     next_cursor: Annotated[str | None, Field(title='Next Cursor')]
+
+
+class ImportPageView(BaseModel):
+    """
+    The org's newest imports, newest first.
+    """
+    items: Annotated[list[ImportView], Field(title='Items')]
 
 
 class InvitationPageView(BaseModel):
