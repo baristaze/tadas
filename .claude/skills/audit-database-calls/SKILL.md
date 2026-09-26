@@ -35,9 +35,12 @@ the providers. It holds no cloud credential and reads no environment.
 1. Name the run: `audit_database_calls_<yyyymmdd>`, today's date in UTC.
    When `uv run python ops/audit/auditdb.py list` shows that name taken,
    another run holds it: add a suffix (`_2`), and never drop a database
-   this run did not make. Make the evidence folder
-   `~/Downloads/tadas_database_calls_<yyyy-mm-dd>/` (`mkdir -p`). Say
-   which commit the run counted (`git rev-parse HEAD`).
+   this run did not make. The evidence folder is
+   `~/Downloads/tadas_database_calls_<yyyy-mm-dd>/` and the report
+   `~/Downloads/tadas_database_calls_<yyyy-mm-dd>.md`; when either
+   exists, both take the next free suffix (`_2`), so a run never
+   overwrites another's. Make the folder (`mkdir -p`). Say which commit
+   the run counted (`git rev-parse HEAD`).
 2. List every route (the routers under
    `services/api/src/tadas/services/api/routers/`, the socket in
    `.../api/realtime/socket.py`, and `/healthz`, `/readyz`, and `/metrics`
@@ -83,7 +86,26 @@ the providers. It holds no cloud credential and reads no environment.
      and the sizes it was measured at;
    - an N+1 (a transaction per row), a read repeated within one flow, a
      transaction opened and rolled back with nothing in it, several
-     transactions in a row on the same role that one would serve.
+     transactions in a row on the same role that one would serve;
+   - the cost of an open socket per hour: every timer the socket's
+     handler runs (`services/api/src/tadas/services/api/realtime/socket.py`)
+     at its interval. The recheck costs its measured round trips every
+     `realtime_recheck_seconds`
+     (`services/api/src/tadas/services/api/settings.py`). A client's ping
+     comes every `ping_interval_seconds` of
+     `deployment/realtime-timeouts.json`, and its pong costs nothing
+     while the head this process heard is younger than
+     `realtime_head_max_age_seconds`, and a head read past it; count the
+     pings an hour that read, for a quiet tenant and for a busy one. Say
+     it per socket per hour and at a thousand open sockets;
+   - the fan-out of one change: one write publishes one hint, every open
+     tab of every member of the tenant receives it, and each tab reads
+     what the hint does not carry. Read what a tab does with a hint in
+     `apps/portal/src/realtime/` (the hints it skips: its own writes, a
+     version it already holds) and measure the read it makes, in a flows
+     file when no built-in flow makes that call. Say the reads caused by
+     one change as reads per hint × members × open tabs, minus the tabs
+     that skip, at an org of 2 and of 200 members with 2 tabs each.
 5. Drop the run's database, whatever happened before, and check it is
    gone:
 
@@ -93,7 +115,19 @@ the providers. It holds no cloud credential and reads no environment.
    ```
 
 6. Write the report, and the proposed tickets in it. The skill files
-   none.
+   none. A fix is proposed in this order, the first that applies:
+   remove the read, fold it into a read the flow already makes, defer
+   it off the request path, and only then run reads in parallel. That
+   order is the rule, because concurrent reads on a bounded pool can
+   make the tail worse. Each role's pool has a fixed size
+   (`database_pool_size` in `om/src/tadas/om/storage/settings.py`) and
+   no overflow, while admission lets many more requests in at once. A
+   request that runs three reads at once holds three connections, so
+   under load it takes two from requests that would each have needed
+   one, and they wait on a checkout. The median falls and the tail
+   grows. Parallel reads are proposed only when they are independent,
+   when nothing earlier in the order applies, and with the pool's
+   headroom at the load the report names.
 
 ## What it never does
 
@@ -133,6 +167,10 @@ the providers. It holds no cloud credential and reads no environment.
 | Flow | Min | Max (or formula) | Transactions | Roles | What drives the range | Measured |
 
 Measured: yes, formula, or read (code only).
+
+## Realtime
+
+| Measure | Per unit | Formula | At the stated sizes | Measured |
 
 ## Findings, by impact
 
