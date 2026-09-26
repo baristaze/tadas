@@ -2,7 +2,9 @@
 stack's Postgres and Valkey, one serving a socket, the other revoking the
 session behind it; the socket closes with 4401 on the wire. When the bus
 never carries the message, the serving process's own recheck closes it
-within its interval. A change of role closes the socket with 1012. The pong
+within its interval. A downgrade to a plan without api keys closes a key's
+socket, at once when the bus carries the account's change and within the
+recheck when it does not. A change of role closes the socket with 1012. The pong
 carries the head heard on the bus, and reads it once that is too old."""
 
 import asyncio
@@ -18,11 +20,13 @@ import httpx
 import pytest
 import uvicorn
 import websockets
-from api_support import OWNER, add_member, seed_request, sign_in_as
+from api_support import OWNER, add_member, on_plan, seed_request, sign_in_as
 from websockets.exceptions import ConnectionClosed
 
 from tadas.om.base import new_id
+from tadas.om.billing.types.plan import Plan
 from tadas.om.opcontext import OpContext, Role
+from tadas.om.outbox.types.row import outbox_row
 from tadas.om.tenancy.types.org import Org
 from tadas.services.api.app import create_app
 from tadas.services.api.container import AppContainer
@@ -216,6 +220,75 @@ async def test_a_change_of_role_in_one_process_closes_the_socket_in_another(
         ticket = await ticket_for(address, member)
         async with websockets.connect(f"ws://{address}/v1/realtime?ticket={ticket}") as ws:
             assert '"type":"hello"' in str(await ws.recv())
+
+
+async def key_socket_on_team(processes: TwoProcesses) -> tuple[str, str]:
+    """The org on Team, an api key of its owner, and a ticket minted on it:
+    the key's headers' value and the ticket."""
+    await on_plan(processes.revoker, processes.org.id, Plan.TEAM)
+    owner = await headers_of(processes.address, processes.email, processes.org)
+    async with httpx.AsyncClient(base_url=f"http://{processes.address}") as client:
+        issued = await client.post(
+            "/v1/api-keys", headers=owner, json={"name": "ci", "role": "member"}
+        )
+    key = issued.json()["key"]
+    return key, await ticket_for(processes.address, {"Authorization": f"Bearer {key}"})
+
+
+async def downgrade(processes: TwoProcesses, announced: bool) -> None:
+    """Process A takes the org off every plan with keys. Announced, the
+    write carries the account's change row and A's relay publishes it, as
+    the billing manager's writes do; not announced, the bus never hears."""
+    billing = processes.revoker.storage.get_billing_storage()
+    account = await billing.read_account(processes.org.id)
+    assert account is not None
+    downgraded = account.model_copy(update={"comped_plan": None})
+    if not announced:
+        await billing.write_account(processes.org.id, downgraded, ())
+        return
+    owner = await headers_of(processes.address, processes.email, processes.org)
+    ctx = await context_of(processes.revoker, owner)
+    rows = (outbox_row(ctx, "billing.account.updated", account.id, {}),)
+    await billing.write_account(processes.org.id, downgraded, rows)
+    await processes.revoker.managers.outbox.relay_all(processes.org.id, rows)
+
+
+async def test_a_downgrade_closes_the_keys_socket_within_the_recheck(tmp_path: Path) -> None:
+    """The org drops to a plan without api keys and the bus never hears: B's
+    recheck refuses the key as its every request is refused, and closes its
+    socket with 4401 within one interval."""
+    async with serving(
+        tmp_path, revoker_bus="memory", realtime_recheck_seconds=RECHECK_SECONDS
+    ) as processes:
+        _, ticket = await key_socket_on_team(processes)
+        async with websockets.connect(
+            f"ws://{processes.address}/v1/realtime?ticket={ticket}"
+        ) as ws:
+            assert '"type":"hello"' in str(await ws.recv())
+            await downgrade(processes, announced=False)
+            started = time.monotonic()
+            closed = await closed_within(ws, RECHECK_SECONDS + 5)
+            waited = time.monotonic() - started
+    assert closed.rcvd is not None
+    assert closed.rcvd.code == CLOSE_UNAUTHENTICATED
+    assert closed.rcvd.reason == "plan_limit_reached"
+    assert waited <= RECHECK_SECONDS + 1.0, f"closed after {waited:.2f}s"
+
+
+async def test_a_downgrade_on_the_bus_closes_the_keys_socket_at_once(tmp_path: Path) -> None:
+    """The account's change reaches B on the bus and wakes the key socket's
+    recheck: the socket closes long before its five-minute interval."""
+    async with serving(tmp_path) as processes:
+        _, ticket = await key_socket_on_team(processes)
+        async with websockets.connect(
+            f"ws://{processes.address}/v1/realtime?ticket={ticket}"
+        ) as ws:
+            assert '"type":"hello"' in str(await ws.recv())
+            await downgrade(processes, announced=True)
+            closed = await closed_within(ws, 10)
+    assert closed.rcvd is not None
+    assert closed.rcvd.code == CLOSE_UNAUTHENTICATED
+    assert closed.rcvd.reason == "plan_limit_reached"
 
 
 async def next_of(ws: websockets.ClientConnection, kind: str) -> dict[str, object]:

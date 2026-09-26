@@ -25,12 +25,13 @@ from tadas.om.base import utcnow
 from tadas.om.billing.types.plan import Plan
 from tadas.om.opcontext import OpContext, Role
 from tadas.om.tenancy.rules import hash_token
+from tadas.om.tenancy.types.socket_ticket import SocketPrincipal
 from tadas.services.api.app import create_app
 from tadas.services.api.container import AppContainer
 from tadas.services.api.gateway.auth import CLOSE_UNAUTHENTICATED
 from tadas.services.api.realtime.envelopes import ErrorEnvelope
 from tadas.services.api.realtime.send_buffer import SendBuffer
-from tadas.services.api.realtime.socket import CLOSE_RECONNECT
+from tadas.services.api.realtime.socket import CLOSE_RECONNECT, recheck_until_refused
 from tadas.services.api.services.realtime import (
     CREDENTIAL_REVOKED,
     MEMBERSHIP_ENDED,
@@ -512,6 +513,80 @@ def test_a_change_of_role_the_bus_lost_closes_the_socket_within_the_recheck(
                 ws.receive_json()
     assert closed.value.code == CLOSE_RECONNECT
     assert closed.value.reason == RIGHTS_CHANGED
+
+
+def test_a_downgrade_the_bus_lost_closes_the_keys_socket_within_the_recheck(
+    tmp_path: Path,
+) -> None:
+    """The org drops to a plan without api keys, in storage alone: the key's
+    socket is refused at its recheck with 4401, as a revoked key's is, and
+    the session's socket in the same org stays open."""
+    container = build_container(tmp_path, realtime_recheck_seconds=RECHECK)
+    _, org = run(
+        container.managers.tenancy.bootstrap(
+            seed_request(), "Acme", "acme", OWNER["email"], OWNER["name"]
+        )
+    )
+    run(on_plan(container, org.id, Plan.TEAM))
+    billing = container.storage.get_billing_storage()
+    with TestClient(create_app(container)) as tc:
+        owner = sign_in(tc, OWNER["email"], org.id)
+        issued = tc.post("/v1/api-keys", headers=owner, json={"name": "ci", "role": "member"})
+        key = {"Authorization": f"Bearer {issued.json()['key']}"}
+        with open_socket(tc, owner) as from_session, open_socket(tc, key) as from_key:
+            assert from_session.receive_json()["type"] == "hello"
+            assert from_key.receive_json()["type"] == "hello"
+            account = run(billing.read_account(org.id))
+            assert account is not None
+            run(billing.write_account(org.id, account.model_copy(update={"comped_plan": None}), ()))
+            with pytest.raises(WebSocketDisconnect) as closed:
+                from_key.receive_json()
+            time.sleep(RECHECK)  # the session's socket rechecks meanwhile, and holds
+            from_session.send_json({"op": "ping"})
+            assert from_session.receive_json()["type"] == "pong"
+    assert closed.value.code == CLOSE_UNAUTHENTICATED
+    assert closed.value.reason == "plan_limit_reached"
+
+
+async def test_a_nudge_runs_the_recheck_at_once(tmp_path: Path) -> None:
+    """A recheck a nudge wakes runs at once, not at the end of the interval,
+    and the interval starts again after it."""
+    container = build_container(tmp_path)
+    tenancy = container.managers.tenancy
+    _, org = await tenancy.bootstrap(seed_request(), "Acme", "acme", OWNER["email"], OWNER["name"])
+    login = await tenancy.dev_sign_in(seed_request(), OWNER["email"])
+    identity = await tenancy.authenticate_login(seed_request(), login.token)
+    ctx = await tenancy.authenticate(
+        seed_request(), (await tenancy.exchange_login(identity, org.id)).token
+    )
+    principal = await tenancy.redeem_ticket(
+        seed_request(), (await tenancy.issue_ticket(ctx)).ticket
+    )
+    service = container.services.get_realtime_service()
+    answers = iter([None, "plan_limit_reached"])
+    asked: list[SocketPrincipal] = []
+    first_asked = asyncio.Event()
+
+    async def recheck(asked_about: SocketPrincipal) -> str | None:
+        asked.append(asked_about)
+        first_asked.set()
+        return next(answers)
+
+    service.recheck = recheck  # type: ignore[method-assign]
+    nudged = asyncio.Event()
+    ended: list[str] = []
+    checking = asyncio.create_task(
+        recheck_until_refused(
+            service, principal, ended.append, 300.0, phase=lambda interval: 0.0, nudged=nudged
+        )
+    )
+    await asyncio.wait_for(first_asked.wait(), timeout=1.0)
+    await asyncio.sleep(0)  # the loop is past the first answer, waiting out the interval
+    assert ended == []  # the first check held; the next is five minutes away
+    nudged.set()
+    await asyncio.wait_for(checking, timeout=1.0)
+    assert len(asked) == 2
+    assert ended == ["plan_limit_reached"]
 
 
 def test_a_recheck_that_cannot_be_made_closes_the_socket(

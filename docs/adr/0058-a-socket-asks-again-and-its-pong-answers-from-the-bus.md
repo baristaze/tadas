@@ -3,7 +3,10 @@
 **Status**: accepted (2026-09-26). The session lifetimes it names are
 14 days idle and 30 days absolute since
 [ADR 0063](0063-sessions-last-weeks.md); the recheck and its bound do
-not change.
+not change. The last paragraph of the consequences is amended
+(2026-09-26): the recheck of a socket an API key opened asks the plan
+too, and a change of the org's billing account wakes that recheck at
+once. See the end of this record.
 
 ## Context
 
@@ -129,6 +132,25 @@ default, is signed out when its socket rechecks. So is `tadas listen`
 in an org where nothing changed for four hours; it exits and asks for a
 sign-in, as any command would.
 
-A socket opened under an API key is checked as the redemption checks
-it: the key and the membership. The plan's lever on keys is checked
-where the ticket is minted, not here.
+A socket opened under an API key is checked as the key's every request
+is: the key, the membership, and the plan's lever on keys. The plan
+comes from the billing account read with the principal
+(`read_key_principal`), so the check costs no read of its own: the
+recheck stays at 2 transactions and 6 round trips. After a downgrade to
+a plan without keys, the recheck refuses the key with
+`plan_limit_reached`, and the socket closes with 4401, as a revoked
+key's does. The key is kept, and works again on a plan with keys.
+
+The bus is the fast path here too. A plan change writes
+`billing.account.updated`, which every process hears. It carries no
+plan, so it closes nothing itself: it wakes, at once, the recheck of
+every socket an API key of that org opened, and the recheck reads the
+plan. A session's socket is not woken. When the bus loses the message,
+or a paid plan runs out at its period's end with no message at all,
+the recheck interval bounds the socket as it bounds a lost revocation.
+
+| Per API key socket | Before | After |
+|---|---|---|
+| Recheck reads | `read_api_key`, `read_principal` | `read_api_key`, `read_key_principal` |
+| Recheck cost | 2 transactions, 6 round trips | 2 transactions, 6 round trips |
+| Worst case after a downgrade | until the key expires, up to 90 days | at once on the bus; one interval (5 minutes) without it |

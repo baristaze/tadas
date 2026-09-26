@@ -10,8 +10,8 @@ from uuid import UUID
 from tadas.infra.topics import EntityChangedPayload, TopicPayload, Topics, TopicsInterface
 from tadas.om.base import utcnow
 from tadas.om.events import EventsManagerInterface
-from tadas.om.exceptions import NotAuthenticated, ValidationFailed
-from tadas.om.opcontext import ActorScope, OpContext
+from tadas.om.exceptions import NotAuthenticated, PlanLimitReached, ValidationFailed
+from tadas.om.opcontext import ActorScope, CredentialKind, OpContext
 from tadas.om.tenancy import TenancyManagerInterface
 from tadas.om.tenancy.types.socket_ticket import SocketPrincipal
 from tadas.services.api.realtime.envelopes import EventEnvelope, IssuedTicketView
@@ -42,14 +42,21 @@ context was built from, or its org, whose deletion ends every membership in
 it) and the close reason. A membership's change is a change of its role, so
 the socket closes to be opened again under the role the member has now."""
 
+PLAN_CHANGES = frozenset({"billing.account.updated"})
+"""The change kinds that may take api keys off the org's plan. They carry no
+plan, so they close nothing themselves: each wakes the recheck of every
+socket an api key of the org opened, and the recheck reads the plan."""
+
 
 @dataclass(frozen=True)
 class AttachedSocket:
     org_id: UUID
     user_id: UUID
     credential_id: UUID
+    credential_kind: CredentialKind
     membership_id: UUID
     end: Callable[[str], None]
+    recheck_now: Callable[[], None]
 
 
 @dataclass(frozen=True)
@@ -121,7 +128,9 @@ class RealtimeServiceImpl(RealtimeServiceInterface):
             current = await self._tenancy.resume(
                 ctx, ctx.org_id, principal.credential_kind, ctx.credential_id, record_use=False
             )
-        except NotAuthenticated as refused:
+        except (NotAuthenticated, PlanLimitReached) as refused:
+            # An api key the org's plan no longer allows is refused as its
+            # every request is, and its socket closes as a revoked one does.
             return refused.code
         if current.ctx.security != ctx.security:
             return RIGHTS_CHANGED
@@ -145,15 +154,22 @@ class RealtimeServiceImpl(RealtimeServiceInterface):
 
         return self._topics.subscribe(topic, f"socket:{ctx.user_id}", forward)
 
-    def attach(self, principal: SocketPrincipal, end: Callable[[str], None]) -> Callable[[], None]:
+    def attach(
+        self,
+        principal: SocketPrincipal,
+        end: Callable[[str], None],
+        recheck_now: Callable[[], None] = lambda: None,
+    ) -> Callable[[], None]:
         ctx = principal.ctx
         socket_id = next(self._ids)
         self._sockets[socket_id] = AttachedSocket(
             org_id=ctx.org_id,
             user_id=ctx.user_id,
             credential_id=ctx.credential_id,
+            credential_kind=principal.credential_kind,
             membership_id=principal.membership_id,
             end=end,
+            recheck_now=recheck_now,
         )
         self._tenants[ctx.org_id] += 1
 
@@ -171,6 +187,14 @@ class RealtimeServiceImpl(RealtimeServiceInterface):
         if not isinstance(payload, EntityChangedPayload):
             return
         self._learn(payload.org_id, payload.seq)
+        if payload.kind in PLAN_CHANGES:
+            for attached in list(self._sockets.values()):
+                if (
+                    attached.org_id == payload.org_id
+                    and attached.credential_kind is CredentialKind.API_KEY
+                ):
+                    attached.recheck_now()
+            return
         revocation = REVOCATIONS.get(payload.kind)
         if revocation is None:
             return

@@ -224,7 +224,9 @@ change. A name the image does not host refuses the boot.
   credential behind its ticket is revoked, and at its expiry whatever
   the client does. The revocation rides a bus that may lose it, so the
   socket also re-checks the credential every
-  `TADAS_REALTIME_RECHECK_SECONDS` and closes when it is refused. Each
+  `TADAS_REALTIME_RECHECK_SECONDS` and closes when it is refused. A
+  socket an api key opened is refused, too, once the org's plan has no
+  keys; a plan change wakes that recheck at once. Each
   of these closes with code 4401, which every client reads as "sign in
   again". A change of the member's role closes the socket with 1012,
   which every client reads as "reconnect", and the new socket carries
