@@ -77,6 +77,9 @@ class IdentityProviderAbsentImpl(IdentityProviderInterface):
     async def revoke_invitation(self, invitation_id: str) -> ProvidedInvitation:
         self._refuse()
 
+    async def delete_user(self, user_id: str) -> None:
+        self._refuse()
+
     async def accepted_invitation(
         self, *, organization_id: str, user_id: str
     ) -> ProvidedInvitation | None:

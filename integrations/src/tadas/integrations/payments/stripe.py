@@ -46,6 +46,10 @@ STRIPE_VERSION = stripe.api_version
 """The API version every request names and every endpoint Tadas registers
 is pinned to: the one this SDK release was built against."""
 
+ENDED_STATUSES = frozenset({"canceled", "incomplete_expired"})
+"""The statuses of a subscription that bills nobody again: nothing is left
+to cancel."""
+
 PORTAL_DESIRED_KEY = "portal"
 """The metadata the bootstrap stamps on the one portal configuration it
 manages (`tadas_desired_key`), which a portal session names."""
@@ -279,6 +283,25 @@ class PaymentsStripeImpl(PaymentsInterface):
                 {"idempotency_key": idempotency_key},
             )
         return subscription_of(subscription.to_dict())
+
+    async def cancel_subscription(self, subscription_id: str) -> None:
+        current = await self.read_subscription(subscription_id)
+        if current is None or current.status in ENDED_STATUSES:
+            return
+        try:
+            async with translated("cancel subscription"):
+                await self._v1().subscriptions.cancel_async(subscription_id)
+        except PaymentsRefused as refused:
+            if "resource_missing" not in refused.message:
+                raise
+
+    async def delete_customer(self, customer_id: str) -> None:
+        try:
+            async with translated("delete customer"):
+                await self._v1().customers.delete_async(customer_id)
+        except PaymentsRefused as refused:
+            if "resource_missing" not in refused.message:
+                raise
 
     def verify_delivery(self, payload: bytes, signature: str | None) -> ProviderDelivery:
         if not self._webhook_secret:

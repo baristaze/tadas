@@ -4,9 +4,10 @@ Tadas owns what a plan entitles an org to; the processor owns whether the
 org has paid. This interface is the one door to it: a customer per org, a
 checkout that starts a subscription, the processor's own page for payment
 methods, invoices, and plan changes, the two changes Tadas makes to a
-subscription itself (cancel at the period's end, the seat count), a read
-of a subscription as the processor holds it now, and the check of an
-inbound delivery's signature. It has a real client and a deterministic
+subscription itself (cancel at the period's end, the seat count), the end
+of both when an account is deleted (the subscription canceled at once, the
+customer deleted), a read of a subscription as the processor holds it now,
+and the check of an inbound delivery's signature. It has a real client and a deterministic
 twin; the twin refuses to run outside a local environment."""
 
 from abc import ABC, abstractmethod
@@ -91,6 +92,23 @@ class PaymentsInterface(ABC):
         """The seat count of a per-seat subscription, with no proration: the
         change applies from the next invoice. The key makes a repeated call
         one change."""
+        ...
+
+    @abstractmethod
+    async def cancel_subscription(self, subscription_id: str) -> None:
+        """Ends the subscription now, not at its period's end: the account it
+        paid for is gone. No proration and no refund is made. A subscription
+        the processor no longer knows, or one canceled already, is done
+        already, and that is no error."""
+        ...
+
+    @abstractmethod
+    async def delete_customer(self, customer_id: str) -> None:
+        """Deletes the org's customer at the processor, which ends every
+        subscription it still has and removes its payment methods. The
+        processor keeps the invoices it issued, as the law asks of it. A
+        customer it no longer knows is deleted already, and that is no
+        error."""
         ...
 
     @abstractmethod

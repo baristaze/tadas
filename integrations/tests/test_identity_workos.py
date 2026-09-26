@@ -476,3 +476,22 @@ async def test_the_start_goes_on_when_workos_is_out_of_reach() -> None:
 
     made, _ = provider(refuse)
     await made.start()
+
+
+async def test_a_user_is_deleted_by_the_subject_and_a_gone_one_is_done() -> None:
+    made, recorder = provider(lambda r: httpx.Response(204))
+    await made.delete_user("user_01ABC")
+    [asked] = recorder.requests
+    assert (asked.method, asked.url.path) == ("DELETE", "/user_management/users/user_01ABC")
+    gone, _ = provider(lambda r: httpx.Response(404, json={"message": "not found"}))
+    await gone.delete_user("user_01ABC")  # deleted already: a rerun is one deletion
+
+
+async def test_a_deletion_workos_cannot_take_now_is_unavailable_and_a_refusal_is_not() -> None:
+    down, _ = provider(lambda r: httpx.Response(503, json={"message": "down"}))
+    with pytest.raises(ProviderUnavailable):
+        await down.delete_user("user_01ABC")
+    refused, _ = provider(lambda r: httpx.Response(403, json={"message": "forbidden"}))
+    with pytest.raises(ProviderRefused) as raised:
+        await refused.delete_user("user_01ABC")
+    assert API_KEY not in str(raised.value)

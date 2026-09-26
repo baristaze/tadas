@@ -361,6 +361,14 @@ class IdentityProviderWorkOSImpl(IdentityProviderInterface):
             _translate(error, "making the admin portal link")
         return link.link
 
+    async def delete_user(self, user_id: str) -> None:
+        try:
+            await self._workos.user_management.delete_user(user_id)
+        except NotFoundError:
+            return  # deleted already: a rerun is one deletion
+        except (WorkOSError, httpx.HTTPError) as error:
+            _translate(error, "deleting the user")
+
     def describe(self) -> str:
         return f"identity provider: WorkOS ({self._base_url}, client {self._client_id})"
 
