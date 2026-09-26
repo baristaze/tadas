@@ -199,8 +199,8 @@ context on keeps the stage the callee needs.
   person's personal org in the same commit as its own tenant, each
   statement under its own tenant's scope, as a switch does; a sign-in
   of a person an older release made gives them theirs. A personal org
-  is never deleted, and its person is never removed from it or given
-  another role (`PersonalOrgFixed`, 409). `POST /v1/orgs` makes a team
+  is deleted only with its person, and its person is never removed from
+  it or given another role (`PersonalOrgFixed`, 409). `POST /v1/orgs` makes a team
   org for the caller from a session, under an Idempotency-Key, and
   answers with the caller's place in it; the switch there is the
   exchange. Migration `202609250001` gives every existing person their
@@ -231,11 +231,30 @@ context on keeps the stage the callee needs.
   which also answers the `work.SYNC_SEATS` row a per-seat plan's add
   rides, and `remove_member` lands that row beside its own. The seed's
   add is not bound by seats. Owners and admins hold `manage_billing`.
+  `delete_account` deletes the caller's whole account from a session,
+  once the typed email is the account's (`rules.confirms_deletion`),
+  refused while they are the last owner of a team org
+  (`rules.left_without_owner`, `LastOwner`, 409, naming each org) or on
+  the operator allowlist (`OperatorRoleHeld`, 403). One named atomic
+  write, `delete_person`, a cross-tenant method on the system scope,
+  hard-deletes the identity, every user it is in any org with their
+  memberships, sessions, keys, and tickets, its sign-ins and operator
+  tokens, and the sign-in delay of its address, and lands in the same
+  commit a revocation row per live credential, `tenancy.user.deleted`,
+  a `work.UNASSIGN_TASKS` row, and the seat row in each org the person
+  leaves, and one `work.DELETE_ACCOUNT` row in their personal org.
+  `delete_personal_org`, that item's last step, soft-deletes the org
+  with its name and slug replaced, and `rules.past_retention` counts a
+  deleted personal org as past its retention at once, so the next
+  sweep purges it through every namespace's tenant purge
+  ([ADR 0041](adr/0041-an-account-is-deleted-at-once-and-its-providers-by-the-queue.md)).
 - `work`: the table-backed work queue in the `queue` role; a row's
   routing field is its `lane`, payload shapes are fixed per `WorkKind`
   by `WORK_PAYLOADS`, and the permission each kind is asked for with by
   `WORK_ENQUEUE_PERMISSIONS`, which the worker's tests hold to every
-  handler's `REQUIRES`. The kinds are `NOOP` and `SYNC_SEATS`. Enqueue is a create: it validates the payload, and
+  handler's `REQUIRES`. The kinds are `NOOP`, `SYNC_SEATS`,
+  `TASK_REMINDER`, `SLACK_POST`, `ORCHESTRATION`, `WAKE_PARKED`,
+  `DELETE_ACCOUNT`, and `UNASSIGN_TASKS`. Enqueue is a create: it validates the payload, and
   the manager's copy stamps the actor from the context, the timestamps,
   status `QUEUED`, zero attempts, and clears every claim field whatever
   the caller sent; the insert reports an existing id and changes nothing,
@@ -693,11 +712,13 @@ and a root the container asks for them (`IntegrationsInterface`). Today
 it is one: the identity provider (`identity/`), with WorkOS's SDK
 (`workos`, pinned) behind `IdentityProviderWorkOSImpl`, the in-memory
 `IdentityProviderTwinImpl` the tests run against, and the absent provider
-of a process that signs nobody in (the worker, or an API without its
-key), which answers every call as unavailable. `IntegrationsSettings`
+of a process without its key, which answers every call as unavailable.
+The worker holds the provider too: it signs nobody in, and deletes a
+deleted account's person there (`delete_user`, where a user the
+provider no longer holds is deleted already). `IntegrationsSettings`
 (`TADAS_IDENTITY_PROVIDER`, `TADAS_WORKOS_CLIENT_ID`,
 `TADAS_WORKOS_API_KEY`, the Tadas App application's own key) is mixed
-into the API's settings, and the configured root refuses the twin in a
+into the API's and the worker's settings, and the configured root refuses the twin in a
 deployed environment. The WorkOS client proves at start that the key is
 the application's and refuses to boot on another (ADR 0033). Every
 provider error is translated into a leaf of infra's exception family,
@@ -827,7 +848,8 @@ twin; it imports infra and nothing from the object model, and its
 exceptions hang under infra's root. Payments is the first:
 `PaymentsInterface` (a customer per org, a checkout, the processor's
 portal, cancel at period end, the seat count, a read of a subscription,
-and `verify_delivery`), `PaymentsStripeImpl` over the Stripe SDK (one
+the end of a deleted account's subscription at once and of its
+customer, and `verify_delivery`), `PaymentsStripeImpl` over the Stripe SDK (one
 client opened at start, `Stripe-Context` naming the account and a pinned
 `Stripe-Version` on every call, a timeout on its transport, errors
 translated to `PaymentsRefused`, `BackendUnreachable`, or
@@ -1013,6 +1035,7 @@ alone, and neither key may touch what the other's work does not need
   deleting the message once applied or when it never can be and leaving
   any other failure to its visibility and the queue's dead letter; the
   claim loop for the kinds `TASK_REMINDER`, `SLACK_POST`, `SYNC_SEATS`,
+  `ORCHESTRATION`, `WAKE_PARKED`, `DELETE_ACCOUNT`, `UNASSIGN_TASKS`,
   and `NOOP` on one lane
   (`TADAS_WORKER_LANE`, or `serve --lane`); a handler that raises
   `WorkParked` has its item deferred for the time it names, no attempt
