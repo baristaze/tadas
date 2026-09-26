@@ -264,9 +264,15 @@ module "load_balancer" {
 }
 
 # The portal and the company site are the same kind of thing, static files
-# behind CloudFront, so they are one module called twice. The portal calls the
-# API, reads its runtime config, and routes client paths; the site calls
+# behind CloudFront, so they are one module called twice. The portal reads its
+# runtime config, routes client paths, and serves the API's paths from its own
+# distribution, by the load balancer at the API's domain name; the site calls
 # nothing and answers a missing path with its own not-found page.
+#
+# The page calls the API same-origin (apiUrl empty means the page's origin),
+# so no request it makes is cross-origin and no browser sends a preflight.
+# The API's own domain name serves everything it served: the payment
+# processor's and Slack's deliveries, the command line, and the operators.
 module "portal" {
   source = "../static_site"
 
@@ -275,12 +281,13 @@ module "portal" {
   bucket_name     = "${var.bucket_prefix}-portal"
   domain_name     = var.app_domain_name
   certificate_arn = module.app_certificate.arn
-  api_url         = "https://${var.api_domain_name}"
+  api_domain_name = var.api_domain_name
+  api_edge_secret = module.secrets.edge_secret
   store_origins   = module.buckets.origins["user-file-uploads"]
   sentry_dsn      = var.portal_sentry_dsn
   client_routes   = true
   runtime_config = {
-    apiUrl      = "https://${var.api_domain_name}"
+    apiUrl      = ""
     sentryDsn   = var.portal_sentry_dsn
     environment = var.environment
   }
@@ -380,6 +387,9 @@ module "api" {
   secrets = merge(local.process_secrets, {
     TADAS_TOTP_ENCRYPTION_KEY = module.secrets.totp_encryption_key_secret_arn
     TADAS_WORKOS_API_KEY      = module.secrets.workos_api_key_secret_arn
+    # What the portal's distribution sends in X-Tadas-Edge: beside it, the
+    # address CloudFront appended to X-Forwarded-For names the client.
+    TADAS_EDGE_SECRET = module.secrets.edge_secret_arn
   })
 
   environment_variables = merge(local.process_environment, local.api_sign_in_environment, {
@@ -388,10 +398,16 @@ module "api" {
     TADAS_ADMISSION_LIMIT_WRITES = tostring(local.admission_limit_writes)
     TADAS_HOST                   = "0.0.0.0"
     TADAS_PORT                   = "8000"
-    TADAS_CORS_ORIGINS           = jsonencode(concat(["https://${var.app_domain_name}"], var.cors_origins))
+    # The portal calls the API same-origin and needs none of this; a tab
+    # opened before its config named the same origin still calls the API's
+    # own name until it reloads, so the portal's origin stays in the list,
+    # beside the other origins a browser may call from.
+    TADAS_CORS_ORIGINS = jsonencode(concat(["https://${var.app_domain_name}"], var.cors_origins))
     # The edge serves the API and liveness; the interactive docs are local.
     TADAS_INTERACTIVE_DOCS = "false"
-    # The load balancer lives in the VPC, so its X-Forwarded-For names the client.
+    # The load balancer lives in the VPC, so its X-Forwarded-For names the
+    # client, or, for a request through the portal's distribution, the edge;
+    # the edge secret then names the client one hop further in.
     TADAS_TRUSTED_PROXIES = jsonencode([var.vpc_cidr])
     # Where Slack sends a browser back at the end of an install; the Slack
     # app's manifest names the same URL (deployment/slack/).

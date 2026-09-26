@@ -1,9 +1,10 @@
-"""`tadas-ops`: traffic, stress, signals check, size, token, and
-stripe-bootstrap, each against one named environment, and workos-bootstrap
-against one WorkOS environment. Exit 0 when the run did what was asked, 1
-when a stress target was missed, a reader found nothing, or a redirect needs
-the WorkOS dashboard, 2 for a bad invocation, a credential the operator
-plane refused, or a WorkOS key that is not the application's."""
+"""`tadas-ops`: traffic, stress, signals check, size, token, work requeue,
+and stripe-bootstrap, each against one named environment, and
+workos-bootstrap against one WorkOS environment. Exit 0 when the run did
+what was asked, 1 when a stress target was missed, a reader found nothing, a
+redirect needs the WorkOS dashboard, or the operator plane refused a
+requeue, 2 for a bad invocation, a credential the operator plane refused, or
+a WorkOS key that is not the application's."""
 
 import argparse
 import asyncio
@@ -16,7 +17,7 @@ from collections.abc import Awaitable, Callable, Iterable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import cast
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import aioboto3
 import httpx
@@ -380,12 +381,13 @@ async def mint_operator_token(
     *,
     dev_email: str | None = None,
     sleep: Callable[[float], Awaitable[object]] | None = None,
+    permission: str = "read",
 ) -> str:
-    """A person's `read` operator token. The person signs in through the
-    identity provider (or, on the local stack with `--dev-email`, by the
-    local sign-in), then the TOTP code is asked for here, in the person's own
-    terminal, and goes only to the second-factor route; what is kept is the
-    token the mint route answers."""
+    """A person's operator token, `read` unless asked otherwise. The person
+    signs in through the identity provider (or, on the local stack with
+    `--dev-email`, by the local sign-in), then the TOTP code is asked for
+    here, in the person's own terminal, and goes only to the second-factor
+    route; what is kept is the token the mint route answers."""
     async with ApiClient(
         env.api_url, app=OPERATOR_APP, app_version=app_version(), transport=transport
     ) as client:
@@ -398,11 +400,30 @@ async def mint_operator_token(
         minted = await client.request(
             "POST",
             "/v1/admin/me/tokens",
-            json={"permission": "read"},
+            json={"permission": permission},
             token=verified.token,
             idempotency_key=str(uuid4()),
         )
     return str(minted["token"])
+
+
+def in_a_persons_terminal(args: argparse.Namespace, env: Environment) -> bool:
+    """Whether a sign-in may start here: a terminal a person holds, and the
+    local sign-in only where the local stack serves it. Says why not."""
+    if not sys.stdin.isatty():
+        print(
+            "an operator's sign-in happens in a person's own terminal: the person signs "
+            "in and gives the TOTP code there, and no agent holds either",
+            file=sys.stderr,
+        )
+        return False
+    if getattr(args, "dev_email", None) is not None and env.name != "local":
+        print(
+            "--dev-email signs in by the local sign-in, which only --env local serves",
+            file=sys.stderr,
+        )
+        return False
+    return True
 
 
 async def token_command(
@@ -414,21 +435,11 @@ async def token_command(
     env = load_environment(args.env)
     file = ops_file(env.name)
     if args.identity == "operator":
-        if not sys.stdin.isatty():
-            print(
-                "the operator's token is minted in a person's own terminal: the person signs "
-                "in and gives the TOTP code there, and no agent holds either",
-                file=sys.stderr,
-            )
+        if not in_a_persons_terminal(args, env):
             return USAGE
-        dev_email = getattr(args, "dev_email", None)
-        if dev_email is not None and env.name != "local":
-            print(
-                "--dev-email signs in by the local sign-in, which only --env local serves",
-                file=sys.stderr,
-            )
-            return USAGE
-        token = await mint_operator_token(env, transport, dev_email=dev_email)
+        token = await mint_operator_token(
+            env, transport, dev_email=getattr(args, "dev_email", None)
+        )
         key = "TADAS_OPERATOR_TOKEN"
     else:
         if env.name not in CLOUD_ENVIRONMENTS:
@@ -442,6 +453,49 @@ async def token_command(
         key = "TADAS_PROVISIONER_TOKEN"
     write_value(file, key, token)
     print(f"wrote {key} into {file}; it expires within the hour")
+    return OK
+
+
+async def work_requeue_command(
+    args: argparse.Namespace, transport: httpx.AsyncBaseTransport | None = None
+) -> int:
+    """Sends one failed work item back to the queue. A write, so it is a
+    person's one named step: the person signs in with the second factor, and
+    a `write` token is minted for this call, used once, and kept nowhere.
+    The env file keeps the `read` token it had, and an agent that holds it
+    cannot run this."""
+    env = load_environment(args.env)
+    if not in_a_persons_terminal(args, env):
+        return USAGE
+    try:
+        token = await mint_operator_token(
+            env, transport, dev_email=getattr(args, "dev_email", None), permission="write"
+        )
+    except ApiError as error:
+        if error.status == 403:
+            print(
+                "your operator entry does not carry write; a requeue needs the write "
+                "permission (docs/runbooks/operator.md, The grant)",
+                file=sys.stderr,
+            )
+            return FAILED
+        raise
+    async with ApiClient(
+        env.api_url,
+        app=OPERATOR_APP,
+        app_version=app_version(),
+        token=token,
+        transport=transport,
+    ) as client:
+        try:
+            item = await client.admin_requeue_work(args.org, args.item)
+        except ApiError as error:
+            print(f"tadas-ops: not requeued: {error}", file=sys.stderr)
+            return FAILED
+    print(
+        f"requeued {item.id} ({item.kind.value}) in org {args.org}: {item.status.value}, "
+        f"{item.attempts} of {item.max_attempts} attempts spent, available now"
+    )
     return OK
 
 
@@ -555,6 +609,22 @@ def build_parser() -> argparse.ArgumentParser:
         "instead of through the identity provider",
     )
 
+    p_work = sub.add_parser("work", help="the work queue, as an operator moves it")
+    work_sub = p_work.add_subparsers(dest="work_command", required=True)
+    p_requeue = work_sub.add_parser(
+        "requeue",
+        help="send one failed work item back to the queue; a person's step, under a "
+        "write token minted for it",
+    )
+    p_requeue.add_argument("--env", required=True)
+    p_requeue.add_argument("--org", required=True, type=UUID, help="the org the item is in")
+    p_requeue.add_argument("item", type=UUID, help="the failed item's id")
+    p_requeue.add_argument(
+        "--dev-email",
+        help="on --env local only: sign in by the local sign-in with this address "
+        "instead of through the identity provider",
+    )
+
     p_workos = sub.add_parser(
         "workos-bootstrap",
         help="reconcile the WorkOS application with deployment/workos/environments.yaml",
@@ -599,6 +669,8 @@ def main(argv: list[str] | None = None) -> int:
             return asyncio.run(signals_command(args))
         if args.command == "token":
             return asyncio.run(token_command(args))
+        if args.command == "work":
+            return asyncio.run(work_requeue_command(args))
         if args.command == "stripe-bootstrap":
             return asyncio.run(stripe_bootstrap_command(args))
         if args.command == "workos-bootstrap":

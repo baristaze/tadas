@@ -51,7 +51,8 @@ the subscription and deletes the customer at Stripe, removes the Slack
 app, and deletes the org, in that order. This is `DELETE_ACCOUNT`'s
 order and its handler's pieces: each step finds its own work done on a
 rerun; a provider out of reach, or a refused key, parks the item
-without spending an attempt; a provider that refuses the call fails it.
+without spending an attempt; a provider that refuses the call fails it
+at once, for an operator to requeue.
 Slack's side stays best effort.
 
 The org waits, live and empty, for the providers, for ADR 0041's
@@ -98,8 +99,8 @@ operator's deletion.
 
 While a provider is down, or refuses the key, the org waits, empty, and
 its subscription keeps billing until the provider answers. A provider
-that refuses the call itself fails the item for good, as with an
-account; running it again is by hand today.
+that refuses the call itself fails the item at once, as with an
+account, and an operator requeues it (`tadas-ops work requeue`).
 
 An operator's deletion still leaves the providers alone.
 

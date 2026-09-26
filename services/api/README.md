@@ -121,13 +121,15 @@ change. A name the image does not host refuses the boot.
   across every org: create an org with its owner, add a member, read
   an org, its members, its tasks, and its events, list every org a
   page at a time, delete a team org (a personal org is refused), read
-  an org's plan and grant it one with no payment, and read the
+  an org's plan and grant it one with no payment, send one of an org's
+  failed work items back to the queue, and read the
   platform's size: the tenant count, the
   user count, and the tasks of the last twenty-four hours.
   (`/v1/admin/orgs`, `/v1/admin/orgs/{org_id}`,
   `/v1/admin/orgs/{org_id}/members`, `/v1/admin/orgs/{org_id}/tasks`,
   `/v1/admin/orgs/{org_id}/events`, `/v1/admin/orgs/{org_id}/billing`,
-  `/v1/admin/orgs/{org_id}/plan`, `/v1/admin/size`). A read route
+  `/v1/admin/orgs/{org_id}/plan`,
+  `/v1/admin/orgs/{org_id}/work/{item_id}/requeue`, `/v1/admin/size`). A read route
   needs an operator who may read; a write route one who may write.
   The plane admits two credentials: a person's sign-in that verified a
   TOTP code, and an operator token. An operator enrols the second
@@ -181,7 +183,10 @@ change. A name the image does not host refuses the boot.
   security boundary.
 - **The client address behind a load balancer.** The forwarded address
   is trusted only from the peers the settings name, never from
-  everyone, so a caller cannot pick its own address.
+  everyone, so a caller cannot pick its own address. Through the
+  portal's CDN edge it is one hop further in, and only a request that
+  carries the edge's secret (`TADAS_EDGE_SECRET`, in `X-Tadas-Edge`)
+  gets that hop; the header never reaches a route.
 - **A socket is bounded twice.** It closes at the expiry of the
   credential behind its ticket whatever the client does, and it
   closes at once when that credential is revoked. Both close with

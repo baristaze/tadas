@@ -1,28 +1,49 @@
 # A static site in the cloud: built files in a private bucket, served by a
 # CloudFront distribution at one domain name, under the security headers.
-# Two sites use it. The portal (name "portal") calls the API cross-origin,
-# routes client paths to index.html, and reads /config.json, written here per
-# environment, so production serves the exact files staging already served.
-# The company site (name "site") calls nothing, has one page and a 404 page,
-# and carries its environment's links in its build.
+# Two sites use it. The portal (name "portal") routes client paths to
+# index.html, reads /config.json, written here per environment, so production
+# serves the exact files staging already served, and reaches the API through
+# this same distribution: the API's paths go to its load balancer, so every
+# call the page makes is same-origin and no browser sends a preflight. The
+# company site (name "site") calls nothing, has one page and a 404 page, and
+# carries its environment's links in its build.
 
 locals {
   tags         = { "tadas:environment" = var.environment }
   s3_origin_id = var.name
 
-  # A managed policy; the ID is fixed across accounts.
+  # Managed policies; the IDs are fixed across accounts.
   caching_optimized = "658327ea-f89d-4fab-a63d-7e88639e58f6"
+  caching_disabled  = "4135ea2d-6df8-44a3-9df3-4b5a84be39ad"
+  # Every viewer header, cookie, and query string but Host, so the Bearer
+  # header, the socket's upgrade headers, and its ticket reach the API, and
+  # CloudFront names the API's own domain in Host and in the TLS handshake,
+  # which the load balancer's certificate matches.
+  all_viewer_except_host = "b689b0a8-53d0-40ab-baf2-68738e2966ac"
 
-  # What the page may reach: its own origin, and, when given, the API over
-  # HTTPS and over the websocket, the object store a signed form or link
-  # names, and the error reporter (the DSN is scheme://key@host/project; only
-  # its origin is named). Nothing else, so a script the site did not ship
-  # neither runs nor phones home. Neither build has an inline script or
-  # style, so no unsafe directive is needed.
-  api_origin    = trimsuffix(var.api_url, "/")
-  api_origins   = var.api_url == "" ? [] : [local.api_origin, replace(local.api_origin, "/^http/", "ws")]
+  # The API behind this distribution, when the site has one.
+  api_enabled   = var.api_domain_name != ""
+  api_origin_id = "api"
+  # The load balancer's idle timeout is pinned beside the realtime pings in
+  # one shared file. CloudFront waits for the API as long as the load
+  # balancer does, so the two agree on when a request has stalled; and it
+  # drops a spare connection a few seconds before the load balancer would,
+  # so it never sends a request down a connection that is being closed.
+  realtime_timeouts     = jsondecode(file("${path.module}/../../../realtime-timeouts.json"))
+  api_read_timeout      = local.realtime_timeouts.load_balancer_idle_timeout_seconds
+  api_keepalive_timeout = local.realtime_timeouts.load_balancer_idle_timeout_seconds - 5
+
+  # What the page may reach: its own origin (the API included, when it is
+  # behind this distribution; its socket is named as wss:// on the same host
+  # as well, for a browser that does not read 'self' as the websocket's
+  # scheme too), the object store a signed form or link names, and the error
+  # reporter (the DSN is scheme://key@host/project; only its origin is
+  # named). Nothing else, so a script the site did not ship neither runs nor
+  # phones home. Neither build has an inline script or style, so no unsafe
+  # directive is needed.
+  socket_origin = local.api_enabled ? ["wss://${var.domain_name}"] : []
   sentry_origin = var.sentry_dsn == "" ? [] : [join("", regex("^(https?://)[^@/]+@([^/]+)", var.sentry_dsn))]
-  connect_src   = concat(["'self'"], local.api_origins, var.store_origins, local.sentry_origin)
+  connect_src   = concat(["'self'"], local.socket_origin, var.store_origins, local.sentry_origin)
   # A file's preview loads from the store by a signed inline link: an image,
   # a video or a sound in the page's player, a PDF in a frame. So the store's
   # origin joins img-src, and media-src and frame-src name it, when there is
@@ -203,6 +224,32 @@ resource "aws_cloudfront_distribution" "this" {
     origin_access_control_id = aws_cloudfront_origin_access_control.this.id
   }
 
+  # The API, at its own domain name, which its load balancer's certificate
+  # names. HTTPS only. Every request carries the edge secret in X-Tadas-Edge,
+  # which CloudFront sets whatever the viewer sent under that name; the API
+  # trusts the address CloudFront appended to X-Forwarded-For only beside it.
+  dynamic "origin" {
+    for_each = local.api_enabled ? [var.api_domain_name] : []
+    content {
+      origin_id   = local.api_origin_id
+      domain_name = origin.value
+
+      custom_origin_config {
+        http_port                = 80
+        https_port               = 443
+        origin_protocol_policy   = "https-only"
+        origin_ssl_protocols     = ["TLSv1.2"]
+        origin_read_timeout      = local.api_read_timeout
+        origin_keepalive_timeout = local.api_keepalive_timeout
+      }
+
+      custom_header {
+        name  = "X-Tadas-Edge"
+        value = var.api_edge_secret
+      }
+    }
+  }
+
   # Static files: cached at the edge; hashed assets never change, the entry
   # points and config.json revalidate (the deploy sets Cache-Control per file).
   default_cache_behavior {
@@ -220,6 +267,26 @@ resource "aws_cloudfront_distribution" "this" {
         event_type   = "viewer-request"
         function_arn = function_association.value.arn
       }
+    }
+  }
+
+  # The API's paths, ahead of the static files: nothing cached, every method,
+  # every viewer header but Host. One behavior carries the requests and the
+  # realtime socket, which CloudFront upgrades like any other request on a
+  # behavior that forwards the viewer's headers. Compression is off: the API
+  # answers what it answers, and a socket's frames are never recompressed.
+  # HTTPS only, since a redirect would turn a POST into a GET.
+  dynamic "ordered_cache_behavior" {
+    for_each = local.api_enabled ? var.api_path_patterns : []
+    content {
+      path_pattern             = ordered_cache_behavior.value
+      target_origin_id         = local.api_origin_id
+      allowed_methods          = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]
+      cached_methods           = ["GET", "HEAD"]
+      viewer_protocol_policy   = "https-only"
+      compress                 = false
+      cache_policy_id          = local.caching_disabled
+      origin_request_policy_id = local.all_viewer_except_host
     }
   }
 

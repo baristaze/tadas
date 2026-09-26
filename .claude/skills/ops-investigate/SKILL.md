@@ -1,6 +1,6 @@
 ---
 name: ops-investigate
-description: "Investigate one environment of the platform with a read-only credential: the alarms, the error rate, the latency, the worker outcomes, the pool, the queues and their dead letters, the providers (sign-in, billing, Slack), the cost against the budget, and the platform's size, then report what is wrong and what to do next. Every read goes through the signals' own APIs (CloudWatch, X-Ray, the error tracker in the cloud; Prometheus, Jaeger, GlitchTip locally). Use when something looks off, when an alarm fires, or as the daily look. Never writes."
+description: "Investigate one environment of the platform with a read-only credential: the alarms, the error rate, the latency, the worker outcomes and the work items that failed for good, the pool, the queues and their dead letters, the providers (sign-in, billing, Slack), the cost against the budget, and the platform's size, then report what is wrong and what to do next. Every read goes through the signals' own APIs (CloudWatch, X-Ray, the error tracker in the cloud; Prometheus, Jaeger, GlitchTip locally). Use when something looks off, when an alarm fires, or as the daily look. Never writes."
 allowed-tools: Read, Grep, Glob, Bash(aws:*), Bash(curl:*), Bash(docker compose:*), Bash(uv run:*)
 ---
 
@@ -119,9 +119,16 @@ named with `-dead` after it. Slack's calls in are in
 
 5. Workers, queue, pool, cache: one counter carries every outcome,
    `tadas_outcomes_total{subsystem, outcome}` (subsystems `worker`,
-   `outbox`, `queue`, `cache`, `rate_limit`, `admission`,
+   `work`, `outbox`, `queue`, `cache`, `rate_limit`, `admission`,
    `idempotency`, `orchestrations`), read as `sum by (subsystem, outcome)
-   (increase(tadas_outcomes_total[<since>]))`. The long-running records
+   (increase(tadas_outcomes_total[<since>]))`. A work item that failed
+   for good counts `work`/`dead_letter`: its attempts ran out
+   (`worker`/`failed` beside it), or its handler was refused, a failure
+   no retry changes (`worker`/`refused`, a provider refusing the call
+   itself). Each one is an `ERROR` line in `/tadas/<env>/maintenance`,
+   `work item <id> (<kind>) in org <org> failed for good: <reason>`,
+   which step 7 finds; `work`/`requeued` counts the ones an operator
+   sent back. The long-running records
    are `orchestrations`, one outcome per kind and state: an import
    (`task_import_running` when it starts, `task_import_parked` on the
    plan's bound, `task_import_resumed`, `task_import_succeeded`,
@@ -212,6 +219,15 @@ named with `-dead` after it. Slack's calls in are in
    `"request_id"` when `TADAS_LOG_JSON` is on.
    With `--request-id`, filter every source on it: `filter request_id
    = "<id>"` in the cloud, `grep` locally.
+   A failed work item is a finding with its id, its kind, its org, and
+   its reason, all off the `failed for good` line. The reason says
+   whether it is the provider's or a person's to fix; a
+   `DELETE_ACCOUNT` one leaves a deleted person's personal org in
+   place until it runs. Once the cause is fixed, a person sends it back
+   with `uv run tadas-ops work requeue --env <env> --org <org> <item>`,
+   in their own terminal: it signs them in with the second factor and
+   mints a `write` token for that one call. This skill names the
+   command in the report and never runs it.
 8. The providers. Each of the three says in its own log when it is
    not configured, and the skill reads that, never a secret: the
    secrets are denied to the role, and their names are enough. Cloud,
@@ -325,7 +341,8 @@ named with `-dead` after it. Slack's calls in are in
 12. Write the report. Name the next skill: `ops-root-cause` with an
     org id when one tenant's rows explain it, `ops-watch` when the
     signal is still moving, `ops-infra-as-code` when the fix is a
-    resource.
+    resource, and, for a failed work item whose cause is fixed, the
+    requeue command of step 7 for a person to run.
 
 ## What it never does
 
@@ -357,6 +374,7 @@ named with `-dead` after it. Slack's calls in are in
 
 - Requests: <rate>, error ratio <ratio>, p95 <ms> by route
 - Workers: <outcomes per kind>, queue depth <n>, oldest <age>
+- Failed work items: <item id, kind, org id, reason; or none>
 - Orchestrations: imports <started, parked, succeeded, failed>, cleanups <opened, succeeded, failed>, defects <record and org ids, or none>
 - Queues: webhooks <n> (dead <n>), slack <n> (dead <n>); services api, maintenance <running>/<desired>
 - Providers: sign-in <configured | off: tadas/<env>/workos_api_key | not in the window>, billing <configured | off: tadas/<env>/stripe_runtime_key | lacks <resources>>, Slack <configured | off: tadas/<env>/slack_client_secret, tadas/<env>/slack_signing_secret, slack_client_id | signature refused: tadas/<env>/slack_signing_secret | not in the window>, broken installations <org ids, or none>

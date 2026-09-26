@@ -14,13 +14,14 @@ from test_billing_work import checkout, consumer_of, queued
 from worker_support import request
 
 from tadas.infra.cache import CacheScope
+from tadas.integrations.exceptions import ProviderRefused, ProviderUnavailable
 from tadas.integrations.identity.absent import IdentityProviderAbsentImpl
 from tadas.integrations.identity.twin import IdentityProviderTwinImpl
 from tadas.integrations.payments.twin import PaymentsTwinImpl
 from tadas.om.billing.types.plan import Plan
 from tadas.om.opcontext import OpContext, Role
 from tadas.om.tenancy.impl.manager import TenancyManagerImpl, TenancyOptions
-from tadas.om.work.types.handler import WorkParked
+from tadas.om.work.types.handler import WorkParked, WorkRefused
 from tadas.om.work.types.work_item import WorkItem, WorkKind
 from tadas.workers.maintenance.container import WorkerContainer
 from tadas.workers.maintenance.main import build_loop
@@ -116,3 +117,38 @@ async def test_a_provider_that_is_down_parks_the_org_until_it_answers(tmp_path: 
     assert len(identity_of(container).deleted_organizations) == 1
     org = await container.storage.get_tenancy_storage().read_org(owner.org_id)
     assert org is not None and org.deleted_at is not None
+
+
+@pytest.mark.parametrize(
+    ("error", "outcome"),
+    [
+        (ProviderRefused("deleting the organization: bad id"), WorkRefused),
+        (
+            ProviderUnavailable("deleting the organization: WorkOS refused the key (401)"),
+            WorkParked,
+        ),
+    ],
+)
+async def test_a_refusal_of_the_call_fails_the_org_and_one_that_may_pass_parks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    error: Exception,
+    outcome: type[Exception],
+) -> None:
+    container, _ = build(tmp_path)
+    tenancy = container.managers.tenancy
+    owner = await signed_in_owner(container)
+    await tenancy.invite_member(owner, "bob@example.test", Role.MEMBER)
+    await tenancy.delete_org(owner, "Acme")
+
+    async def answer(organization_id: str) -> None:
+        raise error
+
+    monkeypatch.setattr(identity_of(container), "delete_organization", answer)
+    ctx, item = await claim(container)
+    with pytest.raises(outcome) as raised:
+        await build_loop(container)._handlers[WorkKind.DELETE_ORG].handle(ctx, item)
+    assert str(error) in str(raised.value)
+    # Either way nothing moved on: the org waits, for the provider or a person.
+    org = await container.storage.get_tenancy_storage().read_org(owner.org_id)
+    assert org is not None and org.deleted_at is None

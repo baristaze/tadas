@@ -90,7 +90,9 @@ def build_services(
     return ServicesImpl(
         tasks=TasksServiceImpl(managers.tasks),
         tenancy=TenancyServiceImpl(managers.tenancy),
-        admin=AdminServiceImpl(managers.tenancy_operator, managers.billing_operator),
+        admin=AdminServiceImpl(
+            managers.tenancy_operator, managers.billing_operator, managers.work_operator
+        ),
         events=EventsServiceImpl(managers.events),
         media=MediaServiceImpl(managers.media),
         realtime=RealtimeServiceImpl(managers.tenancy, managers.events, infra.get_topics()),

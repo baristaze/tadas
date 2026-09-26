@@ -11,11 +11,13 @@ the identity provider, ends the org's subscription and deletes its customer
 at the payment processor, removes the org's Slack app, and deletes the org
 last, which the sweep then purges whole. Every step is one a rerun finds
 done, so a run that stopped halfway is finished by the next. A provider that
-cannot be reached parks the item, spending no attempt: nothing has failed,
-and the work waits for the provider to come back. A provider that refuses
-fails it, which retries and then leaves a failed item for an operator to
-read. The org stays until the providers are done: deleted first, it could
-no longer run the work that names it.
+cannot be reached, or that refuses the process's own key, parks the item,
+spending no attempt: nothing about the call has failed, and the work waits
+for the provider, or a person, to fix it. A provider that refuses the call
+itself fails the item at once, since asking again gets the same answer, and
+leaves a failed item for an operator to read and requeue. The org stays
+until the providers are done: deleted first, it could no longer run the
+work that names it.
 
 `UNASSIGN_TASKS` runs in each org the person left, under their name: their
 open tasks there go unassigned, each by the update a person makes to clear
@@ -37,6 +39,7 @@ from datetime import timedelta
 from typing import ClassVar
 
 from tadas.infra.exceptions import InfraException
+from tadas.integrations.exceptions import PaymentsRefused, ProviderRefused
 from tadas.integrations.identity import IdentityProviderInterface
 from tadas.om.billing import BillingManagerInterface
 from tadas.om.exceptions import PlatformException
@@ -46,7 +49,7 @@ from tadas.om.tasks import TasksManagerInterface
 from tadas.om.tasks.types.filter import OpenTaskCursor, TaskFilter
 from tadas.om.tasks.types.task import TaskScope
 from tadas.om.tenancy import TenancyManagerInterface
-from tadas.om.work.types.handler import WorkHandlerInterface, WorkParked
+from tadas.om.work.types.handler import WorkHandlerInterface, WorkParked, WorkRefused
 from tadas.om.work.types.work_item import DeleteAccountPayload, DeleteOrgPayload, WorkItem
 
 log = logging.getLogger(__name__)
@@ -125,17 +128,23 @@ async def end_providers(
 ) -> None:
     """The providers' side of a tenant that goes, in order: the identity
     provider's record of it, then the processor's subscription and customer,
-    then the Slack app. A provider out of reach parks the item."""
+    then the Slack app. A provider out of reach parks the item; one that
+    refuses the request fails it for good."""
     try:
         if identity_step is not None:
             await identity_step()
         await billing.close_account(ctx)
     except (InfraException, PlatformException) as error:
         # Read by status, as every boundary reads an exception: 503 is
-        # "not right now", a provider unreachable or not configured here.
-        if error.http_status != UNAVAILABLE:
-            raise
-        raise WorkParked(f"a provider is out of reach: {error}", PROVIDER_WAIT) from None
+        # "not right now", a provider unreachable, not configured here, or
+        # refusing the process's own key.
+        if error.http_status == UNAVAILABLE:
+            raise WorkParked(f"a provider is out of reach: {error}", PROVIDER_WAIT) from None
+        # The provider answered and refused the request itself: the same
+        # call gets the same answer, so it is not asked again.
+        if isinstance(error, ProviderRefused | PaymentsRefused):
+            raise WorkRefused(f"a provider refused the call: {error}") from None
+        raise
     # Slack's side is best effort, as every removal of the app is: a Slack
     # that cannot be reached leaves the app in the workspace, and the token
     # goes from Tadas either way.

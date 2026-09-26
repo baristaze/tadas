@@ -1,7 +1,9 @@
 # Two stages: the pnpm workspace builds the portal bundle, and an
-# unprivileged nginx serves it. VITE_API_URL and VITE_SENTRY_DSN are compiled
-# into the bundle, so they are build arguments naming what the browser reaches;
-# an empty VITE_SENTRY_DSN leaves error reporting off.
+# unprivileged nginx serves it and forwards the API's paths to the api
+# container. VITE_API_URL and VITE_SENTRY_DSN are compiled into the bundle,
+# so they are build arguments naming what the browser reaches; an empty
+# VITE_API_URL means the page's own origin, and an empty VITE_SENTRY_DSN
+# leaves error reporting off.
 FROM node:24.21.0-alpine AS build
 RUN corepack enable
 WORKDIR /app
@@ -10,7 +12,7 @@ COPY apps/portal/package.json apps/portal/
 RUN pnpm install --frozen-lockfile --filter @tadas/portal...
 COPY apps/portal apps/portal
 COPY deployment/realtime-timeouts.json deployment/
-ARG VITE_API_URL=http://127.0.0.1:8000
+ARG VITE_API_URL=
 ARG VITE_SENTRY_DSN=
 ARG VITE_SENTRY_ENVIRONMENT=local
 RUN pnpm --filter @tadas/portal build

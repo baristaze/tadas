@@ -875,6 +875,25 @@ class ValidationError(BaseModel):
     type: Annotated[str, Field(title='Error Type')]
 
 
+class WorkKind(StrEnum):
+    NOOP = 'NOOP'
+    SYNC_SEATS = 'SYNC_SEATS'
+    TASK_REMINDER = 'TASK_REMINDER'
+    SLACK_POST = 'SLACK_POST'
+    ORCHESTRATION = 'ORCHESTRATION'
+    WAKE_PARKED = 'WAKE_PARKED'
+    DELETE_ACCOUNT = 'DELETE_ACCOUNT'
+    UNASSIGN_TASKS = 'UNASSIGN_TASKS'
+    DELETE_ORG = 'DELETE_ORG'
+
+
+class WorkStatus(StrEnum):
+    queued = 'queued'
+    claimed = 'claimed'
+    done = 'done'
+    failed = 'failed'
+
+
 class AddApiKeyRequest(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -1120,6 +1139,23 @@ class OperatorBillingView(BaseModel):
     paid_plan: Plan | None
     plan: Plan
     status: SubscriptionStatus | None
+
+
+class OperatorWorkItemView(BaseModel):
+    """
+    One background job as an operator reads it: what it does and for
+    which record, where it stands, and how many of its attempts are spent.
+    The payload and the claim stay the worker's.
+    """
+    attempts: Annotated[int, Field(title='Attempts')]
+    available_at: Annotated[AwareDatetime, Field(title='Available At')]
+    id: Annotated[UUID, Field(title='Id')]
+    kind: WorkKind
+    last_error: Annotated[str | None, Field(title='Last Error')]
+    max_attempts: Annotated[int, Field(title='Max Attempts')]
+    status: WorkStatus
+    target_id: Annotated[UUID, Field(title='Target Id')]
+    updated_at: Annotated[AwareDatetime, Field(title='Updated At')]
 
 
 class OrgDeletedView(BaseModel):

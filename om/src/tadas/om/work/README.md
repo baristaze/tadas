@@ -44,6 +44,16 @@ seven kinds of thing [Tadas is made of](../../../../README.md).
 - **Complete**, **fail** (requeued with a growing delay, or a dead
   letter once the attempts are spent), **defer** (hand it back for
   later), **release** (hand it back now), **extend the lease**.
+- **Fail for good.** A job whose failure no retry changes (a provider
+  refused the call itself, not its availability and not the process's
+  own key) is failed at once, with the reason as its note: a dead
+  letter, with the one attempt it spent. Only a failure that can come
+  out differently is asked again.
+- **Requeue by an operator.** A person on the operator plane with the
+  write permission sends one failed item back to the queue, available
+  now, with every attempt it had. An item that is not failed is
+  refused. The org's diary names the requeue and the operator who made
+  it.
 - **Park.** A job that must wait (Slack asked for a pause, or a
   provider did not answer a deleted account's or org's cleanup) is handed
   back for the time it named, with the reason as its note, and spends
@@ -67,7 +77,7 @@ seven kinds of thing [Tadas is made of](../../../../README.md).
   up to a cap. Requeued items are staggered so a recovered dependency
   is not met by all of them at once.
 - **A dead letter is named.** An item that fails for good is counted
-  and recorded as an event in the org's diary.
+  and recorded as an event in the org's diary, and so is its requeue.
 - **Enqueueing twice leaves one item.** An enqueue that runs again
   under the same id or the same producer key returns the item as
   stored, its claim intact. A producer key is unique within its org.

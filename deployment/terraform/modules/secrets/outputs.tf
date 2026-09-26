@@ -32,6 +32,18 @@ output "totp_encryption_key_secret_arn" {
   depends_on  = [aws_secretsmanager_secret_version.totp_encryption_key]
 }
 
+output "edge_secret_arn" {
+  description = "Injected into the API as TADAS_EDGE_SECRET."
+  value       = aws_secretsmanager_secret.edge_secret.arn
+  depends_on  = [aws_secretsmanager_secret_version.edge_secret]
+}
+
+output "edge_secret" {
+  description = "The same value, for the portal's distribution to send as its X-Tadas-Edge origin header."
+  value       = random_password.edge.result
+  sensitive   = true
+}
+
 output "application_prefix" {
   description = "TADAS_SECRETS_NAME_PREFIX for every process."
   value       = local.application_prefix

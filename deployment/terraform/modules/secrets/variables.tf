@@ -41,3 +41,9 @@ variable "destroyable" {
   description = "True on the nuke's way down only: the secrets are deleted at once, so a rebuild within the recovery window can create them again under the same names."
   type        = bool
 }
+
+variable "edge_secret_version" {
+  description = "The edge secret's version; a raise writes a new value to the secret and to the portal's distribution in one apply."
+  type        = number
+  default     = 1
+}

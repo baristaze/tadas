@@ -1,7 +1,11 @@
 # ADR 0041: An account is deleted at once, and its providers by the queue
 
-**Status**: accepted (2026-09-26). A deviation from STO-32, and from
-CTX-34 for the unassignment.
+**Status**: accepted (2026-09-26), amended (2026-09-26): a provider
+that refuses the call fails the item at once, and an operator requeues
+it; amended (2026-09-26): the last owner's two ways out are in Settings,
+so no account waits on an operator
+([ADR 0042](0042-an-owner-deletes-a-team-org-closed-at-once-and-its-providers-by-the-queue.md)).
+A deviation from STO-32, and from CTX-34 for the unassignment.
 
 ## Context
 
@@ -104,13 +108,14 @@ in that order. Each step finds its own work done on a rerun: a user or
 a customer the provider no longer holds is deleted already, and a
 closed billing account names neither. A provider that cannot be reached
 parks the item for a minute without spending an attempt: a guard
-parks, a bound fails. A provider that refuses fails the item, which
-retries and ends as a failed item an operator reads; the loop has no
-outcome that fails an item at once, so a refusal is asked two more
-times first. A refusal of the process's own key (revoked, or without
-the permission) is not the call's fault: the clients answer it as
-unavailable, and the item parks until a person fixes the key. Slack's
-side stays best effort, as every removal of the app is.
+parks, a bound fails. A provider that refuses the call itself (a `4xx`
+for the request) fails the item at once, with the refusal as its
+reason: asking again gets the same answer (NET-33). A refusal of the
+process's own key (revoked, or without the permission) is not the
+call's fault: the clients answer it as unavailable, the read of the
+subscription before its cancel included, and the item parks until a
+person fixes the key. Slack's side stays best effort, as every removal
+of the app is.
 
 The org waits for the providers because the queue would not run the
 work otherwise: a claim refuses an item of a deleted org. The local
@@ -133,8 +138,9 @@ there on its way to `/signed-out`, which says the account is gone.
 While a provider is down, or refuses the key, the personal org's rows
 wait for it, out of reach of their person; anyone else they had added
 to the org keeps it until then. A provider that refuses the call itself
-fails the item for good, and the org stays with it. Running the item
-again then is by hand today.
+fails the item for good, and the org stays with it. Once the cause is
+fixed, a person with a `write` operator entry sends the item back
+(`tadas-ops work requeue`), and the org's diary names who did.
 
 A person who signs in through WorkOS before the item deletes their
 WorkOS user is a new person in Tadas: the identity the sign-in would

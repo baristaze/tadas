@@ -16,7 +16,9 @@ second lane is a second replica told its lane.
   it raises, the item is failed, which requeues it with a growing delay
   or, once its attempts are spent, makes it a dead letter. When it
   parks, the item is handed back for the time it named and spends no
-  attempt.
+  attempt. When it is refused, a failure no retry changes, the item is
+  a dead letter at once. An operator sends a failed item back with
+  `tadas-ops work requeue`.
 - **The kinds.** A reminder waits for nine in the morning of its task's
   due date, in the time zone of the person the task is for, read when it
   runs; before then it parks until then. Then it marks its task reminded
@@ -39,8 +41,9 @@ second lane is a second replica told its lane.
   in the person's personal org: it deletes the person at WorkOS, cancels
   the org's subscription at once and deletes its customer at Stripe,
   removes its Slack app, and then deletes the org, which the next sweep
-  purges whole. A provider that does not answer parks it for a minute,
-  spending no attempt; a provider that refuses fails it. Each step finds
+  purges whole. A provider that does not answer, or that refuses the
+  process's own key, parks it for a minute, spending no attempt; a
+  provider that refuses the call itself fails it at once. Each step finds
   its own work done on a rerun. The person's open tasks in each team org
   they left go unassigned by an item of their own, run under their name.
   A team org its owner deleted has an item of its own, run in the org:
