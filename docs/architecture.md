@@ -1744,10 +1744,11 @@ page; this section says what exists.
   the account check, and the env file's fields are written once; the
   rules that stop a secret leaking stay inline in each of them, and
   `infra/tests/test_ops_skills.py` holds both halves.
-- **Audits.** Four more skills, `audit-retention`, `audit-query-indexes`,
-  `audit-database-calls`, and `audit-deploy-time`, each a read-only
-  analysis that repeats. The three about the database make a database of
-  their own on the local stack (`ops/audit/auditdb.py`, named
+- **Audits.** Six more skills, `audit-retention`, `audit-query-indexes`,
+  `audit-database-calls`, `audit-credential-lifetimes`,
+  `audit-provider-calls`, and `audit-deploy-time`, each a read-only
+  analysis that repeats. The five that measure the code make a database
+  of their own on the local stack (`ops/audit/auditdb.py`, named
   `audit_<slug>`), seed it (`ops/audit/seed.py`), measure it
   (`ops/audit/explain.py`, `ops/audit/dbcalls.py`), and drop it; the
   deploy audit reads the pipeline's runs and the cluster's events
