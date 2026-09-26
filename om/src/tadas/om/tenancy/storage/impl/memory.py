@@ -147,7 +147,7 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
             self._identities.values(),
             identity,
             lambda other: other.email == identity.email,
-            "uq_identities_email",
+            "uq_identities_email_digest",
         )
         # uq_identities_issuer_subject: one identity per subject of an issuer.
         if identity.subject is not None:

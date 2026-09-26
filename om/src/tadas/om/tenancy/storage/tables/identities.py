@@ -17,7 +17,8 @@ which is why an address holds none (`rules.check_email`)."""
 class Identities(GlobalIdentifiableMixin, TrackableMixin, Base):
     __tablename__ = "identities"
     __table_args__ = (
-        Index("uq_identities_email", "email", unique=True),
+        # One identity per address. The digest is computed from the address,
+        # so its index holds that rule, and it is the one the sign-in reads by.
         Index("uq_identities_email_digest", "email_digest", unique=True),
         # One identity per subject of an issuer: the provider's sign-in lookup.
         Index(
