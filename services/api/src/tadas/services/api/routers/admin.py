@@ -115,6 +115,9 @@ async def revoke_token(
 
 @router.get("/size", response_model=PlatformSizeView)
 async def platform_size(admin: OperatorCtx, service: AdminService) -> PlatformSizeView:
+    """The platform's size as the maintenance worker last counted it, with
+    the moment it did; the route counts nothing. `404` until the first
+    count."""
     return await service.size(admin)
 
 

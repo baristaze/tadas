@@ -2,6 +2,7 @@
 refusal into a typed error, and which call it sends again."""
 
 import json
+from datetime import timedelta
 from typing import Any, cast
 from uuid import UUID, uuid4
 
@@ -641,11 +642,13 @@ async def test_admin_size_reads_the_platforms_size() -> None:
         "tasks_last_24h": 4,
         "events_last_24h": 5,
         "since": "2026-09-17T12:00:00Z",
+        "counted_at": "2026-09-18T12:00:00Z",
     }
     recorder = Recorder({"/v1/admin/size": httpx.Response(200, json=size)})
     async with client_over(recorder, token="lgn_1") as client:
         read = await client.admin_size()
     assert (read.tenants, read.users, read.tasks_last_24h, read.events_last_24h) == (2, 3, 4, 5)
+    assert read.counted_at - read.since == timedelta(hours=24)
     sent = recorder.requests[0]
     assert sent.method == "GET" and sent.url.path == "/v1/admin/size"
     assert sent.headers["authorization"] == "Bearer lgn_1"

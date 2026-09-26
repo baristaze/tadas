@@ -276,7 +276,12 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Platform Size */
+        /**
+         * Platform Size
+         * @description The platform's size as the maintenance worker last counted it, with
+         *     the moment it did; the route counts nothing. `404` until the first
+         *     count.
+         */
         get: operations["platform_size_v1_admin_size_get"];
         put?: never;
         post?: never;
@@ -2422,10 +2427,16 @@ export interface components {
          * PlatformSizeView
          * @description How big the platform is, what the first responder to an alarm reads
          *     before it escalates: live tenants and users, and the tasks created and
-         *     events produced in the last twenty-four hours, a window that starts at
-         *     `since` and ends at the read.
+         *     events produced in the twenty-four hours from `since` to `counted_at`.
+         *     The maintenance worker counts it every few minutes, and this is its
+         *     latest count: `counted_at` says how old the answer is.
          */
         PlatformSizeView: {
+            /**
+             * Counted At
+             * Format: date-time
+             */
+            counted_at: string;
             /** Events Last 24H */
             events_last_24h: number;
             /**
