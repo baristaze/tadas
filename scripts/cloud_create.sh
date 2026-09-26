@@ -470,8 +470,11 @@ case "$environment" in
 esac
 
 if [ "$environment" = "staging" ]; then
-  say "== 5b. The ruleset on main: a merge is a staging deploy, so it lands only through a pull request whose checks passed"
+  say "== 5b. The ruleset on main: a merge is a staging deploy, so it lands only through a pull request whose checks passed on its merge with the current main"
   # The checks are ci.yml's job names; a job renamed there is renamed here.
+  # They are strict: a pull request merges only on a branch up to date with
+  # main, so they ran on its merge with the current main. A merge queue does
+  # the same with less waiting, but only an organization's repository has one.
   ruleset="$(jq -n '{
     name: "main: a pull request whose checks passed",
     target: "branch",
@@ -484,7 +487,7 @@ if [ "$environment" = "staging" ]; then
         require_code_owner_review: false, require_last_push_approval: false,
         required_review_thread_resolution: false}},
       {type: "required_status_checks", parameters: {
-        strict_required_status_checks_policy: false,
+        strict_required_status_checks_policy: true,
         required_status_checks: [
           "fast gate",
           "integration over the compose stack",

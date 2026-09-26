@@ -544,13 +544,26 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
         )
 
     async def read_principal(
-        self, org_id: UUID, user_id: UUID
+        self, org_id: UUID, user_id: UUID, seen: tuple[UUID, datetime] | None = None
     ) -> tuple[Org | None, User | None, Membership | None]:
-        return (
+        found = (
             await self.read_org(org_id),
             await self.read_user(org_id, user_id),
             await self.read_membership_for_user(org_id, user_id),
         )
+        if seen is not None:
+            session_id, seen_at = seen
+            async with self._lock:
+                session = self._get(self._sessions, org_id, session_id)
+                if session is None or session.user_id != user_id:
+                    return found
+                if session.revoked_at is None:
+                    self._put(
+                        self._sessions,
+                        org_id,
+                        session.model_copy(update={"last_seen_at": seen_at}),
+                    )
+        return found
 
     async def write_membership(
         self, org_id: UUID, membership: Membership, outbox_rows: tuple[OutboxRow, ...] = ()
@@ -594,14 +607,6 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
 
     async def read_session_by_id(self, session_id: UUID) -> tuple[UUID, Session] | None:
         return self._sessions.get(session_id)
-
-    async def touch_session(self, org_id: UUID, session_id: UUID, seen_at: datetime) -> None:
-        async with self._lock:
-            session = self._get(self._sessions, org_id, session_id)
-            if session is not None and session.revoked_at is None:
-                self._put(
-                    self._sessions, org_id, session.model_copy(update={"last_seen_at": seen_at})
-                )
 
     async def write_session(
         self, org_id: UUID, session: Session, outbox_rows: tuple[OutboxRow, ...] = ()

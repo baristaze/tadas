@@ -159,21 +159,20 @@ class TenancyServiceImpl(TenancyServiceInterface):
         return AccountDeletedView.model_validate(deleted)
 
     async def get_me(self, ctx: OpContext) -> MeView:
-        # The context carries ids; the entities are loaded by the manager.
-        user = await self._tenancy.get_user(ctx, ctx.user_id)
-        org = await self._tenancy.get_org(ctx)
+        # The context carries ids; the manager loads the user and the org in
+        # one read. The role shown is the context's: an api key's is capped.
+        me = await self._tenancy.get_me(ctx)
         return MeView(
-            user=UserView.model_validate(user),
-            org=OrgView.model_validate(org),
+            user=UserView.model_validate(me.user),
+            org=OrgView.model_validate(me.org),
             role=ctx.security.role,
             permissions=ctx.security.permissions,
             app=ctx.app.type.value,
         )
 
     async def update_me(self, ctx: OpContext, body: UpdateMeRequest) -> UserView:
-        me = await self._tenancy.get_user(ctx, ctx.user_id)
-        user = me.model_copy(update={"display_name": body.display_name})
-        return UserView.model_validate(await self._tenancy.update_user(ctx, user))
+        user = await self._tenancy.rename_user(ctx, ctx.user_id, body.display_name)
+        return UserView.model_validate(user)
 
     async def get_identity(self, ctx: OpContext) -> IdentityView:
         return IdentityView.model_validate(await self._tenancy.get_identity(ctx))

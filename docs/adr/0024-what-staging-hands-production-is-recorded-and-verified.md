@@ -51,8 +51,10 @@ immutable in both registries, but three things were missing:
   with log file validation, into a bucket of its own. The database URL
   requires TLS (`ssl=require`).
 - **Main takes a merge only through a pull request whose checks passed.**
-  The create script sets that ruleset, and `.github/CODEOWNERS` names the
-  owner of the deployment paths.
+  The checks are strict: the branch is up to date with `main`, so they
+  ran on its merge with the current `main`. The create script sets that
+  ruleset, and `.github/CODEOWNERS` names the owner of the deployment
+  paths.
 
 Three positions, chosen and not missed:
 
