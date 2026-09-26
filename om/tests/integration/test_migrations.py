@@ -1,9 +1,10 @@
 """Every role's migrated schema agrees with the ORM metadata, the latest
 revision of every role downgrades and upgrades again, the logins are safe to
 make twice, a data migration passes the fence it runs under, the personal
-org backfill gives every person one, the due date backfill gives every
-task with a due time its date, and the address fold folds every address
-and stops on two that fold to one."""
+org backfill gives every person one, the due date backfill gives every task
+with a due time its date, a task's rank and position follow each other for
+the builds before this one, and the address fold folds every address and
+stops on two that fold to one."""
 
 from datetime import UTC, date, datetime
 from decimal import Decimal
@@ -19,7 +20,7 @@ from contracts.factories import (
     make_personal_org,
     make_user,
 )
-from contracts.task_storage import make_task
+from contracts.task_storage import bump, make_task
 from sqlalchemy import Connection, text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import create_async_engine
@@ -321,7 +322,7 @@ async def test_the_due_date_backfill_takes_the_utc_date_in_every_tenant(
         await engine.dispose()
 
 
-# The rank, filled from the position and kept for the release before.
+# The rank, filled from the position and kept for the build before it.
 
 
 BEFORE_RANK = "202610030000"
@@ -332,11 +333,9 @@ POSITIONS = (0.1, 1e-05, -2.5, 3.0000000000000004, 12345678.9, 0.300000000000000
 decimal of fifteen digits tells from its neighbour."""
 
 
-async def as_the_release_before(
-    sessions: LoginSessions, org: UUID, sql: str, **values: object
-) -> None:
-    """A statement the release before sends, under the runtime login and the
-    tenant's scope: it names the position and never the rank."""
+async def as_a_build_before(sessions: LoginSessions, org: UUID, sql: str, **values: object) -> None:
+    """A statement a build before this one sends, under the runtime login and
+    the tenant's scope."""
     async with sessions[DatabaseRole.CORE]() as session:
         await set_scope(session, org, None, None)
         await session.execute(text(sql), {"org": org, **values})
@@ -351,8 +350,7 @@ async def test_the_rank_is_the_position_digit_for_digit_and_follows_the_release_
     ann, zoe = new_id(), new_id()
     tasks = [make_task(f"p{index}", rank=position) for index, position in enumerate(POSITIONS)]
     for index, task in enumerate(tasks):
-        placed = task.model_copy(update={"position": POSITIONS[index]})
-        assert await storage.create_task(ann if index % 2 else zoe, placed, ())
+        assert await storage.create_task(ann if index % 2 else zoe, task, ())
 
     # The fill: every existing row, every tenant, its rank the float's text.
     await downgrade(DatabaseRole.CORE, core, BEFORE_RANK)
@@ -362,10 +360,10 @@ async def test_the_rank_is_the_position_digit_for_digit_and_follows_the_release_
         (position, Decimal(repr(position))) for position in POSITIONS
     ]
 
-    # The release before creates a task: no rank, and the trigger gives it
-    # the one its position names, which this release reads it at.
+    # The build before the rank creates a task: no rank, and the trigger
+    # gives it the one its position names, which this release reads it at.
     created = new_id()
-    await as_the_release_before(
+    await as_a_build_before(
         pg_sessions,
         ann,
         "INSERT INTO core.tasks (id, org_id, created_at, updated_at, created_by, updated_by,"
@@ -376,14 +374,14 @@ async def test_the_rank_is_the_position_digit_for_digit_and_follows_the_release_
     stored = await storage.read_task(ann, created)
     assert stored is not None and stored.rank == Decimal("-7.25")
 
-    # The release before moves it by the position alone, and edits a title.
-    await as_the_release_before(
+    # That build moves it by the position alone, and edits a title.
+    await as_a_build_before(
         pg_sessions,
         ann,
         "UPDATE core.tasks SET position = 0.15, version = 2 WHERE id = :id",
         id=created,
     )
-    await as_the_release_before(
+    await as_a_build_before(
         pg_sessions, ann, "UPDATE core.tasks SET title = 'renamed' WHERE id = :id", id=created
     )
     stored = await storage.read_task(ann, created)
@@ -393,17 +391,18 @@ async def test_the_rank_is_the_position_digit_for_digit_and_follows_the_release_
         [Decimal("0.15"), *(Decimal(repr(p)) for i, p in enumerate(POSITIONS) if i % 2)]
     )
 
-    # This release writes the rank itself; the position beside it is the
-    # rank's float, and the trigger leaves the rank as written.
+    # This release writes the rank alone; the position takes the rank's
+    # float, and the rank stays as written.
     exact = Decimal("0.1500000000000000000000001")
-    moved = stored.model_copy(
-        update={"rank": exact, "position": float(exact), "version": stored.version + 1}
-    )
+    moved = stored.model_copy(update={"rank": exact, "version": stored.version + 1})
     await storage.update_task(ann, moved, stored.version, ())
     stored = await storage.read_task(ann, created)
-    assert stored is not None and stored.rank == exact and stored.position == 0.15
+    assert stored is not None and stored.rank == exact
+    rows = await on_core(core, f"SELECT position FROM core.tasks WHERE id = '{created}'")
+    assert rows == [(0.15,)]
 
-    # Downgraded, the release before reads the position this release kept.
+    # Downgraded to before the rank, that build reads the position this
+    # release kept.
     await downgrade(DatabaseRole.CORE, core, BEFORE_RANK)
     rows = await on_core(core, f"SELECT position FROM core.tasks WHERE id = '{created}'")
     assert rows == [(0.15,)]
@@ -411,10 +410,94 @@ async def test_the_rank_is_the_position_digit_for_digit_and_follows_the_release_
     assert await check(DatabaseRole.CORE, core) == []
 
 
+# The position, kept the rank's float for the release before, which reads it.
+
+
+BEFORE_POSITION_TRIGGER = "202610170000"
+"""The revision before the one that keeps the position from the rank."""
+
+LONG = Decimal("0.1500000000000000000000001")
+"""A rank whose float, 0.15, holds only its first digits."""
+
+
+async def places(core: str) -> dict[str, tuple[object, ...]]:
+    """Each task's rank and position, by title, as the database holds them."""
+    rows = await on_core(core, "SELECT title, rank, position FROM core.tasks")
+    return {str(title): (rank, position) for title, rank, position in rows}
+
+
+async def test_the_position_is_the_ranks_float_on_every_row_either_release_writes(
+    pg_sessions: LoginSessions, migrated: dict[DatabaseRole, str]
+) -> None:
+    """This release names no position. The release before names the rank
+    and the position, its float, in every write, and reads the position as a
+    number. Each writes over the other's rows, and each reads every row at
+    the rank the other wrote."""
+    core = migrated[DatabaseRole.CORE]
+    storage = TasksStoragePostgresImpl(pg_sessions)
+    org = new_id()
+
+    # This release creates a task and moves it. It writes the rank alone,
+    # and the position takes the rank's float each time.
+    mine = make_task("mine", rank="-2.5")
+    assert await storage.create_task(org, mine, ())
+    assert (await places(core))["mine"] == (Decimal("-2.5"), -2.5)
+    mine = await bump(storage, org, mine, rank=LONG)
+    assert (await places(core))["mine"] == (LONG, 0.15)
+
+    # The release before creates a task and moves it: both stay as written.
+    theirs = new_id()
+    await as_a_build_before(
+        pg_sessions,
+        org,
+        "INSERT INTO core.tasks (id, org_id, created_at, updated_at, created_by, updated_by,"
+        " title, notes, status, rank, position, version)"
+        " VALUES (:id, :org, now(), now(), :id, :id, 'theirs', '', 'open', -3, -3.0, 1)",
+        id=theirs,
+    )
+    await as_a_build_before(
+        pg_sessions,
+        org,
+        "UPDATE core.tasks SET rank = :rank, position = :position, version = 2 WHERE id = :id",
+        id=theirs,
+        rank=LONG + Decimal("1e-25"),
+        position=float(LONG),
+    )
+    assert (await places(core))["theirs"] == (LONG + Decimal("1e-25"), 0.15)
+
+    # The release before moves this release's task to the place it holds: it
+    # names the same rank and that rank's float, which the row holds, so the
+    # rank keeps every digit. Then it edits the title, naming both as read.
+    for sql in (
+        "UPDATE core.tasks SET rank = :rank, position = :position, version = 3 WHERE id = :id",
+        "UPDATE core.tasks SET title = 'mine, edited', rank = :rank, position = :position,"
+        " version = 4 WHERE id = :id",
+    ):
+        await as_a_build_before(pg_sessions, org, sql, id=mine.id, rank=LONG, position=float(LONG))
+    assert (await places(core))["mine, edited"] == (LONG, 0.15)
+
+    # This release reads both at their ranks: every digit counts, though the
+    # two floats tie.
+    assert await storage.read_open_places(org, None, None, limit=10) == [
+        (LONG, mine.id),
+        (LONG + Decimal("1e-25"), theirs),
+    ]
+
+    # Downgraded, the release before reads the position as this release left
+    # it, and writes it itself.
+    await downgrade(DatabaseRole.CORE, core, BEFORE_POSITION_TRIGGER)
+    assert sorted((await places(core)).values()) == [
+        (LONG, 0.15),
+        (LONG + Decimal("1e-25"), 0.15),
+    ]
+    await upgrade(DatabaseRole.CORE, core)
+    assert await check(DatabaseRole.CORE, core) == []
+
+
 # The address fold.
 
 
-BEFORE_ADDRESS_FOLD = "202610170000"
+BEFORE_ADDRESS_FOLD = "202610200000"
 """The revision before the one that folds every stored address."""
 
 

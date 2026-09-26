@@ -56,7 +56,7 @@ the release before among them, meets the unique index with a second
 spelling instead of making a second person.
 
 **A migration folds the stored addresses and stops on two that fold to
-one** (`202610190000`). It folds every identity, user, and invitation,
+one** (`202610200100`). It folds every identity, user, and invitation,
 and then computes the digest from the folded address. Before it changes
 anything, it looks for two identities, or two pending invitations of one
 org, whose addresses fold to one. If there are any, it fails, naming

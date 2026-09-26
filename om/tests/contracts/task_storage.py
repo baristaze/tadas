@@ -20,7 +20,7 @@ from tadas.om.orchestrations.types.orchestration import (
     Step,
 )
 from tadas.om.outbox.types.row import OutboxRow
-from tadas.om.tasks.rules import RANK_SCALE_BOUND, needs_respace, placed
+from tadas.om.tasks.rules import RANK_SCALE_BOUND, needs_respace
 from tadas.om.tasks.storage import TasksStorageInterface
 from tadas.om.tasks.types.filter import OpenTaskCursor, TaskCursor, TaskFilter
 from tadas.om.tasks.types.task import Task, TaskScope, TaskStatus
@@ -124,8 +124,8 @@ def make_task(
     rank: float | str = 0,
     updated_ago: timedelta = timedelta(0),
 ) -> Task:
-    """A task at `rank`, written as the manager writes one: the exact decimal,
-    and the float beside it."""
+    """A task at `rank`, written as the manager writes one: the exact
+    decimal."""
     exact = Decimal(str(rank))
     now = utcnow()
     return Task(
@@ -138,7 +138,6 @@ def make_task(
         status=status,
         assignee_id=assignee_id,
         rank=exact,
-        position=float(exact),
     )
 
 
@@ -525,9 +524,7 @@ class TaskStorageContract:
         await seed(storage, org_a, theirs)
 
         def placed(task: Task, rank: int) -> Task:
-            return task.model_copy(
-                update={"rank": Decimal(rank), "position": float(rank), "version": task.version + 1}
-            )
+            return task.model_copy(update={"rank": Decimal(rank), "version": task.version + 1})
 
         with pytest.raises(TenantMismatch):
             await storage.update_tasks(
@@ -634,7 +631,7 @@ class TaskStorageContract:
             task.model_copy(
                 update={
                     "status": TaskStatus.OPEN,
-                    **placed(rank),
+                    "rank": rank,
                     "archived_at": None,
                     "updated_at": utcnow(),
                     "version": task.version + 1,
@@ -788,7 +785,7 @@ class TaskStorageContract:
         org = new_id()
         low = make_task("low", rank="0.1000000000000000000000001")
         high = make_task("high", rank="0.1000000000000000000000002")
-        assert low.position == high.position, "the float mirror ties"
+        assert float(low.rank) == float(high.rank), "a float ties them"
         await seed(storage, org, high)
         await seed(storage, org, low)
         assert await storage.read_open_places(org, None, None, limit=10) == [
@@ -1017,9 +1014,7 @@ class TaskStorageContract:
         moved_second = await bump(storage, org, second, title="moved")  # now at version 2
 
         def placed(task: Task, rank: int) -> Task:
-            return task.model_copy(
-                update={"rank": Decimal(rank), "position": float(rank), "version": task.version + 1}
-            )
+            return task.model_copy(update={"rank": Decimal(rank), "version": task.version + 1})
 
         with pytest.raises(PreconditionFailed):
             await storage.update_tasks(

@@ -200,16 +200,16 @@ async def test_a_move_answers_the_rank_written_out_and_moves_no_other_task(
         assert answer.status_code == 200, answer.text
         rank = answer.json()["rank"]
         assert isinstance(rank, str) and "E" not in rank.upper()
-        assert answer.json()["position"] == float(rank)
+        assert answer.json()["position"] == float(rank), "the rank's float, for the release before"
     assert len(rank.split(".")[1]) > 15, "past what a float holds"
     listed = (await client.get("/v1/tasks", headers=owner)).json()["items"]
     assert [t["title"] for t in listed] == ["b", "c", "a"], "c moved last, right after b"
     assert next(t for t in listed if t["title"] == "b")["version"] == b["version"]
 
 
-def test_an_open_cursor_reads_a_rank_and_one_the_release_before_issued() -> None:
-    """The release before wrote the position's float into the cursor; the
-    rank was filled from that float's text, so the cursor reads the same."""
+def test_an_open_cursor_reads_a_finite_decimal_however_it_is_written() -> None:
+    """An open cursor's mark is a rank: any finite decimal, in full or in a
+    float's shortest text, reads as the same number."""
     task_id = uuid4()
     for mark in ("-3.0", "1e-05", "0.30000000000000004"):
         raw = base64.urlsafe_b64encode(f"open|{mark}|{task_id}".encode()).decode().rstrip("=")
@@ -252,7 +252,7 @@ def test_the_partial_update_cannot_name_provenance() -> None:
     """The service's merge copies the request's set fields onto the stored
     task; the request type has no provenance field to set and forbids extra
     ones, so the translation cannot rewrite who made a row or its deletion."""
-    reserved = PROVENANCE_FIELDS | {"id", "updated_at", "updated_by", "position"}
+    reserved = PROVENANCE_FIELDS | {"id", "updated_at", "updated_by", "rank"}
     assert set(UpdateTaskRequest.model_fields).isdisjoint(reserved)
     assert UpdateTaskRequest.model_config.get("extra") == "forbid"
 

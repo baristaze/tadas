@@ -364,11 +364,12 @@ context on keeps the stage the callee needs.
   in the tenant), and its run (between the nearest ranks of
   at most 12 digits, 100 places each way at most) is respaced in one
   compare-and-set over its rows (`update_tasks`, `respace_ranks`), each
-  announced. The float `position` is written beside the rank for the
-  release before, and a trigger gives a row that release writes the
-  rank its position names; both go with the contract. A task carries a
-  `version` because it is edited from two windows and two terminals at
-  once ([ADR 0009](adr/0009-tasks-carry-a-version.md)): the manager's
+  announced. The float `position` is out of the mapping. The release
+  before still reads it, so a trigger gives every row this release
+  writes its rank's float, and another gives a row a build before the
+  rank writes the rank its position names; both go with the column. A
+  task carries a `version` because it is edited from two windows and two
+  terminals at once ([ADR 0009](adr/0009-tasks-carry-a-version.md)): the manager's
   copy increments it on update, move, and soft delete, and the storage
   write is a compare-and-set, `WHERE version = :expected` in one
   statement in Postgres and the same check and write under the lock in
@@ -378,7 +379,7 @@ context on keeps the stage the callee needs.
   update reads: `If-Match` on a `PATCH` and a `DELETE`, `expected_version`
   on the move, and a write that names none is `ValidationFailed`. The
   copy on update keeps `PROVENANCE_FIELDS` and the task's
-  `MANAGER_OWNED_FIELDS` (its rank, its position, and its version) as stored.
+  `MANAGER_OWNED_FIELDS` (its rank and its version) as stored.
   The update never inserts; the create primitive is the only way in. So
   a snapshot that missed a write is refused, never merged over it, and
   an edit that raced a delete finds the task gone and cannot bring it
