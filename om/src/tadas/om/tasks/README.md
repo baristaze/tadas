@@ -63,9 +63,11 @@ seven kinds of thing [Tadas is made of](../../../../README.md).
   commit. The tasks go to the bottom of the open list, in the file's
   order. An imported task posts nothing to Slack.
 - **Archive.** Once a day, per org, the cleanup archives the done tasks
-  nobody changed for the archive age, five hundred per step, each step
-  one conditional write that only takes tasks still done and still that
-  old. A task reopened or edited meanwhile is left alone.
+  that nobody had changed for the archive age when the day began (in
+  UTC), five hundred per step, each step one conditional write that
+  only takes tasks still done and still that old. A task reopened or
+  edited meanwhile is left alone. A task that turns that old during the
+  day waits for the next day's cleanup.
 - **List the archived tasks**, newest first, and **restore** one: it
   goes back to the top of the done list, and has the archive age again
   before the next cleanup takes it. Reopening an archived task restores
