@@ -34,7 +34,7 @@ variable "api_log_group_name" {
 }
 
 variable "maintenance_log_group_name" {
-  description = "The worker's log group; each sweep pass's duration is read from its line there."
+  description = "The worker's log group; each sweep pass's duration, and its reads of the work queue and the outbox, are read from its line there."
   type        = string
 }
 
@@ -109,4 +109,16 @@ variable "sweep_duration_seconds" {
   description = "How long one sweep pass may take before the sweep alarm fires. Thirty seconds: the interval between passes, and past the pass's own budget of twenty."
   type        = number
   default     = 30
+}
+
+variable "work_oldest_ready_seconds" {
+  description = "How long the work item ready longest may wait for a worker before the work backlog alarm fires. Ten minutes: a worker with a free slot claims within seconds, so this long means none is claiming."
+  type        = number
+  default     = 600
+}
+
+variable "outbox_oldest_pending_seconds" {
+  description = "How long ago the oldest outbox row not yet relayed may have landed before the outbox lag alarm fires. Five minutes: a row relays at once, so this long is a relay that failed at the request and on about four sweep passes since, 30, 60, and 120 seconds apart."
+  type        = number
+  default     = 300
 }
