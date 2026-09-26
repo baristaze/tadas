@@ -401,7 +401,8 @@ class TasksManagerImpl(TasksManagerInterface):
         schedule their reminders. They go to the bottom of the open list, in
         the file's order: an import adds to the list and does not reorder
         what the team placed. A task's id is derived from the import and its
-        row, so a step run twice presents the same ids. An imported task
+        row, so a step run twice presents the same ids, and it is the task
+        of the person who started the import. An imported task
         posts nothing to Slack: a file of a thousand rows is not a thousand
         messages."""
         if not made:
@@ -414,8 +415,9 @@ class TasksManagerImpl(TasksManagerInterface):
                 id=derived_id(record.id, record.created_at, import_row_part(row.number)),
                 created_at=now,
                 updated_at=now,
-                created_by=ctx.user_id,
-                updated_by=ctx.user_id,
+                # The person who started the import, whoever runs the step.
+                created_by=record.created_by,
+                updated_by=record.created_by,
                 title=row.title,
                 notes=row.notes,
                 assignee_id=row.assignee_id,

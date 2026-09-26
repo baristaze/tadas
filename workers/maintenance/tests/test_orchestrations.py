@@ -96,6 +96,10 @@ async def test_an_import_parks_at_the_plan_and_the_processors_delivery_wakes_it(
     assert done.status is OrchestrationStatus.SUCCEEDED
     assert (done.applied, done.cursor, done.total) == (50, 50, 50)
     assert await container.managers.tasks.count_active_tasks(ctx) == 50
+    # The platform's delivery woke it; the tasks are still the person's.
+    team = TaskFilter(scope=TaskScope.TEAM, user_id=ctx.user_id)
+    page = await container.managers.tasks.get_open_tasks(ctx, team, None, 200)
+    assert {t.created_by for t in page.items} == {ctx.user_id}
 
 
 class Flaky:
