@@ -45,7 +45,10 @@ describe("deleteAccount", () => {
     const outcome = await deleteAccount(e);
     expect(outcome).toEqual({
       deleted: false,
-      refusal: "You are the last owner of Acme. Make someone else an owner of it first.",
+      refusal:
+        "You are the last owner of Acme. Make someone else an owner, or delete the organization, first. " +
+        "Both are done in that organization's Settings.",
+      stranded: [{ id: "o1", name: "Acme", slug: "acme" }],
     });
     expect(e.forget).not.toHaveBeenCalled();
     expect(e.note).not.toHaveBeenCalled();

@@ -13,6 +13,12 @@ export const keys = {
     all: ["my_membership"] as const,
     list: (limit: number) => ["my_membership", "list", limit] as const,
   },
+  // The org's memberships: the role beside each member in Settings. A
+  // `tenancy.membership.*` push reaches it through the router's table.
+  memberships: {
+    all: ["membership"] as const,
+    list: (limit: number) => ["membership", "list", limit] as const,
+  },
   users: {
     all: ["user"] as const,
     list: (limit: number) => ["user", "list", limit] as const,

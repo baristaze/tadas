@@ -7,6 +7,7 @@ import type {
   ApiKeyView,
   CreateTeamOrgRequest,
   DeleteAccountRequest,
+  DeleteOrgRequest,
   DevSignInRequest,
   ExchangeSessionRequest,
   IdentityView,
@@ -19,13 +20,17 @@ import type {
   LogoutRequest,
   MembershipChoicePageView,
   MembershipChoiceView,
+  MembershipPageView,
+  MembershipView,
   MeView,
+  OrgDeletedView,
   SignedOutView,
   SignInCallbackRequest,
   SignInStartRequest,
   SignInStartView,
   SsoLinkRequest,
   SsoLinkView,
+  UpdateMembershipRequest,
   UserPageView,
   UserView,
 } from "../api";
@@ -85,6 +90,43 @@ export function useUsers() {
      * names would otherwise call a member still on the way a former member. */
     isPending: query.isPending || walking,
   };
+}
+
+/** Every membership of the org, page after page, as the member list is read:
+ * the role beside each member in Settings. Read whole, like the users, so a
+ * member on a later page still shows their role. */
+export function useMemberships() {
+  const query = useInfiniteQuery({
+    queryKey: keys.memberships.list(USERS_PAGE_SIZE),
+    initialPageParam: null as string | null,
+    getNextPageParam: (last: MembershipPageView) => last.next_cursor,
+    queryFn: ({ pageParam, signal }) => {
+      const cursor = pageParam ? `&cursor=${encodeURIComponent(pageParam)}` : "";
+      return api.get<MembershipPageView>(`/v1/memberships?limit=${USERS_PAGE_SIZE}${cursor}`, { signal });
+    },
+  });
+  const { hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage } = query;
+  const walking = hasNextPage && !isFetchNextPageError;
+  useEffect(() => {
+    if (walking && !isFetchingNextPage) void fetchNextPage();
+  }, [walking, isFetchingNextPage, fetchNextPage]);
+  return {
+    ...query,
+    data: query.data?.pages.flatMap((page) => page.items) as MembershipView[] | undefined,
+    isPending: query.isPending || walking,
+  };
+}
+
+/** Gives another member a role. The server holds the rules: never above the
+ * caller's own role, never for the caller themselves, and never for the
+ * person of a personal org. The push refreshes every open Settings too. */
+export function useUpdateMemberRole() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ userId, body }: { userId: string; body: UpdateMembershipRequest }) =>
+      api.patch<MembershipView>(`/v1/memberships/${userId}`, body),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: keys.memberships.all }),
+  });
 }
 
 /** Only a member who may manage keys asks for them: `GET /v1/api-keys`
@@ -197,6 +239,15 @@ export function useLogout() {
 export function useDeleteAccount() {
   return useMutation({
     mutationFn: (body: DeleteAccountRequest) => api.post<AccountDeletedView>("/v1/me/deletion", body),
+  });
+}
+
+/** Deletes the team org this tab is in, for everyone in it. The owner types
+ * its name; the answer carries the owner's session in their personal org.
+ * Sent once: a retry would meet a session that is gone. */
+export function useDeleteOrg() {
+  return useMutation({
+    mutationFn: (body: DeleteOrgRequest) => api.post<OrgDeletedView>("/v1/orgs/current/deletion", body),
   });
 }
 

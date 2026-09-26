@@ -195,7 +195,14 @@ Zustand, one realtime channel.
   browser's IANA zone differs from the one held there, sends it once with
   `PATCH /v1/me/identity`. It is quiet: a refusal is dropped and the page
   never waits on it.
-- Settings, for a member who manages members: an invitation by email and
+- Settings, for a member who manages members: each member's role, which
+  a small menu on the member's row changes (`RoleControl.tsx`). It holds
+  the roles the server's rules let the member give: never their own
+  role, never a member above their own role, never a role above it, so
+  an owner makes someone else an owner and an admin gives roles up to
+  admin (`settingsModel.grantableRoles`). It opens on a click, Enter,
+  Space, or the arrows, and closes on Escape or outside. A refusal is
+  said as a notice. An invitation by email and
   role (at most their own, never owner), which WorkOS sends, and the
   pending ones to send again or revoke. A team org's settings also open
   WorkOS's admin portal, where the org's admin connects their identity
@@ -205,11 +212,21 @@ Zustand, one realtime channel.
   account, the personal org with its tasks and files, and their place
   in every team org, "gone now, and gone from backups within 7 days".
   A refusal stays on the card: the last owner of a team org is told
-  which orgs (`last_owner` in the error envelope). Once deleted, the tab
+  which orgs (`last_owner` in the error envelope), and to make someone
+  else an owner or delete the organization. When the org the tab is in
+  is one of them, the card links to its members and to its deletion. Once deleted, the tab
   forgets its session and notes the deletion in its session storage,
   and the browser goes through WorkOS's logout, when the API names one,
   to `/signed-out`, which says "Your account is deleted." once
   (`src/features/settings/deleteAccount.ts`).
+- "Delete this organization", above "Delete my account", for an owner of
+  a team org only. The owner types the org's name to confirm, and the
+  card says what goes for everyone in it: its tasks and files, its
+  members and their keys, its plan, and its Slack app, kept 30 days and
+  then purged. The server answers with a session in the owner's personal
+  org, which the tab takes up, as a switch does, and opens the task list
+  there. With no session in the answer, the tab signs in again
+  (`src/features/settings/deleteOrg.ts`).
 - "Former member". A task names its maker and its assignee from the
   org's member list, read whole; an id the list does not hold is a
   person who left the org or deleted their account, and reads "Former

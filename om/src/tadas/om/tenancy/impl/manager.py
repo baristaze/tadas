@@ -9,6 +9,7 @@ from uuid import UUID
 from pydantic import Field
 
 from tadas.infra.cache import CacheInterface
+from tadas.infra.exceptions import InfraException
 from tadas.infra.observability import current_traceparent
 from tadas.integrations.exceptions import (
     DevicePending,
@@ -42,6 +43,7 @@ from tadas.om.exceptions import (
     OperatorRoleHeld,
     PersonalOrgFixed,
     PlanLimitReached,
+    PlatformException,
     SecondFactorRequired,
     SignInDelayed,
     SignInPending,
@@ -90,6 +92,7 @@ from tadas.om.tenancy.rules import (
     check_org,
     check_time_zone,
     confirms_deletion,
+    confirms_org_deletion,
     credential_kind_of,
     email_digest,
     hash_token,
@@ -114,6 +117,7 @@ from tadas.om.tenancy.types.issued import (
     IssuedOperatorToken,
     IssuedSession,
     IssuedTicket,
+    OrgDeleted,
     OrgMembership,
     SignedOut,
     SignInStart,
@@ -1663,6 +1667,119 @@ class TenancyManagerImpl(TenancyManagerInterface):
             update={
                 "name": DELETED_PERSONAL_ORG_NAME,
                 "slug": f"deleted-{org.id}",
+                "deleted_at": now,
+                "deleted_by": ctx.user_id,
+                "updated_at": now,
+                "updated_by": ctx.user_id,
+            }
+        )
+        # Announced like any change: the sockets of the tenant close on it.
+        row = outbox_row(ctx, "tenancy.org.deleted", org.id, {})
+        await self._storage.write_org(org.id, deleted, (row,))
+        await self._relay.relay(org.id, row)
+        return deleted
+
+    async def delete_org(self, ctx: OpContext, confirm_name: str) -> OrgDeleted:
+        ctx.require(Permission.MANAGE_MEMBERS)
+        # A person deletes the org, not a program: an api key is the tenant's,
+        # and the tenant is not its to end.
+        if ctx.security.credential_kind is not CredentialKind.SESSION_TOKEN:
+            raise NotAuthorized("only a signed-in owner deletes an organization")
+        if ctx.security.role is not Role.OWNER:
+            raise NotAuthorized("only an owner deletes an organization")
+        org = await self.get_org(ctx)
+        if org.personal:
+            raise PersonalOrgFixed("a personal org goes only with its person's account")
+        if not confirms_org_deletion(org.name, confirm_name):
+            raise ValidationFailed("type the organization's name to delete it")
+        asking = await self._storage.read_session(ctx.org_id, ctx.security.credential_id)
+        user = await self._live_user(ctx, ctx.user_id)
+        now = utcnow()
+        # The org stays live, with nobody in it, until the queue has ended its
+        # providers: deleted first, it could no longer run the work that names
+        # it. Its provider organization leaves the row now, so no sign-in
+        # through it, by invitation or single sign-on, finds the org meanwhile.
+        closed = org.model_copy(
+            update={"provider_org_id": None, "updated_at": now, "updated_by": ctx.user_id}
+        )
+        work = outbox_row(
+            ctx,
+            work_row_kind(WorkKind.DELETE_ORG),
+            org.id,
+            {"provider_org_id": org.provider_org_id},
+        )
+
+        def member_row(member: User) -> OutboxRow:
+            return outbox_row(ctx, "tenancy.user.deleted", member.id, user_payload(member))
+
+        def revocation(kind: str, credential_id: UUID, holder: UUID) -> OutboxRow:
+            return outbox_row(ctx, kind, credential_id, {"user_id": str(holder)})
+
+        try:
+            ended = await self._storage.write_closed_org(
+                ctx.org_id, closed, (work,), member_row, revocation
+            )
+        except NotFound:
+            raise InvalidCredential("the org is gone") from None
+        # Each member's removal first, so a socket closes because its person
+        # left; then each revocation, as the record it is. Every row is
+        # durable already: whatever a crash leaves unrelayed, the sweep relays.
+        for landed in (work, *ended):
+            await self._relay.relay(ctx.org_id, landed)
+        log.info("owner %s deleted org %s", ctx.user_id, org.id)
+        landing = None if asking is None else await self._land_home(user, asking)
+        return OrgDeleted(deleted_at=now, session=landing)
+
+    async def _land_home(self, user: User, asking: Session) -> IssuedSession | None:
+        """The session an owner lands on in their personal org once their team
+        org is gone, as a switch would make it: the same person, carrying the
+        provider's session the one that asked came from. None, and the owner
+        signs in again, when they have no personal org or it cannot be made."""
+        places = await self._memberships_of(user.identity_id)
+        home = next((p for p in places if p.org.personal_identity_id == user.identity_id), None)
+        if home is None:
+            return None
+        now = utcnow()
+        token = mint_token(CredentialKind.SESSION_TOKEN)
+        session = Session(
+            id=new_id(),
+            created_at=now,
+            updated_at=now,
+            created_by=home.user.id,
+            updated_by=home.user.id,
+            identity_id=user.identity_id,
+            user_id=home.user.id,
+            token_hash=hash_token(token),
+            credential_kind=CredentialKind.SESSION_TOKEN,
+            expires_at=now + self._options.session_ttl,
+            provider_session_id=asking.provider_session_id,
+        )
+        try:
+            await self._storage.write_session(home.org.id, session)
+        except (InfraException, PlatformException) as error:
+            # The org is gone either way; only the landing failed.
+            log.warning("no session in the personal org of %s: %s", user.identity_id, error)
+            return None
+        return IssuedSession(
+            token=token, expires_at=session.expires_at, org=home.org, user=home.user, role=home.role
+        )
+
+    async def delete_closed_org(self, ctx: OpContext) -> Org | None:
+        ctx.require(Permission.MANAGE_MEMBERS)
+        if ctx.security.role is not Role.SERVICE:
+            raise NotAuthorized("an org its owner deleted is ended by the platform")
+        org = await self._storage.read_org(ctx.org_id)
+        if org is None:
+            raise NotFound(f"org {ctx.org_id} not found")
+        if org.personal:
+            raise PersonalOrgFixed("a personal org goes only with its person's account")
+        if org.deleted_at is not None:
+            return None
+        now = utcnow()
+        # The operator's deletion, as it writes it: the row stays as the
+        # record, and the sweep purges the tenant once the retention passed.
+        deleted = org.model_copy(
+            update={
                 "deleted_at": now,
                 "deleted_by": ctx.user_id,
                 "updated_at": now,

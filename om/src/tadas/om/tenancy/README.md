@@ -111,10 +111,13 @@ of the seven kinds of thing [Tadas is made of](../../../../README.md).
   member when their address is in a domain the org verified; anyone
   else joins by invitation. A personal org has no single sign-on.
 - **Manage members.** List the members a page at a time, change a
-  member's role, or remove a member. Removing ends the membership,
-  hides the user from every list, and revokes their sessions and API
-  keys, all in one step, and announces each revocation so their
-  sockets close. A failure lands none of it.
+  member's role, or remove a member. Nobody changes their own role, so
+  an org's last owner stays one until they make someone else an owner.
+  An owner can make another member an owner; an admin gives roles up
+  to admin. Settings has the control on each member. Removing ends the
+  membership, hides the user from every list, and revokes their
+  sessions and API keys, all in one step, and announces each
+  revocation so their sockets close. A failure lands none of it.
 - **Manage API keys.** Create one with a name, a role, and a lifetime
   of at most ninety days; list them (a member manager sees the org's,
   everyone else their own); revoke one. An org on a plan without API
@@ -142,10 +145,23 @@ of the seven kinds of thing [Tadas is made of](../../../../README.md).
   A deleted org keeps its row as the record; everything else of it is
   purged once the retention has passed, and once nothing is left the
   org is marked purged and the sweep stops visiting it.
+- **Delete an organization.** An owner deletes their team org from a
+  session, by typing its name, in Settings. An admin, a member, and an
+  API key cannot. A personal org is never deleted this way: it goes
+  with its person's account. One step closes the org for everyone in
+  it: every member's place ends, every session, API key, and pending
+  invitation in it is revoked, each announced so every socket closes,
+  and a sign-in through the org's single sign-on no longer finds it.
+  Then the providers go: the org's organization at the identity
+  provider, its subscription and customer at the payment processor, and
+  its Slack app. Then the org is deleted as an operator deletes one,
+  and its data is purged once the retention has passed. The owner lands
+  in their personal org
+  ([ADR 0042](../../../../../docs/adr/0042-an-owner-deletes-a-team-org-closed-at-once-and-its-providers-by-the-queue.md)).
 - **Delete my account.** A person deletes their own account from a
   session, by typing its email. It is refused while they are the last
   owner of a team org, and the refusal names each one: they make
-  someone else an owner first. It is refused while they are on the
+  someone else an owner, or delete the organization, first. It is refused while they are on the
   operator allowlist. Otherwise one commit erases them for good: the
   identity with its second factor, their user and membership in every
   org, every session, api key, sign-in, and operator token they hold,

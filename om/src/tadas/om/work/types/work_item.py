@@ -23,6 +23,7 @@ class WorkKind(StrEnum):
     WAKE_PARKED = "WAKE_PARKED"  # the reason an org's records parked for is gone
     DELETE_ACCOUNT = "DELETE_ACCOUNT"  # a deleted account's providers, then its personal org
     UNASSIGN_TASKS = "UNASSIGN_TASKS"  # a person who left: their open tasks go unassigned
+    DELETE_ORG = "DELETE_ORG"  # a team org its owner deleted: its providers, then the org
 
 
 WORK_ROW_PREFIX = "work."
@@ -152,6 +153,16 @@ class DeleteAccountPayload(Platform):
     provider_user_id: str | None = None
 
 
+class DeleteOrgPayload(Platform):
+    """What is left of a team org its owner deleted: its organization at the
+    identity provider, when it had one, since the org row no longer names it
+    (so no sign-in through it finds the org). It is an id. The item's target
+    is the org, which it runs in: the processor's customer and the Slack app
+    are read from the org when the item runs, and the org is deleted last."""
+
+    provider_org_id: str | None = None
+
+
 class UnassignTasksPayload(Platform):
     """The item's target is the user who left the org, and it runs under
     their name on the service role: their open tasks there are unassigned,
@@ -167,6 +178,7 @@ WORK_PAYLOADS: dict[WorkKind, type[Platform]] = {
     WorkKind.WAKE_PARKED: WakeParkedPayload,
     WorkKind.DELETE_ACCOUNT: DeleteAccountPayload,
     WorkKind.UNASSIGN_TASKS: UnassignTasksPayload,
+    WorkKind.DELETE_ORG: DeleteOrgPayload,
 }
 """The payload shape of every kind; enqueue validates the item's payload against it."""
 
@@ -182,6 +194,9 @@ WORK_ENQUEUE_PERMISSIONS: dict[WorkKind, Permission] = {
     # route enqueues either, and the permission is the width of the handler.
     WorkKind.DELETE_ACCOUNT: Permission.MANAGE_MEMBERS,
     WorkKind.UNASSIGN_TASKS: Permission.WRITE,
+    # Only an owner's deletion of a team org asks for this one, relayed from
+    # its own commit; no route enqueues it.
+    WorkKind.DELETE_ORG: Permission.MANAGE_MEMBERS,
 }
 """The permission that asks for each kind. The person who asks authorizes
 the whole run once, so the permission has to be as wide as the run: every

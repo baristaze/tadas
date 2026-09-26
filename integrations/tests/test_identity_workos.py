@@ -503,3 +503,28 @@ async def test_a_deletion_workos_refuses_as_a_request_is_refused() -> None:
     refused, _ = provider(lambda r: httpx.Response(400, json={"message": "bad id"}))
     with pytest.raises(ProviderRefused):
         await refused.delete_user("not-an-id")
+
+
+async def test_an_organization_is_deleted_by_its_id_and_a_gone_one_is_done() -> None:
+    made, recorder = provider(lambda r: httpx.Response(202))
+    await made.delete_organization("org_01ABC")
+    [asked] = recorder.requests
+    assert (asked.method, asked.url.path) == ("DELETE", "/organizations/org_01ABC")
+    gone, _ = provider(lambda r: httpx.Response(404, json={"message": "not found"}))
+    await gone.delete_organization("org_01ABC")  # deleted already: a rerun is one deletion
+
+
+@pytest.mark.parametrize("status", [503, 401, 403])
+async def test_an_organization_workos_cannot_delete_now_or_from_this_key_is_unavailable(
+    status: int,
+) -> None:
+    made, _ = provider(lambda r: httpx.Response(status, json={"message": "no"}))
+    with pytest.raises(ProviderUnavailable) as raised:
+        await made.delete_organization("org_01ABC")
+    assert API_KEY not in str(raised.value)
+
+
+async def test_an_organization_workos_refuses_to_delete_is_refused() -> None:
+    refused, _ = provider(lambda r: httpx.Response(400, json={"message": "bad id"}))
+    with pytest.raises(ProviderRefused):
+        await refused.delete_organization("not-an-id")

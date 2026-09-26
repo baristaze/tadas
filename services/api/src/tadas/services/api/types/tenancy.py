@@ -256,6 +256,23 @@ class AccountDeletedView(View):
     provider_logout_url: str | None = None
 
 
+class DeleteOrgRequest(RequestBody):
+    """The org's name as its owner typed it, which is how they say they mean
+    it."""
+
+    name: str = Field(min_length=1, max_length=200)
+
+
+class OrgDeletedView(View):
+    """The org is gone for everyone in it: `deleted_at` is when. `session` is
+    the owner's new session in their personal org, which replaces the one
+    that asked, as a switch's does; null when none could be made, and the
+    owner signs in again."""
+
+    deleted_at: datetime
+    session: IssuedSessionView | None = None
+
+
 class ApiKeyView(View):
     id: UUID
     name: str

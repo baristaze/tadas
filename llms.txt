@@ -65,7 +65,7 @@ served to it. Exposure is by listing, never by folder.
 ## Tenant users and admins
 
 - [What Tadas is made of](om/README.md): the nouns and how they relate, for a reader with no code
-- [Tenancy](om/src/tadas/om/tenancy/README.md): orgs (your personal org and the team orgs), people, roles, invitations, single sign-on, credentials, and deleting your account
+- [Tenancy](om/src/tadas/om/tenancy/README.md): orgs (your personal org and the team orgs), people, roles, invitations, single sign-on, credentials, deleting a team org you own, and deleting your account
 - [Tasks](om/src/tadas/om/tasks/README.md): the to-do items and their rules
 - [Orchestrations](om/src/tadas/om/orchestrations/README.md): importing tasks from a file, and the archive of old done tasks
 - [Files](om/src/tadas/om/media/README.md): the files kept with the work, their bounds, and the storage used

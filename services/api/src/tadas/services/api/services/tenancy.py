@@ -16,6 +16,7 @@ from tadas.services.api.types.tenancy import (
     ApiKeyView,
     CreateTeamOrgRequest,
     DeleteAccountRequest,
+    DeleteOrgRequest,
     DeviceSignInView,
     DeviceTokenRequest,
     DevSignInRequest,
@@ -33,6 +34,7 @@ from tadas.services.api.types.tenancy import (
     MembershipPageView,
     MembershipView,
     MeView,
+    OrgDeletedView,
     OrgView,
     SecondFactorRequest,
     SessionView,
@@ -123,6 +125,12 @@ class TenancyServiceInterface(ABC):
 
     @abstractmethod
     async def get_org(self, ctx: OpContext) -> OrgView: ...
+
+    @abstractmethod
+    async def delete_org(self, ctx: OpContext, body: DeleteOrgRequest) -> OrgDeletedView:
+        """The caller's team org, deleted by its owner; the answer carries the
+        owner's session in their personal org."""
+        ...
 
     @abstractmethod
     async def create_org(

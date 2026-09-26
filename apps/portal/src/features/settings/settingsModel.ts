@@ -1,11 +1,16 @@
 // Pure: rows, formatting, and gating predicates for the settings screen.
-import type { ApiKeyView, InvitationView, MeView, Role, UserView } from "../../api";
+import type { ApiKeyView, InvitationView, MembershipView, MeView, Role, UserView } from "../../api";
 
 export interface MemberRow {
   id: string;
   name: string;
   email: string;
   joined: string;
+  /** The member's role; null while the memberships are on the way. */
+  role: Role | null;
+  /** The roles the signed-in member may give this one; empty when they may
+   * not change this member's role at all. */
+  roles: Role[];
 }
 
 export type KeyState = "active" | "expired" | "revoked";
@@ -22,13 +27,19 @@ export function formatDate(iso: string): string {
   return iso.slice(0, 10);
 }
 
-export function memberRows(users: UserView[]): MemberRow[] {
-  return users.map((user) => ({
-    id: user.id,
-    name: user.display_name,
-    email: user.email,
-    joined: formatDate(user.created_at),
-  }));
+export function memberRows(users: UserView[], memberships: MembershipView[] = [], me?: MeView): MemberRow[] {
+  const roleOf = new Map(memberships.map((membership) => [membership.user_id, membership.role]));
+  return users.map((user) => {
+    const role = roleOf.get(user.id) ?? null;
+    return {
+      id: user.id,
+      name: user.display_name,
+      email: user.email,
+      joined: formatDate(user.created_at),
+      role,
+      roles: grantableRoles(me, user.id, role),
+    };
+  });
 }
 
 export function keyState(key: ApiKeyView, now: Date): KeyState {
@@ -61,7 +72,21 @@ export function ssoAvailable(me: MeView | undefined): boolean {
 }
 
 const INVITABLE: readonly Role[] = ["viewer", "member", "admin"];
+const LADDER: readonly Role[] = ["viewer", "member", "admin", "owner"];
 const RANK: Readonly<Record<string, number>> = { viewer: 0, member: 1, admin: 2, owner: 3 };
+
+/** The roles the signed-in member may give another, as the server's rules
+ * have it: only a member who manages members; never their own role; never a
+ * member above their own role; and never a role above it. So an owner may
+ * make someone else an owner, and an admin may not. The owner of a personal
+ * org is kept by the server, which says so if asked. Empty when the member's
+ * role cannot be changed from here. */
+export function grantableRoles(me: MeView | undefined, userId: string, role: Role | null): Role[] {
+  if (!me || role === null || !canManageMembers(me) || userId === me.user.id) return [];
+  const mine = RANK[me.role] ?? -1;
+  if ((RANK[role] ?? 99) > mine) return [];
+  return LADDER.filter((choice) => (RANK[choice] ?? 99) <= mine);
+}
 
 /** The roles an invitation may carry: never above the caller's own, and
  * never owner, which an org has one of. */

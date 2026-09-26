@@ -46,8 +46,13 @@ second lane is a second replica told its lane.
   provider that refuses the call itself fails it at once. Each step finds
   its own work done on a rerun. The person's open tasks in each team org
   they left go unassigned by an item of their own, run under their name.
+  A team org its owner deleted has an item of its own, run in the org:
+  it deletes the org's organization at WorkOS, cancels the subscription
+  and deletes the customer at Stripe, removes the Slack app, and then
+  deletes the org as an operator does, which the sweep purges after the
+  retention. It waits and fails as the account's item does.
   The last kind does nothing and keeps the loop honest. The worker holds
-  the WorkOS key for the account's item, as the API does.
+  the WorkOS key for the account's and the org's items, as the API does.
 - **What Slack sends.** Slack calls the API, which checks each call's
   signature, acknowledges it within Slack's three seconds, and queues
   it on `slack`. The worker reads that queue: `/tadas` commands,

@@ -39,6 +39,12 @@ change. A name the image does not host refuses the boot.
   last_owner` names each team org the person is the last owner of, in
   the envelope's `last_owner.orgs`; `403 operator_role_held` refuses an
   operator. (`POST /v1/me/deletion`, ADR 0041)
+- **Delete this organization.** From an owner's session, with the
+  org's name typed to confirm: everyone in the team org loses it at
+  once, and the answer carries the owner's new session in their
+  personal org. `403 not_authorized` refuses an admin, a member, and an
+  api key; `409 personal_org_fixed` refuses a personal org.
+  (`POST /v1/orgs/current/deletion`, ADR 0042)
 - **Members.** The org's members and their roles a page at a time,
   a member's role, removing a member. (`/v1/users`, `/v1/memberships`,
   `/v1/memberships/{user_id}`)

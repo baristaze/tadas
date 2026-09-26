@@ -123,6 +123,17 @@ class DeleteAccountRequest(BaseModel):
     return_to: Annotated[ReturnTo | None, Field(title='Return To')] = None
 
 
+class DeleteOrgRequest(BaseModel):
+    """
+    The org's name as its owner typed it, which is how they say they mean
+    it.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    name: Annotated[str, Field(max_length=200, min_length=1, title='Name')]
+
+
 class DeliveryReceivedView(BaseModel):
     """
     The delivery checked out and is queued; the processor stops retrying.
@@ -873,6 +884,7 @@ class WorkKind(StrEnum):
     WAKE_PARKED = 'WAKE_PARKED'
     DELETE_ACCOUNT = 'DELETE_ACCOUNT'
     UNASSIGN_TASKS = 'UNASSIGN_TASKS'
+    DELETE_ORG = 'DELETE_ORG'
 
 
 class WorkStatus(StrEnum):
@@ -1144,6 +1156,17 @@ class OperatorWorkItemView(BaseModel):
     status: WorkStatus
     target_id: Annotated[UUID, Field(title='Target Id')]
     updated_at: Annotated[AwareDatetime, Field(title='Updated At')]
+
+
+class OrgDeletedView(BaseModel):
+    """
+    The org is gone for everyone in it: `deleted_at` is when. `session` is
+    the owner's new session in their personal org, which replaces the one
+    that asked, as a switch's does; null when none could be made, and the
+    owner signs in again.
+    """
+    deleted_at: Annotated[AwareDatetime, Field(title='Deleted At')]
+    session: IssuedSessionView | None = None
 
 
 class OrgPageView(BaseModel):

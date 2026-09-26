@@ -3,9 +3,12 @@ import { AppNav } from "../../app/AppNav";
 import { BackToTasks } from "../../app/BackToTasks";
 import { tokens } from "../../design/tokens";
 import { DeleteAccountCard } from "./DeleteAccountCard";
+import { DeleteOrgCard } from "./DeleteOrgCard";
+import { RoleControl } from "./RoleControl";
 import { SettingsTabs } from "./SettingsTabs";
 import { StorageCard } from "./StorageCard";
 import { useDeleteAccountVm } from "./useDeleteAccountVm";
+import { useDeleteOrgVm } from "./useDeleteOrgVm";
 import { useInvitationsVm } from "./useInvitationsVm";
 import { useSettingsVm, type SettingsVm } from "./useSettingsVm";
 import { PaymentNotice } from "../billing/PaymentNotice";
@@ -14,15 +17,24 @@ export function SettingsPage() {
   const vm = useSettingsVm();
   const invites = useInvitationsVm(vm.me);
   const leaving = useDeleteAccountVm(vm.me);
+  const closing = useDeleteOrgVm(vm.me);
   return (
     <Page title="Settings" back={<BackToTasks />} nav={<AppNav />} notice={<PaymentNotice />}>
       <SettingsTabs />
       {vm.error ? <Banner>{vm.error.message}</Banner> : null}
-      <Card title="Members">
+      <Card title="Members" id="members">
         {vm.loading ? (
           <Muted>Loading</Muted>
         ) : (
-          <Table headers={["Name", "Email", "Joined"]} rows={vm.members.map((m) => [m.name, m.email, m.joined])} />
+          <Table
+            headers={["Name", "Email", "Role", "Joined"]}
+            rows={vm.members.map((m) => [
+              m.name,
+              m.email,
+              <RoleControl key={m.id} row={m} onChange={(id, role) => void vm.setRole(id, role)} busy={vm.changingRole} />,
+              m.joined,
+            ])}
+          />
         )}
         {invites.mayManage ? (
           <form
@@ -138,6 +150,7 @@ export function SettingsPage() {
         </Card>
       ) : null}
       <SlackCard slack={vm.slack} />
+      <DeleteOrgCard vm={closing} />
       <DeleteAccountCard vm={leaving} />
     </Page>
   );

@@ -214,6 +214,17 @@ class IdentityProviderInterface(ABC):
         ...
 
     @abstractmethod
+    async def delete_organization(self, organization_id: str) -> None:
+        """Deletes the provider's organization, for good, with what it holds:
+        its connections, its verified domains, and its pending invitations,
+        so no sign-in through it reaches the Tadas org it stood for. One it
+        no longer holds is deleted already, and that is no error: a rerun is
+        one deletion. It fails as `delete_user` does: ProviderUnavailable for
+        a provider out of reach or a refused key, ProviderRefused for the
+        call itself."""
+        ...
+
+    @abstractmethod
     def describe(self) -> str: ...
 
     @abstractmethod

@@ -26,15 +26,24 @@ export function ownedAlone(caught: unknown): OwnedOrg[] {
 }
 
 /** The one line a refusal is said in. The last owner of a team org is told
- * which ones, and to hand each on; anything else is the server's words. */
+ * which ones, and the two ways out of each: hand it on, or delete it. Both
+ * are done in that org's Settings; anything else is the server's words. */
 export function refusalText(caught: unknown): string {
   const orgs = ownedAlone(caught);
   if (orgs.length > 0) {
-    const each = orgs.length === 1 ? "it" : "each";
+    const where = orgs.length === 1 ? "" : "In each, ";
+    const make = orgs.length === 1 ? "Make" : "make";
     return (
       `You are the last owner of ${listed(orgs.map((org) => org.name))}. ` +
-      `Make someone else an owner of ${each} first.`
+      `${where}${make} someone else an owner, or delete the organization, first. ` +
+      `Both are done in that organization's Settings.`
     );
   }
   return errorMessage(caught, "Your account was not deleted.");
+}
+
+/** Whether the org this tab is in is one the refusal names: its Settings is
+ * this page, so the card links to the members and to the org's deletion. */
+export function strandedHere(orgs: readonly OwnedOrg[], currentOrgId: string | undefined): boolean {
+  return currentOrgId !== undefined && orgs.some((org) => org.id === currentOrgId);
 }

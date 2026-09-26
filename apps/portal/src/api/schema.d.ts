@@ -835,6 +835,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/orgs/current/deletion": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Delete Org */
+        post: operations["delete_org_v1_orgs_current_deletion_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/orgs/current/sso-link": {
         parameters: {
             query?: never;
@@ -1426,6 +1443,15 @@ export interface components {
             email: string;
             /** Return To */
             return_to?: string | null;
+        };
+        /**
+         * DeleteOrgRequest
+         * @description The org's name as its owner typed it, which is how they say they mean
+         *     it.
+         */
+        DeleteOrgRequest: {
+            /** Name */
+            name: string;
         };
         /**
          * DeliveryReceivedView
@@ -2092,6 +2118,21 @@ export interface components {
          */
         OrchestrationStatus: "running" | "parked" | "succeeded" | "failed";
         /**
+         * OrgDeletedView
+         * @description The org is gone for everyone in it: `deleted_at` is when. `session` is
+         *     the owner's new session in their personal org, which replaces the one
+         *     that asked, as a switch's does; null when none could be made, and the
+         *     owner signs in again.
+         */
+        OrgDeletedView: {
+            /**
+             * Deleted At
+             * Format: date-time
+             */
+            deleted_at: string;
+            session?: components["schemas"]["IssuedSessionView"] | null;
+        };
+        /**
          * OrgKind
          * @description What an org is for. Every person has exactly one personal org, made
          *     with them; every other org is a team org, made on purpose.
@@ -2734,7 +2775,7 @@ export interface components {
          * WorkKind
          * @enum {string}
          */
-        WorkKind: "NOOP" | "SYNC_SEATS" | "TASK_REMINDER" | "SLACK_POST" | "ORCHESTRATION" | "WAKE_PARKED" | "DELETE_ACCOUNT" | "UNASSIGN_TASKS";
+        WorkKind: "NOOP" | "SYNC_SEATS" | "TASK_REMINDER" | "SLACK_POST" | "ORCHESTRATION" | "WAKE_PARKED" | "DELETE_ACCOUNT" | "UNASSIGN_TASKS" | "DELETE_ORG";
         /**
          * WorkStatus
          * @enum {string}
@@ -4732,6 +4773,61 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OrgView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_org_v1_orgs_current_deletion_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-app"?: string | null;
+                "x-app-version"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeleteOrgRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrgDeletedView"];
+                };
+            };
+            /** @description not_authorized: an owner's session only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description personal_org_fixed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Validation Error */

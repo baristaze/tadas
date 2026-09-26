@@ -1,10 +1,10 @@
 import { useState } from "react";
-import type { MeView } from "../../api";
+import type { MeView, OwnedOrg } from "../../api";
 import { forgetSession } from "../../app/forgetSession";
 import { useDeleteAccount } from "../../queries/tenancy";
 import { noteAccountDeleted, noteSignedOut } from "../../store/signInState";
 import { deleteAccount } from "./deleteAccount";
-import { confirms } from "./deleteAccountModel";
+import { confirms, strandedHere } from "./deleteAccountModel";
 
 /** The "Delete my account" card: the person opens it, types their email,
  * and confirms. The deletion leaves the portal: the browser goes to the
@@ -15,11 +15,13 @@ export function useDeleteAccountVm(me: MeView | undefined) {
   const [open, setOpen] = useState(false);
   const [typed, setTyped] = useState("");
   const [refusal, setRefusal] = useState<string | null>(null);
+  const [stranded, setStranded] = useState<OwnedOrg[]>([]);
   const email = me?.user.email;
 
   const confirm = async () => {
     if (!confirms(typed, email)) return;
     setRefusal(null);
+    setStranded([]);
     const outcome = await deleteAccount({
       remove: () =>
         remove.mutateAsync({ email: typed, return_to: `${window.location.origin}/signed-out` }),
@@ -30,7 +32,10 @@ export function useDeleteAccountVm(me: MeView | undefined) {
       forget: forgetSession,
       leave: (url) => window.location.assign(url ?? "/signed-out"),
     });
-    if (!outcome.deleted) setRefusal(outcome.refusal);
+    if (!outcome.deleted) {
+      setRefusal(outcome.refusal);
+      setStranded(outcome.stranded);
+    }
   };
 
   return {
@@ -41,6 +46,7 @@ export function useDeleteAccountVm(me: MeView | undefined) {
       setOpen(false);
       setTyped("");
       setRefusal(null);
+      setStranded([]);
     },
     typed,
     setTyped,
@@ -48,6 +54,8 @@ export function useDeleteAccountVm(me: MeView | undefined) {
     deleting: remove.isPending,
     confirm,
     refusal,
+    /** The refusal names the org this tab is in: its ways out are on this page. */
+    strandedHere: strandedHere(stranded, me?.org.id),
   };
 }
 
