@@ -34,3 +34,13 @@ def test_every_profile_stays_under_the_login_rate_limit() -> None:
     is never refused for driving the load it was asked to drive."""
     login_rate_limit = 2000  # the API's `login_rate_limit`, per address
     assert all(p.concurrency <= login_rate_limit for p in (LIGHT, REGULAR, HEAVY, STRESS))
+
+
+def test_every_profile_stays_under_a_credential_s_budget() -> None:
+    """Each worker drives one session, and its fastest pace is a step per
+    shortest think time. Every step a read, or every step a write, fits in
+    that session's budget for the window, so a run is refused only by the
+    load it was asked to drive, never by the limit."""
+    window, reads, writes = 60, 3000, 1200  # the API's credential budgets
+    fastest = max(window / p.think_seconds[0] for p in (LIGHT, REGULAR, HEAVY, STRESS))
+    assert fastest <= min(reads, writes)

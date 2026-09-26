@@ -180,6 +180,53 @@ terraform -chdir=deployment/terraform/environments/staging plan -lock=false -ref
 The account and the two names are staging's entry in
 `deployment/cloud/environments.json`.
 
+## A client answered 429
+
+A 429 is a rate limit, `rate_limited` in the envelope, with a
+`Retry-After` of the seconds left on the window. The message says which
+budget was spent
+([ADR 0059](../adr/0059-authenticated-routes-have-limits.md)):
+
+| Message | Budget | Setting |
+|---|---|---|
+| `rate limit exceeded`, on a sign-in route | the client address's sign-ins | `TADAS_LOGIN_RATE_LIMIT` |
+| `rate limit exceeded`, on any other route | the session's or API key's reads, or its writes | `TADAS_CREDENTIAL_RATE_LIMIT_READS`, `TADAS_CREDENTIAL_RATE_LIMIT_WRITES` |
+| `too many failed authentications from this address` | the address's bearers that turned out unknown, expired, or revoked | `TADAS_FAILED_AUTHENTICATION_LIMIT` |
+
+Every window is a minute unless its `_WINDOW_SECONDS` setting says
+otherwise. The refusal lifts on its own when the window ends. Nothing
+needs clearing.
+
+Outcomes per second shows where the refusals come from, under the
+subsystem `rate_limit`: `rejected` for a spent credential or sign-in
+budget, `authentication_failed` for each failed lookup, and
+`address_refused` for each request refused without one. The 429s of
+the last hour, by route:
+
+```bash
+now=$(date +%s); query=$(aws logs start-query --log-group-name /tadas/staging/api \
+  --start-time "$((now - 3600))" --end-time "$now" \
+  --query-string 'filter http.status = 429 | stats count(*) by http.route' \
+  --query queryId --output text)
+sleep 2; aws logs get-query-results --query-id "$query" --query 'results' --output text
+```
+
+What each one usually is:
+
+- **A credential's budget.** One integration polling too fast, or a
+  client in a retry loop. Ask the tenant to poll less often, or to
+  listen on the realtime channel instead. Raise the budget only when
+  honest traffic needs it: set the setting in the environment's
+  `app_environment` and deploy.
+- **An address's failures.** A client that kept a revoked key, or
+  someone trying tokens. Everyone behind that address is refused
+  until the window ends, so a company's gateway can trip it. The
+  budget is per address, never per person.
+
+The limits fail open. While the cache is down or its breaker is open,
+nothing is refused, and dead tokens reach the database again, one
+transaction each. Admission still bounds the process.
+
 ## The work queue and the outbox
 
 The three numbers behind their alarms, pass by pass, from the worker's

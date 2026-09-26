@@ -985,6 +985,8 @@ alone, and neither key may touch what the other's work does not need
   by prefix, `NotAuthenticated` (401) when none or an invalid one is
   presented, request id, error envelope, rate limits keyed on the
   credential id or, on an unauthenticated route, the client address,
+  a per-address budget of failed authentications checked before the
+  lookup ([ADR 0059](adr/0059-authenticated-routes-have-limits.md)),
   admission, edge idempotency), routers for tenancy, tasks, media, and
   the operator plane
   under `/v1/admin/*`, health, readiness, and metrics outside `/v1`, and the
