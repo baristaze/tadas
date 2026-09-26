@@ -5,7 +5,16 @@
 import type { EventView } from "../api";
 import type { ConnectionState } from "../store/connection";
 import { entityOf, isEntityChanged, parseEnvelope, type ClientCommand, type Envelope } from "./envelopes";
-import { behind, eventEnvelope, isLastPage, place, readsBegan, tailSince, type Cursor } from "./stream";
+import {
+  behind,
+  eventEnvelope,
+  isLastPage,
+  place,
+  readsBegan,
+  tailSince,
+  truncatedHead,
+  type Cursor,
+} from "./stream";
 import { backoffDelay, DEGRADED_POLL_INTERVAL_MS, PING_INTERVAL_MS, STABLE_OPEN_MS } from "./timeouts";
 
 const TOPICS = ["entity_changed"];
@@ -89,18 +98,31 @@ export function openChannel(deps: ChannelDeps): Channel {
     return null;
   };
 
+  // The stream is trimmed past the cursor, so no replay can close the gap.
+  // Every query is read afresh, and the cursor moves to the head the refusal
+  // named: the next push or pong replays from there, once, and never asks
+  // below the trim again.
+  const resync = async (head: number) => {
+    await deps.refreshAll();
+    if (stopped) return;
+    if (cursor === null || head > cursor) cursor = head;
+  };
+
   // Pages through the stream after `after`, applying each record through
   // the router, until the last page, a failed fetch, or a page that moved
   // the cursor nowhere: its records sit ahead of the cursor (a seq between
   // is not in storage yet), so reading the same page again would too. The
   // cursor stays where it is, and the next push or pong retries from there.
+  // A fetch refused as truncated is a resync instead.
   const replay = async (after: number): Promise<void> => {
     let from = after;
     while (!stopped) {
       let page: EventView[];
       try {
         page = await deps.fetchEventsAfter(from, deps.pageSize);
-      } catch {
+      } catch (error) {
+        const head = truncatedHead(error);
+        if (head !== null) await resync(head);
         return;
       }
       if (stopped) return;
