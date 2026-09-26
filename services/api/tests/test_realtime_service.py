@@ -1,8 +1,10 @@
 """The realtime service hears every change on the bus and ends the sockets a
 revocation names: the one the session or the api key opened, every one of a
 user whose membership ended or whose role changed, or every one of a deleted
-org, and no other. It re-checks a socket's credential when asked, and answers
-a ping with the head it heard, reading it only when that is unknown or old."""
+org, and no other. It re-checks a socket's credential when asked, the plan of
+an api key among it, and wakes that recheck when the org's account changes.
+It answers a ping with the head it heard, reading it only when that is
+unknown or old."""
 
 from collections.abc import Callable
 from datetime import timedelta
@@ -211,6 +213,85 @@ async def test_the_recheck_answers_what_the_redemption_would(tmp_path: Path) -> 
     assert await realtime.recheck(from_key) is None
     await tenancy.revoke_api_key(owner, key.api_key.id)
     assert await realtime.recheck(from_key) == "not_authenticated"
+
+
+async def put_on(container: AppContainer, org_id: UUID, plan: Plan | None) -> None:
+    """Changes the org's plan in storage alone, as a downgrade whose message
+    the bus lost: no row, so nothing is announced. None is no grant: Free."""
+    billing = container.storage.get_billing_storage()
+    account = await billing.read_account(org_id)
+    assert account is not None
+    await billing.write_account(org_id, account.model_copy(update={"comped_plan": plan}), ())
+
+
+async def test_the_recheck_refuses_a_key_its_plan_no_longer_allows(tmp_path: Path) -> None:
+    """A downgrade to a plan without api keys refuses the key's socket as it
+    refuses the key's every request, with the plan's refusal; the session's
+    socket in the same org holds. The key is kept, so it holds again on a
+    plan with keys."""
+    container = build_container(tmp_path)
+    tenancy = container.managers.tenancy
+    _, org = await tenancy.bootstrap(seed_request(), "Acme", "acme", OWNER["email"], OWNER["name"])
+    await on_plan(container, org.id, Plan.TEAM)
+    token = await session_of(container, org.id, OWNER["email"])
+    key = await tenancy.create_api_key(
+        await tenancy.authenticate(seed_request(), token), "ci", Role.MEMBER
+    )
+    from_session = await principal_of(container, token)
+    from_key = await principal_of(container, key.key)
+    realtime = container.services.get_realtime_service()
+
+    await put_on(container, org.id, None)
+    assert await realtime.recheck(from_key) == "plan_limit_reached"
+    assert await realtime.recheck(from_session) is None
+
+    await put_on(container, org.id, Plan.PRO)
+    assert await realtime.recheck(from_key) is None
+
+
+async def test_a_change_of_the_account_wakes_the_recheck_of_key_sockets(tmp_path: Path) -> None:
+    """The account's change carries no plan, so it closes nothing itself: it
+    wakes the recheck of every socket an api key of the org opened, and of
+    no session's socket and no other org's."""
+    container = build_container(tmp_path)
+    tenancy = container.managers.tenancy
+    _, org = await tenancy.bootstrap(seed_request(), "Acme", "acme", OWNER["email"], OWNER["name"])
+    await on_plan(container, org.id, Plan.TEAM)
+    token = await session_of(container, org.id, OWNER["email"])
+    owner = await tenancy.authenticate(seed_request(), token)
+    key = await tenancy.create_api_key(owner, "ci", Role.MEMBER)
+    realtime = container.services.get_realtime_service()
+    woken: dict[str, int] = {"session": 0, "key": 0}
+    ended: list[str] = []
+
+    def wake(name: str) -> Callable[[], None]:
+        def recheck_now() -> None:
+            woken[name] += 1
+
+        return recheck_now
+
+    realtime.attach(await principal_of(container, token), ended.append, wake("session"))
+    realtime.attach(await principal_of(container, key.key), ended.append, wake("key"))
+
+    async def announce(org_id: UUID) -> None:
+        await container.infra.get_topics().publish(
+            Topics.ENTITY_CHANGED,
+            EntityChangedPayload(
+                idempotency_key=new_id(),
+                produced_at=utcnow(),
+                org_id=org_id,
+                kind="billing.account.updated",
+                target_id=new_id(),
+                seq=1,
+                actor_id=owner.user_id,
+            ),
+        )
+
+    await announce(new_id())
+    assert woken == {"session": 0, "key": 0}
+    await announce(org.id)
+    assert woken == {"session": 0, "key": 1}
+    assert ended == []
 
 
 async def test_the_recheck_is_not_a_use_of_the_session(tmp_path: Path) -> None:
