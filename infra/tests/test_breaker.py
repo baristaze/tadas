@@ -282,9 +282,10 @@ class FakeTopics(TopicsInterface):
         self.subscribed: list[str] = []
         self.lifecycle: list[str] = []
 
-    async def publish(self, topic: Topics, payload: TopicPayload) -> None:
+    async def publish(self, topic: Topics, payload: TopicPayload) -> bool:
         self.published.append(topic)
         self._clock.advance(self.cost)
+        return True
 
     def subscribe(self, topic: Topics, consumer: str, handler: TopicHandler) -> Callable[[], None]:
         self.subscribed.append(consumer)
@@ -326,11 +327,13 @@ async def test_the_publisher_opens_after_the_same_bound() -> None:
 
 async def test_an_open_publisher_drops_the_publish_without_reaching_the_bus() -> None:
     """A topic is best effort, so that is the answer: the durable part of the
-    write has landed and a missed wake-up degrades to polling latency."""
+    write has landed, and the publish says it was dropped, never that it
+    landed, so the outbox relay keeps its row."""
     topics, inner, _, _ = a_topics_breaker()
+    assert await topics.publish(Topics.ENTITY_CHANGED, a_change()) is True
     await publish_the_timeout(topics, inner, FAILURES)
     inner.published.clear()
-    assert await topics.publish(Topics.ENTITY_CHANGED, a_change()) is None
+    assert await topics.publish(Topics.ENTITY_CHANGED, a_change()) is False
     assert inner.published == []
 
 

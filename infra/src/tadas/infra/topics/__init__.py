@@ -2,7 +2,9 @@
 the payload map. A topic is best effort: a published event reaches every
 process that was subscribed at the time, at most once, and a bus hiccup may
 lose it. Durable work never rides a topic; it is a row in the work queue,
-and a missed wake-up degrades to polling latency, never to lost work."""
+and a missed wake-up degrades to polling latency, never to lost work.
+`publish` says whether the bus took the message, so a producer that must not
+lose one keeps it and sends it again."""
 
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
@@ -73,7 +75,14 @@ TopicHandler = Callable[[TopicPayload], Awaitable[None]]
 
 class TopicsInterface(ABC):
     @abstractmethod
-    async def publish(self, topic: Topics, payload: TopicPayload) -> None: ...
+    async def publish(self, topic: Topics, payload: TopicPayload) -> bool:
+        """True once the bus took the message. False when it was dropped: the
+        bus refused it, which the impl logs and counts, or a breaker declined
+        to pay for it. Never raises for the bus; a payload of the wrong type
+        raises. A caller that only wakes someone ignores the answer; the
+        outbox relay keeps a row whose message was dropped and sends it
+        again."""
+        ...
 
     @abstractmethod
     def subscribe(
