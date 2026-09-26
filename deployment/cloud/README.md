@@ -28,10 +28,10 @@ before a change of size, and correct this page when a price moves.
 | Environment | Size | Where | About a month |
 |-------------|------|-------|---------------|
 | dev | none | the laptop, from `deployment/local` | $0 |
-| staging | XS | AWS, `environments/staging/main.tf` | $115 |
-| production | S | AWS, `environments/prod/main.tf` | $130 |
+| staging | XS | AWS, `environments/staging/main.tf` | $124 |
+| production | S | AWS, `environments/prod/main.tf` | $139 |
 | bootstrap, per account | n/a | AWS, `bootstrap/<staging \| prod>/`: registry, state, two DNS zones, the site's certificate, budget | $2 each |
-| **Total** | | | **$249** |
+| **Total** | | | **$267** |
 
 This is the demo posture. There are no customers yet, only demos, so
 production is sized to be shown and not to be leaned on. Dev has no
@@ -63,8 +63,8 @@ The fixed $75 is included in every total below.
 
 | Size | API tasks | Worker tasks | Postgres | Valkey | Pool | Ceilings | About a month |
 |------|-----------|--------------|----------|--------|------|----------|---------------|
-| **XS** | 1 × 0.25 vCPU, 0.5 GB | 1 × 0.25, 0.5 | `db.t4g.micro`, one zone | 1 × `cache.t4g.micro` | 6 | 2, 1 | **$115** |
-| **S** | 1 × 0.25, 0.5 | 1 × 0.25, 0.5 | `db.t4g.small`, one zone | 1 × `cache.t4g.micro` | 10 | 3, 1 | **$130** |
+| **XS** | 1 × 0.5 vCPU, 1 GB | 1 × 0.25, 0.5 | `db.t4g.micro`, one zone | 1 × `cache.t4g.micro` | 6 | 2, 1 | **$124** |
+| **S** | 1 × 0.5, 1 | 1 × 0.25, 0.5 | `db.t4g.small`, one zone | 1 × `cache.t4g.micro` | 10 | 3, 1 | **$139** |
 | **M** | 2 × 0.5, 1 | 1 × 0.25, 0.5 | `db.t4g.medium`, two zones | 2 × `cache.t4g.small` | 12 | 4, 2 | **$260** |
 | **L** | 2 × 0.5, 1 | 2 × 0.5, 1 | `db.m6g.large`, two zones | 2 × `cache.m6g.large` | 12 | 6, 2 | **$560** |
 | **XL** | 4 × 1, 2 | 2 × 1, 2 | `db.m6g.xlarge`, two zones, 100 GB | 2 × `cache.m6g.xlarge` | 12 | 12, 4 | **$1,125** |
@@ -72,12 +72,14 @@ The fixed $75 is included in every total below.
 The ceilings are the autoscaling maximums, API first and worker
 second. A total is the month at the floor, with the flip off or with
 no load to answer. With the flip on, a busy month can add the tasks up
-to the ceilings: at most $9 at XS and $18 at S.
+to the ceilings: at most $18 at XS and $36 at S.
 
 The unit prices behind them:
 
 - **Fargate (x86).** 0.25 vCPU and 0.5 GB is about $9 a task. 0.5 and
-  1 GB is $18. 1 and 2 GB is $36.
+  1 GB is $18. 1 and 2 GB is $36. In us-west-2 a vCPU lists at
+  $0.04048 an hour and a GB at $0.004445, the same as us-east-1. Fargate
+  ties memory to CPU: half a vCPU takes 1 GB at the least.
 - **RDS Postgres, one zone.** `db.t4g.micro` is $12, `db.t4g.small`
   $23, `db.t4g.medium` $47, `db.m6g.large` $111, `db.m6g.xlarge` $222.
   A second zone doubles the instance and its storage. The default 20
@@ -85,6 +87,12 @@ The unit prices behind them:
 - **ElastiCache Valkey, per node.** `cache.t4g.micro` is $9,
   `cache.t4g.small` $19, `cache.m6g.large` $87, `cache.m6g.xlarge`
   $174. Valkey is priced about 20 percent under Redis OSS.
+
+The API task starts at half a vCPU in every size. The collector sidecar
+shares the task's CPU, and a page load's reads arrive together. On a
+quarter vCPU the task idles at about 30 percent, and each read of a page
+load waits seconds for the CPU. The worker keeps a quarter: nothing waits
+on it in a page load.
 
 What each size is for:
 
@@ -143,10 +151,10 @@ together: $200 each today.
 
 | Posture | Staging | Production | About a month | Budget |
 |---------|---------|------------|---------------|--------|
-| **Demo, production off** | XS | not applied | $117 | $400 |
-| **Demo** (today) | XS | S | $249 | $400 |
-| **First customers** | S | M | $392 | $600 |
-| **Real production** | S | L | $692 | $1,000 |
+| **Demo, production off** | XS | not applied | $126 | $400 |
+| **Demo** (today) | XS | S | $267 | $400 |
+| **First customers** | S | M | $399 | $600 |
+| **Real production** | S | L | $699 | $1,000 |
 | **Growth** | M | XL | $1,387 | re-plan |
 
 Staging stays small in every posture. It proves the deploy and the
@@ -174,10 +182,10 @@ These are ordered by what they save. None of them changes the
 architecture.
 
 1. **Leave production unapplied until the first demo.** That saves
-   about $130 a month. `release` does not move, so nothing deploys it.
+   about $139 a month. `release` does not move, so nothing deploys it.
 2. **Tear staging down between demo weeks**, with
    `scripts/cloud_nuke.sh staging`, and build it again with
-   `scripts/cloud_create.sh staging`. That saves about $115, and
+   `scripts/cloud_create.sh staging`. That saves about $124, and
    staging's data goes with it.
 3. **Commit once the size is settled.** A one-year reserved instance
    for RDS and ElastiCache, or a Compute Savings Plan for Fargate,
