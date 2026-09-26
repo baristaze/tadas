@@ -21,32 +21,35 @@ class TaskView(View):
     notes: str
     status: TaskStatus
     assignee_id: UUID | None
-    position: float = Field(
-        description=(
-            "The rank as a float, for a client of the release before; order by"
-            " `rank`. It leaves the wire in the release after this one."
-        ),
-        json_schema_extra={"deprecated": True},
-    )
     created_at: datetime
     updated_at: datetime
     created_by: UUID
     deleted_at: datetime | None
     version: int
+    rank: str = Field(
+        description=(
+            "Where an open task sits in the open list, which is ascending by"
+            " rank, then by id. An exact decimal number, written out in full:"
+            " compare two as numbers, never as floats and never as text."
+        ),
+    )
     # Later fields default, so a client reads a response from a build that
     # predates them.
     due_on: date | None = None
     reminded_at: datetime | None = None
     # Set when the daily cleanup archived the task; null otherwise.
     archived_at: datetime | None = None
-    rank: str | None = Field(
+    # Read from the task's rank: the view sends the rank's float, and the
+    # task has no position of its own.
+    position: float | None = Field(
         default=None,
+        validation_alias="rank",
         description=(
-            "Where an open task sits in the open list, which is ascending by"
-            " rank, then by id. An exact decimal number, written out in full:"
-            " compare two as numbers, never as floats and never as text. Null"
-            " only from a build that predates it, which orders by `position`."
+            "The rank as a float, for a client of the release before, which"
+            " requires it. Order by `rank`: no client reads this, and it"
+            " leaves the wire in the release after this one."
         ),
+        json_schema_extra={"deprecated": True},
     )
 
     @field_validator("rank", mode="before")

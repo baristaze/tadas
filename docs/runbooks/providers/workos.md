@@ -331,8 +331,8 @@ make up
 ```
 
 `.env.example` names the client id and leaves `TADAS_WORKOS_API_KEY`
-commented out on purpose. The Makefile includes that file, and a line
-there with an empty value would override what the shell exported.
+commented out: a key is never committed. What the shell exports wins
+over `.env` and `.env.example` alike.
 
 A sign-out after a sign-in through WorkOS goes through WorkOS's logout
 and comes back to the portal's `/signed-out` on the port it left from.

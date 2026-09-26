@@ -33,7 +33,6 @@ def task(**changes) -> TaskView:
         "status": TaskStatus.open,
         "assignee_id": None,
         "rank": "0",
-        "position": 0.0,
         "created_at": "2026-09-18T12:00:00Z",
         "updated_at": "2026-09-18T12:00:00Z",
         "created_by": ME,
@@ -71,7 +70,7 @@ def test_an_update_names_the_first_difference_that_matters() -> None:
     assert describe("updated", before, noted, "Ann", name_of) == (
         "Ann edited the notes of a task: Migrate DB"
     )
-    moved = before.model_copy(update={"rank": "-1", "position": -1.0})
+    moved = before.model_copy(update={"rank": "-1"})
     assert describe("updated", before, moved, "Ann", name_of) == "Ann moved a task: Migrate DB"
     assert describe("updated", before, before, "Ann", name_of) == "Ann updated a task: Migrate DB"
     assert describe("updated", None, before, "Ann", name_of) == "Ann updated a task: Migrate DB"
