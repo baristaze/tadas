@@ -34,10 +34,10 @@ seven kinds of thing [Tadas is made of](../../../../README.md).
   added or removed in an org on Max, an orchestration started, stepped,
   or woken, a plan that rose, and an account deleted. The item starts queued with zero
   attempts and no claim, whatever the caller sent.
-- **Claim.** A worker takes the oldest available item on its lane, in
-  one statement, and gets a claim token and the context the job runs
-  under: the org, the service role, and the person who asked as the
-  attribution. An item whose org is gone is failed in the same call.
+- **Claim.** A worker takes the item on its lane that has been ready
+  longest, in one statement, and gets a claim token and the context the
+  job runs under: the org, the service role, and the person who asked
+  as the attribution. An item whose org is gone is failed in the same call.
 - **Complete**, **fail** (requeued with a growing delay, or a dead
   letter once the attempts are spent), **defer** (hand it back for
   later), **release** (hand it back now), **extend the lease**.

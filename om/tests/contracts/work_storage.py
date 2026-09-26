@@ -105,19 +105,28 @@ class WorkStorageContract:
         assert await storage.claim_next(lane, [WorkKind.NOOP], "w3", LEASE) is None
         assert await storage.read_item(org, item.id) == claimed
 
-    async def test_claim_takes_the_oldest_available_in_its_queue(
+    async def test_claim_takes_the_item_ready_longest_in_its_queue(
         self, storage: WorkStorageInterface, lane: str
     ) -> None:
+        """The order is readiness, then id: an item made later that became
+        ready earlier, a requeued one or a reminder whose time came, goes
+        first; items ready at the same moment go by id."""
         org = new_id()
         later = make_item(lane=lane, available_in=timedelta(hours=1))
         elsewhere = make_item(lane=lane + "-other")
-        first, second = make_item(lane=lane), make_item(lane=lane)
-        for item in (later, elsewhere, second, first):
+        first = make_item(lane=lane, available_in=timedelta(seconds=-2))
+        second = make_item(lane=lane, available_in=timedelta(seconds=-1))
+        tied = [
+            make_item(lane=lane).model_copy(update={"available_at": first.available_at})
+            for _ in range(2)
+        ]
+        overdue = make_item(lane=lane, available_in=timedelta(minutes=-5))
+        for item in (later, elsewhere, second, first, *reversed(tied), overdue):
             await storage.create_item(org, item)
-        claimed = await storage.claim_next(lane, [WorkKind.NOOP], "w1", LEASE)
-        assert claimed is not None and claimed[1].id == min(first.id, second.id)
-        claimed = await storage.claim_next(lane, [WorkKind.NOOP], "w1", LEASE)
-        assert claimed is not None and claimed[1].id == max(first.id, second.id)
+        order = [overdue.id, first.id, *sorted(t.id for t in tied), second.id]
+        for expected in order:
+            claimed = await storage.claim_next(lane, [WorkKind.NOOP], "w1", LEASE)
+            assert claimed is not None and claimed[1].id == expected
         assert await storage.claim_next(lane, [WorkKind.NOOP], "w1", LEASE) is None
 
     async def test_requeue_stale_is_per_tenant_conditional_and_staggered(

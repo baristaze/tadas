@@ -47,27 +47,31 @@ class WorkStorageMemoryImpl(MemoryStorageBase, WorkStorageInterface):
     ) -> tuple[UUID, WorkItem] | None:
         now = utcnow()
         async with self._lock:
-            for org_id, item in self._rows_across_tenants(self._items):
-                if (
-                    item.lane == lane
-                    and item.status is WorkStatus.QUEUED
-                    and item.kind in kinds
-                    and item.available_at <= now
-                ):
-                    claimed = item.model_copy(
-                        update={
-                            "status": WorkStatus.CLAIMED,
-                            "claimed_by": worker_id,
-                            "claim_token": new_id(),
-                            "lease_expires_at": now + lease,
-                            "attempts": attempts_after_claim(item.attempts),
-                            "updated_at": now,
-                            "updated_by": EMPTY_UUID,  # the claim is the platform's write
-                        }
-                    )
-                    self._items[item.id] = (org_id, claimed)
-                    return org_id, claimed
-        return None
+            ready = [
+                (org_id, item)
+                for org_id, item in self._rows_across_tenants(self._items)
+                if item.lane == lane
+                and item.status is WorkStatus.QUEUED
+                and item.kind in kinds
+                and item.available_at <= now
+            ]
+            if not ready:
+                return None
+            # The item ready longest goes first, as the Postgres claim orders it.
+            org_id, item = min(ready, key=lambda pair: (pair[1].available_at, pair[1].id))
+            claimed = item.model_copy(
+                update={
+                    "status": WorkStatus.CLAIMED,
+                    "claimed_by": worker_id,
+                    "claim_token": new_id(),
+                    "lease_expires_at": now + lease,
+                    "attempts": attempts_after_claim(item.attempts),
+                    "updated_at": now,
+                    "updated_by": EMPTY_UUID,  # the claim is the platform's write
+                }
+            )
+            self._items[item.id] = (org_id, claimed)
+            return org_id, claimed
 
     async def requeue_stale(
         self, org_id: UUID, now: datetime, stagger: timedelta, limit: int

@@ -9,7 +9,7 @@ second lane is a second replica told its lane.
 
 - **Claim, handle, complete.** The loop wakes on `work_available`,
   with a short poll as the fallback for a missed wake-up, and claims
-  the oldest available item on its lane while it has a free slot. Each
+  the item on its lane ready longest while it has a free slot. Each
   item runs as a task of its own, under the context the claim produced,
   naming the request that caused the work and linking its trace to
   that request. When the handler returns, the item is completed; when
