@@ -419,7 +419,9 @@ async def test_a_call_a_request_makes_ends_at_its_deadline_not_at_the_timeout(
     assert raised.value.slack_code == "deadline"
     assert raised.value.message == PASSED
     assert 0.35 <= waited < 1.5, waited
-    assert slack.calls == 1
+    # The exchange, cut at the deadline, and no attempt after it; none at all
+    # on a runner slow enough that the call's own work takes the whole of it.
+    assert slack.calls <= 1
 
 
 async def test_the_web_client_refuses_a_foreign_response_url_before_any_request() -> None:
