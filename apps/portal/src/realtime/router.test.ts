@@ -34,10 +34,13 @@ const SERVER_KINDS = [
   "tasks.task.created",
   "tasks.task.updated",
   "tasks.task.deleted",
+  "tasks.task.restored",
+  "tasks.task.archived",
   "media.file.created",
   "media.file.updated",
   "media.file.deleted",
   "tasks.task.reminded",
+  "orchestrations.orchestration.updated",
   "slack.installation.created",
   "slack.installation.updated",
   "slack.installation.deleted",
@@ -133,10 +136,46 @@ describe("routeEnvelope", () => {
     }
   });
 
-  it("refreshes the task lists when a reminder goes out, since the task's version moved on", () => {
+  it("refreshes the task lists for a replayed task record, which stands for the records before it", () => {
     const { queryClient, seen } = recording();
     expect(routeEnvelope(queryClient, pushOf("tasks.task.reminded"))).toEqual({ invalidated: [keys.tasks.all] });
     expect(seen).toEqual([keys.tasks.all]);
+  });
+
+  it("hands a live task push to the hints, one per push, and invalidates no list", () => {
+    for (const kind of ["tasks.task.created", "tasks.task.updated", "tasks.task.deleted", "tasks.task.restored", "tasks.task.archived", "tasks.task.reminded"]) {
+      const { queryClient, seen } = recording();
+      const hinted: string[] = [];
+      expect(routeEnvelope(queryClient, pushOf(kind), { hint: (id) => hinted.push(id) })).toEqual({
+        invalidated: [],
+        hinted: ["x"],
+      });
+      expect(hinted).toEqual(["x"]);
+      expect(seen).toEqual([]);
+    }
+  });
+
+  it("refreshes an import's own record on its progress, and no task list", () => {
+    // An import step lands a hundred tasks; each is its own task push. The
+    // record's progress push reads the progress line, never the lists.
+    const { queryClient, seen } = recording();
+    const hinted: string[] = [];
+    const outcome = routeEnvelope(queryClient, pushOf("orchestrations.orchestration.updated"), {
+      hint: (id) => hinted.push(id),
+    });
+    expect(outcome).toEqual({ invalidated: [keys.imports.all] });
+    expect(seen.some((key) => isPrefixOf(key, keys.tasks.open("team")) || isPrefixOf(key, keys.tasks.all))).toBe(false);
+    expect(hinted).toEqual([]);
+  });
+
+  it("keeps every other kind on its invalidation when the hints are there", () => {
+    const hinted: string[] = [];
+    for (const kind of SERVER_KINDS.filter((k) => !k.startsWith("tasks."))) {
+      const { queryClient } = recording();
+      const withHints = routeEnvelope(queryClient, pushOf(kind), { hint: (id) => hinted.push(id) });
+      expect(withHints).toEqual(routeEnvelope(recording().queryClient, pushOf(kind)));
+    }
+    expect(hinted).toEqual([]);
   });
 
   it("refreshes the Slack installation on each of its pushes", () => {

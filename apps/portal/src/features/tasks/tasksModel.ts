@@ -1,5 +1,5 @@
-// Pure: ordering, the rows the list renders, drag placements, and the cache
-// edits the list makes before the server answers.
+// Pure: the rows the list renders, drag placements, and the order a drag
+// shows before the server answers.
 import type { InfiniteData } from "@tanstack/react-query";
 import type { MeView, TaskPageView, TaskView, UserView } from "../../api";
 import { dueBadge, type DueBadge } from "./dueModel";
@@ -29,9 +29,14 @@ export function canAdd(title: string): boolean {
   return title.trim().length > 0;
 }
 
+/** What a person no longer in the org is called: their user is gone, and
+ * the id on what they made names nobody. The list of members is read whole
+ * before any name is shown, so an id it lacks is one that left. */
+export const FORMER_MEMBER = "Former member";
+
 export function nameOf(userId: string, users: ReadonlyMap<string, UserView>, meId: string | null): string {
   if (userId === meId) return "you";
-  return users.get(userId)?.display_name ?? "someone";
+  return users.get(userId)?.display_name ?? FORMER_MEMBER;
 }
 
 export function taskRow(
@@ -75,41 +80,8 @@ export function placement(
   return { order, afterId: insertAt === 0 ? null : (without[insertAt - 1]?.id ?? null) };
 }
 
-// Cache edits over a paged list. Each returns new data and leaves missing
-// data missing; the pages keep their cursors, since the server refetches
-// after every write anyway.
-
-function withoutTask(page: TaskPageView, taskId: string): TaskPageView {
-  return { ...page, items: page.items.filter((task) => task.id !== taskId) };
-}
-
-export function pagesWithout(
-  data: InfiniteData<TaskPageView> | undefined,
-  taskId: string,
-): InfiniteData<TaskPageView> | undefined {
-  return data && { ...data, pages: data.pages.map((page) => withoutTask(page, taskId)) };
-}
-
-export function pagesWithTaskOnTop(
-  data: InfiniteData<TaskPageView> | undefined,
-  task: TaskView,
-): InfiniteData<TaskPageView> | undefined {
-  if (!data || data.pages.length === 0) return data;
-  const [first, ...rest] = data.pages.map((page) => withoutTask(page, task.id));
-  return { ...data, pages: [{ ...first!, items: [task, ...first!.items] }, ...rest] };
-}
-
-export function pagesWithTaskReplaced(
-  data: InfiniteData<TaskPageView> | undefined,
-  task: TaskView,
-): InfiniteData<TaskPageView> | undefined {
-  return (
-    data && {
-      ...data,
-      pages: data.pages.map((page) => ({ ...page, items: page.items.map((t) => (t.id === task.id ? task : t)) })),
-    }
-  );
-}
+// The order a drag asks for, shown before the server answers. Every other
+// cache edit is a placement (`queries/taskPlacement.ts`).
 
 /** The whole order asked for, on the first page; the pages after it are
  * emptied, since the order spans every page that was loaded. */

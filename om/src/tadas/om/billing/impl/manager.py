@@ -220,6 +220,35 @@ class BillingManagerImpl(BillingManagerInterface):
         log.info("org %s set its plan to %s", ctx.org_id, "end" if cancel else "renew")
         return billing_of(updated, now)
 
+    async def close_account(self, ctx: OpContext) -> Billing:
+        # The work of an account's deletion, as a seat count's is: the
+        # service role runs it, and it manages members, not a plan.
+        ctx.require(Permission.MANAGE_MEMBERS)
+        account = await self._storage.read_account(ctx.org_id)
+        now = self._clock()
+        if account is None or (account.customer_id is None and account.subscription_id is None):
+            return billing_of(account, now)
+        # The subscription first: the customer's deletion would end it too,
+        # but a customer that will not go must not leave it billing.
+        if account.subscription_id is not None:
+            await self._payments.cancel_subscription(account.subscription_id)
+        if account.customer_id is not None:
+            await self._payments.delete_customer(account.customer_id)
+        closed = account.model_copy(
+            update={
+                "customer_id": None,
+                "subscription_id": None,
+                "status": None,
+                "cancel_at_period_end": False,
+                "synced_at": now,
+                "updated_at": now,
+                "updated_by": ctx.user_id,
+            }
+        )
+        await self._write(ctx, closed)
+        log.info("org %s closed its account at the processor", ctx.org_id)
+        return billing_of(closed, now)
+
     async def org_of_delivery(
         self, rctx: RequestContext, delivery: ProviderDelivery
     ) -> UUID | None:

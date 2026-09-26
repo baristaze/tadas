@@ -24,6 +24,7 @@ from tadas.integrations.exceptions import (
     DevicePending,
     ProviderConflict,
     ProviderRefused,
+    ProviderUnavailable,
 )
 from tadas.integrations.identity import (
     DeviceAuthorization,
@@ -61,6 +62,11 @@ class IdentityProviderTwinImpl(IdentityProviderInterface):
         self._codes: dict[str, ProvidedSignIn] = {}
         self._challenges: dict[str, str] = {}
         self._devices: dict[str, ProvidedSignIn | Literal["pending", "denied", "expired"]] = {}
+        self.deleted: list[str] = []
+        """Every user the twin deleted, in order."""
+        self.unavailable_for = 0
+        """How many of the next deletions answer as a provider that is down,
+        for a test of the retry."""
 
     def _id(self, kind: str) -> str:
         return f"twin_{kind}_{next(self._counter):06d}"
@@ -319,6 +325,13 @@ class IdentityProviderTwinImpl(IdentityProviderInterface):
             {"organization": organization_id, "intent": intent, "return_url": return_url}
         )
         return f"{TWIN_PORTAL}?{query}"
+
+    async def delete_user(self, user_id: str) -> None:
+        if self.unavailable_for > 0:
+            self.unavailable_for -= 1
+            raise ProviderUnavailable("deleting the user: the twin is down")
+        if self.users.pop(user_id, None) is not None:
+            self.deleted.append(user_id)
 
     def describe(self) -> str:
         return "identity provider: the twin (in-process, local only)"

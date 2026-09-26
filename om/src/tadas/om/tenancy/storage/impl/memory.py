@@ -5,6 +5,7 @@ from uuid import UUID
 from tadas.om.base import EMPTY_UUID
 from tadas.om.exceptions import Conflict, NotFound, UniqueKeyTaken
 from tadas.om.idempotency.storage import AttemptFenceInterface
+from tadas.om.opcontext import Role
 from tadas.om.outbox.storage import OutboxLandingInterface
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.storage.impl.memory_base import HasId, MemoryStorageBase, MemoryTable
@@ -335,6 +336,77 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
                 self._put(self._api_keys, org_id, key)
             return revoked
 
+    async def delete_person(
+        self,
+        identity_id: UUID,
+        email: str,
+        owned: tuple[UUID, ...],
+        outbox_rows: tuple[OutboxRow, ...],
+        revocation_row: Callable[[UUID, str, UUID], OutboxRow],
+    ) -> tuple[OutboxRow, ...]:
+        # Every check, then every write: the twin of one commit.
+        async with self._lock:
+            if identity_id not in self._identities:
+                raise NotFound(f"identity {identity_id} not found")
+            live = {
+                user.id: user.identity_id
+                for _, user in self._rows_across_tenants(self._users)
+                if user.deleted_at is None
+            }
+            alone = [
+                org_id
+                for org_id in owned
+                if not any(
+                    m.role is Role.OWNER
+                    and m.deleted_at is None
+                    and live.get(m.user_id, identity_id) != identity_id
+                    for m in self._rows(self._memberships, org_id)
+                )
+            ]
+            if alone:
+                raise Conflict(f"no owner would be left in {', '.join(map(str, alone))}")
+            places = {
+                (org_id, user.id)
+                for org_id, user in self._rows_across_tenants(self._users)
+                if user.identity_id == identity_id
+            }
+
+            def theirs(org_id: UUID, user_id: UUID | None) -> bool:
+                return (org_id, user_id) in places
+
+            revoked: list[OutboxRow] = []
+            for session_id, (org_id, session) in list(self._sessions.items()):
+                if org_id == EMPTY_UUID and session.identity_id == identity_id:
+                    del self._sessions[session_id]
+                elif theirs(org_id, session.user_id):
+                    if session.revoked_at is None:
+                        revoked.append(
+                            revocation_row(org_id, "tenancy.session.revoked", session_id)
+                        )
+                    del self._sessions[session_id]
+            for key_id, (org_id, key) in list(self._api_keys.items()):
+                if theirs(org_id, key.user_id):
+                    if key.deleted_at is None:
+                        revoked.append(revocation_row(org_id, "tenancy.api_key.deleted", key_id))
+                    del self._api_keys[key_id]
+            for table in (self._memberships, self._socket_tickets):
+                for row_id, (org_id, row) in list(table.items()):
+                    if theirs(org_id, row.user_id):
+                        del table[row_id]
+            for invitation_id, (org_id, invitation) in list(self._invitations.items()):
+                if invitation.email in {email, email.lower()} or theirs(
+                    org_id, invitation.accepted_user_id
+                ):
+                    del self._invitations[invitation_id]
+            for user_id, (org_id, _) in list(self._users.items()):
+                if theirs(org_id, user_id):
+                    del self._users[user_id]
+            self._sign_in_delays.pop(digest_of(email), None)
+            del self._identities[identity_id]
+            for row in (*outbox_rows, *revoked):
+                self._land(row.org_id, (row,))
+            return tuple(revoked)
+
     async def read_users(self, org_id: UUID, after: UUID | None, limit: int) -> list[User]:
         live = [u for u in self._rows(self._users, org_id) if u.deleted_at is None]
         if after is not None:
@@ -394,8 +466,12 @@ class TenancyStorageMemoryImpl(MemoryStorageBase, TenancyStorageInterface):
             live = [m for m in live if is_after_in_id_order(m.user_id, after_user_id)]
         return sorted(live, key=lambda m: m.user_id)[:limit]
 
-    async def count_members(self, org_id: UUID) -> int:
-        return sum(1 for m in self._rows(self._memberships, org_id) if m.deleted_at is None)
+    async def count_members(self, org_id: UUID, role: Role | None = None) -> int:
+        return sum(
+            1
+            for m in self._rows(self._memberships, org_id)
+            if m.deleted_at is None and (role is None or m.role is role)
+        )
 
     async def read_membership_for_user(self, org_id: UUID, user_id: UUID) -> Membership | None:
         return next(

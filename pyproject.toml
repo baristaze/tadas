@@ -113,6 +113,7 @@ tenantless = [
     "TenancyStorageInterface.confirm_totp",
     "TenancyStorageInterface.count_orgs",
     "TenancyStorageInterface.count_users",
+    "TenancyStorageInterface.delete_person",
     "TenancyStorageInterface.purge_sign_in_delays",
     "TenancyStorageInterface.read_api_key_by_digest",
     "TenancyStorageInterface.read_identity",

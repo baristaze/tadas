@@ -6,9 +6,6 @@ import {
   canWrite,
   flattenPages,
   pagesWithOrder,
-  pagesWithout,
-  pagesWithTaskOnTop,
-  pagesWithTaskReplaced,
   placement,
   taskRow,
   withLeaving,
@@ -54,7 +51,7 @@ describe("tasks model", () => {
       done: false,
     });
     expect(taskRow(task("2", { created_by: "gone", status: "done" }), users, "ann")).toMatchObject({
-      createdBy: "someone",
+      createdBy: "Former member",
       assignee: null,
       done: true,
     });
@@ -80,18 +77,13 @@ describe("tasks model", () => {
     expect(placement(open, "x", "a", "before")).toBeNull();
   });
 
-  it("edits a paged list: on top, without, replaced, and reordered", () => {
+  it("shows a dragged order across the loaded pages", () => {
     const data = pages(page(task("x"), task("y")), page(task("z")));
-    expect(ids(flattenPages(pagesWithTaskOnTop(data, task("n", { status: "done" }))))).toEqual(["n", "x", "y", "z"]);
-    expect(ids(flattenPages(pagesWithTaskOnTop(data, task("z"))))).toEqual(["z", "x", "y"]);
-    expect(ids(flattenPages(pagesWithout(data, "y")))).toEqual(["x", "z"]);
-    expect(flattenPages(pagesWithTaskReplaced(data, task("z", { title: "renamed" })))[2]?.title).toBe("renamed");
     // A reorder spans every loaded page: the order lands on the first page
-    // and the rest empty, so no task shows twice until the refetch.
+    // and the rest empty, so no task shows twice.
     const reordered = pagesWithOrder(data, [task("z"), task("x"), task("y")]);
     expect(ids(flattenPages(reordered))).toEqual(["z", "x", "y"]);
     expect(reordered?.pages.length).toBe(2);
-    expect(pagesWithout(undefined, "a")).toBeUndefined();
     expect(pagesWithOrder(undefined, [])).toBeUndefined();
     expect(flattenPages(undefined)).toEqual([]);
   });

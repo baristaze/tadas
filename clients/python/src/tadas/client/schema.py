@@ -9,6 +9,17 @@ from uuid import UUID
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, RootModel
 
 
+class AccountDeletedView(BaseModel):
+    """
+    The account is gone: `deleted_at` is when. The database's backups
+    still hold it until they expire, seven days on. `provider_logout_url` is
+    where the browser goes next, as on a sign-out; null when the sign-in
+    left no session there.
+    """
+    deleted_at: Annotated[AwareDatetime, Field(title='Deleted At')]
+    provider_logout_url: Annotated[str | None, Field(title='Provider Logout Url')] = None
+
+
 class TtlDays(RootModel[int]):
     root: Annotated[int, Field(ge=1, le=90, title='Ttl Days')]
 
@@ -93,6 +104,23 @@ class CredentialKind(StrEnum):
     socket_ticket = 'socket_ticket'
     operator_token = 'operator_token'
     internal = 'internal'
+
+
+class ReturnTo(RootModel[str]):
+    root: Annotated[str, Field(max_length=2000, min_length=1, title='Return To')]
+
+
+class DeleteAccountRequest(BaseModel):
+    """
+    The account's email as the person typed it, which is how they say
+    they mean it; and, as on the sign-out, where the identity provider sends
+    the browser once it has ended its own session.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    email: Annotated[str, Field(max_length=320, min_length=1, title='Email')]
+    return_to: Annotated[ReturnTo | None, Field(title='Return To')] = None
 
 
 class DeliveryReceivedView(BaseModel):
@@ -251,10 +279,6 @@ class IssuedTotpSecretView(BaseModel):
     otpauth_uri: Annotated[str | None, Field(title='Otpauth Uri')]
 
 
-class ReturnTo(RootModel[str]):
-    root: Annotated[str, Field(max_length=2000, min_length=1, title='Return To')]
-
-
 class LogoutRequest(BaseModel):
     """
     Where the identity provider sends the browser once it has ended its own
@@ -375,6 +399,15 @@ class OrgView(BaseModel):
     slug: Annotated[str, Field(title='Slug')]
 
 
+class OwnedOrgRef(BaseModel):
+    """
+    An org named in a refusal: enough to find it and to say which.
+    """
+    id: Annotated[UUID, Field(title='Id')]
+    name: Annotated[str, Field(title='Name')]
+    slug: Annotated[str, Field(title='Slug')]
+
+
 class ParkReason(StrEnum):
     """
     Why a record waits, and so what wakes it.
@@ -395,6 +428,18 @@ class Plan(StrEnum):
     pro = 'pro'
     team = 'team'
     max = 'max'
+
+
+class PlanLimitDetail(BaseModel):
+    """
+    What a `plan_limit_reached` refusal carries, so a client can offer the
+    plan that lifts the bound: the lever, the org's plan, the bound, and the
+    first plan above it that admits one more (null when none does).
+    """
+    lever: Annotated[str, Field(title='Lever')]
+    limit: Annotated[int | None, Field(title='Limit')]
+    plan: Annotated[str, Field(title='Plan')]
+    suggested_plan: Annotated[str | None, Field(title='Suggested Plan')]
 
 
 class PlanLimitsView(BaseModel):
@@ -680,6 +725,16 @@ class StorageUsageView(BaseModel):
     purposes: Annotated[list[PurposeUsageView], Field(title='Purposes')]
     total_count: Annotated[int, Field(title='Total Count')]
     total_size_bytes: Annotated[int, Field(title='Total Size Bytes')]
+
+
+class StreamTruncatedDetail(BaseModel):
+    """
+    What a `stream_truncated` refusal carries: the floor, the highest seq
+    trimmed from the stream, and the head. A client drops its cursor, reads
+    afresh what it shows, and goes on from the head.
+    """
+    floor: Annotated[int, Field(title='Floor')]
+    head: Annotated[int, Field(title='Head')]
 
 
 class SubscriptionStatus(StrEnum):
@@ -1004,6 +1059,14 @@ class IssuedUploadView(BaseModel):
     url: Annotated[str | None, Field(title='Url')]
 
 
+class LastOwnerDetail(BaseModel):
+    """
+    What a `last_owner` refusal carries: every team org the person is the
+    last owner of, which they hand on or delete before their account goes.
+    """
+    orgs: Annotated[list[OwnedOrgRef], Field(title='Orgs')]
+
+
 class MeView(BaseModel):
     app: Annotated[str, Field(title='App')]
     org: OrgView
@@ -1084,6 +1147,19 @@ class ApiKeyPageView(BaseModel):
     """
     items: Annotated[list[ApiKeyView], Field(title='Items')]
     next_cursor: Annotated[str | None, Field(title='Next Cursor')]
+
+
+class ErrorBody(BaseModel):
+    code: Annotated[str, Field(title='Code')]
+    last_owner: LastOwnerDetail | None = None
+    message: Annotated[str, Field(title='Message')]
+    plan_limit: PlanLimitDetail | None = None
+    request_id: Annotated[UUID, Field(title='Request Id')]
+    stream: StreamTruncatedDetail | None = None
+
+
+class ErrorResponse(BaseModel):
+    error: ErrorBody
 
 
 class ImportPageView(BaseModel):

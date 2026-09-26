@@ -3,6 +3,7 @@
 // a deadline on every call, and the app's one retry. The one file in the app
 // that may call fetch.
 
+import type { LastOwnerDetail, OwnedOrgRef } from "./types";
 import {
   DEFAULT_RETRY_ATTEMPTS,
   DEFAULT_RETRY_BASE_DELAY_MS,
@@ -27,6 +28,9 @@ export interface StreamTruncated {
   head: number;
 }
 
+/** An org a `last_owner` refusal names: the team orgs the person is the last owner of. */
+export type OwnedOrg = OwnedOrgRef;
+
 export interface ErrorEnvelope {
   error: {
     code: string;
@@ -34,6 +38,7 @@ export interface ErrorEnvelope {
     request_id: string;
     plan_limit?: PlanLimit | null;
     stream?: StreamTruncated | null;
+    last_owner?: LastOwnerDetail | null;
   };
 }
 
@@ -47,6 +52,8 @@ export class ApiError extends Error {
   readonly planLimit: PlanLimit | null;
   /** Where the stream goes on from, when a `stream_truncated` refusal carried it. */
   readonly stream: StreamTruncated | null;
+  /** The orgs a `last_owner` refusal names; empty for every other refusal. */
+  readonly lastOwnerOf: OwnedOrg[];
 
   constructor(
     status: number,
@@ -56,6 +63,7 @@ export class ApiError extends Error {
     retryAfterMs?: number,
     planLimit: PlanLimit | null = null,
     stream: StreamTruncated | null = null,
+    lastOwnerOf: OwnedOrg[] = [],
   ) {
     super(message);
     this.name = "ApiError";
@@ -65,6 +73,7 @@ export class ApiError extends Error {
     this.retryAfterMs = retryAfterMs;
     this.planLimit = planLimit;
     this.stream = stream;
+    this.lastOwnerOf = lastOwnerOf;
   }
 }
 
@@ -254,6 +263,7 @@ export function createClient(options: ClientOptions): ApiClient {
           retryAfterMs,
           parsed.error.plan_limit ?? null,
           parsed.error.stream ?? null,
+          parsed.error.last_owner?.orgs ?? [],
         );
       }
       throw new ApiError(response.status, "unknown_error", statusMessage(response), requestId, retryAfterMs);

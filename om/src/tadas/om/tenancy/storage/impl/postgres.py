@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from tadas.om.base import EMPTY_UUID, Identifiable, new_id
 from tadas.om.exceptions import Conflict, NotFound, UniqueKeyTaken
 from tadas.om.idempotency.storage.tables.idempotency_records import IdempotencyRecords
+from tadas.om.opcontext import Role
 from tadas.om.outbox.storage.tables.outbox_rows import OutboxRows
 from tadas.om.outbox.types.row import OutboxRow
 from tadas.om.storage.impl.pg_base import (
@@ -21,6 +22,7 @@ from tadas.om.storage.impl.pg_base import (
     violated_constraint,
 )
 from tadas.om.storage.utils.translation import apply_row, to_model, to_row
+from tadas.om.tenancy.rules import email_digest
 from tadas.om.tenancy.storage import TenancyStorageInterface
 from tadas.om.tenancy.storage.tables.api_keys import ApiKeys
 from tadas.om.tenancy.storage.tables.identities import Identities
@@ -368,6 +370,111 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
             await session.commit()
         return tuple(revoked)
 
+    async def delete_person(
+        self,
+        identity_id: UUID,
+        email: str,
+        owned: tuple[UUID, ...],
+        outbox_rows: tuple[OutboxRow, ...],
+        revocation_row: Callable[[UUID, str, UUID], OutboxRow],
+    ) -> tuple[OutboxRow, ...]:
+        # One transaction under the system scope: a person's rows are in every
+        # tenant they joined, and the erasure is one commit or none, a hard
+        # delete outside the sweep (ADR 0041). Every statement names the
+        # person (the identity, its address, or the users it is) and, where
+        # a row is a tenant's, the tenants those users are in.
+        revoked: list[OutboxRow] = []
+        async with self._session_for(Identities, org_id=EMPTY_UUID) as session:
+            gone = await session.execute(
+                delete(Identities).where(Identities.id == identity_id).returning(Identities.id)
+            )
+            if gone.first() is None:
+                await session.rollback()
+                raise NotFound(f"identity {identity_id} not found")
+            if owned:
+                # The owners of each tenant the person owns, locked: a second
+                # owner leaving at once waits here and then finds only itself.
+                owners = (
+                    select(Memberships.org_id, Users.identity_id)
+                    .join(Users, Users.id == Memberships.user_id)
+                    .where(
+                        Memberships.org_id.in_(owned),
+                        Memberships.role == Role.OWNER.value,
+                        Memberships.deleted_at.is_(None),
+                        Users.deleted_at.is_(None),
+                    )
+                    .with_for_update(of=Memberships)
+                )
+                kept = {
+                    org_id
+                    for org_id, owner in (await session.execute(owners)).all()
+                    if owner != identity_id
+                }
+                alone = [org_id for org_id in owned if org_id not in kept]
+                if alone:
+                    await session.rollback()
+                    raise Conflict(f"no owner would be left in {', '.join(map(str, alone))}")
+            users = (
+                await session.execute(
+                    delete(Users)
+                    .where(Users.identity_id == identity_id)
+                    .returning(Users.org_id, Users.id)
+                )
+            ).all()
+            org_ids = {org_id for org_id, _ in users}
+            user_ids = {user_id for _, user_id in users}
+            await session.execute(
+                delete(Memberships).where(
+                    Memberships.org_id.in_(org_ids), Memberships.user_id.in_(user_ids)
+                )
+            )
+            sessions = await session.execute(
+                delete(Sessions)
+                .where(
+                    or_(
+                        and_(Sessions.org_id.in_(org_ids), Sessions.user_id.in_(user_ids)),
+                        and_(Sessions.org_id == EMPTY_UUID, Sessions.identity_id == identity_id),
+                    )
+                )
+                .returning(Sessions.org_id, Sessions.id, Sessions.revoked_at)
+            )
+            for org_id, session_id, revoked_at in sessions.all():
+                if org_id != EMPTY_UUID and revoked_at is None:
+                    revoked.append(revocation_row(org_id, "tenancy.session.revoked", session_id))
+            keys = await session.execute(
+                delete(ApiKeys)
+                .where(ApiKeys.org_id.in_(org_ids), ApiKeys.user_id.in_(user_ids))
+                .returning(ApiKeys.org_id, ApiKeys.id, ApiKeys.deleted_at)
+            )
+            for org_id, key_id, deleted_at in keys.all():
+                if deleted_at is None:
+                    revoked.append(revocation_row(org_id, "tenancy.api_key.deleted", key_id))
+            await session.execute(
+                delete(SocketTickets).where(
+                    SocketTickets.org_id.in_(org_ids), SocketTickets.user_id.in_(user_ids)
+                )
+            )
+            # An invitation holds the address it was sent to: every one sent
+            # to the person's, and every one they accepted, goes with them.
+            await session.execute(
+                delete(Invitations).where(
+                    or_(
+                        Invitations.email.in_({email, email.lower()}),
+                        and_(
+                            Invitations.org_id.in_(org_ids),
+                            Invitations.accepted_user_id.in_(user_ids),
+                        ),
+                    )
+                )
+            )
+            await session.execute(
+                delete(SignInDelays).where(SignInDelays.email_digest == email_digest(email))
+            )
+            for outbox_row in (*outbox_rows, *revoked):
+                session.add(to_row(outbox_row, OutboxRows, org_id=outbox_row.org_id))
+            await session.commit()
+        return tuple(revoked)
+
     async def read_users(self, org_id: UUID, after: UUID | None, limit: int) -> list[User]:
         stmt = (
             select(Users)
@@ -461,12 +568,14 @@ class TenancyStoragePostgresImpl(PgStorageBase, TenancyStorageInterface):
             result = await session.execute(stmt)
             return [to_model(row, Membership) for row in result.scalars()]
 
-    async def count_members(self, org_id: UUID) -> int:
+    async def count_members(self, org_id: UUID, role: Role | None = None) -> int:
         stmt = (
             select(func.count())
             .select_from(Memberships)
             .where(Memberships.org_id == org_id, Memberships.deleted_at.is_(None))
         )
+        if role is not None:
+            stmt = stmt.where(Memberships.role == role.value)
         async with self._session_for(stmt, org_id=org_id) as session:
             return (await session.execute(stmt)).scalar_one()
 

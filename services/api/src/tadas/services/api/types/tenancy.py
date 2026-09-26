@@ -237,6 +237,25 @@ class SignedOutView(SessionView):
     provider_logout_url: str | None = None
 
 
+class DeleteAccountRequest(RequestBody):
+    """The account's email as the person typed it, which is how they say
+    they mean it; and, as on the sign-out, where the identity provider sends
+    the browser once it has ended its own session."""
+
+    email: str = Field(min_length=1, max_length=320)
+    return_to: str | None = Field(default=None, min_length=1, max_length=2000)
+
+
+class AccountDeletedView(View):
+    """The account is gone: `deleted_at` is when. The database's backups
+    still hold it until they expire, seven days on. `provider_logout_url` is
+    where the browser goes next, as on a sign-out; null when the sign-in
+    left no session there."""
+
+    deleted_at: datetime
+    provider_logout_url: str | None = None
+
+
 class ApiKeyView(View):
     id: UUID
     name: str

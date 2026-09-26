@@ -14,7 +14,7 @@ cannot prove Write without writing."""
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -23,7 +23,11 @@ from uuid import UUID
 import stripe
 
 from tadas.infra.exceptions import BackendFailed, BackendUnreachable
-from tadas.integrations.exceptions import PaymentsRefused, PaymentsUnconfigured
+from tadas.integrations.exceptions import (
+    PaymentsRefused,
+    PaymentsUnconfigured,
+    ProviderUnavailable,
+)
 from tadas.integrations.payments import PaymentsInterface
 from tadas.integrations.payments.deliveries import verified
 from tadas.integrations.payments.permissions import (
@@ -45,6 +49,10 @@ log = logging.getLogger(__name__)
 STRIPE_VERSION = stripe.api_version
 """The API version every request names and every endpoint Tadas registers
 is pinned to: the one this SDK release was built against."""
+
+ENDED_STATUSES = frozenset({"canceled", "incomplete_expired"})
+"""The statuses of a subscription that bills nobody again: nothing is left
+to cancel."""
 
 PORTAL_DESIRED_KEY = "portal"
 """The metadata the bootstrap stamps on the one portal configuration it
@@ -280,6 +288,17 @@ class PaymentsStripeImpl(PaymentsInterface):
             )
         return subscription_of(subscription.to_dict())
 
+    async def cancel_subscription(self, subscription_id: str) -> None:
+        current = await self.read_subscription(subscription_id)
+        if current is None or current.status in ENDED_STATUSES:
+            return
+        v1 = self._v1()
+        await ended("cancel subscription", lambda: v1.subscriptions.cancel_async(subscription_id))
+
+    async def delete_customer(self, customer_id: str) -> None:
+        v1 = self._v1()
+        await ended("delete customer", lambda: v1.customers.delete_async(customer_id))
+
     def verify_delivery(self, payload: bytes, signature: str | None) -> ProviderDelivery:
         if not self._webhook_secret:
             raise PaymentsUnconfigured("no webhook signing secret is configured")
@@ -313,6 +332,26 @@ def subscription_of(raw: dict[str, Any]) -> ProviderSubscription:
         cancel_at_period_end=bool(raw.get("cancel_at_period_end")),
         org_id=org_id,
     )
+
+
+async def ended(operation: str, call: Callable[[], Awaitable[object]]) -> None:
+    """One call that ends something of a deleted account. What the processor
+    no longer holds is ended already. A refusal of the runtime key itself (a
+    key revoked, or without the permission) is the process's, not the
+    call's, and is unavailable until a person fixes the key, so the work
+    that asked waits for it rather than failing."""
+    try:
+        async with translated(operation):
+            try:
+                await call()
+            except (stripe.PermissionError, stripe.AuthenticationError) as error:
+                reason = error.code or type(error).__name__
+                raise ProviderUnavailable(
+                    f"the runtime key may not {operation} ({reason}); give it the permission"
+                ) from None
+    except PaymentsRefused as refused:
+        if "resource_missing" not in refused.message:
+            raise
 
 
 @asynccontextmanager

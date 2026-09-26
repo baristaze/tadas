@@ -18,6 +18,7 @@ import stripe
 from tadas.integrations.exceptions import (
     DeliveryRefused,
     PaymentsUnconfigured,
+    ProviderUnavailable,
     UnsafeIntegration,
 )
 from tadas.integrations.impl.configured import payments_for, refuse_unsafe_payments
@@ -483,3 +484,84 @@ async def test_a_portal_session_for_a_failed_payment_opens_the_payment_method_fl
         },
     }
     assert fix["customer"] == "cus_1"
+
+
+class _Ends:
+    """The SDK client's `v1` as far as ending an account reads it: one
+    subscription in a status, and the calls made."""
+
+    def __init__(self, status: str | None, missing: bool = False) -> None:
+        self.calls: list[tuple[str, str]] = []
+        self._status = status
+        self._missing = missing
+        ends = self
+
+        class Subscriptions:
+            async def retrieve_async(self, subscription_id: str) -> object:
+                if ends._status is None:
+                    raise stripe.InvalidRequestError("gone", None, code="resource_missing")
+                raw = {"id": subscription_id, "customer": "cus_1", "status": ends._status}
+                return type("S", (), {"to_dict": lambda self: raw})()
+
+            async def cancel_async(self, subscription_id: str) -> object:
+                ends.calls.append(("cancel", subscription_id))
+                return object()
+
+        class Customers:
+            async def delete_async(self, customer_id: str) -> object:
+                ends.calls.append(("delete", customer_id))
+                if ends._missing:
+                    raise stripe.InvalidRequestError("gone", None, code="resource_missing")
+                return object()
+
+        self.subscriptions = Subscriptions()
+        self.customers = Customers()
+        self.v1 = self
+
+
+@pytest.mark.parametrize(
+    ("status", "calls"),
+    [
+        ("active", [("cancel", "sub_1"), ("delete", "cus_1")]),
+        ("past_due", [("cancel", "sub_1"), ("delete", "cus_1")]),
+        ("canceled", [("delete", "cus_1")]),
+        (None, [("delete", "cus_1")]),
+    ],
+)
+async def test_an_accounts_subscription_ends_now_and_its_customer_goes(
+    status: str | None, calls: list[tuple[str, str]]
+) -> None:
+    """A live subscription is canceled at once, one that ended or that the
+    processor no longer knows is left alone, and the customer is deleted."""
+    payments = await _checked(set())
+    ends = _Ends(status)
+    payments._client = ends  # type: ignore[assignment]
+    await payments.cancel_subscription("sub_1")
+    await payments.delete_customer("cus_1")
+    assert ends.calls == calls
+
+
+async def test_a_customer_the_processor_no_longer_knows_is_deleted_already() -> None:
+    payments = await _checked(set())
+    payments._client = _Ends("canceled", missing=True)  # type: ignore[assignment]
+    await payments.delete_customer("cus_1")
+
+
+async def test_a_runtime_key_refused_the_end_of_an_account_is_unavailable_not_refused() -> None:
+    """A key without the permission is the process's to fix: the work waits."""
+    payments = await _checked(set())
+
+    class Refusing(_Ends):
+        def __init__(self) -> None:
+            super().__init__("active")
+
+            class Customers:
+                async def delete_async(self, customer_id: str) -> object:
+                    raise stripe.PermissionError("no", None, code=None)
+
+            self.customers = Customers()
+
+    payments._client = Refusing()  # type: ignore[assignment]
+    with pytest.raises(ProviderUnavailable) as raised:
+        await payments.delete_customer("cus_1")
+    assert "delete customer" in str(raised.value)

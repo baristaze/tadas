@@ -137,10 +137,29 @@ of the seven kinds of thing [Tadas is made of](../../../../README.md).
   can create an org with its owner, add a member (bound by the org's
   seats like any other door), read an org, its
   members, its tasks, and its events, read the platform's size, list
-  every org, and delete a team org. A personal org is never deleted.
+  every org, and delete a team org. An operator never deletes a personal
+  org: it goes only with its person.
   A deleted org keeps its row as the record; everything else of it is
   purged once the retention has passed, and once nothing is left the
   org is marked purged and the sweep stops visiting it.
+- **Delete my account.** A person deletes their own account from a
+  session, by typing its email. It is refused while they are the last
+  owner of a team org, and the refusal names each one: they make
+  someone else an owner first. It is refused while they are on the
+  operator allowlist. Otherwise one commit erases them for good: the
+  identity with its second factor, their user and membership in every
+  org, every session, api key, sign-in, and operator token they hold,
+  the sign-in delay of their address, and every invitation sent to it. Each live credential is
+  announced as revoked, so their sockets close. What they made in a
+  team org stays the org's, under an id that no longer names anyone,
+  and their open tasks there go unassigned. Their personal org goes
+  whole, once the providers are done: the person at the identity
+  provider, the org's subscription and customer at the payment
+  processor, and its Slack app; then the org is deleted, and the next
+  sweep purges it, with no retention. It is gone now, and gone from the
+  backups within seven days. There is no undo, and the same address
+  signs up again as a new person
+  ([ADR 0041](../../../../../docs/adr/0041-an-account-is-deleted-at-once-and-its-providers-by-the-queue.md)).
 - **Grant an operator.** The grant job puts an identity on the
   allowlist, takes it off, or mints the operator token of the
   provisioner or the smoke identity. Each change of the allowlist is
@@ -161,9 +180,10 @@ of the seven kinds of thing [Tadas is made of](../../../../README.md).
   second-factor codes are deleted for good
   after the retention, thirty days by default; a revoked session goes
   once it has expired too, within its twelve hours. A socket ticket,
-  which lives a minute, is deleted a day after it expired. Erasing a
-  person is this purge: the events of this namespace carry ids and
-  never a value.
+  which lives a minute, is deleted a day after it expired. A deleted
+  personal org keeps no retention: its rows go at the next sweep. The
+  events of this namespace carry ids and never a value, so a person's
+  deletion leaves nothing of them there.
 
 ## The rules
 
@@ -183,7 +203,8 @@ of the seven kinds of thing [Tadas is made of](../../../../README.md).
   user in an org, one identity per subject of an issuer, one pending
   invitation per address in an org. Removing a member or deleting an org frees the name
   for reuse.
-- **A personal org stays its person's.** It is not deleted, and its
+- **A personal org stays its person's.** It is deleted only with its
+  person, and its
   person is not removed from it and does not change role in it, so it
   never changes hands. Nobody leaves an org by removing themselves, in
   any org. Everyone else in a personal org is an ordinary member.

@@ -145,6 +145,20 @@ class PaymentsTwinImpl(PaymentsInterface):
             self.quantity_changes.append((subscription_id, quantity))
         return self._view(found)
 
+    async def cancel_subscription(self, subscription_id: str) -> None:
+        found = self.subscriptions.get(subscription_id)
+        if found is not None:
+            found["status"] = "canceled"
+
+    async def delete_customer(self, customer_id: str) -> None:
+        found = self.customers.pop(customer_id, None)
+        if found is None:
+            return
+        self._customer_by_org.pop(UUID(found["metadata"][ORG_METADATA_KEY]), None)
+        for subscription in self.subscriptions.values():
+            if subscription["customer"] == customer_id:
+                subscription["status"] = "canceled"
+
     def verify_delivery(self, payload: bytes, signature: str | None) -> ProviderDelivery:
         return verified(payload, signature, self._secret)
 

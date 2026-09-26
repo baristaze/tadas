@@ -34,10 +34,12 @@ from tadas.om.exceptions import (
     EmailNotVerified,
     InvalidCredential,
     InvitationClosed,
+    LastOwner,
     MembershipLimitReached,
     NotAnOperator,
     NotAuthorized,
     NotFound,
+    OperatorRoleHeld,
     PersonalOrgFixed,
     PlanLimitReached,
     SecondFactorRequired,
@@ -87,11 +89,14 @@ from tadas.om.tenancy.rules import (
     check_email,
     check_org,
     check_time_zone,
+    confirms_deletion,
     credential_kind_of,
     email_digest,
     hash_token,
     is_platform_email,
+    left_without_owner,
     matching_totp_step,
+    past_retention,
     pkce_challenge,
     role_at_most,
     sign_in_delay,
@@ -103,6 +108,7 @@ from tadas.om.tenancy.types.api_key import ApiKey
 from tadas.om.tenancy.types.identity import Identity
 from tadas.om.tenancy.types.invitation import Invitation, InvitationState
 from tadas.om.tenancy.types.issued import (
+    AccountDeleted,
     IssuedApiKey,
     IssuedLogin,
     IssuedOperatorToken,
@@ -146,6 +152,10 @@ plane and nothing else. An api key is an agent's and proves none."""
 SIGN_IN_USED = "this sign-in was used already; sign in again"
 """The refusal of a sign-in presented after its exchange: a sign-in makes one
 session, so a retry, a second choice, or a replay starts a new sign-in."""
+
+
+DELETED_PERSONAL_ORG_NAME = "Deleted account"
+"""What the record of a deleted account's personal org is called."""
 
 
 class TenancyOptions(Platform):
@@ -250,11 +260,6 @@ async def issue_operator_token(
     return IssuedOperatorToken(
         token=token, expires_at=session.expires_at, operator_role=operator_role
     )
-
-
-def expired(org: Org, before: datetime) -> bool:
-    """A tenant past its retention: deleted before `before`."""
-    return org.deleted_at is not None and org.deleted_at < before
 
 
 class TenancyManagerImpl(TenancyManagerInterface):
@@ -1141,7 +1146,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
         self._pass = (
             rctx.request_id,
             frozenset(scopes),
-            frozenset(org.id for org in orgs if expired(org, before)),
+            frozenset(org.id for org in orgs if past_retention(org, before)),
         )
         return [
             build_context(
@@ -1528,6 +1533,148 @@ class TenancyManagerImpl(TenancyManagerInterface):
             await self._relay.relay(ctx.org_id, landed)
         return removed
 
+    async def delete_account(
+        self, ctx: OpContext, confirm_email: str, return_to: str | None = None
+    ) -> AccountDeleted:
+        ctx.require(Permission.READ)
+        # A person deletes their account, not a program: an api key belongs
+        # to the tenant it was minted in, and the person is not its to erase.
+        if ctx.security.credential_kind is not CredentialKind.SESSION_TOKEN:
+            raise NotAuthorized("only a signed-in person deletes their account")
+        if return_to is not None and return_to not in self._options.sign_out_return_uris:
+            raise ValidationFailed("that is not this environment's sign-out return")
+        user = await self._live_user(ctx, ctx.user_id)
+        identity = await self._storage.read_identity(user.identity_id)
+        if identity is None:
+            raise InvalidCredential("the identity is gone")
+        if not confirms_deletion(identity.email, confirm_email):
+            raise ValidationFailed("type your account's email to delete it")
+        if identity.operator_role is not None:
+            raise OperatorRoleHeld(
+                "an operator's account is deleted once the operator role is taken off"
+            )
+        places = await self._memberships_of(identity.id)
+        refusal = await self._last_owner(places)
+        if refusal.orgs:
+            raise refusal
+        asking = await self._storage.read_session(ctx.org_id, ctx.security.credential_id)
+        rows: list[OutboxRow] = []
+        for place in places:
+            # Each row is written under the person's own place in its org:
+            # the removal is theirs, and so is the work it asks for.
+            where = await self.service_context(ctx, place.org.id, place.user.id)
+            if place.org.personal_identity_id == identity.id:
+                rows.append(
+                    outbox_row(
+                        where,
+                        work_row_kind(WorkKind.DELETE_ACCOUNT),
+                        place.org.id,
+                        {"provider_user_id": self._provider_user_id(identity)},
+                    )
+                )
+                continue
+            rows.append(
+                outbox_row(where, "tenancy.user.deleted", place.user.id, user_payload(place.user))
+            )
+            rows.append(
+                outbox_row(where, work_row_kind(WorkKind.UNASSIGN_TASKS), place.user.id, {})
+            )
+            rows.extend(await self._seat_rows(where))
+
+        users = {place.org.id: place.user.id for place in places}
+
+        def revocation(org_id: UUID, kind: str, credential_id: UUID) -> OutboxRow:
+            # Ids only, as every revocation's row; the actor is the person's
+            # place in the org, the system user for one they had already left.
+            actor = users.get(org_id, EMPTY_UUID)
+            return OutboxRow(
+                id=new_id(),
+                created_at=utcnow(),
+                org_id=org_id,
+                kind=kind,
+                target_id=credential_id,
+                payload={"user_id": str(actor)},
+                actor_id=actor,
+                request_id=ctx.request_id,
+                traceparent=current_traceparent(),
+                app=ctx.app.type.value,
+            )
+
+        # The tenants that must keep an owner once the person goes: the
+        # storage counts their owners again under a lock, so two owners who
+        # leave at once never leave one with none.
+        owned = tuple(
+            place.org.id for place in places if not place.org.personal and place.role is Role.OWNER
+        )
+        now = utcnow()
+        try:
+            revocations = await self._storage.delete_person(
+                identity.id, identity.email, owned, tuple(rows), revocation
+            )
+        except NotFound:
+            raise InvalidCredential("the identity is gone") from None
+        except Conflict:
+            # Another owner left first: the refusal the check above would give now.
+            raise await self._last_owner(places) from None
+        # Each removal first, so a socket closes because its person left;
+        # then each revocation, as the record it is. Every row is durable
+        # already: whatever a crash leaves unrelayed, the sweep relays.
+        for landed in (*rows, *revocations):
+            await self._relay.relay(landed.org_id, landed)
+        log.info("identity %s deleted its account", identity.id)
+        provider_logout = None if asking is None else self._provider_logout(asking, return_to)
+        return AccountDeleted(deleted_at=now, provider_logout_url=provider_logout)
+
+    async def _last_owner(self, places: tuple[OrgMembership, ...]) -> LastOwner:
+        """The refusal naming every team org the person is the last owner of;
+        one naming none when there is no such org."""
+        stranded = [
+            place.org
+            for place in places
+            if left_without_owner(
+                place.org, place.role, await self._storage.count_members(place.org.id, Role.OWNER)
+            )
+        ]
+        return LastOwner(tuple((str(org.id), org.name, org.slug) for org in stranded))
+
+    def _provider_user_id(self, identity: Identity) -> str | None:
+        """The person's name at the identity provider, when this environment's
+        provider is the one that named them; None for a person who only ever
+        signed in locally."""
+        if identity.subject is None or identity.issuer != self._provider.issuer:
+            return None
+        return identity.subject
+
+    async def delete_personal_org(self, ctx: OpContext) -> Org | None:
+        ctx.require(Permission.MANAGE_MEMBERS)
+        org = await self._storage.read_org(ctx.org_id)
+        if org is None:
+            raise NotFound(f"org {ctx.org_id} not found")
+        if org.deleted_at is not None:
+            return None
+        person = org.personal_identity_id
+        if person is None or await self._storage.read_identity(person) is not None:
+            raise PersonalOrgFixed("only the personal org of a deleted account is deleted")
+        now = utcnow()
+        # The org row stays as the record that the tenant existed, and a
+        # personal org is named after its person, so the name and the slug
+        # made from it go now: the row keeps ids and nothing that says who.
+        deleted = org.model_copy(
+            update={
+                "name": DELETED_PERSONAL_ORG_NAME,
+                "slug": f"deleted-{org.id}",
+                "deleted_at": now,
+                "deleted_by": ctx.user_id,
+                "updated_at": now,
+                "updated_by": ctx.user_id,
+            }
+        )
+        # Announced like any change: the sockets of the tenant close on it.
+        row = outbox_row(ctx, "tenancy.org.deleted", org.id, {})
+        await self._storage.write_org(org.id, deleted, (row,))
+        await self._relay.relay(org.id, row)
+        return deleted
+
     async def count_members(self, ctx: OpContext) -> int:
         ctx.require(Permission.READ)
         return await self._storage.count_members(ctx.org_id)
@@ -1716,7 +1863,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
         if swept is not None and ctx.request_id == swept[0] and ctx.org_id in swept[1]:
             return ctx.org_id in swept[2]
         org = await self._storage.read_org(ctx.org_id)
-        return org is not None and expired(org, utcnow() - self._options.retention)
+        return org is not None and past_retention(org, utcnow() - self._options.retention)
 
     async def mark_purged(self, ctx: OpContext) -> bool:
         ctx.require(Permission.MANAGE_MEMBERS)

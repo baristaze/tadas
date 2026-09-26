@@ -97,10 +97,10 @@ box at the top of the editor, **Search by resource or endpoint**.
 
 | Group | Resource (as the editor names it) | Permission | The calls |
 |-------|-----------------------------------|------------|-----------|
-| Core | Customers | Write | create a customer per org; read it back when a delivery names it |
+| Core | Customers | Write | create a customer per org; read it back when a delivery names it; delete it when its person deletes their account |
 | Checkout Sessions | Checkout Sessions | Write | start a hosted checkout |
 | Billing | Customer Portal | Write | open a portal session (a write); list the portal configurations to find the one the bootstrap manages (a read, which Write includes) |
-| Billing | Subscriptions | Write | read a subscription; cancel it at the period's end or take that back; change the seat count |
+| Billing | Subscriptions | Write | read a subscription; cancel it at the period's end or take that back; cancel it at once when its person deletes their account; change the seat count |
 | Billing | Prices | Read | find a price by its lookup key |
 
 The API and the worker hold the same key. Both call Customers and
@@ -351,6 +351,7 @@ refused shows there as `403`, with the permission it needed.
 | The runtime key and the signing secret inside the processes | The deploy: each task gets them as environment variables at start | Every task start |
 | The runtime key's check: one read per permission | The API and the worker | Every task start |
 | Customers and subscriptions | The API at checkout, the worker from deliveries | While people use the product |
+| A deleted account's subscription canceled at once and its customer deleted | The worker (`DELETE_ACCOUNT`) | When a person deletes their account; Stripe keeps the invoices |
 
 The keys themselves are never automated. A person makes each one, and
 writes the runtime key into the secret store.

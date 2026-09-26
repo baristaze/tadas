@@ -49,7 +49,7 @@ output "sentry_dsn_secret_arn" {
 }
 
 output "workos_api_key_secret_arn" {
-  description = "The Tadas App application's API key, injected into the API as TADAS_WORKOS_API_KEY; \"off\" until set, which leaves sign-in through WorkOS answering 503."
+  description = "The Tadas App application's API key, injected into the API and the worker as TADAS_WORKOS_API_KEY; \"off\" until set, which leaves sign-in through WorkOS answering 503."
   value       = aws_secretsmanager_secret.workos_api_key.arn
   depends_on  = [aws_secretsmanager_secret_version.workos_api_key]
 }

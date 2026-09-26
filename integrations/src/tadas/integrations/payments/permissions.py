@@ -34,9 +34,10 @@ WEBHOOK_ENDPOINTS = Permission(
 )
 
 RUNTIME_PERMISSIONS = (CUSTOMERS, CHECKOUT_SESSIONS, CUSTOMER_PORTAL, SUBSCRIPTIONS, PRICES_READ)
-"""The API and the worker: a customer per org (create, read), a hosted
-checkout, a portal session and the list of portal configurations, a
-subscription read and changed, and a price found by lookup key."""
+"""The API and the worker: a customer per org (create, read, and delete
+when its account is deleted), a hosted checkout, a portal session and the
+list of portal configurations, a subscription read, changed, and canceled,
+and a price found by lookup key."""
 
 BOOTSTRAP_PERMISSIONS = (PRODUCTS, PRICES_WRITE, WEBHOOK_ENDPOINTS, CUSTOMER_PORTAL)
 """`tadas-ops stripe-bootstrap`: the products, the prices, the environment's

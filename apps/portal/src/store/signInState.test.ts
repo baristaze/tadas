@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { SIGN_IN_STATE_TTL_MS, consumeSignIn, newState, rememberSignIn } from "./signInState";
+import {
+  SIGN_IN_STATE_TTL_MS,
+  consumeSignIn,
+  newState,
+  noteAccountDeleted,
+  rememberSignIn,
+  takeAccountDeleted,
+} from "./signInState";
 
 class MemoryStorage {
   private items = new Map<string, string>();
@@ -42,5 +49,24 @@ describe("the sign-ins a tab started", () => {
     storage.setItem("tadas.portal.signIn", "not json");
     expect(consumeSignIn("x", 0, storage)).toBeNull();
     expect(consumeSignIn("x", 0, undefined)).toBeNull();
+  });
+});
+
+describe("an account deleted in this tab", () => {
+  function memory() {
+    const kept = new Map<string, string>();
+    return {
+      getItem: (key: string) => kept.get(key) ?? null,
+      setItem: (key: string, value: string) => void kept.set(key, value),
+      removeItem: (key: string) => void kept.delete(key),
+    };
+  }
+
+  it("is said once on the page the browser lands on, across the provider's round trip", () => {
+    const storage = memory();
+    expect(takeAccountDeleted(storage)).toBe(false);
+    noteAccountDeleted(storage);
+    expect(takeAccountDeleted(storage)).toBe(true);
+    expect(takeAccountDeleted(storage)).toBe(false);
   });
 });

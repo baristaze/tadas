@@ -2,7 +2,11 @@ import { useQueryClient, type InfiniteData } from "@tanstack/react-query";
 import type { TaskPageView, TaskScope, TaskView } from "../../api";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { keys } from "../../queries/keys";
+import { placeTask, refreshTaskLists, removeTask } from "../../queries/taskCache";
+import { windowOf } from "../../queries/taskPlacement";
 import {
+  DONE_PAGE_SIZE,
+  OPEN_PAGE_SIZE,
   useCreateTask,
   useDeleteTask,
   useDoneTasks,
@@ -22,9 +26,6 @@ import {
   flattenPages,
   MOTION_MS,
   pagesWithOrder,
-  pagesWithout,
-  pagesWithTaskOnTop,
-  pagesWithTaskReplaced,
   taskRow,
   withLeaving,
   type DropSide,
@@ -61,6 +62,9 @@ export function useTasksVm() {
   // can happen; the flag is what disables the button.
   const [saving, setSaving] = useState(false);
   const savingNow = useRef(false);
+  // Pages of held rows shown past the pages loaded; see `windowOf`.
+  const [extraOpen, setExtraOpen] = useState(0);
+  const [extraDone, setExtraDone] = useState(0);
   const timers = useRef(new Set<ReturnType<typeof setTimeout>>());
 
   useEffect(() => {
@@ -70,18 +74,27 @@ export function useTasksVm() {
 
   const meId = me.data?.user.id ?? null;
   const usersById = useMemo(() => new Map((users.data ?? []).map((u) => [u.id, u])), [users.data]);
-  const openTasks = useMemo(() => flattenPages(open.data), [open.data]);
+  const openHeld = useMemo(() => flattenPages(open.data), [open.data]);
+  const doneHeld = useMemo(() => flattenPages(done.data), [done.data]);
+  const openTasks = useMemo(
+    () => windowOf(openHeld, open.data?.pages.length ?? 1, OPEN_PAGE_SIZE, extraOpen),
+    [openHeld, open.data, extraOpen],
+  );
   const openView = useMemo(() => withLeaving(openTasks, leaving), [openTasks, leaving]);
-  const doneTasks = useMemo(() => flattenPages(done.data), [done.data]);
+  const doneTasks = useMemo(
+    () => windowOf(doneHeld, done.data?.pages.length ?? 1, DONE_PAGE_SIZE, extraDone),
+    [doneHeld, done.data, extraDone],
+  );
   const leavingIds = useMemo(() => new Set(leaving.map((l) => l.task.id)), [leaving]);
 
   type Pages = InfiniteData<TaskPageView> | undefined;
   const editOpen = (edit: (data: Pages) => Pages) =>
     queryClient.setQueryData<InfiniteData<TaskPageView>>(keys.tasks.open(scope), edit);
-  const editDone = (edit: (data: Pages) => Pages) =>
-    queryClient.setQueryData<InfiniteData<TaskPageView>>(keys.tasks.done(scope), edit);
-  // The server is the truth: after any write, every task list refetches, in every scope.
-  const refresh = () => void queryClient.invalidateQueries({ queryKey: keys.tasks.all });
+  // The server is the truth, and every write answers with the task as it
+  // wrote it: the answer is placed into every cached list, in every scope,
+  // and no list is read again. A write the server refused reads them again.
+  const place = (task: TaskView) => placeTask(queryClient, task);
+  const refresh = () => refreshTaskLists(queryClient);
   // Every write names the version of the task as held here; a write the
   // server refused because the task changed since is said as such. Every
   // write is awaited, and none hands its callbacks to `mutate`: one hook
@@ -108,14 +121,11 @@ export function useTasksVm() {
     const body = { title: title.trim(), notes: "" };
     setTitle("");
     try {
-      const created = await create.mutateAsync(body);
-      editOpen((data) => pagesWithTaskOnTop(data, created));
+      place(await create.mutateAsync(body));
       setError(null);
     } catch (cause) {
       setTitle(body.title);
       fail(cause);
-    } finally {
-      refresh();
     }
   };
 
@@ -124,40 +134,38 @@ export function useTasksVm() {
     const doneTask: TaskView = { ...task, status: "done", updated_at: new Date().toISOString() };
     const index = openView.findIndex((t) => t.id === task.id);
     setLeaving((current) => [...current.filter((l) => l.task.id !== task.id), { task: doneTask, index }]);
-    editOpen((data) => pagesWithout(data, task.id));
-    editDone((data) => pagesWithTaskOnTop(data, doneTask));
+    placeTask(queryClient, doneTask, { optimistic: true });
     later(() => setLeaving((current) => current.filter((l) => l.task.id !== task.id)));
     try {
       // The row the server wrote replaces the optimistic one: it carries
       // the version the write bumped, and without it un-ticking or editing
-      // the task before the refetch lands is refused as someone else's
-      // change (`reopen` and `add` do the same).
-      const completed = await update.mutateAsync({
-        id: task.id,
-        body: { status: "done" },
-        version: task.version,
-      });
-      editDone((data) => pagesWithTaskOnTop(data, completed));
+      // the task is refused as someone else's change (`reopen` and `add`
+      // do the same).
+      place(
+        await update.mutateAsync({
+          id: task.id,
+          body: { status: "done" },
+          version: task.version,
+        }),
+      );
     } catch (cause) {
       fail(cause);
-    } finally {
-      refresh();
     }
   };
 
   const reopen = async (task: TaskView) => {
-    editDone((data) => pagesWithout(data, task.id));
+    // The server puts a reopened task on top of the open list.
+    placeTask(queryClient, { ...task, status: "open", position: Number.NEGATIVE_INFINITY }, { optimistic: true });
     try {
-      const reopened = await update.mutateAsync({
-        id: task.id,
-        body: { status: "open" },
-        version: task.version,
-      });
-      editOpen((data) => pagesWithTaskOnTop(data, reopened));
+      place(
+        await update.mutateAsync({
+          id: task.id,
+          body: { status: "open" },
+          version: task.version,
+        }),
+      );
     } catch (cause) {
       fail(cause);
-    } finally {
-      refresh();
     }
   };
 
@@ -182,8 +190,7 @@ export function useTasksVm() {
         },
         version: edit.version,
       });
-      editOpen((data) => pagesWithTaskReplaced(data, saved));
-      editDone((data) => pagesWithTaskReplaced(data, saved));
+      place(saved);
       setEditingId(null);
       setError(null);
     } catch (cause) {
@@ -194,20 +201,18 @@ export function useTasksVm() {
     } finally {
       savingNow.current = false;
       setSaving(false);
-      refresh();
     }
   };
 
   const destroy = async (task: TaskView) => {
-    editOpen((data) => pagesWithout(data, task.id));
-    editDone((data) => pagesWithout(data, task.id));
+    removeTask(queryClient, task.id, { optimistic: true });
     setEditingId(null);
     try {
-      await remove.mutateAsync({ id: task.id, version: task.version });
+      // The answer is the task as deleted, which no list shows; placing it
+      // keeps its version, so an older read never brings it back.
+      place(await remove.mutateAsync({ id: task.id, version: task.version }));
     } catch (cause) {
       fail(cause);
-    } finally {
-      refresh();
     }
   };
 
@@ -220,7 +225,10 @@ export function useTasksVm() {
       {
         move: (id, afterId, version) => move.mutateAsync({ id, afterId, version }),
         showOrder: (order) => editOpen((data) => pagesWithOrder(data, order)),
-        showMoved: (task) => editOpen((data) => pagesWithTaskReplaced(data, task)),
+        // The row keeps the place the drop gave it: the server put it right
+        // after the same task, and a renumber's new positions reach the
+        // other rows by their own pushes.
+        showMoved: (task) => placeTask(queryClient, task, { inPlace: true }),
         refetch: refresh,
         report: setError,
       },
@@ -230,6 +238,8 @@ export function useTasksVm() {
   const changeScope = (next: TaskScope) => {
     setScope(next);
     setEditingId(null);
+    setExtraOpen(0);
+    setExtraDone(0);
   };
 
   // Only the open copy of a completed task leaves; the done copy is arriving.
@@ -254,12 +264,14 @@ export function useTasksVm() {
     dismissError: () => setError(null),
     open: openView.map((task) => rowOf(task, "open")),
     done: doneTasks.map((task) => rowOf(task, "done")),
-    hasMoreOpen: open.hasNextPage,
+    hasMoreOpen: open.hasNextPage || openHeld.length > openTasks.length,
     loadingMoreOpen: open.isFetchingNextPage,
-    showMoreOpen: () => void open.fetchNextPage(),
-    hasMoreDone: done.hasNextPage,
+    showMoreOpen: () =>
+      openHeld.length > openTasks.length ? setExtraOpen((n) => n + 1) : void open.fetchNextPage(),
+    hasMoreDone: done.hasNextPage || doneHeld.length > doneTasks.length,
     loadingMoreDone: done.isFetchingNextPage,
-    showMoreDone: () => void done.fetchNextPage(),
+    showMoreDone: () =>
+      doneHeld.length > doneTasks.length ? setExtraDone((n) => n + 1) : void done.fetchNextPage(),
     editingId,
     startEditing: setEditingId,
     stopEditing: () => setEditingId(null),

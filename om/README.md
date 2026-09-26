@@ -14,8 +14,8 @@ one org can see anything in another. That is a rule, not a choice.
 
 Every person has one **personal org**, their own place to work. It is
 made with them the first time they sign in, named after them, and it is theirs
-for as long as they exist: it is never deleted, and it never changes
-hands. Every other org is a **team org**, which a person makes when a
+for as long as they exist: it goes only when they delete their account,
+and it never changes hands. Every other org is a **team org**, which a person makes when a
 team needs one and owns from then on. A person can belong to many team
 orgs, and anyone can be added to a personal org too.
 
