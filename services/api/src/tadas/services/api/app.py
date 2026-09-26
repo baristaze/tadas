@@ -78,6 +78,7 @@ def create_app(container: AppContainer | None = None) -> FastAPI:
         limit_reads=settings.admission_limit_reads,
         limit_writes=settings.admission_limit_writes,
         retry_after=timedelta(seconds=settings.admission_retry_after_seconds),
+        deadline=timedelta(seconds=settings.request_deadline_seconds),
     )
     app.add_middleware(RequestIdMiddleware)
     app.add_middleware(

@@ -44,14 +44,17 @@ class SlackServiceInterface(ABC):
         ...
 
     @abstractmethod
-    async def receive_command(self, request: SlackRequest) -> None:
+    async def receive_command(self, rctx: RequestContext, request: SlackRequest) -> None:
         """Checks the signature over the body and its timestamp and queues the
         command; one that fails the check is refused before anything is
-        queued. Answers within Slack's three seconds: the work is a worker's."""
+        queued. Answers within Slack's three seconds: the work is a worker's.
+        The send to the queue ends by the request's deadline."""
         ...
 
     @abstractmethod
-    async def receive_event(self, request: SlackRequest) -> SlackEventAnswerView:
+    async def receive_event(
+        self, rctx: RequestContext, request: SlackRequest
+    ) -> SlackEventAnswerView:
         """Checks the signature, then answers Slack's check of the URL with its
-        challenge, or queues the event."""
+        challenge, or queues the event, by the request's deadline."""
         ...

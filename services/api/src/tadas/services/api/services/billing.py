@@ -4,7 +4,7 @@ pages, cancellation, and the processor's inbound deliveries."""
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
-from tadas.om.opcontext import OpContext
+from tadas.om.opcontext import OpContext, RequestContext
 from tadas.services.api.types.billing import (
     BillingView,
     DeliveryReceivedView,
@@ -43,8 +43,10 @@ class BillingServiceInterface(ABC):
 
 class WebhooksServiceInterface(ABC):
     @abstractmethod
-    async def receive_stripe(self, delivery: SignedDelivery) -> DeliveryReceivedView:
+    async def receive_stripe(
+        self, rctx: RequestContext, delivery: SignedDelivery
+    ) -> DeliveryReceivedView:
         """Checks the delivery's signature over its body and its timestamp,
-        and queues it; a delivery that fails the check is refused before
-        anything is queued."""
+        and queues it by the request's deadline; a delivery that fails the
+        check is refused before anything is queued."""
         ...

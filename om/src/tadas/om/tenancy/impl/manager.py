@@ -407,7 +407,10 @@ class TenancyManagerImpl(TenancyManagerInterface):
     ) -> IssuedLogin:
         try:
             signed_in = await self._provider.authenticate_code(
-                code, code_verifier=code_verifier, invitation_token=invitation_token
+                code,
+                code_verifier=code_verifier,
+                invitation_token=invitation_token,
+                deadline=rctx.deadline,
             )
         except ProviderUnavailable as error:
             raise Unavailable(f"sign-in is not available: {error.message}") from None
@@ -417,7 +420,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
 
     async def start_device_sign_in(self, rctx: RequestContext) -> DeviceAuthorization:
         try:
-            return await self._provider.start_device()
+            return await self._provider.start_device(deadline=rctx.deadline)
         except ProviderUnavailable as error:
             raise Unavailable(f"sign-in is not available: {error.message}") from None
         except ProviderRefused as error:
@@ -425,7 +428,9 @@ class TenancyManagerImpl(TenancyManagerInterface):
 
     async def finish_device_sign_in(self, rctx: RequestContext, device_code: str) -> IssuedLogin:
         try:
-            signed_in = await self._provider.authenticate_device(device_code)
+            signed_in = await self._provider.authenticate_device(
+                device_code, deadline=rctx.deadline
+            )
         except DeviceSlowDown:
             raise SignInSlowDown("asked too often; wait longer before asking again") from None
         except DevicePending:
@@ -591,7 +596,9 @@ class TenancyManagerImpl(TenancyManagerInterface):
                 org, provided = member_of, None
                 pending = await self._storage.read_pending_invitation(org.id, identity.email)
             else:
-                provided = await self._provider.get_organization(organization_id)
+                provided = await self._provider.get_organization(
+                    organization_id, deadline=rctx.deadline
+                )
                 found = await self._org_of(provided)
                 if found is None:
                     return False
@@ -604,6 +611,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
                     organization_id=organization_id,
                     user_id=signed_in.user.id,
                     email=signed_in.user.email,
+                    deadline=rctx.deadline,
                 )
             )
         except (ProviderRefused, ProviderUnavailable) as error:
@@ -793,6 +801,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
             app=rctx.app,
             trace_id=rctx.trace_id,
             caused_by_request_id=rctx.caused_by_request_id,
+            deadline=rctx.deadline,
             identity_id=identity.id,
             email=identity.email,
             credential_kind=kind,
@@ -982,6 +991,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
             app=ictx.app,
             trace_id=ictx.trace_id,
             caused_by_request_id=ictx.caused_by_request_id,
+            deadline=ictx.deadline,
             identity_id=ictx.identity_id,
             email=ictx.email,
             credential_kind=ictx.credential_kind,
@@ -1347,13 +1357,14 @@ class TenancyManagerImpl(TenancyManagerInterface):
                 email=email,
                 organization_id=org.provider_org_id,
                 expires_in_days=self._options.invitation_ttl_days,
+                deadline=ctx.deadline,
             )
         except ProviderConflict:
             # Pending at the provider already (an earlier attempt sent it and
             # lost its answer): that one is adopted.
             found = await self._provider_call(
                 self._provider.find_pending_invitation(
-                    email=email, organization_id=org.provider_org_id
+                    email=email, organization_id=org.provider_org_id, deadline=ctx.deadline
                 )
             )
             if found is None:
@@ -1391,7 +1402,9 @@ class TenancyManagerImpl(TenancyManagerInterface):
         ctx.require(Permission.MANAGE_MEMBERS)
         invitation = await self._pending_invitation(ctx, invitation_id)
         sent = await self._provider_call(
-            self._provider.resend_invitation(invitation.provider_invitation_id)
+            self._provider.resend_invitation(
+                invitation.provider_invitation_id, deadline=ctx.deadline
+            )
         )
         now = utcnow()
         resent = invitation.model_copy(
@@ -1412,7 +1425,9 @@ class TenancyManagerImpl(TenancyManagerInterface):
         invitation = await self._pending_invitation(ctx, invitation_id)
         if invitation.open_at(utcnow()):
             try:
-                await self._provider.revoke_invitation(invitation.provider_invitation_id)
+                await self._provider.revoke_invitation(
+                    invitation.provider_invitation_id, deadline=ctx.deadline
+                )
             except ProviderRefused as error:
                 # Accepted or expired at the provider meanwhile: closed here too.
                 log.info("the provider refused the revocation: %s", error.message)
@@ -1431,7 +1446,10 @@ class TenancyManagerImpl(TenancyManagerInterface):
         assert org.provider_org_id is not None
         return await self._provider_call(
             self._provider.portal_link(
-                organization_id=org.provider_org_id, intent=intent, return_url=return_url
+                organization_id=org.provider_org_id,
+                intent=intent,
+                return_url=return_url,
+                deadline=ctx.deadline,
             )
         )
 
@@ -1443,7 +1461,9 @@ class TenancyManagerImpl(TenancyManagerInterface):
         if org.provider_org_id is not None:
             return org
         provided = await self._provider_call(
-            self._provider.ensure_organization(external_id=str(org.id), name=org.name)
+            self._provider.ensure_organization(
+                external_id=str(org.id), name=org.name, deadline=ctx.deadline
+            )
         )
         linked = org.model_copy(
             update={

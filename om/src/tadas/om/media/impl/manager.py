@@ -102,7 +102,9 @@ class MediaManagerImpl(MediaManagerInterface):
         # declared. The local store holds a presigned key to them as well.
         if len(data) > file.size_bytes:
             raise ValidationFailed(f"the upload is {len(data)} bytes, over {file.size_bytes}")
-        await self._buckets.put(ctx.org_id, BUCKET, file.key, data, file.content_type)
+        await self._buckets.put(
+            ctx.org_id, BUCKET, file.key, data, file.content_type, deadline=ctx.deadline
+        )
         return file
 
     async def confirm_file(self, ctx: OpContext, file_id: UUID) -> File:
@@ -111,7 +113,7 @@ class MediaManagerImpl(MediaManagerInterface):
         if file.status is FileStatus.STORED:
             return file
         self._own(ctx, file)
-        if not await self._buckets.exists(ctx.org_id, BUCKET, file.key):
+        if not await self._buckets.exists(ctx.org_id, BUCKET, file.key, deadline=ctx.deadline):
             raise ValidationFailed(f"file {file_id} has not arrived in the store")
         stored = file.model_copy(
             update={"status": FileStatus.STORED, "updated_at": utcnow(), "updated_by": ctx.user_id}
@@ -158,7 +160,7 @@ class MediaManagerImpl(MediaManagerInterface):
 
     async def get_content(self, ctx: OpContext, file_id: UUID) -> bytes:
         file = await self._stored(ctx, file_id)
-        return await self._buckets.get(ctx.org_id, BUCKET, file.key)
+        return await self._buckets.get(ctx.org_id, BUCKET, file.key, deadline=ctx.deadline)
 
     async def delete_file(self, ctx: OpContext, file_id: UUID) -> File:
         ctx.require(Permission.WRITE)

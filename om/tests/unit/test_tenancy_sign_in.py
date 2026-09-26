@@ -268,7 +268,7 @@ async def test_a_device_asked_too_often_is_told_to_slow_down(
 ) -> None:
     from tadas.integrations.exceptions import DeviceSlowDown
 
-    async def slow(device_code: str) -> None:
+    async def slow(device_code: str, **_: object) -> None:
         raise DeviceSlowDown("slow down")
 
     monkeypatch.setattr(twin, "authenticate_device", slow)

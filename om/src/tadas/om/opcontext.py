@@ -19,6 +19,7 @@ Roles, permissions, credential kinds, and app types are declared here, so
 this module imports nothing above `base.py` and the tenancy namespace reads
 them rather than the other way round."""
 
+from datetime import datetime
 from enum import StrEnum
 from typing import Protocol
 from uuid import UUID
@@ -132,6 +133,12 @@ class RequestContext(Platform):
     # read off the work item. Two fields, never one written over the other: a
     # reader asks what happened in this run and what asked for it.
     caused_by_request_id: UUID | None = None
+    # The instant this request's time runs out, which the gateway stamps when
+    # it admits the request (ADR 0069). Every call it makes to a provider or
+    # to AWS is handed it, so the calls share what is left. None where no
+    # request waits: a worker's stage, bounded by its item's lease, a socket,
+    # an ops command.
+    deadline: datetime | None = None
 
 
 class IdentityContext(RequestContext):
@@ -268,6 +275,7 @@ def build_context(
         app=rctx.app,
         trace_id=rctx.trace_id,
         caused_by_request_id=rctx.caused_by_request_id,
+        deadline=rctx.deadline,
         security=SecurityContext(
             user_id=user_id,
             org_id=org_id,

@@ -9,7 +9,7 @@ from tadas.om.billing.types.billing import Billing
 from tadas.om.billing.types.plan import Plan
 from tadas.om.exceptions import ValidationFailed
 from tadas.om.media import MediaManagerInterface
-from tadas.om.opcontext import OpContext, Permission
+from tadas.om.opcontext import OpContext, Permission, RequestContext
 from tadas.om.tasks import TasksManagerInterface
 from tadas.om.tenancy import TenancyManagerInterface
 from tadas.services.api.services.billing import (
@@ -137,12 +137,14 @@ class WebhooksServiceImpl(WebhooksServiceInterface):
         self._payments = payments
         self._queues = queues
 
-    async def receive_stripe(self, delivery: SignedDelivery) -> DeliveryReceivedView:
+    async def receive_stripe(
+        self, rctx: RequestContext, delivery: SignedDelivery
+    ) -> DeliveryReceivedView:
         verified = self._payments.verify_delivery(delivery.payload, delivery.signature)
         body = {
             "idempotency_key": str(verified.idempotency_key),
             "provider": "stripe",
             "delivery": verified.model_dump(mode="json"),
         }
-        await self._queues.send(Queues.WEBHOOKS, json.dumps(body).encode())
+        await self._queues.send(Queues.WEBHOOKS, json.dumps(body).encode(), deadline=rctx.deadline)
         return DeliveryReceivedView(received=True)

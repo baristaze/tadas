@@ -192,7 +192,9 @@ class BillingManagerImpl(BillingManagerInterface):
                 f"the org pays for {paid.value}; change the plan in the billing portal"
             )
         if account is None or account.customer_id is None:
-            customer_id = await self._payments.create_customer(ctx.org_id, org_name)
+            customer_id = await self._payments.create_customer(
+                ctx.org_id, org_name, deadline=ctx.deadline
+            )
             account = await self._with_customer(ctx, account, customer_id)
         assert account.customer_id is not None
         url = await self._payments.create_checkout(
@@ -202,6 +204,7 @@ class BillingManagerImpl(BillingManagerInterface):
             quantity=max(1, seats) if seats_metered(plan) else 1,
             success_url=success_url,
             cancel_url=cancel_url,
+            deadline=ctx.deadline,
         )
         log.info("org %s started a checkout for %s", ctx.org_id, plan.value)
         return CheckoutStart(url=url)
@@ -214,7 +217,7 @@ class BillingManagerImpl(BillingManagerInterface):
         if account is None or account.customer_id is None:
             raise NotFound("the org has no billing account yet; choose a plan first")
         return await self._payments.create_portal_session(
-            account.customer_id, return_url, update_payment_method
+            account.customer_id, return_url, update_payment_method, deadline=ctx.deadline
         )
 
     async def cancel(self, ctx: OpContext) -> Billing:
@@ -230,7 +233,7 @@ class BillingManagerImpl(BillingManagerInterface):
         if account is None or account.subscription_id is None or paid_plan(account, now) is None:
             raise NotFound("the org has no paid plan to change")
         subscription = await self._payments.set_cancel_at_period_end(
-            account.subscription_id, cancel
+            account.subscription_id, cancel, deadline=ctx.deadline
         )
         updated = mirrored(account, subscription, ctx.user_id, now)
         await self._write(ctx, updated)

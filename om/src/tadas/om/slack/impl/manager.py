@@ -119,10 +119,10 @@ class SlackManagerImpl(SlackManagerInterface):
             raise NotFound("that install is unknown, used, or expired")
         org_id, started = redeemed
         ctx = await self._tenancy.service_context(rctx, org_id, started.user_id)
-        grant = await self._slack.exchange_code(code, redirect_uri)
+        grant = await self._slack.exchange_code(code, redirect_uri, deadline=ctx.deadline)
         held = await self._storage.read_installation_by_team(grant.team_id)
         if held is not None and held[0] != org_id:
-            await self._revoke_quietly(grant.tokens)
+            await self._revoke_quietly(ctx, grant.tokens)
             raise SlackWorkspaceTaken("this Slack workspace is installed for another org")
         current = await self._storage.read_installation(org_id)
         if current is not None and current.team_id != grant.team_id:
@@ -130,14 +130,18 @@ class SlackManagerImpl(SlackManagerInterface):
             await self._remove(ctx, current, uninstall=True)
             current = None
         installation = self._installed(ctx, grant, current)
-        await self._secrets.put(org_id, installation.credential_ref, tokens_json(grant.tokens))
+        await self._secrets.put(
+            org_id, installation.credential_ref, tokens_json(grant.tokens), deadline=ctx.deadline
+        )
         try:
             await self._write(ctx, installation, "created" if current is None else "updated")
         except UniqueKeyTaken:
             # A race the read above did not see: another org took the workspace.
             if current is None:
-                await self._secrets.delete(org_id, installation.credential_ref)
-            await self._revoke_quietly(grant.tokens)
+                await self._secrets.delete(
+                    org_id, installation.credential_ref, deadline=ctx.deadline
+                )
+            await self._revoke_quietly(ctx, grant.tokens)
             raise SlackWorkspaceTaken("this Slack workspace is installed for another org") from None
         return installation
 
@@ -200,15 +204,21 @@ class SlackManagerImpl(SlackManagerInterface):
         it either way."""
         if uninstall:
             try:
-                tokens = tokens_from(await self._secrets.get(ctx.org_id, current.credential_ref))
-                await self._slack.uninstall(tokens.access_token.get_secret_value())
+                tokens = tokens_from(
+                    await self._secrets.get(
+                        ctx.org_id, current.credential_ref, deadline=ctx.deadline
+                    )
+                )
+                await self._slack.uninstall(
+                    tokens.access_token.get_secret_value(), deadline=ctx.deadline
+                )
             except SlackError as error:
                 log.warning("slack app of org %s was not removed at Slack: %s", ctx.org_id, error)
             except InfraException as error:
                 if error.code != SecretNotFound.code:
                     raise
                 # No token: nothing to remove the app with.
-        await self._secrets.delete(ctx.org_id, current.credential_ref)
+        await self._secrets.delete(ctx.org_id, current.credential_ref, deadline=ctx.deadline)
         now = utcnow()
         deleted = current.model_copy(
             update={
@@ -237,7 +247,11 @@ class SlackManagerImpl(SlackManagerInterface):
         if installation is None:
             raise NotFound("the org has no Slack installation")
         try:
-            tokens = tokens_from(await self._secrets.get(ctx.org_id, installation.credential_ref))
+            tokens = tokens_from(
+                await self._secrets.get(
+                    ctx.org_id, installation.credential_ref, deadline=ctx.deadline
+                )
+            )
         except InfraException as error:
             # Translated by its code: a token that is gone breaks the install.
             if error.code != SecretNotFound.code:
@@ -262,7 +276,9 @@ class SlackManagerImpl(SlackManagerInterface):
         # A renewal that settled between the read above and the claim left a
         # fresh pair: it is read again, and a refresh token already spent is
         # never presented.
-        tokens = tokens_from(await self._secrets.get(ctx.org_id, installation.credential_ref))
+        tokens = tokens_from(
+            await self._secrets.get(ctx.org_id, installation.credential_ref, deadline=ctx.deadline)
+        )
         if tokens.refresh_token is None or (
             tokens.expires_at is not None and tokens.expires_at - self._options.refresh_margin > now
         ):
@@ -281,7 +297,9 @@ class SlackManagerImpl(SlackManagerInterface):
             raise
         # The refresh token just used stops working after Slack's grace
         # period, so the new pair is kept before anything else happens.
-        await self._secrets.put(ctx.org_id, installation.credential_ref, tokens_json(fresh))
+        await self._secrets.put(
+            ctx.org_id, installation.credential_ref, tokens_json(fresh), deadline=ctx.deadline
+        )
         await self._storage.settle_refresh(ctx.org_id, installation.id, fresh.expires_at, utcnow())
         return fresh.access_token.get_secret_value()
 
@@ -345,9 +363,9 @@ class SlackManagerImpl(SlackManagerInterface):
             return 0
         return await self._storage.purge_tenant(ctx.org_id, self._options.purge_batch)
 
-    async def _revoke_quietly(self, tokens: SlackTokens) -> None:
+    async def _revoke_quietly(self, ctx: OpContext, tokens: SlackTokens) -> None:
         try:
-            await self._slack.revoke(tokens.access_token.get_secret_value())
+            await self._slack.revoke(tokens.access_token.get_secret_value(), deadline=ctx.deadline)
         except SlackError as error:
             log.warning("a Slack token the platform does not keep was not revoked: %s", error)
 
