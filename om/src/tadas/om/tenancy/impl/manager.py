@@ -797,7 +797,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
     ) -> IssuedLogin:
         """The credential that carries no tenant, stored under the system scope."""
         token, session = self._new_login(identity, provider_session_id=provider_session_id)
-        await self._storage.write_session(EMPTY_UUID, session)
+        await self._create_session(EMPTY_UUID, session)
         return IssuedLogin(token=token, expires_at=session.expires_at, memberships=memberships)
 
     def _new_login(
@@ -1114,7 +1114,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
         issued, session = new_operator_token(
             identity.id, role, expires_in, self._options.operator_token_ttl
         )
-        await self._storage.write_session(EMPTY_UUID, session)
+        await self._create_session(EMPTY_UUID, session)
         return issued
 
     async def resume(
@@ -1881,7 +1881,7 @@ class TenancyManagerImpl(TenancyManagerInterface):
             provider_session_id=asking.provider_session_id,
         )
         try:
-            await self._storage.write_session(home.org.id, session)
+            await self._create_session(home.org.id, session)
         except (InfraException, PlatformException) as error:
             # The org is gone either way; only the landing failed.
             log.warning("no session in the personal org of %s: %s", user.identity_id, error)
@@ -2191,7 +2191,8 @@ class TenancyManagerImpl(TenancyManagerInterface):
             credential_id=ctx.security.credential_id,
             expires_at=now + self._options.ticket_ttl,
         )
-        await self._storage.write_socket_ticket(ctx.org_id, behind)
+        if not await self._storage.create_socket_ticket(ctx.org_id, behind):
+            raise Conflict(f"socket ticket {behind.id} is already written")
         return IssuedTicket(ticket=ticket, expires_at=behind.expires_at)
 
     # Helpers.
@@ -2218,6 +2219,14 @@ class TenancyManagerImpl(TenancyManagerInterface):
         return outbox_row(
             ctx, f"tenancy.session.{action}", session.id, self._session_payload(session)
         )
+
+    async def _create_session(self, org_id: UUID, session: Session) -> None:
+        """Lands a new credential's row through the insert that reports. Its id
+        is minted with its secret, so an id already written is never a retry
+        of this call: the row there keeps another digest, and the secret is
+        refused rather than handed out as one that opens nothing."""
+        if not await self._storage.create_session(org_id, session):
+            raise Conflict(f"session {session.id} is already written")
 
     async def _write_session(self, ctx: OpContext, session: Session, action: str) -> None:
         row = self._session_row(ctx, session, action)

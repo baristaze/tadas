@@ -432,11 +432,20 @@ class TenancyStorageInterface(ABC):
         ...
 
     @abstractmethod
+    async def create_session(self, org_id: UUID, session: Session) -> bool:
+        """The create of a credential kept as a session row: a sign-in, an
+        operator token, or a session with no sign-in to end. False when the
+        id is already written, which changes nothing. A token hash another
+        row holds is UniqueKeyTaken, and nothing lands."""
+        ...
+
+    @abstractmethod
     async def write_session(
         self, org_id: UUID, session: Session, outbox_rows: tuple[OutboxRow, ...] = ()
     ) -> None:
-        """A revocation is a session write with a handoff: the row announcing
-        it lands beside the session, so the socket it opened hears of it."""
+        """The update by copy. A revocation is a session write with a handoff:
+        the row announcing it lands beside the session, so the socket it
+        opened hears of it."""
         ...
 
     @abstractmethod
@@ -595,7 +604,11 @@ class TenancyStorageInterface(ABC):
         ...
 
     @abstractmethod
-    async def write_socket_ticket(self, org_id: UUID, ticket: SocketTicket) -> None: ...
+    async def create_socket_ticket(self, org_id: UUID, ticket: SocketTicket) -> bool:
+        """The create, and the only write of a ticket besides its redemption.
+        False when the id is already written, which changes nothing. A ticket
+        hash another row holds is UniqueKeyTaken, and nothing lands."""
+        ...
 
     @abstractmethod
     async def redeem_socket_ticket(

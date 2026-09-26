@@ -13,6 +13,11 @@ The real client speaks the Web API; the twin answers in-process, issues its
 own installs and tokens, and signs its own requests with Slack's scheme. A
 caller never knows which it holds.
 
+Slack tells the app what happened in a workspace through events, and the
+app subscribes to the few it acts on: a mention, the App Home opened, the
+app uninstalled or its token revoked, and a member joining a channel the
+bot is in, which is the bot itself when someone invites it.
+
 The errors are the decision a caller needs, not Slack's whole vocabulary: a
 rate limit says when to come back, an unusable channel says the channel is
 broken until a person fixes it, a revoked token says the install is gone,
@@ -37,15 +42,22 @@ BOT_SCOPES: tuple[str, ...] = (
     "app_mentions:read",
     "users:read",
     "users:read.email",
+    "channels:read",
+    "groups:read",
 )
 """What the bot asks for at install, and nothing more: the `/tadas` command,
-posting in a channel it was invited to, `@tadas`, and the email of the person
-who typed, which is how a Slack user is matched to a member. The manifests in
-`deployment/slack/` name the same list; a test holds them together."""
+posting in a channel it was invited to, `@tadas`, the email of the person
+who typed, which is how a Slack user is matched to a member, and
+`member_joined_channel` in a public channel and in a private one, which is
+how Tadas hears that its bot was invited back to the channel it posts to.
+The manifests in `deployment/slack/` name the same list; a test holds them
+together."""
 
 UNUSABLE_CHANNEL_ERRORS = frozenset({"channel_not_found", "not_in_channel", "is_archived"})
 """Slack's answers that no retry changes: the channel is gone, archived, or
-the app was never invited. A person fixes each; the platform stops posting."""
+the app is not in it; a private channel the app is not in answers
+`channel_not_found`. A person fixes each, and the platform stops posting
+until the bot joins the channel again or another channel is bound."""
 
 REVOKED_TOKEN_ERRORS = frozenset(
     {

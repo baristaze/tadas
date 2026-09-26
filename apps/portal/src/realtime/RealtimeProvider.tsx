@@ -16,7 +16,7 @@ import { notify } from "../store/notices";
 import { useSessionStore } from "../store/session";
 import { openChannel } from "./channel";
 import type { Envelope } from "./envelopes";
-import { announceReminder } from "./reminder";
+import { announceMissedReminders, announceReminder } from "./reminder";
 import { watchPage } from "./pageVisibility";
 import { reminderOf, routeEnvelope } from "./router";
 import { createTaskHints, ReadAsList } from "./taskHints";
@@ -63,10 +63,14 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
         routeEnvelope(queryClient, envelope, hints);
         announce(envelope);
       },
-      routeReplayed: (envelope) => {
-        routeEnvelope(queryClient, envelope);
-        const reminded = reminderOf(envelope);
-        if (reminded) void announceReminder(reminded, { readTask: fetchTask, notify });
+      routeReplayed: (envelope) => routeEnvelope(queryClient, envelope),
+      // A reminder read back from the stream (the replay after a reconnect,
+      // the first catch-up) is kept through the replay's collapse to one
+      // record per entity, and announced once the read-back ends.
+      isAnnounced: (envelope) => reminderOf(envelope) !== null,
+      announce: (envelopes) => {
+        const reminded = envelopes.map(reminderOf).filter((id): id is string => id !== null);
+        void announceMissedReminders(reminded, { readTask: fetchTask, notify });
       },
       refreshAll: () => queryClient.invalidateQueries(),
       connection: useConnectionStore,
