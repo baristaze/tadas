@@ -33,11 +33,21 @@ class PlanLimitDetail(View):
     suggested_plan: str | None
 
 
+class StreamTruncatedDetail(View):
+    """What a `stream_truncated` refusal carries: the floor, the highest seq
+    trimmed from the stream, and the head. A client drops its cursor, reads
+    afresh what it shows, and goes on from the head."""
+
+    floor: int
+    head: int
+
+
 class ErrorBody(View):
     code: str
     message: str
     request_id: UUID
     plan_limit: PlanLimitDetail | None = None
+    stream: StreamTruncatedDetail | None = None
 
 
 class ErrorResponse(View):

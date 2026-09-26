@@ -135,6 +135,7 @@ class ApiError(Exception):
         message: str,
         request_id: str | None,
         retry_after: float | None = None,
+        stream_head: int | None = None,
     ) -> None:
         super().__init__(message)
         self.status = status
@@ -143,6 +144,8 @@ class ApiError(Exception):
         self.request_id = request_id
         self.retry_after = retry_after
         """How long the server asked a retry to wait, its `Retry-After`, when it did."""
+        self.stream_head = stream_head
+        """Where the stream goes on from, when a `stream_truncated` refusal named it."""
 
     def __str__(self) -> str:
         suffix = f" (request {self.request_id})" if self.request_id else ""
@@ -177,6 +180,8 @@ def _error_of(response: httpx.Response) -> ApiError:
         body = None
     envelope = body.get("error") if isinstance(body, dict) else None
     if isinstance(envelope, dict) and "code" in envelope and "message" in envelope:
+        stream = envelope.get("stream")
+        head = stream.get("head") if isinstance(stream, dict) else None
         return ApiError(
             response.status_code,
             str(envelope["code"]),
@@ -185,6 +190,7 @@ def _error_of(response: httpx.Response) -> ApiError:
             if (envelope.get("request_id") or request_id)
             else None,
             retry_after,
+            head if isinstance(head, int) else None,
         )
     return ApiError(
         response.status_code, "unknown_error", response.reason_phrase, request_id, retry_after

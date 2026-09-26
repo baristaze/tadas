@@ -42,6 +42,9 @@ else in Python calls `/v1/*`.
   each wait is jitter, because a socket drops for a shared reason: a bare
   curve would bring every listener back at the same instant. `async for
   change in Channel(client)` yields every change once, in stream order.
+  A replay refused as `stream_truncated` runs `on_resync`, where that
+  consumer reads its state again, and the cursor moves to the head the
+  refusal names.
   A consumer that keeps its own copy of the state reads it in
   `on_first_open`, which runs once after the first hello and before any
   change, so nothing committed after that read is missed.

@@ -57,6 +57,7 @@ def build_managers(
     operator_options: TenancyOperatorOptions | None = None,
     integrations: IntegrationsInterface | None = None,
     tasks_options: TasksOptions | None = None,
+    events_options: EventsOptions | None = None,
 ) -> Managers:
     """`integrations` is the root of the hosted services the managers front:
     the identity provider, which the tenancy manager signs people in and
@@ -99,7 +100,9 @@ def build_managers(
             else integrations.get_identity_provider()
         ),
     )
-    events = EventsManagerImpl(storage.get_event_storage(), tenancy, EventsOptions())
+    events = EventsManagerImpl(
+        storage.get_event_storage(), tenancy, events_options or EventsOptions()
+    )
     work = WorkManagerImpl(
         storage.get_work_storage(),
         tenancy,

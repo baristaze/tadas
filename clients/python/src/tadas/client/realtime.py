@@ -3,7 +3,9 @@ to `entity_changed`, pings at the interval the hello names from a timer of
 their own, and an async iterator of changes in stream order. A push ahead of
 the cursor is a replay of `/v1/events` after it, never a skip; a dropped
 socket reconnects with backoff and replays the same way, so a consumer sees
-every change once."""
+every change once. A replay refused because the stream is trimmed past the
+cursor is a resync: the consumer reads its state afresh, and the cursor goes
+on from the head the refusal names."""
 
 import asyncio
 import logging
@@ -81,15 +83,22 @@ class Channel:
         on_state: Callable[[State], None] | None = None,
         connect: Connect | None = None,
         on_first_open: Callable[[], Awaitable[None]] | None = None,
+        on_resync: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
         """`on_first_open` runs once, after the first hello and before any
         change is yielded: a consumer that keeps its own copy of the state
         reads it there, so nothing committed after the head it starts from
         is missed and nothing before it is replayed. It runs again on the
-        next connect when it fails."""
+        next connect when it fails.
+
+        `on_resync` runs when the stream is trimmed past the cursor: the
+        changes between are gone, so the consumer reads its state afresh
+        there, and the cursor then moves to the head the refusal named. When
+        it fails, the cursor stays, and the next replay resyncs again."""
         self._client = client
         self._on_state = on_state or (lambda _: None)
         self._on_first_open = on_first_open
+        self._on_resync = on_resync
         self._connect = connect or self._connect_default
         self._attempt = 0
         self.cursor: Cursor = None
@@ -229,7 +238,13 @@ class Channel:
         """Every record after `after`, page by page, in order; the cursor
         follows each one so a crash mid-replay resumes where it stopped."""
         while True:
-            events = await self._client.events_after(after, LIMIT_MAX)
+            try:
+                events = await self._client.events_after(after, LIMIT_MAX)
+            except ApiError as error:
+                if error.code != "stream_truncated" or error.stream_head is None:
+                    raise
+                await self._resync(error.stream_head)
+                return
             for event in events:
                 if place(self.cursor, event.seq).kind == "next":
                     self.cursor = event.seq
@@ -237,3 +252,13 @@ class Channel:
             if not events or is_last_page(len(events), LIMIT_MAX):
                 return
             after = events[-1].seq
+
+    async def _resync(self, head: int) -> None:
+        """No page closes a gap below the floor. The consumer reads afresh,
+        then the cursor goes on from `head`, so the next replay starts at or
+        above the floor and is never refused the same way again."""
+        log.info("the stream is trimmed past seq %s; resyncing at %s", self.cursor, head)
+        if self._on_resync is not None:
+            await self._on_resync()
+        if self.cursor is None or head > self.cursor:
+            self.cursor = head

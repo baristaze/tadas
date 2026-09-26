@@ -602,8 +602,14 @@ context on keeps the stage the callee needs.
   once and consumes no number. An id another tenant owns is refused
   before the number is spent, over both impls, as Postgres rolls the
   number back with the insert it refused, so a write this tenant cannot
-  make never moves its cursor. No update, and one delete: the sweep drops a
-  tenant's whole stream once the deleted tenant is past the retention. An
+  make never moves its cursor. No update, and two deletes. The trim takes
+  the oldest events of a living tenant past the event retention, a
+  bounded batch from the bottom, and moves the cursor row's `floor` to
+  the last of them in the same transaction, so the stream is whole
+  above the floor; `get_events` after a seq below the floor is refused as
+  `StreamTruncated` (410, naming the floor and the head). The sweep also
+  drops a tenant's whole stream once the deleted tenant is past the
+  retention ([ADR 0040](adr/0040-the-event-stream-has-a-floor.md)). An
   event about a user leaves out `email` and `display_name`. The entity events reach the stream through
   the event storage, from the outbox relay; the manager's `append_event` is for
   an audit entry (the work manager's dead letter), requires `WRITE`, and
@@ -1133,7 +1139,10 @@ alone, and neither key may touch what the other's work does not need
   replay pages until the last page, a failed fetch, or a page that moved
   the cursor nowhere (a seq between is not in storage yet), and the
   cursor never moves past a seq that was not applied, so the next push
-  or pong retries from where it stands. The first hello has no cursor
+  or pong retries from where it stands. A replay refused as
+  `stream_truncated` is a resync: every query is refreshed once, and
+  the cursor moves to the head the refusal names
+  ([ADR 0040](adr/0040-the-event-stream-has-a-floor.md)). The first hello has no cursor
   before it: what the page read before the socket subscribed may predate
   a change never pushed. So the client reads the last page of the stream
   and routes the records produced since the page began reading (the

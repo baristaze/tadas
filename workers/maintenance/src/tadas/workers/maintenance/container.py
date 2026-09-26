@@ -11,7 +11,7 @@ from tadas.integrations.impl.configured import absent_integrations, payments_for
 from tadas.integrations.payments import PaymentsInterface
 from tadas.integrations.root import IntegrationsInterface
 from tadas.integrations.slack import SlackInterface
-from tadas.om.root import Managers, build_managers
+from tadas.om.root import EventsOptions, Managers, build_managers
 from tadas.om.storage.impl.postgres import StoragePostgresImpl
 from tadas.om.storage.root import StorageInterface
 from tadas.om.tasks.impl.manager import TasksOptions
@@ -24,6 +24,12 @@ def tasks_options(settings: MaintenanceSettings) -> TasksOptions:
     """What the worker's tasks manager reads that a setting names: the age at
     which the daily cleanup archives a done task."""
     return TasksOptions(archive_after=timedelta(days=settings.tasks_archive_after_days))
+
+
+def events_options(settings: MaintenanceSettings) -> EventsOptions:
+    """The sweep's trim of each living org's stream: off at 0 days."""
+    days = settings.event_retention_days
+    return EventsOptions(retention=timedelta(days=days) if days else None)
 
 
 class WorkerContainer:
@@ -72,6 +78,7 @@ class WorkerContainer:
                 infra,
                 integrations=integrations,
                 tasks_options=tasks_options(settings),
+                events_options=events_options(settings),
             ),
             integrations,
         )
@@ -107,6 +114,7 @@ class WorkerContainer:
                 infra,
                 integrations=integrations,
                 tasks_options=tasks_options(settings),
+                events_options=events_options(settings),
             ),
             integrations,
         )

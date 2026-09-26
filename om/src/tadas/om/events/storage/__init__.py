@@ -1,7 +1,8 @@
 """Storage of the event stream. Append assigns the tenant's next sequence
 number from the tenant's cursor row, inside its own transaction; it is the one
-named atomic method of this namespace, and the one number storage assigns,
-because only the database can order commits."""
+number storage assigns, because only the database can order commits. The trim
+is the other atomic method: it deletes from the bottom of the stream and moves
+the tenant's floor in one transaction, so the stream above the floor is whole."""
 
 from abc import ABC, abstractmethod
 from datetime import datetime
@@ -37,6 +38,24 @@ class EventStorageInterface(ABC):
         passed: every event and the cursor row, as every namespace drops a
         tenant past it; returns how many events went. The one delete this
         append-only stream has."""
+        ...
+
+    @abstractmethod
+    async def trim(self, org_id: UUID, before: datetime, limit: int) -> int:
+        """One transaction, under the cursor row's lock: of the tenant's lowest
+        `limit` events above the floor, the run from the bottom produced before
+        `before` is deleted, and the floor moves to the last seq of that run.
+        The run stops at the first younger event, even when older ones follow
+        it, because `seq` follows the relay and not the write: the stream above
+        the floor stays whole. Returns how many events went; 0 when none was
+        old enough, and on a second trim that raced the first."""
+        ...
+
+    @abstractmethod
+    async def read_floor(self, org_id: UUID) -> int:
+        """The tenant's floor, read from the cursor row: the highest seq the
+        trim removed, 0 while it removed none. Every event above it, up to
+        the head, is stored."""
         ...
 
     @abstractmethod

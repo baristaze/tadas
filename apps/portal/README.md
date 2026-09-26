@@ -77,7 +77,9 @@ Zustand, one realtime channel.
 - `src/realtime/RealtimeProvider.tsx` owns the one socket; the loop
   itself (ticket, reconnect with backoff, the stream cursor and its
   replay) is `channel.ts`, without React, run in its test over a fake
-  socket and fake timers. The reconnect delay doubles to a cap and half
+  socket and fake timers. A replay refused as `stream_truncated` (the
+  stream is trimmed past the cursor) refreshes every query once and moves
+  the cursor to the head the refusal names. The reconnect delay doubles to a cap and half
   of each wait is jitter, because a socket drops for a shared reason: a
   bare curve would bring every tab back at the same instant. A socket
   counts as connected once the hello frame arrives, so a server that

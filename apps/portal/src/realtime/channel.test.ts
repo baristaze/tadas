@@ -1,6 +1,6 @@
 // The socket loop over a fake socket and fake timers: what it sends, when it
 // reconnects, and how it moves the stream cursor.
-import type { EventView } from "../api";
+import { ApiError, type EventView } from "../api";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useConnectionStore } from "../store/connection";
 import { CLOSE_UNAUTHENTICATED, openChannel, SOCKET_OPEN, type Channel, type SocketLike } from "./channel";
@@ -351,6 +351,106 @@ describe("stream cursor", () => {
     h2.sockets[0]!.receive(push(6));
     await flush();
     expect(channel.cursor()).toBe(6);
+  });
+});
+
+describe("a stream trimmed past the cursor", () => {
+  // The trim took everything up to 7; the stream holds 8 and 9. A read after
+  // a seq below 7 is refused as the API refuses it, naming the head.
+  const trimmed = (stream: EventView[], floor = 7) => (after: number) => {
+    if (after < floor) {
+      const head = stream[stream.length - 1]!.seq;
+      throw new ApiError(410, "stream_truncated", "gone", null, undefined, null, { floor, head });
+    }
+    return stream.filter((e) => e.seq > after);
+  };
+
+  it("reads everything afresh once and goes on from the head", async () => {
+    const h = harness(trimmed([event(8), event(9)]));
+    channel = h.channel;
+    await flush();
+    h.sockets[0]!.accept();
+    await flush();
+    h.sockets[0]!.receive(hello(5));
+    await flush();
+    // The hello carries no time, so the first catch-up refreshed once already.
+    h.refreshAll.mockClear();
+    h.sockets[0]!.receive(push(9));
+    await flush();
+    expect(h.fetches).toEqual([5]);
+    expect(h.refreshAll).toHaveBeenCalledTimes(1);
+    expect(channel.cursor()).toBe(9);
+
+    // No loop: the pong at the head and the next push read nothing again.
+    h.sockets[0]!.receive({ type: "pong", sent_at: null, seq: 9 });
+    h.sockets[0]!.receive(push(10));
+    await flush();
+    expect(h.fetches).toEqual([5]);
+    expect(h.refreshAll).toHaveBeenCalledTimes(1);
+    expect(channel.cursor()).toBe(10);
+    expect(h.routed.filter((e) => e.type === "event").map(seqOf)).toEqual([10]);
+  });
+
+  it("resyncs from a pong too, when no push announced the trim", async () => {
+    const h = harness(trimmed([event(8), event(9)]));
+    channel = h.channel;
+    await flush();
+    h.sockets[0]!.accept();
+    await flush();
+    h.sockets[0]!.receive(hello(5));
+    await flush();
+    // The hello carries no time, so the first catch-up refreshed once already.
+    h.refreshAll.mockClear();
+    h.sockets[0]!.receive({ type: "pong", sent_at: null, seq: 9 });
+    h.sockets[0]!.receive({ type: "pong", sent_at: null, seq: 9 });
+    await flush();
+    expect(h.fetches).toEqual([5]);
+    expect(h.refreshAll).toHaveBeenCalledTimes(1);
+    expect(channel.cursor()).toBe(9);
+  });
+
+  it("resyncs on the reconnect of a tab that slept past the trim", async () => {
+    const h = harness(trimmed([event(8), event(9)]));
+    channel = h.channel;
+    await flush();
+    h.sockets[0]!.accept();
+    await flush();
+    h.sockets[0]!.receive(hello(5));
+    await flush();
+    // The hello carries no time, so the first catch-up refreshed once already.
+    h.refreshAll.mockClear();
+    h.sockets[0]!.drop();
+    await vi.advanceTimersByTimeAsync(1_000);
+    h.sockets[1]!.accept();
+    await flush();
+    expect(h.fetches).toEqual([5]);
+    expect(h.refreshAll).toHaveBeenCalledTimes(1);
+    expect(channel.cursor()).toBe(9);
+  });
+
+  it("keeps the cursor on any other failure, and replays from it next time", async () => {
+    let down = true;
+    const stream = [event(6), event(7)];
+    const h = harness((after) => {
+      if (down) throw new ApiError(503, "unavailable", "later", null);
+      return stream.filter((e) => e.seq > after);
+    });
+    channel = h.channel;
+    await flush();
+    h.sockets[0]!.accept();
+    await flush();
+    h.sockets[0]!.receive(hello(5));
+    await flush();
+    // The hello carries no time, so the first catch-up refreshed once already.
+    h.refreshAll.mockClear();
+    h.sockets[0]!.receive(push(7));
+    await flush();
+    expect(h.refreshAll).not.toHaveBeenCalled();
+    expect(channel.cursor()).toBe(5);
+    down = false;
+    h.sockets[0]!.receive({ type: "pong", sent_at: null, seq: 7 });
+    await flush();
+    expect(channel.cursor()).toBe(7);
   });
 });
 
