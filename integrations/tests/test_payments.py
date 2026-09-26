@@ -17,6 +17,7 @@ import stripe
 
 from tadas.integrations.exceptions import (
     DeliveryRefused,
+    PaymentsRefused,
     PaymentsUnconfigured,
     ProviderUnavailable,
     UnsafeIntegration,
@@ -565,3 +566,51 @@ async def test_a_runtime_key_refused_the_end_of_an_account_is_unavailable_not_re
     with pytest.raises(ProviderUnavailable) as raised:
         await payments.delete_customer("cus_1")
     assert "delete customer" in str(raised.value)
+
+
+async def test_a_runtime_key_refused_the_read_before_a_cancel_is_unavailable() -> None:
+    """The read on the way to the cancel is the end's too: a key without the
+    permission to read subscriptions parks the work, never fails it."""
+    payments = await _checked(set())
+
+    class Unreadable(_Ends):
+        def __init__(self) -> None:
+            super().__init__("active")
+            ends = self
+
+            class Subscriptions:
+                async def retrieve_async(self, subscription_id: str) -> object:
+                    raise stripe.PermissionError("no", None, code=None)
+
+                async def cancel_async(self, subscription_id: str) -> object:
+                    ends.calls.append(("cancel", subscription_id))
+                    return object()
+
+            self.subscriptions = Subscriptions()
+
+    unreadable = Unreadable()
+    payments._client = unreadable  # type: ignore[assignment]
+    with pytest.raises(ProviderUnavailable) as raised:
+        await payments.cancel_subscription("sub_1")
+    assert "read subscription" in str(raised.value)
+    assert unreadable.calls == []
+
+
+async def test_a_cancel_the_processor_refuses_as_a_request_is_refused() -> None:
+    """A refusal of the request itself stays a refusal: the caller decides."""
+    payments = await _checked(set())
+
+    class Invalid(_Ends):
+        def __init__(self) -> None:
+            super().__init__("active")
+
+            class Subscriptions:
+                async def retrieve_async(self, subscription_id: str) -> object:
+                    raise stripe.InvalidRequestError("bad", None, code="parameter_invalid")
+
+            self.subscriptions = Subscriptions()
+
+    payments._client = Invalid()  # type: ignore[assignment]
+    with pytest.raises(PaymentsRefused) as raised:
+        await payments.cancel_subscription("sub_1")
+    assert "parameter_invalid" in str(raised.value)

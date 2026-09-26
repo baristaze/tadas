@@ -284,10 +284,20 @@ context on keeps the stage the callee needs.
   the hand-back, the requeue, the failure, and the completion all sign
   `updated_by` with `EMPTY_UUID`, and the copy starts from the stored
   row: `created_by` is the person who asked for the work, `updated_by`
-  is the machinery that ran it, and a worker's copy rewrites neither. A failed item is a
+  is the machinery that ran it, and a worker's copy rewrites neither. A
+  handler's run ends one of four ways: it returns (complete), it raises
+  `WorkParked` (defer, no attempt spent), it raises `WorkRefused` for a
+  failure no retry changes (`fail_for_good`, failed at once), or it raises
+  anything else (fail, requeued with a growing delay until the attempts
+  are spent). A failed item is a
   dead letter, named by a `work.item.failed` event in the tenant's
-  stream and counted on the outcome counter. Done or failed items are
-  purged by the sweep after the work retention (30 days).
+  stream and counted on the outcome counter. The operator plane is
+  `WorkOperatorManagerInterface`: `requeue` sends one failed item back to
+  the queue, available now with its attempts reset, in one statement
+  conditional on the row still being failed (`write_item_if_failed`); it
+  signs `updated_by` with the operator's identity and names the requeue by
+  a `work.item.requeued` event whose actor is that identity. Done or
+  failed items are purged by the sweep after the work retention (30 days).
 - `tasks`: the to-do items (`Task`: title, notes, status, position,
   version, and the due date `due_on` with `reminded_at` beside it), listed by a `TaskFilter` (team or mine) and paged by a
   cursor, `OpenTaskCursor` over (position, id) for the open list and
