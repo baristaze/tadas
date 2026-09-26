@@ -121,7 +121,7 @@ tracker is reported as "not read", never as "no errors".
      --state-value ALARM --profile tadas-<env>-investigate
    ```
 
-   Local: the nine alarm conditions of `ops-investigate` as queries against
+   Local: the ten alarm conditions of `ops-investigate` as queries against
    `$TADAS_PROMETHEUS_URL/api/v1/query`. An alarm that was already in
    `ALARM` in the last batch is not reported again; a transition
    (`OK` to `ALARM`, `ALARM` to `OK`) is.

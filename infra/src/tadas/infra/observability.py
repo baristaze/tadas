@@ -63,7 +63,7 @@ SWEEP_SECONDS = Histogram(
     buckets=(0.1, 0.5, 1, 2.5, 5, 10, 20, 30, 60, 120),
 )
 # The sweep's reads of the work queue and the outbox, one each per pass, as
-# the pass read them. The same three numbers are fields of the pass's log
+# the pass read them. The same four numbers are fields of the pass's log
 # line, which the alarms read in the cloud; these are what Grafana draws.
 WORK_OLDEST_READY_SECONDS = Gauge(
     "tadas_work_oldest_ready_seconds",
@@ -76,6 +76,10 @@ WORK_FAILED_RECENTLY = Gauge(
 OUTBOX_OLDEST_PENDING_SECONDS = Gauge(
     "tadas_outbox_oldest_pending_seconds",
     "How long ago the oldest outbox row that is neither relayed nor failed landed",
+)
+OUTBOX_FAILED_RECENTLY = Gauge(
+    "tadas_outbox_failed_recently",
+    "Outbox rows that failed for good in the last fifteen minutes",
 )
 
 

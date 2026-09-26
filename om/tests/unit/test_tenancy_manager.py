@@ -926,6 +926,9 @@ class SpyRelay(OutboxRelayInterface):
     async def oldest_pending_age(self) -> timedelta:
         return await self._relay.oldest_pending_age()
 
+    async def failed_within(self, window: timedelta) -> int:
+        return await self._relay.failed_within(window)
+
     def hold(self, request_id: UUID) -> None:
         self._relay.hold(request_id)
 

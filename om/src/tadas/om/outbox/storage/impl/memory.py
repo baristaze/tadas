@@ -82,6 +82,13 @@ class OutboxStorageMemoryImpl(OutboxStorageInterface, OutboxLandingInterface):
             default=None,
         )
 
+    async def count_failed_since(self, since: datetime) -> int:
+        return sum(
+            1
+            for _, row in self._rows.values()
+            if row.failed_at is not None and row.failed_at > since
+        )
+
     async def purge_done(self, before: datetime, limit: int) -> int:
         done = [
             row_id
